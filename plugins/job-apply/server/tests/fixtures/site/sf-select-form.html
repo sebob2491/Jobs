@@ -9,9 +9,10 @@
 </head>
 <body>
 <!-- like SuccessFactors' application questions (Qorvo, Oct 2026): its dropdowns are
-     "paginated selects", a text box that lists 10 entries here (100 on the live site) and
-     filters the whole list as you type. "No Selection" is the empty choice, and words typed
-     into the box stay there when nothing is picked. -->
+     "paginated selects", a text box that lists 100 entries at a time and filters the whole
+     list as you type. "No Selection" is the empty choice, and words typed into the box stay
+     there when nothing is picked. The veteran question is optional, and has no "don't wish
+     to answer". -->
 <h1>Career Opportunities: Equipment Technician (10556)</h1>
 <form id="apply" novalidate>
   <label for="fn">Legal First Name *</label><input id="fn" required>
@@ -27,16 +28,24 @@
            class="rcmpaginatedselectinput rcmpaginatedselectitem">
     <div id="38:_listSelect" role="listbox" class="rcmpaginatedselectlist"></div>
   </div>
+  <div class="sel">
+    <input aria-label="Pre-Offer : Are you a Protected Veteran?" autocomplete="off" type="text"
+           placeholder="No Selection" role="combobox" aria-owns="52:_listSelect" aria-expanded="false" id="51:_input"
+           class="rcmpaginatedselectinput rcmpaginatedselectitem">
+    <div id="52:_listSelect" role="listbox" class="rcmpaginatedselectlist"></div>
+  </div>
   <button type="submit">Apply</button>
 </form>
 <script>
-  const PAGE = 10;
+  const PAGE = 100;
+  // more countries than one page holds: the United States is only found by searching
+  const filler = Array.from({length: 110}, (_, i) => `Territory ${String(i + 1).padStart(3, '0')}`);
   const LISTS = {
-    '9:_input': ['No Selection', 'Afghanistan', 'Aland Islands', 'Albania', 'Algeria', 'American Samoa', 'Andorra',
-                 'Angola', 'Anguilla', 'Antarctica', 'Argentina', 'Armenia', 'Brazil', 'Canada', 'France', 'Germany',
-                 'Mexico', 'United Kingdom', 'United States', 'United States Minor Outlying Islands', 'Zambia'],
+    '9:_input': ['No Selection', 'Afghanistan', 'Aland Islands', 'Albania', 'Algeria', ...filler, 'United Kingdom',
+                 'United States', 'United States Minor Outlying Islands', 'Zambia'],
     '37:_input': ['No Selection', 'Afrikaans', 'Arabic', 'Chinese', 'Dutch', 'English', 'French', 'German', 'Hindi',
                   'Japanese', 'Korean', 'Portuguese', 'Spanish', 'Vietnamese'],
+    '51:_input': ['No Selection', 'I am a protected veteran', 'I am not a protected veteran'],
   };
   for (const [id, all] of Object.entries(LISTS)) {
     const box = document.getElementById(id);

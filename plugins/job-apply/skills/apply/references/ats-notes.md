@@ -112,8 +112,11 @@ the page URL. Use this file for the parts of each flow that `autofill` can't do.
   yourself"). Do the same by hand: fill it in, and let the user choose the password.
 - Its dropdowns are text boxes that list their first 100 entries and find the rest as you
   type (Qorvo's Country list stops at Iran): type the answer, then pick it from the list.
-  "No Selection" is the empty choice. Words typed that pick nothing stay in the box, and
-  the site then says the question is required; empty the box and try again.
+  A shorter list is all there is. When the answer isn't in it, ask the user about a
+  required question and leave an optional one empty (Qorvo's optional veteran question has
+  no "don't wish to answer"). "No Selection" is the empty
+  choice. Words typed that pick nothing stay in the box, and the site then says the
+  question is required; empty the box and try again.
 - The application is usually one long page with sections and attachments, so a single
   `autofill` covers most of it. Scroll and run `inspect_form` again if sections expand.
 

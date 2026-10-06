@@ -480,6 +480,7 @@ class Applier:
                 if result["filled"]:
                     self._log(run, f"filled {len(result['filled'])} field(s) on {_where(data)}")
                 pending, missing_files = _pending(result, once_failed)
+                self._note_skipped(run, result)
                 before, page_key = data, (data.get("url"), tuple(data.get("headings") or []))
                 data, text = await self._look()  # filling can add or enable things (State after Country, Submit)
                 run.page_info = _page_info(data)  # what the person sees on the desk: the page as filled
@@ -619,6 +620,13 @@ class Applier:
             self._log(run, f"{len(failed)} of your answers didn't go in")
         return failed
 
+    def _note_skipped(self, run: Run, result: dict[str, Any]) -> None:
+        """Optional fields that wouldn't take the profile's answer are skipped, and said so."""
+        skipped = [f.get("label") or "a field" for f in result["failed"] if f.get("required") is False]
+        if skipped:
+            self._log(run, f"skipped {len(skipped)} optional field(s) that wouldn't take your profile's answer: "
+                      + ", ".join(f"\u201c{label}\u201d" for label in skipped[:3]))
+
     async def _decline_cookies(self, run: Run, data: dict[str, Any], text: str) -> bool:
         """Press Reject / Decline / Necessary only on a cookie banner (never Accept). Banners
         cover forms and catch clicks; ones with no way to decline are left for the person.
@@ -706,6 +714,7 @@ class Applier:
         if result["filled"]:
             self._log(run, f"filled {len(result['filled'])} field(s) on {_where(data)}")
         pending, missing_files = _pending(result, once_failed)
+        self._note_skipped(run, result)
         if missing_files:
             return self._pause(run, "stuck", "The form needs a file the profile doesn't point to (set documents.resume "
                                "in profile.yaml): " + ", ".join(f["label"] for f in missing_files), pending)
@@ -810,9 +819,12 @@ def _pending(result: dict[str, Any], once_failed: dict[str, dict[str, Any]]) -> 
     pending = [{**f, **once_failed[question_key(f.get("label") or "")]}
                if question_key(f.get("label") or "") in once_failed else f
                for f in result["needs_input"] if f.get("required") and f.get("kind") != "file"]
-    pending += [{"id": f["id"], "label": f.get("label") or "", "kind": "combobox" if f.get("options") else "text",
+    # the profile's answers that didn't go in, where the site requires one (an optional field
+    # is skipped: Qorvo's optional veteran question has no "don't wish to answer")
+    pending += [{"id": f["id"], "label": f.get("label") or "", "kind": f.get("kind") or ("combobox" if f.get("options") else "text"),
                  "required": True, "error": f.get("error"),
-                 **({"options": f["options"]} if f.get("options") else {})} for f in result["failed"]]
+                 **({"options": f["options"]} if f.get("options") else {})}
+                for f in result["failed"] if f.get("required", True)]
     # an answer of theirs the page turned down is asked again, even when the box isn't empty
     # (words left in a picker's search box read as an answer), unless the profile's answer
     # went in after it

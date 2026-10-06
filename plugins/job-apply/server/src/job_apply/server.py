@@ -434,6 +434,7 @@ async def autofill(job_id: int | None = None, overwrite: bool = False) -> dict[s
     results = await browser.fill([{"id": f["id"], "value": f["value"], "names": is_name_rule(f.get("rule") or "")}
                                   for f in plan["to_fill"]]) if plan["to_fill"] else []
     by_id = {f["id"]: f for f in plan["to_fill"]}
+    fields = {f["id"]: f for f in data["fields"]}
     filled, failed = [], []
     for r in results:
         src = by_id.get(r["id"], {})
@@ -441,7 +442,12 @@ async def autofill(job_id: int | None = None, overwrite: bool = False) -> dict[s
         if r["ok"]:
             filled.append(entry)
         else:
-            failed.append({**entry, "error": r["error"], **({"options": r["options"]} if r.get("options") else {})})
+            # what to ask instead: the field's kind, whether it's required, and its choices
+            # (those of the group picked, when the answer was a group of entries)
+            field = fields.get(r["id"], {})
+            options = r.get("options") or field.get("options")
+            failed.append({**entry, "error": r["error"], "kind": field.get("kind"),
+                           "required": bool(field.get("required", True)), **({"options": options} if options else {})})
     after = await browser.inspect(include_dropdown_options=False)
     snapshot = await _auto_snapshot("autofill failures", failed) if failed else None
     return {

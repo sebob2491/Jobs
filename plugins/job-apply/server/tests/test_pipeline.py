@@ -926,7 +926,7 @@ def test_an_answer_the_page_turns_down_is_asked_again(srv, monkeypatch):
         finally:
             await applier.stop()
 
-    assert run(go()) == ["Sam", "United States", "English"]
+    assert run(go()) == ["Sam", "United States", "English", ""]  # the optional veteran question is left
 
 
 def test_a_turned_down_answer_is_asked_again_whatever_the_box_shows():
@@ -940,3 +940,15 @@ def test_a_turned_down_answer_is_asked_again_whatever_the_box_shows():
     assert [(q["label"], q["error"]) for q in pending] == [("Preferred Locale/Language", "nothing in its list matched 'Klingon'")]
     profile_filled = {**nothing_left, "filled": [{"id": "28", "label": "Preferred Locale/Language", "value": "English"}]}
     assert pipeline._pending(profile_filled, turned_down)[0] == []
+
+
+def test_a_profile_answer_that_doesnt_go_in_is_asked_only_where_required():
+    """A required field is asked about with its own choices. An optional one is skipped: Qorvo's
+    optional veteran question (no "don't wish to answer") was asked over and over."""
+    result = {"needs_input": [], "filled": [], "failed": [
+        {"id": "17", "label": "Country", "value": "Atlantis", "error": "nothing in its list matched 'Atlantis'",
+         "kind": "combobox", "required": True, "options": ["No Selection", "Afghanistan"]},
+        {"id": "40", "label": "Pre-Offer : Are you a Protected Veteran?", "value": "I don't wish to answer",
+         "error": "nothing in its list matched", "kind": "combobox", "required": False, "options": ["Yes", "No"]}]}
+    pending, _ = pipeline._pending(result, {})
+    assert [(q["label"], q["kind"], q["options"]) for q in pending] == [("Country", "combobox", ["No Selection", "Afghanistan"])]

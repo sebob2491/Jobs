@@ -300,6 +300,16 @@ def test_no_selection_is_nothing_chosen():
     and the entry is no "No" answer."""
     assert is_empty_value("No Selection")
     assert choose_option("I do not", ["No Selection", "Yes", "No"]) == "No"
-    country = {"id": "1", "label": "Country", "kind": "combobox", "value": "", "search": True,
-               "options": ["No Selection", "Afghanistan", "Aland Islands", "Albania"]}
-    assert resolve_field(country, prof()).value == "United States"  # searched for: the list starts at A
+
+
+def test_a_paged_list_is_searched_only_when_it_shows_a_full_page():
+    """SuccessFactors' dropdowns list 100 entries at a time. Qorvo's countries stop at Iran, so
+    the profile's country is searched for. Its veteran list is three entries, all there is:
+    an answer that isn't among them is left alone rather than typed in."""
+    countries = ["No Selection"] + [f"Country {i}" for i in range(99)]
+    country = {"id": "1", "label": "Country", "kind": "combobox", "value": "", "paged": True, "options": countries}
+    assert resolve_field(country, prof()).value == "United States"
+    assert resolve_field({**country, "options": countries[:50]}, prof()) is None
+    veteran = {"id": "2", "label": "Pre-Offer : Are you a Protected Veteran?", "kind": "combobox", "value": "",
+               "paged": True, "options": ["No Selection", "I am a protected veteran", "I am not a protected veteran"]}
+    assert resolve_field(veteran, prof()) is None  # the profile's "I don't wish to answer" isn't offered

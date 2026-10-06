@@ -51,6 +51,7 @@ _NO = re.compile(r"^(no|n|false|never|i am not|i do not|i don'?t|i will not|i wo
                  r"i'?ve never|i can ?not|i can'?t)\b", re.I)
 _FILLER = {"yes", "no", "y", "n", "i", "am", "a", "an", "the", "to", "for", "of", "in", "my", "and", "or", "is", "be",
            "this", "it", "up"}
+PAGED_LIST_PAGE = 100  # entries SuccessFactors' paginated select lists at a time
 _DECLINE = re.compile(r"decline|not (wish|want) to|prefer not|choose not|do not want|don'?t wish|not to (answer|disclose|self)|rather not", re.I)
 
 
@@ -617,8 +618,12 @@ def resolve_field(field: dict, prof: Profile, job: dict | None = None, file_inpu
         chosen = choose_option(ans.value, options)
         if chosen is None and ans.rule == "how_heard":
             chosen = _own_website(ans.value, options, job)
-        if chosen is None and field.get("search") and not isinstance(ans.value, (list, dict)):
-            return ans  # a search prompt lists only its top level: the fill searches it for the answer
+        # a search prompt lists only its top level, and a full page of a paged list (Qorvo's
+        # countries stop at Iran) only its start: the fill searches them for the answer. A
+        # shorter paged list is all there is, so a search can't find anything else in it.
+        searched = field.get("search") or field.get("paged") and len(options) >= PAGED_LIST_PAGE
+        if chosen is None and searched and not isinstance(ans.value, (list, dict)):
+            return ans
         if chosen is None:
             return None
         return Answer(chosen, ans.rule)
