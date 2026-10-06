@@ -555,7 +555,13 @@ async def check_pipeline(company: dict[str, Any], out: Path, rec: dict[str, Any]
         return
     first = found["results"][0]
     rec["posting"] = {k: first.get(k) for k in ("title", "location", "url")}
-    job = server.add_job(url=first["url"], title=first["title"], company=company["name"])["job"]
+    apply_url = ""
+    try:  # as the desk does: the posting's own apply link, when it has one
+        apply_url = (await fetch_posting(first["url"])).apply_url
+    except Exception as e:  # noqa: BLE001
+        rec["posting"]["read_error"] = f"{type(e).__name__}: {str(e)[:200]}"
+    rec["posting"]["apply_url"] = apply_url
+    job = server.add_job(url=first["url"], title=first["title"], company=company["name"], apply_url=apply_url)["job"]
     applier = Applier(server)
     applier.start()
     rec["rounds"] = []
