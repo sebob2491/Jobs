@@ -24,12 +24,14 @@ The desk is a local web page served by this plugin. It does what the `find-jobs`
   - **Alert me** (in the header) turns on desktop notifications for jobs that come to
     need the user or are ready to submit, so the desk can be left in the background.
 - **Site passwords** stores one password per job system: Workday (most of the
-  employers), SuccessFactors (Edwards, Qorvo, Amkor) or iCIMS (Daifuku). Each employer
-  has its own account. With a password saved, the desk signs in by itself and fills in
-  Create Account forms, leaving the terms box and the button to the user. If the
-  password doesn't sign in (usually a first application there), the desk opens that
-  employer's Create Account form and fills it in. A password is only typed into its own
-  system's addresses. The user types it into the desk page; never ask for it in the
+  employers), SuccessFactors (Edwards, Qorvo, Amkor), iCIMS (Daifuku), ApplicantStack
+  (SCREEN), UKG Pro (Nikon Precision) or Infor (Benchmark). Each employer has its own
+  account. With a password saved, the desk signs in by itself and fills in Create Account
+  forms (email, password, name and country from the profile), leaving the terms box, any
+  picture code and the button to the user. If the password doesn't sign in (usually a
+  first application there), the desk opens that employer's Create Account form ("Create
+  an account", "Register", "Sign up") and fills it in. A password is only typed into its
+  own system's addresses. The user types it into the desk page; never ask for it in the
   conversation.
 - **Submit** sends one application. **Submit for me** sends every application that
   needs nothing, and stays off until the user turns it on. LinkedIn and Indeed are

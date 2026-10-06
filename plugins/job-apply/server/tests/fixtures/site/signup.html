@@ -1,0 +1,21 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Sign up</title></head>
+<body>
+<!-- like UKG Pro's "Create your account": one password box, and a way back to log in -->
+<h1>Create your account</h1>
+<form id="signup" novalidate>
+  <label for="em">Email address *</label><input id="em" type="text" required>
+  <label for="pw">Password *</label><input id="pw" type="password" required>
+  <button type="submit">Continue</button>
+</form>
+<p>Already have an account? <a href="signin-signup-link.html">Log in</a></p>
+<script>
+  window.created = 0;
+  document.getElementById('signup').addEventListener('submit', (e) => {
+    e.preventDefault();
+    window.created += 1;
+  });
+</script>
+</body>
+</html>

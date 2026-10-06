@@ -315,7 +315,10 @@ EXTRACT_JS = r"""
 
   const errors = [];
   for (const el of document.querySelectorAll('[role="alert"], [aria-live="assertive"], [data-automation-id="errorMessage"], [class*="error" i]:not(input):not(select):not(textarea)')) {
-    const t = txt(el);
+    // without icon-font glyphs (Amkor's "\ue0b1 Invalid email address or password"; an alert
+    // that's only an icon says nothing)
+    const t = txt(el).replace(/[\uE000-\uF8FF]/g, '').trim();
+    if (!/[\p{L}\p{N}]/u.test(t)) continue;
     const r = el.getBoundingClientRect();
     if (r.width <= 1 || r.height <= 1) continue;  // screen-reader announcements ("… page is loaded")
     if (/\bpage is loaded\b|^loading\b/i.test(t)) continue;

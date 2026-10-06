@@ -22,6 +22,10 @@ on:
         description: Run the one-button apply pipeline instead of the field check
         type: boolean
         default: false
+      fake_passwords:
+        description: With pipeline, a throwaway saved password per job system (one sign-in try, then Create Account filled in; never created)
+        type: boolean
+        default: false
   push:
 
 jobs:
@@ -54,11 +58,13 @@ jobs:
       - name: Run live smoke test
         env:
           COMPANIES: ${{ inputs.companies }}
+          FAKE_PASSWORDS: ${{ inputs.fake_passwords }}
         run: |
           args=(--out live-report)
           if [ -n "$COMPANIES" ]; then args+=(--companies "$COMPANIES"); fi
           if [ "$FIXTURES" = "true" ]; then args+=(--fixtures); fi
           if [ "$PIPELINE" = "true" ]; then args+=(--pipeline); fi
+          if [ "$FAKE_PASSWORDS" = "true" ]; then args+=(--fake-passwords); fi
           uv run --frozen python scripts/live_smoke.py "${args[@]}"
       - name: Summary
         if: always()

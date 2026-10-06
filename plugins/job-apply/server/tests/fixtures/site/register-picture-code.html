@@ -1,0 +1,28 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Registration / Candidate Experience</title></head>
+<body>
+<!-- like Benchmark's Infor registration: names, the email as user name, a picture code, and a
+     resume to upload now if you like; only an account, not the application -->
+<h1>Registration</h1>
+<form id="register" novalidate>
+  <label for="fn">First Name</label><input id="fn" type="text">
+  <label for="ln">Last Name</label><input id="ln" type="text">
+  <label for="em">Email Address (User Name)</label><input id="em" type="text">
+  <label for="pw">Password</label><input id="pw" type="password">
+  <label for="pw2">Confirm Password</label><input id="pw2" type="password">
+  <img alt="" src="data:image/gif;base64,R0lGODlhAQABAAAAACw=">
+  <label for="code">Enter the text in image above</label><input id="code" type="text">
+  <label for="up">Want To Upload Your Resume Now?</label><input id="up" type="text">
+  <label for="file">File upload. Press enter to browse for a file</label><input id="file" type="file">
+  <label><input id="nores" type="checkbox"> I don't have a resume</label>
+  <button type="submit">Submit</button>
+</form>
+<script>
+  window.created = 0;
+  document.getElementById('register').addEventListener('submit', (e) => { e.preventDefault(); window.created += 1; });
+  window.result = () => ({first: fn.value, last: ln.value, email: em.value, same: pw.value === pw2.value && pw.value.length > 0,
+                          code: code.value, upload: up.value, files: file.files.length, nores: nores.checked});
+</script>
+</body>
+</html>

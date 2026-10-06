@@ -174,6 +174,9 @@ footer { max-width: 1240px; margin: 0 auto; padding: 0 16px 24px; color: var(--m
             <option value="workday">Workday: Intel, Applied, KLA and 10 more</option>
             <option value="successfactors">SuccessFactors: Edwards, Qorvo, Amkor</option>
             <option value="icims">iCIMS: Daifuku</option>
+            <option value="applicantstack">ApplicantStack: SCREEN</option>
+            <option value="ukg">UKG Pro: Nikon Precision</option>
+            <option value="infor">Infor: Benchmark</option>
           </select>
         </div>
         <div class="pw-row"><input type="password" id="pw" autocomplete="new-password" aria-label="Password">
@@ -436,7 +439,8 @@ function renderHeader() {
   const tailor = $("tailor");
   if (document.activeElement !== tailor) tailor.checked = !!s.tailor_resumes;
   $("tailor-hint").textContent = s.tailor_resumes ? "On: each job waits for Claude to write a resume for it." : "Off: your usual resume goes with every application.";
-  const systems = {workday: "Workday", successfactors: "SuccessFactors", icims: "iCIMS"};
+  const systems = {workday: "Workday", successfactors: "SuccessFactors", icims: "iCIMS", applicantstack: "ApplicantStack",
+                   ukg: "UKG Pro", infor: "Infor"};
   $("pw-state").innerHTML = Object.entries(state.passwords || {}).map(([site, saved]) =>
     `<span class="pill ${saved ? "good" : ""}" data-site="${esc(site)}">${esc(systems[site] || site)}: ${saved ? "saved" : "not saved"}</span>`).join(" ");
   const notes = [];

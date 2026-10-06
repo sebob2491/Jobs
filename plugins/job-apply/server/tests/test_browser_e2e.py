@@ -387,6 +387,15 @@ def test_inspect_waits_for_a_form_drawn_late(srv):
     assert [f["label"] for f in fields] == ["Email Address"]
 
 
+def test_errors_are_read_without_icon_glyphs(srv):
+    """Amkor's sign-in shows its error after an icon-font glyph, and an alert that's only a glyph."""
+    run(srv.open_application(url=fixture_url("jsonld_posting.html")))
+    page = run(srv.browser.page())
+    run(page.evaluate("""() => document.body.insertAdjacentHTML('beforeend',
+      '<div role="alert">\ue0b1 Invalid email address or password.</div><div role="alert">\ue1f7</div>')"""))
+    assert run(srv.browser.inspect(False))["errors"] == ["Invalid email address or password."]
+
+
 def test_search_text_left_in_a_picker_is_no_evidence(srv):
     run(srv.open_application(url=fixture_url("jsonld_posting.html")))
     page = run(srv.browser.page())

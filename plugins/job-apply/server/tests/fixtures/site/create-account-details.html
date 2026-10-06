@@ -1,0 +1,27 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Career Opportunities: Create an Account</title></head>
+<body>
+<!-- like Amkor's SuccessFactors "Create an Account": the email twice, names, country, a newsletter box -->
+<h1>Career Opportunities: Create an Account</h1>
+<form id="create" novalidate>
+  <label for="em">Email Address: *</label><input id="em" type="text" required>
+  <label for="em2">Retype Email Address: *</label><input id="em2" type="text" required>
+  <label for="pw">Choose Password: *</label><input id="pw" type="password" required>
+  <label for="pw2">Retype Password: *</label><input id="pw2" type="password" required>
+  <label for="fn">First Name: *</label><input id="fn" type="text" required>
+  <label for="ln">Last Name: *</label><input id="ln" type="text" required>
+  <label for="co">Country/Region of Residence:*</label>
+  <select id="co" required><option value="">- Select -</option><option>Canada</option><option>Mexico</option>
+    <option>United States</option></select>
+  <label><input id="news" type="checkbox"> Hear more about career opportunities</label>
+  <button type="submit">Create Account</button>
+</form>
+<script>
+  window.created = 0;
+  document.getElementById('create').addEventListener('submit', (e) => { e.preventDefault(); window.created += 1; });
+  window.result = () => ({email: em.value, email2: em2.value, same: pw.value === pw2.value && pw.value.length > 0,
+                          first: fn.value, last: ln.value, country: co.value, news: news.checked});
+</script>
+</body>
+</html>

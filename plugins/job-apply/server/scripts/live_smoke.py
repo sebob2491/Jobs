@@ -689,11 +689,20 @@ async def main() -> int:
     ap.add_argument("--companies", default="", help="comma-separated names (default: all)")
     ap.add_argument("--fixtures", action="store_true", help="also write tests/fixtures/live/ fixtures")
     ap.add_argument("--pipeline", action="store_true", help="run the one-button apply pipeline instead")
+    ap.add_argument("--fake-passwords", action="store_true",
+                    help="with --pipeline: a throwaway saved password for each job system the desk takes one for, "
+                         "so a run tries the sign-in once and fills in Create Account (it never creates one)")
     args = ap.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
     wanted = [n.strip().lower() for n in args.companies.split(",") if n.strip()]
     companies = [c for c in load_companies() if not wanted or any(w in c["name"].lower() for w in wanted)]
     if args.pipeline:
+        if args.fake_passwords:
+            import secrets
+
+            from job_apply.pipeline import DESK_PASSWORDS
+            for name in DESK_PASSWORDS:  # this run's environment only; never written anywhere
+                os.environ[f"JOB_APPLY_SECRET_{name.upper()}"] = f"Throwaway-{secrets.token_urlsafe(12)}-1!"
         return await pipeline_main(companies, args.out, args.fixtures)
 
     records = []
@@ -830,6 +839,35 @@ async def _question_markup(run: Any) -> list[str]:
     return out
 
 
+async def account_form() -> dict[str, Any]:
+    """At a sign-in the run stopped on: the form its way to a new account opens ("Create an
+    account", "Register", "Sign up"), which the desk fills when a saved password doesn't sign
+    in. Opened and read only, with the queue stopped, so nothing is filled in or sent. Only
+    from a sign-in page (one password box): on a Create Account form, its own "Create
+    Account" button would create the account."""
+    from job_apply.pipeline import _CREATE_ACCOUNT
+
+    try:
+        form = await server.inspect_form(include_dropdown_options=False)
+        if sum(f["kind"] == "password" for f in form["fields"]) != 1 or any(
+                f.get("value") for f in form["fields"] if f["kind"] in ("text", "email", "password")):
+            # an account form, or one the desk filled in (a --fake-passwords run): left as it is
+            return {"skipped": "not an untouched sign-in page", "fields": [f.get("label") for f in form["fields"]][:20]}
+        link = next((a for a in form["actions"] if _CREATE_ACCOUNT.match(a["text"].strip()) and not a.get("disabled")
+                     and not a.get("is_submit") and not a.get("form_submit")), None)
+        if link is None:
+            return {"none": [a["text"] for a in form["actions"]][:20]}
+        await server.click(link["id"])
+        await asyncio.sleep(6)
+        after = await server.inspect_form(include_dropdown_options=False)
+        return {"pressed": link["text"], "url": after["url"], "title": after.get("title"),
+                "headings": after["headings"][:6], "actions": [a["text"] for a in after["actions"]][:20],
+                "fields": [{k: f.get(k) for k in ("label", "kind", "required", "sublabel", "options")}
+                           for f in after["fields"]][:30]}
+    except Exception as e:  # noqa: BLE001 - a probe; the run's record stands without it
+        return {"error": f"{type(e).__name__}: {str(e)[:200]}"}
+
+
 async def check_pipeline(company: dict[str, Any], out: Path, rec: dict[str, Any], fixtures: bool = False) -> None:
     from job_apply.pipeline import Applier, question_key
 
@@ -878,6 +916,8 @@ async def check_pipeline(company: dict[str, Any], out: Path, rec: dict[str, Any]
             break
     finally:
         await applier.stop()
+        if (rec.get("rounds") or [{}])[-1].get("need") == "sign_in":
+            rec["account_form"] = await account_form()
         try:
             snap = await server.debug_snapshot(note=f"live pipeline: {company['name']}")
             dest = out / "pipeline" / slug(company["name"])

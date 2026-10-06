@@ -1,0 +1,29 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Career Opportunities: Sign In</title></head>
+<body>
+<h2>Sign In</h2>
+<form id="signin" novalidate>
+  <label for="em">Email Address*</label><input id="em" type="email" required>
+  <label for="pw">Password*</label><input id="pw" type="password" required>
+  <button type="submit">Sign In</button>
+</form>
+<h3>Not a registered user yet?</h3>
+<p><a id="create" href="create-account.html">Create an account</a></p>
+<div id="err" role="alert"></div>
+<script>
+  // Like Amkor's SuccessFactors sign-in: a failed sign-in reloads the page, and a click on
+  // "Create an account" made before that has finished is lost. Here the first click after
+  // a failed sign-in is.
+  let reloading = false;
+  document.getElementById('signin').addEventListener('submit', (e) => {
+    e.preventDefault();
+    document.getElementById('err').textContent = 'Invalid email address or password. Please re-enter your login info.';
+    reloading = true;
+  });
+  document.getElementById('create').addEventListener('click', (e) => {
+    if (reloading) { e.preventDefault(); reloading = false; }
+  });
+</script>
+</body>
+</html>
