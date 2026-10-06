@@ -39,8 +39,8 @@ NAVIGATION_RE = re.compile(
     r"sign ?in|log ?in|create account|verify|send (me a )?code|ok|accept( all)?( cookies)?|i agree|apply manually|start)\b",
     re.I,
 )
-# How long a click may wait for its button to become clickable, in ms.
 SHORT_MENU = 12  # a menu this short shows every choice; a longer one may show only some
+# How long a click may wait for its button to become clickable, in ms.
 CLICK_TIMEOUT = 8000
 CONFIRMATION_RE = re.compile(
     r"thank you for (applying|your application|your interest)|application (has been |was )?(submitted|received|complete)"
