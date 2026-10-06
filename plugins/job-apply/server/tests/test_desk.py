@@ -162,16 +162,21 @@ def test_desk_page_buttons_reach_the_api(srv, tmp_path):
 
                 await page.fill("#add-links", fixture_url("jsonld_posting.html"))
                 await page.click("#add-btn")
-                row = page.locator("li.row", has_text="EUV")
-                await row.wait_for()
-                assert await row.locator("input[type=checkbox]").is_checked()  # picked, ready for Apply
-                assert await page.input_value("#add-links") == ""
+                # listed, picked for Apply, and the box emptied (waited for: the page's own
+                # refresh can draw the row a moment before the add returns)
+                await page.wait_for_function("""() => {
+                  const row = [...document.querySelectorAll('li.row')].find((r) => r.textContent.includes('EUV'));
+                  return row && row.querySelector('input[type=checkbox]').checked
+                    && document.getElementById('add-links').value === '';
+                }""", timeout=20000)
 
                 await page.fill("#pw", "typed-on-the-page")
                 await page.click("#pw-form button[type=submit]")
                 await page.wait_for_selector("#pw-state:text('Saved')")
                 assert config.get_secret("workday_password") == "typed-on-the-page"
-                assert await page.input_value("#pw") == ""  # not left sitting in the page
+                # not left sitting in the page (cleared once the save returns; the page's own
+                # refresh can show "Saved" a moment before that)
+                await page.wait_for_function("() => document.getElementById('pw').value === ''", timeout=5000)
                 await browser.close()
         finally:
             await desk.stop()
