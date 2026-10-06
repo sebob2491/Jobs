@@ -29,9 +29,16 @@ below.
     then ask the user to click Submit in the browser. When they say it went
     through, call `update_job(job_id, status="applied")`.
 - `click` refuses final submit buttons. Don't work around it with other selectors.
-- CAPTCHAs, email verification codes, sign-ins and passwords belong to the user. Ask
-  them to handle these in the browser window, or use `fill_secret` with a secret
-  they stored themselves. Never type a password with `fill_form`.
+- CAPTCHAs, sign-ins and passwords belong to the user. Ask them to handle these in
+  the browser window, or use `fill_secret` with a secret they stored themselves.
+  Never type a password with `fill_form`.
+- **Email verification codes and links.** If `settings.email_codes` is true and the
+  Gmail connector is available, you may fetch the code yourself. Search with
+  `search_threads` for `newer_than:1h (code OR verify OR verification OR "one-time")`
+  plus the company or ATS name, and read only the newest matching message. Type the
+  code with `fill_form`, or open a verification link with `open_application(url=...)`.
+  If no email arrives within a minute or two, or the setting is off, ask the user for
+  the code. Never read other mail, and never send or delete anything.
 - Check `list_jobs` before starting so you never apply to the same posting twice.
 
 ## Workflow for each job

@@ -34,3 +34,25 @@ def test_upsert_update_export(job_apply_home):
     out = job_apply_home / "out.csv"
     assert t.export_csv(out) == 1
     assert "Lam Research" in out.read_text()
+
+
+def test_log_email_moves_status_forward_once(job_apply_home):
+    t = Tracker()
+    job, _ = t.upsert({"url": "https://kla.wd1.myworkdayjobs.com/Search/job/x_1", "title": "FSE", "company": "KLA"})
+    t.update(job["id"], status="applied")
+
+    out = t.log_email(job["id"], "thr-1", "interview", "Phone screen request", "2026-10-01")
+    assert out == {"already_logged": False, "status": "interviewing", "changed": True}
+    assert t.log_email(job["id"], "thr-1", "interview")["already_logged"] is True  # same thread again
+    # a late "we received your application" doesn't move it backwards
+    assert t.log_email(job["id"], "thr-0", "confirmation")["status"] == "interviewing"
+    assert t.log_email(job["id"], "thr-2", "offer", "Offer letter")["status"] == "offer"
+    assert t.log_email(job["id"], "thr-3", "rejection")["status"] == "offer"  # offer stands
+    assert {r["thread_id"] for r in t.logged_threads()} == {"thr-0", "thr-1", "thr-2", "thr-3"}
+    notes = [e["note"] for e in t.events(job["id"])]
+    assert any("Phone screen request" in n for n in notes)
+
+    other, _ = t.upsert({"url": "https://example.com/jobs/2", "title": "Tech", "company": "Example"})
+    assert t.log_email(other["id"], "thr-9", "rejection")["status"] == "rejected"
+    with pytest.raises(ValueError):
+        t.log_email(other["id"], "thr-10", "ghosted")

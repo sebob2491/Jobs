@@ -13,7 +13,8 @@ the page URL. Use this file for the parts of each flow that `autofill` can't do.
   password with `fill_secret(field_id, "workday_password")`.
 - **New accounts:** creating one is the user's decision. Ask first. Then use the
   profile email and `fill_secret` for both password fields. The user must accept
-  any terms checkbox and enter any email verification code.
+  any terms checkbox. Workday then emails a "verify your account" link. Open it
+  yourself if `settings.email_codes` is on, otherwise the user clicks it.
 - If you see a CAPTCHA or a "verify you are human" check, ask the user to solve it.
 
 ## Workday (`*.myworkdayjobs.com`): Applied Materials, KLA, Intel, Microchip, NXP, TEL, Analog Devices, Hitachi High-Tech, ASML (some postings)
@@ -72,8 +73,8 @@ the page URL. Use this file for the parts of each flow that `autofill` can't do.
 
 - The posting page has an **Apply** button. These sites often ask for the resume
   first, then fill in the form from it, so check what they parsed.
-- Some flows ask for an email and a one-time code before the form. The user has
-  to enter the code.
+- Some flows ask for an email and a one-time code before the form. Fetch the code
+  if `settings.email_codes` is on, otherwise ask the user for it.
 
 ## SAP SuccessFactors (`successfactors.com`, `/job/City-Title-ST-Zip/<id>/` URLs): TSMC Arizona, Amkor, Qorvo, Entegris
 
@@ -84,9 +85,8 @@ the page URL. Use this file for the parts of each flow that `autofill` can't do.
 ## Oracle Recruiting Cloud (`*.oraclecloud.com/hcmUI/CandidateExperience`): onsemi, Texas Instruments
 
 - The flow asks for the email first, then sends a one-time code to that address.
-  The user enters the code, or reads it out to you if they want you to type it.
-  If the Gmail connector is available and the user says it's fine, you can find
-  the code in their email.
+  If `settings.email_codes` is on, fetch the code as the apply skill describes.
+  Otherwise the user enters it, or reads it out to you.
 
 ## Greenhouse (`greenhouse.io`) and Lever (`lever.co`): ASM
 

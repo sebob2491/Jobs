@@ -45,6 +45,14 @@ CREATE TABLE IF NOT EXISTS jobs (
     updated_at TEXT NOT NULL,
     applied_at TEXT DEFAULT ''
 );
+CREATE TABLE IF NOT EXISTS emails (
+    thread_id TEXT PRIMARY KEY,
+    job_id INTEGER NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+    category TEXT NOT NULL,
+    summary TEXT DEFAULT '',
+    received_at TEXT DEFAULT '',
+    logged_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     job_id INTEGER NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
@@ -53,6 +61,17 @@ CREATE TABLE IF NOT EXISTS events (
     note TEXT DEFAULT ''
 );
 """
+
+# What an employer email means for the application's status.
+EMAIL_CATEGORIES = {
+    "confirmation": "applied",  # "we received your application"
+    "assessment": "interviewing",  # online test, questionnaire, HireVue
+    "interview": "interviewing",
+    "offer": "offer",
+    "rejection": "rejected",
+    "other": None,
+}
+_PIPELINE = ["saved", "in_progress", "ready_to_submit", "applied", "interviewing", "offer"]
 
 _JOB_FIELDS = [
     "url", "apply_url", "title", "company", "location", "ats", "source", "external_id",
@@ -197,6 +216,44 @@ class Tracker:
             )
         self.conn.commit()
         return self.get(job_id)  # type: ignore[return-value]
+
+    def log_email(self, job_id: int, thread_id: str, category: str, summary: str = "",
+                  received_at: str = "") -> dict[str, Any]:
+        """Record an employer email once and move the status forward if it says so.
+        Never moves an application backwards (a late confirmation email doesn't undo
+        an interview), and a rejection doesn't override an offer."""
+        if category not in EMAIL_CATEGORIES:
+            raise ValueError(f"category must be one of {', '.join(EMAIL_CATEGORIES)}")
+        job = self.get(job_id, with_description=False)
+        if job is None:
+            raise KeyError(f"No job with id {job_id}")
+        if self.conn.execute("SELECT 1 FROM emails WHERE thread_id = ?", (thread_id,)).fetchone():
+            return {"already_logged": True, "status": job["status"], "changed": False}
+        self.conn.execute(
+            "INSERT INTO emails (thread_id, job_id, category, summary, received_at, logged_at) VALUES (?, ?, ?, ?, ?, ?)",
+            (thread_id, job_id, category, summary, received_at, _now()),
+        )
+        self.conn.commit()
+        current, target = job["status"], EMAIL_CATEGORIES[category]
+        new = current
+        if target == "rejected":
+            new = current if current in ("offer", "withdrawn") else "rejected"
+        elif target and current in _PIPELINE and _PIPELINE.index(target) > _PIPELINE.index(current):
+            new = target
+        note = f"email ({category}{', ' + received_at if received_at else ''}): {summary}".strip()
+        if new != current:
+            self.update(job_id, status=new, note=note)
+        else:
+            self.update(job_id, note=note)
+        return {"already_logged": False, "status": new, "changed": new != current}
+
+    def logged_threads(self, since_days: int | None = None) -> list[dict[str, Any]]:
+        q = "SELECT thread_id, job_id, category, received_at FROM emails"
+        args: list[Any] = []
+        if since_days is not None:
+            q += " WHERE logged_at >= datetime('now', ?)"
+            args.append(f"-{int(since_days)} days")
+        return [dict(r) for r in self.conn.execute(q + " ORDER BY logged_at DESC", args)]
 
     def events(self, job_id: int) -> list[dict[str, Any]]:
         rows = self.conn.execute("SELECT at, status, note FROM events WHERE job_id = ? ORDER BY id", (job_id,))

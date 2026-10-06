@@ -45,6 +45,11 @@ All of the user's data lives in `~/.job-apply/`, outside the plugin:
    - Submit mode: `review` (default, they approve each submit) or `auto` for chosen
      ATSs such as `[workday, greenhouse, lever]`. LinkedIn and Indeed always need
      them to click Submit themselves.
+   - Email, only if the Gmail connector is connected: may Claude read the
+     verification codes and links career sites email them (`settings.email_codes`)?
+     May it check their email for replies to applications (`settings.email_tracking`)?
+     Both default to off. Explain that Claude only searches for those specific
+     messages and never sends or deletes mail.
 
 4. Write `~/.job-apply/profile.yaml` and keep its comments. Run `setup_status` again
    until `profile_complete` is true. Then show the user a short summary of their

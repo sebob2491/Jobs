@@ -70,6 +70,8 @@ class Settings:
     auto_submit_ats: list[str] = field(default_factory=list)
     headless: bool = False
     browser_channel: str = "chrome"  # "chrome", "msedge" or "chromium" (bundled)
+    email_codes: bool = False  # may Claude read sign-in/verification codes from the user's email
+    email_tracking: bool = False  # may Claude scan email for replies to applications
 
     @classmethod
     def from_dict(cls, d: dict[str, Any] | None) -> "Settings":
@@ -79,6 +81,8 @@ class Settings:
             auto_submit_ats=[str(a).lower() for a in d.get("auto_submit_ats") or []],
             headless=bool(d.get("headless", False)),
             browser_channel=str(d.get("browser_channel", "chrome")).lower(),
+            email_codes=d.get("email_codes") is True,
+            email_tracking=d.get("email_tracking") is True,
         )
         if os.environ.get("JOB_APPLY_HEADLESS") == "1":
             s.headless = True

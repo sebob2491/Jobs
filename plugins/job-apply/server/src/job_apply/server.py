@@ -93,7 +93,8 @@ def setup_status() -> dict[str, Any]:
         "profile_complete": not missing,
         "missing_profile_fields": missing,
         "settings": {"submit_mode": s.submit_mode, "auto_submit_ats": s.auto_submit_ats,
-                     "browser_channel": s.browser_channel, "headless": s.headless},
+                     "browser_channel": s.browser_channel, "headless": s.headless,
+                     "email_codes": s.email_codes, "email_tracking": s.email_tracking},
         "chrome_detected": has_chrome,
         "browser_note": "If the browser fails to start, install Chrome or run "
                         f"`uv run --project \"{config.PLUGIN_ROOT / 'server'}\" playwright install chromium` "
@@ -189,6 +190,24 @@ def update_job(job_id: int, status: str | None = None, notes: str | None = None,
     ready_to_submit, applied, interviewing, offer, rejected, withdrawn, skipped."""
     job = tracker().update(job_id, status=status, notes=notes, apply_url=apply_url, note=event_note)
     return {"job": _brief(job)}
+
+
+@mcp.tool()
+def log_email(job_id: int, thread_id: str, category: str, summary: str = "", received_at: str = "") -> dict[str, Any]:
+    """Record an employer's email about an application and update its status.
+
+    category: confirmation, assessment, interview, offer, rejection or other.
+    thread_id is the Gmail thread id, so the same email is never counted twice
+    (already_logged=true). Status only moves forward (applied -> interviewing -> offer);
+    a rejection sets rejected unless there's already an offer."""
+    return tracker().log_email(job_id, thread_id, category, summary, received_at)
+
+
+@mcp.tool()
+def logged_emails(since_days: int | None = 90) -> dict[str, Any]:
+    """Gmail thread ids already recorded with log_email, so a status check can skip them."""
+    rows = tracker().logged_threads(since_days)
+    return {"count": len(rows), "threads": rows}
 
 
 @mcp.tool()

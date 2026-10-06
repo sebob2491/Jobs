@@ -117,3 +117,6 @@ settings:
   auto_submit_ats: []         # e.g. [workday, greenhouse, lever, eightfold, successfactors]
   browser_channel: chrome     # chrome, msedge, or chromium (Playwright's bundled browser)
   headless: false
+  # Email (needs the Gmail connector in Claude). Both are off until you turn them on.
+  email_codes: false          # Claude may read sign-in / verification codes that career sites email you
+  email_tracking: false       # Claude may scan your email for replies to your applications
