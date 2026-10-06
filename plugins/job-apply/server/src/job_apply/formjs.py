@@ -268,7 +268,7 @@ EXTRACT_JS = r"""
   const SUBMIT = /\bsubmit\b|send (my )?application|finish (my )?application|complete (my )?application/i;
   const FINALISH = /^(apply( now)?|send( now)?|finish|complete( application)?|confirm( and send)?)$/i;
   const POSTING_PAGE = /career(?:_|%5f)ns=job(?:_|%5f)listing(?:&|#|$)/i;  // browser.POSTING_PAGE_RE
-  const ACTION = /apply|next|continue|review|submit|save|add|upload|sign ?in|log ?in|create account|start|back|previous|edit|done|ok\b|accept|agree|use my last|autofill|manually|verify|confirm|remove|delete/i;
+  const ACTION = /apply|next|continue|review|submit|save|add|upload|sign ?in|log ?in|create (an |your |a new )?account|sign ?up|register|start|back|previous|edit|done|ok\b|accept|agree|use my last|autofill|manually|verify|confirm|remove|delete/i;
   // Up to 60 of the page's buttons. A dropdown's entries are choices in a field, not
   // things to do on the page: Eightfold draws them as buttons, and an open list of
   // referral sources or countries used to fill all 60 places before "Submit
