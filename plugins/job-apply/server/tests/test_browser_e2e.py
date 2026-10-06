@@ -570,3 +570,21 @@ def test_a_picker_is_searched_by_name_not_by_flag_and_code(srv):
         out = run(srv.fill_form([{"id": field["id"], "value": value}]))
         assert out["ok"], out
         assert run(page.input_value("#cc")) == "🇺🇸 (+1) United States of America"
+
+
+def test_a_long_open_menu_doesnt_hide_the_submit_button(srv):
+    """Infineon: an open list of referral sources, drawn as buttons, filled the 60 actions
+    read from the page before "Submit application" was reached, so the desk couldn't find
+    it. Menu entries aren't page actions, and a submit button always makes the list."""
+    run(srv.open_application(url=fixture_url("jsonld_posting.html")))
+    page = run(srv.browser.page())
+    sources = "".join(f'<button type="button" role="option">Source {i}</button>' for i in range(80))
+    clears = "".join(f'<button type="button">Clear field {i}</button>' for i in range(70))
+    run(page.set_content(f"""<form>
+      <label for="h">How did you hear about us?</label><input id="h" role="combobox" aria-controls="h-list">
+      <div id="h-list" role="listbox">{sources}</div>
+      {clears}
+      <button type="submit">Submit application</button></form>"""))
+    actions = run(srv.inspect_form(include_dropdown_options=False))["actions"]
+    assert not any(a["text"].startswith("Source") for a in actions)
+    assert [a["text"] for a in run(srv.browser.find_submit())] == ["Submit application"]
