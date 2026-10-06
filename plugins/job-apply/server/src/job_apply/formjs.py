@@ -101,6 +101,19 @@ EXTRACT_JS = r"""
     }
     return '';
   };
+  // Text a widget displays beside its input (react-select's chosen value). Only looks inside
+  // the widget itself: stops at the first wrapper that holds other form controls.
+  const shownNear = (el) => {
+    for (let n = el.parentElement, d = 0; n && d < 3; n = n.parentElement, d++) {
+      const others = Array.from(n.querySelectorAll('input, select, textarea, button')).filter((x) => x !== el && x.type !== 'hidden');
+      if (others.length) break;
+      const copy = n.cloneNode(true);
+      copy.querySelectorAll('label, legend, input, [role="listbox"], [role="option"], [aria-live]').forEach((x) => x.remove());
+      const t = clean(copy.textContent);
+      if (t && t.length < 120) return t;
+    }
+    return '';
+  };
   const tag = (el, id) => { el.setAttribute('data-ja-id', id); return id; };
   const idOf = (el) => el.getAttribute('data-ja-id') || tag(el, newId());
 
@@ -149,6 +162,7 @@ EXTRACT_JS = r"""
       const container = el.closest('[data-automation-id="multiselectInputContainer"]') || el.parentElement;
       const pills = container ? Array.from(container.querySelectorAll('[data-automation-id="selectedItem"], [class*="selected" i] [class*="label" i]')).map(txt).filter(Boolean) : [];
       if (pills.length) value = pills.join(', ');
+      else if (!el.value) value = shownNear(el);  // react-select shows the choice beside an empty input
     }
     // A site's own search box (header, nav, search form) is not part of the application.
     if (el.closest('[role="search"], header, nav, form[action*="search" i], form[id*="search" i], form[class*="search" i]')
@@ -363,15 +377,15 @@ FIELD_OPTIONS_JS = r"""
       const c = o.closest('[role="listbox"]') || o.parentElement;
       groups.set(c, (groups.get(c) || []).concat([o]));
     }
-    let best = [], bestScore = Infinity;
+    let best = [], bestGap = Infinity;
     for (const [c, os] of groups) {
+      // a menu that was already showing before this field was opened is never its menu
+      if (os.every((o) => o.getAttribute('data-ja-before') === text(o))) continue;
       const b = c.getBoundingClientRect();
       const overlap = Math.min(b.right, box.right) - Math.max(b.left, box.left);
       if (overlap <= 0) continue;
       const gap = Math.min(Math.abs(b.top - box.bottom), Math.abs(box.top - b.bottom));
-      const stale = os.every((o) => o.getAttribute('data-ja-before') === text(o));
-      const score = gap + (stale ? 1000 : 0);
-      if (gap < 120 && score < bestScore) { bestScore = score; best = os; }
+      if (gap < 120 && gap < bestGap) { bestGap = gap; best = os; }
     }
     opts = best;
   }
@@ -388,13 +402,20 @@ FIELD_OPTIONS_JS = r"""
 # What a dropdown field currently displays: input value, button text, or selected chips.
 SHOWN_VALUE_JS = r"""
 (el) => {
+  // react-select clears its input and shows the choice in a sibling, Workday shows chips:
+  // walk up to the nearest wrapper that displays something, ignoring labels and open menus.
   const clean = (s) => (s || '').replace(/\s+/g, ' ').trim();
   const parts = [];
   if (el.value) parts.push(el.value);
   if (el.tagName !== 'INPUT') parts.push(el.innerText || el.textContent || '');
-  const box = el.closest('[data-automation-id="multiselectInputContainer"], [class*="select" i], [class*="combobox" i]')
-    || el.parentElement;
-  if (box) parts.push(box.innerText || '');
+  for (let n = el.parentElement, d = 0; n && d < 4; n = n.parentElement, d++) {
+    const others = Array.from(n.querySelectorAll('input, select, textarea, button')).filter((x) => x !== el && x.type !== 'hidden');
+    if (others.length) break;  // that's the surrounding form, not the widget
+    const copy = n.cloneNode(true);
+    copy.querySelectorAll('label, legend, input, [role="listbox"], [role="option"], [aria-live]').forEach((x) => x.remove());
+    const t = clean(copy.textContent);
+    if (t && t.length < 120) { parts.push(t); break; }
+  }
   return clean(parts.join(' '));
 }
 """

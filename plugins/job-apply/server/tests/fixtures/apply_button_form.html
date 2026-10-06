@@ -50,7 +50,19 @@
         const li = document.createElement('li');
         li.setAttribute('role', 'option');
         li.textContent = item;
-        li.addEventListener('mousedown', (e) => { e.preventDefault(); input.value = item; input.dataset.selected = item; list.hidden = true; });
+        li.addEventListener('mousedown', (e) => {
+          e.preventDefault();
+          if (id === 'gen') {
+            // exactly like react-select: the input empties and the choice shows beside it
+            input.value = '';
+            let shown = input.parentElement.querySelector('.single-value');
+            if (!shown) { shown = document.createElement('div'); shown.className = 'single-value'; input.before(shown); }
+            shown.textContent = item;
+          } else {
+            input.value = item;
+          }
+          list.hidden = true;
+        });
         list.appendChild(li);
       }
       list.hidden = false;

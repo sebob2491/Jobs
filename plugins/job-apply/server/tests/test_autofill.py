@@ -183,3 +183,11 @@ def test_choices_seen_on_live_forms():
     assert choose_option("Yes", asm_auth) is None  # two "authorized" answers: a person decides
     lam_eeo = ["Male", "Female", "Choose not to disclose"]
     assert choose_option("Decline to self-identify", lam_eeo) == "Choose not to disclose"
+
+
+def test_country_lists_with_flags_and_dial_codes():
+    lam = ["\U0001F1FA\U0001F1F2 (+1) United States Minor Outlying Islands", "\U0001F1FA\U0001F1F8 (+1) United States of America",
+           "\U0001F1E8\U0001F1E6 (+1) Canada"]
+    assert choose_option("United States", lam) == lam[1]
+    assert choose_option("united states of america (+1)", lam) == lam[1]
+    assert choose_option("United States", ["United States Minor Outlying Islands", "United States"]) == "United States"

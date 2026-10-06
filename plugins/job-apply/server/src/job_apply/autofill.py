@@ -114,6 +114,11 @@ def degree_key(s: str) -> str | None:
     return None
 
 
+def _strip_codes(n: str) -> str:
+    """Drop dial codes and bare numbers: '+1 united states of america' -> 'united states of america'."""
+    return " ".join(t for t in n.split() if not re.fullmatch(r"\+?\d+", t))
+
+
 def choose_option(desired: Any, options: list[str]) -> str | None:
     """Pick the option that best matches `desired`, or None if nothing does."""
     opts = [o for o in options if o and not _PLACEHOLDER_VALUES.match(o.strip())]
@@ -122,10 +127,11 @@ def choose_option(desired: Any, options: list[str]) -> str | None:
     want = norm(desired)
     normed = [(o, norm(o)) for o in opts]
 
-    # 1. exact, including aliases (AZ ~ Arizona, USA ~ United States of America)
-    wanted = _aliases(want)
+    # 1. exact, including aliases (AZ ~ Arizona, USA ~ United States of America), ignoring
+    #    dial codes and flags ("🇺🇸 (+1) United States of America")
+    wanted = _aliases(want) | _aliases(_strip_codes(want))
     for o, n in normed:
-        if n in wanted or _aliases(n) & wanted:
+        if n in wanted or _aliases(n) & wanted or _strip_codes(n) in wanted:
             return o
 
     # 2. declines ("Decline to self-identify", "I don't wish to answer", ...)
@@ -156,6 +162,13 @@ def choose_option(desired: Any, options: list[str]) -> str | None:
     contains = [o for o, n in normed if want and re.search(rf"(^| ){re.escape(want)}( |$)", n)]
     if len(contains) == 1:
         return contains[0]
+    if len(contains) > 1:
+        # "United States" in both "...of America" and "...Minor Outlying Islands": take the
+        # one whose extra words the aliases explain, else the one with the fewest extra words
+        known = {t for a in wanted for t in a.split()}
+        def extra(o: str) -> int:
+            return len(set(_strip_codes(norm(o)).split()) - set(want.split()) - known)
+        contains.sort(key=extra)
     contained = [o for o, n in normed if n and n in want]
     if len(contained) == 1:
         return contained[0]

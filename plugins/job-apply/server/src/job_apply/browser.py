@@ -493,7 +493,8 @@ class BrowserSession:
         landed in some other menu, or the widget refused it)."""
         await page.wait_for_timeout(150)
         shown = await loc.evaluate(SHOWN_VALUE_JS)
-        if norm(choice) not in norm(shown) and choose_option(choice, [shown]) is None:
+        # Only positive evidence counts: some widgets display the value where we can't see it.
+        if shown and norm(choice) not in norm(shown) and choose_option(choice, [shown]) is None:
             raise ValueError(f"Picked {choice!r} but the field shows {shown[:80]!r}; set it by hand or with click")
 
     async def _type_and_pick(self, page: Page, loc: Locator, field: dict, value: Any) -> str:
