@@ -8,6 +8,10 @@ Each company in data/companies.yaml may carry a `search` block naming one of:
     eightfold:       {host: careers.example.com, domain: example.com}
     smartrecruiters: <company identifier>
     oracle:          {host: xxxx.fa.us2.oraclecloud.com, site: CX_1001}
+    applicantstack:  <board name>
+    icims:           <portal name>          (read in the browser)
+    paycom:          <career portal key>    (read in the browser)
+    sitecore:        {url: ..., api: ...}   (ASML; read in the browser)
 
 Companies without one (SuccessFactors sites, custom pages) are searched in the
 browser instead. These endpoints are what the careers pages themselves call;
@@ -35,11 +39,12 @@ from .postings import USER_AGENT
 WORKDAY_PAGE = 20  # Workday rejects larger pages
 MAX_ALTERNATIVES = 4
 FETCH_WHEN_FILTERING = 60  # results to scan per search when filtering by location ourselves
-CLIENT_SIDE = {"greenhouse", "lever", "applicantstack"}  # whole board comes back at once; titles are filtered here
+CLIENT_SIDE = {"greenhouse", "lever", "applicantstack", "paycom"}  # whole board comes back at once; titles are filtered here
 # Searches whose data only comes through the site's own page in the browser (ASML's
-# Sitecore Discover widget; iCIMS portals, which turn away plain requests).
+# Sitecore Discover widget; iCIMS portals, which turn away plain requests; Paycom, whose
+# API wants the session its career page sets up).
 # search_companies lists them under needs_browser and the search_company_jobs tool runs them.
-BROWSER_SEARCHES = {"sitecore", "icims"}
+BROWSER_SEARCHES = {"sitecore", "icims", "paycom"}
 RETRY_STATUS = {429, 500, 502, 503, 504}  # a passing problem on the site's side
 RETRY_DELAY = 1.0  # seconds, doubled on the second retry
 
@@ -439,6 +444,75 @@ def parse_icims(html: str, base: str) -> list[Listing]:
         out.append(Listing(company="", title=title, url=url, location=location.strip(), posted=posted,
                            external_id=m.group(1), ats="icims"))
     return out
+
+
+
+# ----------------------------------------------------------------- Paycom (Ebara), through the browser
+PAYCOM_TAKE = 100  # the page asks for 10 at a time
+PAYCOM_PAGES = 3
+
+
+def paycom_page_url(cfg: Any) -> str:
+    return f"https://www.paycomonline.net/v4/ats/web.php/portal/{cfg}/career-page"
+
+
+def paycom_rewrite(body: Any, skip: int = 0) -> Any:
+    """Ask for PAYCOM_TAKE openings from `skip` instead of the page's first 10."""
+    if not isinstance(body, dict) or "take" not in body:
+        return None
+    return {**body, "skip": skip, "take": PAYCOM_TAKE}
+
+
+async def paycom_search(capture: Callable[..., Awaitable[Any]], cfg: Any, query: str,
+                        found: list[Listing]) -> None:
+    """Paycom career pages (Ebara) load their openings from Paycom's API under a session the
+    page sets up, so the board is read in the browser, PAYCOM_TAKE openings per call, and
+    titles are matched here. `capture` is BrowserSession.capture_json."""
+    for page in range(PAYCOM_PAGES):
+        skip = page * PAYCOM_TAKE
+        data = await capture(paycom_page_url(cfg), "/job-posting-previews/search",
+                             rewrite=lambda body, skip=skip: paycom_rewrite(body, skip))
+        batch = parse_paycom(data, cfg)
+        found.extend(listing for listing in batch if title_matches(listing.title, query))
+        total = data.get("jobPostingPreviewsCount") if isinstance(data, dict) else None
+        if skip + PAYCOM_TAKE >= total if isinstance(total, int) else len(batch) < PAYCOM_TAKE:
+            return
+
+
+def _paycom_place(text: str) -> str:
+    """'Sacramento, CA - Sacramento, CA 95838' (the site, then its address) -> 'Sacramento, CA 95838'."""
+    site, sep, address = text.partition(" - ")
+    return address if sep and address.startswith(site) else text
+
+
+def parse_paycom(data: Any, cfg: Any) -> list[Listing]:
+    previews = data.get("jobPostingPreviews") or [] if isinstance(data, dict) else []
+    out = []
+    for p in previews:
+        if not isinstance(p, dict) or not p.get("jobId"):
+            continue
+        title = re.sub(r"\s+", " ", str(p.get("jobTitle") or "")).strip()
+        req = re.search(r"\s*\((\d+)\)$", title)  # "Field Service Technician II (33195)": Ebara's requisition number
+        if req:
+            title = title[:req.start()]
+        listing = Listing(
+            company="", title=title, url=f"https://www.paycomonline.net/v4/ats/web.php/portal/{cfg}/jobs/{p['jobId']}",
+            location=_paycom_place(re.sub(r"\s+", " ", str(p.get("locations") or "")).strip()),
+            posted=_paycom_date(p.get("postedOn")), external_id=req.group(1) if req else str(p["jobId"]), ats="paycom",
+        )
+        if p.get("remoteType"):
+            listing.notes.append(f"Paycom lists it as {p['remoteType']}")
+        out.append(listing)
+    return out
+
+
+def _paycom_date(value: Any) -> str:
+    """'10/01/2026' or '2026-10-01T...' -> '2026-10-01'; Ebara's board leaves it empty."""
+    text = str(value or "")
+    us = re.match(r"(\d{1,2})/(\d{1,2})/(\d{4})", text)
+    if us:
+        return f"{us.group(3)}-{int(us.group(1)):02d}-{int(us.group(2)):02d}"
+    return text[:10] if re.match(r"\d{4}-\d{2}-\d{2}", text) else ""
 
 
 async def _eightfold(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, terms: list[str]) -> list[Listing]:

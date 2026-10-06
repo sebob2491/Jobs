@@ -25,6 +25,7 @@ COMPANIES = [
     {"name": "Workday Site Co", "search": {"workday": "https://wd1.myworkdaysite.com/recruiting/wsco/WS_Careers"}},
     {"name": "AS Co", "search": {"applicantstack": "asco"}},
     {"name": "iCIMS Co", "search": {"icims": "careers-icco"}},
+    {"name": "Paycom Co", "search": {"paycom": "PAYCOMKEY"}},
 ]
 # SCREEN SPE USA's board: one table of every opening, title and location
 AS_BOARD = """<h1>Job Openings</h1><table class="table"><thead><tr><th>Job Title</th><th>Location</th></tr></thead><tbody>
@@ -218,6 +219,8 @@ def test_search_all_backends():
     # iCIMS answers plain requests with HTTP 405: it's left for the browser
     assert "iCIMS Co" not in by_company and not any("icims" in str(r.url) for r in seen)
     assert {"company": "iCIMS Co", "kind": "icims", "config": "careers-icco"} in out["needs_browser"]
+    assert {"company": "Paycom Co", "kind": "paycom", "config": "PAYCOMKEY"} in out["needs_browser"]
+    assert not any("paycom" in str(r.url) for r in seen)
 
     assert out["browser_only"] == [{"company": "Browser Co", "careers_url": "https://careers.browserco.com"}]
     assert set(out["errors"]) == {"Broken Co", "Odd Lever Co"}  # each fails alone; the rest still return
@@ -488,3 +491,73 @@ def test_icims_board_is_read_in_the_browser(srv, monkeypatch):
     assert pages == [icims_page_url("careers-daifuku-america", "field service")] == [
         "https://careers-daifuku-america.icims.com/jobs/search?ss=1&searchKeyword=field+service&in_iframe=1"]
     assert not out["errors"]
+
+
+# Ebara's Paycom board: the page's own search call (10 at a time) and its answer
+PAYCOM_PAGE_BODY = {"skip": 0, "take": 10, "filtersForQuery": {
+    "distanceFrom": 0, "workEnvironments": [], "positionTypes": [], "educationLevels": [], "categories": [],
+    "travelTypes": [], "shiftTypes": [], "otherFilters": [], "keywordSearchText": "", "location": "", "sortOption": ""}}
+
+
+def paycom_answer(previews, total=None):
+    return {"jobPostingPreviews": previews, "jobPostingPreviewsCount": len(previews) if total is None else total}
+
+
+def paycom_job(job_id, title, where, remote=""):
+    return {"jobId": job_id, "jobTitle": title, "positionType": "Full Time", "remoteType": remote,
+            "locations": where, "description": "POSITION SUMMARY\r\nUnder direct supervision, ...",
+            "postedOn": "", "isHotJob": False}
+
+
+def test_paycom_board_is_read_in_the_browser(srv, monkeypatch):
+    """Ebara's Paycom API wants the session its career page sets up, so the page makes the
+    call, asked for the whole board, and titles are matched here."""
+    calls = []
+
+    async def fake_capture(url, url_part, timeout=25000, want=None, rewrite=None):
+        sent = rewrite(json.loads(json.dumps(PAYCOM_PAGE_BODY)))
+        calls.append((url, url_part, sent["skip"], sent["take"]))
+        assert sent["filtersForQuery"] == PAYCOM_PAGE_BODY["filtersForQuery"]  # the rest of the page's call kept
+        return paycom_answer([
+            paycom_job(389200, "Desktop System Specialist  (32906)", "Phoenix, AZ - Phoenix, AZ"),
+            paycom_job(401000, "Field Service Associate II  (Semiconductor)  (33300)", "Chandler, AZ - Chandler, AZ 85226"),
+            paycom_job(389228, "Field Service Associate II  (Semiconductor)  (32907)", "Sherman, TX - Sherman, TX 75092"),
+            paycom_job(401001, "Field Service Technician I-III (33301)", "Phoenix, AZ - Phoenix, AZ", remote="Hybrid"),
+        ])
+
+    monkeypatch.setattr(srv.browser, "capture_json", fake_capture)
+    out = asyncio.run(srv.search_company_jobs("field service | customer engineer", companies=["Ebara"], location="AZ"))
+    base = "https://www.paycomonline.net/v4/ats/web.php/portal/95CACB007211B4A999FBE2ED52E7762E"
+    assert [(r["title"], r["location"], r["url"], r["external_id"], r["ats"]) for r in out["results"]] == [
+        ("Field Service Associate II (Semiconductor)", "Chandler, AZ 85226", f"{base}/jobs/401000", "33300", "paycom"),
+        ("Field Service Technician I-III", "Phoenix, AZ", f"{base}/jobs/401001", "33301", "paycom"),
+    ]  # the Texas opening and the desktop job are left out
+    assert out["results"][1]["notes"] == ["Paycom lists it as Hybrid"]
+    assert calls == [(f"{base}/career-page", "/job-posting-previews/search", 0, 100)]  # whole board, one tab
+    assert not out["errors"] and out["results"][0]["company"] == "Ebara Technologies"
+
+
+def test_paycom_search_pages_through_a_big_board():
+    from job_apply.search import Listing, paycom_rewrite, paycom_search
+
+    skips = []
+
+    async def capture(url, url_part, timeout=25000, want=None, rewrite=None):
+        sent = rewrite(json.loads(json.dumps(PAYCOM_PAGE_BODY)))
+        skips.append(sent["skip"])
+        start = sent["skip"]
+        return paycom_answer([paycom_job(i, f"Field Service Engineer ({i})", "Chandler, AZ - Chandler, AZ")
+                              for i in range(start + 1, min(start + 100, 150) + 1)], total=150)
+
+    found: list[Listing] = []
+    asyncio.run(paycom_search(capture, "KEY", "field service", found))
+    assert skips == [0, 100] and len(found) == 150
+    assert paycom_rewrite({"widgets": []}) is None and paycom_rewrite(None) is None  # some other call: left alone
+
+    calls = []
+
+    async def odd(url, url_part, timeout=25000, want=None, rewrite=None):
+        calls.append(url)
+        return {"unexpected": True}
+    asyncio.run(paycom_search(odd, "KEY", "field service", []))
+    assert calls == ["https://www.paycomonline.net/v4/ats/web.php/portal/KEY/career-page"]  # nothing more to ask for

@@ -126,6 +126,14 @@ the page URL. Use this file for the parts of each flow that `autofill` can't do.
   search lists each opening with its location (`US-AZ-Chandler`) and posting date. It
   turns away plain requests (HTTP 405), so the search runs in a background browser tab.
 
+## Paycom (`paycomonline.net`): Ebara Technologies
+
+- The career page loads every opening from Paycom's own API, which only answers that
+  page, so the search runs in a background browser tab. Titles end in the requisition
+  number, as in "Field Service Technician II (33195)"; the search drops it from the title.
+- The career page has **Sign In** and **Create Account** links: Paycom keeps an applicant
+  account per employer.
+
 ## ASML (`asml.com/en/careers`)
 
 - Postings are on asml.com. **Apply** may lead to Workday (`asml.wd3.myworkdayjobs.com`)

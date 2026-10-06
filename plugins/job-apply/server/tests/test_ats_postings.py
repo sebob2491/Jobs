@@ -15,6 +15,8 @@ def test_detect_ats():
         "https://career8.successfactors.com/career?company=amkor": "successfactors",
         "https://hctz.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1001/jobs": "oracle_hcm",
         "https://micron.eightfold.ai/careers": "eightfold",
+        "https://www.paycomonline.net/v4/ats/web.php/portal/95CACB007211B4A999FBE2ED52E7762E/jobs/389228": "paycom",
+        "https://seus.applicantstack.com/x/detail/a2ejxq3cpz4b": "applicantstack",
         "https://www.example-semi.com/careers/find-your-job/field-service-engineer-j00012345": "company_site",
         None: "company_site",
     }

@@ -72,7 +72,7 @@ from job_apply import server  # noqa: E402
 from job_apply.fixtures import convert  # noqa: E402
 from job_apply.postings import fetch_posting  # noqa: E402
 from job_apply.autofill import polarity  # noqa: E402
-from job_apply.search import load_companies, search_companies, sitecore_search  # noqa: E402
+from job_apply.search import load_companies, sitecore_search  # noqa: E402
 
 QUERY_AZ = "field service | customer service engineer | customer engineer | equipment technician"  # in Arizona
 QUERY_ANY = "engineer | technician"  # fallback so every company still gets a browser check
@@ -129,7 +129,9 @@ async def check_company(company: dict[str, Any], out: Path, fixtures: bool, rec:
     rec["search_az"] = search_brief(az, company["name"])
     found = az
     if not az["results"]:
-        found = await search_companies(QUERY_ANY, location=None, limit=3, companies=[company])
+        # The tool again, so boards read in the browser (iCIMS, Paycom) get a posting to check too.
+        found = await server.search_company_jobs(QUERY_ANY, companies=[company["name"]], location=None,
+                                                 limit_per_company=3)
         rec["search_any"] = search_brief(found, company["name"])
     if not found["results"]:
         return
@@ -208,9 +210,7 @@ PROBES = {
     "onsemi": "https://hctz.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1001/jobs?keyword=field+service",
     # Equipment makers that hire field service engineers around Phoenix, not in companies.yaml
     # yet: what their job boards are built on, and how a listing looks.
-    "Daifuku America": "https://careers-daifuku-america.icims.com/jobs/search?ss=1&searchKeyword=field+service&in_iframe=1",
     "SUSS MicroTec": "https://career.suss.com/en/jobs",
-    "Ebara Technologies": "https://www.paycomonline.net/v4/ats/web.php/portal/95CACB007211B4A999FBE2ED52E7762E/career-page",
     "Thermo Fisher": "https://jobs.thermofisher.com/global/en/search-results?keywords=field%20service%20engineer%20arizona",
 }
 # Job links as a page (or one of its frames) draws them, with the text of the card around
@@ -470,7 +470,8 @@ async def check_pipeline(company: dict[str, Any], out: Path, rec: dict[str, Any]
 
     found = await server.search_company_jobs(QUERY_AZ, companies=[company["name"]], location="AZ", limit_per_company=5)
     if not found["results"]:
-        found = await search_companies(QUERY_ANY, location=None, limit=3, companies=[company])
+        found = await server.search_company_jobs(QUERY_ANY, companies=[company["name"]], location=None,
+                                                 limit_per_company=3)
     if not found["results"]:
         rec["note"] = "no postings found"
         return

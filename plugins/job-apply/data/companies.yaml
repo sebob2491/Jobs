@@ -158,3 +158,9 @@ companies:
     az_sites: Chandler (field service on automated material handling at fabs)
     confidence: medium        # live check, Oct 2026: the portal's frame lists openings with location and date
     search: {icims: careers-daifuku-america}
+  - name: Ebara Technologies
+    careers_url: https://www.paycomonline.net/v4/ats/web.php/portal/95CACB007211B4A999FBE2ED52E7762E/career-page
+    ats: paycom
+    az_sites: Phoenix, Anthem (vacuum pumps and CMP tools at fabs; field service roles across the US)
+    confidence: medium        # live check, Oct 2026: 18 openings, two in Arizona, from Paycom's own search call
+    search: {paycom: 95CACB007211B4A999FBE2ED52E7762E}
