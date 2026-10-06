@@ -715,6 +715,8 @@ class Applier:
             self._log(run, f"filled {len(result['filled'])} field(s) on {_where(data)}")
         pending, missing_files = _pending(result, once_failed)
         self._note_skipped(run, result)
+        data, _ = await self._look()
+        run.page_info = _page_info(data)  # the page as filled
         if missing_files:
             return self._pause(run, "stuck", "The form needs a file the profile doesn't point to (set documents.resume "
                                "in profile.yaml): " + ", ".join(f["label"] for f in missing_files), pending)

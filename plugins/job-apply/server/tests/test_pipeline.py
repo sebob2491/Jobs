@@ -882,6 +882,8 @@ def test_a_page_that_creates_the_account_as_it_applies_is_filled_around_the_pass
     assert values["em"] == values["em2"] == "sam.rivera@example.com"
     assert (values["fn"], values["ln"], values["city"], values["zip"]) == ("Sam", "Rivera", "Chandler", "85225")
     assert values["pw"] == values["pw2"] == ""  # the person's to choose
+    # what's recorded of the page is the page as filled: only the password boxes are left
+    assert [f["label"] for f in r.page_info["fields"] if f["empty"]] == ["Choose Password: *", "Retype Password: *"]
     assert srv.tracker().get(job["id"])["status"] == "ready_to_submit"
     assert not any("clicked" in line for line in r.log)  # Apply sends it: never pressed
 
