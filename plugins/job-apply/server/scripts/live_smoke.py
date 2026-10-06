@@ -228,7 +228,7 @@ PROBES = {
 HTTP_PROBES = {
     # Qorvo's Apply now is a dropdown toggle ("Apply now ▾"): the menu it opens
     "Qorvo": ("https://careers.qorvo.com/job/Chandler-Analog-Design-Intern-AZ-85226/1421977600/",
-              ".btn-group, .dropdown-menu, [class*='apply' i], [id*='apply' i]"),
+              "text:Apply with LinkedIn"),
     "Amkor Technology": ("https://career8.successfactors.com/career?company=amkor&career_ns=job_listing_summary"
                          "&navBarLevel=JOB_SEARCH", "a[href*='career_job_req_id'], .jobTitle, table tr, form"),
 }
@@ -244,8 +244,17 @@ async def probe_http(name: str, url: str, selector: str) -> dict[str, Any]:
                                  follow_redirects=True, timeout=30) as client:
         r = await client.get(url)
     soup = BeautifulSoup(r.text, "html.parser")
+    if selector.startswith("text:"):  # the markup around each place the page says this
+        found = []
+        for hit in soup.find_all(string=re.compile(re.escape(selector[5:])))[:4]:
+            box = hit.parent
+            for _ in range(4):
+                box = box.parent if box.parent is not None and box.parent.name != "body" else box
+            found.append(box)
+    else:
+        found = soup.select(selector)[:8]
     return {"http_probe": name, "url": url, "status": r.status_code, "final_url": str(r.url), "chars": len(r.text),
-            "parts": [re.sub(r"\s+", " ", str(e))[:2500] for e in soup.select(selector)[:8]]}
+            "parts": [re.sub(r"\s+", " ", str(e))[:4000] for e in found]}
 
 
 # Job links as a page (or one of its frames) draws them, with the text of the card around
