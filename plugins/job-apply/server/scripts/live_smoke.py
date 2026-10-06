@@ -253,8 +253,8 @@ async def probe_page(name: str, url: str) -> dict[str, Any]:
             seen.append({"method": r.request.method, "status": r.status, "url": r.url[:keep], "type": ctype[:40]})
             if "/discover/v2/" in r.url:  # ASML's job search (Sitecore Discover): keep the request and an answer
                 samples.append(asyncio.ensure_future(_sample(r)))
-            elif "jobPublication/list.json" in r.url or (r.url.endswith("/widgets") and r.request.method == "POST"):
-                samples.append(asyncio.ensure_future(_sample(r, 2500)))  # SUSS's job list; Phenom's (Thermo Fisher)
+            elif "jobPublication/list.json" in r.url or "job-posting-previews/search" in r.url:
+                samples.append(asyncio.ensure_future(_sample(r, 4000)))  # SUSS's job list; Paycom's (Ebara)
 
     async def _sample(r: Any, keep: int = 1500) -> dict[str, Any]:
         try:
@@ -262,8 +262,11 @@ async def probe_page(name: str, url: str) -> dict[str, Any]:
         except Exception as e:  # noqa: BLE001
             body = f"unreadable: {e}"
         out: dict[str, Any] = {"url": r.url[:600], "request": (r.request.post_data or "")[:3000], "response": body[:keep]}
-        try:  # a list of openings (SUSS): the fields one has, and a whole one to read them from
+        try:  # a list of openings (SUSS; Paycom's under a key): the fields one has, and a whole one
             items = json.loads(body)
+            if isinstance(items, dict):
+                out["keys"] = sorted(items)[:20]
+                items = next((v for v in items.values() if isinstance(v, list) and v and isinstance(v[0], dict)), items)
             if isinstance(items, list) and items and isinstance(items[0], dict):
                 out["count"] = len(items)
                 out["item_keys"] = sorted(items[0])
