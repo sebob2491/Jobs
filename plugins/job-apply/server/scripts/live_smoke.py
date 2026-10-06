@@ -270,6 +270,20 @@ async def probe_menu(name: str, url: str, press: str, needle: str) -> dict[str, 
         await button.click(timeout=10000)
         await tab.wait_for_timeout(2500)
         rec["after"] = await tab.evaluate(MENU_JS, needle)
+        # the menu beside the button, and everything on the page labelled "apply", by text or attribute
+        rec["menu_html"] = await button.evaluate("""(b) => {
+          const g = b.closest('.btn-group, .dropdown, .applylink') || b.parentElement;
+          const m = g && g.querySelector('.dropdown-menu, [role="menu"], ul');
+          return (m || g).outerHTML.replace(/\\s+/g, ' ').slice(0, 4000);
+        }""")
+        rec["apply_bits"] = await tab.evaluate("""() => [...document.querySelectorAll('a, button, [role], li')]
+          .filter((e) => /apply/i.test((e.getAttribute('aria-label') || '') + ' ' + (e.getAttribute('title') || '')
+            + ' ' + (e.children.length < 3 ? e.textContent : '')))
+          .slice(0, 20).map((e) => ({tag: e.tagName, role: e.getAttribute('role'), aria: e.getAttribute('aria-label'),
+            title: e.getAttribute('title'), cls: String(e.className || '').slice(0, 80), href: e.getAttribute('href'),
+            text: (e.textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 60),
+            shown: !!(e.offsetWidth || e.offsetHeight || e.getClientRects().length),
+            html: e.outerHTML.replace(/\\s+/g, ' ').slice(0, 300)}))""")
         rec["url_after"] = tab.url
     except Exception as e:  # noqa: BLE001
         rec["error"] = f"{type(e).__name__}: {str(e)[:300]}"
