@@ -164,6 +164,34 @@ def test_a_list_the_page_draws_is_read_page_by_page(srv):
         "https://career8.successfactors.com/career?career_ns=job_listing&company=example&navBarLevel=JOB_SEARCH"
         "&rcm_site_locale=en_US&career_job_req_id=29004&selected_lang=en_US"))  # no session in it
 
+
+SF_POSTING_QUERY = "?career_ns=job_listing&company=example&career_job_req_id=29107"
+
+
+def test_an_older_successfactors_posting_is_entered_through_its_apply(srv, monkeypatch):
+    """Amkor's postings (SuccessFactors' older sites) sit in a form whose submit is "Apply". With
+    nothing in the form to fill, it opens the application, so it's pressed like any way in,
+    even in a dry run. An "Apply" whose form has something to fill still sends it."""
+    monkeypatch.setenv("JOB_APPLY_NEVER_SUBMIT", "1")
+    posting = fixture_url("site/sf-classic-posting.html") + SF_POSTING_QUERY
+    run(srv.browser.goto(posting))
+    applies = [a for a in run(srv.inspect_form(include_dropdown_options=False))["actions"] if a["text"] == "Apply"]
+    assert len(applies) == 2 and not any(a.get("is_submit") for a in applies)
+    out = run(srv.click(applies[0]["id"]))
+    assert out["clicked"] and out["headings"] == ["Sign In"], out
+
+    # the same page with a box to fill in its form: Apply would send that
+    run(srv.browser.goto(posting))
+    page = run(srv.browser.page())
+    run(page.evaluate("() => { const box = document.createElement('input'); box.name = 'name';"
+                      " document.getElementById('careerform').prepend(box); }"))
+    applies = [a for a in run(srv.inspect_form(include_dropdown_options=False))["actions"] if a["text"] == "Apply"]
+    assert applies and all(a.get("is_submit") for a in applies)
+    assert run(srv.click(applies[0]["id"]))["clicked"] is False
+    # and a page that isn't a posting: an "Apply" submit is the final one, as before
+    run(srv.browser.goto(fixture_url("site/sf-classic-posting.html")))
+    assert run(srv.click("Apply"))["clicked"] is False
+
 def test_iframe_form_and_linkedin_policy(srv, monkeypatch):
     job = srv.add_job(url=fixture_url("iframe_host.html"), title="Process Technician", company="Example Fab")["job"]
     run(srv.open_application(job_id=job["id"]))

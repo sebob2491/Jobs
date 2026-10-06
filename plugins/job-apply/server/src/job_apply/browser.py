@@ -40,6 +40,9 @@ NAVIGATION_RE = re.compile(
     r"sign ?in|log ?in|create account|verify|send (me a )?code|ok|accept( all)?( cookies)?|i agree|apply manually|start)\b",
     re.I,
 )
+# SuccessFactors' older career sites show a posting inside a form whose submit button is
+# "Apply". With nothing in the form to fill, it opens the application; it sends nothing.
+POSTING_PAGE_RE = re.compile(r"career(?:_|%5f)ns=job(?:_|%5f)listing(?:&|#|$)", re.I)
 SHORT_MENU = 12  # a menu this short shows every choice; a longer one may show only some
 # How long a click may wait for its button to become clickable, in ms.
 CLICK_TIMEOUT = 8000
@@ -900,7 +903,7 @@ class BrowserSession:
                 loc = None
                 continue
             if not allow_submit:
-                self._check_clickable(info)
+                self._check_clickable(info, page.url)
             if await self._present(loc):
                 return loc, info
             loc = None
@@ -914,15 +917,19 @@ class BrowserSession:
             return False
 
     @staticmethod
-    def _check_clickable(info: dict[str, Any]) -> None:
+    def _check_clickable(info: dict[str, Any], url: str = "") -> None:
         label = " ".join((info.get("label") or "").split())
         text = (info.get("text") or "").strip()
-        if SUBMIT_RE.search(label) or (info.get("formSubmit") and FINALISH_RE.match(text)):
+        # a posting's own Apply on SuccessFactors' older sites: an empty form, so nothing is sent
+        opens = bool(info.get("formSubmit") and POSTING_PAGE_RE.search(url) and re.match(r"^apply( now)?$", text, re.I)
+                     and not info.get("formFields"))
+        if SUBMIT_RE.search(label) or (info.get("formSubmit") and FINALISH_RE.match(text) and not opens):
             raise SubmitBlocked(
                 f"{label!r} looks like the final submit button. Use submit_application "
                 "(after the user confirms), or let the user click it in the browser."
             )
-        if info.get("formSubmit") and not NAVIGATION_RE.match(text) and config.Profile.load().settings.dry_run:
+        if (info.get("formSubmit") and not NAVIGATION_RE.match(text) and not opens
+                and config.Profile.load().settings.dry_run):
             raise SubmitBlocked(f"Dry run: {label!r} submits a form, and it isn't a recognised step button.")
 
     async def _find_by_text(self, page: Page, text: str) -> Locator | None:

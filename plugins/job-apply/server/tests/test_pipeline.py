@@ -954,3 +954,27 @@ def test_a_profile_answer_that_doesnt_go_in_is_asked_only_where_required():
          "error": "nothing in its list matched", "kind": "combobox", "required": False, "options": ["Yes", "No"]}]}
     pending, _ = pipeline._pending(result, {})
     assert [(q["label"], q["kind"], q["options"]) for q in pending] == [("Country", "combobox", ["No Selection", "Afghanistan"])]
+
+
+
+def test_an_older_successfactors_posting_is_applied_to_through_its_apply(srv, monkeypatch):
+    """Amkor, live (Oct 2026): its posting's "Apply" is a form's submit button, which the desk
+    took for the final one, and it stopped ("couldn't find the button that moves this
+    application on")."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    url = fixture_url("site/sf-classic-posting.html") + "?career_ns=job_listing&company=example&career_job_req_id=29107"
+    job = srv.add_job(url=url, title="Equipment Technician (ATA)", company="Example Semi")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status == "needs_you")
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert r.need == "sign_in", (r.reason, r.log)
+    assert "clicked \u201cApply\u201d" in r.log
