@@ -217,6 +217,10 @@ PROBES = {
     # Benchmark is Infor CloudSuite; Qorvo's search pages are SuccessFactors HTML. Canon USA
     # and MKS block automated browsers outright.)
     # Equipment makers with field service engineers at Arizona fabs, not in the list yet.
+    # Amkor's posting page (SuccessFactors' older pages): how its Apply button is drawn; the
+    # desk took it for a final submit and didn't press it
+    "Amkor Technology": "https://career8.successfactors.com/career?career_ns=job_listing&company=amkor"
+                        "&navBarLevel=JOB_SEARCH&rcm_site_locale=en_US&career_job_req_id=29107&selected_lang=en_US",
     # Nikon's posting page: how its Apply button is drawn (the form reader doesn't see it)
     "Nikon Precision": "https://recruiting2.ultipro.com/NIK1001NIKON/JobBoard/f11a0b52-5153-4c12-ad2c-b7f3b0a74112/"
                        "OpportunityDetail?opportunityId=532a7dc9-8394-4cbc-8184-f43e88e906bf",
@@ -563,7 +567,11 @@ async def probe_page(name: str, url: str) -> dict[str, Any]:
         # the markup of anything that reads like an apply or sign-in button, whatever it's drawn with
         rec["apply_buttons"] = await tab.evaluate("""() => [...document.querySelectorAll('body *')]
           .filter((e) => /^\\s*(apply( now)?|quick apply|sign in)\\s*$/i.test(e.textContent || '') && e.children.length < 4)
-          .slice(0, 8).map((e) => ({tag: e.tagName, html: e.outerHTML.slice(0, 500),
+          .slice(0, 8).map((e) => ({tag: e.tagName, type: e.type || null, html: e.outerHTML.slice(0, 500),
+                                   form: e.form ? (e.form.id || e.form.getAttribute('name') || 'unnamed') : null,
+                                   form_fields: e.form ? [...e.form.elements].filter((f) => /^(INPUT|SELECT|TEXTAREA)$/.test(f.tagName)
+                                     && !/^(hidden|submit|button|image|reset)$/i.test(f.type || '')
+                                     && !!(f.offsetWidth || f.offsetHeight)).length : null,
                                    parent: (e.parentElement ? e.parentElement.outerHTML : '').slice(0, 300)}))""")
         hrefs = await tab.evaluate("() => [...document.querySelectorAll('a[href], iframe[src]')].map(e => e.href || e.src)")
         rec["ats_links"] = sorted({h for h in hrefs if ATS_HOST.search(h)})[:10]
