@@ -335,8 +335,10 @@ class Applier:
                     return self._pause(run, "sign_in", f"I filled in your email and saved password on {_site(run, data)}'s "
                                        "Create Account form. Tick their terms box if there is one and create the account "
                                        "(then verify your email if they ask); the desk carries on after that.")
+                tip = (" Save a Workday password on the desk and it fills these in for you next time."
+                       if detect_ats(data["url"]) == "workday" and config.get_secret("workday_password") is None else "")
                 return self._pause(run, "sign_in", f"Sign in (or create your account) on {_site(run, data)} in "
-                                   "the browser window; the desk carries on by itself after that.")
+                                   "the browser window; the desk carries on by itself after that." + tip)
             if kind == "email_code":
                 await self._bring_forward(run)
                 return self._pause(run, "email_code", "The site emailed you a code or a link. Enter the code in the "

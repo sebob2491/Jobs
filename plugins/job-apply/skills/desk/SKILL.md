@@ -21,6 +21,10 @@ The desk is a local web page served by this plugin. It does what the `find-jobs`
     Consent questions default to not remembered;
   - sign-ins, bot checks and emailed codes. The user deals with these in the browser
     window, and the desk carries on by itself once the page moves past them.
+- **Workday password** stores one password for the user's Workday accounts (each
+  employer has its own). With it, the desk signs in by itself and fills in Create
+  Account forms, leaving the terms box and the button to the user. The user types it
+  into the desk page; never ask for it in the conversation.
 - **Submit** sends one application. **Submit for me** sends every application that
   needs nothing, and stays off until the user turns it on. LinkedIn and Indeed are
   always submitted by the user.

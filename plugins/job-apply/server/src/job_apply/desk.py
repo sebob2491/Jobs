@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any
 
 import uvicorn
+import yaml
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, Response
@@ -111,6 +112,7 @@ class Desk:
             r("/api/answer", self.answer_view, methods=["POST"]),
             r("/api/job/{job_id:int}/{action}", self.job_view, methods=["POST"]),
             r("/api/settings", self.settings_view, methods=["POST"]),
+            r("/api/password", self.password_view, methods=["POST"]),
         ])
 
     async def start(self, port: int = DEFAULT_PORT, open_browser: bool = True) -> str:
@@ -227,6 +229,18 @@ class Desk:
             self._save_settings()
         return JSONResponse({"auto_submit": self.applier.auto_submit})
 
+    async def password_view(self, request: Request) -> Response:
+        """A career-site password typed into the page goes straight to secrets.yaml. It is
+        never sent back, logged, or shown to Claude."""
+        if not self._allowed(request, api=True):
+            return self._forbidden()
+        body = await request.json()
+        try:
+            config.save_site_password(str(body.get("name") or ""), str(body.get("value") or ""))
+        except ValueError as e:
+            return JSONResponse({"error": str(e)}, status_code=400)
+        return JSONResponse({"saved": True})
+
     # ------------------------------------------------------------- actions
     async def find_jobs(self) -> None:
         self.search.update(status="running", error=None, started=time.time())
@@ -324,6 +338,7 @@ class Desk:
                         "titles": prof.get("preferences.titles") or [], "path": str(config.profile_path())},
             "settings": {"submit_mode": settings.submit_mode, "dry_run": settings.dry_run,
                          "auto_submit": self.applier.auto_submit},
+            "passwords": {"workday": _has_secret("workday_password")},  # saved or not, never the value
             "search": self.search,
             "listings": rows,
             "others": others,
@@ -331,6 +346,13 @@ class Desk:
             "queued": [jid for kind, jid in self.applier.tasks if kind == "apply"],
             "counts": t.counts(),
         }
+
+
+def _has_secret(name: str) -> bool:
+    try:
+        return config.get_secret(name) is not None
+    except (OSError, yaml.YAMLError):  # a hand-edited secrets.yaml with a typo mustn't break the page
+        return False
 
 
 _desk: Desk | None = None

@@ -204,6 +204,36 @@ def get_secret(name: str) -> str | None:
     return None
 
 
+SITE_PASSWORD = re.compile(r"^[a-z][a-z0-9]{1,30}_password$")  # e.g. workday_password
+
+
+def save_site_password(name: str, value: str) -> None:
+    """Store a career-site password the person typed into the Job Desk. Only its own
+    entry in secrets.yaml changes; the rest of the file, comments included, stays as
+    they wrote it. The file is readable by the person alone."""
+    if not SITE_PASSWORD.match(name):
+        raise ValueError(f"not a site password name: {name!r}")
+    if not value or not value.strip() or "\n" in value or "\r" in value:
+        raise ValueError("the password is empty or has a line break")
+    ensure_home()
+    path = secrets_path()
+    old = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
+    kept, skipping = [], False
+    for line in old:
+        if re.match(rf"{re.escape(name)}\s*:", line):
+            skipping = True  # drop the old entry and any lines continuing it
+            continue
+        if skipping and (line.startswith((" ", "\t")) or not line.strip()):
+            continue
+        skipping = False
+        kept.append(line)
+    entry = yaml.safe_dump({name: value}, default_flow_style=False, allow_unicode=True, width=10**6).strip()
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write("\n".join([*kept, entry]) + "\n")
+    path.chmod(0o600)
+
+
 def saved_answers() -> list[dict[str, Any]]:
     path = answers_path()
     if not path.exists():

@@ -1,6 +1,7 @@
 """The Job Desk's local web API, driven the way its page drives it."""
 
 import asyncio
+import os
 import time
 
 import httpx
@@ -158,6 +159,12 @@ def test_desk_page_buttons_reach_the_api(srv, tmp_path):
                     await asyncio.sleep(0.1)
                 assert config.saved_answers()[0]["answer"] == "Yes"
                 assert ("apply", other["id"]) in desk.applier.tasks
+
+                await page.fill("#pw", "typed-on-the-page")
+                await page.click("#pw-form button[type=submit]")
+                await page.wait_for_selector("#pw-state:text('Saved')")
+                assert config.get_secret("workday_password") == "typed-on-the-page"
+                assert await page.input_value("#pw") == ""  # not left sitting in the page
                 await browser.close()
         finally:
             await desk.stop()
@@ -208,3 +215,50 @@ def test_opening_the_page_searches_when_the_last_search_is_stale(srv, monkeypatc
 
     run(go())
     assert len(searched) == 1 and desk.search["status"] == "done"
+
+
+def test_a_site_password_goes_to_secrets_only(srv):
+    """Typed into the page, kept in secrets.yaml; the desk only ever says whether one is saved."""
+    desk = Desk(srv)
+    desk.applier.start = lambda: None
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{desk.port}", timeout=20, trust_env=False) as c:
+                h = {"x-desk-token": desk.token}
+                body = {"name": "workday_password", "value": "s3cret: #1"}
+                assert (await c.post("/api/password", json=body)).status_code == 403
+                assert (await c.get("/api/state", headers=h)).json()["passwords"] == {"workday": False}
+                assert (await c.post("/api/password", headers=h, json=body)).json() == {"saved": True}
+                after = await c.get("/api/state", headers=h)
+                assert after.json()["passwords"] == {"workday": True} and "s3cret" not in after.text
+                for bad in ({"name": "profile", "value": "x"}, {"name": "workday_password", "value": "a\nb"}):
+                    assert (await c.post("/api/password", headers=h, json=bad)).status_code == 400
+        finally:
+            await desk.stop()
+
+    run(go())
+    assert config.get_secret("workday_password") == "s3cret: #1"
+
+
+def test_saving_a_password_leaves_the_rest_of_the_file_alone(job_apply_home):
+    path = config.secrets_path()
+    path.write_text("# career sites\nsuccessfactors_password: keep-me\nworkday_password: old-one\n\nother: 1\n")
+    config.save_site_password("workday_password", "new one")
+    config.save_site_password("workday_password", "newer one")  # replaced, not added twice
+    text = path.read_text()
+    assert text.startswith("# career sites\nsuccessfactors_password: keep-me\n")
+    assert "old-one" not in text and text.count("workday_password") == 1 and "other: 1" in text
+    assert config.get_secret("workday_password") == "newer one"
+    assert config.get_secret("successfactors_password") == "keep-me"
+    if os.name == "posix":
+        assert path.stat().st_mode & 0o777 == 0o600
+    for name, value in (("../workday_password", "x"), ("workday_password", " "), ("workday_password", "a\rb")):
+        with pytest.raises(ValueError):
+            config.save_site_password(name, value)
+
+
+def test_a_broken_secrets_file_doesnt_break_the_page(srv, job_apply_home):
+    config.secrets_path().write_text("workday_password: [unclosed\n")
+    assert Desk(srv).state()["passwords"] == {"workday": False}

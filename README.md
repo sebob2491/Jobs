@@ -115,6 +115,12 @@ opens a page on your computer (served by the plugin on `127.0.0.1`):
    that every application that needs nothing from you is sent. LinkedIn and Indeed
    are always yours to submit.
 
+Each employer on Workday has its own account. Save a password in the desk's
+**Workday password** card and it fills in their Create Account forms (you tick their
+terms and press the button) and signs you in after that. The password goes from the
+page straight into `~/.job-apply/secrets.yaml` on your computer. Claude never sees it,
+and the desk only reports whether one is saved.
+
 Jobs Claude saves from Indeed or LinkedIn show up in the same list. Without Claude
 Code, run `uv run --project <plugin>/server job-apply-desk`.
 
@@ -134,7 +140,7 @@ Everything personal stays on your machine in `~/.job-apply/`. Set
 |---|---|
 | `profile.yaml` | Your answers. Edit it any time ([template](plugins/job-apply/templates/profile.example.yaml)). |
 | `resume.pdf` | Default resume |
-| `secrets.yaml` | Optional career-site passwords (you write this file; run `chmod 600` on it) |
+| `secrets.yaml` | Optional career-site passwords, such as `workday_password`. Save one from the Job Desk, or write the file yourself and run `chmod 600` on it. |
 | `tracker.db` | Application tracker (SQLite). `export_jobs_csv` writes a spreadsheet. |
 | `answers.yaml` | Answers you gave in the Job Desk, reused on later applications. Edit or delete entries freely. |
 | `recommendations.json`, `desk.json` | The Job Desk's last search, and whether "Submit for me" is on |
