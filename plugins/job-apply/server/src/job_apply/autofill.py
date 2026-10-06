@@ -269,10 +269,13 @@ def _relocate(prof: Profile, job: dict) -> Any:
     return _yn("preferences.willing_to_relocate")(prof, job)
 
 
-def _travel(prof: Profile, job: dict) -> Any:
+def _travel(prof: Profile, job: dict, label: str = "") -> Any:
     v = prof.get("preferences.willing_to_travel")
     if isinstance(v, bool):
         return "Yes" if v else "No"
+    asked, mine = re.findall(r"(\d+) ?%", label), re.findall(r"(\d+) ?%", str(v or ""))
+    if asked and mine and max(map(int, asked)) > max(map(int, mine)):
+        return None  # more travel than the profile agrees to: the user decides
     return v
 
 
@@ -323,9 +326,13 @@ RULES: list[tuple[str, str, Getter, int | None, set[str] | None]] = [
     # also comes with other questions, e.g. Micron's "are you a citizen of Cuba, Iran ...?"
     ("us_person", r"\bu ?s person\b|citizen.{0,80}(permanent resident|green card|refugee|asyl|protected individual)",
      _yn("work_authorization.us_person"), None, None),
-    ("us_citizen", r"are you a (u s |united states )?citizen", _yn("work_authorization.us_citizen"), None, None),
+    ("us_citizen", r"are you a (u s|united states) citizen\b|are you a citizen of the (u s|united states)( of america)?$",
+     _yn("work_authorization.us_citizen"), None, None),
     ("citizenship", r"citizenship|country of citizen|are you a (u ?s )?citizen", _p("work_authorization.citizenship"), None, None),
     ("clearance", r"security clearance|active clearance", _p("work_authorization.security_clearance"), None, None),
+    # "do you live nearby or are you willing to relocate?": a local applicant isn't relocating
+    ("local_or_relocate", r"(located|live|living|reside|residing|based|commut).{0,60}relocat|relocat.{0,60}(located|live|living|reside|residing|commut)",
+     lambda p, j: None, None, None),
     ("relocate", r"relocat", _relocate, None, None),
     ("travel", r"travel", _travel, None, None),
     ("shift", r"shift work|rotating shift|nights and weekends|work (nights|weekends)|on ?call", _yn("preferences.flexible_schedule"), None, None),
@@ -540,7 +547,7 @@ def resolve_field(field: dict, prof: Profile, job: dict | None = None, file_inpu
             if kinds is not None and kind not in kinds:
                 continue
             if re.search(pattern, label):
-                value = getter(prof, job)
+                value = getter(prof, job, raw_label) if getter is _travel else getter(prof, job)
                 if value is None or value == "":
                     return None  # recognised but the profile has no answer
                 ans = Answer(value, name)

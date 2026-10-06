@@ -59,6 +59,11 @@ def test_resolve_questions():
     assert resolve_field(f("Can you work for us without requiring visa sponsorship now or in the future?", "select",
                            options=yes_no), p).value == "Yes"
     assert resolve_field(f("Are you under the age of 18?", "radio_group", options=yes_no), p).value == "No"
+    # a local applicant isn't relocating; more travel than the profile allows is the user's call
+    assert resolve_field(f("Do you currently live in the Phoenix area or are you willing to relocate?", "radio_group",
+                           options=yes_no), p) is None
+    assert resolve_field(f("Are you willing to travel up to 50% of the time?", "radio_group", options=yes_no), p).value == "Yes"
+    assert resolve_field(f("This role requires up to 100% travel. Are you willing?", "radio_group", options=yes_no), p) is None
     # "How did you hear" must not be answered with the LinkedIn profile URL
     assert resolve_field(f("How did you hear about us? (LinkedIn, Indeed, etc.)"), p).value == "LinkedIn"
 
@@ -195,6 +200,11 @@ def test_export_questions_that_are_not_about_being_a_us_person():
     # the U.S. person definition spelled out is still the U.S. person question
     listed = "Are you a U.S. citizen, lawful permanent resident, refugee or asylee?"
     assert resolve_field(f(listed, "radio_group", options=yes_no), p).value == "Yes"
+    p.data["work_authorization"]["us_citizen"] = True
+    assert resolve_field(f("Are you a U.S. citizen?", "radio_group", options=yes_no), p).value == "Yes"
+    assert resolve_field(f("Are you a citizen of the United States?", "radio_group", options=yes_no), p).value == "Yes"
+    assert resolve_field(f("Are you a citizen of a country other than the United States?", "radio_group",
+                           options=yes_no), p) is None
     # a yearly desired salary doesn't answer current or monthly pay questions (Micron, live)
     p.data.setdefault("preferences", {})["desired_salary"] = "$85,000"
     assert resolve_field(f("Expected salary"), p).value == "$85,000"
