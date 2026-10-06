@@ -374,7 +374,17 @@ FIELD_OPTIONS_JS = r"""
     // No ARIA link: a field's menu is the one attached to it, opening just below (or above)
     // it and overlapping it horizontally. Menus some sites leave open for earlier fields sit
     // further up the page; options that were already showing before opening rank last.
+    const outer = (f) => f.closest('[role="combobox"]') || f;
     const box = (el.closest('[role="combobox"]') || el.parentElement || el).getBoundingClientRect();
+    const overlaps = (b, r) => Math.min(b.right, r.right) - Math.max(b.left, r.left) > 0;
+    const gapTo = (b, r) => Math.min(Math.abs(b.top - r.bottom), Math.abs(r.top - b.bottom));
+    // the other dropdowns on the page: a menu that sits nearer one of them is that one's
+    // (Micron's previous question kept its menu open over this field and drew it afresh)
+    const others = Array.from(document.querySelectorAll('[role="combobox"], [aria-haspopup="listbox"], input[aria-autocomplete]'))
+      .map(outer).filter((f) => f !== outer(el) && !f.contains(el) && !el.contains(f) && f.getClientRects().length > 0)
+      .map((f) => f.getBoundingClientRect());
+    let mine = outer(el).getBoundingClientRect();  // measured like the others, not by its wrapper
+    if (!mine.width && !mine.height) mine = box;
     const groups = new Map();
     for (const o of all) {
       const c = o.closest('[role="listbox"]') || o.parentElement;
@@ -385,9 +395,9 @@ FIELD_OPTIONS_JS = r"""
       // a menu that was already showing before this field was opened is never its menu
       if (os.every((o) => o.getAttribute('data-ja-before') === text(o))) continue;
       const b = c.getBoundingClientRect();
-      const overlap = Math.min(b.right, box.right) - Math.max(b.left, box.left);
-      if (overlap <= 0) continue;
-      const gap = Math.min(Math.abs(b.top - box.bottom), Math.abs(box.top - b.bottom));
+      if (!overlaps(b, box)) continue;
+      const gap = gapTo(b, box);
+      if (others.some((r) => overlaps(b, r) && gapTo(b, r) < gapTo(b, mine))) continue;
       if (gap < 120 && gap < bestGap) { bestGap = gap; best = os; }
     }
     opts = best;

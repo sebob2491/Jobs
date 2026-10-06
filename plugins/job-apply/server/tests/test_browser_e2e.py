@@ -353,3 +353,50 @@ def test_capture_json_takes_the_keyword_search_and_enlarges_it(srv):
     search = got["received"]["widget"]["items"][0]["search"]
     assert search == {"limit": 100, "offset": 0, "query": {"keyphrase": "field service"}}
     assert run(srv.browser.page()).url == "about:blank"  # the search tab didn't take over
+
+
+def test_a_menu_left_over_the_next_field_isnt_its_options(srv):
+    """Micron: the availability question's menu stayed open over the next question and was
+    drawn afresh when focus moved, so its options were read as the next question's."""
+    run(srv.open_application(url=fixture_url("jsonld_posting.html")))
+    page = run(srv.browser.page())
+    run(page.set_content("""
+      <style>.f { margin-bottom: 8px } label { display: block } input { width: 300px }
+             [role=listbox] { position: absolute; background: #fff; border: 1px solid #ccc; margin: 0; padding: 0;
+                              width: 300px; list-style: none; z-index: 10 } [role=option] { padding: 6px }</style>
+      <form>
+        <div class="f"><label for="avail">When would you be available if an offer was accepted?</label>
+          <input id="avail" role="combobox" autocomplete="off"></div>
+        <div class="f"><label for="friends">Do you have any friends/relatives presently employed by Micron?</label>
+          <input id="friends" role="combobox" autocomplete="off"></div>
+      </form>
+      <script>
+        function menu(input, options) {
+          const ul = document.createElement('ul');
+          ul.setAttribute('role', 'listbox');
+          const r = input.getBoundingClientRect();
+          ul.style.left = (r.left + scrollX) + 'px';
+          ul.style.top = (r.bottom + scrollY) + 'px';
+          for (const t of options) {
+            const li = document.createElement('li');
+            li.setAttribute('role', 'option');
+            li.textContent = t;
+            li.onclick = () => { input.value = t; ul.remove(); };
+            ul.append(li);
+          }
+          document.body.append(ul);
+          return ul;
+        }
+        const AVAIL = ['Immediately after offer acceptance', 'Within 1 month after offer acceptance',
+                       'Within 2 months after offer acceptance'];
+        let availMenu = null;
+        avail.addEventListener('click', () => { if (!availMenu) availMenu = menu(avail, AVAIL); });
+        // ignores Escape and blur, and draws itself again when focus moves on
+        friends.addEventListener('focus', () => { if (availMenu) { availMenu.remove(); availMenu = menu(avail, AVAIL); } });
+        const later = () => setTimeout(() => menu(friends, ['Yes', 'No']), 400);
+        friends.addEventListener('click', later);
+        friends.addEventListener('keydown', (e) => { if (e.key === 'ArrowDown') later(); });
+      </script>"""))
+    fields = run(srv.inspect_form(include_dropdown_options=True))["fields"]
+    assert by_label(fields, "available")["options"][0] == "Immediately after offer acceptance"
+    assert by_label(fields, "friends")["options"] == ["Yes", "No"]

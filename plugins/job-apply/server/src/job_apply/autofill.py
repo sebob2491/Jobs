@@ -48,6 +48,8 @@ _PLACEHOLDER_VALUES = re.compile(
 _YES = re.compile(r"^(yes|y|true|i am\b(?! not)|i do\b(?! not)|i will\b(?! not)|i have\b(?! not)|i can\b(?! not)|agree)", re.I)
 _NO = re.compile(r"^(no|n|false|never|i am not|i do not|i don'?t|i will not|i won'?t|i have not|i haven'?t|i have never|"
                  r"i'?ve never|i can ?not|i can'?t)\b", re.I)
+_FILLER = {"yes", "no", "y", "n", "i", "am", "a", "an", "the", "to", "for", "of", "in", "my", "and", "or", "is", "be",
+           "this", "it", "up"}
 _DECLINE = re.compile(r"decline|not (wish|want) to|prefer not|choose not|do not want|don'?t wish|not to (answer|disclose|self)|rather not", re.I)
 
 
@@ -129,10 +131,14 @@ def choose_option(desired: Any, options: list[str]) -> str | None:
 
     # 1. exact, including aliases (AZ ~ Arizona, USA ~ United States of America), ignoring
     #    dial codes and flags ("🇺🇸 (+1) United States of America")
-    wanted = _aliases(want) | _aliases(_strip_codes(want))
+    exact = _aliases(want)
     for o, n in normed:
-        if n in wanted or _aliases(n) & wanted or _strip_codes(n) in wanted:
+        if n in exact or _aliases(n) & exact:
             return o
+    wanted = exact | _aliases(_strip_codes(want))
+    loose = [o for o, n in normed if n in wanted or _aliases(n) & wanted or _strip_codes(n) in wanted]
+    if len(loose) == 1:  # not when only a number told them apart ("Yes - 25%" / "Yes - 75%")
+        return loose[0]
 
     # 2. declines ("Decline to self-identify", "I don't wish to answer", ...)
     if _DECLINE.search(str(desired)):
@@ -145,6 +151,14 @@ def choose_option(desired: Any, options: list[str]) -> str | None:
         hits = [o for o, _ in normed if polarity(o) is pol]
         if len(hits) == 1:
             return hits[0]  # e.g. "No" -> "I have NEVER been employed by ASM"
+        # several answers say yes: the words after the yes decide ("Yes, for any employer"
+        # -> "I am authorized to work in this country for any employer", not "...for my
+        # current employer")
+        detail = set(want.split()) - _FILLER
+        if len(hits) > 1 and detail:
+            scores = sorted(((len(detail & set(norm(o).split())), o) for o in hits), key=lambda x: -x[0])
+            if scores[0][0] > scores[1][0]:
+                return scores[0][1]
         if hits and len(want.split()) == 1 and all(polarity(o) is not None for o, _ in normed if not _DECLINE.search(o)):
             return hits[0]
         # e.g. "No, I will not require sponsorship" vs "No" — fall through to overlap
@@ -213,6 +227,15 @@ def _yn(path: str, invert: bool = False) -> Getter:
         return None if invert else v  # free text can't be turned around
 
     return g
+
+
+def _authorized(prof: Profile, job: dict) -> Any:
+    """Authorized and needing no sponsorship means authorized for any employer, which is
+    what forms that also offer "for my current employer" (ASM) are asking."""
+    if prof.get("work_authorization.authorized_to_work") is True and \
+            prof.get("work_authorization.requires_sponsorship") is False:
+        return "Yes, for any employer"
+    return _yn("work_authorization.authorized_to_work")(prof, job)
 
 
 def _edu(summary_key: str, entry_key: str) -> Getter:
@@ -321,7 +344,7 @@ RULES: list[tuple[str, str, Getter, int | None, set[str] | None]] = [
     ("over_18", r"(18|eighteen) years|at least 18|over the age|age of 18|legal age", _yn("work_authorization.over_18"), None, None),
     ("no_sponsorship", r"without .{0,40}sponsor", _yn("work_authorization.requires_sponsorship", invert=True), None, None),
     ("sponsorship", r"sponsor", _yn("work_authorization.requires_sponsorship"), None, None),
-    ("authorized", r"authori[sz]ed to work|eligible to work|legally (able|permitted|allowed) to work|right to work|work authori[sz]ation|employment eligibility", _yn("work_authorization.authorized_to_work"), None, None),
+    ("authorized", r"authori[sz]ed to work|eligible to work|legally (able|permitted|allowed) to work|right to work|work authori[sz]ation|employment eligibility", _authorized, None, None),
     # Only questions that ask whether you are a U.S. person: export-control wording
     # also comes with other questions, e.g. Micron's "are you a citizen of Cuba, Iran ...?"
     ("us_person", r"\bu ?s person\b|citizen.{0,80}(permanent resident|green card|refugee|asyl|protected individual)",
