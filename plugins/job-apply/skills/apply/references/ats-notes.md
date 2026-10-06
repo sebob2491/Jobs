@@ -102,7 +102,8 @@ the page URL. Use this file for the parts of each flow that `autofill` can't do.
   elsewhere ("Greensboro, NC +3 more"); those carry the state after their first place.
 
 - Click **Apply now** on the posting, then sign in or create an account (email and
-  password). Its link only works when pressed on the posting page: opened on its own it
+  password). On Qorvo's site Apply now is a menu: **Apply Now** in it asks for an email
+  and **Start** before the sign-in page; the desk goes through both. Its link only works when pressed on the posting page: opened on its own it
   lands on the site's home page, so jobs from these sites start at the posting.
 - The application is usually one long page with sections and attachments, so a single
   `autofill` covers most of it. Scroll and run `inspect_form` again if sections expand.

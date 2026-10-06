@@ -324,7 +324,8 @@ RULES: list[tuple[str, str, Getter, int | None, set[str] | None]] = [
     ("how_heard", r"how did you (hear|find|learn)|where did you (hear|find|learn)|source of (application|referral)|^source$", _p("preferences.how_did_you_hear"), None, None),
     # contact details: short labels only, so long questions that merely mention
     # "state" or "name" don't match
-    ("email", r"^(confirm |re ?enter |verify )?e ?mail( address)?( again)?$|^(your )?email\b", _p("personal.email"), 45, None),
+    ("email", r"^(confirm |re ?enter |verify )?e ?mail( address)?( again)?$|^(your )?email\b|^enter (your )?e ?mail\b",
+     _p("personal.email"), 45, None),  # "Enter email to start application process" (Qorvo)
     ("first_name", r"^(legal )?(first|given)( name)?$|^(legal )?first name|^given name|^forename", _p("personal.first_name"), 45, None),
     ("middle_name", r"^middle (name|initial)", _p("personal.middle_name"), 45, None),
     ("last_name", r"^(legal )?(last|family|sur)( ?name)?$|^(legal )?(last|family) name|^surname", _p("personal.last_name"), 45, None),
@@ -405,8 +406,8 @@ def _answer_bank(prof: Profile, label: str) -> Answer | None:
     return None
 
 
-def _document(prof: Profile, job: dict, kind: str) -> str | None:
-    """Prefer a tailored file in the job's folder, then the profile default."""
+def tailored_document(job: dict, kind: str) -> str | None:
+    """A resume or cover letter made for this job, in its folder."""
     folder = Path(job["folder"]) if job.get("folder") else None
     stem = "cover_letter" if kind == "cover_letter" else "resume"
     if folder and folder.exists():
@@ -415,6 +416,14 @@ def _document(prof: Profile, job: dict, kind: str) -> str | None:
             hits = sorted(p for p in folder.glob(f"*{ext}") if p.stem.lower().endswith(stem))
             if hits:
                 return str(hits[0])
+    return None
+
+
+def _document(prof: Profile, job: dict, kind: str) -> str | None:
+    """Prefer a tailored file in the job's folder, then the profile default."""
+    tailored = tailored_document(job, kind)
+    if tailored:
+        return tailored
     p = expand(prof.get(f"documents.{kind}"))
     return str(p) if p and p.exists() else None
 

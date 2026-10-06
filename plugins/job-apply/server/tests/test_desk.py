@@ -1,6 +1,7 @@
 """The Job Desk's local web API, driven the way its page drives it."""
 
 import asyncio
+import json
 import os
 import time
 
@@ -443,3 +444,53 @@ def test_saving_an_answer_keeps_the_rest_of_answers_yaml(job_apply_home):
     assert data["mine"] == "keep" and {"question": "a note to myself"} in data["answers"]
     assert any(a.get("match") == "lift" for a in data["answers"]) and data["answers"][0]["answer"] == "No"
     assert not path.with_name("answers.yaml.tmp").exists()
+
+
+def test_the_tailoring_switch_is_kept_and_its_waiting_jobs_listed(srv, job_apply_home):
+    """The desk remembers "Tailor my resume for each job", says how many jobs wait for a
+    tailored resume, and "Use my usual resume" sends one on without it."""
+    from job_apply.pipeline import Run
+
+    job = srv.add_job(url=fixture_url("site/posting.html"), title="FSE", company="Example Fab")["job"]
+    desk = Desk(srv)
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            h = {"x-desk-token": desk.token}
+            async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{desk.port}", timeout=20, trust_env=False) as c:
+                r = await c.post("/api/settings", headers=h, json={"tailor_resumes": True})
+                assert r.json() == {"auto_submit": False, "tailor_resumes": True}
+                await desk.applier.stop()  # hold the queue still while the waiting job is set up
+                desk.applier.runs[job["id"]] = Run(job["id"], "FSE", "Example Fab", status="needs_you", need="tailor")
+                state = (await c.get("/api/state", headers=h)).json()
+                assert state["settings"]["tailor_resumes"] is True and state["tailoring"] == 1
+                r = await c.post(f"/api/job/{job['id']}/usual_resume", headers=h)
+                assert r.json() == {"ok": True}
+                assert desk.applier.runs[job["id"]].usual_resume and desk.applier.runs[job["id"]].status == "queued"
+        finally:
+            await desk.stop()
+
+    run(go())
+    assert json.loads((job_apply_home / "desk.json").read_text())["tailor_resumes"] is True
+    assert Desk(srv).applier.tailor is True  # still on next time the desk opens
+
+
+def test_tailoring_queue_hands_claude_the_jobs_and_the_real_resume(srv, job_apply_home):
+    from job_apply import desk as desk_module
+    from job_apply.pipeline import Run
+
+    job = srv.add_job(url="https://example.com/jobs/fse", title="Field Service Engineer", company="Example Fab",
+                      description="Install and service EUV tools at customer fabs.")["job"]
+    (job_apply_home / "Sam_Rivera_Resume.md").write_text("# Sam Rivera\n\n## Experience\n")
+    d = desk_module.get_desk(srv)
+    d.applier.runs[job["id"]] = Run(job["id"], status="needs_you", need="tailor")
+    try:
+        out = srv.tailoring_queue()
+    finally:
+        desk_module._desk = None
+    assert [j["job_id"] for j in out["jobs"]] == [job["id"]]
+    assert "EUV tools" in out["jobs"][0]["description"]
+    assert out["base_resume"].startswith("# Sam Rivera") and out["resume_file"].endswith("resume.pdf")
+    assert any("Coursework is not a degree" in rule for rule in out["rules"])
+

@@ -29,6 +29,7 @@ Job application assistant. Typical flow for one posting:
   only after the user says to submit.
 Repeated sections (Workday "My Experience"): add_entries("work"/"education"), then autofill.
 Tailored documents: render_document(kind, markdown, job_id) before autofill uploads files.
+The Job Desk's tailoring switch holds jobs for a tailored resume: tailoring_queue() lists them.
 Rules: never invent facts about the applicant; answers must come from the profile or the
 user. LinkedIn and Indeed applications are always submitted by the user clicking the
 button themselves. Passwords go through fill_secret, never fill_form."""
@@ -310,9 +311,65 @@ async def render_document(kind: str, markdown: str, job_id: int | None = None, d
         return {"error": str(e), "source": str(source)}
     limit = 2 if kind == "resume" else 1
     out: dict[str, Any] = {"path": str(folder / f"{name}.pdf"), "pages": pages, "source": str(source)}
+    too_long = folder / f"{name}.too-long"  # a job the desk holds for this resume waits for the next render
     if pages > limit:
         out["warning"] = f"{pages} pages; aim for at most {limit}. Tighten the text and render again."
+        if job_id is not None:
+            too_long.touch()
+    else:
+        too_long.unlink(missing_ok=True)
+        from . import desk
+
+        if job_id is not None and desk._desk is not None:  # the job it was written for carries on now
+            desk._desk.applier.wake()
     return out
+
+
+TAILOR_RULES = [
+    "Use only what the user's real resume and profile say: choose, order and reword. Never add a tool, "
+    "certification, number, duty, employer, date or degree they didn't list.",
+    "Lead with the experience and skills the posting asks for, in the posting's own words where they're true.",
+    "Keep every title, employer and date exactly as the profile has them. Coursework is not a degree.",
+    "At most 2 pages. Same layout as render_document's: # Name, a contact line, ## sections, "
+    "### Title — Company, City *dates*, bullets.",
+    "The first time, show the user one tailored resume before rendering the rest; after they approve the "
+    "style, carry on without asking.",
+]
+
+
+@mcp.tool()
+def tailoring_queue() -> dict[str, Any]:
+    """Jobs the Job Desk is holding until Claude writes a resume tailored to each one (its
+    "Tailor my resume for each job" switch is on). For each job, write the resume in
+    Markdown from the user's real resume (base_resume, or resume_file and the profile's
+    work and education history), following `rules`, then call
+    render_document("resume", markdown, job_id). The desk carries on with that job as soon
+    as its PDF is saved."""
+    from . import desk
+
+    d = desk._desk
+    if d is None:
+        return {"jobs": [], "note": "The Job Desk isn't open, so no job is waiting. Open it with open_job_desk()."}
+    prof = config.Profile.load()
+    jobs = []
+    for run in d.applier.tailoring():
+        job = tracker().get(run.job_id) or {}
+        jobs.append({"job_id": run.job_id, "title": job.get("title") or run.title,
+                     "company": job.get("company") or run.company, "url": job.get("url"),
+                     "location": job.get("location"),
+                     "description": (job.get("description") or "")[:12000]
+                     or "Not read yet: read it with ingest_job(url) first."})
+    base = sorted(config.home().glob("*_Resume.md"))
+    resume = config.expand(prof.get("documents.resume"))
+    return {
+        "jobs": jobs,
+        "base_resume": base[0].read_text(encoding="utf-8") if base else None,
+        "resume_file": str(resume) if resume and resume.exists() else None,
+        "work_history": prof.get("work_history") or [],
+        "education_history": prof.get("education_history") or [],
+        "education": prof.get("education") or {},
+        "rules": TAILOR_RULES,
+    }
 
 
 @mcp.tool()

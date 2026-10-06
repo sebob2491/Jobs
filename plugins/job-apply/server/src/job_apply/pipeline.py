@@ -16,16 +16,18 @@ front) and carries on by itself once the page moves past it, or when they choose
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import re
 import time
 from collections import deque
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
 from . import config
 from .ats import ATS_NAMES, detect_ats
-from .autofill import clean_label, is_empty_value, norm
+from .autofill import clean_label, is_empty_value, norm, tailored_document
 from .browser import TabClosed
 
 NEW_TAB_WAIT = 4  # seconds to wait for a tab opened late by a click before calling it a stall
@@ -50,7 +52,7 @@ _SIGN_IN_ACTION = re.compile(r"^(sign in|log ?in|sign in with email)$", re.I)
 _CREATE_ACCOUNT = re.compile(r"^(create (?:an |your |a new )?account|sign up|register)[.!]?$", re.I)
 _SOCIAL = re.compile(r"\b(google|apple|linked ?in|facebook|microsoft|indeed|seek)\b", re.I)
 _STEP = re.compile(r"^(save (?:and|&) continue|continue|next|next step|review|review (?:and|&) submit|"
-                   r"review application|proceed|go to next step)$", re.I)
+                   r"review application|proceed|go to next step|start)$", re.I)
 _SIGN_IN_STEP = re.compile(r"create account\s*/\s*sign in|sign in\s*/\s*create account", re.I)  # Workday's step name
 _ENTRY = re.compile(r"^(apply manually|apply now|apply|easy apply|quick apply|"
                     r"apply for (?:this|the) (?:job|position|role)(?: online)?|"
@@ -75,6 +77,7 @@ class Run:
     status: str = "queued"  # queued | running | needs_you | ready | submitted | failed | skipped
     # questions | sign_in | bot_check | email_code | captcha | your_submit | stuck
     # | submit_failed (pressed, the form is still there) | check_submit (pressed, no confirmation)
+    # | tailor (waiting for Claude to write a resume for this job)
     need: str = ""
     reason: str = ""
     questions: list[dict[str, Any]] = field(default_factory=list)
@@ -84,6 +87,7 @@ class Run:
     paused_at: float = 0.0
     paused_site: str = ""  # the site it paused on, so a tab taken to webmail isn't "moved on"
     submit: bool = False  # submit once the review page is reached
+    usual_resume: bool = False  # the person chose to go ahead without a tailored resume
     once: dict[str, Any] = field(default_factory=dict)  # answers for this application only, by question
     seen_form: bool = False  # got into the application itself (so a page with only Submit is its review page)
     page_info: dict[str, Any] = field(default_factory=dict)  # what the page looked like when it paused
@@ -120,7 +124,8 @@ def pick_next(actions: list[dict[str, Any]], in_form: bool) -> dict[str, Any] | 
     steps = [a for a in usable if _STEP.match(a["text"].strip())]
     entries = [a for a in usable if _ENTRY.match(a["text"].strip()) and not _SOCIAL.search(a["text"])
                and not (_AVOID.search(a["text"]) and "manually" not in a["text"].lower())]
-    entries.sort(key=lambda a: "manually" not in a["text"].lower())
+    # an open menu's own entry ("Apply Now" under Qorvo's "Apply now ▾") before the toggle again
+    entries.sort(key=lambda a: (not a.get("menu"), "manually" not in a["text"].lower()))
     order = (steps + entries) if in_form else (entries + steps)
     return order[0] if order else None
 
@@ -132,6 +137,8 @@ def _fingerprint(page: dict[str, Any]) -> tuple:
     return page.get("url"), tuple(page.get("headings") or []), count, actions
 
 
+_TAILOR_SAYS = ("Waiting for a resume written for this job. In Claude Code, say \u201ctailor my resumes\u201d; the "
+                "desk carries on with this job as soon as its resume is ready. Or use your usual resume.")
 _BOT_CHECK_SAYS = ("The site is checking that you're a person (a bot check or CAPTCHA). Solve it in the browser "
                    "window; the desk carries on by itself after that.")
 _ERRORISH = re.compile(r"error|required|invalid|please|must|enter |select |missing|problem|fix|can'?t be blank", re.I)
@@ -170,6 +177,7 @@ class Applier:
         self.runs: dict[int, Run] = {}
         self.tasks: deque[tuple[str, int]] = deque()
         self.auto_submit = False
+        self.tailor = False  # hold each job until Claude has written a resume for it
         self.current: int | None = None
         self._wake = asyncio.Event()
         self._worker_task: asyncio.Task | None = None
@@ -218,6 +226,35 @@ class Applier:
         self._wake.set()
         return run
 
+    def wake(self) -> None:
+        """Look again now (a tailored resume was just written)."""
+        self._wake.set()
+
+    def set_tailor(self, on: bool) -> None:
+        self.tailor = on
+        if not on:  # nothing to wait for any more
+            for run in [r for r in self.runs.values() if r.status == "needs_you" and r.need == "tailor"]:
+                with contextlib.suppress(KeyError, ValueError):
+                    self.enqueue(run.job_id, submit=run.submit)
+
+    def use_usual_resume(self, job_id: int) -> Run:
+        """Go ahead with this job without a tailored resume."""
+        run = self.runs[job_id]
+        run.usual_resume = True
+        return self.enqueue(job_id, submit=run.submit, front=True)
+
+    def tailoring(self) -> list[Run]:
+        """The jobs waiting for a resume written for them."""
+        return [r for r in self.runs.values() if r.status == "needs_you" and r.need == "tailor"]
+
+    def _resume_tailored(self) -> None:
+        """Carry on with each waiting job whose tailored resume is now in its folder."""
+        for run in self.tailoring():
+            job = self.srv.tracker().get(run.job_id, with_description=False)
+            if job and tailored_ready(job):
+                with contextlib.suppress(KeyError, ValueError):
+                    self.enqueue(run.job_id, submit=run.submit)
+
     def later(self, job_id: int) -> Run:
         """Stop holding the queue for this job; it stays paused until resumed."""
         run = self.runs[job_id]
@@ -261,6 +298,7 @@ class Applier:
                 await asyncio.sleep(POLL_SECONDS)
 
     async def _tick(self) -> None:
+        self._resume_tailored()
         # A Submit the person pressed goes first, even while the queue holds for a sign-in.
         submit = next((t for t in self.tasks if t[0] == "submit"), None)
         blocker = next((r for r in self.runs.values() if r.blocking), None)
@@ -373,6 +411,10 @@ class Applier:
     async def _drive(self, run: Run) -> None:
         srv = self.srv
         run.status, run.need, run.reason = "running", "", "Working on it"
+        if self.tailor and not run.usual_resume:
+            job = srv.tracker().get(run.job_id, with_description=False) or {}
+            if not tailored_ready(job):  # before its tab opens: nothing to keep waiting
+                return self._pause(run, "tailor", _TAILOR_SAYS)
         if not await self._open(run):
             return
         stalls, entries_done, waited, refilled, dismissed = 0, set(), False, set(), set()
@@ -719,7 +761,13 @@ class Applier:
 
 
 _APPLICATION_FIELD = re.compile(r"first name|last name|full name|legal name|resume|\bcv\b|phone|address|"
-                                r"authori[sz]ed|sponsor", re.I)
+                                r"authori[sz]ed|sponsor|start (?:the |your |an? )?appl", re.I)  # "email to start application"
+
+
+def tailored_ready(job: dict[str, Any]) -> bool:
+    """A resume written for this job is in its folder, and not a draft that came out too long."""
+    folder = Path(job["folder"]) if job.get("folder") else None
+    return bool(tailored_document(job, "resume")) and not (folder and any(folder.glob("*.too-long")))
 
 
 def _application_like(data: dict[str, Any]) -> bool:

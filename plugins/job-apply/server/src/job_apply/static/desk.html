@@ -140,6 +140,8 @@ footer { max-width: 1240px; margin: 0 auto; padding: 0 16px 24px; color: var(--m
       <button class="primary" id="apply" data-act="apply" disabled>Apply to selected</button>
       <label><input type="checkbox" id="auto"> Submit for me when nothing needs me</label>
       <span class="hint" id="auto-hint"></span>
+      <label><input type="checkbox" id="tailor"> Tailor my resume for each job</label>
+      <span class="hint" id="tailor-hint"></span>
     </div>
     <ul class="rows" id="rows"></ul>
     <div id="skipped-sites"></div>
@@ -335,6 +337,7 @@ function jobButtons(r, which) {
   if (which.includes("submit")) out.push(b("submit", "Submit", "primary"));
   if (which.includes("applied")) out.push(b("applied", "I submitted it", "primary"));
   if (which.includes("resume")) out.push(b("resume", "Resume"));
+  if (which.includes("usual_resume")) out.push(b("usual_resume", "Use my usual resume"));
   if (which.includes("later")) out.push(b("later", "Later"));
   if (which.includes("skip")) out.push(b("skip", "Skip job"));
   return `<div class="actions">${out.join("")}</div>`;
@@ -360,6 +363,7 @@ function renderSide() {
     else if (r.need === "captcha") body = jobButtons(r, ["show", "submit", "skip"]);
     else if (r.need === "your_submit" || r.need === "check_submit") body = jobButtons(r, ["show", "applied", "skip"]);
     else if (r.need === "submit_failed") body = jobButtons(r, ["show", "submit", "applied", "skip"]);
+    else if (r.need === "tailor") body = jobButtons(r, ["usual_resume", "skip"]);
     else body = jobButtons(r, ["show", "resume", "skip"]);
     const key = `${r.job_id}:${r.need}:${(r.questions || []).map((q) => q.label).join("|")}`;
     return {key, html: `<div class="task ${r.blocking ? "hands" : ""}">${head}${body}</div>`};
@@ -405,6 +409,9 @@ function renderHeader() {
   if (document.activeElement !== auto) auto.checked = !!s.auto_submit;
   auto.disabled = s.dry_run;
   $("auto-hint").textContent = s.dry_run ? "Off in practice mode (settings.submit_mode: dry_run)." : s.auto_submit ? "On: complete applications are submitted without asking." : "Off: you press Submit for each one.";
+  const tailor = $("tailor");
+  if (document.activeElement !== tailor) tailor.checked = !!s.tailor_resumes;
+  $("tailor-hint").textContent = s.tailor_resumes ? "On: each job waits for Claude to write a resume for it." : "Off: your usual resume goes with every application.";
   const saved = !!(state.passwords && state.passwords.workday);
   $("pw-state").textContent = saved ? "Saved" : "Not saved";
   $("pw-state").className = "pill " + (saved ? "good" : "");
@@ -415,6 +422,8 @@ function renderHeader() {
     <button data-job="${waiting.job_id}" data-job-act="show">Show me</button>`});
   const needing = allRuns().filter((r) => r.status === "needs_you").length;
   document.title = needing ? `(${needing}) Needs you · Job Desk` : "Job Desk";
+  if (state.tailoring) notes.push({cls: "waiting", html: `<strong>${state.tailoring} job${state.tailoring === 1 ? "" : "s"} waiting for a tailored resume.</strong>
+    <span>In Claude Code, say \u201ctailor my resumes\u201d. Each job carries on as soon as its resume is ready.</span>`});
   if (p.missing && p.missing.length) notes.push({cls: "notice", html: `Your profile is missing ${p.missing.map(esc).join(", ")}. Run <code>/job-apply:setup</code> in Claude Code, or edit <code>${esc(p.path)}</code>.`});
   if (state.answers_problem) notes.push({cls: "notice", html: `Your saved answers aren't being used: ${esc(state.answers_problem)}.`});
   if (!token) notes.push({cls: "notice", html: "This page needs the address the desk printed (it carries a key). Open it from Claude with “open the job desk”."});
@@ -595,6 +604,7 @@ document.addEventListener("change", (e) => {
     if (t.checked && !confirm("Submit complete applications without asking you first? You can turn this off any time.")) { t.checked = false; return; }
     act(() => api("/api/settings", {auto_submit: t.checked}));
   }
+  if (t.id === "tailor") act(() => api("/api/settings", {tailor_resumes: t.checked}));
 });
 
 refresh();

@@ -59,3 +59,23 @@ def test_render_default_resume_into_home(srv, job_apply_home):
     out = run(srv.render_document("resume", RESUME, default=True))
     assert Path(out["path"]) == job_apply_home / "Sam_Rivera_Resume.pdf"
     assert Path(out["path"]).read_bytes().startswith(b"%PDF")
+
+
+def test_a_too_long_tailored_resume_holds_its_job(srv, monkeypatch):
+    """render_document flags a tailored resume over 2 pages, so the desk doesn't send it
+    while Claude tightens it; the next render, within the limit, clears the flag."""
+    from job_apply.pipeline import tailored_ready
+
+    pages = iter([3, 1])
+
+    async def fake_render(page_html, dest):
+        dest.write_bytes(b"%PDF-1.4\n")
+        return next(pages)
+
+    monkeypatch.setattr(srv, "render_pdf", fake_render)
+    job = srv.add_job(url="https://example.com/jobs/2", title="FSE", company="Example Litho")["job"]
+    out = run(srv.render_document("resume", RESUME, job_id=job["id"]))
+    assert "warning" in out and not tailored_ready(srv.tracker().get(job["id"]))
+    out = run(srv.render_document("resume", RESUME, job_id=job["id"]))
+    assert "warning" not in out and tailored_ready(srv.tracker().get(job["id"]))
+

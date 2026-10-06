@@ -37,6 +37,7 @@ def test_resolve_contact_fields():
     assert resolve_field(f("First Name *"), p).value == "Sam"
     assert resolve_field(f("Legal Last Name"), p).value == "Rivera"
     assert resolve_field(f("Email Address"), p).value == "sam.rivera@example.com"
+    assert resolve_field(f("Enter email to start application process"), p).value == "sam.rivera@example.com"  # Qorvo
     assert resolve_field(f("Phone Number"), p).value == "480-555-0123"
     assert resolve_field(f("State", "select", options=["Arizona", "Texas"]), p).value == "Arizona"
     assert resolve_field(f("Country Phone Code", "listbox", options=["Canada (+1)", "United States of America (+1)"]), p).value \

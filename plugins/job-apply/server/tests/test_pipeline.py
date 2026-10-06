@@ -4,6 +4,7 @@ review -> submit)."""
 
 import asyncio
 import time
+from pathlib import Path
 
 import pytest
 from conftest import browser_available, fixture_url, run
@@ -308,6 +309,31 @@ def test_a_button_drawn_as_a_web_component_is_pressed(srv, monkeypatch):
 
     r = run(go())
     assert r.need == "sign_in" and "clicked “Apply now”" in r.log, (r.reason, r.log)
+
+
+def test_an_apply_menu_is_followed_through_to_the_application(srv, monkeypatch):
+    """Qorvo's Apply now opens a menu (Apply Now, Start apply with LinkedIn); its Apply Now
+    asks for an email and a Start before the application. The toggle itself is pressed
+    once, not over and over, and the LinkedIn route is left alone."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 1)
+    job = srv.add_job(url=fixture_url("site/apply-menu-posting.html"), title="Intern", company="Example Semi")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status == "needs_you")
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert r.need == "sign_in", (r.reason, r.log)
+    clicks = [line for line in r.log if line.startswith("clicked")]
+    assert clicks == ["clicked “Apply now”", "clicked “Apply Now”", "clicked “Start”"], r.log
+    assert r.url.endswith("/signin.html")
 
 
 def test_cookie_dialog_is_declined_never_accepted(srv, monkeypatch):
@@ -754,3 +780,72 @@ def test_a_flow_that_goes_round_in_a_circle_stops_after_one_lap(srv, monkeypatch
     assert "“Continue” on “Confirm Your Identity” (“You've requested too many verification codes" in r.reason
     assert [line for line in r.log if line.startswith("clicked")] == ["clicked “Apply Now”", "clicked “Next”",
                                                                        "clicked “Continue”"]
+
+
+def test_tailoring_holds_a_job_until_its_resume_is_written(srv, monkeypatch):
+    """With "Tailor my resume" on, a job waits before its tab opens and carries on once a
+    resume made for it is in its folder; a draft that came out too long doesn't count."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    job = srv.add_job(url=fixture_url("site/posting.html"), title="FSE", company="Example Fab")["job"]
+    folder = Path(srv.tracker().get(job["id"])["folder"])
+    applier = Applier(srv)
+    applier.tailor = True
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status == "needs_you")
+            waited = (r.need, r.page, [x.job_id for x in applier.tailoring()])
+            folder.mkdir(parents=True, exist_ok=True)
+            (folder / "Sam_Rivera_Resume.pdf").write_bytes(b"%PDF-1.4\n")
+            (folder / "Sam_Rivera_Resume.too-long").touch()  # render_document asked for a shorter one
+            applier.wake()
+            await asyncio.sleep(1)
+            held = r.need
+            (folder / "Sam_Rivera_Resume.too-long").unlink()
+            applier.wake()
+            await until(lambda: r.status == "needs_you" and r.need != "tailor")
+            return waited, held, r
+        finally:
+            await applier.stop()
+
+    waited, held, r = run(go())
+    assert waited == ("tailor", None, [job["id"]])  # no tab opened while it waits
+    assert held == "tailor"
+    assert r.need == "sign_in" and "clicked “Apply Manually”" in r.log, (r.reason, r.log)
+
+
+def test_the_usual_resume_can_go_instead_of_a_tailored_one(srv, monkeypatch):
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    job = srv.add_job(url=fixture_url("site/posting.html"), title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+    applier.tailor = True
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status == "needs_you")
+            applier.use_usual_resume(job["id"])
+            await until(lambda: r.status == "needs_you" and r.need != "tailor")
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert r.need == "sign_in", (r.reason, r.log)
+
+
+def test_turning_tailoring_off_lets_waiting_jobs_go(srv):
+    applier = Applier(srv)
+    job = srv.add_job(url=fixture_url("site/posting.html"), title="FSE", company="Example Fab")["job"]
+    run_ = pipeline.Run(job["id"], status="needs_you", need="tailor")
+    applier.runs[job["id"]] = run_
+
+    async def go():
+        applier.set_tailor(False)
+
+    run(go())
+    assert run_.status == "queued" and ("apply", job["id"]) in applier.tasks
+
