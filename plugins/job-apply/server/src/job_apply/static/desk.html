@@ -184,8 +184,8 @@ const selected = new Set();
 let filter = "recommended";
 let state = null;
 let busy = false;
-let autoSearched = false;
-const STALE_SEARCH = 12 * 3600;  // seconds: open with fresh listings
+let autoSearchedAt = 0;
+const STALE_SEARCH = 12 * 3600;  // seconds: listings older than this are searched again, also on a desk left open
 
 // Openings shown on earlier visits, kept in this browser only: the others are tagged New
 // for the whole of this visit. The first visit tags nothing.
@@ -432,8 +432,9 @@ async function refresh() {
     render();
     rememberSeen((state.listings || []).map((r) => r.url));
     const sr = state.search;
-    if (!autoSearched && sr.status !== "running" && (!sr.at || Date.now() / 1000 - sr.at > STALE_SEARCH)) {
-      autoSearched = true;  // open on fresh listings
+    const now = Date.now() / 1000;
+    if (sr.status !== "running" && (!sr.at || now - sr.at > STALE_SEARCH) && now - autoSearchedAt > STALE_SEARCH) {
+      autoSearchedAt = now;  // fresh listings on opening, and twice a day on a desk left open
       await api("/api/search", {});
     }
   } catch (e) {
