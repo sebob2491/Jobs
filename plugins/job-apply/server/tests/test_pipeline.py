@@ -49,6 +49,17 @@ def test_pick_next_and_classify():
     assert classify({"title": "Apply", "fields": form, "actions": []}, "I'm not a robot") == "form"
 
 
+def test_what_a_page_flags_is_named():
+    """Onto's Workday lists what's wrong as links ("Error-Email") in an "Errors Found" box and
+    marks the field invalid; a stalled page says so in words."""
+    page = {"errors": ["Please try again."],
+            "actions": ["Errors Found", "Error-Email", {"text": "Error - How Did You Hear About Us?*"}, "Next"],
+            "fields": [{"label": "Email*", "invalid": True}, {"label": "City*"}]}
+    assert pipeline._flagged(page) == ["Please try again.", "“Email” needs fixing",
+                                       "“How Did You Hear About Us” needs fixing", "“Email” is marked invalid"]
+    assert pipeline._flagged({"errors": ["Field Service Engineer page is loaded"], "actions": ["Next"]}) == []
+
+
 def test_one_button_apply_walks_the_whole_flow(srv, monkeypatch):
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
     job = srv.add_job(url=fixture_url("site/posting.html"), title="Field Service Engineer", company="Example Fab")["job"]

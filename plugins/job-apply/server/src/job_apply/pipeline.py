@@ -132,6 +132,19 @@ _BOT_CHECK_SAYS = ("The site is checking that you're a person (a bot check or CA
 _ERRORISH = re.compile(r"error|required|invalid|please|must|enter |select |missing|problem|fix|can'?t be blank", re.I)
 
 
+def _flagged(data: dict[str, Any]) -> list[str]:
+    """What a page marks as wrong: its error messages, Workday's "Error-Email" links in its
+    "Errors Found" box, and fields marked invalid."""
+    out = [e for e in data.get("errors") or [] if _ERRORISH.search(e)]
+    for a in data.get("actions") or []:
+        m = re.match(r"^error\s*-\s*(.+)$", (a if isinstance(a, str) else a.get("text", "")).strip(), re.I)
+        if m:
+            out.append(f"\u201c{clean_label(m.group(1))}\u201d needs fixing")
+    out += [f"\u201c{clean_label(f.get('label') or '')}\u201d is marked invalid"
+            for f in data.get("fields") or [] if isinstance(f, dict) and f.get("invalid") and f.get("label")]
+    return list(dict.fromkeys(out))
+
+
 def _page_info(data: dict[str, Any]) -> dict[str, Any]:
     """Enough to see why a job paused, without any of the values typed into the page."""
     return {
@@ -485,6 +498,8 @@ class Applier:
                 stalls += 1
                 problems = [e for e in clicked.get("errors") or [] if _ERRORISH.search(e)]
                 if problems or stalls >= 2:
+                    # say what's wrong: Workday lists it as links ("Error-Email") and marks fields
+                    problems = _flagged(clicked) or _flagged((await self._look())[0])
                     errors = "; ".join(problems)[:300]
                     return self._pause(run, "stuck", "The page didn't move on" + (f": {errors}" if errors else ".")
                                        + " Fix it in the browser, then press Resume.")
