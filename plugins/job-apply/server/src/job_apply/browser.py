@@ -12,7 +12,7 @@ import json
 import os
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from playwright.async_api import (
     BrowserContext,
@@ -279,7 +279,7 @@ class BrowserSession:
 
     async def _field_options(self, page: Page, field_id: str, loc: Locator, wait_ms: int) -> list[str]:
         """This field's menu options, polling while the menu renders."""
-        frame = self._frame_for(page, field_id)
+        self._frame_for(page, field_id)  # fails clearly if the field's frame has gone
         waited = 0
         while True:
             try:
@@ -356,17 +356,38 @@ class BrowserSession:
             page = await self.page()
             return await page.content()
 
-    async def capture_json(self, url: str, url_part: str, timeout: int = 25000) -> Any:
+    async def capture_json(self, url: str, url_part: str, timeout: int = 25000,
+                           want: Callable[[Any], bool] | None = None,
+                           rewrite: Callable[[Any], Any] | None = None) -> Any:
         """Open `url` in a background tab and return the JSON of the first response whose URL
         contains `url_part`: the data a careers page loads for itself, when its API refuses
-        direct requests."""
+        direct requests. `want` picks among several such calls by their JSON request body;
+        `rewrite` may change that body on its way out (e.g. a bigger page size)."""
+        def body_of(request: Any) -> Any:
+            try:
+                return json.loads(request.post_data or "null")
+            except (ValueError, TypeError):
+                return None
+
         async with self._lock:
             await self.page()
             assert self._ctx is not None
             self._background = True
             tab = await self._ctx.new_page()
             try:
-                async with tab.expect_response(lambda r: url_part in r.url and r.ok, timeout=timeout) as info:
+                if rewrite is not None:
+                    async def handle(route: Any) -> None:
+                        changed = rewrite(body_of(route.request))
+                        if changed is None:
+                            await route.continue_()
+                        else:
+                            await route.continue_(post_data=json.dumps(changed))
+                    await tab.route(lambda u: url_part in u, handle)
+
+                def matches(r: Any) -> bool:
+                    return url_part in r.url and r.ok and (want is None or bool(want(body_of(r.request))))
+
+                async with tab.expect_response(matches, timeout=timeout) as info:
                     await tab.goto(url, wait_until="domcontentloaded", timeout=45000)
                 return await (await info.value).json()
             finally:

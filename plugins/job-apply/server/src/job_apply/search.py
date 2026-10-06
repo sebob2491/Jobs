@@ -35,6 +35,10 @@ WORKDAY_PAGE = 20  # Workday rejects larger pages
 MAX_ALTERNATIVES = 4
 FETCH_WHEN_FILTERING = 60  # results to scan per search when filtering by location ourselves
 CLIENT_SIDE = {"greenhouse", "lever"}  # whole board comes back at once; titles are filtered here
+# Searches whose data only comes through the site's own page in the browser (ASML's
+# Sitecore Discover widget). search_companies lists them under needs_browser and the
+# search_company_jobs tool runs them.
+BROWSER_SEARCHES = {"sitecore"}
 RETRY_STATUS = {429, 500, 502, 503, 504}  # a passing problem on the site's side
 RETRY_DELAY = 1.0  # seconds, doubled on the second retry
 
@@ -286,6 +290,48 @@ def parse_eightfold(data: Any, host: str) -> list[Listing]:
     return out
 
 
+# ------------------------------------------------- Sitecore Discover (ASML), through the browser
+SITECORE_LIMIT = 100  # the page asks for 25 at a time; one call can cover a company's whole list
+
+
+def sitecore_page_url(cfg: dict[str, Any], query: str) -> str:
+    return str(cfg["url"]).format(query=quote(query))
+
+
+def _sitecore_searches(body: Any) -> list[dict[str, Any]]:
+    items = ((body or {}).get("widget") or {}).get("items") or [] if isinstance(body, dict) else []
+    return [i["search"] for i in items if isinstance(i, dict) and isinstance(i.get("search"), dict)]
+
+
+def sitecore_wants(body: Any) -> bool:
+    """The page's own keyword search, not its facet-only first call."""
+    return any((s.get("query") or {}).get("keyphrase") for s in _sitecore_searches(body))
+
+
+def sitecore_rewrite(body: Any) -> Any:
+    """Ask for SITECORE_LIMIT results in one go instead of the page's first 25."""
+    searches = [s for s in _sitecore_searches(body) if (s.get("query") or {}).get("keyphrase")]
+    for s in searches:
+        s["limit"], s["offset"] = SITECORE_LIMIT, 0
+    return body if searches else None
+
+
+def parse_sitecore(data: Any) -> list[Listing]:
+    out = []
+    for widget in (data or {}).get("widgets") or []:
+        for c in widget.get("content") or []:
+            if not isinstance(c, dict) or not c.get("url") or c.get("type", "job_detail_page") != "job_detail_page":
+                continue
+            place = c.get("job_location") or ", ".join(
+                str(x) for x in (c.get("job_city"), c.get("job_state"), c.get("job_country")) if x)
+            out.append(Listing(
+                company="", title=c.get("name") or "", url=c["url"], location=place,
+                posted=str(c.get("job_date_posted") or "")[:10], external_id=str(c.get("job_id") or c.get("id") or ""),
+                ats="company_site",
+            ))
+    return out
+
+
 def eightfold_page_url(cfg: dict[str, Any], query: str, location: str | None) -> str:
     """The careers page whose own search call the browser fallback listens for."""
     params = {"query": " ".join(alternatives(query)), "domain": cfg["domain"]}
@@ -477,13 +523,18 @@ async def search_companies(
     results: list[dict[str, Any]] = []
     errors: dict[str, str] = {}
     browser_only: list[dict[str, str]] = []
+    needs_browser: list[dict[str, Any]] = []
     sem = asyncio.Semaphore(4)
 
     async def one(company: dict[str, Any]) -> None:
         search = company.get("search") or {}
         kind = next((k for k in SEARCHERS if k in search), None)
         if kind is None:
-            browser_only.append({"company": company["name"], "careers_url": company.get("careers_url", "")})
+            browser_kind = next((k for k in BROWSER_SEARCHES if k in search), None)
+            if browser_kind:
+                needs_browser.append({"company": company["name"], "kind": browser_kind, "config": search[browser_kind]})
+            else:
+                browser_only.append({"company": company["name"], "careers_url": company.get("careers_url", "")})
             return
         fetch = max(limit, FETCH_WHEN_FILTERING) if terms else limit
         found: list[Listing] = []
@@ -507,4 +558,4 @@ async def search_companies(
         if own:
             await client.aclose()
     results.sort(key=lambda r: (r["company"], not r.get("title_match", True), r["title"]))
-    return {"results": results, "errors": errors, "browser_only": browser_only}
+    return {"results": results, "errors": errors, "browser_only": browser_only, "needs_browser": needs_browser}

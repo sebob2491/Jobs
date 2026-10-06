@@ -308,3 +308,48 @@ def test_ingest_reports_navigation_failure(srv):
     out = run(srv.ingest_job("http://127.0.0.1:9/no-such-posting", use_browser=True))
     assert out["saved"] is False and "couldn't open" in out["error"]
     assert srv.list_jobs()["count"] == 0  # nothing saved from the page that was already open
+
+
+def test_capture_json_takes_the_keyword_search_and_enlarges_it(srv):
+    """ASML's page calls its search API twice (facets, then the keyword search); take the
+    keyword one, with its page size raised before it leaves the browser."""
+    import json
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    from job_apply.search import sitecore_rewrite, sitecore_wants
+
+    page = b"""<!doctype html><title>Find your job</title><script>
+      const send = search => fetch('/discover/v2/1', {method: 'POST', headers: {'content-type': 'application/json'},
+                                                      body: JSON.stringify({widget: {items: [{rfk_id: 'jobs', search}]}})});
+      const keyphrase = new URLSearchParams(location.search).get('query');
+      send({limit: 25, facet: {all: true}}).then(() => send({limit: 25, offset: 50, query: {keyphrase}}));
+    </script>"""
+
+    class Site(BaseHTTPRequestHandler):
+        def reply(self, kind, body):
+            self.send_response(200)
+            self.send_header("content-type", kind)
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_GET(self):
+            self.reply("text/html", page)
+
+        def do_POST(self):
+            received = json.loads(self.rfile.read(int(self.headers["content-length"])))
+            self.reply("application/json", json.dumps({"received": received}).encode())
+
+        def log_message(self, *args):
+            pass
+
+    site = ThreadingHTTPServer(("127.0.0.1", 0), Site)
+    threading.Thread(target=site.serve_forever, daemon=True).start()
+    try:
+        url = f"http://127.0.0.1:{site.server_port}/careers?query=field%20service"
+        got = run(srv.browser.capture_json(url, "/discover/v2/", want=sitecore_wants, rewrite=sitecore_rewrite))
+    finally:
+        site.shutdown()
+    search = got["received"]["widget"]["items"][0]["search"]
+    assert search == {"limit": 100, "offset": 0, "query": {"keyphrase": "field service"}}
+    assert run(srv.browser.page()).url == "about:blank"  # the search tab didn't take over

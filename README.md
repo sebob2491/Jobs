@@ -173,7 +173,7 @@ plugins/job-apply/
 | Tool | Purpose |
 |---|---|
 | `setup_status`, `get_profile` | Check what's missing and read the profile |
-| `search_company_jobs` | Search employers' own job boards (Workday, Greenhouse, Lever, Eightfold, SmartRecruiters, Oracle) by keyword and location, with no browser needed |
+| `search_company_jobs` | Search employers' own job boards (Workday, Greenhouse, Lever, Eightfold, SmartRecruiters, Oracle, and ASML's site) by keyword and location; sites that refuse direct requests are read through a background browser tab |
 | `ingest_job`, `add_job` | Save a posting. Parses Workday, Greenhouse, Lever and SmartRecruiters APIs, schema.org JobPosting data, or page text. |
 | `list_jobs`, `get_job`, `update_job`, `export_jobs_csv` | Application tracker |
 | `open_application`, `click`, `tabs` | Navigate the browser. `click` refuses final submit buttons. |

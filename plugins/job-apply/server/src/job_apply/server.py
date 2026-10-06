@@ -16,7 +16,8 @@ from .autofill import is_empty_value, plan_autofill, profile_entries
 from .browser import BrowserSession, BrowserUnavailable, SubmitBlocked
 from .postings import FetchError, Posting, fetch_posting, finalize, parse_html
 from .render import KINDS, render_pdf, to_html
-from .search import eightfold_page_url, keep_listings, load_companies, location_terms, parse_eightfold, search_companies
+from .search import (alternatives, eightfold_page_url, keep_listings, load_companies, location_terms, parse_eightfold,
+                     parse_sitecore, search_companies, sitecore_page_url, sitecore_rewrite, sitecore_wants)
 from .tracker import Tracker
 
 INSTRUCTIONS = """\
@@ -185,6 +186,22 @@ async def search_company_jobs(
         found = parse_eightfold(data, cfg["host"])
         out["results"].extend(keep_listings(name, found, location_terms(location), limit_per_company, query))
         del out["errors"][name]
+    # Sites whose search only answers their own page (ASML): run it there, one tab per wording.
+    for item in out.pop("needs_browser", []):
+        name, cfg = item["company"], item["config"]
+        found, failures = [], []
+        for wording in alternatives(query):
+            try:
+                data = await browser.capture_json(sitecore_page_url(cfg, wording), cfg.get("api", "/discover/v2/"),
+                                                  want=sitecore_wants, rewrite=sitecore_rewrite)
+            except Exception as e:  # one wording failing keeps the others' results
+                failures.append(f"{type(e).__name__}: {str(e).splitlines()[0][:150] if str(e) else ''}")
+                continue
+            found.extend(parse_sitecore(data))
+        if failures:
+            out["errors"][name] = f"browser search: {failures[0]}" + (
+                f" ({len(failures)} of {len(alternatives(query))} searches failed)" if found else "")
+        out["results"].extend(keep_listings(name, found, location_terms(location), limit_per_company, query))
     t = tracker()
     for r in out["results"]:
         job = t.find_by_url(r["url"])

@@ -322,3 +322,62 @@ def test_passing_server_errors_are_retried_and_one_failure_keeps_the_rest(monkey
     assert tries.count("customer engineer") == 3
     assert out["errors"]["Workday Co"].startswith("SearchError: HTTP 502")
     assert "1 of 2 searches failed" in out["errors"]["Workday Co"]
+
+
+# The shape of asml.com's Sitecore Discover answer (live probe, Oct 2026; descriptions trimmed).
+ASML_ANSWER = {"widgets": [{"rfk_id": "asml_job_search", "type": "content_grid", "content": [
+    {"description": "<p>Install and repair EUV systems.</p>", "id": "J-00327683", "job_city": "Hefei",
+     "job_country": "China", "job_date_posted": "2025-09-25T00:00:00", "job_degrees": ["Bachelor", "Master"],
+     "job_id": "J-00327683", "job_location": "Hefei, China", "job_state": "AH", "job_teams": ["Customer Support"],
+     "job_type": "Fix", "name": "Field Service Engineer", "type": "job_detail_page",
+     "url": "https://www.asml.com/en/careers/find-your-job/field-service-engineer-j00327683"},
+    {"id": "J-00329630", "job_city": "Phoenix", "job_country": "US", "job_date_posted": "2026-09-14T00:00:00",
+     "job_id": "J-00329630", "job_location": "Phoenix, AZ, US", "job_state": "AZ", "job_type": "Fix",
+     "name": "Field Service Engineer - EUV", "type": "job_detail_page",
+     "url": "https://www.asml.com/en/careers/find-your-job/field-service-engineer-euv-j00329630"},
+    {"name": "Life at ASML", "type": "article", "url": "https://www.asml.com/en/careers/life"},
+]}]}
+
+
+def test_asml_sitecore_answer_and_request():
+    from job_apply.search import parse_sitecore, sitecore_page_url, sitecore_rewrite, sitecore_wants
+
+    jobs = parse_sitecore(ASML_ANSWER)
+    assert [(j.title, j.location, j.posted, j.external_id) for j in jobs] == [
+        ("Field Service Engineer", "Hefei, China", "2025-09-25", "J-00327683"),
+        ("Field Service Engineer - EUV", "Phoenix, AZ, US", "2026-09-14", "J-00329630"),
+    ]  # the article isn't a job
+    facets_only = {"widget": {"items": [{"rfk_id": "asml_job_search", "search": {"limit": 25, "facet": {"all": True}}}]}}
+    keyword = {"widget": {"items": [{"rfk_id": "asml_job_search", "search": {
+        "limit": 25, "offset": 0, "query": {"keyphrase": "field service", "operator": "and"}}}]}}
+    assert not sitecore_wants(facets_only) and sitecore_wants(keyword)
+    assert sitecore_rewrite(facets_only) is None  # left alone
+    assert sitecore_rewrite(keyword)["widget"]["items"][0]["search"]["limit"] == 100
+    assert sitecore_page_url({"url": "https://www.asml.com/en/careers/find-your-job?query={query}"}, "field service") == \
+        "https://www.asml.com/en/careers/find-your-job?query=field%20service"
+
+    async def go():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            return await search_companies("field service", client=client, location="AZ", companies=[
+                {"name": "ASML", "search": {"sitecore": {"url": "https://www.asml.com/f?query={query}"}}}])
+    out = asyncio.run(go())
+    assert out["results"] == [] and out["needs_browser"] == [
+        {"company": "ASML", "kind": "sitecore", "config": {"url": "https://www.asml.com/f?query={query}"}}]
+
+
+def test_search_tool_runs_asml_in_the_browser(srv, monkeypatch):
+    calls = []
+
+    async def fake_capture(url, url_part, timeout=25000, want=None, rewrite=None):
+        calls.append((url, url_part, want is not None, rewrite is not None))
+        return ASML_ANSWER
+
+    monkeypatch.setattr(srv.browser, "capture_json", fake_capture)
+    monkeypatch.setattr(srv, "load_companies", lambda: [
+        {"name": "ASML", "search": {"sitecore": {"url": "https://www.asml.com/en/careers/find-your-job?query={query}"}}}])
+    out = asyncio.run(srv.search_company_jobs("field service | customer engineer", companies=["ASML"], location="AZ"))
+    assert [r["title"] for r in out["results"]] == ["Field Service Engineer - EUV"]  # Hefei is filtered out
+    assert out["results"][0]["company"] == "ASML" and "needs_browser" not in out
+    assert [c[0] for c in calls] == ["https://www.asml.com/en/careers/find-your-job?query=field%20service",
+                                     "https://www.asml.com/en/careers/find-your-job?query=customer%20engineer"]
+    assert all(c[1] == "/discover/v2/" and c[2] and c[3] for c in calls)
