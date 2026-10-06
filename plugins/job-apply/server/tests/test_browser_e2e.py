@@ -269,6 +269,31 @@ def test_click_is_not_repeated_on_a_page_that_moved_on(srv, monkeypatch):
     assert run(page.evaluate("() => window.clicks")) == 0
 
 
+def test_inspect_waits_for_a_form_drawn_late(srv):
+    """Oracle's email step draws its form a moment after the page itself."""
+    run(srv.open_application(url=fixture_url("jsonld_posting.html")))
+    page = run(srv.browser.page())
+    run(page.evaluate("""() => setTimeout(() => {
+      const f = document.createElement('form');
+      f.innerHTML = '<label for=em>Email Address</label><input id=em type=email required>';
+      document.body.append(f);
+    }, 1200)"""))
+    fields = run(srv.inspect_form(include_dropdown_options=False))["fields"]
+    assert [f["label"] for f in fields] == ["Email Address"]
+
+
+def test_search_text_left_in_a_picker_is_no_evidence(srv):
+    run(srv.open_application(url=fixture_url("jsonld_posting.html")))
+    page = run(srv.browser.page())
+    run(page.evaluate("() => { const form = document.createElement('form'); "
+                      "form.innerHTML = '<div><input id=eth value=C></div><input id=other>'; document.body.prepend(form); }"))
+    loc = page.locator("#eth")
+    run(srv.browser._confirm_choice(page, loc, "Choose not to disclose"))  # "C" is what was typed, not a choice
+    run(page.evaluate("() => { document.getElementById('eth').value = 'Asian'; }"))
+    with pytest.raises(ValueError):
+        run(srv.browser._confirm_choice(page, loc, "Choose not to disclose"))
+
+
 def test_dry_run_keeps_later_statuses(srv, monkeypatch):
     monkeypatch.setenv("JOB_APPLY_NEVER_SUBMIT", "1")
     job = srv.add_job(url=fixture_url("generic_form.html"), title="FSE", company="Example Litho")["job"]

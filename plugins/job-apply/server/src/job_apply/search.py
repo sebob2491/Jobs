@@ -35,6 +35,8 @@ WORKDAY_PAGE = 20  # Workday rejects larger pages
 MAX_ALTERNATIVES = 4
 FETCH_WHEN_FILTERING = 60  # results to scan per search when filtering by location ourselves
 CLIENT_SIDE = {"greenhouse", "lever"}  # whole board comes back at once; titles are filtered here
+RETRY_STATUS = {429, 500, 502, 503, 504}  # a passing problem on the site's side
+RETRY_DELAY = 1.0  # seconds, doubled on the second retry
 
 
 @dataclass
@@ -174,7 +176,7 @@ async def _workday(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, 
 
     async def page(offset: int, facets: dict[str, list[str]]) -> dict[str, Any]:
         body = {"appliedFacets": facets, "limit": WORKDAY_PAGE, "offset": offset, "searchText": query}
-        r = await client.post(api, json=body, headers={"Accept": "application/json"})
+        r = await _send(client, "POST", api, json=body, headers={"Accept": "application/json"})
         _raise_for(r, api)
         return r.json()
 
@@ -213,7 +215,7 @@ async def _workday(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, 
 
 async def _greenhouse(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, terms: list[str]) -> list[Listing]:
     api = f"https://boards-api.greenhouse.io/v1/boards/{cfg}/jobs"
-    r = await client.get(api)
+    r = await _send(client, "GET", api)
     _raise_for(r, api)
     out = []
     for j in r.json().get("jobs", []):
@@ -231,7 +233,7 @@ async def _greenhouse(client: httpx.AsyncClient, cfg: Any, query: str, limit: in
 
 async def _lever(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, terms: list[str]) -> list[Listing]:
     api = f"https://api.lever.co/v0/postings/{cfg}?mode=json"
-    r = await client.get(api)
+    r = await _send(client, "GET", api)
     _raise_for(r, api)
     data = r.json()
     if not isinstance(data, list):
@@ -301,7 +303,7 @@ async def _eightfold(client: httpx.AsyncClient, cfg: Any, query: str, limit: int
     start = 0
     while len(out) < limit:
         params = {"domain": domain, "query": query, "location": "", "start": start}
-        r = await client.get(api, params=params, headers=headers)
+        r = await _send(client, "GET", api, params=params, headers=headers)
         _raise_for(r, api)
         data = r.json()
         batch = parse_eightfold(data, host)
@@ -315,7 +317,7 @@ async def _eightfold(client: httpx.AsyncClient, cfg: Any, query: str, limit: int
 
 async def _smartrecruiters(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, terms: list[str]) -> list[Listing]:
     api = f"https://api.smartrecruiters.com/v1/companies/{cfg}/postings"
-    r = await client.get(api, params={"q": query, "limit": min(limit, 100)})
+    r = await _send(client, "GET", api, params={"q": query, "limit": min(limit, 100)})
     _raise_for(r, api)
     out = []
     for p in r.json().get("content") or []:
@@ -341,7 +343,7 @@ async def _oracle(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, t
     api = (f"https://{host}/hcmRestApi/resources/latest/recruitingCEJobRequisitions?onlyData=true"
            "&expand=requisitionList.workLocation,requisitionList.otherWorkLocations,requisitionList.secondaryLocations,"
            f"flexFieldsFacet.values,requisitionList.requisitionFlexFields&finder={finder}")
-    r = await client.get(api, headers={"Accept": "application/json"})
+    r = await _send(client, "GET", api, headers={"Accept": "application/json"})
     _raise_for(r, api)
     out = []
     for item in r.json().get("items") or []:
@@ -350,10 +352,22 @@ async def _oracle(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, t
             out.append(Listing(
                 company="", title=req.get("Title") or "",
                 url=f"https://{host}/hcmUI/CandidateExperience/en/sites/{site}/job/{req.get('Id')}",
-                location="; ".join(dict.fromkeys(p for p in places if p)), posted=req.get("PostedDate") or "",
+                location=_merge_places(places), posted=req.get("PostedDate") or "",
                 external_id=str(req.get("Id") or ""), ats="oracle_hcm",
             ))
     return out[:limit]
+
+
+def _merge_places(places: list[str]) -> str:
+    """"Scottsdale, AZ, United States" and "Scottsdale, AZ, US" are one place."""
+    kept: list[str] = []
+    cities: set[str] = set()
+    for place in places:
+        city = norm(place.split(",")[0])
+        if city and city not in cities:
+            cities.add(city)
+            kept.append(place)
+    return "; ".join(kept)
 
 
 def _oracle_places(req: dict[str, Any]) -> list[str]:
@@ -386,6 +400,22 @@ def _epoch_date(value: Any) -> str:
         return datetime.fromtimestamp(int(value), timezone.utc).date().isoformat()
     except (TypeError, ValueError, OSError):
         return ""
+
+
+async def _send(client: httpx.AsyncClient, method: str, url: str, **kw: Any) -> httpx.Response:
+    """The request, tried up to three times while the site reports a passing problem
+    (Workday answers the odd search with a 502)."""
+    for attempt in range(3):
+        try:
+            r = await client.request(method, url, **kw)
+        except httpx.TransportError:
+            if attempt == 2:
+                raise
+        else:
+            if r.status_code not in RETRY_STATUS or attempt == 2:
+                return r
+        await asyncio.sleep(RETRY_DELAY * 2 ** attempt)
+    raise AssertionError("unreachable")
 
 
 def _raise_for(r: httpx.Response, url: str) -> None:
@@ -457,16 +487,18 @@ async def search_companies(
             return
         fetch = max(limit, FETCH_WHEN_FILTERING) if terms else limit
         found: list[Listing] = []
-        try:
-            async with sem:
-                if kind in CLIENT_SIDE:
-                    found = await SEARCHERS[kind](client, search[kind], query, fetch, terms)
-                else:
-                    for alt in alternatives(query):
-                        found.extend(await SEARCHERS[kind](client, search[kind], alt, fetch, terms))
-        except Exception as e:  # one company's odd response must not sink the others
-            errors[company["name"]] = f"{type(e).__name__}: {str(e)[:200]}"
-            return
+        wordings = [query] if kind in CLIENT_SIDE else alternatives(query)
+        failed: list[str] = []
+        async with sem:
+            for wording in wordings:
+                try:
+                    found.extend(await SEARCHERS[kind](client, search[kind], wording, fetch, terms))
+                except Exception as e:  # an odd response must not sink the other searches
+                    failed.append(f"{type(e).__name__}: {str(e)[:200]}")
+        if failed:
+            partial = len(failed) < len(wordings)
+            errors[company["name"]] = failed[0] + (
+                f" ({len(failed)} of {len(wordings)} searches failed; the others' results are listed)" if partial else "")
         results.extend(keep_listings(company["name"], found, terms, limit, query))
 
     try:

@@ -419,3 +419,17 @@ SHOWN_VALUE_JS = r"""
   return clean(parts.join(' '));
 }
 """
+
+
+# Resolves once nothing has been added to or removed from the page for `quiet` ms
+# (or after `most` ms): single-page apps draw the next step after the network is idle.
+QUIET_JS = r"""
+([quiet, most]) => new Promise((resolve) => {
+  let timer;
+  const done = () => { observer.disconnect(); clearTimeout(timer); clearTimeout(cap); resolve(true); };
+  const observer = new MutationObserver(() => { clearTimeout(timer); timer = setTimeout(done, quiet); });
+  const cap = setTimeout(done, most);
+  observer.observe(document, { childList: true, subtree: true });
+  timer = setTimeout(done, quiet);
+})
+"""

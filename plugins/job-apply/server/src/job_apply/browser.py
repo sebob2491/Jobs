@@ -28,7 +28,7 @@ from playwright.async_api import (
 from . import config
 from .autofill import choose_option, is_empty_value, norm, polarity
 from .formjs import (CLICK_CHOICE_JS, COVERED_JS, ELEMENT_INFO_JS, ENTRIES_JS, EXTRACT_JS, FIELD_OPTIONS_JS,
-                     MARK_OPTIONS_JS, SHOWN_VALUE_JS, VISIBLE_TEXT_JS)
+                     MARK_OPTIONS_JS, QUIET_JS, SHOWN_VALUE_JS, VISIBLE_TEXT_JS)
 
 SUBMIT_RE = re.compile(r"\bsubmit\b|send (my )?application|finish (my )?application|complete (my )?application", re.I)
 # A form's own submit button with one of these labels is the final step too ("Apply", "Send").
@@ -172,7 +172,11 @@ class BrowserSession:
             await page.wait_for_load_state("networkidle", timeout=timeout)
         except PlaywrightTimeout:
             pass
-        await page.wait_for_timeout(300)
+        try:
+            # Oracle and Workday keep drawing the next step after the network goes quiet
+            await page.evaluate(QUIET_JS, [350, 2000])
+        except PlaywrightError:
+            await page.wait_for_timeout(300)  # it navigated meanwhile
 
     async def tabs(self, switch_to: int | None = None) -> dict[str, Any]:
         async with self._lock:
@@ -287,6 +291,11 @@ class BrowserSession:
         async with self._lock:
             page = await self.page()
             data = await self._extract(page)
+            for _ in range(5):  # Oracle can draw the form a moment after the rest of the page
+                if data["fields"]:
+                    break
+                await page.wait_for_timeout(500)
+                data = await self._extract(page)
             if include_dropdown_options:
                 for f in data["fields"]:
                     if f["kind"] in ("listbox", "combobox") and not f.get("options") and not f.get("disabled"):
@@ -495,8 +504,10 @@ class BrowserSession:
         landed in some other menu, or the widget refused it)."""
         await page.wait_for_timeout(150)
         shown = await loc.evaluate(SHOWN_VALUE_JS)
-        # Only positive evidence counts: some widgets display the value where we can't see it.
-        if shown and norm(choice) not in norm(shown) and choose_option(choice, [shown]) is None:
+        # Only positive evidence counts: some widgets display the value where we can't see it,
+        # and search text left in the box ("C" for "Choose not to disclose") isn't a choice.
+        if (shown and norm(choice) not in norm(shown) and not norm(choice).startswith(norm(shown))
+                and choose_option(choice, [shown]) is None):
             raise ValueError(f"Picked {choice!r} but the field shows {shown[:80]!r}; set it by hand or with click")
 
     async def _type_and_pick(self, page: Page, loc: Locator, field: dict, value: Any) -> str:

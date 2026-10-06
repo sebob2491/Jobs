@@ -7,6 +7,7 @@ import json
 import httpx
 
 from job_apply.postings import fetch_posting
+import job_apply.search as search_module
 from job_apply.search import (_workday_location_facets, alternatives, eightfold_page_url, location_matches,
                               location_terms, search_companies, title_matches)
 
@@ -100,7 +101,7 @@ def handler(request: httpx.Request) -> httpx.Response:
                 or "keyword=%22equipment%20engineer%22,sortBy=RELEVANCY" in url) and "offset" not in url
         return httpx.Response(200, json={"items": [{"TotalJobsCount": 3, "requisitionList": [
             {"Id": "25011541", "Title": "Equipment Engineer", "PrimaryLocation": "Phoenix, AZ, United States",
-             "PostedDate": "2026-09-29"},
+             "PostedDate": "2026-09-29", "workLocation": [{"TownOrCity": "Phoenix", "Region2": "AZ", "Country": "US"}]},
             # only a country as the primary location; the site is in the expanded locations
             {"Id": "25011323", "Title": "Field Service Technician", "PrimaryLocation": "United States",
              "secondaryLocations": [{"Name": "Richardson, TX, United States", "CountryCode": "US"}]},
@@ -297,3 +298,27 @@ def test_parse_eightfold_shapes():
     assert [(x.title, x.url, x.location) for x in parse_eightfold(pcsx, "c.x.com")] == \
         [("FSE 2", "https://c.x.com/careers/job/8", "Phoenix, AZ")]
     assert parse_eightfold({"unexpected": True}, "c.x.com") == []
+
+
+def test_passing_server_errors_are_retried_and_one_failure_keeps_the_rest(monkeypatch):
+    monkeypatch.setattr(search_module, "RETRY_DELAY", 0)
+    tries: list[str] = []
+
+    def flaky(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        tries.append(body["searchText"])
+        if body["searchText"] == "customer engineer":
+            return httpx.Response(502)  # down for this wording the whole time
+        if tries.count("field service") == 1:
+            return httpx.Response(503)  # a hiccup on the very first request
+        return workday(body)
+
+    async def go():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(flaky)) as client:
+            return await search_companies("field service | customer engineer", location="AZ", client=client,
+                                          companies=[COMPANIES[0]])
+    out = asyncio.run(go())
+    assert len(out["results"]) == 20 and all(r["location"] == "Chandler, AZ" for r in out["results"])
+    assert tries.count("customer engineer") == 3
+    assert out["errors"]["Workday Co"].startswith("SearchError: HTTP 502")
+    assert "1 of 2 searches failed" in out["errors"]["Workday Co"]
