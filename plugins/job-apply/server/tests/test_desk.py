@@ -121,8 +121,9 @@ def test_desk_page_buttons_reach_the_api(srv, tmp_path):
 
     posting = fixture_url("site/posting.html")
     desk = Desk(srv)
+    many = "Phoenix, AZ; Chandler, AZ; Austin, TX; Hillsboro, OR; Boise, ID"  # a multi-site Workday posting
     desk.listings = [
-        {"company": "Example Fab", "title": "Field Service Engineer", "url": posting, "location": "Phoenix, AZ",
+        {"company": "Example Fab", "title": "Field Service Engineer", "url": posting, "location": many,
          "fit": {"score": 80, "reasons": ["title matches"], "concerns": [], "blocked": False, "recommended": True}},
         {"company": "Example Bank", "title": "Accountant", "url": "https://example.com/acct", "location": "Phoenix, AZ",
          "fit": {"score": 20, "reasons": [], "concerns": ["not one of your target titles"], "blocked": False,
@@ -149,6 +150,8 @@ def test_desk_page_buttons_reach_the_api(srv, tmp_path):
                 await page.goto(desk.url)
                 await page.wait_for_selector("text=Field Service Engineer")
                 assert await page.locator("text=Accountant").count() == 0  # not recommended: hidden by default
+                where = page.locator(f"span[title='{many}']")
+                assert await where.inner_text() == "Phoenix, AZ; Chandler, AZ; Austin, TX and 2 more"
                 await page.click("text=Select recommended")
                 await page.click("#apply")
                 for _ in range(50):

@@ -585,6 +585,81 @@ def test_workday_entries_that_arent_postings_are_left_out():
         ("Field Service Engineer", "https://adco.wd1.myworkdayjobs.com/External/job/Chandler-AZ/FSE_R1")]
 
 
+def workday_multi_site(filters: bool):
+    """A Workday site whose postings include multi-site ones, listed as "7 Locations"; each
+    posting's own call names its places. With filters, the site's location filter has an
+    Arizona value (and the search uses it); without, the site has no location filter."""
+    places = {
+        "FSE_R1": ["Austin, TX", "Phoenix, AZ", "Hillsboro, OR", "Phoenix, AZ"],
+        "FSE_R2": ["Austin, TX", "Hillsboro, OR"],
+        "FSS_R5": ["Tempe, AZ"],
+    }
+    postings = [("Field Service Engineer", "/job/Austin-TX/FSE_R1", "7 Locations"),
+                ("Field Service Engineer II", "/job/Austin-TX/FSE_R2", "2 Locations"),
+                ("Field Service Technician", "/job/Chandler-AZ/FST_R3", "Chandler, AZ"),
+                ("Field Service Engineer III", "/job/Phoenix-AZ/FSE_R4", "3 Locations"),  # its call fails
+                ("Field Service Specialist", "/job/FSS_R5", "")]
+    calls: list[str] = []
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        url = str(request.url)
+        calls.append(url)
+        if url == "https://mco.wd1.myworkdayjobs.com/wday/cxs/mco/External/jobs":
+            body = json.loads(request.content)
+            out = {"total": len(postings), "jobPostings": [
+                {"title": t, "externalPath": path, "locationsText": where, "postedOn": "Posted Today",
+                 "bulletFields": [path.rsplit("_", 1)[-1]]} for t, path, where in postings]}
+            if filters and not body["appliedFacets"]:
+                out["facets"] = [{"facetParameter": "locations", "descriptor": "Locations", "values": [
+                    {"descriptor": "Phoenix, AZ", "id": "loc-phx", "count": 4},
+                    {"descriptor": "Austin, TX", "id": "loc-aus", "count": 2}]}]
+            return httpx.Response(200, json=out)
+        job = url.rsplit("/", 1)[-1]
+        if url.startswith("https://mco.wd1.myworkdayjobs.com/wday/cxs/mco/External/job/") and job in places:
+            first, *more = places[job]
+            return httpx.Response(200, json={"jobPostingInfo": {"title": "x", "location": first,
+                                                                "additionalLocations": more}})
+        return httpx.Response(500)
+
+    async def go():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(answer)) as client:
+            return await search_companies("field service", location="AZ", client=client, companies=[
+                {"name": "Multi Co", "search": {"workday": "https://mco.wd1.myworkdayjobs.com/External"}}])
+    found = asyncio.run(go())
+    assert found["errors"] == {}
+    return {r["title"]: (r["location"], r["notes"]) for r in found["results"]}, calls
+
+
+def test_a_workday_posting_in_several_places_is_listed_with_them(monkeypatch):
+    """Found through the site's own Arizona filter: the places come from each posting, the
+    ones in Arizona first. Where they don't show Arizona, or the posting can't be read, it
+    stays "N Locations" to check."""
+    monkeypatch.setattr(search_module, "RETRY_DELAY", 0)
+    listed, calls = workday_multi_site(filters=True)
+    assert listed == {
+        "Field Service Engineer": ("Phoenix, AZ; Austin, TX; Hillsboro, OR", []),
+        "Field Service Engineer II": ("2 Locations", ["location given as '2 Locations'; check the posting"]),
+        "Field Service Technician": ("Chandler, AZ", []),
+        "Field Service Engineer III": ("3 Locations", ["location given as '3 Locations'; check the posting"]),
+        "Field Service Specialist": ("Tempe, AZ", []),
+    }
+    # only the postings without a single place are read, each once (a failing one up to 3 times)
+    read = [c.rsplit("/", 1)[-1] for c in calls if "/External/job/" in c]
+    assert sorted(set(read)) == ["FSE_R1", "FSE_R2", "FSE_R4", "FSS_R5"] and read.count("FSE_R1") == 1
+
+
+def test_a_workday_site_without_a_place_filter_drops_multi_site_jobs_elsewhere(monkeypatch):
+    monkeypatch.setattr(search_module, "RETRY_DELAY", 0)
+    listed, _ = workday_multi_site(filters=False)
+    assert listed == {
+        "Field Service Engineer": ("Phoenix, AZ; Austin, TX; Hillsboro, OR", []),
+        # Austin and Hillsboro only: not in Arizona
+        "Field Service Technician": ("Chandler, AZ", []),
+        "Field Service Engineer III": ("3 Locations", ["location given as '3 Locations'; check the posting"]),
+        "Field Service Specialist": ("Tempe, AZ", []),
+    }
+
+
 # Nikon Precision's UKG Pro board: the page's own search call (50 at a time) and its answer
 UKG_PAGE_BODY = {"opportunitySearch": {"Top": 50, "Skip": 0, "QueryString": "", "OrderBy": [
     {"Value": "postedDateDesc", "PropertyName": "PostedDate", "Ascending": False}],

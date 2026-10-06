@@ -191,7 +191,8 @@ async def _workday(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, 
     if not parts:
         raise SearchError(f"Not a Workday site URL: {cfg}")
     host, tenant, site = parts["host"], parts["tenant"], parts["site"]
-    api = f"https://{host}/wday/cxs/{tenant}/{site}/jobs"
+    cxs = f"https://{host}/wday/cxs/{tenant}/{site}"
+    api = f"{cxs}/jobs"
     # myworkdaysite.com addresses carry the tenant: /recruiting/<tenant>/<site>/job/...
     base = f"https://{host}/recruiting/{tenant}/{site}" if "myworkdaysite.com" in host else f"https://{host}/{site}"
 
@@ -233,7 +234,42 @@ async def _workday(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, 
         if not postings or len(out) >= limit or offset >= total:
             break
         data = await page(offset, applied)
-    return out[:limit]
+    out = out[:limit]
+    await _workday_places(client, cxs, base, out, terms, in_area=bool(applied))
+    return out
+
+
+WORKDAY_PLACE_PAGES = 20  # multi-site postings read for their places, per search
+_SITE_COUNT = re.compile(r"\d+ locations?", re.I)  # how Workday lists a multi-site posting
+
+
+async def _workday_places(client: httpx.AsyncClient, cxs: str, base: str, listings: list[Listing],
+                          terms: list[str], in_area: bool) -> None:
+    """Workday lists a posting with several places as "7 Locations", and the odd one with
+    none. Read those postings' places (the ones in the area first), so the location filter
+    and the ranking see where they are. A posting the site's own location filter found is
+    in the area: its places only replace "7 Locations" when they show that too."""
+    sem = asyncio.Semaphore(4)
+
+    async def one(listing: Listing) -> None:
+        url = cxs + listing.url[len(base):]  # the posting's own call: /wday/cxs/<tenant>/<site>/job/...
+        async with sem:
+            try:
+                r = await _send(client, "GET", url, headers={"Accept": "application/json"})
+                _raise_for(r, url)
+                info = r.json().get("jobPostingInfo") or {}
+            except Exception:  # an unreadable posting stays "check the posting"
+                return
+        places = [str(x).strip() for x in [info.get("location"), *(info.get("additionalLocations") or [])] if x]
+        places = list(dict.fromkeys(x for x in places if x))
+        places.sort(key=lambda x: location_matches(x, terms) is not True)
+        where = "; ".join(places)
+        if where and not (in_area and location_matches(where, terms) is not True):
+            listing.location = where
+
+    todo = [x for x in listings
+            if x.url.startswith(base + "/") and (not x.location.strip() or _SITE_COUNT.fullmatch(x.location.strip()))]
+    await asyncio.gather(*(one(x) for x in todo[:WORKDAY_PLACE_PAGES]))
 
 
 async def _greenhouse(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, terms: list[str]) -> list[Listing]:
