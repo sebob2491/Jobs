@@ -114,6 +114,18 @@ EXTRACT_JS = r"""
     }
     return '';
   };
+  // Choices shown as pills (Eightfold's location picker shows "Singapore" with a Remove
+  // button beside a read-only input): look in the smallest wrapper that holds no other
+  // input, leaving out any open menu.
+  const pillsNear = (el) => {
+    for (let n = el.parentElement, d = 0; n && d < 6; n = n.parentElement, d++) {
+      if (Array.from(n.querySelectorAll('input, select, textarea')).some((x) => x !== el && x.type !== 'hidden')) break;
+      const pills = Array.from(n.querySelectorAll('[data-automation-id="selectedItem"], [class*="selected" i] [class*="label" i], [class*="pill" i] [class*="label" i]'))
+        .filter((p) => !p.closest('[role="listbox"], [role="option"]')).map(txt).filter(Boolean);
+      if (pills.length) return Array.from(new Set(pills));
+    }
+    return [];
+  };
   const tag = (el, id) => { el.setAttribute('data-ja-id', id); return id; };
   const idOf = (el) => el.getAttribute('data-ja-id') || tag(el, newId());
 
@@ -159,8 +171,9 @@ EXTRACT_JS = r"""
     else if (tagName === 'button' || (role === 'combobox' && tagName !== 'input')) { kind = 'listbox'; value = txt(el); }
     else if (role === 'combobox' || el.getAttribute('aria-autocomplete') === 'list') {
       kind = 'combobox';
-      const container = el.closest('[data-automation-id="multiselectInputContainer"]') || el.parentElement;
-      const pills = container ? Array.from(container.querySelectorAll('[data-automation-id="selectedItem"], [class*="selected" i] [class*="label" i]')).map(txt).filter(Boolean) : [];
+      const workday = el.closest('[data-automation-id="multiselectInputContainer"]');
+      const pills = workday ? Array.from(workday.querySelectorAll('[data-automation-id="selectedItem"], [class*="selected" i] [class*="label" i]')).map(txt).filter(Boolean)
+        : pillsNear(el);
       if (pills.length) value = pills.join(', ');
       else if (!el.value) value = shownNear(el);  // react-select shows the choice beside an empty input
     }
