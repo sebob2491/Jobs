@@ -80,6 +80,7 @@ ul.rows { list-style: none; margin: 0; padding: 0; }
 .chip.plus { background: var(--good-bg); color: var(--good); }
 .chip.minus { background: var(--warn-bg); color: var(--warn); }
 .chip.stop { background: var(--bad-bg); color: var(--bad); }
+.chip.new { background: var(--info-bg); color: var(--accent); font-weight: 600; }
 .empty { padding: 28px 16px; text-align: center; color: var(--muted); }
 .side { display: grid; gap: 16px; }
 .task { padding: 12px 14px; border-top: 1px solid var(--line); }
@@ -186,6 +187,28 @@ let busy = false;
 let autoSearched = false;
 const STALE_SEARCH = 12 * 3600;  // seconds: open with fresh listings
 
+// Openings shown on earlier visits, kept in this browser only: the others are tagged New
+// for the whole of this visit. The first visit tags nothing.
+const SEEN_KEY = "desk-seen";
+let seenBefore = null, firstVisit = false, seenSaved = -1;
+function loadSeen() {
+  if (seenBefore) return;
+  try {
+    const raw = localStorage.getItem(SEEN_KEY);
+    firstVisit = raw === null;
+    seenBefore = new Set(JSON.parse(raw || "[]"));
+  } catch (e) { seenBefore = new Set(); firstVisit = true; }
+}
+function rememberSeen(urls) {
+  try {
+    const all = new Set([...JSON.parse(localStorage.getItem(SEEN_KEY) || "[]"), ...urls]);
+    if (all.size === seenSaved) return;
+    seenSaved = all.size;
+    localStorage.setItem(SEEN_KEY, JSON.stringify([...all].slice(-3000)));
+  } catch (e) {}
+}
+const isNew = (r) => !firstVisit && seenBefore && !seenBefore.has(r.url) && !r.run && !DONE.has(r.status);
+
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
 const $ = (id) => document.getElementById(id);
 
@@ -257,6 +280,7 @@ function renderRows() {
     const fit = r.fit || {score: 0, reasons: [], concerns: []};
     const done = DONE.has(r.status) || (r.run && ["submitted", "running", "queued"].includes(r.run.status));
     const chips = [
+      ...(isNew(r) ? [`<span class="chip new">New</span>`] : []),
       ...fit.reasons.map((x) => `<span class="chip plus">${esc(x)}</span>`),
       ...fit.concerns.map((x) => `<span class="chip ${fit.blocked ? "stop" : "minus"}">${esc(x)}</span>`),
     ].join("");
@@ -367,7 +391,9 @@ function renderHeader() {
   const sr = state.search;
   $("find").innerHTML = sr.status === "running" ? `<span class="spin"></span> Searching…` : "Find jobs";
   $("find").disabled = sr.status === "running";
-  $("searched").textContent = sr.status === "failed" ? "Search failed: " + (sr.error || "") : sr.at ? "Searched " + ago(sr.at) : "";
+  const fresh = (state.listings || []).filter((r) => isNew(r) && (r.added || (r.fit && r.fit.recommended))).length;
+  $("searched").textContent = sr.status === "failed" ? "Search failed: " + (sr.error || "")
+    : sr.at ? "Searched " + ago(sr.at) + (fresh ? ` · ${fresh} new` : "") : "";
   const auto = $("auto");
   if (document.activeElement !== auto) auto.checked = !!s.auto_submit;
   auto.disabled = s.dry_run;
@@ -402,7 +428,9 @@ async function refresh() {
   if (busy) return;
   try {
     state = await api("/api/state");
+    loadSeen();
     render();
+    rememberSeen((state.listings || []).map((r) => r.url));
     const sr = state.search;
     if (!autoSearched && sr.status !== "running" && (!sr.at || Date.now() / 1000 - sr.at > STALE_SEARCH)) {
       autoSearched = true;  // open on fresh listings

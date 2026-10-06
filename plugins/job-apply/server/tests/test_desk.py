@@ -303,3 +303,36 @@ def test_pasted_links_are_read_saved_and_listed(srv):
             await desk.stop()
 
     run(go())
+
+
+def test_openings_new_since_the_last_visit_are_tagged(srv):
+    from playwright.async_api import async_playwright
+
+    desk = Desk(srv)
+    desk.applier.start = lambda: None
+    desk.search.update(status="done", at=time.time())
+    fit = {"score": 80, "reasons": ["title matches"], "concerns": [], "blocked": False, "recommended": True}
+    desk.listings = [{"company": "Example Fab", "title": "Field Service Engineer", "url": "https://example.com/1",
+                      "location": "Phoenix, AZ", "fit": fit}]
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with async_playwright() as pw:
+                browser = await pw.chromium.launch()
+                page = await browser.new_page()
+                await page.goto(desk.url)
+                await page.wait_for_selector("text=Field Service Engineer")
+                assert await page.locator(".chip.new").count() == 0  # a first visit tags nothing
+                desk.listings.append({"company": "Example Litho", "title": "Equipment Technician",
+                                      "url": "https://example.com/2", "location": "Chandler, AZ", "fit": fit})
+                await page.reload()
+                await page.wait_for_selector("text=Equipment Technician")
+                tagged = page.locator("li.row", has=page.locator(".chip.new"))
+                assert await tagged.count() == 1 and "Equipment Technician" in await tagged.inner_text()
+                assert "1 new" in await page.inner_text("#searched")
+                await browser.close()
+        finally:
+            await desk.stop()
+
+    run(go())

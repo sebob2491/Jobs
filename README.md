@@ -101,7 +101,8 @@ opens a page on your computer (served by the plugin on `127.0.0.1`):
 1. **Find jobs** searches every employer's career site for your target titles in
    your area. Each opening gets a fit score, with the reasons and concerns under it:
    "title matches", "posted this week", "requires a Bachelor's (you have an
-   Associate's)", "senior-level role", "requires an active clearance".
+   Associate's)", "senior-level role", "requires an active clearance". Openings that
+   weren't there on your last visit are tagged **New**.
 2. Tick the ones you want, or press **Select recommended**, then **Apply to
    selected**. The desk works through them one at a time in the browser window. It
    clicks into each application, fills every page, adds Workday's work and
