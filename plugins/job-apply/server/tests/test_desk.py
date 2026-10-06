@@ -186,11 +186,19 @@ def test_desk_page_buttons_reach_the_api(srv, tmp_path):
 
                 await page.fill("#pw", "typed-on-the-page")
                 await page.click("#pw-form button[type=submit]")
-                await page.wait_for_selector("#pw-state:text('Saved')")
+                await page.wait_for_selector("#pw-state [data-site=workday].good")
                 assert config.get_secret("workday_password") == "typed-on-the-page"
                 # not left sitting in the page (cleared once the save returns; the page's own
-                # refresh can show "Saved" a moment before that)
+                # refresh can show it saved a moment before that)
                 await page.wait_for_function("() => document.getElementById('pw').value === ''", timeout=5000)
+                # another system's password (Edwards, Qorvo and Amkor are on SuccessFactors)
+                assert await page.locator("#pw-state [data-site=successfactors].good").count() == 0
+                await page.select_option("#pw-site", "successfactors")
+                await page.fill("#pw", "another-one")
+                await page.click("#pw-form button[type=submit]")
+                await page.wait_for_selector("#pw-state [data-site=successfactors].good")
+                assert config.get_secret("successfactors_password") == "another-one"
+                assert config.get_secret("workday_password") == "typed-on-the-page"
                 await browser.close()
         finally:
             await desk.stop()
@@ -322,10 +330,11 @@ def test_a_site_password_goes_to_secrets_only(srv):
                 h = {"x-desk-token": desk.token}
                 body = {"name": "workday_password", "value": "s3cret: #1"}
                 assert (await c.post("/api/password", json=body)).status_code == 403
-                assert (await c.get("/api/state", headers=h)).json()["passwords"] == {"workday": False}
+                none = {"workday": False, "successfactors": False, "icims": False}
+                assert (await c.get("/api/state", headers=h)).json()["passwords"] == none
                 assert (await c.post("/api/password", headers=h, json=body)).json() == {"saved": True}
                 after = await c.get("/api/state", headers=h)
-                assert after.json()["passwords"] == {"workday": True} and "s3cret" not in after.text
+                assert after.json()["passwords"] == {**none, "workday": True} and "s3cret" not in after.text
                 for bad in ({"name": "profile", "value": "x"}, {"name": "workday_password", "value": "a\nb"}):
                     assert (await c.post("/api/password", headers=h, json=bad)).status_code == 400
         finally:
@@ -354,7 +363,7 @@ def test_saving_a_password_leaves_the_rest_of_the_file_alone(job_apply_home):
 
 def test_a_broken_secrets_file_doesnt_break_the_page(srv, job_apply_home):
     config.secrets_path().write_text("workday_password: [unclosed\n")
-    assert Desk(srv).state()["passwords"] == {"workday": False}
+    assert Desk(srv).state()["passwords"] == {"workday": False, "successfactors": False, "icims": False}
 
 
 def test_pasted_links_are_read_saved_and_listed(srv):

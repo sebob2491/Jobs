@@ -997,3 +997,16 @@ def test_an_older_successfactors_posting_is_applied_to_through_its_apply(srv, mo
     r = run(go())
     assert r.need == "sign_in", (r.reason, r.log)
     assert "clicked \u201cApply\u201d" in r.log
+
+
+
+def test_a_sign_in_by_hand_mentions_the_password_the_desk_could_save(monkeypatch):
+    """The tip at a sign-in names the system whose password the desk page saves; none for a
+    system it doesn't, or once that password is saved."""
+    monkeypatch.setattr(pipeline, "_secret", lambda name: None)
+    assert "Save a SuccessFactors password" in pipeline._password_tip("https://career8.successfactors.com/career?x=1")
+    assert "Save a Workday password" in pipeline._password_tip("https://intel.wd1.myworkdayjobs.com/External/login")
+    assert pipeline._password_tip("https://www.taleo.net/careersection/login") == ""  # not offered on the page
+    assert pipeline._password_tip("https://example.com/careers/login") == ""
+    monkeypatch.setattr(pipeline, "_secret", lambda name: "saved")
+    assert pipeline._password_tip("https://career8.successfactors.com/career?x=1") == ""

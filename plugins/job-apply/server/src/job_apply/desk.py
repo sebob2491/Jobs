@@ -30,7 +30,7 @@ from starlette.responses import HTMLResponse, JSONResponse, Response
 from starlette.routing import Route
 
 from . import config
-from .pipeline import Applier, question_key
+from .pipeline import DESK_PASSWORDS, Applier, question_key
 from .ats import detect_ats
 from .postings import fetch_posting, finalize, parse_html
 from .recommend import recommend, score_listing
@@ -408,7 +408,8 @@ class Desk:
             "settings": {"submit_mode": settings.submit_mode, "dry_run": settings.dry_run,
                          "auto_submit": self.applier.auto_submit, "tailor_resumes": self.applier.tailor},
             "tailoring": len(self.applier.tailoring()),
-            "passwords": {"workday": _has_secret("workday_password")},  # saved or not, never the value
+            # saved or not, never the value
+            "passwords": {ats: _has_secret(f"{ats}_password") for ats in SITE_PASSWORDS},
             "answers_problem": config.answers_problem(),
             "search": self.search,
             "listings": rows,
@@ -431,6 +432,9 @@ def _has_secret(name: str) -> bool:
 
 
 MAX_LINKS = 20  # pasted at once; a person's own picks, not a crawl
+# The job systems whose password the page lets the person save (the employers on the list
+# use these): the desk signs in with each on that system's own sites only (PASSWORD_SITES).
+SITE_PASSWORDS = tuple(name.removesuffix("_password") for name in DESK_PASSWORDS)
 
 _desk: Desk | None = None
 

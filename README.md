@@ -124,14 +124,16 @@ opens a page on your computer (served by the plugin on `127.0.0.1`):
    that every application that needs nothing from you is sent. LinkedIn and Indeed
    are always yours to submit.
 
-Each employer on Workday has its own account. Save a password in the desk's
-**Workday password** card and it fills in their Create Account forms (you tick their
-terms and press the button) and signs you in after that. When it doesn't sign in at an
-employer, usually because it's your first application there, the desk tries it once and
-then fills in that employer's Create Account form instead. The password goes from the page
-straight into `~/.job-apply/secrets.yaml` on your computer, and is only ever typed into
-Workday's own addresses (`*.myworkdayjobs.com`, `*.myworkday.com`). Claude never sees it,
-and the desk only reports whether one is saved.
+Each employer has its own account on its job site. In the desk's **Site passwords**
+card, save one password for a job system: Workday (13 of the employers), SuccessFactors
+(Edwards, Qorvo, Amkor) or iCIMS (Daifuku). The desk then fills in that system's Create
+Account forms (you tick their terms and press the button) and signs you in after that.
+When it doesn't sign in at an employer, usually because it's your first application
+there, the desk tries it once and then fills in that employer's Create Account form
+instead. On Qorvo's one-page application it puts the password in both boxes. The password
+goes from the page straight into `~/.job-apply/secrets.yaml` on your computer, and is only
+ever typed into that system's own addresses (for Workday, `*.myworkdayjobs.com` and
+`*.myworkday.com`). Claude never sees it, and the desk only reports whether one is saved.
 
 The desk works in each job's own browser tab and follows only the tabs an application
 opens itself, so a tab you open (to check your email, say) is left alone. Jobs already
