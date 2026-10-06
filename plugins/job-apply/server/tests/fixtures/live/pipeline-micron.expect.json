@@ -1,0 +1,231 @@
+{
+  "source_url": "https://micron.eightfold.ai/careers/apply?pid=44751998",
+  "note": "live pipeline: Micron",
+  "fields": [
+    {
+      "label": "Accepted file format: .rtf, .txt, .doc, .docx or .pdf",
+      "kind": "file",
+      "required": false
+    },
+    {
+      "label": "Email",
+      "kind": "text",
+      "required": true
+    },
+    {
+      "label": "First name",
+      "kind": "text",
+      "required": true
+    },
+    {
+      "label": "Last name",
+      "kind": "text",
+      "required": true
+    },
+    {
+      "label": "Country code",
+      "kind": "combobox",
+      "required": true
+    },
+    {
+      "label": "Phone Number",
+      "kind": "text",
+      "required": true
+    },
+    {
+      "label": "Country",
+      "kind": "combobox",
+      "required": true
+    },
+    {
+      "label": "State",
+      "kind": "combobox",
+      "required": true
+    },
+    {
+      "label": "City",
+      "kind": "text",
+      "required": true
+    },
+    {
+      "label": "Country of Residence",
+      "kind": "combobox",
+      "required": true
+    },
+    {
+      "label": "First Name",
+      "kind": "text",
+      "required": true
+    },
+    {
+      "label": "Last Name",
+      "kind": "text",
+      "required": true
+    },
+    {
+      "label": "Address Line 1",
+      "kind": "text",
+      "required": true
+    },
+    {
+      "label": "City",
+      "kind": "text",
+      "required": true
+    },
+    {
+      "label": "Postal Code",
+      "kind": "text",
+      "required": true
+    },
+    {
+      "label": "State",
+      "kind": "combobox",
+      "required": true
+    },
+    {
+      "label": "Please enter your Race/Ethnicity",
+      "kind": "combobox",
+      "required": false
+    },
+    {
+      "label": "Please select your citizenship status: (Note: Please type the country of the position you are applying for to provide your citizenship status in that country. Options for that country will be shown.)",
+      "kind": "combobox",
+      "required": false
+    },
+    {
+      "label": "Please select your disability status:",
+      "kind": "combobox",
+      "required": false
+    },
+    {
+      "label": "Are you at least 18 years old?",
+      "kind": "combobox",
+      "required": true
+    },
+    {
+      "label": "Are you a Domestic Worker or a Foreign Worker?",
+      "kind": "combobox",
+      "required": true
+    },
+    {
+      "label": "When would you be available if an offer was accepted?",
+      "kind": "combobox",
+      "required": true
+    },
+    {
+      "label": "Are you bonded by your current company/school? If yes, pls state the bond value.",
+      "kind": "text",
+      "required": true
+    },
+    {
+      "label": "Have you applied on any previous occasions for employment in any capacity with Micron?",
+      "kind": "combobox",
+      "required": true
+    },
+    {
+      "label": "Do you have any friends/relatives presently employed by Micron?",
+      "kind": "combobox",
+      "required": true
+    },
+    {
+      "label": "Please state their Name/Relationship/Dept/Position/Employee Number",
+      "kind": "text",
+      "required": false
+    },
+    {
+      "label": "Have you ever been terminated or asked to resign by any former employer for the following reasons:",
+      "kind": "combobox",
+      "required": true
+    },
+    {
+      "label": "Are you referred to this job by a Micron employee?",
+      "kind": "combobox",
+      "required": true
+    },
+    {
+      "label": "If Yes, please state their name/dept/employee no:",
+      "kind": "text",
+      "required": false
+    },
+    {
+      "label": "All Micron sites must observe U.S. export control rules that control information that may be provided to persons from Cuba, Iran, North Korea, and Syria. Are you a citizen of, or do you hold dual citizenship with any of these countries?",
+      "kind": "combobox",
+      "required": true
+    },
+    {
+      "label": "Expected Monthly Basic Salary (exclude allowance & overtime pay):",
+      "kind": "text",
+      "required": true
+    },
+    {
+      "label": "Do you have any plans to join the board of directors of a for-profit company prior to starting a job with Micron?",
+      "kind": "combobox",
+      "required": true
+    },
+    {
+      "label": "Current/Last Drawn Monthly Basic Salary:",
+      "kind": "text",
+      "required": true
+    },
+    {
+      "label": "Are you currently serving on the board of directors of any for-profit company?",
+      "kind": "combobox",
+      "required": true
+    },
+    {
+      "label": "How many months is your current package including any fixed yearly bonus?",
+      "kind": "text",
+      "required": true
+    },
+    {
+      "label": "Please provide more details (if yes Recruiter MUST provide details to legal)",
+      "kind": "text",
+      "required": true
+    },
+    {
+      "label": "In the last 5 years, have you been an employee of a U.S. federal, state, or local government?",
+      "kind": "combobox",
+      "required": true
+    },
+    {
+      "label": "Please select your academic ranking:",
+      "kind": "combobox",
+      "required": true
+    },
+    {
+      "label": "Please provide the name of the government entity, your title, and dates of employment.",
+      "kind": "text",
+      "required": true
+    },
+    {
+      "label": "Please describe your current compensation package. Include description of basic salary, AWS (Annual Wage Supplement)/fixed bonus, variable bonuses, allowances, stock options/equity and other compensation in the currency you received them in:",
+      "kind": "text",
+      "required": true
+    },
+    {
+      "label": "Terms and Conditions Please read carefully. You may ask your recruiter to explain this covenant. I certify that the information contained in the application and related documents or in any written or oral statement is correct to the best of my knowledge and understand that any falsification, misrepresentation or omission on this application is grounds for refusal to hire, or if hired, dismissal (regardless of when the falsification, misrepresentation or omission is discovered). To determine my qualifications, I hereby consent and authorize the company to collect, process, handle, conduct an investigation of information under this my application for legal, personnel, administrative, management purposes, and I release and hold the company harmless from any related liability including for conducting pre-employment screening and future the investigations. I authorize all my prior employers, educational institutions, and other third parties to release all information. I understand and agree that this application or any other documents is not a guarantee of continued employment. I understand that any offer of employment is conditioned upon my submitting and successfully clearing all pre-employment screening activities required by Micron for the specific site or region. The applicant hereby testifies, warrants, and represents that all questions in this application have been fully and accurately answered.",
+      "kind": "combobox",
+      "required": true
+    },
+    {
+      "label": "Have you previously been employed by any Micron Company?",
+      "kind": "radio_group",
+      "required": true
+    },
+    {
+      "label": "Yes",
+      "kind": "checkbox",
+      "required": false
+    },
+    {
+      "label": "Please select your gender:",
+      "kind": "radio_group",
+      "required": false
+    },
+    {
+      "label": "Save my answers for future applications.",
+      "kind": "checkbox",
+      "required": false
+    }
+  ]
+}
