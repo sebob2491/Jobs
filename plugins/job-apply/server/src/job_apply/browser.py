@@ -537,15 +537,11 @@ class BrowserSession:
             try:
                 await loc.click(timeout=8000)
             except PlaywrightTimeout as e:
+                # Knockout/React can swap the button out mid-click, or a cookie banner sits on
+                # top: find it again by its text if it was replaced, then click it directly.
                 if "detached" in str(e) and info["text"]:
-                    # Knockout/React re-renders can swap the button out mid-click; find it again once.
-                    again = await self._find_by_text(page, info["text"])
-                    if again is None:
-                        raise
-                    await again.click(timeout=8000)
-                else:
-                    # Something (often a cookie banner) sits on top; click the element directly.
-                    await loc.evaluate("el => el.click()")
+                    loc = await self._find_by_text(page, info["text"]) or loc
+                await loc.evaluate("el => el.click()", timeout=5000)
             await self._settle(page)
             page = await self.page()  # the click may have opened a new tab
             return await self._summary(page)

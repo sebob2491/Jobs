@@ -50,8 +50,15 @@ def redact(text: str, secrets: list[str]) -> str:
 
 def clean_html(raw: str, secrets: list[str], frame_map: dict[str, str] | None = None, base_url: str = "") -> str:
     soup = BeautifulSoup(raw, "html.parser")
-    for tag in soup.find_all(["script", "noscript"]):
+    for tag in soup.find_all(["script", "noscript", "base"]):
         tag.decompose()
+    # Keep fixtures hermetic: nothing may load from the network when a test opens them.
+    for tag in soup.find_all("link"):
+        if str(tag.get("href", "")).startswith(("http:", "https:", "//")):
+            tag.decompose()
+    for tag in soup.find_all(["img", "source", "video", "audio"]):
+        tag.attrs.pop("src", None)
+        tag.attrs.pop("srcset", None)
     for tag in soup.find_all(True):
         for attr in [a for a in tag.attrs if a.startswith("data-ja-") or a.startswith("on")]:
             del tag[attr]

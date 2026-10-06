@@ -11,12 +11,14 @@ def test_personal_data_is_redacted(tmp_path):
       <div data-automation-id="legalName" data-ja-id="3" onclick="x()">Sam Rivera</div>
       <input name="phone" value="480-555-0123"><span>Call 4805550123</span>
       <a href="https://www.linkedin.com/in/samrivera">profile</a>
-      <label><input type="radio" value="Yes" checked> Yes</label></body></html>"""
+      <label><input type="radio" value="Yes" checked> Yes</label>
+      <link rel="stylesheet" href="https://cdn.example.com/site.css"><img src="https://cdn.example.com/logo.png"></body></html>"""
     out = clean_html(raw, secrets)
     for leaked in ("Rivera", "sam.rivera", "480-555-0123", "4805550123", "samrivera", "<script", "data-ja-", "onclick"):
         assert leaked.lower() not in out.lower(), leaked
     assert 'data-automation-id="legalName"' in out  # structure the extractor relies on is kept
     assert 'value="Yes"' in out  # radio/checkbox option values are kept
+    assert "cdn.example.com" not in out  # nothing loads from the network when a test opens it
 
 
 def test_convert_writes_expectations(tmp_path):
