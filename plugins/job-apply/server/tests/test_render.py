@@ -52,3 +52,10 @@ def test_render_document_into_job_folder(srv):
 
 def test_count_pages():
     assert count_pages(b"<< /Type /Pages /Kids [1 0 R 2 0 R] >> << /Type /Page >> << /Type/Page >>") == 2
+
+
+@pytest.mark.skipif(not browser_available(), reason="no Playwright Chromium installed")
+def test_render_default_resume_into_home(srv, job_apply_home):
+    out = run(srv.render_document("resume", RESUME, default=True))
+    assert Path(out["path"]) == job_apply_home / "Sam_Rivera_Resume.pdf"
+    assert Path(out["path"]).read_bytes().startswith(b"%PDF")

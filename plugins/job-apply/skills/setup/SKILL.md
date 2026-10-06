@@ -23,7 +23,12 @@ All of the user's data lives in `~/.job-apply/`, outside the plugin:
 
 2. **Resume.** Ask for the resume file path, or look for a resume in the working
    directory. Copy it to `~/.job-apply/resume.pdf` (or `.docx`) and set
-   `documents.resume`. Read it, then fill `personal`, `experience`, `education`,
+   `documents.resume`. If the user has no file handy and the Indeed connector is
+   available, call its `get_resume` and use that as the source instead. Indeed
+   resumes often lack end dates and bullet points, so ask for those. Then write
+   a clean resume in Markdown, show it to the user, render it with
+   `render_document("resume", markdown, default=true)`, and set
+   `documents.resume` to the path it returns. Read it, then fill `personal`, `experience`, `education`,
    `history.previous_employers`, `work_history` (every job, with start/end month)
    and `education_history` from it. Use only what the resume says; if a date or
    location is missing, ask rather than guess.

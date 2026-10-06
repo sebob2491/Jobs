@@ -258,9 +258,11 @@ def logged_emails(since_days: int | None = 90) -> dict[str, Any]:
 
 
 @mcp.tool()
-async def render_document(kind: str, markdown: str, job_id: int | None = None) -> dict[str, Any]:
+async def render_document(kind: str, markdown: str, job_id: int | None = None, default: bool = False) -> dict[str, Any]:
     """Turn a tailored resume or cover letter written in Markdown into a PDF in the job's
     folder. autofill uploads it there ahead of the profile's default documents.
+    With default=true (no job), it writes the user's default document into ~/.job-apply
+    instead, for setup; then point documents.resume / documents.cover_letter at it.
 
     kind: "resume" or "cover_letter".
     Resume layout: `# Full Name`, a contact line, `## Section` headings,
@@ -269,8 +271,7 @@ async def render_document(kind: str, markdown: str, job_id: int | None = None) -
     Only reorder, trim and rephrase what the user's real resume says."""
     if kind not in KINDS:
         raise ValueError(f"kind must be one of {KINDS}")
-    job = _job(job_id)
-    folder = Path(job["folder"])
+    folder = config.ensure_home() if default else Path(_job(job_id)["folder"])
     prof = config.Profile.load()
     stem = "_".join(p for p in [prof.get("personal.first_name"), prof.get("personal.last_name")] if p)
     name = f"{stem}_{'Resume' if kind == 'resume' else 'Cover_Letter'}" if stem else kind
