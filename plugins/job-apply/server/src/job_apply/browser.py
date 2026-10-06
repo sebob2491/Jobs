@@ -478,6 +478,30 @@ class BrowserSession:
             finally:
                 await tab.close()
 
+    async def frames_html(self, url: str) -> list[str]:
+        """The HTML of `url` and of each frame on it, read in a background tab. Some job
+        boards (iCIMS) turn away plain requests and list their openings inside a frame."""
+        async with self._lock:
+            if self._ctx is None:
+                await self._launch()
+            assert self._ctx is not None
+            tab = await self._ctx.new_page()
+            try:
+                await tab.goto(url, wait_until="domcontentloaded", timeout=45000)
+                try:
+                    await tab.wait_for_load_state("networkidle", timeout=8000)
+                except PlaywrightTimeout:
+                    pass  # pages that keep polling: what's drawn by now is enough
+                pages = []
+                for frame in tab.frames:
+                    try:
+                        pages.append(await frame.content())
+                    except PlaywrightError:  # a frame that went away meanwhile
+                        continue
+                return pages
+            finally:
+                await tab.close()
+
     async def snapshot(self, dest: Path, note: str = "", details: Any = None) -> Path:
         """Save what's needed to debug a page later: HTML of every frame, a screenshot
         and the extracted fields. Stays on the user's machine."""

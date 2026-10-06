@@ -21,10 +21,11 @@ import re
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable
-from urllib.parse import quote, urlencode
+from urllib.parse import quote, urlencode, urljoin
 
 import httpx
 import yaml
+from bs4 import BeautifulSoup
 
 from . import config
 from .ats import workday_parts
@@ -34,11 +35,11 @@ from .postings import USER_AGENT
 WORKDAY_PAGE = 20  # Workday rejects larger pages
 MAX_ALTERNATIVES = 4
 FETCH_WHEN_FILTERING = 60  # results to scan per search when filtering by location ourselves
-CLIENT_SIDE = {"greenhouse", "lever"}  # whole board comes back at once; titles are filtered here
+CLIENT_SIDE = {"greenhouse", "lever", "applicantstack"}  # whole board comes back at once; titles are filtered here
 # Searches whose data only comes through the site's own page in the browser (ASML's
-# Sitecore Discover widget). search_companies lists them under needs_browser and the
-# search_company_jobs tool runs them.
-BROWSER_SEARCHES = {"sitecore"}
+# Sitecore Discover widget; iCIMS portals, which turn away plain requests).
+# search_companies lists them under needs_browser and the search_company_jobs tool runs them.
+BROWSER_SEARCHES = {"sitecore", "icims"}
 RETRY_STATUS = {429, 500, 502, 503, 504}  # a passing problem on the site's side
 RETRY_DELAY = 1.0  # seconds, doubled on the second retry
 
@@ -177,6 +178,8 @@ async def _workday(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, 
         raise SearchError(f"Not a Workday site URL: {cfg}")
     host, tenant, site = parts["host"], parts["tenant"], parts["site"]
     api = f"https://{host}/wday/cxs/{tenant}/{site}/jobs"
+    # myworkdaysite.com addresses carry the tenant: /recruiting/<tenant>/<site>/job/...
+    base = f"https://{host}/recruiting/{tenant}/{site}" if "myworkdaysite.com" in host else f"https://{host}/{site}"
 
     async def page(offset: int, facets: dict[str, list[str]]) -> dict[str, Any]:
         body = {"appliedFacets": facets, "limit": WORKDAY_PAGE, "offset": offset, "searchText": query}
@@ -206,7 +209,7 @@ async def _workday(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, 
             if nowhere_near and location_matches(p.get("locationsText", ""), terms) is None:
                 continue
             out.append(Listing(
-                company="", title=p.get("title", ""), url=f"https://{host}/{site}{p.get('externalPath') or ''}",
+                company="", title=p.get("title", ""), url=f"{base}{p.get('externalPath') or ''}",
                 location=p.get("locationsText", ""), posted=p.get("postedOn", ""),
                 external_id=(p.get("bulletFields") or [""])[0], ats="workday",
             ))
@@ -365,6 +368,79 @@ def eightfold_page_url(cfg: dict[str, Any], query: str, location: str | None) ->
     return f"https://{cfg['host']}/careers?{urlencode(params)}"
 
 
+async def _applicantstack(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, terms: list[str]) -> list[Listing]:
+    """ApplicantStack boards (SCREEN SPE USA) list every opening on one page, each with
+    its location."""
+    base = f"https://{cfg}.applicantstack.com"
+    url = f"{base}/x/openings"
+    r = await _send(client, "GET", url)
+    _raise_for(r, url)
+    return [listing for listing in parse_applicantstack(r.text, base) if title_matches(listing.title, query)]
+
+
+def parse_applicantstack(html: str, base: str) -> list[Listing]:
+    soup = BeautifulSoup(html, "html.parser")
+    out: list[Listing] = []
+    seen: set[str] = set()
+    for a in soup.select('a[href*="/x/detail/"]'):
+        url = urljoin(base + "/", str(a["href"]))
+        title = a.get_text(" ", strip=True)
+        if not title or url in seen:
+            continue
+        seen.add(url)
+        row = a.find_parent("tr")  # a table: Job Title, Location
+        cells = [td.get_text(" ", strip=True) for td in row.find_all("td") if td.find("a") is None] if row else []
+        out.append(Listing(company="", title=title, url=url, location=next((c for c in cells if c), ""),
+                           external_id=url.rstrip("/").rsplit("/", 1)[-1], ats="applicantstack"))
+    return out
+
+
+def icims_page_url(cfg: Any, query: str) -> str:
+    return f"https://{cfg}.icims.com/jobs/search?" + urlencode({"ss": "1", "searchKeyword": query, "in_iframe": "1"})
+
+
+async def icims_search(frames_html: Callable[[str], Awaitable[list[str]]], cfg: Any, query: str,
+                       found: list[Listing]) -> None:
+    """iCIMS portals (Daifuku America) answer plain requests with HTTP 405, so the search
+    page is read in the browser. The openings are drawn inside the portal's frame, each
+    with its location and posting date."""
+    base = f"https://{cfg}.icims.com"
+    for html in await frames_html(icims_page_url(cfg, query)):
+        found.extend(parse_icims(html, base))
+
+
+def parse_icims(html: str, base: str) -> list[Listing]:
+    soup = BeautifulSoup(html, "html.parser")
+    out: list[Listing] = []
+    seen: set[str] = set()
+    for a in soup.select('a[href*="/jobs/"]'):
+        m = re.search(r"/jobs/(\d+)/[^/?#]+/job", str(a.get("href") or ""))
+        if not m:
+            continue
+        url = urljoin(base + "/", str(a["href"]).split("?")[0])  # the full page, not the frame's copy
+        if url in seen:
+            continue
+        seen.add(url)
+        heading = a.find(["h2", "h3", "h4"])
+        for label in a.select(".sr-only, .field-label"):  # "External Title", read out to screen readers
+            label.decompose()
+        title = (heading or a).get_text(" ", strip=True) or re.sub(r"^\d+\s*-\s*", "", str(a.get("title") or ""))
+        row = a.find_parent(class_="row")
+        location = posted = ""
+        if row is not None:
+            left = row.select_one(".header.left")  # Job Locations: US-AZ-Chandler
+            if left is not None:
+                location = " ".join(s.get_text(" ", strip=True) for s in left.find_all("span", recursive=False)
+                                    if "sr-only" not in (s.get("class") or []))
+            when = row.select_one(".header.right span[title]")  # Posted Date: 9/24/2026 6:18 PM
+            if when is not None:
+                d = re.match(r"(\d{1,2})/(\d{1,2})/(\d{4})", str(when["title"]))
+                posted = f"{d.group(3)}-{int(d.group(1)):02d}-{int(d.group(2)):02d}" if d else ""
+        out.append(Listing(company="", title=title, url=url, location=location.strip(), posted=posted,
+                           external_id=m.group(1), ats="icims"))
+    return out
+
+
 async def _eightfold(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, terms: list[str]) -> list[Listing]:
     host, domain = cfg["host"], cfg["domain"]
     api = f"https://{host}/api/pcsx/search"
@@ -462,6 +538,7 @@ SEARCHERS: dict[str, Callable[[httpx.AsyncClient, Any, str, int, list[str]], Awa
     "eightfold": _eightfold,
     "smartrecruiters": _smartrecruiters,
     "oracle": _oracle,
+    "applicantstack": _applicantstack,
 }
 
 

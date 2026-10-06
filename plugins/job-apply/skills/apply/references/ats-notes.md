@@ -21,7 +21,7 @@ the page URL. Use this file for the parts of each flow that `autofill` can't do.
   it's fine, take the privacy-preserving option: "Reject all", "Decline" or
   "Necessary only". Never accept marketing cookies on their behalf.
 
-## Workday (`*.myworkdayjobs.com`): Applied Materials, KLA, Intel, Microchip, NXP, TEL, Analog Devices, Hitachi High-Tech, Entegris, ASML (some postings)
+## Workday (`*.myworkdayjobs.com`, `*.myworkdaysite.com`): Applied Materials, KLA, Intel, Microchip, NXP, TEL, Analog Devices, Hitachi High-Tech, Entegris, Axcelis, Onto Innovation, ASML (some postings)
 
 - Each company has its own Workday account. Use the same email each time.
 - Path: **Apply** → choose **Autofill with Resume** (Workday parses the resume
@@ -114,6 +114,17 @@ the page URL. Use this file for the parts of each flow that `autofill` can't do.
   banner, which can keep the embedded form from loading.
 - Custom questions and a voluntary EEO section are at the bottom. The final button,
   **Submit Application** or **Submit application**, goes through `submit_application`.
+
+## ApplicantStack (`*.applicantstack.com`): SCREEN SPE USA
+
+- Every opening is listed on one page (`/x/openings`), with its location. The board also
+  has a **My Account** page for returning to a saved or submitted application.
+
+## iCIMS (`*.icims.com`): Daifuku America
+
+- The portal draws its pages inside a frame, so field ids start with `f1-`. Its job
+  search lists each opening with its location (`US-AZ-Chandler`) and posting date. It
+  turns away plain requests (HTTP 405), so the search runs in a background browser tab.
 
 ## ASML (`asml.com/en/careers`)
 

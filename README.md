@@ -24,10 +24,12 @@ each job as a PDF that it uploads in place of your default.
 
 It works with any careers site, plus specific handling for the systems common
 at semiconductor companies: Workday (Applied Materials, KLA, Intel, Microchip,
-NXP, TEL, ADI), Eightfold (Lam Research, Micron, Infineon), SuccessFactors (TSMC
-Arizona, Amkor, Qorvo), Oracle (onsemi, TI), Greenhouse (ASM) and Lever.
-`plugins/job-apply/data/companies.yaml` lists 21 semiconductor employers with
-Arizona sites.
+NXP, TEL, ADI, Onto Innovation, Axcelis), Eightfold (Lam Research, Micron, Infineon),
+SuccessFactors (TSMC Arizona, Amkor, Qorvo), Oracle (onsemi, TI), Greenhouse (ASM),
+ApplicantStack (SCREEN), iCIMS (Daifuku) and Lever.
+`plugins/job-apply/data/companies.yaml` lists 25 semiconductor employers with
+Arizona sites, including equipment makers whose field service engineers work at
+Arizona fabs.
 
 ## How submitting works
 

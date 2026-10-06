@@ -208,15 +208,28 @@ PROBES = {
     "onsemi": "https://hctz.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1001/jobs?keyword=field+service",
     # Equipment makers that hire field service engineers around Phoenix, not in companies.yaml
     # yet: what their job boards are built on, and how a listing looks.
-    "SCREEN SPE USA": "https://seus.applicantstack.com/x/openings",
     "Daifuku America": "https://careers-daifuku-america.icims.com/jobs/search?ss=1&searchKeyword=field+service&in_iframe=1",
-    "Onto Innovation": "https://ontoinnovation.com/careers",
-    "Axcelis": "https://www.axcelis.com/careers/",
     "SUSS MicroTec": "https://career.suss.com/en/jobs",
-    "Kokusai Semiconductor Equipment": "https://www.ksec.com/careers",
-    "Ebara Technologies": "https://www.ebaratech.com/careers",
+    "Ebara Technologies": "https://www.ebaratech.com/careers/job-openings/",
     "Thermo Fisher": "https://jobs.thermofisher.com/global/en/search-results?keywords=field%20service%20engineer%20arizona",
 }
+# Job links as a page (or one of its frames) draws them, with the text of the card around
+# each and a little of its markup, to write a reader for a new job board from.
+JOB_LINKS_JS = r"""() => {
+  const out = [];
+  for (const a of document.querySelectorAll('a[href]')) {
+    const href = a.href;
+    if (!/\/job|find-your-job\/.+|jobid|requisition|\/detail\/|\/opening|\/position/i.test(href)) continue;
+    let card = a;
+    for (let i = 0; i < 4 && card.parentElement && (card.innerText || '').length < 80; i++) card = card.parentElement;
+    out.push({href, text: (a.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 120),
+              card: (card.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 300),
+              html: card.outerHTML.replace(/\s+/g, ' ').slice(0, 700)});
+    if (out.length >= 12) break;
+  }
+  return out;
+}"""
+
 # Hosts of the job systems the search knows, or might learn: a careers page's links to one
 # of these say where its openings really live.
 ATS_HOST = re.compile(r"myworkdayjobs|myworkdaysite|myworkday\.com|icims\.com|applicantstack|greenhouse\.io|lever\.co|"
@@ -240,13 +253,15 @@ async def probe_page(name: str, url: str) -> dict[str, Any]:
             seen.append({"method": r.request.method, "status": r.status, "url": r.url[:keep], "type": ctype[:40]})
             if "/discover/v2/" in r.url:  # ASML's job search (Sitecore Discover): keep the request and an answer
                 samples.append(asyncio.ensure_future(_sample(r)))
+            elif "jobPublication/list.json" in r.url or (r.url.endswith("/widgets") and r.request.method == "POST"):
+                samples.append(asyncio.ensure_future(_sample(r, 2500)))  # SUSS's job list; Phenom's (Thermo Fisher)
 
-    async def _sample(r: Any) -> dict[str, Any]:
+    async def _sample(r: Any, keep: int = 1500) -> dict[str, Any]:
         try:
             body = await r.text()
         except Exception as e:  # noqa: BLE001
             body = f"unreadable: {e}"
-        out: dict[str, Any] = {"request": (r.request.post_data or "")[:3000], "response": body[:1500]}
+        out: dict[str, Any] = {"url": r.url[:600], "request": (r.request.post_data or "")[:3000], "response": body[:keep]}
         try:  # the answer's shape: totals, filter names and values, where the openings are
             out["widgets"] = [{
                 "keys": sorted(k for k in w if k not in ("content", "facet")),
@@ -268,21 +283,16 @@ async def probe_page(name: str, url: str) -> dict[str, Any]:
         rec["json_calls"] = seen[:30]
         rec["text_sample"] = re.sub(r"\s+", " ", await tab.inner_text("body"))[:500]
         if samples:
-            rec["api_samples"] = [await s for s in samples[-2:]]
-        # job links as the page draws them, with the text of the card around each
-        rec["job_links"] = await tab.evaluate(r"""() => {
-          const out = [];
-          for (const a of document.querySelectorAll('a[href]')) {
-            const href = a.href;
-            if (!/\/job|find-your-job\/.+|jobid|requisition|\/detail\/|\/opening|\/position/i.test(href)) continue;
-            let card = a;
-            for (let i = 0; i < 4 && card.parentElement && (card.innerText || '').length < 80; i++) card = card.parentElement;
-            out.push({href, text: (a.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 120),
-                      card: (card.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 300)});
-            if (out.length >= 12) break;
-          }
-          return out;
-        }""")
+            rec["api_samples"] = [await s for s in samples[-3:]]
+        # job links as the page draws them (and its frames: iCIMS lists jobs in one), with the
+        # text of the card around each and the card's markup
+        job_links: list[Any] = []
+        for frame in tab.frames:
+            try:
+                job_links += await frame.evaluate(JOB_LINKS_JS)
+            except Exception:  # noqa: BLE001 - a frame that went away
+                continue
+        rec["job_links"] = job_links[:12]
         hrefs = await tab.evaluate("() => [...document.querySelectorAll('a[href], iframe[src]')].map(e => e.href || e.src)")
         rec["ats_links"] = sorted({h for h in hrefs if ATS_HOST.search(h)})[:10]
         rec["frames"] = [f.url[:200] for f in tab.frames if f is not tab.main_frame][:5]
