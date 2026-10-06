@@ -19,8 +19,10 @@ The desk is a local web page served by this plugin. It does what the `find-jobs`
   - questions the profile doesn't answer, answered right on the page. Answers are
     remembered in `~/.job-apply/answers.yaml` unless the user unticks "remember".
     Consent questions default to not remembered;
-  - sign-ins, bot checks and emailed codes. The user deals with these in the browser
-    window, and the desk carries on by itself once the page moves past them.
+  - sign-ins, bot checks, CAPTCHAs and emailed codes. The user deals with these in the
+    browser window, and the desk carries on by itself once the page moves past them.
+  - **Alert me** (in the header) turns on desktop notifications for jobs that come to
+    need the user or are ready to submit, so the desk can be left in the background.
 - **Workday password** stores one password for the user's Workday accounts (each
   employer has its own). With it, the desk signs in by itself and fills in Create
   Account forms, leaving the terms box and the button to the user. If the password

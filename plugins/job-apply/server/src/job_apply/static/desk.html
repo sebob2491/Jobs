@@ -115,6 +115,7 @@ footer { max-width: 1240px; margin: 0 auto; padding: 0 16px 24px; color: var(--m
     <span id="mode"></span>
     <span class="spacer"></span>
     <span class="small" id="searched"></span>
+    <button class="link" id="alerts" data-act="alerts" hidden>Alert me</button>
     <button id="find" data-act="find">Find jobs</button>
   </div>
 </header>
@@ -424,11 +425,54 @@ function renderHeader() {
     ${errs.map(([c, e]) => `<div>${esc(c)}: ${esc(e)}</div>`).join("")}</details>` : "";
 }
 
+// Desktop alerts, so the desk can work in the background: one when a job needs you (a
+// sign-in, a CAPTCHA, questions) or is ready to submit. Only for what happens after the page
+// opens, and only once per job and step.
+const ALERTS_KEY = "jobdesk-alerts";
+let announced = null;  // "job:status:need" already seen (null until the first state)
+
+function alertsOn() {
+  try {
+    return "Notification" in window && Notification.permission === "granted" && localStorage.getItem(ALERTS_KEY) !== "off";
+  } catch (e) { return false; }
+}
+
+function renderAlerts() {
+  const b = $("alerts");
+  if (!("Notification" in window)) { b.hidden = true; return; }
+  b.hidden = false;
+  const blocked = Notification.permission === "denied";
+  b.textContent = blocked ? "Alerts blocked" : alertsOn() ? "Alerts on" : "Alert me";
+  b.title = blocked ? "Your browser blocks notifications from this page; allow them in its site settings."
+    : alertsOn() ? "You get a desktop alert when a job needs you. Click to turn alerts off."
+    : "Get a desktop alert when a job needs you or is ready to submit.";
+  b.setAttribute("aria-pressed", String(alertsOn()));
+}
+
+function announce() {
+  const due = allRuns().filter((r) => r.status === "needs_you" || r.status === "ready");
+  const keys = new Set(due.map((r) => `${r.job_id}:${r.status}:${r.need || ""}`));
+  if (announced !== null && alertsOn()) {
+    for (const r of due) {
+      if (announced.has(`${r.job_id}:${r.status}:${r.need || ""}`)) continue;
+      const head = r.status === "ready" ? "ready to submit" : "needs you";
+      try {
+        const n = new Notification(`${r.company || "A job"} ${head}`, {body: `${r.title}: ${r.reason || ""}`.slice(0, 180),
+                                                                     tag: `jobdesk-${r.job_id}`});
+        n.onclick = () => { window.focus(); n.close(); };
+      } catch (e) { /* some browsers only allow notifications from a service worker */ }
+    }
+  }
+  announced = keys;
+}
+
 function render() {
   if (!state) return;
   renderHeader();
   renderRows();
   renderSide();
+  renderAlerts();
+  announce();
 }
 
 async function refresh() {
@@ -472,6 +516,19 @@ document.addEventListener("click", (e) => {
   const a = t.dataset.act, job = t.dataset.job, jobAct = t.dataset.jobAct;
   if (!state && (a || jobAct)) return;  // the page hasn't loaded yet
   if (a === "find") act(() => api("/api/search", {}));
+  if (a === "alerts" && "Notification" in window) {
+    if (Notification.permission === "granted") {
+      try { localStorage.setItem(ALERTS_KEY, alertsOn() ? "off" : "on"); } catch (err) { /* stays as it was */ }
+      renderAlerts();
+    } else if (Notification.permission === "denied") {
+      alert("Your browser is blocking notifications from this page. Allow them in its site settings, then press Alert me again.");
+    } else {
+      Notification.requestPermission().then(() => {
+        try { localStorage.setItem(ALERTS_KEY, "on"); } catch (err) { /* on by default once allowed */ }
+        renderAlerts();
+      });
+    }
+  }
   if (a === "select-recommended") {
     (state.listings || []).forEach((r) => { if (r.fit && r.fit.recommended && !DONE.has(r.status) && !r.run) selected.add(r.url); });
     renderRows();

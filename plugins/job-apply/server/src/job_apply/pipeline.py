@@ -30,6 +30,8 @@ from .browser import TabClosed
 
 NEW_TAB_WAIT = 4  # seconds to wait for a tab opened late by a click before calling it a stall
 MAX_STEPS = 15
+LATE_BUTTONS_WAIT = 10  # seconds for a page's buttons to be drawn
+SIGN_IN_STEP_WAIT = 25  # Workday's sign-in step can take longer to draw its buttons (Applied's)
 HANDS_ON = {"bot_check", "sign_in", "email_code"}
 HANDS_ON_TIMEOUT = 15 * 60  # then the queue stops waiting and moves on
 POLL_SECONDS = 3.0
@@ -49,6 +51,7 @@ _CREATE_ACCOUNT = re.compile(r"^(create (?:an |your |a new )?account|sign up|reg
 _SOCIAL = re.compile(r"\b(google|apple|linked ?in|facebook|microsoft|indeed|seek)\b", re.I)
 _STEP = re.compile(r"^(save (?:and|&) continue|continue|next|next step|review|review (?:and|&) submit|"
                    r"review application|proceed|go to next step)$", re.I)
+_SIGN_IN_STEP = re.compile(r"create account\s*/\s*sign in|sign in\s*/\s*create account", re.I)  # Workday's step name
 _ENTRY = re.compile(r"^(apply manually|apply now|apply|easy apply|quick apply|"
                     r"apply for (?:this|the) (?:job|position|role)(?: online)?|"
                     r"apply to (?:this )?job|start (?:your |my )?application|i'?m interested|"
@@ -140,8 +143,9 @@ def _flagged(data: dict[str, Any]) -> list[str]:
         m = re.match(r"^error\s*-\s*(.+)$", (a if isinstance(a, str) else a.get("text", "")).strip(), re.I)
         if m:
             out.append(f"\u201c{clean_label(m.group(1))}\u201d needs fixing")
+    fields = data.get("fields")  # a click's summary carries only how many there are
     out += [f"\u201c{clean_label(f.get('label') or '')}\u201d is marked invalid"
-            for f in data.get("fields") or [] if isinstance(f, dict) and f.get("invalid") and f.get("label")]
+            for f in (fields if isinstance(fields, list) else []) if isinstance(f, dict) and f.get("invalid") and f.get("label")]
     return list(dict.fromkeys(out))
 
 
@@ -455,10 +459,16 @@ class Applier:
             if (kind == "form" or run.seen_form and not entry_here) and await srv.browser.find_submit():
                 return await self._finish(run, data, text)
             action = pick_next(data.get("actions") or [], in_form=kind == "form")
+            sign_in_step = bool(_SIGN_IN_STEP.search(" ".join(data.get("headings") or [])))
             if action is None and kind == "page" and not waited:
                 waited = True  # slow pages (Intel's Workday, Eightfold forms) draw their buttons late
-                if await self._wait_for_progress(10):
+                if await self._wait_for_progress(SIGN_IN_STEP_WAIT if sign_in_step else LATE_BUTTONS_WAIT):
                     continue
+            if action is None and sign_in_step:
+                # Workday's sign-in step whose sign-in buttons never drew (Applied's, now and then)
+                await self._bring_forward(run)
+                return self._pause(run, "sign_in", f"Sign in (or create your account) on {_site(run, data)} in "
+                                   "the browser window; the desk carries on by itself after that.")
             if action is None:
                 greyed = [a for a in data.get("actions") or [] if a.get("is_submit") and a.get("disabled")]
                 if greyed:
@@ -475,6 +485,12 @@ class Applier:
                 lap = " \u2192 ".join(pressed_on[pressed.index(key):])
                 return self._pause(run, "stuck", f"I went round in a circle ({lap}, then back to {_where(data)}), so "
                                    "the site isn't letting this application on. Have a look in the browser, then press "
+                                   "Resume.")
+            if kind == "page" and [p[:1] + p[2:] for p in pressed[-2:]] == [key[:1] + key[2:]] * 2:
+                # "next" on a list of jobs (a link to a search page): its pages differ, but no
+                # application ever opens
+                return self._pause(run, "stuck", f"I pressed \u201c{action['text'].strip()}\u201d three times on "
+                                   f"{_where(data)} and no application opened. Have a look in the browser, then press "
                                    "Resume.")
             pressed.append(key)
             pressed_on.append(f"\u201c{action['text'].strip()}\u201d on {_page_said(data)}")

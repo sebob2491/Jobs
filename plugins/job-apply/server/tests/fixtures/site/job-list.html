@@ -1,0 +1,21 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Careers</title></head>
+<body>
+<!-- like Analog Devices' Workday board: a list of jobs whose "next" shows the next page -->
+<h1>Careers</h1>
+<h2 id="first">Intern - Engineering</h2>
+<h2 id="second">Staff Engineer</h2>
+<nav aria-label="pagination"><button type="button" id="prev">previous</button> <span id="n">1</span>
+  <button type="button" id="next">next</button></nav>
+<script>
+  let n = 1;
+  document.getElementById('next').addEventListener('click', () => {
+    n += 1;
+    document.getElementById('n').textContent = String(n);
+    document.getElementById('first').textContent = 'Job ' + (2 * n - 1);
+    document.getElementById('second').textContent = 'Job ' + (2 * n);
+  });
+</script>
+</body>
+</html>

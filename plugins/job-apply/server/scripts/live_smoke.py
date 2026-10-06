@@ -211,6 +211,19 @@ PROBES = {
     # Employers not in companies.yaml go here while their job board is worked out: what it's
     # built on, and how a listing looks. (SUSS MicroTec, Oct 2026: an EQS board of 80
     # openings, none in Arizona; its US ones are in Williston, VT.)
+    # Employers in companies.yaml with no search yet (SuccessFactors and unknown sites):
+    # their search pages, to see whether a list of openings can be read off them.
+    "TSMC Arizona": "https://careers.tsmc.com/en_US/careers/SearchJobs/?listFilterMode=1&jobRecordsPerPage=25&jobOffset=0",
+    "Amkor Technology": "https://amkor.com/careers/united-states/",
+    "Edwards Vacuum": "https://www.jobs.atlascopcogroup.com/search/?q=field+service&locationsearch=Arizona",
+    "Qorvo": "https://careers.qorvo.com/search/?q=&locationsearch=Arizona",
+    "Benchmark Electronics": "https://www.bench.com/careers",
+    # Equipment makers with field service engineers at Arizona fabs, not in the list yet.
+    "Nikon Precision": "https://www.nikonprecision.com/careers/",
+    "Canon USA": "https://www.usa.canon.com/about-us/careers",
+    "MKS Instruments": "https://www.mks.com/n/careers",
+    "Advanced Energy": "https://www.advancedenergy.com/en-us/about/careers/",
+    "DISCO Hi-Tec America": "https://www.discousa.com/careers/",
 }
 # Job links as a page (or one of its frames) draws them, with the text of the card around
 # each and a little of its markup, to write a reader for a new job board from.

@@ -58,6 +58,8 @@ def test_what_a_page_flags_is_named():
     assert pipeline._flagged(page) == ["Please try again.", "“Email” needs fixing",
                                        "“How Did You Hear About Us” needs fixing", "“Email” is marked invalid"]
     assert pipeline._flagged({"errors": ["Field Service Engineer page is loaded"], "actions": ["Next"]}) == []
+    # a click's summary: the actions' texts and how many fields there are (Onto's run crashed on it)
+    assert pipeline._flagged({"fields": 16, "actions": ["Error-Email", "Next"], "errors": []}) == ["“Email” needs fixing"]
 
 
 def test_one_button_apply_walks_the_whole_flow(srv, monkeypatch):
@@ -223,6 +225,48 @@ def test_sign_in_buttons_drawn_late_are_a_sign_in(srv, monkeypatch):
 
     r = run(go())
     assert r.need == "sign_in", (r.reason, r.log)
+
+
+def test_a_sign_in_step_that_never_draws_its_buttons_is_a_sign_in(srv, monkeypatch):
+    """Applied's Workday sometimes leaves its sign-in step loading: the person signs in."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "SIGN_IN_STEP_WAIT", 2)
+    job = srv.add_job(url=fixture_url("site/signin-step-loading.html"), title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status == "needs_you")
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert r.need == "sign_in" and r.blocking, (r.reason, r.log)
+
+
+def test_a_list_of_jobs_isnt_paged_through(srv, monkeypatch):
+    """A link to a search page (Analog Devices' board) has "next" for its next page of jobs:
+    pressing it again and again never opens an application."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 1)
+    job = srv.add_job(url=fixture_url("site/job-list.html"), title="Careers", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status == "needs_you")
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert r.need == "stuck" and "three times" in r.reason, (r.reason, r.log)
+    assert sum(entry == "clicked “next”" for entry in r.log) == 2
 
 
 def test_cookie_dialog_is_declined_never_accepted(srv, monkeypatch):
