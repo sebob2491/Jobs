@@ -115,10 +115,12 @@ def test_helpers():
     assert title_matches("Field Service Engineer II", "field service")
     assert title_matches("Equipment Engineering Technician", "field service | equipment engineer")
     assert not title_matches("Accountant", "field service | equipment engineer")
-    assert location_terms("AZ") == ["az", "arizona"]
+    az = location_terms("AZ")
+    assert az[:2] == ["az", "arizona"] and {"phoenix", "chandler", "tempe"} <= set(az)  # metro cities count too
     assert location_terms("Phoenix|Chandler") == ["phoenix", "chandler"]
-    assert location_terms("arizona") == ["arizona", "az"]
-    az = ["az", "arizona"]
+    assert location_terms("arizona")[:2] == ["arizona", "az"]
+    assert location_matches("Chandler (Office)", az) is True  # NXP lists only the city
+    assert location_matches("AZ - Chandler", az) is True
     assert location_matches("US-AZ-Chandler", az) is True
     assert location_matches("US > Arizona > Phoenix", az) is True
     assert location_matches("Hillsboro, OR", az) is False
@@ -188,6 +190,12 @@ def test_posting_apis():
                 "typeOfEmployment": {"label": "Full-time"},
                 "jobAd": {"sections": {"jobDescription": {"title": "Job Description", "text": "<p>Lead EUV installs.</p>"},
                                        "qualifications": {"title": "Qualifications", "text": "<ul><li>5 years</li></ul>"}}}})
+        if url.startswith("https://hctz.fa.us2.oraclecloud.com/hcmRestApi/resources/latest/recruitingCEJobRequisitionDetails"):
+            assert "finder=ById;Id=%222506217%22,siteNumber=CX_1001" in url
+            return httpx.Response(200, json={"items": [{
+                "Id": "2506217", "Title": "Equipment Technician", "PrimaryLocation": "Phoenix, AZ, United States",
+                "ExternalDescriptionStr": "<p>Maintain probers.</p>", "ExternalQualificationsStr": "<ul><li>AAS</li></ul>",
+                "ExternalPostedStartDate": "2026-09-30"}]})
         if url.startswith("https://boards-api.greenhouse.io/v1/boards/asm/jobs/4885531101"):
             return httpx.Response(200, json={"title": "Digital Solutions Engineer", "company_name": "ASM",
                                               "absolute_url": "https://www.asm.com/open-vacancies/?gh_jid=4885531101",
@@ -198,9 +206,13 @@ def test_posting_apis():
         async with httpx.AsyncClient(transport=httpx.MockTransport(posting_handler)) as client:
             sr = await fetch_posting("https://jobs.smartrecruiters.com/ASML1/744000001-regional-lead", client=client)
             gh = await fetch_posting("https://job-boards.greenhouse.io/asm/jobs/4885531101", client=client)
-            return sr, gh
+            orc = await fetch_posting(
+                "https://hctz.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1001/job/2506217", client=client)
+            return sr, gh, orc
 
-    sr, gh = asyncio.run(go())
+    sr, gh, orc = asyncio.run(go())
+    assert orc.parse_method == "oracle-api" and orc.title == "Equipment Technician"
+    assert "Maintain probers." in orc.description and "- AAS" in orc.description and orc.ats == "oracle_hcm"
     assert sr.parse_method == "smartrecruiters-api" and sr.company == "ASML" and sr.location == "Chandler, AZ, US"
     assert "Lead EUV installs." in sr.description and "- 5 years" in sr.description
     assert sr.ats == "smartrecruiters"
@@ -241,6 +253,8 @@ def test_tool_falls_back_to_browser_for_eightfold(srv, monkeypatch):
     monkeypatch.setattr(server.browser, "capture_json", capture)
     out = asyncio.run(server.search_company_jobs("field service", location="AZ"))
     assert out["errors"] == {}
-    assert [r["title"] for r in out["results"]] == ["Field Service Engineer 2"]  # titles still filtered
+    # ranked, not filtered: Eightfold's own relevance already chose these
+    assert [(r["title"], r["title_match"]) for r in out["results"]] == \
+        [("Field Service Engineer 2", True), ("Payroll Specialist", False)]
     assert pages == [("https://careers.lamresearch.com/careers?query=field+service&domain=lamresearch.com&location=Arizona",
                       "/api/apply/v2/jobs")]

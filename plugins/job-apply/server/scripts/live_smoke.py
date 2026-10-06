@@ -67,7 +67,7 @@ from job_apply.fixtures import convert  # noqa: E402
 from job_apply.postings import fetch_posting  # noqa: E402
 from job_apply.search import load_companies, search_companies  # noqa: E402
 
-QUERY_AZ = "field service | equipment | technician"  # what the user actually looks for, in Arizona
+QUERY_AZ = "field service | customer service engineer | customer engineer | equipment technician"  # in Arizona
 QUERY_ANY = "engineer | technician"  # fallback so every company still gets a browser check
 APPLY = re.compile(r"^(apply( now| for (this|the) (job|position|role))?|apply to (this )?job|i'?m interested|"
                    r"start (your |my )?application|apply manually)$", re.I)
@@ -172,6 +172,47 @@ async def check_company(company: dict[str, Any], out: Path, fixtures: bool) -> d
     return rec
 
 
+# Career pages whose job data comes from a call we haven't pinned down yet: record what
+# the page itself requests, so the search can use it.
+PROBES = {
+    "Lam Research": "https://careers.lamresearch.com/careers?query=field%20service&location=Arizona",
+    "Micron": "https://micron.eightfold.ai/careers?query=field%20service&domain=micron.com",
+    "Infineon": "https://jobs.infineon.com/careers?query=field%20service&domain=infineon.com",
+    "ASML": "https://www.asml.com/en/careers/find-your-job?query=field%20service",
+    "Texas Instruments": "https://careers.ti.com/en/sites/CX/jobs?keyword=technician",
+}
+
+
+async def probe_page(name: str, url: str) -> dict[str, Any]:
+    await server.browser.page()
+    ctx = server.browser._ctx  # noqa: SLF001 - test script reaching into the session on purpose
+    assert ctx is not None
+    server.browser._background = True  # noqa: SLF001
+    tab = await ctx.new_page()
+    seen: list[dict[str, Any]] = []
+
+    def on_response(r: Any) -> None:
+        ctype = r.headers.get("content-type", "")
+        if "json" in ctype or "/api/" in r.url:
+            seen.append({"method": r.request.method, "status": r.status, "url": r.url[:300], "type": ctype[:40]})
+
+    tab.on("response", on_response)
+    rec: dict[str, Any] = {"probe": name, "url": url}
+    try:
+        resp = await tab.goto(url, wait_until="domcontentloaded", timeout=45000)
+        rec["document_status"] = resp.status if resp else None
+        await tab.wait_for_timeout(12000)
+        rec["title"] = await tab.title()
+        rec["json_calls"] = seen[:30]
+        rec["text_sample"] = re.sub(r"\s+", " ", await tab.inner_text("body"))[:500]
+    except Exception as e:  # noqa: BLE001
+        rec["error"] = f"{type(e).__name__}: {str(e)[:300]}"
+    finally:
+        await tab.close()
+        server.browser._background = False  # noqa: SLF001
+    return rec
+
+
 async def check_careers_page(company: dict[str, Any]) -> dict[str, Any]:
     """Companies without a search API: can the browser read their careers page at all?"""
     rec: dict[str, Any] = {"company": company["name"], "careers_url": company.get("careers_url"), "ats": company.get("ats")}
@@ -217,6 +258,15 @@ async def main() -> int:
         rec["seconds"] = round(time.time() - started, 1)
         records.append(rec)
         print("LIVE_RESULT " + json.dumps(rec, default=str), flush=True)
+
+    for name, url in PROBES.items():
+        if wanted and not any(w in name.lower() for w in wanted):
+            continue
+        try:
+            probe = await asyncio.wait_for(probe_page(name, url), 90)
+        except Exception as e:  # noqa: BLE001
+            probe = {"probe": name, "error": f"{type(e).__name__}: {str(e)[:200]}"}
+        print("LIVE_PROBE " + json.dumps(probe, default=str), flush=True)
 
     await server.close_browser()
     (args.out / "report.json").write_text(json.dumps(records, indent=2, default=str))

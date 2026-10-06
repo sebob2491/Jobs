@@ -97,8 +97,7 @@ companies:
     careers_url: https://careers.ti.com/en/sites/CX
     ats: oracle_hcm
     az_sites: Phoenix
-    confidence: high
-    search: {oracle: {host: careers.ti.com, site: CX}}   # Oracle Recruiting on TI's own domain
+    confidence: high        # Oracle Recruiting behind TI's own domain; its search API isn't exposed there
   - name: Hitachi High-Tech America
     careers_url: https://hitachi.wd1.myworkdayjobs.com/hitachi
     ats: workday

@@ -199,6 +199,17 @@ def _yn(path: str) -> Getter:
     return g
 
 
+def _edu(summary_key: str, entry_key: str) -> Getter:
+    """education.<summary_key>, else the most recent education_history entry."""
+    def g(prof: Profile, job: dict) -> Any:
+        value = prof.get(f"education.{summary_key}")
+        if value is None:
+            entries = [e for e in prof.get("education_history", []) or [] if isinstance(e, dict)]
+            value = entries[0].get(entry_key) if entries else None
+        return value
+    return g
+
+
 def _full_name(prof: Profile, job: dict) -> str | None:
     return prof.full_name or None
 
@@ -267,7 +278,7 @@ RULES: list[tuple[str, str, Getter, int | None, set[str] | None]] = [
     ("phone", r"phone|mobile|cell|telephone", _p("personal.phone"), 45, {"text", "combobox"}),
     ("address2", r"address line 2|^address 2|apartment|suite|^apt|^unit", _p("personal.address.line2"), 45, None),
     ("address1", r"address line 1|^address 1|^street|^(home |mailing |street )?address$", _p("personal.address.line1"), 45, None),
-    ("city", r"^city|town|^city town", _p("personal.address.city"), 45, None),
+    ("city", r"^city|town|location city|current city|city of residence", _p("personal.address.city"), 45, None),
     ("postal", r"zip|postal|post code|postcode", _p("personal.address.postal_code"), 45, None),
     ("county", r"^county", lambda p, j: p.get("personal.address.county"), 45, None),
     ("state", r"^state|province|^region|state province", _state, 45, None),
@@ -278,11 +289,11 @@ RULES: list[tuple[str, str, Getter, int | None, set[str] | None]] = [
     ("current_company", r"(current|most recent|present) (employer|company)", _p("experience.current_company"), 60, None),
     ("current_title", r"(current|most recent|present) (job )?(title|position|role)", _p("experience.current_title"), 60, None),
     ("total_years", r"^(total )?years of (professional |work )?experience$", _p("experience.total_years"), 60, None),
-    ("degree", r"highest (level of )?(education|degree)|^degree$|education level", _p("education.highest_degree"), 80, None),
-    ("school", r"^(school|university|college|institution)\b", _p("education.school"), 45, None),
-    ("major", r"^(major|field of study|discipline|area of study)", _p("education.major"), 45, None),
-    ("gpa", r"^gpa|grade point", _p("education.gpa"), 45, None),
-    ("grad_year", r"graduation (year|date)|year of graduation", _p("education.graduation_year"), 60, None),
+    ("degree", r"highest (level of )?(education|degree)|^degree$|education level", _edu("highest_degree", "degree"), 80, None),
+    ("school", r"^(school|university|college|institution)\b", _edu("school", "school"), 45, None),
+    ("major", r"^(major|field of study|discipline|area of study)", _edu("major", "major"), 45, None),
+    ("gpa", r"^gpa|grade point", _edu("gpa", "gpa"), 45, None),
+    ("grad_year", r"graduation (year|date)|year of graduation", _edu("graduation_year", "end"), 60, None),
     ("signature", r"(electronic |e )?signature|sign your (full )?name", _full_name, 80, {"text"}),
     ("signed_date", r"today s date|date signed|signature date", _today, 45, {"text"}),
     # questions (any length)

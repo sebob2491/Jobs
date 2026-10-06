@@ -18,7 +18,8 @@ from urllib.parse import urljoin
 import httpx
 from bs4 import BeautifulSoup
 
-from .ats import detect_ats, greenhouse_parts, lever_parts, linkedin_job_id, smartrecruiters_parts, workday_parts
+from .ats import (detect_ats, greenhouse_parts, lever_parts, linkedin_job_id, oracle_parts, smartrecruiters_parts,
+                  workday_parts)
 
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -299,6 +300,31 @@ async def _fetch_smartrecruiters(client: httpx.AsyncClient, url: str) -> Posting
     )
 
 
+async def _fetch_oracle(client: httpx.AsyncClient, url: str) -> Posting | None:
+    parts = oracle_parts(url)
+    if not parts:
+        return None
+    api = (f"https://{parts['host']}/hcmRestApi/resources/latest/recruitingCEJobRequisitionDetails"
+           f"?expand=all&onlyData=true&finder=ById;Id=%22{parts['job_id']}%22,siteNumber={parts['site']}")
+    items = (await _get(client, api, headers={"Accept": "application/json"})).json().get("items") or []
+    if not items:
+        return None
+    d = items[0]
+    body = "\n\n".join(html_to_text(d.get(k) or "") for k in
+                       ("ExternalDescriptionStr", "ExternalResponsibilitiesStr", "ExternalQualificationsStr") if d.get(k))
+    return Posting(
+        url=url,
+        title=d.get("Title") or "",
+        location=d.get("PrimaryLocation") or "",
+        description=body[:MAX_DESCRIPTION],
+        apply_url=url,
+        external_id=str(d.get("Id") or parts["job_id"]),
+        employment_type=d.get("WorkerType") or d.get("JobSchedule") or "",
+        posted_at=d.get("ExternalPostedStartDate") or "",
+        parse_method="oracle-api",
+    )
+
+
 async def fetch_posting(url: str, timeout: float = 20.0, client: httpx.AsyncClient | None = None) -> Posting:
     """Fetch and parse a posting over plain HTTP. Raises FetchError when the
     site refuses (LinkedIn and Indeed usually do); callers can then read the
@@ -316,7 +342,7 @@ async def _fetch_with(client: httpx.AsyncClient, url: str) -> Posting:
     posting: Posting | None = None
     api_error = ""
     fetcher = {"workday": _fetch_workday, "greenhouse": _fetch_greenhouse, "lever": _fetch_lever,
-               "smartrecruiters": _fetch_smartrecruiters}.get(ats)
+               "smartrecruiters": _fetch_smartrecruiters, "oracle_hcm": _fetch_oracle}.get(ats)
     if fetcher:
         try:
             posting = await fetcher(client, url)

@@ -6,8 +6,10 @@
   <label for="first_name">First Name *</label><input id="first_name" required>
   <label for="last_name">Last Name *</label><input id="last_name" required>
   <label for="email">Email *</label><input id="email" type="email" required>
-  <label for="cover">Cover Letter</label><input id="cover" type="file">
-  <label for="res">Resume/CV *</label><input id="res" type="file" required>
+  <div class="field"><div class="label">Cover Letter</div>
+    <div class="upload"><label for="cover">Attach</label><input id="cover" type="file"></div></div>
+  <div class="field"><div class="label">Resume/CV *</div>
+    <div class="upload"><label for="res">Attach</label><input id="res" type="file" required></div></div>
   <button type="submit">Submit Application</button>
 </form>
 </body>

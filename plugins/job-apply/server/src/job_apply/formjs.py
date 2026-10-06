@@ -104,6 +104,7 @@ EXTRACT_JS = r"""
   const tag = (el, id) => { el.setAttribute('data-ja-id', id); return id; };
   const idOf = (el) => el.getAttribute('data-ja-id') || tag(el, newId());
 
+  const GENERIC_FILE = /^(attach|upload|choose (a )?file|browse|select files?|add (a )?file|drop (your )?files? here|or|enter manually)$/i;
   const HONEYPOT = /for robots|robots only|if you('| a)?re (a )?human|not (be )?(filled|entered) by humans|honey ?pot|leave this field (blank|empty)/i;
   const fields = [];
   const seen = new Set();
@@ -149,7 +150,17 @@ EXTRACT_JS = r"""
       const pills = container ? Array.from(container.querySelectorAll('[data-automation-id="selectedItem"], [class*="selected" i] [class*="label" i]')).map(txt).filter(Boolean) : [];
       if (pills.length) value = pills.join(', ');
     }
-    const label = labelFor(el);
+    let label = labelFor(el);
+    // Upload widgets often label the input with its button ("Attach"); use the field's heading.
+    if (kind === 'file' && GENERIC_FILE.test(label)) {
+      for (let node = el.parentElement, d = 0; node && d < 5; node = node.parentElement, d++) {
+        // the nearest heading *before* the input, so a big container doesn't hand back an earlier field's label
+        const cands = Array.from(node.querySelectorAll('label, legend, [class*="label" i], h3, h4, [id$="-label"]'))
+          .filter((c) => c.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING)
+          .map(txt).filter((t) => t && t.length < 80 && !GENERIC_FILE.test(t));
+        if (cands.length) { label = cands[cands.length - 1]; break; }
+      }
+    }
     // Bot traps ("for robots only, do not enter if you're human") must never be filled.
     if (HONEYPOT.test(label) || HONEYPOT.test(el.name || '')) continue;
     const f = {

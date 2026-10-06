@@ -109,6 +109,13 @@ def smartrecruiters_parts(url: str) -> dict[str, str] | None:
     return None
 
 
+def oracle_parts(url: str) -> dict[str, str] | None:
+    m = re.search(r"https?://([^/]+)/hcmUI/CandidateExperience/[\w-]+/sites/([\w-]+)/(?:requisitions/preview|job)/(\d+)", url)
+    if m:
+        return {"host": m.group(1), "site": m.group(2), "job_id": m.group(3)}
+    return None
+
+
 def linkedin_job_id(url: str) -> str | None:
     m = re.search(r"linkedin\.com/jobs/view/(?:[\w-]*?-)?(\d{6,})", url) or re.search(
         r"currentJobId=(\d{6,})", url

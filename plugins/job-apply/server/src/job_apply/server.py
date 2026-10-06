@@ -16,8 +16,7 @@ from .autofill import is_empty_value, plan_autofill, profile_entries
 from .browser import BrowserSession, BrowserUnavailable, SubmitBlocked
 from .postings import FetchError, Posting, fetch_posting, finalize, parse_html
 from .render import KINDS, render_pdf, to_html
-from .search import (eightfold_page_url, keep_listings, load_companies, location_terms, parse_eightfold,
-                     search_companies, title_matches)
+from .search import eightfold_page_url, keep_listings, load_companies, location_terms, parse_eightfold, search_companies
 from .tracker import Tracker
 
 INSTRUCTIONS = """\
@@ -183,8 +182,8 @@ async def search_company_jobs(
         except Exception as e:  # keep the original error, add why the fallback failed too
             out["errors"][name] = f"{err}; browser fallback: {type(e).__name__}: {str(e).splitlines()[0][:150]}"
             continue
-        found = [x for x in parse_eightfold(data, cfg["host"]) if title_matches(x.title, query)]
-        out["results"].extend(keep_listings(name, found, location_terms(location), limit_per_company))
+        found = parse_eightfold(data, cfg["host"])
+        out["results"].extend(keep_listings(name, found, location_terms(location), limit_per_company, query))
         del out["errors"][name]
     t = tracker()
     for r in out["results"]:

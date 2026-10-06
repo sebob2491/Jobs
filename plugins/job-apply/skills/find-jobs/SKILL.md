@@ -17,8 +17,14 @@ The goal is a short, deduplicated list of real openings saved to the tracker
    get its details and save it with `add_job(url, title, company, description,
    location, salary, source="indeed")`.
 
-3. **Company career sites.** Run
-   `search_company_jobs(query="field service | equipment engineer", location="AZ")`.
+3. **Company career sites.** Run `search_company_jobs` with `location="AZ"` (or the
+   user's area) and a query that covers how each employer names the role. For
+   field service that's
+   `"field service | customer service engineer | customer engineer | equipment technician | equipment engineer"`.
+   KLA says "Customer Service Engineer", Applied Materials says "Customer Engineer",
+   and TEL often says "Field Engineer". Results whose title matches come first
+   (`title_match: true`). The others matched on the description, so read their
+   titles before discarding them.
    It queries each company's own job search directly: Workday, Greenhouse, Lever,
    Eightfold, SmartRecruiters and Oracle sites, for the companies in
    `<plugin>/data/companies.yaml` (`companies_file` in `setup_status`). Pass

@@ -82,8 +82,16 @@ def title_matches(title: str, query: str) -> bool:
     return False
 
 
+# Employers often list just the city ("Chandler (Office)"), so a state also matches its
+# main metro areas. Only states the plugin's company list covers need entries.
+STATE_CITIES = {
+    "AZ": ["phoenix", "chandler", "tempe", "mesa", "scottsdale", "gilbert", "glendale", "peoria", "tucson",
+           "goodyear", "surprise", "avondale", "casa grande", "queen creek", "maricopa"],
+}
+
+
 def location_terms(location: str | None) -> list[str]:
-    """'AZ' -> ['az', 'arizona']; 'Phoenix|Chandler' -> ['phoenix', 'chandler']."""
+    """'AZ' -> ['az', 'arizona', 'phoenix', 'chandler', ...]; 'Phoenix|Chandler' -> ['phoenix', 'chandler']."""
     if not location:
         return []
     terms: list[str] = []
@@ -95,9 +103,11 @@ def location_terms(location: str | None) -> list[str]:
         up = part.strip().upper()
         if up in US_STATES:
             terms.append(norm(US_STATES[up]))
+            terms.extend(STATE_CITIES.get(up, []))
         for code, name in US_STATES.items():
             if n == norm(name):
                 terms.append(code.lower())
+                terms.extend(STATE_CITIES.get(code, []))
     return list(dict.fromkeys(terms))
 
 
@@ -162,10 +172,11 @@ async def _workday(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, 
     first = await page(0, {})
     applied: dict[str, list[str]] = {}
     if terms and first.get("facets"):
+        # Use the site's own location filter when one of its values names the area;
+        # otherwise scan unfiltered results and filter them afterwards.
         applied = _workday_location_facets(first["facets"], terms)
-        if not applied:
-            return []  # the site offers location filters and none is in the area asked for
-        first = await page(0, applied)
+        if applied:
+            first = await page(0, applied)
     total = int(first.get("total") or 0)  # only the first page carries the total
     out: list[Listing] = []
     data, offset = first, 0
@@ -287,8 +298,9 @@ async def _oracle(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, t
     offset = 0
     while len(out) < limit:
         page_size = min(25, limit - len(out))
+        sort = "RELEVANCY" if keyword.strip() else "POSTING_DATES_DESC"
         finder = (f'findReqs;siteNumber={site},limit={page_size},offset={offset},keyword="{keyword}",'
-                  f"sortBy=POSTING_DATES_DESC")
+                  f"sortBy={sort}")
         api = (f"https://{host}/hcmRestApi/resources/latest/recruitingCEJobRequisitions"
                f"?onlyData=true&expand=requisitionList.secondaryLocations&finder={quote(finder, safe='=;,')}")
         r = await client.get(api, headers={"Accept": "application/json"})
@@ -341,10 +353,14 @@ def _pick(companies: list[dict[str, Any]], names: list[str] | None) -> list[dict
     return [c for c in companies if any(w and (w in norm(c["name"]) or norm(c["name"]) in w) for w in wanted)]
 
 
-def keep_listings(company: str, listings: list[Listing], terms: list[str], limit: int) -> list[dict[str, Any]]:
-    """Deduplicate, apply the location filter, note broad locations, cap at `limit`."""
+def keep_listings(company: str, listings: list[Listing], terms: list[str], limit: int,
+                  query: str = "") -> list[dict[str, Any]]:
+    """Deduplicate, apply the location filter, note broad locations, put listings whose
+    title matches the query first (others matched on description), cap at `limit`."""
     kept: list[dict[str, Any]] = []
     seen: set[str] = set()
+    if query:
+        listings = sorted(listings, key=lambda x: not title_matches(x.title, query))
     for listing in listings:
         if listing.url in seen:
             continue
@@ -355,7 +371,10 @@ def keep_listings(company: str, listings: list[Listing], terms: list[str], limit
             continue
         if where is None:
             listing.notes.append(f"location given as {listing.location or 'nothing'!r}; check the posting")
-        kept.append(listing.to_dict())
+        row = listing.to_dict()
+        if query:
+            row["title_match"] = title_matches(listing.title, query)
+        kept.append(row)
         if len(kept) >= limit:
             break
     return kept
@@ -398,12 +417,12 @@ async def search_companies(
         except Exception as e:  # one company's odd response must not sink the others
             errors[company["name"]] = f"{type(e).__name__}: {str(e)[:200]}"
             return
-        results.extend(keep_listings(company["name"], found, terms, limit))
+        results.extend(keep_listings(company["name"], found, terms, limit, query))
 
     try:
         await asyncio.gather(*(one(c) for c in companies))
     finally:
         if own:
             await client.aclose()
-    results.sort(key=lambda r: (r["company"], r["title"]))
+    results.sort(key=lambda r: (r["company"], not r.get("title_match", True), r["title"]))
     return {"results": results, "errors": errors, "browser_only": browser_only}
