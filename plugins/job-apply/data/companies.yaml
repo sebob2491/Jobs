@@ -132,3 +132,23 @@ companies:
     ats: unknown            # postings also appear on DirectEmployers boards (dejobs.org)
     az_sites: Tempe (HQ), Phoenix
     confidence: low
+  # Equipment makers whose field service engineers work at Arizona fabs (Intel, TSMC,
+  # Microchip, onsemi). Found Oct 2026; their job systems were read off their careers pages.
+  - name: SCREEN SPE USA
+    careers_url: https://seus.applicantstack.com/x/openings
+    ats: applicantstack
+    az_sites: Chandler, Phoenix (field service at customer fabs)
+    confidence: high          # live check, Oct 2026: one table of every opening, with its location
+    search: {applicantstack: seus}
+  - name: Onto Innovation
+    careers_url: https://wd1.myworkdaysite.com/recruiting/onto/ONTO_Careers
+    ats: workday
+    az_sites: Phoenix (field service)
+    confidence: medium        # ontoinnovation.com/careers links here (live check, Oct 2026)
+    search: {workday: https://wd1.myworkdaysite.com/recruiting/onto/ONTO_Careers}
+  - name: Axcelis Technologies
+    careers_url: https://axcelis.wd1.myworkdayjobs.com/axcelis
+    ats: workday
+    az_sites: Phoenix area (field service)
+    confidence: medium        # axcelis.com/careers links here (live check, Oct 2026)
+    search: {workday: https://axcelis.wd1.myworkdayjobs.com/axcelis}

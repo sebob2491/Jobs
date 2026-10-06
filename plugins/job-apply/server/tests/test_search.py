@@ -22,7 +22,15 @@ COMPANIES = [
     {"name": "Browser Co", "careers_url": "https://careers.browserco.com"},
     {"name": "Broken Co", "search": {"greenhouse": "broken"}},
     {"name": "Odd Lever Co", "search": {"lever": "oddco"}},
+    {"name": "Workday Site Co", "search": {"workday": "https://wd1.myworkdaysite.com/recruiting/wsco/WS_Careers"}},
+    {"name": "AS Co", "search": {"applicantstack": "asco"}},
 ]
+# SCREEN SPE USA's board: one table of every opening, title and location
+AS_BOARD = """<h1>Job Openings</h1><table class="table"><thead><tr><th>Job Title</th><th>Location</th></tr></thead><tbody>
+<tr><td><a href="/x/detail/a2ejxq3cpz4b">Field Service Engineer - Chandler</a></td><td>Chandler, AZ</td></tr>
+<tr><td><a href="/x/detail/a2ejxq3c5xpg">Field Service Engineer - Austin</a></td><td>Austin, TX</td></tr>
+<tr><td><a href="/x/detail/a2ejxq3tau2q">Administrative Coordinator &amp; Translator - Hillsboro</a></td><td>Hillsboro, OR</td></tr>
+</tbody></table>"""
 seen: list[httpx.Request] = []
 
 WD_FACETS = [{"facetParameter": "locationMainGroup", "descriptor": "Locations", "values": [
@@ -109,6 +117,12 @@ def handler(request: httpx.Request) -> httpx.Response:
             {"Id": "25011777", "Title": "Field Service Technician", "PrimaryLocation": "Austin, TX, United States",
              "otherWorkLocations": [{"LocationName": "TUC-1", "TownOrCity": "Tucson", "Region2": "AZ", "Country": "US"}]},
         ]}]})
+    if url.startswith("https://wd1.myworkdaysite.com/wday/cxs/wsco/WS_Careers/jobs"):
+        return httpx.Response(200, json={"total": 1, "jobPostings": [
+            {"title": "Field Service Engineer 1", "externalPath": "/job/Phoenix-AZ/Field-Service-Engineer-1_R1",
+             "locationsText": "Phoenix, AZ", "postedOn": "Posted Today", "bulletFields": ["R1"]}]})
+    if url == "https://asco.applicantstack.com/x/openings":
+        return httpx.Response(200, text=AS_BOARD)
     if url == "https://boards-api.greenhouse.io/v1/boards/broken/jobs":
         return httpx.Response(404, json={"status": 404})
     raise AssertionError(f"unexpected request {request.method} {url}")
@@ -179,6 +193,13 @@ def test_search_all_backends():
     assert orc[0]["url"] == "https://abcd.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1/job/25011541"
     # "United States" in Richardson, TX is dropped; a Texas job that's also in Tucson is kept
     assert [r["location"] for r in orc] == ["Phoenix, AZ, United States", "Austin, TX, United States; Tucson, AZ, US"]
+
+    # myworkdaysite.com postings keep the tenant in their address (Onto Innovation)
+    assert by_company["Workday Site Co"][0]["url"] == \
+        "https://wd1.myworkdaysite.com/recruiting/wsco/WS_Careers/job/Phoenix-AZ/Field-Service-Engineer-1_R1"
+    assert [(r["title"], r["location"], r["url"]) for r in by_company["AS Co"]] == [
+        ("Field Service Engineer - Chandler", "Chandler, AZ", "https://asco.applicantstack.com/x/detail/a2ejxq3cpz4b")]
+    assert sum("applicantstack" in str(r.url) for r in seen) == 1  # whole board, fetched once
 
     assert out["browser_only"] == [{"company": "Browser Co", "careers_url": "https://careers.browserco.com"}]
     assert set(out["errors"]) == {"Broken Co", "Odd Lever Co"}  # each fails alone; the rest still return

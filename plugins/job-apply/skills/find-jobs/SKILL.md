@@ -26,7 +26,7 @@ The goal is a short, deduplicated list of real openings saved to the tracker
    (`title_match: true`). The others matched on the description, so read their
    titles before discarding them.
    It queries each company's own job search directly: Workday, Greenhouse, Lever,
-   Eightfold, SmartRecruiters and Oracle sites, for the companies in
+   Eightfold, SmartRecruiters, Oracle and ApplicantStack sites, for the companies in
    `<plugin>/data/companies.yaml` (`companies_file` in `setup_status`). Pass
    `companies=[...]` to limit it to particular employers.
    - Results already in the tracker carry `tracked`. Skip those.

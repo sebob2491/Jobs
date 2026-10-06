@@ -21,10 +21,11 @@ import re
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable
-from urllib.parse import quote, urlencode
+from urllib.parse import quote, urlencode, urljoin
 
 import httpx
 import yaml
+from bs4 import BeautifulSoup
 
 from . import config
 from .ats import workday_parts
@@ -34,7 +35,7 @@ from .postings import USER_AGENT
 WORKDAY_PAGE = 20  # Workday rejects larger pages
 MAX_ALTERNATIVES = 4
 FETCH_WHEN_FILTERING = 60  # results to scan per search when filtering by location ourselves
-CLIENT_SIDE = {"greenhouse", "lever"}  # whole board comes back at once; titles are filtered here
+CLIENT_SIDE = {"greenhouse", "lever", "applicantstack"}  # whole board comes back at once; titles are filtered here
 # Searches whose data only comes through the site's own page in the browser (ASML's
 # Sitecore Discover widget). search_companies lists them under needs_browser and the
 # search_company_jobs tool runs them.
@@ -177,6 +178,8 @@ async def _workday(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, 
         raise SearchError(f"Not a Workday site URL: {cfg}")
     host, tenant, site = parts["host"], parts["tenant"], parts["site"]
     api = f"https://{host}/wday/cxs/{tenant}/{site}/jobs"
+    # myworkdaysite.com addresses carry the tenant: /recruiting/<tenant>/<site>/job/...
+    base = f"https://{host}/recruiting/{tenant}/{site}" if "myworkdaysite.com" in host else f"https://{host}/{site}"
 
     async def page(offset: int, facets: dict[str, list[str]]) -> dict[str, Any]:
         body = {"appliedFacets": facets, "limit": WORKDAY_PAGE, "offset": offset, "searchText": query}
@@ -206,7 +209,7 @@ async def _workday(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, 
             if nowhere_near and location_matches(p.get("locationsText", ""), terms) is None:
                 continue
             out.append(Listing(
-                company="", title=p.get("title", ""), url=f"https://{host}/{site}{p.get('externalPath') or ''}",
+                company="", title=p.get("title", ""), url=f"{base}{p.get('externalPath') or ''}",
                 location=p.get("locationsText", ""), posted=p.get("postedOn", ""),
                 external_id=(p.get("bulletFields") or [""])[0], ats="workday",
             ))
@@ -365,6 +368,33 @@ def eightfold_page_url(cfg: dict[str, Any], query: str, location: str | None) ->
     return f"https://{cfg['host']}/careers?{urlencode(params)}"
 
 
+async def _applicantstack(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, terms: list[str]) -> list[Listing]:
+    """ApplicantStack boards (SCREEN SPE USA) list every opening on one page, each with
+    its location."""
+    base = f"https://{cfg}.applicantstack.com"
+    url = f"{base}/x/openings"
+    r = await _send(client, "GET", url)
+    _raise_for(r, url)
+    return [listing for listing in parse_applicantstack(r.text, base) if title_matches(listing.title, query)]
+
+
+def parse_applicantstack(html: str, base: str) -> list[Listing]:
+    soup = BeautifulSoup(html, "html.parser")
+    out: list[Listing] = []
+    seen: set[str] = set()
+    for a in soup.select('a[href*="/x/detail/"]'):
+        url = urljoin(base + "/", str(a["href"]))
+        title = a.get_text(" ", strip=True)
+        if not title or url in seen:
+            continue
+        seen.add(url)
+        row = a.find_parent("tr")  # a table: Job Title, Location
+        cells = [td.get_text(" ", strip=True) for td in row.find_all("td") if td.find("a") is None] if row else []
+        out.append(Listing(company="", title=title, url=url, location=next((c for c in cells if c), ""),
+                           external_id=url.rstrip("/").rsplit("/", 1)[-1], ats="applicantstack"))
+    return out
+
+
 async def _eightfold(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, terms: list[str]) -> list[Listing]:
     host, domain = cfg["host"], cfg["domain"]
     api = f"https://{host}/api/pcsx/search"
@@ -462,6 +492,7 @@ SEARCHERS: dict[str, Callable[[httpx.AsyncClient, Any, str, int, list[str]], Awa
     "eightfold": _eightfold,
     "smartrecruiters": _smartrecruiters,
     "oracle": _oracle,
+    "applicantstack": _applicantstack,
 }
 
 
