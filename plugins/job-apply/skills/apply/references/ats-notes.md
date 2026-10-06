@@ -21,12 +21,17 @@ the page URL. Use this file for the parts of each flow that `autofill` can't do.
   it's fine, take the privacy-preserving option: "Reject all", "Decline" or
   "Necessary only". Never accept marketing cookies on their behalf.
 
-## Workday (`*.myworkdayjobs.com`): Applied Materials, KLA, Intel, Microchip, NXP, TEL, Analog Devices, Hitachi High-Tech, ASML (some postings)
+## Workday (`*.myworkdayjobs.com`): Applied Materials, KLA, Intel, Microchip, NXP, TEL, Analog Devices, Hitachi High-Tech, Entegris, ASML (some postings)
 
 - Each company has its own Workday account. Use the same email each time.
 - Path: **Apply** → choose **Autofill with Resume** (Workday parses the resume
   into My Experience, so check what it parsed) or **Apply Manually** → sign in
   or create an account → steps.
+- Some sites (KLA, NXP, Hitachi) open on a sign-in page that shows only **Sign in
+  with Apple / Google / LinkedIn / email** buttons and no fields. Click **Sign in
+  with email**, then run `inspect_form` again for the email and password fields.
+  Never use the Apple, Google or LinkedIn buttons: they sign in with the user's
+  other accounts, so the user does that themselves if they want to.
 - Steps: My Information → My Experience → Application Questions → Voluntary
   Disclosures → Self Identify → Review. The Next button reads **Save and Continue**.
   The last button reads **Submit**, which goes through `submit_application`.
@@ -80,7 +85,7 @@ the page URL. Use this file for the parts of each flow that `autofill` can't do.
 - Some flows ask for an email and a one-time code before the form. Fetch the code
   if `settings.email_codes` is on, otherwise ask the user for it.
 
-## SAP SuccessFactors (`successfactors.com`, `/job/City-Title-ST-Zip/<id>/` URLs): TSMC Arizona, Amkor, Qorvo, Entegris
+## SAP SuccessFactors (`successfactors.com`, `/job/City-Title-ST-Zip/<id>/` URLs): TSMC Arizona, Amkor, Qorvo, Edwards Vacuum
 
 - Click **Apply now**, then sign in or create an account (email and password).
 - The application is usually one long page with sections and attachments, so a single
@@ -91,6 +96,9 @@ the page URL. Use this file for the parts of each flow that `autofill` can't do.
 - The flow asks for the email first, then sends a one-time code to that address.
   If `settings.email_codes` is on, fetch the code as the apply skill describes.
   Otherwise the user enters it, or reads it out to you.
+- Texas Instruments shows a privacy banner whose only button is **AGREE AND PROCEED**.
+  It covers **Apply Now** and the email step, so no fields appear until it's gone.
+  Agreeing is the user's call, like any cookie choice: ask once per session.
 
 ## Greenhouse (`greenhouse.io`) and Lever (`lever.co`): ASM
 

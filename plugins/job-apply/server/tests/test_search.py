@@ -7,8 +7,8 @@ import json
 import httpx
 
 from job_apply.postings import fetch_posting
-from job_apply.search import (alternatives, eightfold_page_url, location_matches, location_terms, search_companies,
-                              title_matches)
+from job_apply.search import (_workday_location_facets, alternatives, eightfold_page_url, location_matches,
+                              location_terms, search_companies, title_matches)
 
 COMPANIES = [
     {"name": "Workday Co", "search": {"workday": "https://wdco.wd1.myworkdayjobs.com/External"}},
@@ -41,7 +41,8 @@ def workday(body: dict) -> httpx.Response:
         count, where = 40, None
     page = [
         {"title": f"Field Service Engineer {offset + i}", "externalPath": f"/job/X/FSE_R{offset + i}",
-         "locationsText": where or ("Chandler, AZ" if i % 2 == 0 else "Hillsboro, OR"), "postedOn": "Posted Today",
+         "locationsText": where or ("2 Locations" if i % 5 == 4 else "Chandler, AZ" if i % 2 == 0 else "Hillsboro, OR"),
+         "postedOn": "Posted Today",
          "bulletFields": [f"R{offset + i}"]}
         for i in range(min(20, max(0, count - offset)))
     ]
@@ -97,9 +98,15 @@ def handler(request: httpx.Request) -> httpx.Response:
         assert "finder=findReqs;siteNumber=CX_1,facetsList=WORK_LOCATIONS%3B" in url
         assert ("keyword=%22field%20service%22,sortBy=RELEVANCY" in url
                 or "keyword=%22equipment%20engineer%22,sortBy=RELEVANCY" in url) and "offset" not in url
-        return httpx.Response(200, json={"items": [{"TotalJobsCount": 1, "requisitionList": [
+        return httpx.Response(200, json={"items": [{"TotalJobsCount": 3, "requisitionList": [
             {"Id": "25011541", "Title": "Equipment Engineer", "PrimaryLocation": "Phoenix, AZ, United States",
-             "PostedDate": "2026-09-29"}]}]})
+             "PostedDate": "2026-09-29"},
+            # only a country as the primary location; the site is in the expanded locations
+            {"Id": "25011323", "Title": "Field Service Technician", "PrimaryLocation": "United States",
+             "secondaryLocations": [{"Name": "Richardson, TX, United States", "CountryCode": "US"}]},
+            {"Id": "25011777", "Title": "Field Service Technician", "PrimaryLocation": "Austin, TX, United States",
+             "otherWorkLocations": [{"LocationName": "TUC-1", "TownOrCity": "Tucson", "Region2": "AZ", "Country": "US"}]},
+        ]}]})
     if url == "https://boards-api.greenhouse.io/v1/boards/broken/jobs":
         return httpx.Response(404, json={"status": 404})
     raise AssertionError(f"unexpected request {request.method} {url}")
@@ -166,8 +173,10 @@ def test_search_all_backends():
     sr = {r["url"]: r for r in by_company["SR Co"]}
     assert sr["https://jobs.smartrecruiters.com/SRCO1/744000001"]["location"] == "Chandler, AZ, US"
     assert sr["https://jobs.smartrecruiters.com/SRCO1/744000002"]["location"] == "Phoenix, AZ"  # country: null
-    assert by_company["Oracle Co"][0]["url"] == \
-        "https://abcd.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1/job/25011541"
+    orc = by_company["Oracle Co"]
+    assert orc[0]["url"] == "https://abcd.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1/job/25011541"
+    # "United States" in Richardson, TX is dropped; a Texas job that's also in Tucson is kept
+    assert [r["location"] for r in orc] == ["Phoenix, AZ, United States", "Austin, TX, United States; Tucson, AZ, US"]
 
     assert out["browser_only"] == [{"company": "Browser Co", "careers_url": "https://careers.browserco.com"}]
     assert set(out["errors"]) == {"Broken Co", "Odd Lever Co"}  # each fails alone; the rest still return
@@ -175,8 +184,18 @@ def test_search_all_backends():
 
 
 def test_workday_area_without_matches_returns_nothing():
+    # the site's location filter has nothing in Texas, so its "2 Locations" jobs aren't there either
     out = run_search(query="field service", names=["workday"], location="TX")
     assert out["results"] == [] and out["errors"] == {}
+
+
+def test_workday_location_filter_outcomes():
+    tx, az = location_terms("TX"), location_terms("AZ")
+    assert _workday_location_facets(WD_FACETS, az) == {"locations": ["loc-chandler"]}
+    assert _workday_location_facets(WD_FACETS, tx) == {}  # has places, none in the area
+    no_places = [{"facetParameter": "jobFamilyGroup", "descriptor": "Job Category",
+                  "values": [{"descriptor": "Engineering", "id": "eng", "count": 9}]}]
+    assert _workday_location_facets(no_places, tx) is None  # can't tell, so "N Locations" jobs stay
 
 
 def test_company_filter_and_anywhere():

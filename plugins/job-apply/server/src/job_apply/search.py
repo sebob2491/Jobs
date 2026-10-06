@@ -138,17 +138,21 @@ def location_matches(text: str, terms: list[str]) -> bool | None:
 # Each searcher takes (client, config value, query, how many to fetch, location terms).
 
 
-def _workday_location_facets(facets: Any, terms: list[str]) -> dict[str, list[str]]:
+def _workday_location_facets(facets: Any, terms: list[str]) -> dict[str, list[str]] | None:
     """Pick the location facet values (Workday's own location filter) that match the terms.
-    Returns {facetParameter: [ids]} for the one parameter covering the most postings."""
+    Returns {facetParameter: [ids]} for the one parameter covering the most postings, {} when
+    the site has location values but none in the area, and None when it has none at all."""
     found: dict[str, list[tuple[str, int]]] = {}
+    any_location = False
 
     def walk(items: Any, param: str | None) -> None:
+        nonlocal any_location
         for item in items or []:
             if not isinstance(item, dict):
                 continue
             p = item.get("facetParameter") or param
             if p and "id" in item and "descriptor" in item and re.search(r"location|country|state|city|region", p, re.I):
+                any_location = True
                 if location_matches(str(item["descriptor"]), terms) is True:
                     found.setdefault(p, []).append((str(item["id"]), int(item.get("count") or 0)))
             if item.get("values"):
@@ -156,7 +160,7 @@ def _workday_location_facets(facets: Any, terms: list[str]) -> dict[str, list[st
 
     walk(facets, None)
     if not found:
-        return {}
+        return {} if any_location else None
     best = max(found, key=lambda p: sum(c for _, c in found[p]))
     return {best: [i for i, _ in found[best]]}
 
@@ -176,18 +180,25 @@ async def _workday(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, 
 
     first = await page(0, {})
     applied: dict[str, list[str]] = {}
+    nowhere_near = False
     if terms and first.get("facets"):
         # Use the site's own location filter when one of its values names the area;
         # otherwise scan unfiltered results and filter them afterwards.
-        applied = _workday_location_facets(first["facets"], terms)
-        if applied:
+        match = _workday_location_facets(first["facets"], terms)
+        if match:
+            applied = match
             first = await page(0, applied)
+        # The filter lists every place these results are in. If none is in the area,
+        # neither is any "3 Locations" job.
+        nowhere_near = match == {}
     total = int(first.get("total") or 0)  # only the first page carries the total
     out: list[Listing] = []
     data, offset = first, 0
     while True:
         postings = data.get("jobPostings") or []
         for p in postings:
+            if nowhere_near and location_matches(p.get("locationsText", ""), terms) is None:
+                continue
             out.append(Listing(
                 company="", title=p.get("title", ""), url=f"https://{host}/{site}{p.get('externalPath') or ''}",
                 location=p.get("locationsText", ""), posted=p.get("postedOn", ""),
@@ -335,13 +346,29 @@ async def _oracle(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, t
     out = []
     for item in r.json().get("items") or []:
         for req in item.get("requisitionList") or []:
+            places = [req.get("PrimaryLocation") or ""] + _oracle_places(req)
             out.append(Listing(
                 company="", title=req.get("Title") or "",
                 url=f"https://{host}/hcmUI/CandidateExperience/en/sites/{site}/job/{req.get('Id')}",
-                location=req.get("PrimaryLocation") or "", posted=req.get("PostedDate") or "",
+                location="; ".join(dict.fromkeys(p for p in places if p)), posted=req.get("PostedDate") or "",
                 external_id=str(req.get("Id") or ""), ats="oracle_hcm",
             ))
     return out[:limit]
+
+
+def _oracle_places(req: dict[str, Any]) -> list[str]:
+    """A requisition's other places (the search asks for them). The primary location is
+    sometimes just "United States", and a job can also be at sites other than the primary."""
+    places = []
+    for key in ("secondaryLocations", "workLocation", "otherWorkLocations"):
+        for loc in req.get(key) or []:
+            if not isinstance(loc, dict):
+                continue
+            parts = [str(loc[k]) for k in ("TownOrCity", "Region2", "Country") if loc.get(k)]
+            name = loc.get("Name") or ", ".join(parts) or loc.get("LocationName")
+            if name:
+                places.append(str(name))
+    return places
 
 
 SEARCHERS: dict[str, Callable[[httpx.AsyncClient, Any, str, int, list[str]], Awaitable[list[Listing]]]] = {
