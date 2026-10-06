@@ -91,13 +91,16 @@ class Desk:
         except (OSError, ValueError):
             pass
         try:
-            self.applier.auto_submit = bool(json.loads(_settings_path().read_text(encoding="utf-8")).get("auto_submit"))
-        except (OSError, ValueError):
+            saved = json.loads(_settings_path().read_text(encoding="utf-8"))
+            self.applier.auto_submit = saved.get("auto_submit") is True
+            self.applier.tailor = saved.get("tailor_resumes") is True
+        except (OSError, ValueError, AttributeError):
             pass
 
     def _save_settings(self) -> None:
         config.ensure_home()
-        _settings_path().write_text(json.dumps({"auto_submit": self.applier.auto_submit}), encoding="utf-8")
+        _settings_path().write_text(json.dumps({"auto_submit": self.applier.auto_submit,
+                                                "tailor_resumes": self.applier.tailor}), encoding="utf-8")
 
     # ------------------------------------------------------------- serving
     @property
@@ -214,6 +217,8 @@ class Desk:
             elif action == "show":
                 if not await a.focus(job_id):
                     return JSONResponse({"error": "Its tab is closed. Press Resume to open it again."}, status_code=409)
+            elif action == "usual_resume":
+                a.use_usual_resume(job_id)
             elif action == "applied":
                 self.srv.tracker().update(job_id, status="applied", note="marked applied in the Job Desk")
                 if job_id in a.runs:
@@ -230,8 +235,11 @@ class Desk:
         body = await request.json()
         if "auto_submit" in body:
             self.applier.auto_submit = body["auto_submit"] is True  # not "false", which bool() calls true
+        if "tailor_resumes" in body:
+            self.applier.set_tailor(body["tailor_resumes"] is True)
+        if "auto_submit" in body or "tailor_resumes" in body:
             self._save_settings()
-        return JSONResponse({"auto_submit": self.applier.auto_submit})
+        return JSONResponse({"auto_submit": self.applier.auto_submit, "tailor_resumes": self.applier.tailor})
 
     async def password_view(self, request: Request) -> Response:
         """A career-site password typed into the page goes straight to secrets.yaml. It is
@@ -350,6 +358,7 @@ class Desk:
             if a.get("remember", True):
                 try:
                     config.save_answer(label, value, run.company)
+                    run.once.pop(question_key(label), None)  # an earlier answer for this application only
                     continue
                 except (ValueError, OSError) as e:
                     problem = f"Couldn't remember your answers ({e}); they're used for this application only."
@@ -397,7 +406,8 @@ class Desk:
             "profile": {"name": prof.full_name, "missing": prof.missing_required(),
                         "titles": prof.get("preferences.titles") or [], "path": str(config.profile_path())},
             "settings": {"submit_mode": settings.submit_mode, "dry_run": settings.dry_run,
-                         "auto_submit": self.applier.auto_submit},
+                         "auto_submit": self.applier.auto_submit, "tailor_resumes": self.applier.tailor},
+            "tailoring": len(self.applier.tailoring()),
             "passwords": {"workday": _has_secret("workday_password")},  # saved or not, never the value
             "answers_problem": config.answers_problem(),
             "search": self.search,

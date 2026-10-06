@@ -735,6 +735,18 @@ class BrowserSession:
                 and choose_option(choice, [shown]) is None):
             raise ValueError(f"Picked {choice!r} but the field shows {shown[:80]!r}; set it by hand or with click")
 
+    async def _clear_search(self, page: Page, loc: Locator) -> None:
+        """Empty a picker's box after a search that found nothing to pick. SuccessFactors keeps
+        the typed words, and a box with words in it reads as answered: the desk went on to the
+        submit step while the site still said the question was required."""
+        try:
+            if await loc.input_value():
+                await loc.fill("")
+                await loc.evaluate("el => el.blur()")
+        except (PlaywrightError, PlaywrightTimeout):
+            pass
+        await self._close_menus(page)  # after: emptying the box can bring its menu back
+
     async def _type_and_pick(self, page: Page, loc: Locator, field: dict, value: Any) -> str:
         text, names = str(value), bool(field.get("names"))
         await self._open(page, field["id"], loc)
@@ -760,7 +772,7 @@ class BrowserSession:
             choice = choose_option(text, options, names=names)
         if choice is None:
             if options:
-                await self._close_menus(page)
+                await self._clear_search(page, loc)
                 raise ValueError(f"{text!r} doesn't match any suggestion: {options[:30]}")
             # Nothing was listed. A pick-list (one that names its menu) needs a pick: Eightfold's
             # Country code dropped the typed text once its menu closed, and the field stayed
@@ -769,6 +781,7 @@ class BrowserSession:
             await loc.evaluate("el => el.blur()")
             await page.wait_for_timeout(200)
             if picks or norm(await loc.input_value()) != norm(query):
+                await self._clear_search(page, loc)
                 raise ValueError(f"nothing in its list matched {query!r}")
             return "typed (no suggestions appeared)"
         await self._click_option(page, field["id"], choice)

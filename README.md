@@ -20,7 +20,9 @@ company careers site) and Claude does the rest:
 
 It also fills Workday's "My Experience" section, with one block per job and
 degree in your profile, and it can write a tailored resume or cover letter for
-each job as a PDF that it uploads in place of your default.
+each job as a PDF that it uploads in place of your default. In the Job Desk, turn
+on "Tailor my resume for each job" and say "tailor my resumes" to Claude: each
+picked job waits until Claude has written its resume, then carries on.
 
 It works with any careers site, plus specific handling for the systems common
 at semiconductor companies: Workday (Applied Materials, KLA, Intel, Microchip,

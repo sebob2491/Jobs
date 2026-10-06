@@ -224,6 +224,8 @@ EXTRACT_JS = r"""
     // a Workday search prompt: what it lists on opening is only its top level
     if (kind === 'combobox' && (el.getAttribute('data-uxi-widget-type') === 'selectinput'
         || el.closest('[data-automation-id="multiSelectContainer"], [data-automation-id="multiselectInputContainer"]'))) f.search = true;
+    // SuccessFactors' paginated select: lists 100 entries at a time, the rest by search
+    if (kind === 'combobox' && el.classList.contains('rcmpaginatedselectinput')) f.paged = true;
     if (el.multiple) f.multiple = true;
     if (el.disabled || el.getAttribute('aria-disabled') === 'true') f.disabled = true;
     if (el.readOnly) f.readonly = true;
@@ -281,8 +283,12 @@ EXTRACT_JS = r"""
   for (const el of document.querySelectorAll(BUTTONS)) {
     if (el.getAttribute('aria-haspopup') === 'listbox' || !visible(el)) continue;
     const role = el.getAttribute('role');
-    if (role === 'option' || role === 'menuitem' || el.closest('[role="listbox"], [role="menu"]')) continue;
     const t = clean(txt(el) || el.value || el.getAttribute('aria-label') || '');
+    // A menu's entries are mostly site navigation, left out, but an open menu of ways to
+    // apply (Qorvo's "Apply now ▾": Apply Now, Start apply with LinkedIn) holds the way in.
+    const inMenu = role === 'menuitem' || !!el.closest('[role="menu"]');
+    const applyItem = inMenu && !el.closest('[role="menubar"]') && /\bapply\b/i.test(t);  // not the site's top bar
+    if (role === 'option' || el.closest('[role="listbox"]') || (inMenu && !applyItem)) continue;
     if (!t || t.length > 60) continue;
     if (el.tagName === 'A' && !ACTION.test(t)) continue;
     const full = t + ' ' + (el.getAttribute('aria-label') || '');
@@ -290,6 +296,7 @@ EXTRACT_JS = r"""
     const isSubmit = SUBMIT.test(full) || (formSubmit && FINALISH.test(t));
     if (actions.length >= 60 && !isSubmit && !formSubmit && !STEP.test(t)) continue;
     const a = { id: idOf(el), text: t };
+    if (applyItem) a.menu = true;
     // A cookie banner's own buttons (OneTrust's sits at the very end of a long page, past
     // the page text the desk reads)
     const box = el.closest(COOKIE_BOX);

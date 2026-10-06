@@ -115,6 +115,38 @@ def test_workday_2026_search_prompt_is_picked_not_typed(srv):
     assert by_label(after, "country phone code")["value"] == "United States of America (+1)"
 
 
+
+def test_a_successfactors_list_is_searched_and_a_search_that_picks_nothing_is_emptied(srv, job_apply_home):
+    """Qorvo's SuccessFactors (Oct 2026): its dropdowns list their first 100 entries (the
+    countries stop at Iran) and find the rest as you type. Words typed that pick nothing stay
+    in the box, where they read as an answer: the desk went on to the submit step while the
+    site still said "Preferred Locale/Language is required"."""
+    run(srv.browser.goto(fixture_url("site/sf-select-form.html")))
+    fields = run(srv.inspect_form())["fields"]
+    country, locale = by_label(fields, "country"), by_label(fields, "locale")
+    assert country["kind"] == "combobox" and country["paged"] and len(country["options"]) == 100
+    assert "United States" not in country["options"]
+    assert by_label(fields, "veteran")["options"] == ["No Selection", "I am a protected veteran",
+                                                       "I am not a protected veteran"]
+    result = run(srv.autofill())
+    assert {f["label"]: f["value"] for f in result["filled"]}["Country"] == "United States", result
+    assert not result["failed"], result["failed"]  # the veteran list is all there is: nothing typed into it
+    assert [f["label"] for f in result["needs_input"] if f.get("required")] == ["Preferred Locale/Language"]
+
+    out = run(srv.fill_form([{"id": locale["id"], "value": "Klingon"}]))
+    assert not out["ok"] and "Klingon" in out["results"][0]["error"], out
+    after = run(srv.inspect_form(include_dropdown_options=False))["fields"]
+    assert by_label(after, "locale")["value"] == ""  # not "Klingon"
+    assert by_label(after, "country")["value"] == "United States"
+
+    # a country the list doesn't have: the field comes back with what to ask instead
+    profile = job_apply_home / "profile.yaml"
+    profile.write_text(profile.read_text().replace("country: United States", "country: Atlantis"))
+    run(srv.browser.goto(fixture_url("site/sf-select-form.html")))
+    failed = run(srv.autofill())["failed"]
+    assert [(f["label"], f["kind"], f["required"], len(f["options"])) for f in failed] == [("Country", "combobox", True, 100)]
+    assert by_label(run(srv.inspect_form(include_dropdown_options=False))["fields"], "country")["value"] == ""
+
 def test_iframe_form_and_linkedin_policy(srv, monkeypatch):
     job = srv.add_job(url=fixture_url("iframe_host.html"), title="Process Technician", company="Example Fab")["job"]
     run(srv.open_application(job_id=job["id"]))

@@ -4,6 +4,7 @@ review -> submit)."""
 
 import asyncio
 import time
+from pathlib import Path
 
 import pytest
 from conftest import browser_available, fixture_url, run
@@ -308,6 +309,31 @@ def test_a_button_drawn_as_a_web_component_is_pressed(srv, monkeypatch):
 
     r = run(go())
     assert r.need == "sign_in" and "clicked “Apply now”" in r.log, (r.reason, r.log)
+
+
+def test_an_apply_menu_is_followed_through_to_the_application(srv, monkeypatch):
+    """Qorvo's Apply now opens a menu (Apply Now, Start apply with LinkedIn); its Apply Now
+    asks for an email and a Start before the application. The toggle itself is pressed
+    once, not over and over, and the LinkedIn route is left alone."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 1)
+    job = srv.add_job(url=fixture_url("site/apply-menu-posting.html"), title="Intern", company="Example Semi")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status == "needs_you")
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert r.need == "sign_in", (r.reason, r.log)
+    clicks = [line for line in r.log if line.startswith("clicked")]
+    assert clicks == ["clicked “Apply now”", "clicked “Apply Now”", "clicked “Start”"], r.log
+    assert r.url.endswith("/signin.html")
 
 
 def test_cookie_dialog_is_declined_never_accepted(srv, monkeypatch):
@@ -754,3 +780,177 @@ def test_a_flow_that_goes_round_in_a_circle_stops_after_one_lap(srv, monkeypatch
     assert "“Continue” on “Confirm Your Identity” (“You've requested too many verification codes" in r.reason
     assert [line for line in r.log if line.startswith("clicked")] == ["clicked “Apply Now”", "clicked “Next”",
                                                                        "clicked “Continue”"]
+
+
+def test_tailoring_holds_a_job_until_its_resume_is_written(srv, monkeypatch):
+    """With "Tailor my resume" on, a job waits before its tab opens and carries on once a
+    resume made for it is in its folder; a draft that came out too long doesn't count."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    job = srv.add_job(url=fixture_url("site/posting.html"), title="FSE", company="Example Fab")["job"]
+    folder = Path(srv.tracker().get(job["id"])["folder"])
+    applier = Applier(srv)
+    applier.tailor = True
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status == "needs_you")
+            waited = (r.need, r.page, [x.job_id for x in applier.tailoring()])
+            folder.mkdir(parents=True, exist_ok=True)
+            (folder / "Sam_Rivera_Resume.pdf").write_bytes(b"%PDF-1.4\n")
+            (folder / "Sam_Rivera_Resume.too-long").touch()  # render_document asked for a shorter one
+            applier.wake()
+            await asyncio.sleep(1)
+            held = r.need
+            (folder / "Sam_Rivera_Resume.too-long").unlink()
+            applier.wake()
+            await until(lambda: r.status == "needs_you" and r.need != "tailor")
+            return waited, held, r
+        finally:
+            await applier.stop()
+
+    waited, held, r = run(go())
+    assert waited == ("tailor", None, [job["id"]])  # no tab opened while it waits
+    assert held == "tailor"
+    assert r.need == "sign_in" and "clicked “Apply Manually”" in r.log, (r.reason, r.log)
+
+
+def test_the_usual_resume_can_go_instead_of_a_tailored_one(srv, monkeypatch):
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    job = srv.add_job(url=fixture_url("site/posting.html"), title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+    applier.tailor = True
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status == "needs_you")
+            applier.use_usual_resume(job["id"])
+            await until(lambda: r.status == "needs_you" and r.need != "tailor")
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert r.need == "sign_in", (r.reason, r.log)
+
+
+def test_turning_tailoring_off_lets_waiting_jobs_go(srv):
+    applier = Applier(srv)
+    job = srv.add_job(url=fixture_url("site/posting.html"), title="FSE", company="Example Fab")["job"]
+    run_ = pipeline.Run(job["id"], status="needs_you", need="tailor")
+    applier.runs[job["id"]] = run_
+
+    async def go():
+        applier.set_tailor(False)
+
+    run(go())
+    assert run_.status == "queued" and ("apply", job["id"]) in applier.tasks
+
+
+def account_apply_run(srv, monkeypatch, saved=None):
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    if saved:  # a password saved for this site (the fixture page stands in for SuccessFactors)
+        monkeypatch.setattr(pipeline, "password_for", lambda url: "successfactors_password")
+        monkeypatch.setenv("JOB_APPLY_SECRET_SUCCESSFACTORS_PASSWORD", saved)
+    job = srv.add_job(url=fixture_url("site/account-apply.html"), title="ET", company="Example Semi")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status == "needs_you")
+            values = await r.page.evaluate("() => Object.fromEntries([...document.querySelectorAll('input')].map((i) => [i.id, i.value]))")
+            return r, values
+        finally:
+            await applier.stop()
+
+    r, values = run(go())
+    return job, r, values
+
+
+def test_a_page_that_creates_the_account_as_it_applies_is_filled_around_the_password(srv, monkeypatch):
+    """Qorvo's SuccessFactors application is also its Create Account form, and its Apply
+    sends both. The desk fills the application, leaves the password and that button to
+    the person, and says so."""
+    job, r, values = account_apply_run(srv, monkeypatch)
+    assert r.need == "your_submit", (r.reason, r.log)
+    assert "Choose a password" in r.reason and "press its Apply button yourself" in r.reason
+    assert values["em"] == values["em2"] == "sam.rivera@example.com"
+    assert (values["fn"], values["ln"], values["city"], values["zip"]) == ("Sam", "Rivera", "Chandler", "85225")
+    assert values["pw"] == values["pw2"] == ""  # the person's to choose
+    # what's recorded of the page is the page as filled: only the password boxes are left
+    assert [f["label"] for f in r.page_info["fields"] if f["empty"]] == ["Choose Password: *", "Retype Password: *"]
+    assert srv.tracker().get(job["id"])["status"] == "ready_to_submit"
+    assert not any("clicked" in line for line in r.log)  # Apply sends it: never pressed
+
+
+def test_a_saved_password_goes_into_both_boxes_of_such_a_page(srv, monkeypatch):
+    job, r, values = account_apply_run(srv, monkeypatch, saved="Fake-Pass-123")
+    assert r.need == "your_submit" and "Your saved password is in its password boxes" in r.reason, (r.reason, r.log)
+    assert values["pw"] == values["pw2"] == "Fake-Pass-123"
+
+
+
+def test_an_answer_the_page_turns_down_is_asked_again(srv, monkeypatch):
+    """Qorvo, live: an answer that matched nothing in a SuccessFactors dropdown left its words
+    in the box, the desk took the box for answered, and went on to the submit step while the
+    site still said "Preferred Locale/Language is required"."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    job = srv.add_job(url=fixture_url("site/sf-select-form.html"), title="ET", company="Example Semi")["job"]
+    applier = Applier(srv)
+    locale = question_key("Preferred Locale/Language")
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status == "needs_you")
+            assert r.need == "questions", (r.reason, r.log)
+            assert [q["label"] for q in r.questions] == ["Preferred Locale/Language"]  # Country was searched for
+
+            r.once[locale] = "Klingon"
+            applier.enqueue(job["id"], front=True)
+            await until(lambda: any("didn't go in" in line for line in r.log) and r.status not in ("queued", "running"))
+            assert r.need == "questions", (r.status, r.reason, r.log)
+            assert [q["label"] for q in r.questions] == ["Preferred Locale/Language"]
+            assert "Klingon" in r.questions[0]["error"]
+            assert await r.page.input_value("[aria-label='Preferred Locale/Language']") == ""
+
+            r.once[locale] = "English"
+            applier.enqueue(job["id"], front=True)
+            await until(lambda: r.status in ("ready", "failed") or r.status == "needs_you" and r.need != "questions")
+            assert r.status == "ready", (r.reason, r.log)
+            return await r.page.evaluate("() => [...document.querySelectorAll('input')].map((i) => i.value)")
+        finally:
+            await applier.stop()
+
+    assert run(go()) == ["Sam", "United States", "English", ""]  # the optional veteran question is left
+
+
+def test_a_turned_down_answer_is_asked_again_whatever_the_box_shows():
+    """A widget that keeps the words after a failed pick still gets its question asked again,
+    unless the profile's own answer went in after."""
+    turned_down = {question_key("Preferred Locale/Language"): {
+        "id": "28", "label": "Preferred Locale/Language", "kind": "combobox", "required": True,
+        "error": "nothing in its list matched 'Klingon'"}}
+    nothing_left = {"needs_input": [], "failed": [], "filled": []}
+    pending, _ = pipeline._pending(nothing_left, turned_down)
+    assert [(q["label"], q["error"]) for q in pending] == [("Preferred Locale/Language", "nothing in its list matched 'Klingon'")]
+    profile_filled = {**nothing_left, "filled": [{"id": "28", "label": "Preferred Locale/Language", "value": "English"}]}
+    assert pipeline._pending(profile_filled, turned_down)[0] == []
+
+
+def test_a_profile_answer_that_doesnt_go_in_is_asked_only_where_required():
+    """A required field is asked about with its own choices. An optional one is skipped: Qorvo's
+    optional veteran question (no "don't wish to answer") was asked over and over."""
+    result = {"needs_input": [], "filled": [], "failed": [
+        {"id": "17", "label": "Country", "value": "Atlantis", "error": "nothing in its list matched 'Atlantis'",
+         "kind": "combobox", "required": True, "options": ["No Selection", "Afghanistan"]},
+        {"id": "40", "label": "Pre-Offer : Are you a Protected Veteran?", "value": "I don't wish to answer",
+         "error": "nothing in its list matched", "kind": "combobox", "required": False, "options": ["Yes", "No"]}]}
+    pending, _ = pipeline._pending(result, {})
+    assert [(q["label"], q["kind"], q["options"]) for q in pending] == [("Country", "combobox", ["No Selection", "Afghanistan"])]

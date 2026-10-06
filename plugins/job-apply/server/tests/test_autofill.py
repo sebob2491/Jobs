@@ -1,4 +1,9 @@
-from job_apply.autofill import choose_option, plan_autofill, resolve_field
+from job_apply.autofill import (
+    choose_option,
+    is_empty_value,
+    plan_autofill,
+    resolve_field,
+)
 from job_apply.config import Profile
 
 
@@ -37,6 +42,8 @@ def test_resolve_contact_fields():
     assert resolve_field(f("First Name *"), p).value == "Sam"
     assert resolve_field(f("Legal Last Name"), p).value == "Rivera"
     assert resolve_field(f("Email Address"), p).value == "sam.rivera@example.com"
+    assert resolve_field(f("Enter email to start application process"), p).value == "sam.rivera@example.com"  # Qorvo
+    assert resolve_field(f("Retype Email Address: *"), p).value == "sam.rivera@example.com"  # SuccessFactors
     assert resolve_field(f("Phone Number"), p).value == "480-555-0123"
     assert resolve_field(f("State", "select", options=["Arizona", "Texas"]), p).value == "Arizona"
     assert resolve_field(f("Country Phone Code", "listbox", options=["Canada (+1)", "United States of America (+1)"]), p).value \
@@ -286,3 +293,23 @@ def test_names_are_matched_by_name_not_shared_words():
     assert choose_option("Mesa Community College", ["Scottsdale Community College", "Mesa Community College (AZ)"],
                          names=True) == "Mesa Community College (AZ)"
     assert choose_option("Intel Corporation", ["Intel", "Microchip"], names=True) == "Intel"
+
+
+def test_no_selection_is_nothing_chosen():
+    """SuccessFactors' dropdowns read "No Selection" when nothing is picked: the box is empty,
+    and the entry is no "No" answer."""
+    assert is_empty_value("No Selection")
+    assert choose_option("I do not", ["No Selection", "Yes", "No"]) == "No"
+
+
+def test_a_paged_list_is_searched_only_when_it_shows_a_full_page():
+    """SuccessFactors' dropdowns list 100 entries at a time. Qorvo's countries stop at Iran, so
+    the profile's country is searched for. Its veteran list is three entries, all there is:
+    an answer that isn't among them is left alone rather than typed in."""
+    countries = ["No Selection"] + [f"Country {i}" for i in range(99)]
+    country = {"id": "1", "label": "Country", "kind": "combobox", "value": "", "paged": True, "options": countries}
+    assert resolve_field(country, prof()).value == "United States"
+    assert resolve_field({**country, "options": countries[:50]}, prof()) is None
+    veteran = {"id": "2", "label": "Pre-Offer : Are you a Protected Veteran?", "kind": "combobox", "value": "",
+               "paged": True, "options": ["No Selection", "I am a protected veteran", "I am not a protected veteran"]}
+    assert resolve_field(veteran, prof()) is None  # the profile's "I don't wish to answer" isn't offered

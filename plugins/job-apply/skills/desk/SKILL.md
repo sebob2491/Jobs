@@ -10,8 +10,8 @@ The desk is a local web page served by this plugin. It does what the `find-jobs`
 
 - **Find jobs** searches every employer's career site for the profile's
   `preferences.titles` in its `preferences.locations` (or home state). It ranks each
-  opening, with plain reasons and concerns under it: a Bachelor's requirement against
-  an Associate's, senior titles, clearances, export control, travel.
+  opening, with plain reasons and concerns under it: a degree requirement the user's
+  education doesn't meet, senior titles, clearances, export control, travel.
 - **Apply to selected** works through the picked jobs one at a time in the automation
   browser. It clicks through Apply, autofills every page, adds Workday's work and
   education blocks, and stops at each review page.
@@ -32,6 +32,9 @@ The desk is a local web page served by this plugin. It does what the `find-jobs`
 - **Submit** sends one application. **Submit for me** sends every application that
   needs nothing, and stays off until the user turns it on. LinkedIn and Indeed are
   always submitted by the user.
+- **Tailor my resume for each job** holds each picked job, before its browser tab
+  opens, until Claude has written a resume for it (see Tailoring resumes). The page
+  says how many are waiting. **Use my usual resume** sends one on without.
 
 ## Steps
 
@@ -49,6 +52,25 @@ The desk is a local web page served by this plugin. It does what the `find-jobs`
 5. The desk keeps running while Claude Code is open. Without Claude, the user can run
    `uv run --project <plugin>/server job-apply-desk` (the path is `plugin_root` in
    `setup_status`).
+
+## Tailoring resumes
+
+When the user says "tailor my resumes", or the desk shows jobs waiting for a tailored
+resume:
+
+1. Call `tailoring_queue()`. It lists the waiting jobs with their posting text, the
+   user's real resume (`base_resume`, or `resume_file` to read) with the profile's work
+   and education history, and the `rules`.
+2. For each job, write the resume in Markdown. Choose, order and reword what the real
+   resume says so the parts the posting asks for come first, in its own words where
+   they're true. Never add a tool, certification, number, duty, employer, date or
+   degree; coursework is not a degree.
+3. The first time, show the user one tailored resume and ask if the style is right.
+   After that, carry on without asking.
+4. Call `render_document("resume", markdown, job_id)`. The desk carries on with that
+   job as soon as its PDF is saved. A `warning` about length means tighten it and
+   render again; the job waits until it fits on 2 pages.
+5. A job whose description says it hasn't been read yet: `ingest_job(url)` first.
 
 ## Bot checks
 

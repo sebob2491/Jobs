@@ -16,16 +16,18 @@ front) and carries on by itself once the page moves past it, or when they choose
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import re
 import time
 from collections import deque
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
 from . import config
 from .ats import ATS_NAMES, detect_ats
-from .autofill import clean_label, is_empty_value, norm
+from .autofill import clean_label, is_empty_value, norm, tailored_document
 from .browser import TabClosed
 
 NEW_TAB_WAIT = 4  # seconds to wait for a tab opened late by a click before calling it a stall
@@ -50,7 +52,7 @@ _SIGN_IN_ACTION = re.compile(r"^(sign in|log ?in|sign in with email)$", re.I)
 _CREATE_ACCOUNT = re.compile(r"^(create (?:an |your |a new )?account|sign up|register)[.!]?$", re.I)
 _SOCIAL = re.compile(r"\b(google|apple|linked ?in|facebook|microsoft|indeed|seek)\b", re.I)
 _STEP = re.compile(r"^(save (?:and|&) continue|continue|next|next step|review|review (?:and|&) submit|"
-                   r"review application|proceed|go to next step)$", re.I)
+                   r"review application|proceed|go to next step|start)$", re.I)
 _SIGN_IN_STEP = re.compile(r"create account\s*/\s*sign in|sign in\s*/\s*create account", re.I)  # Workday's step name
 _ENTRY = re.compile(r"^(apply manually|apply now|apply|easy apply|quick apply|"
                     r"apply for (?:this|the) (?:job|position|role)(?: online)?|"
@@ -75,6 +77,7 @@ class Run:
     status: str = "queued"  # queued | running | needs_you | ready | submitted | failed | skipped
     # questions | sign_in | bot_check | email_code | captcha | your_submit | stuck
     # | submit_failed (pressed, the form is still there) | check_submit (pressed, no confirmation)
+    # | tailor (waiting for Claude to write a resume for this job)
     need: str = ""
     reason: str = ""
     questions: list[dict[str, Any]] = field(default_factory=list)
@@ -84,6 +87,7 @@ class Run:
     paused_at: float = 0.0
     paused_site: str = ""  # the site it paused on, so a tab taken to webmail isn't "moved on"
     submit: bool = False  # submit once the review page is reached
+    usual_resume: bool = False  # the person chose to go ahead without a tailored resume
     once: dict[str, Any] = field(default_factory=dict)  # answers for this application only, by question
     seen_form: bool = False  # got into the application itself (so a page with only Submit is its review page)
     page_info: dict[str, Any] = field(default_factory=dict)  # what the page looked like when it paused
@@ -120,7 +124,8 @@ def pick_next(actions: list[dict[str, Any]], in_form: bool) -> dict[str, Any] | 
     steps = [a for a in usable if _STEP.match(a["text"].strip())]
     entries = [a for a in usable if _ENTRY.match(a["text"].strip()) and not _SOCIAL.search(a["text"])
                and not (_AVOID.search(a["text"]) and "manually" not in a["text"].lower())]
-    entries.sort(key=lambda a: "manually" not in a["text"].lower())
+    # an open menu's own entry ("Apply Now" under Qorvo's "Apply now ▾") before the toggle again
+    entries.sort(key=lambda a: (not a.get("menu"), "manually" not in a["text"].lower()))
     order = (steps + entries) if in_form else (entries + steps)
     return order[0] if order else None
 
@@ -132,6 +137,8 @@ def _fingerprint(page: dict[str, Any]) -> tuple:
     return page.get("url"), tuple(page.get("headings") or []), count, actions
 
 
+_TAILOR_SAYS = ("Waiting for a resume written for this job. In Claude Code, say \u201ctailor my resumes\u201d; the "
+                "desk carries on with this job as soon as its resume is ready. Or use your usual resume.")
 _BOT_CHECK_SAYS = ("The site is checking that you're a person (a bot check or CAPTCHA). Solve it in the browser "
                    "window; the desk carries on by itself after that.")
 _ERRORISH = re.compile(r"error|required|invalid|please|must|enter |select |missing|problem|fix|can'?t be blank", re.I)
@@ -170,6 +177,7 @@ class Applier:
         self.runs: dict[int, Run] = {}
         self.tasks: deque[tuple[str, int]] = deque()
         self.auto_submit = False
+        self.tailor = False  # hold each job until Claude has written a resume for it
         self.current: int | None = None
         self._wake = asyncio.Event()
         self._worker_task: asyncio.Task | None = None
@@ -218,6 +226,35 @@ class Applier:
         self._wake.set()
         return run
 
+    def wake(self) -> None:
+        """Look again now (a tailored resume was just written)."""
+        self._wake.set()
+
+    def set_tailor(self, on: bool) -> None:
+        self.tailor = on
+        if not on:  # nothing to wait for any more
+            for run in [r for r in self.runs.values() if r.status == "needs_you" and r.need == "tailor"]:
+                with contextlib.suppress(KeyError, ValueError):
+                    self.enqueue(run.job_id, submit=run.submit)
+
+    def use_usual_resume(self, job_id: int) -> Run:
+        """Go ahead with this job without a tailored resume."""
+        run = self.runs[job_id]
+        run.usual_resume = True
+        return self.enqueue(job_id, submit=run.submit, front=True)
+
+    def tailoring(self) -> list[Run]:
+        """The jobs waiting for a resume written for them."""
+        return [r for r in self.runs.values() if r.status == "needs_you" and r.need == "tailor"]
+
+    def _resume_tailored(self) -> None:
+        """Carry on with each waiting job whose tailored resume is now in its folder."""
+        for run in self.tailoring():
+            job = self.srv.tracker().get(run.job_id, with_description=False)
+            if job and tailored_ready(job):
+                with contextlib.suppress(KeyError, ValueError):
+                    self.enqueue(run.job_id, submit=run.submit)
+
     def later(self, job_id: int) -> Run:
         """Stop holding the queue for this job; it stays paused until resumed."""
         run = self.runs[job_id]
@@ -261,6 +298,7 @@ class Applier:
                 await asyncio.sleep(POLL_SECONDS)
 
     async def _tick(self) -> None:
+        self._resume_tailored()
         # A Submit the person pressed goes first, even while the queue holds for a sign-in.
         submit = next((t for t in self.tasks if t[0] == "submit"), None)
         blocker = next((r for r in self.runs.values() if r.blocking), None)
@@ -373,6 +411,10 @@ class Applier:
     async def _drive(self, run: Run) -> None:
         srv = self.srv
         run.status, run.need, run.reason = "running", "", "Working on it"
+        if self.tailor and not run.usual_resume:
+            job = srv.tracker().get(run.job_id, with_description=False) or {}
+            if not tailored_ready(job):  # before its tab opens: nothing to keep waiting
+                return self._pause(run, "tailor", _TAILOR_SAYS)
         if not await self._open(run):
             return
         stalls, entries_done, waited, refilled, dismissed = 0, set(), False, set(), set()
@@ -397,6 +439,8 @@ class Applier:
             if kind == "bot_check":
                 await self._bring_forward(run)
                 return self._pause(run, "bot_check", _BOT_CHECK_SAYS)
+            if kind == "sign_in" and _account_and_application(data):
+                return await self._apply_with_account(run, data)
             if kind == "sign_in":
                 done = await self._sign_in(run, data, sign_ins)
                 if done in ("email_step", "submitted", "create_account"):
@@ -435,13 +479,8 @@ class Applier:
                 result = await srv.autofill(job_id=run.job_id)
                 if result["filled"]:
                     self._log(run, f"filled {len(result['filled'])} field(s) on {_where(data)}")
-                pending = [{**f, **once_failed[question_key(f.get("label") or "")]}
-                           if question_key(f.get("label") or "") in once_failed else f
-                           for f in result["needs_input"] if f.get("required") and f.get("kind") != "file"]
-                pending += [{"id": f["id"], "label": f.get("label") or "", "kind": "combobox" if f.get("options") else "text",
-                             "required": True, "error": f.get("error"),
-                             **({"options": f["options"]} if f.get("options") else {})} for f in result["failed"]]
-                missing_files = [f for f in result["needs_input"] if f.get("required") and f.get("kind") == "file"]
+                pending, missing_files = _pending(result, once_failed)
+                self._note_skipped(run, result)
                 before, page_key = data, (data.get("url"), tuple(data.get("headings") or []))
                 data, text = await self._look()  # filling can add or enable things (State after Country, Submit)
                 run.page_info = _page_info(data)  # what the person sees on the desk: the page as filled
@@ -558,25 +597,35 @@ class Applier:
 
     async def _fill_once(self, run: Run, data: dict[str, Any]) -> dict[str, dict[str, Any]]:
         """Answers the person gave for this application only (not remembered). Returns the
-        ones that didn't go in, by question: the reason, and the entries to choose from
-        when the answer was a group of them."""
+        ones that didn't go in, by question: the field, the reason, and the entries to
+        choose from when the answer was a group of them."""
         if not run.once:
             return {}
-        by_id = {f["id"]: question_key(f.get("label") or "") for f in data.get("fields") or []}
+        fields = {f["id"]: f for f in data.get("fields") or []}
+        by_id = {fid: question_key(f.get("label") or "") for fid, f in fields.items()}
         fills = [{"id": fid, "value": run.once[key]} for fid, key in by_id.items()
-                 if key in run.once and is_empty_value(next(f.get("value") for f in data["fields"] if f["id"] == fid))]
+                 if key in run.once and is_empty_value(fields[fid].get("value"))]
         if not fills:
             return {}
         out = await self.srv.fill_form(fills)
-        failed = {by_id[r["id"]]: {"error": r.get("error") or "didn't take",
+        failed = {by_id[r["id"]]: {**{k: fields[r["id"]][k] for k in ("id", "kind", "label", "section", "required", "options")
+                                      if fields[r["id"]].get(k) not in (None, [])},
+                                   "error": r.get("error") or "didn't take",
                                    **({"options": r["options"]} if r.get("options") else {})}
-                  for r in out.get("results", []) if not r.get("ok")}
+                  for r in out.get("results", []) if not r.get("ok") and r.get("id") in fields}
         done = len(fills) - len(failed)
         if done:
             self._log(run, f"filled {done} answer(s) you gave for this application")
         if failed:
             self._log(run, f"{len(failed)} of your answers didn't go in")
         return failed
+
+    def _note_skipped(self, run: Run, result: dict[str, Any]) -> None:
+        """Optional fields that wouldn't take the profile's answer are skipped, and said so."""
+        skipped = [f.get("label") or "a field" for f in result["failed"] if f.get("required") is False]
+        if skipped:
+            self._log(run, f"skipped {len(skipped)} optional field(s) that wouldn't take your profile's answer: "
+                      + ", ".join(f"\u201c{label}\u201d" for label in skipped[:3]))
 
     async def _decline_cookies(self, run: Run, data: dict[str, Any], text: str) -> bool:
         """Press Reject / Decline / Necessary only on a cookie banner (never Accept). Banners
@@ -640,7 +689,8 @@ class Applier:
             return None
         await srv.fill_form([{"id": email["id"], "value": address}])
         for box in passwords:
-            await srv.fill_secret(box["id"], secret)
+            if not (await srv.fill_secret(box["id"], secret)).get("ok"):
+                return None  # it didn't go in: say nothing about a saved password
         if len(passwords) == 2:  # a new account: accepting the site's terms is the person's call
             self._log(run, "filled the Create Account form with your email and saved password")
             return "prefilled"
@@ -651,6 +701,35 @@ class Applier:
         await srv.click(button["id"])
         self._log(run, "signed in with your saved password")
         return "submitted"
+
+    async def _apply_with_account(self, run: Run, data: dict[str, Any]) -> None:
+        """A page that creates the account as it applies: Qorvo's SuccessFactors puts Create
+        Account and the whole application on one page. The application is filled in around
+        the password boxes; choosing the password and pressing the site's own Apply, which
+        sends the application, are the person's."""
+        srv = self.srv
+        run.seen_form = True
+        once_failed = await self._fill_once(run, data)
+        result = await srv.autofill(job_id=run.job_id)
+        if result["filled"]:
+            self._log(run, f"filled {len(result['filled'])} field(s) on {_where(data)}")
+        pending, missing_files = _pending(result, once_failed)
+        self._note_skipped(run, result)
+        data, _ = await self._look()
+        run.page_info = _page_info(data)  # the page as filled
+        if missing_files:
+            return self._pause(run, "stuck", "The form needs a file the profile doesn't point to (set documents.resume "
+                               "in profile.yaml): " + ", ".join(f["label"] for f in missing_files), pending)
+        if pending:
+            return self._pause(run, "questions", f"{len(pending)} question(s) your profile doesn't answer. Answer them "
+                               "here and the desk fills them in (and remembers them).", pending)
+        saved = await self._sign_in(run, data, {}) == "prefilled"
+        srv._mark_ready(srv.tracker().get(run.job_id), "filled by the Job Desk; the site creates the account as it applies")
+        await self._bring_forward(run)
+        password = "Your saved password is in its password boxes" if saved else "Choose a password in its password boxes"
+        return self._pause(run, "your_submit", f"Filled in on {_site(run, data)}, which creates your account as you "
+                           f"apply. {password}, check the page, then press its Apply button yourself: that sends the "
+                           "application. Then press \u201cI submitted it\u201d here.")
 
     async def _bring_forward(self, run: Run) -> None:
         if run.page is not None and not run.page.is_closed():
@@ -719,7 +798,48 @@ class Applier:
 
 
 _APPLICATION_FIELD = re.compile(r"first name|last name|full name|legal name|resume|\bcv\b|phone|address|"
-                                r"authori[sz]ed|sponsor", re.I)
+                                r"authori[sz]ed|sponsor|start (?:the |your |an? )?appl", re.I)  # "email to start application"
+
+
+_ACCOUNT_FIELD = re.compile(r"e-?mail|password|user ?name|log ?in|terms|privacy|captcha|language|locale", re.I)
+
+
+def _account_and_application(data: dict[str, Any]) -> bool:
+    """A Create Account form that is also the whole application (Qorvo's SuccessFactors):
+    password boxes, and five or more fields an application asks for, a name or address
+    among them."""
+    fields = data.get("fields") or []
+    if not any(f.get("kind") == "password" for f in fields):
+        return False
+    others = [f for f in fields if f.get("kind") != "password" and not _ACCOUNT_FIELD.search(f.get("label") or "")]
+    return len(others) >= 5 and any(_APPLICATION_FIELD.search(f.get("label") or "") for f in others)
+
+
+def _pending(result: dict[str, Any], once_failed: dict[str, dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """After autofill: the required questions to put to the person (with any answer of theirs
+    the page turned down), and the required file inputs nothing could go in."""
+    pending = [{**f, **once_failed[question_key(f.get("label") or "")]}
+               if question_key(f.get("label") or "") in once_failed else f
+               for f in result["needs_input"] if f.get("required") and f.get("kind") != "file"]
+    # the profile's answers that didn't go in, where the site requires one (an optional field
+    # is skipped: Qorvo's optional veteran question has no "don't wish to answer")
+    pending += [{"id": f["id"], "label": f.get("label") or "", "kind": f.get("kind") or ("combobox" if f.get("options") else "text"),
+                 "required": True, "error": f.get("error"),
+                 **({"options": f["options"]} if f.get("options") else {})}
+                for f in result["failed"] if f.get("required", True)]
+    # an answer of theirs the page turned down is asked again, even when the box isn't empty
+    # (words left in a picker's search box read as an answer), unless the profile's answer
+    # went in after it
+    asked = {question_key(f.get("label") or "") for f in pending + (result.get("filled") or [])}
+    pending += [f for key, f in once_failed.items() if key not in asked and f.get("kind") != "file"]
+    missing_files = [f for f in result["needs_input"] if f.get("required") and f.get("kind") == "file"]
+    return pending, missing_files
+
+
+def tailored_ready(job: dict[str, Any]) -> bool:
+    """A resume written for this job is in its folder, and not a draft that came out too long."""
+    folder = Path(job["folder"]) if job.get("folder") else None
+    return bool(tailored_document(job, "resume")) and not (folder and any(folder.glob("*.too-long")))
 
 
 def _application_like(data: dict[str, Any]) -> bool:

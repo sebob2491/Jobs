@@ -1,0 +1,48 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Analog Design Intern Job Details | Example Semi</title>
+<style>.dropdown-menu { display: none; } .open > .dropdown-menu { display: block; } .getter { display: none; }</style>
+</head>
+<body>
+<!-- like Qorvo's SuccessFactors posting: "Apply now" is a dropdown toggle. Its menu's items
+     are role="menuitem" links ("Apply Now", "Start apply with LinkedIn"), each beside a help
+     link. "Apply Now" shows an email box and a Start button, which go on to sign-in. The
+     page also has a job-alert box, filled in already, and a top menu bar whose "Apply"
+     is the site's general application, not this job's. -->
+<nav><ul role="menubar"><li role="none"><a role="menuitem" href="general-application.html">Apply</a></li>
+  <li role="none"><a role="menuitem" href="search.html">Search Jobs</a></li></ul></nav>
+<form class="alerts"><label for="freq">Select how often (in days) to receive an alert:</label>
+  <input id="freq" required value="7"><button type="button">Create Alert</button></form>
+<h1>Analog Design Intern</h1>
+<div class="btn-group" id="group">
+  <button type="button" class="btn dropdown-toggle" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false"
+          aria-label="Apply now" id="toggle">Apply now <span class="caret"></span></button>
+  <ul class="dropdown-menu socialbutton">
+    <li role="none"><a role="menuitem" href="#" id="manual" aria-label="Apply Now"> Apply Now </a>
+      <a href="javascript:void(0)" class="help" aria-label="Apply now Help" title="Apply now Help"><img alt="" src="data:,"></a></li>
+    <li role="none"><a role="menuitem" href="#" id="linkedin" aria-label="Start apply with LinkedIn"> Start apply with LinkedIn </a>
+      <a href="javascript:void(0)" class="help" aria-label="Apply with LinkedIn Help" title="Apply with LinkedIn Help"><img alt="" src="data:,"></a></li>
+    <div class="getter" id="getter">
+      <input type="email" placeholder="Email" aria-label="Enter email to start application process" id="email">
+      <button type="button" aria-label="Start the apply process" id="start">Start</button>
+    </div>
+  </ul>
+</div>
+<p>Chandler, AZ, US, 85226</p>
+<script>
+  const group = document.getElementById('group');
+  document.getElementById('toggle').addEventListener('click', () => {
+    group.classList.toggle('open');
+    document.getElementById('toggle').setAttribute('aria-expanded', group.classList.contains('open'));
+  });
+  document.getElementById('manual').addEventListener('click', (e) => {
+    e.preventDefault();
+    document.getElementById('getter').style.display = 'block';
+  });
+  document.getElementById('linkedin').addEventListener('click', (e) => { e.preventDefault(); location.href = 'linkedin.html'; });
+  document.getElementById('start').addEventListener('click', () => {
+    if (document.getElementById('email').value.includes('@')) location.href = 'signin.html';
+  });
+</script>
+</body>
+</html>

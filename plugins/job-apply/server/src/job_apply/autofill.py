@@ -42,7 +42,8 @@ _COUNTRY_ALIASES = [
     {"taiwan", "taiwan province of china", "chinese taipei"},
 ]
 _PLACEHOLDER_VALUES = re.compile(
-    r"^(|select|select one|select\.\.\.|-+|choose|choose one|please select|none selected|--\s*select\s*--|mm/dd/yyyy|mm/yyyy)$",
+    r"^(|select|select one|select\.\.\.|-+|choose|choose one|please select|none selected|no selection|"
+    r"--\s*select\s*--|mm/dd/yyyy|mm/yyyy)$",  # "No Selection": SuccessFactors' empty dropdowns
     re.I,
 )
 _YES = re.compile(r"^(yes|y|true|i am\b(?! not)|i do\b(?! not)|i will\b(?! not)|i have\b(?! not)|i can\b(?! not)|agree)", re.I)
@@ -50,6 +51,7 @@ _NO = re.compile(r"^(no|n|false|never|i am not|i do not|i don'?t|i will not|i wo
                  r"i'?ve never|i can ?not|i can'?t)\b", re.I)
 _FILLER = {"yes", "no", "y", "n", "i", "am", "a", "an", "the", "to", "for", "of", "in", "my", "and", "or", "is", "be",
            "this", "it", "up"}
+PAGED_LIST_PAGE = 100  # entries SuccessFactors' paginated select lists at a time
 _DECLINE = re.compile(r"decline|not (wish|want) to|prefer not|choose not|do not want|don'?t wish|not to (answer|disclose|self)|rather not", re.I)
 
 
@@ -324,7 +326,8 @@ RULES: list[tuple[str, str, Getter, int | None, set[str] | None]] = [
     ("how_heard", r"how did you (hear|find|learn)|where did you (hear|find|learn)|source of (application|referral)|^source$", _p("preferences.how_did_you_hear"), None, None),
     # contact details: short labels only, so long questions that merely mention
     # "state" or "name" don't match
-    ("email", r"^(confirm |re ?enter |verify )?e ?mail( address)?( again)?$|^(your )?email\b", _p("personal.email"), 45, None),
+    ("email", r"^(confirm |re ?enter |re ?type |verify )?e ?mail( address)?( again)?$|^(your )?email\b|^enter (your )?e ?mail\b",
+     _p("personal.email"), 45, None),  # "Enter email to start application process" (Qorvo)
     ("first_name", r"^(legal )?(first|given)( name)?$|^(legal )?first name|^given name|^forename", _p("personal.first_name"), 45, None),
     ("middle_name", r"^middle (name|initial)", _p("personal.middle_name"), 45, None),
     ("last_name", r"^(legal )?(last|family|sur)( ?name)?$|^(legal )?(last|family) name|^surname", _p("personal.last_name"), 45, None),
@@ -405,8 +408,8 @@ def _answer_bank(prof: Profile, label: str) -> Answer | None:
     return None
 
 
-def _document(prof: Profile, job: dict, kind: str) -> str | None:
-    """Prefer a tailored file in the job's folder, then the profile default."""
+def tailored_document(job: dict, kind: str) -> str | None:
+    """A resume or cover letter made for this job, in its folder."""
     folder = Path(job["folder"]) if job.get("folder") else None
     stem = "cover_letter" if kind == "cover_letter" else "resume"
     if folder and folder.exists():
@@ -415,6 +418,14 @@ def _document(prof: Profile, job: dict, kind: str) -> str | None:
             hits = sorted(p for p in folder.glob(f"*{ext}") if p.stem.lower().endswith(stem))
             if hits:
                 return str(hits[0])
+    return None
+
+
+def _document(prof: Profile, job: dict, kind: str) -> str | None:
+    """Prefer a tailored file in the job's folder, then the profile default."""
+    tailored = tailored_document(job, kind)
+    if tailored:
+        return tailored
     p = expand(prof.get(f"documents.{kind}"))
     return str(p) if p and p.exists() else None
 
@@ -607,8 +618,12 @@ def resolve_field(field: dict, prof: Profile, job: dict | None = None, file_inpu
         chosen = choose_option(ans.value, options)
         if chosen is None and ans.rule == "how_heard":
             chosen = _own_website(ans.value, options, job)
-        if chosen is None and field.get("search") and not isinstance(ans.value, (list, dict)):
-            return ans  # a search prompt lists only its top level: the fill searches it for the answer
+        # a search prompt lists only its top level, and a full page of a paged list (Qorvo's
+        # countries stop at Iran) only its start: the fill searches them for the answer. A
+        # shorter paged list is all there is, so a search can't find anything else in it.
+        searched = field.get("search") or field.get("paged") and len(options) >= PAGED_LIST_PAGE
+        if chosen is None and searched and not isinstance(ans.value, (list, dict)):
+            return ans
         if chosen is None:
             return None
         return Answer(chosen, ans.rule)

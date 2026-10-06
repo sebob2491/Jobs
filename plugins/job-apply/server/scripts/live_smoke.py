@@ -71,7 +71,7 @@ FAKE_PROFILE = {
 from job_apply import server  # noqa: E402
 from job_apply.fixtures import convert  # noqa: E402
 from job_apply.postings import fetch_posting  # noqa: E402
-from job_apply.autofill import polarity  # noqa: E402
+from job_apply.autofill import is_empty_value, polarity  # noqa: E402
 from job_apply.search import load_companies, sitecore_search  # noqa: E402
 
 QUERY_AZ = "field service | customer service engineer | customer engineer | equipment technician"  # in Arizona
@@ -270,6 +270,20 @@ async def probe_menu(name: str, url: str, press: str, needle: str) -> dict[str, 
         await button.click(timeout=10000)
         await tab.wait_for_timeout(2500)
         rec["after"] = await tab.evaluate(MENU_JS, needle)
+        # the menu beside the button, and everything on the page labelled "apply", by text or attribute
+        rec["menu_html"] = await button.evaluate("""(b) => {
+          const g = b.closest('.btn-group, .dropdown, .applylink') || b.parentElement;
+          const m = g && g.querySelector('.dropdown-menu, [role="menu"], ul');
+          return (m || g).outerHTML.replace(/\\s+/g, ' ').slice(0, 4000);
+        }""")
+        rec["apply_bits"] = await tab.evaluate("""() => [...document.querySelectorAll('a, button, [role], li')]
+          .filter((e) => /apply/i.test((e.getAttribute('aria-label') || '') + ' ' + (e.getAttribute('title') || '')
+            + ' ' + (e.children.length < 3 ? e.textContent : '')))
+          .slice(0, 20).map((e) => ({tag: e.tagName, role: e.getAttribute('role'), aria: e.getAttribute('aria-label'),
+            title: e.getAttribute('title'), cls: String(e.className || '').slice(0, 80), href: e.getAttribute('href'),
+            text: (e.textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 60),
+            shown: !!(e.offsetWidth || e.offsetHeight || e.getClientRects().length),
+            html: e.outerHTML.replace(/\\s+/g, ' ').slice(0, 300)}))""")
         rec["url_after"] = tab.url
     except Exception as e:  # noqa: BLE001
         rec["error"] = f"{type(e).__name__}: {str(e)[:300]}"
@@ -595,7 +609,8 @@ async def print_shot(name: str, page: Any) -> None:
 
 def fake_answer(q: dict[str, Any]) -> Any:
     """A throwaway answer for a question the fake profile can't answer (this run only)."""
-    options = [o for o in q.get("options") or [] if o and not re.match(r"^(select|choose|--|please)", o, re.I)]
+    options = [o for o in q.get("options") or []
+               if o and not is_empty_value(o) and not re.match(r"^(select|choose|--|please)", o, re.I)]
     if q.get("kind") == "checkbox":
         return "Yes"
     if options:
@@ -605,6 +620,20 @@ def fake_answer(q: dict[str, Any]) -> Any:
     if re.search(r"year|salary|number|how many|zip|postal|\bgpa\b", q.get("label") or "", re.I):
         return "0"
     return "Test answer"
+
+
+async def _question_markup(run: Any) -> list[str]:
+    if run.page is None or run.page.is_closed():
+        return []
+    out = []
+    for q in run.questions[:12]:
+        try:
+            out.append(await run.page.evaluate(
+                """(id) => { const e = document.querySelector(`[data-ja-id="${id}"]`);
+                  return e ? e.outerHTML.replace(/\\s+/g, ' ').slice(0, 700) : 'not found'; }""", str(q.get("id"))))
+        except Exception as e:  # noqa: BLE001
+            out.append(f"{type(e).__name__}: {str(e)[:100]}")
+    return out
 
 
 async def check_pipeline(company: dict[str, Any], out: Path, rec: dict[str, Any], fixtures: bool = False) -> None:
@@ -641,6 +670,8 @@ async def check_pipeline(company: dict[str, Any], out: Path, rec: dict[str, Any]
                 "status": run.status, "need": run.need, "reason": run.reason, "url": run.url, "log": list(run.log),
                 "questions": [{k: q.get(k) for k in ("label", "kind", "required", "options", "error")}
                               for q in run.questions],
+                # each asked-about field's markup, to see what kind of control it is
+                "markup": await _question_markup(run),
                 "page": run.page_info,
             })
             if run.need == "stuck":
