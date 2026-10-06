@@ -218,7 +218,9 @@ PROBES = {
     # and MKS block automated browsers outright.)
     "Edwards Vacuum": "https://www.jobs.atlascopcogroup.com/search/?q=field+service&locationsearch=Arizona",
     # Equipment makers with field service engineers at Arizona fabs, not in the list yet.
-    "Nikon Precision": "https://recruiting2.ultipro.com/NIK1001NIKON/JobBoard/f11a0b52-5153-4c12-ad2c-b7f3b0a74112/?q=&o=postedDateDesc",
+    # Nikon's posting page: how its Apply button is drawn (the form reader doesn't see it)
+    "Nikon Precision": "https://recruiting2.ultipro.com/NIK1001NIKON/JobBoard/f11a0b52-5153-4c12-ad2c-b7f3b0a74112/"
+                       "OpportunityDetail?opportunityId=532a7dc9-8394-4cbc-8184-f43e88e906bf",
 }
 # Job links as a page (or one of its frames) draws them, with the text of the card around
 # each and a little of its markup, to write a reader for a new job board from.
@@ -340,6 +342,11 @@ async def probe_page(name: str, url: str) -> dict[str, Any]:
           const s = d.eagerLoadRefineSearch || d.refineSearch;
           return {keys: Object.keys(d).slice(0, 30), search: s ? JSON.stringify(s).slice(0, 3000) : null};
         }""")
+        # the markup of anything that reads like an apply or sign-in button, whatever it's drawn with
+        rec["apply_buttons"] = await tab.evaluate("""() => [...document.querySelectorAll('body *')]
+          .filter((e) => /^\\s*(apply( now)?|quick apply|sign in)\\s*$/i.test(e.textContent || '') && e.children.length < 4)
+          .slice(0, 8).map((e) => ({tag: e.tagName, html: e.outerHTML.slice(0, 500),
+                                   parent: (e.parentElement ? e.parentElement.outerHTML : '').slice(0, 300)}))""")
         hrefs = await tab.evaluate("() => [...document.querySelectorAll('a[href], iframe[src]')].map(e => e.href || e.src)")
         rec["ats_links"] = sorted({h for h in hrefs if ATS_HOST.search(h)})[:10]
         rec["frames"] = [f.url[:200] for f in tab.frames if f is not tab.main_frame][:5]
