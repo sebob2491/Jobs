@@ -49,6 +49,10 @@ _ENTRY = re.compile(r"^(apply manually|apply now|apply|easy apply|apply for (?:t
 _AVOID = re.compile(r"autofill|with resume|resume parse|sign ?in|log ?in|create account|register|upload|back|"
                     r"previous|cancel|save for later|withdraw|delete|remove|search|share|print|email (?:me|this)", re.I)
 _EXPERIENCE_PAGE = re.compile(r"my experience|work experience|employment history", re.I)
+# Cookie banners: only ever the privacy-preserving choice, and only when the site offers one.
+_DECLINE_COOKIES = re.compile(r"^(reject(?: all)?(?: cookies)?|decline(?: all)?(?: cookies)?|only (?:strictly )?necessary"
+                              r"|necessary (?:cookies )?only|use necessary cookies only|accept (?:only )?necessary"
+                              r"(?: cookies)?|reject optional(?: cookies)?)$", re.I)
 
 
 @dataclass
@@ -306,6 +310,9 @@ class Applier:
             run.page_info = _page_info(data)
             run.url = data["url"]
             run.page = srv.browser.current_tab or run.page
+            if await self._decline_cookies(run, data, text):
+                data, text = await self._look()
+                run.page_info = _page_info(data)
             kind = classify(data, text)
             actions = data.get("actions") or []
             entry_here = any(_ENTRY.match(a["text"].strip()) and not a.get("disabled") for a in actions)
@@ -328,7 +335,7 @@ class Applier:
                                    "the desk carries on by itself after that.")
             if kind == "form":
                 run.seen_form = True
-                await self._fill_once(run, data)
+                once_failed = await self._fill_once(run, data)
                 key = _fingerprint(data)
                 if key not in entries_done and _EXPERIENCE_PAGE.search(" ".join(data.get("headings") or [])):
                     entries_done.add(key)
@@ -339,7 +346,9 @@ class Applier:
                 result = await srv.autofill(job_id=run.job_id)
                 if result["filled"]:
                     self._log(run, f"filled {len(result['filled'])} field(s) on {_where(data)}")
-                pending = [f for f in result["needs_input"] if f.get("required") and f.get("kind") != "file"]
+                pending = [{**f, "error": once_failed[question_key(f.get("label") or "")]}
+                           if question_key(f.get("label") or "") in once_failed else f
+                           for f in result["needs_input"] if f.get("required") and f.get("kind") != "file"]
                 pending += [{"id": f["id"], "label": f.get("label") or "", "kind": "text", "required": True,
                              "error": f.get("error")} for f in result["failed"]]
                 missing_files = [f for f in result["needs_input"] if f.get("required") and f.get("kind") == "file"]
@@ -349,6 +358,10 @@ class Applier:
                 if pending:
                     return self._pause(run, "questions", f"{len(pending)} question(s) your profile doesn't answer. "
                                        "Answer them here and the desk fills them in (and remembers them).", pending)
+                data, text = await self._look()  # filling can add or enable things (State after Country, Submit)
+                run.page_info = _page_info(data)
+                actions = data.get("actions") or []
+                entry_here = any(_ENTRY.match(a["text"].strip()) and not a.get("disabled") for a in actions)
             if (kind == "form" or run.seen_form and not entry_here) and await srv.browser.find_submit():
                 return await self._finish(run, data, text)
             action = pick_next(data.get("actions") or [], in_form=kind == "form")
@@ -357,6 +370,12 @@ class Applier:
                 if await self._wait_for_progress(10):
                     continue
             if action is None:
+                greyed = [a for a in data.get("actions") or [] if a.get("is_submit") and a.get("disabled")]
+                if greyed:
+                    problems = "; ".join(e for e in data.get("errors") or [] if _ERRORISH.search(e))[:300]
+                    return self._pause(run, "stuck", f"\u201c{greyed[0]['text']}\u201d is greyed out, so the site still "
+                                       "wants something" + (f": {problems}" if problems else ".") +
+                                       " Fix it in the browser, then press Resume.")
                 return self._pause(run, "stuck", "I couldn't find the button that moves this application on. "
                                    "Take it a step further in the browser, then press Resume.")
             before = _fingerprint(data)
@@ -387,16 +406,39 @@ class Applier:
                 return True
         return False
 
-    async def _fill_once(self, run: Run, data: dict[str, Any]) -> None:
-        """Answers the person gave for this application only (not remembered)."""
+    async def _fill_once(self, run: Run, data: dict[str, Any]) -> dict[str, str]:
+        """Answers the person gave for this application only (not remembered). Returns the
+        ones that didn't go in, by question, with the reason."""
         if not run.once:
-            return
-        fills = [{"id": f["id"], "value": run.once[question_key(f.get("label") or "")]}
-                 for f in data.get("fields") or []
-                 if question_key(f.get("label") or "") in run.once and is_empty_value(f.get("value"))]
-        if fills:
-            await self.srv.fill_form(fills)
-            self._log(run, f"filled {len(fills)} answer(s) you gave for this application")
+            return {}
+        by_id = {f["id"]: question_key(f.get("label") or "") for f in data.get("fields") or []}
+        fills = [{"id": fid, "value": run.once[key]} for fid, key in by_id.items()
+                 if key in run.once and is_empty_value(next(f.get("value") for f in data["fields"] if f["id"] == fid))]
+        if not fills:
+            return {}
+        out = await self.srv.fill_form(fills)
+        failed = {by_id[r["id"]]: r.get("error") or "didn't take" for r in out.get("results", []) if not r.get("ok")}
+        done = len(fills) - len(failed)
+        if done:
+            self._log(run, f"filled {done} answer(s) you gave for this application")
+        if failed:
+            self._log(run, f"{len(failed)} of your answers didn't go in")
+        return failed
+
+    async def _decline_cookies(self, run: Run, data: dict[str, Any], text: str) -> bool:
+        """Press Reject / Decline / Necessary only on a cookie banner (never Accept). Banners
+        cover forms and catch clicks; ones with no way to decline are left for the person."""
+        if "cookie" not in text.lower():
+            return False
+        button = next((a for a in data.get("actions") or []
+                       if _DECLINE_COOKIES.match(a.get("text", "").strip()) and not a.get("disabled")), None)
+        if button is None:
+            return False
+        result = await self.srv.click(button["id"])
+        if result.get("clicked"):
+            self._log(run, f"declined cookies (\u201c{button['text']}\u201d)")
+            return True
+        return False
 
     async def _sign_in(self, run: Run, data: dict[str, Any]) -> bool:
         """Sign in with the profile email and a stored <ats>_password, if the person set one up.

@@ -158,3 +158,23 @@ def test_workday_style_dialog_is_followed(srv, monkeypatch):
     assert r.need == "sign_in", (r.reason, r.log)
     assert r.log[1:3] == ["clicked “Apply”", "clicked “Apply Manually”"]
     assert r.page_info["url"].endswith("signin.html") and "Sign In" in r.page_info["actions"]
+
+
+def test_cookie_dialog_is_declined_never_accepted(srv, monkeypatch):
+    """Infineon's cookie dialog covers the whole form; the desk presses Reject, never Accept."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    job = srv.add_job(url=fixture_url("site/cookie-form.html"), title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"))
+            return r, await r.page.evaluate("() => window.accepted || 0")
+        finally:
+            await applier.stop()
+
+    r, accepted = run(go())
+    assert r.status == "ready", (r.reason, r.log)
+    assert "declined cookies (“Reject”)" in r.log and accepted == 0

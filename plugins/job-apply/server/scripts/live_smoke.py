@@ -229,6 +229,20 @@ async def probe_page(name: str, url: str) -> dict[str, Any]:
         rec["title"] = await tab.title()
         rec["json_calls"] = seen[:30]
         rec["text_sample"] = re.sub(r"\s+", " ", await tab.inner_text("body"))[:500]
+        # job links as the page draws them, with the text of the card around each
+        rec["job_links"] = await tab.evaluate(r"""() => {
+          const out = [];
+          for (const a of document.querySelectorAll('a[href]')) {
+            const href = a.href;
+            if (!/\/job|find-your-job\/.+|jobid|requisition/i.test(href)) continue;
+            let card = a;
+            for (let i = 0; i < 4 && card.parentElement && (card.innerText || '').length < 80; i++) card = card.parentElement;
+            out.push({href, text: (a.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 120),
+                      card: (card.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 300)});
+            if (out.length >= 12) break;
+          }
+          return out;
+        }""")
     except Exception as e:  # noqa: BLE001
         rec["error"] = f"{type(e).__name__}: {str(e)[:300]}"
     finally:

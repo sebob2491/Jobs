@@ -436,3 +436,11 @@ QUIET_JS = r"""
   timer = setTimeout(done, quiet);
 })
 """
+
+
+# Is a dropdown menu open (one with options showing)?
+OPEN_MENU_JS = r"""
+() => [...document.querySelectorAll('[role="listbox"], [role="menu"]')].some((m) =>
+  m.tagName !== 'SELECT' && m.getClientRects().length > 0 && getComputedStyle(m).visibility !== 'hidden'
+  && m.querySelector('[role="option"], [role="menuitem"]'))
+"""

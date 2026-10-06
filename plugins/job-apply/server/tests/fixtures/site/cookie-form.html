@@ -1,0 +1,26 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Apply - Example Fab</title>
+<style>
+  #consent { position: fixed; inset: 0; background: rgba(0,0,0,.4); display: flex; align-items: center; justify-content: center; }
+  #consent .box { background: #fff; padding: 20px; }
+</style>
+</head>
+<body>
+<h1>Application Form</h1>
+<form id="app" onsubmit="event.preventDefault(); document.body.innerHTML = '<h1>Thank you for applying!</h1>';">
+  <label for="fn">First Name *</label><input id="fn" required>
+  <label for="ln">Last Name *</label><input id="ln" required>
+  <label for="em">Email *</label><input id="em" type="email" required>
+  <button type="submit">Submit application</button>
+</form>
+<div id="consent" role="dialog" aria-label="Use of cookies">
+  <div class="box">
+    <h2>Use of cookies</h2>
+    <p>We use cookies to understand how you use our site.</p>
+    <button type="button" onclick="window.accepted = (window.accepted || 0) + 1; this.closest('#consent').remove();">Accept</button>
+    <button type="button" onclick="this.closest('#consent').remove();">Reject</button>
+  </div>
+</div>
+</body>
+</html>
