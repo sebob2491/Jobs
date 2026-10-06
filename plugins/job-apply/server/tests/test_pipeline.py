@@ -487,6 +487,8 @@ def test_a_create_account_form_is_filled_from_the_profile(srv, monkeypatch, page
             assert r.need == "sign_in" and "Create Account form" in r.reason, (r.reason, r.log)
             assert await r.page.evaluate("() => window.result()") == expected
             assert await r.page.evaluate("() => window.created") == 0
+            # the desk's own record of the page shows it filled in (whether, never what)
+            assert {f["kind"]: f["empty"] for f in r.page_info["fields"] if f["kind"] == "password"} == {"password": False}
             return r
         finally:
             await applier.stop()

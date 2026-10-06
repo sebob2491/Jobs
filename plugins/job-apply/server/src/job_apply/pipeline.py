@@ -452,6 +452,9 @@ class Applier:
                     sign_ins[done] = sign_ins.get(done, 0) + 1
                     continue
                 await self._bring_forward(run)
+                if done in ("prefilled", "filled"):
+                    data, _ = await self._look()
+                    run.page_info = _page_info(data)  # the page as filled
                 if done == "prefilled":
                     first = (" Your saved password didn't sign in there, so this is probably your first application "
                              "with them; if you do have an account, sign in instead." if sign_ins.get("create_account") else "")
