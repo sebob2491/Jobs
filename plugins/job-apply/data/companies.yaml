@@ -9,10 +9,9 @@
 companies:
   - name: ASML
     careers_url: https://www.asml.com/en/careers/find-your-job
-    ats: workday            # asml.wd3.myworkdayjobs.com seen; some roles on SmartRecruiters
+    ats: unknown            # postings live on asml.com; its old SmartRecruiters board only lists stale roles
     az_sites: Chandler, Phoenix
     confidence: medium
-    search: {smartrecruiters: ASML1}   # seen for a Chandler role; Workday tenant asml.wd3 also exists
   - name: Lam Research
     careers_url: https://careers.lamresearch.com/careers
     ats: eightfold
@@ -84,20 +83,22 @@ companies:
     confidence: medium
     search: {eightfold: {host: micron.eightfold.ai, domain: micron.com}}
   - name: Entegris
-    careers_url: https://careers.entegris.com
-    ats: successfactors
+    careers_url: https://entegris.wd1.myworkdayjobs.com/EntegrisCareers
+    ats: workday            # careers.entegris.com redirects here (live check, Oct 2026)
     az_sites: Chandler
-    confidence: low
+    confidence: high
+    search: {workday: https://entegris.wd1.myworkdayjobs.com/EntegrisCareers}
   - name: Edwards Vacuum
-    careers_url: https://www.edwardsvacuum.com/en-us/join-us/job-overview/
-    ats: custom
+    careers_url: https://www.jobs.atlascopcogroup.com/search/?q=&facetFilters=%7B%22filter1%22%3A%5B%22Edwards%22%5D%2C%22mfield3%22%3A%5B%22United+States%22%5D%7D
+    ats: successfactors     # Atlas Copco group job search, filtered to Edwards in the US
     az_sites: Chandler
-    confidence: low
+    confidence: medium
   - name: Texas Instruments
-    careers_url: https://careers.ti.com
+    careers_url: https://careers.ti.com/en/sites/CX
     ats: oracle_hcm
     az_sites: Phoenix
     confidence: high
+    search: {oracle: {host: careers.ti.com, site: CX}}   # Oracle Recruiting on TI's own domain
   - name: Hitachi High-Tech America
     careers_url: https://hitachi.wd1.myworkdayjobs.com/hitachi
     ats: workday
@@ -122,7 +123,7 @@ companies:
     confidence: high
     search: {eightfold: {host: jobs.infineon.com, domain: infineon.com}}
   - name: Benchmark Electronics
-    careers_url: https://career.bench.com
-    ats: unknown
+    careers_url: https://www.bench.com/careers
+    ats: unknown            # postings also appear on DirectEmployers boards (dejobs.org)
     az_sites: Tempe (HQ), Phoenix
     confidence: low

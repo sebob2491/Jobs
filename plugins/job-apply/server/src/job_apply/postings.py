@@ -18,7 +18,7 @@ from urllib.parse import urljoin
 import httpx
 from bs4 import BeautifulSoup
 
-from .ats import detect_ats, greenhouse_parts, lever_parts, linkedin_job_id, workday_parts
+from .ats import detect_ats, greenhouse_parts, lever_parts, linkedin_job_id, smartrecruiters_parts, workday_parts
 
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -229,13 +229,16 @@ async def _fetch_greenhouse(client: httpx.AsyncClient, url: str) -> Posting | No
         return None
     api = f"https://boards-api.greenhouse.io/v1/boards/{parts['board']}/jobs/{parts['job_id']}?questions=true"
     data = (await _get(client, api)).json()
+    # The Greenhouse-hosted page always carries the form; employer pages that embed it
+    # in an iframe often don't load it until cookies are accepted.
+    hosted = f"https://job-boards.greenhouse.io/{parts['board']}/jobs/{parts['job_id']}"
     p = Posting(
         url=url,
         title=data.get("title", ""),
         company=data.get("company_name") or parts["board"],
         location=(data.get("location") or {}).get("name", ""),
         description=html_to_text(html.unescape(data.get("content", ""))),
-        apply_url=data.get("absolute_url") or url,
+        apply_url=hosted,
         external_id=str(data.get("requisition_id") or data.get("id") or ""),
         posted_at=data.get("updated_at", ""),
         parse_method="greenhouse-api",
@@ -269,30 +272,64 @@ async def _fetch_lever(client: httpx.AsyncClient, url: str) -> Posting | None:
     )
 
 
-async def fetch_posting(url: str, timeout: float = 20.0) -> Posting:
+async def _fetch_smartrecruiters(client: httpx.AsyncClient, url: str) -> Posting | None:
+    parts = smartrecruiters_parts(url)
+    if not parts:
+        return None
+    api = f"https://api.smartrecruiters.com/v1/companies/{parts['company']}/postings/{parts['posting_id']}"
+    data = (await _get(client, api)).json()
+    sections = ((data.get("jobAd") or {}).get("sections") or {})
+    body = []
+    for key in ("jobDescription", "qualifications", "additionalInformation", "companyDescription"):
+        sec = sections.get(key) or {}
+        if sec.get("text"):
+            body.append(f"{sec.get('title') or ''}\n{html_to_text(sec['text'])}".strip())
+    loc = data.get("location") or {}
+    return Posting(
+        url=url,
+        title=data.get("name", ""),
+        company=(data.get("company") or {}).get("name") or parts["company"],
+        location=", ".join(x for x in [loc.get("city"), loc.get("region"), (loc.get("country") or "").upper()] if x),
+        description="\n\n".join(body)[:MAX_DESCRIPTION],
+        apply_url=data.get("applyUrl") or url,
+        external_id=data.get("refNumber") or parts["posting_id"],
+        employment_type=(data.get("typeOfEmployment") or {}).get("label", ""),
+        posted_at=(data.get("releasedDate") or "")[:10],
+        parse_method="smartrecruiters-api",
+    )
+
+
+async def fetch_posting(url: str, timeout: float = 20.0, client: httpx.AsyncClient | None = None) -> Posting:
     """Fetch and parse a posting over plain HTTP. Raises FetchError when the
     site refuses (LinkedIn and Indeed usually do); callers can then read the
     page through the browser instead."""
     url = url.strip()
-    ats = detect_ats(url)
+    if client is not None:
+        return await _fetch_with(client, url)
     headers = {"User-Agent": USER_AGENT, "Accept-Language": "en-US,en;q=0.9"}
-    async with httpx.AsyncClient(headers=headers, follow_redirects=True, timeout=timeout) as client:
-        posting: Posting | None = None
-        api_error = ""
-        fetcher = {"workday": _fetch_workday, "greenhouse": _fetch_greenhouse, "lever": _fetch_lever}.get(ats)
-        if fetcher:
-            try:
-                posting = await fetcher(client, url)
-            except (FetchError, ValueError) as e:
-                api_error = str(e)
-        if posting is None:
-            r = await _get(client, url, headers={"Accept": "text/html,application/xhtml+xml"})
-            final_url = str(r.url)
-            if ats == "linkedin" and ("authwall" in final_url or "/login" in final_url):
-                raise FetchError("LinkedIn requires sign-in for this posting")
-            posting = parse_html(r.text, url)
-            if api_error:
-                posting.warnings.append(f"ATS API lookup failed ({api_error}); parsed the page instead.")
+    async with httpx.AsyncClient(headers=headers, follow_redirects=True, timeout=timeout) as own:
+        return await _fetch_with(own, url)
+
+
+async def _fetch_with(client: httpx.AsyncClient, url: str) -> Posting:
+    ats = detect_ats(url)
+    posting: Posting | None = None
+    api_error = ""
+    fetcher = {"workday": _fetch_workday, "greenhouse": _fetch_greenhouse, "lever": _fetch_lever,
+               "smartrecruiters": _fetch_smartrecruiters}.get(ats)
+    if fetcher:
+        try:
+            posting = await fetcher(client, url)
+        except (FetchError, ValueError, KeyError, TypeError, AttributeError) as e:
+            api_error = f"{type(e).__name__}: {e}"
+    if posting is None:
+        r = await _get(client, url, headers={"Accept": "text/html,application/xhtml+xml"})
+        final_url = str(r.url)
+        if ats == "linkedin" and ("authwall" in final_url or "/login" in final_url):
+            raise FetchError("LinkedIn requires sign-in for this posting")
+        posting = parse_html(r.text, url)
+        if api_error:
+            posting.warnings.append(f"ATS API lookup failed ({api_error}); parsed the page instead.")
     return finalize(posting)
 
 

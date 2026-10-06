@@ -67,7 +67,8 @@ from job_apply.fixtures import convert  # noqa: E402
 from job_apply.postings import fetch_posting  # noqa: E402
 from job_apply.search import load_companies, search_companies  # noqa: E402
 
-QUERY = "engineer | technician"
+QUERY_AZ = "field service | equipment | technician"  # what the user actually looks for, in Arizona
+QUERY_ANY = "engineer | technician"  # fallback so every company still gets a browser check
 APPLY = re.compile(r"^(apply( now| for (this|the) (job|position|role))?|apply to (this )?job|i'?m interested|"
                    r"start (your |my )?application|apply manually)$", re.I)
 NEVER = re.compile(r"autofill|resume|last application|submit|sign ?in|log ?in|create account|register|upload|"
@@ -93,14 +94,23 @@ def field_brief(f: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+def search_brief(found: dict[str, Any], name: str) -> dict[str, Any]:
+    return {
+        "count": len(found["results"]),
+        "error": found["errors"].get(name),
+        "sample": [{k: r.get(k) for k in ("title", "location", "url", "posted", "notes")} for r in found["results"][:4]],
+    }
+
+
 async def check_company(company: dict[str, Any], out: Path, fixtures: bool) -> dict[str, Any]:
     rec: dict[str, Any] = {"company": company["name"], "search_config": company.get("search")}
-    found = await search_companies(QUERY, location=None, limit=5, companies=[company])
-    rec["search"] = {
-        "count": len(found["results"]),
-        "error": found["errors"].get(company["name"]),
-        "sample": [{k: r[k] for k in ("title", "location", "url", "posted")} for r in found["results"][:3]],
-    }
+    # The MCP tool, so the Eightfold browser fallback and tracker marking run too.
+    az = await server.search_company_jobs(QUERY_AZ, companies=[company["name"]], location="AZ", limit_per_company=5)
+    rec["search_az"] = search_brief(az, company["name"])
+    found = az
+    if not az["results"]:
+        found = await search_companies(QUERY_ANY, location=None, limit=3, companies=[company])
+        rec["search_any"] = search_brief(found, company["name"])
     if not found["results"]:
         return rec
     first = found["results"][0]
@@ -210,9 +220,9 @@ async def main() -> int:
 
     await server.close_browser()
     (args.out / "report.json").write_text(json.dumps(records, indent=2, default=str))
-    lines = ["| Company | Search | Posting | Form fields | Autofilled | Failed | Notes |", "|---|---|---|---|---|---|---|"]
+    lines = ["| Company | AZ matches | Posting | Form fields | Autofilled | Failed | Notes |", "|---|---|---|---|---|---|---|"]
     for r in records:
-        s = r.get("search") or {}
+        s = r.get("search_az") or {}
         p = r.get("posting") or {}
         lines.append("| {} | {} | {} | {} | {} | {} | {} |".format(
             r["company"],

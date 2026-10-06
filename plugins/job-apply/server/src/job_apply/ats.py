@@ -102,6 +102,13 @@ def lever_parts(url: str) -> dict[str, str] | None:
     return None
 
 
+def smartrecruiters_parts(url: str) -> dict[str, str] | None:
+    m = re.search(r"(?:jobs|careers)\.smartrecruiters\.com/([\w-]+)/(\d{6,})", url)
+    if m:
+        return {"company": m.group(1), "posting_id": m.group(2)}
+    return None
+
+
 def linkedin_job_id(url: str) -> str | None:
     m = re.search(r"linkedin\.com/jobs/view/(?:[\w-]*?-)?(\d{6,})", url) or re.search(
         r"currentJobId=(\d{6,})", url

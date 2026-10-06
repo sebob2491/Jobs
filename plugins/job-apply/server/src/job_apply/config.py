@@ -64,6 +64,21 @@ def expand(p: str | None) -> Path | None:
     return Path(os.path.expandvars(str(p))).expanduser()
 
 
+SUBMIT_MODES = {"review", "auto", "dry_run"}
+_MODE_ALIASES = {"dryrun": "dry_run", "practice": "dry_run", "test": "dry_run", "manual": "review", "confirm": "review"}
+
+
+def _submit_mode(raw: Any) -> tuple[str, list[str]]:
+    """'dry-run', 'Dry Run', 'dryrun' -> 'dry_run'. Unknown values fall back to review, with a warning."""
+    if raw is None or raw == "":
+        return "review", []
+    mode = re.sub(r"[\s-]+", "_", str(raw).strip().lower())
+    mode = _MODE_ALIASES.get(mode, mode)
+    if mode in SUBMIT_MODES:
+        return mode, []
+    return "review", [f"Unknown settings.submit_mode {raw!r}; using 'review'. Use review, auto or dry_run."]
+
+
 def never_submit() -> bool:
     """Hard switch for tests and practice runs: nothing is ever submitted."""
     return os.environ.get("JOB_APPLY_NEVER_SUBMIT") == "1"
@@ -77,12 +92,15 @@ class Settings:
     browser_channel: str = "chrome"  # "chrome", "msedge" or "chromium" (bundled)
     email_codes: bool = False  # may Claude read sign-in/verification codes from the user's email
     email_tracking: bool = False  # may Claude scan email for replies to applications
+    warnings: list[str] = field(default_factory=list)
 
     @classmethod
     def from_dict(cls, d: dict[str, Any] | None) -> "Settings":
         d = d or {}
+        mode, warnings = _submit_mode(d.get("submit_mode"))
         s = cls(
-            submit_mode=str(d.get("submit_mode", "review")).lower(),
+            submit_mode=mode,
+            warnings=warnings,
             auto_submit_ats=[str(a).lower() for a in d.get("auto_submit_ats") or []],
             headless=bool(d.get("headless", False)),
             browser_channel=str(d.get("browser_channel", "chrome")).lower(),

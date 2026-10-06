@@ -171,3 +171,46 @@ def test_dry_run_never_submits(srv, monkeypatch):
     with pytest.raises(SubmitBlocked):
         run(srv.browser.press_submit(submit_id))
     assert "Thank you" not in run(srv.page_text())
+
+
+def test_final_apply_button_honeypot_and_enter(srv, monkeypatch):
+    job = srv.add_job(url=fixture_url("apply_button_form.html"), title="Tech", company="Example Fab")["job"]
+    run(srv.open_application(job_id=job["id"]))
+    form = run(srv.inspect_form())
+    assert not any("blank" in f["label"].lower() for f in form["fields"])  # bot trap never reported
+    actions = {a["text"]: a for a in form["actions"]}
+    assert actions["Apply"].get("is_submit") and actions["Apply"].get("form_submit")
+    assert actions["Search"].get("form_submit") and not actions["Search"].get("is_submit")
+
+    result = run(srv.autofill())
+    assert {f["label"] for f in result["filled"]} >= {"First Name", "Last Name", "Email", "City"}
+    assert "Thank you" not in run(srv.page_text())  # typing into the in-form combobox pressed no Enter
+
+    blocked = run(srv.click("Apply"))  # a form's own "Apply" button is the final submit
+    assert blocked["clicked"] is False
+
+    monkeypatch.setenv("JOB_APPLY_NEVER_SUBMIT", "1")
+    assert run(srv.click("Search"))["clicked"]  # step-like form buttons still work in a dry run
+    assert "searched" in run(srv.page_text())
+    assert run(srv.click("Send it"))["clicked"] is False  # any other form submit is refused in a dry run
+    monkeypatch.delenv("JOB_APPLY_NEVER_SUBMIT")
+    assert run(srv.click("Send it"))["clicked"]  # outside a dry run it's an ordinary button
+
+    done = run(srv.submit_application(job_id=job["id"], user_confirmed=True))
+    assert done["submitted"] and done["confirmed"]
+
+
+def test_dry_run_keeps_later_statuses(srv, monkeypatch):
+    monkeypatch.setenv("JOB_APPLY_NEVER_SUBMIT", "1")
+    job = srv.add_job(url=fixture_url("generic_form.html"), title="FSE", company="Example Litho")["job"]
+    srv.update_job(job["id"], status="interviewing")
+    run(srv.open_application(job_id=job["id"]))
+    run(srv.submit_application(job_id=job["id"], user_confirmed=True))
+    assert srv.get_job(job["id"])["job"]["status"] == "interviewing"
+
+
+def test_ingest_reports_navigation_failure(srv):
+    run(srv.open_application(url=fixture_url("generic_form.html")))
+    out = run(srv.ingest_job("http://127.0.0.1:9/no-such-posting", use_browser=True))
+    assert out["saved"] is False and "couldn't open" in out["error"]
+    assert srv.list_jobs()["count"] == 0  # nothing saved from the page that was already open

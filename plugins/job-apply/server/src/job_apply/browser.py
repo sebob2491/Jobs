@@ -27,9 +27,17 @@ from playwright.async_api import (
 
 from . import config
 from .autofill import choose_option, is_empty_value, polarity
-from .formjs import CLICK_CHOICE_JS, ENTRIES_JS, EXTRACT_JS, OPTIONS_JS, VISIBLE_TEXT_JS
+from .formjs import CLICK_CHOICE_JS, ELEMENT_INFO_JS, ENTRIES_JS, EXTRACT_JS, OPTIONS_JS, VISIBLE_TEXT_JS
 
 SUBMIT_RE = re.compile(r"\bsubmit\b|send (my )?application|finish (my )?application|complete (my )?application", re.I)
+# A form's own submit button with one of these labels is the final step too ("Apply", "Send").
+FINALISH_RE = re.compile(r"^(apply( now)?|send( now)?|finish|complete( application)?|confirm( and send)?)$", re.I)
+# Form buttons that only move between steps; in a dry run every other form submit is refused.
+NAVIGATION_RE = re.compile(
+    r"^(next|continue|save( and| &)? continue|save( for later| draft)?|review|back|previous|add( another)?|search|"
+    r"sign ?in|log ?in|create account|verify|send (me a )?code|ok|accept( all)?( cookies)?|i agree|apply manually|start)\b",
+    re.I,
+)
 CONFIRMATION_RE = re.compile(
     r"thank you for (applying|your application|your interest)|application (has been |was )?(submitted|received|complete)"
     r"|we('ve| have) received your application|successfully (submitted|applied)|your application is (in|on its way)",
@@ -70,6 +78,7 @@ class BrowserSession:
         self._ctx: BrowserContext | None = None
         self._page: Page | None = None
         self._lock = asyncio.Lock()
+        self._background = False  # True while a helper tab is open that shouldn't become current
         self._frame_ids: dict[Frame, str] = {}
         self._fields: dict[str, dict] = {}
         self._actions: dict[str, dict] = {}
@@ -109,7 +118,8 @@ class BrowserSession:
 
     def _on_new_page(self, page: Page) -> None:
         # "Apply" buttons often open the company site in a new tab; follow it.
-        self._page = page
+        if not self._background:
+            self._page = page
 
     async def page(self) -> Page:
         if self._ctx is None:
@@ -264,6 +274,23 @@ class BrowserSession:
         async with self._lock:
             page = await self.page()
             return await page.content()
+
+    async def capture_json(self, url: str, url_part: str, timeout: int = 25000) -> Any:
+        """Open `url` in a background tab and return the JSON of the first response whose URL
+        contains `url_part`: the data a careers page loads for itself, when its API refuses
+        direct requests."""
+        async with self._lock:
+            await self.page()
+            assert self._ctx is not None
+            self._background = True
+            tab = await self._ctx.new_page()
+            try:
+                async with tab.expect_response(lambda r: url_part in r.url and r.ok, timeout=timeout) as info:
+                    await tab.goto(url, wait_until="domcontentloaded", timeout=45000)
+                return await (await info.value).json()
+            finally:
+                await tab.close()
+                self._background = False
 
     async def snapshot(self, dest: Path, note: str = "", details: Any = None) -> Path:
         """Save what's needed to debug a page later: HTML of every frame, a screenshot
@@ -430,8 +457,10 @@ class BrowserSession:
         await loc.fill("")
         await loc.press_sequentially(text, delay=30)
         options = await self._visible_options(page, field["id"])
-        if not options:
-            await loc.press("Enter")  # search-style pickers (Workday) list results after Enter
+        if not options and not await loc.evaluate("el => !!el.form"):
+            # Search-style pickers (Workday) list results after Enter. Inside a <form>,
+            # Enter could submit the whole form, so it's never pressed there.
+            await loc.press("Enter")
             options = await self._visible_options(page, field["id"])
         choice = choose_option(text, options)
         if choice is None:
@@ -452,18 +481,34 @@ class BrowserSession:
                 loc = await self._find_by_text(page, target)
             if loc is None or not await loc.count():
                 raise KeyError(f"Nothing clickable matches {target!r}; call inspect_form for ids")
-            label = await loc.evaluate(
-                "el => [el.innerText || el.textContent || el.value || '', el.getAttribute('aria-label') || ''].join(' ')"
-            )
-            if SUBMIT_RE.search(label or "") and not allow_submit:
-                raise SubmitBlocked(
-                    f"{' '.join(label.split())!r} looks like the final submit button. Use submit_application "
-                    "(after the user confirms), or let the user click it in the browser."
-                )
-            await loc.click(timeout=8000)
+            info = await loc.evaluate(ELEMENT_INFO_JS)
+            if not allow_submit:
+                self._check_clickable(info)
+            try:
+                await loc.click(timeout=8000)
+            except PlaywrightTimeout as e:
+                # Knockout/React re-renders can swap the button out mid-click; find it again once.
+                if "detached" not in str(e) or not info["text"]:
+                    raise
+                again = await self._find_by_text(page, info["text"])
+                if again is None:
+                    raise
+                await again.click(timeout=8000)
             await self._settle(page)
             page = await self.page()  # the click may have opened a new tab
             return await self._summary(page)
+
+    @staticmethod
+    def _check_clickable(info: dict[str, Any]) -> None:
+        label = " ".join((info.get("label") or "").split())
+        text = (info.get("text") or "").strip()
+        if SUBMIT_RE.search(label) or (info.get("formSubmit") and FINALISH_RE.match(text)):
+            raise SubmitBlocked(
+                f"{label!r} looks like the final submit button. Use submit_application "
+                "(after the user confirms), or let the user click it in the browser."
+            )
+        if info.get("formSubmit") and not NAVIGATION_RE.match(text) and config.Profile.load().settings.dry_run:
+            raise SubmitBlocked(f"Dry run: {label!r} submits a form, and it isn't a recognised step button.")
 
     async def _find_by_text(self, page: Page, text: str) -> Locator | None:
         """First visible button/link named `text`, then any visible text match, across frames."""

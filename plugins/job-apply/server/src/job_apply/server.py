@@ -16,7 +16,8 @@ from .autofill import is_empty_value, plan_autofill, profile_entries
 from .browser import BrowserSession, BrowserUnavailable, SubmitBlocked
 from .postings import FetchError, Posting, fetch_posting, finalize, parse_html
 from .render import KINDS, render_pdf, to_html
-from .search import search_companies
+from .search import (eightfold_page_url, keep_listings, load_companies, location_terms, parse_eightfold,
+                     search_companies, title_matches)
 from .tracker import Tracker
 
 INSTRUCTIONS = """\
@@ -95,6 +96,7 @@ def setup_status() -> dict[str, Any]:
         "profile_path": str(config.profile_path()),
         "profile_complete": not missing,
         "missing_profile_fields": missing,
+        "settings_warnings": s.warnings,
         "settings": {"submit_mode": s.submit_mode, "auto_submit_ats": s.auto_submit_ats,
                      "browser_channel": s.browser_channel, "headless": s.headless,
                      "email_codes": s.email_codes, "email_tracking": s.email_tracking},
@@ -143,7 +145,9 @@ async def ingest_job(url: str, use_browser: bool = False) -> dict[str, Any]:
                         "(for Indeed, the Indeed connector's get_job_details also works).",
             }
         try:
-            await browser.goto(url)
+            opened = await browser.goto(url)
+            if opened.get("navigation_error"):
+                return {"saved": False, "error": f"The browser couldn't open the page: {opened['navigation_error']}"}
             posting = finalize(parse_html(await browser.html(), url))
         except BrowserUnavailable as e:
             return {"saved": False, "error": str(e)}
@@ -168,6 +172,20 @@ async def search_company_jobs(
     Results already in the tracker carry `tracked`. Companies in `browser_only` have no
     search API; open their careers_url and use the site's search."""
     out = await search_companies(query, companies, location, limit_per_company)
+    # Eightfold career sites refuse scripted API calls; let a real page make the call instead.
+    by_name = {c["name"]: c for c in load_companies()}
+    for name, err in list(out["errors"].items()):
+        cfg = (by_name.get(name, {}).get("search") or {}).get("eightfold")
+        if not cfg or "403" not in err:
+            continue
+        try:
+            data = await browser.capture_json(eightfold_page_url(cfg, query, location), "/api/apply/v2/jobs")
+        except Exception as e:  # keep the original error, add why the fallback failed too
+            out["errors"][name] = f"{err}; browser fallback: {type(e).__name__}: {str(e).splitlines()[0][:150]}"
+            continue
+        found = [x for x in parse_eightfold(data, cfg["host"]) if title_matches(x.title, query)]
+        out["results"].extend(keep_listings(name, found, location_terms(location), limit_per_company))
+        del out["errors"][name]
     t = tracker()
     for r in out["results"]:
         job = t.find_by_url(r["url"])
@@ -456,6 +474,15 @@ async def close_browser() -> dict[str, Any]:
     return {"closed": True}
 
 
+def _mark_ready(job: dict[str, Any], note: str) -> None:
+    """ready_to_submit only for jobs not yet past that point (a practice run on an
+    application that's already in must not move it backwards)."""
+    if job["status"] in ("saved", "in_progress"):
+        tracker().update(job["id"], status="ready_to_submit", note=note)
+    else:
+        tracker().update(job["id"], note=note)
+
+
 def _submit_policy(ats: str) -> str:
     s = config.Profile.load().settings
     if s.dry_run:
@@ -478,11 +505,11 @@ async def submit_application(job_id: int | None = None, user_confirmed: bool = F
     ats = detect_ats(page["url"])
     policy = _submit_policy(ats)
     if policy == "dry_run":
-        tracker().update(job["id"], status="ready_to_submit", note="dry run: filled, not submitted")
+        _mark_ready(job, "dry run: filled, not submitted")
         return {"submitted": False, "reason": "Dry run (settings.submit_mode: dry_run): the form is filled and "
                                               "left unsubmitted. Nothing was sent."}
     if policy == "user_clicks_submit":
-        tracker().update(job["id"], status="ready_to_submit", note=f"filled on {ATS_NAMES.get(ats, ats)}")
+        _mark_ready(job, f"filled on {ATS_NAMES.get(ats, ats)}")
         return {
             "submitted": False,
             "reason": f"{ATS_NAMES.get(ats, ats)} prohibits automated submission. Ask the user to review the "

@@ -28,7 +28,15 @@ below.
     call `submit_application` (it marks the job `ready_to_submit` and does not click),
     then ask the user to click Submit in the browser. When they say it went
     through, call `update_job(job_id, status="applied")`.
-- `click` refuses final submit buttons. Don't work around it with other selectors.
+  - `dry_run` (practice mode, `settings.submit_mode: dry_run`): fill everything,
+    then stop. `submit_application` and `click` both refuse to send anything. Tell
+    the user the form is complete and was deliberately not submitted. Never call it
+    applied.
+- `click` refuses final submit buttons, including a form's own "Apply" or "Send"
+  button. Don't work around it with other selectors.
+- Never fill a field meant to catch bots ("for robots only", "leave this field
+  blank"). `inspect_form` already hides the ones it recognises. If one still
+  shows up, leave it empty.
 - CAPTCHAs, sign-ins and passwords belong to the user. Ask them to handle these in
   the browser window, or use `fill_secret` with a secret they stored themselves.
   Never type a password with `fill_form`.

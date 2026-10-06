@@ -104,6 +104,7 @@ EXTRACT_JS = r"""
   const tag = (el, id) => { el.setAttribute('data-ja-id', id); return id; };
   const idOf = (el) => el.getAttribute('data-ja-id') || tag(el, newId());
 
+  const HONEYPOT = /for robots|robots only|if you('| a)?re (a )?human|not (be )?(filled|entered) by humans|honey ?pot|leave this field (blank|empty)/i;
   const fields = [];
   const seen = new Set();
   const groups = new Map();
@@ -149,6 +150,8 @@ EXTRACT_JS = r"""
       if (pills.length) value = pills.join(', ');
     }
     const label = labelFor(el);
+    // Bot traps ("for robots only, do not enter if you're human") must never be filled.
+    if (HONEYPOT.test(label) || HONEYPOT.test(el.name || '')) continue;
     const f = {
       id: idOf(el), kind, label, required: isRequired(el, label), value: kind === 'password' ? value : clean(String(value || '')),
     };
@@ -207,6 +210,7 @@ EXTRACT_JS = r"""
   }
 
   const SUBMIT = /\bsubmit\b|send (my )?application|finish (my )?application|complete (my )?application/i;
+  const FINALISH = /^(apply( now)?|send( now)?|finish|complete( application)?|confirm( and send)?)$/i;
   const ACTION = /apply|next|continue|review|submit|save|add|upload|sign ?in|log ?in|create account|start|back|previous|edit|done|ok\b|accept|agree|use my last|autofill|manually|verify|confirm|remove|delete/i;
   const actions = [];
   for (const el of document.querySelectorAll('button, [role="button"], input[type="submit"], input[type="button"], a[href]')) {
@@ -217,7 +221,9 @@ EXTRACT_JS = r"""
     if (el.tagName === 'A' && !ACTION.test(t)) continue;
     const full = t + ' ' + (el.getAttribute('aria-label') || '');
     const a = { id: idOf(el), text: t };
-    if (SUBMIT.test(full)) a.is_submit = true;
+    const formSubmit = el.type === 'submit' && !!el.form;
+    if (formSubmit) a.form_submit = true;
+    if (SUBMIT.test(full) || (formSubmit && FINALISH.test(t))) a.is_submit = true;
     if (el.disabled || el.getAttribute('aria-disabled') === 'true') a.disabled = true;
     actions.push(a);
   }
@@ -297,4 +303,13 @@ ENTRIES_JS = r"""
   }
   return { entries, buttons };
 }
+"""
+
+# Facts click() needs about an element before deciding whether it may press it.
+ELEMENT_INFO_JS = r"""
+(el) => ({
+  label: [el.innerText || el.textContent || el.value || '', el.getAttribute('aria-label') || ''].join(' ').replace(/\s+/g, ' ').trim(),
+  text: (el.innerText || el.textContent || el.value || '').replace(/\s+/g, ' ').trim(),
+  formSubmit: el.type === 'submit' && !!el.form,
+})
 """

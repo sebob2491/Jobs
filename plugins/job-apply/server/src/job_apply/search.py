@@ -21,7 +21,7 @@ import re
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 
 import httpx
 import yaml
@@ -34,6 +34,7 @@ from .postings import USER_AGENT
 WORKDAY_PAGE = 20  # Workday rejects larger pages
 MAX_ALTERNATIVES = 4
 FETCH_WHEN_FILTERING = 60  # results to scan per search when filtering by location ourselves
+CLIENT_SIDE = {"greenhouse", "lever"}  # whole board comes back at once; titles are filtered here
 
 
 @dataclass
@@ -45,10 +46,14 @@ class Listing:
     posted: str = ""
     external_id: str = ""
     ats: str = ""
+    company_url: str = ""  # the employer's own page for the posting, when it differs from url
     notes: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        out = asdict(self)
+        if not out["company_url"]:
+            del out["company_url"]
+        return out
 
 
 class SearchError(Exception):
@@ -96,141 +101,215 @@ def location_terms(location: str | None) -> list[str]:
     return list(dict.fromkeys(terms))
 
 
-_BROAD = re.compile(r"(\d+|multiple|various|several) locations?|remote|anywhere|united states( of america)?|usa?|us remote")
+_BROAD = re.compile(
+    r"((\d+|multiple|various|several) locations?|anywhere|nationwide|united states( of america)?|usa?|u s a?)"
+)
 
 
 def location_matches(text: str, terms: list[str]) -> bool | None:
-    """True/False, or None when the listing is too broad to tell ("3 Locations", "Remote")."""
+    """True/False, or None when the listing is too broad to tell ("3 Locations", "Remote - US")."""
     if not terms:
         return True
     n = norm(text)
-    if not n or _BROAD.fullmatch(n):
-        return None
     padded = f" {n} "
-    return any(f" {t} " in padded for t in terms)
+    if any(f" {t} " in padded for t in terms):
+        return True
+    if not n or _BROAD.fullmatch(n) or re.search(r"\bremote\b", n):
+        return None
+    return False
 
 
 # --------------------------------------------------------------------- per-ATS
+# Each searcher takes (client, config value, query, how many to fetch, location terms).
 
 
-async def _workday(client: httpx.AsyncClient, cfg: Any, query: str, limit: int) -> list[Listing]:
+def _workday_location_facets(facets: Any, terms: list[str]) -> dict[str, list[str]]:
+    """Pick the location facet values (Workday's own location filter) that match the terms.
+    Returns {facetParameter: [ids]} for the one parameter covering the most postings."""
+    found: dict[str, list[tuple[str, int]]] = {}
+
+    def walk(items: Any, param: str | None) -> None:
+        for item in items or []:
+            if not isinstance(item, dict):
+                continue
+            p = item.get("facetParameter") or param
+            if p and "id" in item and "descriptor" in item and re.search(r"location|country|state|city|region", p, re.I):
+                if location_matches(str(item["descriptor"]), terms) is True:
+                    found.setdefault(p, []).append((str(item["id"]), int(item.get("count") or 0)))
+            if item.get("values"):
+                walk(item["values"], p)
+
+    walk(facets, None)
+    if not found:
+        return {}
+    best = max(found, key=lambda p: sum(c for _, c in found[p]))
+    return {best: [i for i, _ in found[best]]}
+
+
+async def _workday(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, terms: list[str]) -> list[Listing]:
     parts = workday_parts(str(cfg).rstrip("/") + "/")
     if not parts:
         raise SearchError(f"Not a Workday site URL: {cfg}")
     host, tenant, site = parts["host"], parts["tenant"], parts["site"]
     api = f"https://{host}/wday/cxs/{tenant}/{site}/jobs"
-    out: list[Listing] = []
-    offset = 0
-    while len(out) < limit:
-        body = {"appliedFacets": {}, "limit": WORKDAY_PAGE, "offset": offset, "searchText": query}
+
+    async def page(offset: int, facets: dict[str, list[str]]) -> dict[str, Any]:
+        body = {"appliedFacets": facets, "limit": WORKDAY_PAGE, "offset": offset, "searchText": query}
         r = await client.post(api, json=body, headers={"Accept": "application/json"})
         _raise_for(r, api)
-        data = r.json()
+        return r.json()
+
+    first = await page(0, {})
+    applied: dict[str, list[str]] = {}
+    if terms and first.get("facets"):
+        applied = _workday_location_facets(first["facets"], terms)
+        if not applied:
+            return []  # the site offers location filters and none is in the area asked for
+        first = await page(0, applied)
+    total = int(first.get("total") or 0)  # only the first page carries the total
+    out: list[Listing] = []
+    data, offset = first, 0
+    while True:
         postings = data.get("jobPostings") or []
         for p in postings:
-            path = p.get("externalPath") or ""
             out.append(Listing(
-                company="", title=p.get("title", ""), url=f"https://{host}/{site}{path}",
+                company="", title=p.get("title", ""), url=f"https://{host}/{site}{p.get('externalPath') or ''}",
                 location=p.get("locationsText", ""), posted=p.get("postedOn", ""),
                 external_id=(p.get("bulletFields") or [""])[0], ats="workday",
             ))
         offset += WORKDAY_PAGE
-        if not postings or offset >= int(data.get("total") or 0):
+        if not postings or len(out) >= limit or offset >= total:
             break
+        data = await page(offset, applied)
     return out[:limit]
 
 
-async def _greenhouse(client: httpx.AsyncClient, cfg: Any, query: str, limit: int) -> list[Listing]:
+async def _greenhouse(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, terms: list[str]) -> list[Listing]:
     api = f"https://boards-api.greenhouse.io/v1/boards/{cfg}/jobs"
     r = await client.get(api)
     _raise_for(r, api)
-    out = [
-        Listing(company="", title=j.get("title", ""), url=j.get("absolute_url", ""),
-                location=(j.get("location") or {}).get("name", ""), posted=j.get("updated_at", ""),
-                external_id=str(j.get("requisition_id") or j.get("id") or ""), ats="greenhouse")
-        for j in r.json().get("jobs", [])
-    ]
-    return [x for x in out if title_matches(x.title, query)][:limit]
+    out = []
+    for j in r.json().get("jobs", []):
+        if not title_matches(j.get("title", ""), query):
+            continue
+        hosted = f"https://job-boards.greenhouse.io/{cfg}/jobs/{j.get('id')}"
+        own = j.get("absolute_url") or ""
+        out.append(Listing(
+            company="", title=j.get("title", ""), url=hosted, company_url=own if own != hosted else "",
+            location=(j.get("location") or {}).get("name", ""), posted=j.get("updated_at", ""),
+            external_id=str(j.get("requisition_id") or j.get("id") or ""), ats="greenhouse",
+        ))
+    return out
 
 
-async def _lever(client: httpx.AsyncClient, cfg: Any, query: str, limit: int) -> list[Listing]:
+async def _lever(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, terms: list[str]) -> list[Listing]:
     api = f"https://api.lever.co/v0/postings/{cfg}?mode=json"
     r = await client.get(api)
     _raise_for(r, api)
+    data = r.json()
+    if not isinstance(data, list):
+        raise SearchError(f"Unexpected Lever response from {api}")
     out = []
-    for j in r.json():
+    for j in data:
+        if not title_matches(j.get("text", ""), query):
+            continue
         cats = j.get("categories") or {}
         created = j.get("createdAt")
         out.append(Listing(
-            company="", title=j.get("text", ""), url=j.get("hostedUrl", ""), location=cats.get("location", ""),
+            company="", title=j.get("text", ""), url=j.get("hostedUrl", ""), location=cats.get("location") or "",
             posted=datetime.fromtimestamp(created / 1000, timezone.utc).date().isoformat() if created else "",
             external_id=j.get("id", ""), ats="lever",
         ))
-    return [x for x in out if title_matches(x.title, query)][:limit]
+    return out
 
 
-async def _eightfold(client: httpx.AsyncClient, cfg: Any, query: str, limit: int) -> list[Listing]:
+def parse_eightfold(data: dict[str, Any], host: str) -> list[Listing]:
+    out = []
+    for p in data.get("positions") or []:
+        locs = p.get("locations") or [p.get("location") or ""]
+        out.append(Listing(
+            company="", title=p.get("name", ""),
+            url=p.get("canonicalPositionUrl") or f"https://{host}/careers/job/{p.get('id')}",
+            location="; ".join(l for l in locs if l), external_id=str(p.get("display_job_id") or p.get("id") or ""),
+            posted=_epoch_date(p.get("t_create")), ats="eightfold",
+        ))
+    return out
+
+
+def eightfold_page_url(cfg: dict[str, Any], query: str, location: str | None) -> str:
+    """The careers page whose own search call the browser fallback listens for."""
+    params = {"query": " ".join(alternatives(query)), "domain": cfg["domain"]}
+    if location:
+        first = location.split("|")[0].strip()
+        params["location"] = US_STATES.get(first.upper(), first)
+    return f"https://{cfg['host']}/careers?{urlencode(params)}"
+
+
+async def _eightfold(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, terms: list[str]) -> list[Listing]:
     host, domain = cfg["host"], cfg["domain"]
     api = f"https://{host}/api/apply/v2/jobs"
+    headers = {"Accept": "application/json", "Referer": f"https://{host}/careers"}
     out: list[Listing] = []
     start = 0
     while len(out) < limit:
         params = {"domain": domain, "start": start, "num": 10, "query": query, "sort_by": "relevance"}
-        r = await client.get(api, params=params, headers={"Accept": "application/json"})
+        r = await client.get(api, params=params, headers=headers)
         _raise_for(r, api)
         data = r.json()
-        positions = data.get("positions") or []
-        for p in positions:
-            locs = p.get("locations") or [p.get("location", "")]
-            out.append(Listing(
-                company="", title=p.get("name", ""),
-                url=p.get("canonicalPositionUrl") or f"https://{host}/careers/job/{p.get('id')}",
-                location="; ".join(l for l in locs if l), external_id=str(p.get("display_job_id") or p.get("id") or ""),
-                posted=_epoch_date(p.get("t_create")), ats="eightfold",
-            ))
+        batch = parse_eightfold(data, host)
+        out.extend(batch)
         start += 10
-        if not positions or start >= int(data.get("count") or 0):
+        if not batch or start >= int(data.get("count") or 0):
             break
     return out[:limit]
 
 
-async def _smartrecruiters(client: httpx.AsyncClient, cfg: Any, query: str, limit: int) -> list[Listing]:
+async def _smartrecruiters(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, terms: list[str]) -> list[Listing]:
     api = f"https://api.smartrecruiters.com/v1/companies/{cfg}/postings"
     r = await client.get(api, params={"q": query, "limit": min(limit, 100)})
     _raise_for(r, api)
     out = []
-    for p in r.json().get("content", []):
+    for p in r.json().get("content") or []:
         loc = p.get("location") or {}
-        where = ", ".join(x for x in [loc.get("city"), loc.get("region"), loc.get("country", "").upper()] if x)
+        where = ", ".join(x for x in [loc.get("city"), loc.get("region"), (loc.get("country") or "").upper()] if x)
         out.append(Listing(
-            company="", title=p.get("name", ""), url=f"https://jobs.smartrecruiters.com/{cfg}/{p.get('id')}",
-            location=where, posted=(p.get("releasedDate") or "")[:10], external_id=p.get("refNumber") or p.get("id", ""),
-            ats="smartrecruiters",
+            company="", title=p.get("name") or "", url=f"https://jobs.smartrecruiters.com/{cfg}/{p.get('id')}",
+            location=where, posted=(p.get("releasedDate") or "")[:10],
+            external_id=p.get("refNumber") or p.get("id") or "", ats="smartrecruiters",
         ))
     return out[:limit]
 
 
-async def _oracle(client: httpx.AsyncClient, cfg: Any, query: str, limit: int) -> list[Listing]:
+async def _oracle(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, terms: list[str]) -> list[Listing]:
     host, site = cfg["host"], cfg["site"]
     keyword = query.replace('"', "")
-    finder = f'findReqs;siteNumber={site},limit={min(limit, 25)},keyword="{keyword}",sortBy=POSTING_DATES_DESC'
-    api = (f"https://{host}/hcmRestApi/resources/latest/recruitingCEJobRequisitions"
-           f"?onlyData=true&expand=requisitionList.secondaryLocations&finder={quote(finder, safe='=;,')}")
-    r = await client.get(api, headers={"Accept": "application/json"})
-    _raise_for(r, api)
-    out = []
-    for item in r.json().get("items", []):
-        for req in item.get("requisitionList") or []:
-            out.append(Listing(
-                company="", title=req.get("Title", ""),
-                url=f"https://{host}/hcmUI/CandidateExperience/en/sites/{site}/job/{req.get('Id')}",
-                location=req.get("PrimaryLocation", ""), posted=req.get("PostedDate", ""),
-                external_id=str(req.get("Id", "")), ats="oracle_hcm",
-            ))
+    out: list[Listing] = []
+    offset = 0
+    while len(out) < limit:
+        page_size = min(25, limit - len(out))
+        finder = (f'findReqs;siteNumber={site},limit={page_size},offset={offset},keyword="{keyword}",'
+                  f"sortBy=POSTING_DATES_DESC")
+        api = (f"https://{host}/hcmRestApi/resources/latest/recruitingCEJobRequisitions"
+               f"?onlyData=true&expand=requisitionList.secondaryLocations&finder={quote(finder, safe='=;,')}")
+        r = await client.get(api, headers={"Accept": "application/json"})
+        _raise_for(r, api)
+        batch = []
+        for item in r.json().get("items") or []:
+            for req in item.get("requisitionList") or []:
+                batch.append(Listing(
+                    company="", title=req.get("Title") or "",
+                    url=f"https://{host}/hcmUI/CandidateExperience/en/sites/{site}/job/{req.get('Id')}",
+                    location=req.get("PrimaryLocation") or "", posted=req.get("PostedDate") or "",
+                    external_id=str(req.get("Id") or ""), ats="oracle_hcm",
+                ))
+        out.extend(batch)
+        offset += page_size
+        if len(batch) < page_size:
+            break
     return out[:limit]
 
 
-SEARCHERS: dict[str, Callable[[httpx.AsyncClient, Any, str, int], Awaitable[list[Listing]]]] = {
+SEARCHERS: dict[str, Callable[[httpx.AsyncClient, Any, str, int, list[str]], Awaitable[list[Listing]]]] = {
     "workday": _workday,
     "greenhouse": _greenhouse,
     "lever": _lever,
@@ -262,6 +341,26 @@ def _pick(companies: list[dict[str, Any]], names: list[str] | None) -> list[dict
     return [c for c in companies if any(w and (w in norm(c["name"]) or norm(c["name"]) in w) for w in wanted)]
 
 
+def keep_listings(company: str, listings: list[Listing], terms: list[str], limit: int) -> list[dict[str, Any]]:
+    """Deduplicate, apply the location filter, note broad locations, cap at `limit`."""
+    kept: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for listing in listings:
+        if listing.url in seen:
+            continue
+        seen.add(listing.url)
+        listing.company = company
+        where = location_matches(listing.location, terms)
+        if where is False:
+            continue
+        if where is None:
+            listing.notes.append(f"location given as {listing.location or 'nothing'!r}; check the posting")
+        kept.append(listing.to_dict())
+        if len(kept) >= limit:
+            break
+    return kept
+
+
 async def search_companies(
     query: str,
     names: list[str] | None = None,
@@ -287,28 +386,19 @@ async def search_companies(
         if kind is None:
             browser_only.append({"company": company["name"], "careers_url": company.get("careers_url", "")})
             return
-        found: dict[str, Listing] = {}
         fetch = max(limit, FETCH_WHEN_FILTERING) if terms else limit
+        found: list[Listing] = []
         try:
             async with sem:
-                for alt in alternatives(query):
-                    for listing in await SEARCHERS[kind](client, search[kind], alt, fetch):
-                        found.setdefault(listing.url, listing)
-        except (httpx.HTTPError, SearchError, KeyError, ValueError, TypeError) as e:
+                if kind in CLIENT_SIDE:
+                    found = await SEARCHERS[kind](client, search[kind], query, fetch, terms)
+                else:
+                    for alt in alternatives(query):
+                        found.extend(await SEARCHERS[kind](client, search[kind], alt, fetch, terms))
+        except Exception as e:  # one company's odd response must not sink the others
             errors[company["name"]] = f"{type(e).__name__}: {str(e)[:200]}"
             return
-        kept = 0
-        for listing in found.values():
-            listing.company = company["name"]
-            where = location_matches(listing.location, terms)
-            if where is False:
-                continue
-            if where is None:
-                listing.notes.append(f"location given as {listing.location or 'nothing'!r}; check the posting")
-            results.append(listing.to_dict())
-            kept += 1
-            if kept >= limit:
-                break
+        results.extend(keep_listings(company["name"], found, terms, limit))
 
     try:
         await asyncio.gather(*(one(c) for c in companies))

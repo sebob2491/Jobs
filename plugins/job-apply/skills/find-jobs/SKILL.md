@@ -24,6 +24,9 @@ The goal is a short, deduplicated list of real openings saved to the tracker
    `<plugin>/data/companies.yaml` (`companies_file` in `setup_status`). Pass
    `companies=[...]` to limit it to particular employers.
    - Results already in the tracker carry `tracked`. Skip those.
+   - Eightfold sites (Lam Research, Micron, Infineon) refuse direct API calls. The
+     tool then loads the site's search page in a background browser tab and reads
+     the results from it, which takes a few seconds per company.
    - `errors` lists companies whose search failed. Fall back to the browser for
      those, and for everything in `browser_only` (SuccessFactors sites such as TSMC,
      Amkor and Qorvo): open the careers URL with `open_application(url=...)`, use the
