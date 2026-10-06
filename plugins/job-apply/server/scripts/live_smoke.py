@@ -216,7 +216,9 @@ PROBES = {
     # (Oct 2026: TSMC Arizona shows Cloudflare's check; Amkor is classic SuccessFactors;
     # Benchmark is Infor CloudSuite; Qorvo's search pages are SuccessFactors HTML. Canon USA
     # and MKS block automated browsers outright.)
-    "Edwards Vacuum": "https://www.jobs.atlascopcogroup.com/search/?q=field+service&locationsearch=Arizona",
+    # Edwards' US openings (11 pages in Oct 2026): the answer of SuccessFactors' newer jobs API
+    "Edwards Vacuum": "https://www.jobs.atlascopcogroup.com/search/?q=&facetFilters=%7B%22filter1%22%3A%5B%22Edwards%22%5D"
+                      "%2C%22mfield3%22%3A%5B%22United+States%22%5D%7D",
     # Equipment makers with field service engineers at Arizona fabs, not in the list yet.
     # Nikon's posting page: how its Apply button is drawn (the form reader doesn't see it)
     "Nikon Precision": "https://recruiting2.ultipro.com/NIK1001NIKON/JobBoard/f11a0b52-5153-4c12-ad2c-b7f3b0a74112/"
