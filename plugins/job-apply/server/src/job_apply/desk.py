@@ -155,7 +155,8 @@ class Desk:
         host = (request.headers.get("host") or "").split(":")[0]
         if host not in ("127.0.0.1", "localhost"):
             return False  # DNS rebinding: someone else's name pointing here
-        return not api or secrets.compare_digest(request.headers.get("x-desk-token", ""), self.token)
+        # bytes: compare_digest refuses non-ASCII text, and a stray header must be a 403, not a 500
+        return not api or secrets.compare_digest(request.headers.get("x-desk-token", "").encode(), self.token.encode())
 
     def _forbidden(self) -> Response:
         return JSONResponse({"error": "forbidden"}, status_code=403)
@@ -181,19 +182,19 @@ class Desk:
         if not self._allowed(request, api=True):
             return self._forbidden()
         body = await request.json()
-        queued = self.apply(urls=body.get("urls") or [], job_ids=body.get("job_ids") or [],
-                            submit=bool(body.get("submit")))
-        return JSONResponse({"queued": queued})
+        queued, refused = self.apply(urls=body.get("urls") or [], job_ids=body.get("job_ids") or [],
+                                     submit=body.get("submit") is True)
+        return JSONResponse({"queued": queued, "already_applied": refused})
 
     async def answer_view(self, request: Request) -> Response:
         if not self._allowed(request, api=True):
             return self._forbidden()
         body = await request.json()
         try:
-            self.answer(int(body["job_id"]), body.get("answers") or [])
+            note = self.answer(int(body["job_id"]), body.get("answers") or [])
         except (KeyError, ValueError) as e:
             return JSONResponse({"error": str(e)}, status_code=400)
-        return JSONResponse({"ok": True})
+        return JSONResponse({"ok": True, "note": note})
 
     async def job_view(self, request: Request) -> Response:
         if not self._allowed(request, api=True):
@@ -228,7 +229,7 @@ class Desk:
             return self._forbidden()
         body = await request.json()
         if "auto_submit" in body:
-            self.applier.auto_submit = bool(body["auto_submit"])
+            self.applier.auto_submit = body["auto_submit"] is True  # not "false", which bool() calls true
             self._save_settings()
         return JSONResponse({"auto_submit": self.applier.auto_submit})
 
@@ -274,10 +275,14 @@ class Desk:
     def _listing(self, url: str) -> dict[str, Any] | None:
         return next((item for item in self.listings if item.get("url") == url), None)
 
-    def apply(self, urls: list[str], job_ids: list[int], submit: bool) -> list[int]:
+    def apply(self, urls: list[str], job_ids: list[int], submit: bool) -> tuple[list[int], list[str]]:
+        """Queue these jobs. Returns the ids queued, and the titles of any already applied to,
+        which are never queued again (with "Submit for me" on, that would apply twice)."""
         t = self.srv.tracker()
         ids = [int(j) for j in job_ids]
         for url in urls:
+            if not re.match(r"(?i)^(https?|file)://", str(url)):
+                continue  # a listing whose link isn't a web address ("javascript:…") is never opened
             tracked = t.find_by_url(url)
             if tracked is not None and self._listing(url) is None:
                 ids.append(tracked["id"])  # added by Claude or by hand
@@ -293,9 +298,17 @@ class Desk:
                 "posted_at": posting.get("posted_at") or item.get("posted"), "description": posting.get("description"),
             })
             ids.append(job["id"])
+        queued, refused = [], []
         for job_id in dict.fromkeys(ids):
-            self.applier.enqueue(job_id, submit=submit)
-        return list(dict.fromkeys(ids))
+            try:
+                self.applier.enqueue(job_id, submit=submit)
+                queued.append(job_id)
+            except KeyError:  # no such job (a stale page)
+                continue
+            except ValueError:
+                job = t.get(job_id, with_description=False) or {}
+                refused.append(job.get("title") or f"job {job_id}")
+        return queued, refused
 
     async def add_links(self, links: list[str]) -> list[dict[str, Any]]:
         """Pasted job links (LinkedIn, Indeed, a company site): read each posting, save it to
@@ -318,24 +331,31 @@ class Desk:
                 try:
                     posting = finalize(parse_html(await self.srv.browser.background_html(url), url))
                 except Exception as e:  # report it on the page; the other links still go in
-                    out.append({"url": url, "error": f"couldn't read the posting: {str(e).splitlines()[0][:150]}"})
+                    out.append({"url": url, "error": f"couldn't read the posting: {_first_line(e)}"})
                     continue
             job, _ = self.srv.tracker().upsert(posting.to_dict())
             out.append({"url": job["url"], "job_id": job["id"], "title": job.get("title"), "company": job.get("company"),
-                        "warnings": posting.warnings})
+                        "status": job.get("status"), "warnings": posting.warnings})
         return out
 
-    def answer(self, job_id: int, answers: list[dict[str, Any]]) -> None:
+    def answer(self, job_id: int, answers: list[dict[str, Any]]) -> str | None:
+        """Fill the person's answers in. Returns a note if some couldn't be remembered (they
+        still go into this application)."""
         run = self.applier.runs[job_id]
+        problem = None
         for a in answers:
             label, value = str(a.get("label") or ""), a.get("value")
             if not label or value in (None, ""):
                 continue
             if a.get("remember", True):
-                config.save_answer(label, value, run.company)
-            else:
-                run.once[question_key(label)] = value
+                try:
+                    config.save_answer(label, value, run.company)
+                    continue
+                except (ValueError, OSError) as e:
+                    problem = f"Couldn't remember your answers ({e}); they're used for this application only."
+            run.once[question_key(label)] = value
         self.applier.enqueue(job_id, submit=run.submit, front=True)
+        return problem
 
     # ------------------------------------------------------------- state
     def state(self) -> dict[str, Any]:
@@ -379,6 +399,7 @@ class Desk:
             "settings": {"submit_mode": settings.submit_mode, "dry_run": settings.dry_run,
                          "auto_submit": self.applier.auto_submit},
             "passwords": {"workday": _has_secret("workday_password")},  # saved or not, never the value
+            "answers_problem": config.answers_problem(),
             "search": self.search,
             "listings": rows,
             "others": others,
@@ -386,6 +407,10 @@ class Desk:
             "queued": [jid for kind, jid in self.applier.tasks if kind == "apply"],
             "counts": t.counts(),
         }
+
+
+def _first_line(e: BaseException) -> str:
+    return ((str(e).strip().splitlines() or [type(e).__name__])[0])[:150]
 
 
 def _has_secret(name: str) -> bool:

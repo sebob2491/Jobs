@@ -15,6 +15,12 @@ from job_apply.pipeline import Applier, classify, pick_next, question_key
 pytestmark = pytest.mark.skipif(not browser_available(), reason="no Playwright Chromium installed")
 
 
+def saved_password(monkeypatch):
+    """A saved password, and the fake application site (local files) treated as its system's."""
+    monkeypatch.setenv("JOB_APPLY_SECRET_TEST_SITE_PASSWORD", "not-a-real-password")
+    monkeypatch.setattr(pipeline, "password_for", lambda url: "test_site_password")
+
+
 async def until(condition, timeout=60):
     start = time.monotonic()
     while not condition():
@@ -120,7 +126,7 @@ def test_bot_check_holds_the_queue_until_the_person_passes_it(srv, monkeypatch):
 
 def test_saved_password_signs_in_without_the_person(srv, monkeypatch):
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
-    monkeypatch.setenv("JOB_APPLY_SECRET_COMPANY_SITE_PASSWORD", "not-a-real-password")
+    saved_password(monkeypatch)
     job = srv.add_job(url=fixture_url("site/posting.html"), title="FSE", company="Example Fab")["job"]
     applier = Applier(srv)
 
@@ -182,7 +188,7 @@ def test_cookie_dialog_is_declined_never_accepted(srv, monkeypatch):
 
 def test_create_account_is_filled_but_left_for_the_person(srv, monkeypatch):
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
-    monkeypatch.setenv("JOB_APPLY_SECRET_COMPANY_SITE_PASSWORD", "not-a-real-password")
+    saved_password(monkeypatch)
     job = srv.add_job(url=fixture_url("site/create-account.html"), title="FSE", company="Example Fab")["job"]
     applier = Applier(srv)
 
@@ -205,6 +211,33 @@ def test_create_account_is_filled_but_left_for_the_person(srv, monkeypatch):
 
     r = run(go())
     assert "filled the Create Account form with your email and saved password" in r.log
+
+
+def test_a_saved_password_that_doesnt_sign_in_opens_create_account(srv, monkeypatch):
+    """A first application at a Workday employer: there's no account there yet, so the
+    saved password can't get in. It's tried once, then Create Account is filled in."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    saved_password(monkeypatch)
+    job = srv.add_job(url=fixture_url("site/signin-no-account.html"), title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status == "needs_you")
+            assert r.need == "sign_in" and "Create Account form" in r.reason, (r.reason, r.log)
+            assert "first application" in r.reason
+            assert r.page.url.endswith("create-account.html")
+            filled = await r.page.evaluate("() => [em.value, pw.value === pw2.value && pw.value.length > 0, terms.checked]")
+            assert filled == ["sam.rivera@example.com", True, False]  # terms and the button stay with the person
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert r.log.count("signed in with your saved password") == 1  # not tried again
+    assert "your saved password didn't sign in, so I opened Create Account" in r.log
 
 
 def test_follows_an_application_that_opens_in_a_new_tab_late(srv, monkeypatch):
@@ -251,3 +284,285 @@ def test_a_missing_file_brings_the_questions_along(srv, job_apply_home, monkeypa
             await applier.stop()
 
     run(go())
+
+
+def _job_b_waiting_on_review(srv, applier):
+    """Job B: filled earlier, waiting on its review page for the person's own Submit."""
+    async def setup():
+        b_job = srv.add_job(url=fixture_url("site/review.html"), title="Job B", company="B Co")["job"]
+        tab = await srv.browser.new_tab()
+        await tab.goto(fixture_url("site/review.html"))
+        applier.runs[b_job["id"]] = pipeline.Run(b_job["id"], "Job B", "B Co", status="ready", seen_form=True, page=tab)
+        return b_job, tab
+    return setup()
+
+
+@pytest.mark.parametrize("how", ["skip", "close"])
+def test_a_job_whose_tab_goes_never_carries_on_in_another_tab(srv, monkeypatch, how):
+    """Skip pressed, or the tab closed, while a job runs: it stops there. Moving on to the
+    last open tab instead (job B's, on its review page) could press B's Submit."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    a_job = srv.add_job(url=fixture_url("site/step1.html"), title="Job A", company="A Co")["job"]
+    applier = Applier(srv)
+    applier.auto_submit = True
+    real_click = srv.click
+
+    async def go():
+        b_job, b_tab = await _job_b_waiting_on_review(srv, applier)
+
+        async def click_then_lose_the_tab(target):
+            out = await real_click(target)
+            a = applier.runs[a_job["id"]]
+            if a.status == "running" and a.page is not None and not a.page.is_closed():
+                if how == "skip":
+                    await applier.skip(a_job["id"])
+                else:
+                    await a.page.close()
+            return out
+
+        monkeypatch.setattr(srv, "click", click_then_lose_the_tab)
+        applier.start()
+        try:
+            a = applier.enqueue(a_job["id"], submit=True)
+            # until the worker is done with A (the old code carried on into B's tab after a skip)
+            await until(lambda: applier.current is None and a.status not in ("queued", "running"))
+            await asyncio.sleep(0.5)
+            return a, b_job, await b_tab.inner_text("body")
+        finally:
+            await applier.stop()
+
+    a, b_job, b_text = run(go())
+    if how == "skip":
+        assert a.status == "skipped", (a.status, a.reason, a.log)
+    else:
+        assert a.status == "failed" and "tab was closed" in a.reason, (a.status, a.reason, a.log)
+    assert "Thank you" not in b_text and "Check your application" in b_text  # B untouched
+    assert srv.tracker().get(b_job["id"])["status"] == "saved"
+    assert srv.tracker().get(a_job["id"])["status"] != "applied"
+
+
+def test_a_tab_the_person_opens_is_not_taken_over(srv, monkeypatch):
+    """Only tabs the application opens are followed. One the person opens (to check their
+    email, say) while a job runs is theirs: nothing is typed or clicked there."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    job = srv.add_job(url=fixture_url("site/step1.html"), title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+    real_click = srv.click
+    theirs = []
+
+    async def click_then_open_a_tab(target):
+        out = await real_click(target)
+        if not theirs:
+            tab = await srv.browser._ctx.new_page()  # like pressing Ctrl+T
+            await tab.goto(fixture_url("site/step1.html"))
+            theirs.append(tab)
+        return out
+
+    monkeypatch.setattr(srv, "click", click_then_open_a_tab)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"))
+            values = await theirs[0].evaluate("() => [fn.value, ln.value, em.value]")
+            return r, values, theirs[0].url
+        finally:
+            await applier.stop()
+
+    r, values, their_url = run(go())
+    assert r.need == "questions" and r.page.url.endswith("step2.html"), (r.status, r.reason, r.log)
+    assert values == ["", "", ""] and their_url.endswith("step1.html")  # left alone
+
+
+def test_a_sign_in_hold_waits_quietly_while_other_jobs_queue(srv, monkeypatch):
+    """The queue holds for a person's sign-in, with another job waiting: the paused tab is
+    looked at once a poll, not in a tight loop over the page they're typing in."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    first = srv.add_job(url=fixture_url("site/signin.html"), title="FSE", company="Example Fab")["job"]
+    second = srv.add_job(url=fixture_url("site/step1.html"), title="FSE 2", company="Example Fab")["job"]
+    applier = Applier(srv)
+    looks = []
+    real_moved_on = applier._moved_on
+
+    async def counted(run_):
+        looks.append(time.monotonic())
+        return await real_moved_on(run_)
+
+    monkeypatch.setattr(applier, "_moved_on", counted)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(first["id"])
+            await until(lambda: r.status == "needs_you")
+            applier.enqueue(second["id"])
+            looks.clear()
+            await asyncio.sleep(2)
+            return r, len(looks)
+        finally:
+            await applier.stop()
+
+    r, count = run(go())
+    assert r.need == "sign_in" and r.blocking
+    assert count <= 2 / 0.3 + 2, count  # one look a poll (hundreds before)
+
+
+def test_a_paused_tab_taken_to_webmail_is_not_the_application_moving_on(srv, monkeypatch):
+    """Paused at a sign-in, the person uses that tab to read their email: nothing is filled
+    or clicked there. Back on the application's site, the desk carries on."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    job = srv.add_job(url=fixture_url("site/signin.html"), title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status == "needs_you")
+            await r.page.route("https://mail.example.com/**", lambda route: route.fulfill(
+                content_type="text/html", body="<h1>Inbox</h1><form><label for=q>Search mail</label><input id=q>"
+                "<label for=to>To</label><input id=to><button>Next</button></form>"))
+            await r.page.goto("https://mail.example.com/inbox")
+            await asyncio.sleep(1.5)
+            stayed = (r.status, r.blocking, await r.page.evaluate("() => to.value"))
+            await r.page.goto(fixture_url("site/step1.html"))  # signed in elsewhere, back on the application
+            await until(lambda: r.status == "needs_you" and r.need == "questions")
+            return stayed
+        finally:
+            await applier.stop()
+
+    status, blocking, typed = run(go())
+    assert (status, blocking, typed) == ("needs_you", True, "")
+
+
+def test_submit_for_me_leaves_an_application_with_an_empty_required_field(srv, monkeypatch):
+    job = srv.add_job(url=fixture_url("site/submit-empty.html"), title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        tab = await srv.browser.new_tab()
+        await tab.goto(fixture_url("site/submit-empty.html"))
+        r = pipeline.Run(job["id"], "FSE", "Example Fab", status="running", seen_form=True, page=tab)
+        applier.runs[job["id"]] = r
+        await applier._strict(applier._submit(r, by_person=False))
+        return r, await tab.evaluate("() => window.sent")
+
+    r, sent = run(go())
+    assert r.need == "stuck" and "Why do you want to work here?" in r.reason, (r.status, r.reason)
+    assert sent == 0
+
+
+def test_a_submit_the_site_turns_down_is_not_called_submitted(srv, monkeypatch):
+    """The person pressed Submit; the site showed an error and kept the form. That's not
+    "Submitted": the job stays open, with Submit and "I submitted it" to hand."""
+    job = srv.add_job(url=fixture_url("site/submit-empty.html"), title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        tab = await srv.browser.new_tab()
+        await tab.goto(fixture_url("site/submit-empty.html"))
+        r = pipeline.Run(job["id"], "FSE", "Example Fab", status="queued", seen_form=True, page=tab)
+        applier.runs[job["id"]] = r
+        await applier._strict(applier._submit(r))
+        return r
+
+    r = run(go())
+    assert (r.status, r.need) == ("needs_you", "submit_failed"), (r.status, r.reason)
+    assert "please answer every required question" in r.reason
+    assert srv.tracker().get(job["id"])["status"] != "applied"
+
+
+def test_a_submit_with_no_confirmation_asks_the_person_to_check(srv, monkeypatch):
+    job = srv.add_job(url=fixture_url("site/submit-quiet.html"), title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        tab = await srv.browser.new_tab()
+        await tab.goto(fixture_url("site/submit-quiet.html"))
+        r = pipeline.Run(job["id"], "FSE", "Example Fab", status="queued", seen_form=True, page=tab)
+        applier.runs[job["id"]] = r
+        await applier._strict(applier._submit(r))
+        return r
+
+    r = run(go())
+    assert (r.status, r.need) == ("needs_you", "check_submit"), (r.status, r.reason)
+
+
+def test_questions_that_appear_after_filling_are_filled_too(srv, monkeypatch):
+    """State shows only once Country is picked: it's filled in the same pass, not left empty
+    on a page that then counts as ready."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    job = srv.add_job(url=fixture_url("site/reveal.html"), title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"))
+            return r, await r.page.evaluate("() => [country.value, st.value]")
+        finally:
+            await applier.stop()
+
+    r, values = run(go())
+    assert r.status == "ready", (r.status, r.reason, r.log)
+    assert values == ["United States", "Arizona"]
+
+
+def test_the_saved_password_only_goes_to_its_own_system():
+    from job_apply.pipeline import password_for
+    assert password_for("https://asml.wd3.myworkdayjobs.com/en-US/ASMLExternal/login") == "workday_password"
+    assert password_for("https://wd5.myworkday.com/acme/login.htmld") == "workday_password"
+    assert password_for("https://career4.successfactors.com/career?company=acme") == "successfactors_password"
+    # lookalikes that only mention Workday in their address
+    assert password_for("https://evil.example/myworkdayjobs.com/login") is None
+    assert password_for("https://acme.myworkdayjobs.com.evil.example/login") is None
+    assert password_for("https://notmyworkdayjobs.com/login") is None
+    assert password_for("http://acme.wd1.myworkdayjobs.com/login") is None  # not over https
+    assert password_for("https://careers.example.com/signin") is None
+
+
+def test_a_password_box_inside_an_embedded_frame_is_left_alone(srv, monkeypatch):
+    """A frame can come from anywhere; the saved password only goes into the page's own form."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    saved_password(monkeypatch)
+    job = srv.add_job(url=fixture_url("site/framed-signin.html"), title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status == "needs_you")
+            frame = next(f for f in r.page.frames if f.url.endswith("/signin.html"))
+            return r, await frame.evaluate("() => [em.value, pw.value]")
+        finally:
+            await applier.stop()
+
+    r, values = run(go())
+    assert r.need == "sign_in", (r.status, r.reason, r.log)
+    assert values == ["", ""]
+    assert not any("saved password" in line for line in r.log)
+
+
+def test_skip_closes_the_jobs_tabs_both_the_posting_and_the_application(srv, monkeypatch):
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    job = srv.add_job(url=fixture_url("site/popup-posting.html"), title="Sr. Field Application Engineering",
+                      company="Example Litho")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status == "needs_you", timeout=90)
+            tabs = srv.browser.lineage(r.page)
+            await applier.skip(job["id"])
+            return r, tabs
+        finally:
+            await applier.stop()
+
+    r, tabs = run(go())
+    assert len(tabs) == 2 and tabs[0].url.endswith("signin.html") and tabs[1].url.endswith("popup-posting.html")
+    assert all(t.is_closed() for t in tabs) and r.status == "skipped"

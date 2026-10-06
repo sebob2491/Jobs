@@ -80,6 +80,10 @@ class SubmitBlocked(Exception):
     pass
 
 
+class TabClosed(Exception):
+    """The tab a job was working in is gone (closed, or skipped in the Job Desk)."""
+
+
 def _search_words(text: str) -> str:
     """What to type into a picker's search box: the words, without flags, dial codes or
     bracketed extras. Eightfold's Country code list searches the country's name, so
@@ -95,7 +99,10 @@ class BrowserSession:
         self._ctx: BrowserContext | None = None
         self._page: Page | None = None
         self._lock = asyncio.Lock()
-        self._background = False  # True while a helper tab is open that shouldn't become current
+        self._openers: dict[Page, Page] = {}  # tab -> the tab that opened it
+        # While the Job Desk works on a job, the tools stay on that job's tab (and the tabs
+        # it opens): a closed one raises TabClosed instead of moving on to another tab.
+        self.strict_tabs = False
         self._frame_ids: dict[Frame, str] = {}
         self._fields: dict[str, dict] = {}
         self._actions: dict[str, dict] = {}
@@ -110,7 +117,8 @@ class BrowserSession:
         settings = config.Profile.load().settings
         user_dir = config.browser_profile_dir()
         user_dir.mkdir(parents=True, exist_ok=True)
-        self._pw = await async_playwright().start()
+        if self._pw is None:  # still running if only the browser window was closed
+            self._pw = await async_playwright().start()
         kwargs: dict[str, Any] = {
             "user_data_dir": str(user_dir),
             "headless": settings.headless,
@@ -131,27 +139,56 @@ class BrowserSession:
             self._pw = None
             raise BrowserUnavailable(UNAVAILABLE_HELP + " | ".join(errors))
         self._ctx.set_default_timeout(15000)  # a vanished element fails in 15 s, not 30
-        self._ctx.on("page", self._on_new_page)
-        self._page = self._ctx.pages[0] if self._ctx.pages else await self._ctx.new_page()
+        ctx = self._ctx
+        ctx.on("page", self._watch)
+        ctx.on("close", lambda _: self._forget(ctx))
+        for tab in ctx.pages:
+            self._watch(tab)
+        self._page = ctx.pages[0] if ctx.pages else await ctx.new_page()
 
-    def _on_new_page(self, page: Page) -> None:
-        # "Apply" buttons often open the company site in a new tab; follow it.
-        if not self._background:
-            self._page = page
+    def _watch(self, tab: Page) -> None:
+        if not getattr(tab, "_ja_watched", False):
+            tab._ja_watched = True  # type: ignore[attr-defined]
+            tab.on("popup", lambda popup: self._on_popup(tab, popup))
+            tab.on("close", lambda _: self._openers.pop(tab, None))
+
+    def _on_popup(self, opener: Page, popup: Page) -> None:
+        # "Apply" buttons often open the application in a new tab: follow it, but only from
+        # the tab being worked on. Tabs the person opens, and background reads, stay put.
+        self._watch(popup)
+        self._openers[popup] = opener
+        if opener is self._page:
+            self._page = popup
+
+    def _forget(self, ctx: BrowserContext) -> None:
+        """The person closed the browser window: open a fresh one next time it's needed."""
+        if self._ctx is ctx:
+            self._ctx = self._page = None
+            self._openers.clear()
+            self._fields.clear()
+            self._actions.clear()
+            self._frame_ids.clear()
 
     async def page(self) -> Page:
         if self._ctx is None:
             await self._launch()
         assert self._ctx is not None
         if self._page is None or self._page.is_closed():
-            live = [p for p in self._ctx.pages if not p.is_closed()]
-            self._page = live[-1] if live else await self._ctx.new_page()
+            opener = self._openers.get(self._page) if self._page is not None else None
+            if opener is not None and not opener.is_closed():
+                self._page = opener  # a popup that closed itself (a sign-in window): back to its tab
+            elif self.strict_tabs:
+                raise TabClosed("The tab this application was in has been closed.")
+            else:
+                live = [p for p in self._ctx.pages if not p.is_closed()]
+                self._page = live[-1] if live else await self._ctx.new_page()
         return self._page
 
     async def new_tab(self) -> Page:
         """Open a tab and make it the one the tools act on (the Job Desk gives each job its own)."""
         async with self._lock:
-            await self.page()
+            if self._ctx is None:
+                await self._launch()
             assert self._ctx is not None
             self._page = await self._ctx.new_page()
             return self._page
@@ -162,6 +199,14 @@ class BrowserSession:
             return False
         self._page = page
         return True
+
+    def lineage(self, tab: Page | None) -> list[Page]:
+        """This tab and the tabs that opened it, nearest first: one job's tabs."""
+        out: list[Page] = []
+        while tab is not None and tab not in out:
+            out.append(tab)
+            tab = self._openers.get(tab)
+        return out
 
     @property
     def current_tab(self) -> Page | None:
@@ -392,10 +437,10 @@ class BrowserSession:
                 return None
 
         async with self._lock:
-            await self.page()
+            if self._ctx is None:
+                await self._launch()
             assert self._ctx is not None
-            self._background = True
-            tab = await self._ctx.new_page()
+            tab = await self._ctx.new_page()  # not a popup of the job's tab, so it never becomes current
             try:
                 if rewrite is not None:
                     async def handle(route: Any) -> None:
@@ -414,15 +459,14 @@ class BrowserSession:
                 return await (await info.value).json()
             finally:
                 await tab.close()
-                self._background = False
 
     async def background_html(self, url: str) -> str:
         """The HTML of `url`, read in a background tab so the tab an application is in
         stays where it is (the Job Desk adds pasted links while it applies)."""
         async with self._lock:
-            await self.page()
+            if self._ctx is None:
+                await self._launch()
             assert self._ctx is not None
-            self._background = True
             tab = await self._ctx.new_page()
             try:
                 await tab.goto(url, wait_until="domcontentloaded", timeout=45000)
@@ -433,7 +477,6 @@ class BrowserSession:
                 return await tab.content()
             finally:
                 await tab.close()
-                self._background = False
 
     async def snapshot(self, dest: Path, note: str = "", details: Any = None) -> Path:
         """Save what's needed to debug a page later: HTML of every frame, a screenshot

@@ -21,16 +21,19 @@ import time
 from collections import deque
 from dataclasses import dataclass, field
 from typing import Any
+from urllib.parse import urlparse
 
 from . import config
 from .ats import ATS_NAMES, detect_ats
 from .autofill import clean_label, is_empty_value, norm
+from .browser import TabClosed
 
 NEW_TAB_WAIT = 4  # seconds to wait for a tab opened late by a click before calling it a stall
 MAX_STEPS = 15
 HANDS_ON = {"bot_check", "sign_in", "email_code"}
 HANDS_ON_TIMEOUT = 15 * 60  # then the queue stops waiting and moves on
 POLL_SECONDS = 3.0
+FINISHED = {"applied", "interviewing", "offer", "rejected", "withdrawn"}  # tracker statuses never applied to again
 
 _BOT_TITLE = re.compile(r"just a moment|attention required|access denied|pardon our interruption|security check|"
                         r"are you a robot|bot (?:check|detection)", re.I)
@@ -42,6 +45,7 @@ _VERIFY_EMAIL = re.compile(r"verif(?:y|ication)\b.{0,40}\b(?:e-?mail|account|lin
 _CODE_FIELD = re.compile(r"verification code|one[- ]time (?:pass)?code|passcode|security code|\bcode\b.{0,40}"
                          r"(?:sent|email)|enter (?:the )?(?:\d-digit )?code|\botp\b", re.I)
 _SIGN_IN_ACTION = re.compile(r"^(sign in|log ?in|sign in with email)$", re.I)
+_CREATE_ACCOUNT = re.compile(r"^(create (?:an |your |a new )?account|sign up|register)[.!]?$", re.I)
 _SOCIAL = re.compile(r"\b(google|apple|linked ?in|facebook|microsoft|indeed|seek)\b", re.I)
 _STEP = re.compile(r"^(save (?:and|&) continue|continue|next|next step|review|review (?:and|&) submit|"
                    r"review application|proceed|go to next step)$", re.I)
@@ -63,13 +67,16 @@ class Run:
     title: str = ""
     company: str = ""
     status: str = "queued"  # queued | running | needs_you | ready | submitted | failed | skipped
-    need: str = ""  # questions | sign_in | bot_check | email_code | captcha | your_submit | stuck
+    # questions | sign_in | bot_check | email_code | captcha | your_submit | stuck
+    # | submit_failed (pressed, the form is still there) | check_submit (pressed, no confirmation)
+    need: str = ""
     reason: str = ""
     questions: list[dict[str, Any]] = field(default_factory=list)
     log: list[str] = field(default_factory=list)
     url: str = ""
     blocking: bool = False  # the queue waits on this one
     paused_at: float = 0.0
+    paused_site: str = ""  # the site it paused on, so a tab taken to webmail isn't "moved on"
     submit: bool = False  # submit once the review page is reached
     once: dict[str, Any] = field(default_factory=dict)  # answers for this application only, by question
     seen_form: bool = False  # got into the application itself (so a page with only Submit is its review page)
@@ -161,9 +168,13 @@ class Applier:
         job = self.srv.tracker().get(job_id)
         if job is None:
             raise KeyError(f"No job with id {job_id}")
-        run = self.runs.get(job_id) or Run(job_id, job.get("title", ""), job.get("company", ""))
+        run = self.runs.get(job_id)
+        if job.get("status") in FINISHED or run is not None and run.status == "submitted":
+            # applying again could send a second application ("Submit for me")
+            raise ValueError(f"{job.get('title') or 'That job'} is already marked {job.get('status') or 'submitted'}")
+        run = run or Run(job_id, job.get("title", ""), job.get("company", ""))
         self.runs[job_id] = run
-        if run.status == "running":
+        if run.status == "running" and self.current == job_id:
             return run
         run.status, run.need, run.reason, run.blocking, run.questions = "queued", "", "", False, []
         run.submit = submit
@@ -196,11 +207,12 @@ class Applier:
         self._cancel(job_id)
         run.status, run.need, run.blocking, run.reason = "skipped", "", False, "Skipped"
         self.srv.tracker().update(job_id, status="skipped", note="skipped in the Job Desk")
-        if run.page is not None and not run.page.is_closed():
-            try:
-                await run.page.close()
-            except Exception:
-                pass
+        for tab in self.srv.browser.lineage(run.page):  # its application tab, and the tab that opened it
+            if not tab.is_closed():
+                try:
+                    await tab.close()
+                except Exception:
+                    pass
         run.page = None
         return run
 
@@ -225,36 +237,58 @@ class Applier:
                 await asyncio.sleep(POLL_SECONDS)
 
     async def _tick(self) -> None:
+        # A Submit the person pressed goes first, even while the queue holds for a sign-in.
+        submit = next((t for t in self.tasks if t[0] == "submit"), None)
         blocker = next((r for r in self.runs.values() if r.blocking), None)
-        if blocker is not None:
+        if blocker is not None and submit is None:
             if time.time() - blocker.paused_at > HANDS_ON_TIMEOUT:
                 blocker.blocking = False
                 blocker.reason += " (stopped waiting; press Resume when you're ready)"
-            elif await self._moved_on(blocker):
+            elif await self._strict(self._moved_on(blocker)):
                 blocker.blocking = False
-                self.enqueue(blocker.job_id, submit=blocker.submit, front=True)
+                try:
+                    self.enqueue(blocker.job_id, submit=blocker.submit, front=True)
+                except ValueError:  # marked applied meanwhile
+                    pass
             else:
+                self._wake.clear()  # sleep the poll out, unless something new comes in
                 await self._sleep(POLL_SECONDS)
                 return
         if not self.tasks:
             self._wake.clear()
             await self._sleep(30)
             return
-        kind, job_id = self.tasks.popleft()
+        task = submit or self.tasks[0]
+        self.tasks.remove(task)
+        kind, job_id = task
         run = self.runs[job_id]
         self.current = job_id
         try:
-            if kind == "submit":
-                await self._submit(run)
-            else:
-                await self._drive(run)
+            await self._strict(self._submit(run) if kind == "submit" else self._drive(run))
+        except TabClosed:
+            if run.status != "skipped":
+                run.status, run.need, run.blocking = "failed", "", False
+                run.reason = "Its tab was closed. Press Resume to start this application again."
+                self._log(run, run.reason)
         except Exception as e:
-            run.status, run.need = "failed", ""
-            run.reason = f"Something went wrong: {type(e).__name__}: {str(e).splitlines()[0][:200] if str(e) else ''}"
-            self._log(run, run.reason)
+            if run.status != "skipped":
+                run.status, run.need = "failed", ""
+                run.reason = f"Something went wrong: {type(e).__name__}: {str(e).splitlines()[0][:200] if str(e) else ''}"
+                self._log(run, run.reason)
         finally:
             self.current = None
+            if run.status == "running":  # the desk was stopped part-way
+                run.status, run.reason = "failed", "Stopped before it finished. Press Resume to carry on."
             run.updated = time.time()
+
+    async def _strict(self, step: Any) -> Any:
+        """Run a job's step with the browser held to that job's tab (and tabs it opens)."""
+        browser = self.srv.browser
+        browser.strict_tabs = True
+        try:
+            return await step
+        finally:
+            browser.strict_tabs = False
 
     async def _sleep(self, seconds: float) -> None:
         try:
@@ -263,11 +297,16 @@ class Applier:
             pass
 
     async def _moved_on(self, run: Run) -> bool:
-        """Has the person got the paused tab past its sign-in, check or code?"""
+        """Has the person got the paused tab past its sign-in, check or code? Only on the
+        same site, or on into an application system: a tab they've taken to their webmail
+        or a sign-in provider isn't the application moving on."""
         if not self.srv.browser.use_tab(run.page):
             return True  # they closed it: start the job again
         data, text = await self._look()
-        return classify(data, text) != run.need
+        if classify(data, text) == run.need:
+            return False
+        url = data.get("url") or ""
+        return _site_key(url) == run.paused_site or detect_ats(url) not in ("company_site", "linkedin", "indeed")
 
     # ------------------------------------------------------------- one job
     def _log(self, run: Run, text: str) -> None:
@@ -276,10 +315,13 @@ class Applier:
         run.updated = time.time()
 
     def _pause(self, run: Run, need: str, reason: str, questions: list[dict[str, Any]] | None = None) -> None:
+        if run.status == "skipped":
+            return
         run.status, run.need, run.reason = "needs_you", need, reason
         run.questions = questions or []
         run.blocking = need in HANDS_ON
         run.paused_at = time.time()
+        run.paused_site = _site_key(run.url)
         self._log(run, reason)
 
     async def _look(self) -> tuple[dict[str, Any], str]:
@@ -308,8 +350,11 @@ class Applier:
         run.status, run.need, run.reason = "running", "", "Working on it"
         if not await self._open(run):
             return
-        stalls, sign_ins, entries_done, waited = 0, 0, set(), False
+        stalls, entries_done, waited, refilled = 0, set(), False, set()
+        sign_ins: dict[str, int] = {}  # what the saved password was used for on this pass
         for _ in range(MAX_STEPS):
+            if run.status == "skipped":  # pressed while this job was running
+                return
             data, text = await self._look()
             run.page_info = _page_info(data)
             run.url = data["url"]
@@ -327,19 +372,26 @@ class Applier:
                 return self._pause(run, "bot_check", "The site is showing a bot check. Solve it in the browser "
                                    "window; the desk carries on by itself after that.")
             if kind == "sign_in":
-                done = await self._sign_in(run, data) if sign_ins < 2 else None
-                if done == "signed_in":
-                    sign_ins += 1
+                done = await self._sign_in(run, data, sign_ins)
+                if done in ("email_step", "submitted", "create_account"):
+                    sign_ins[done] = sign_ins.get(done, 0) + 1
                     continue
                 await self._bring_forward(run)
                 if done == "prefilled":
+                    first = (" Your saved password didn't sign in there, so this is probably your first application "
+                             "with them; if you do have an account, sign in instead." if sign_ins.get("create_account") else "")
                     return self._pause(run, "sign_in", f"I filled in your email and saved password on {_site(run, data)}'s "
                                        "Create Account form. Tick their terms box if there is one and create the account "
-                                       "(then verify your email if they ask); the desk carries on after that.")
+                                       "(then verify your email if they ask); the desk carries on after that." + first)
+                if done == "filled":
+                    return self._pause(run, "sign_in", f"I filled in your email and saved password on {_site(run, data)}'s "
+                                       "sign-in form. Press its sign-in button in the browser window; the desk carries on "
+                                       "after that.")
                 tip = (" Save a Workday password on the desk and it fills these in for you next time."
-                       if detect_ats(data["url"]) == "workday" and config.get_secret("workday_password") is None else "")
+                       if password_for(data["url"]) == "workday_password" and _secret("workday_password") is None else "")
+                failed = " Your saved password didn't sign in there." if sign_ins.get("submitted") else ""
                 return self._pause(run, "sign_in", f"Sign in (or create your account) on {_site(run, data)} in "
-                                   "the browser window; the desk carries on by itself after that." + tip)
+                                   "the browser window; the desk carries on by itself after that." + failed + tip)
             if kind == "email_code":
                 await self._bring_forward(run)
                 return self._pause(run, "email_code", "The site emailed you a code or a link. Enter the code in the "
@@ -363,8 +415,12 @@ class Applier:
                 pending += [{"id": f["id"], "label": f.get("label") or "", "kind": "text", "required": True,
                              "error": f.get("error")} for f in result["failed"]]
                 missing_files = [f for f in result["needs_input"] if f.get("required") and f.get("kind") == "file"]
+                before, page_key = data, (data.get("url"), tuple(data.get("headings") or []))
                 data, text = await self._look()  # filling can add or enable things (State after Country, Submit)
                 run.page_info = _page_info(data)  # what the person sees on the desk: the page as filled
+                if _new_required(before, data) and page_key not in refilled:
+                    refilled.add(page_key)  # answers drew new questions ("If yes, explain"): fill those too
+                    continue
                 if missing_files:  # questions come along, so they can be answered meanwhile
                     return self._pause(run, "stuck", "The form needs a file the profile doesn't point to (set "
                                        "documents.resume in profile.yaml): " + ", ".join(f["label"] for f in missing_files)
@@ -472,23 +528,44 @@ class Applier:
             return True
         return False
 
-    async def _sign_in(self, run: Run, data: dict[str, Any]) -> str | None:
-        """With the profile email and a stored <ats>_password (if the person saved one): sign
-        in ("signed_in"), or fill a Create Account form and leave its terms and button to the
-        person ("prefilled"). None when there's nothing to do."""
+    async def _sign_in(self, run: Run, data: dict[str, Any], tried: dict[str, int]) -> str | None:
+        """With the profile email and a stored <ats>_password (if the person saved one):
+
+        - "email_step": pressed Workday's "Sign in with email" to reach the form;
+        - "submitted": filled in the sign-in form and pressed its button (once a pass);
+        - "create_account": that didn't get in, most likely because there's no account
+          there yet, so it opened the site's Create Account form;
+        - "prefilled": filled in a Create Account form, leaving its terms and button to
+          the person;
+        - "filled": filled in a sign-in form whose button it doesn't recognise.
+
+        None when there's nothing (more) to do. `tried` counts what this pass already did."""
         srv = self.srv
-        secret = f"{detect_ats(data['url'])}_password"
-        if config.get_secret(secret) is None:
+        secret = password_for(data["url"])
+        if secret is None or _secret(secret) is None:
             return None
-        fields = data.get("fields") or []
-        actions = data.get("actions") or []
+        # the page's own fields: never a password box inside a frame from another site
+        fields = [f for f in data.get("fields") or [] if not re.match(r"f\d+-", str(f.get("id")))]
+        actions = [a for a in data.get("actions") or [] if not a.get("disabled")]
         if not fields:
             email_button = next((a for a in actions if re.match(r"^sign in with email$", a["text"], re.I)), None)
-            if email_button is None:
+            if email_button is None or tried.get("email_step", 0) >= 2:
                 return None
             await srv.click(email_button["id"])
-            return "signed_in"
+            return "email_step"
         passwords = [f for f in fields if f["kind"] == "password"]
+        if len(passwords) == 1 and tried.get("submitted"):
+            # Signed in once already and still asked to: the password didn't get in. Trying it
+            # again won't help (and can lock an account); a first visit needs an account.
+            create = next((a for a in actions if _CREATE_ACCOUNT.match(a["text"].strip())), None)
+            if create is None or tried.get("create_account"):
+                return None
+            try:
+                await srv.click(create["id"])
+            except KeyError:
+                return None
+            self._log(run, "your saved password didn't sign in, so I opened Create Account")
+            return "create_account"
         email = next((f for f in fields if f["kind"] in ("text", "email")
                       and re.search(r"e-?mail|user ?name|login", f.get("label") or "", re.I)), None)
         address = config.Profile.load().get("personal.email")
@@ -503,10 +580,10 @@ class Applier:
         button = next((a for a in actions if _SIGN_IN_ACTION.match(a["text"].strip()) and not _SOCIAL.search(a["text"])),
                       None)
         if button is None:
-            return "prefilled"
+            return "filled"
         await srv.click(button["id"])
         self._log(run, "signed in with your saved password")
-        return "signed_in"
+        return "submitted"
 
     async def _bring_forward(self, run: Run) -> None:
         if run.page is not None and not run.page.is_closed():
@@ -518,6 +595,8 @@ class Applier:
     async def _finish(self, run: Run, data: dict[str, Any], text: str) -> None:
         """The review page (or a one-page form with its submit button) is reached."""
         srv = self.srv
+        if run.status == "skipped":
+            return
         ats = detect_ats(data["url"])
         job = srv.tracker().get(run.job_id)
         if ats in config.HUMAN_SUBMIT_ONLY:
@@ -529,23 +608,43 @@ class Applier:
             return self._pause(run, "captcha", "Filled. The form has a CAPTCHA: tick it in the browser, then "
                                "press Submit here.")
         if run.submit and self.auto_submit:
-            return await self._submit(run)
+            return await self._submit(run, by_person=False)
         srv._mark_ready(job, "filled by the Job Desk")
         run.status, run.need = "ready", ""
         run.reason = "Filled and waiting on the review page. Check it in the browser, then press Submit."
         self._log(run, "reached the review page")
 
-    async def _submit(self, run: Run) -> None:
+    async def _submit(self, run: Run, by_person: bool = True) -> None:
+        """Press the final button: the person pressed Submit for this job, or (by_person
+        False) "Submit for me" is on, which also needs every required field filled."""
         srv = self.srv
+        if run.status == "skipped":
+            return
         if not srv.browser.use_tab(run.page):
             run.status, run.reason = "needs_you", "Its tab was closed. Press Resume to fill it again first."
             return
         srv.browser.current_job_id = run.job_id
+        if not by_person:
+            data = await srv.inspect_form(include_dropdown_options=False)
+            empty = [f.get("label") or "a field" for f in _empty_required(data)]
+            if empty:
+                return self._pause(run, "stuck", "Not submitted: required fields are still empty (" + ", ".join(empty[:5])
+                                   + "). Fill them in the browser, then press Resume.")
         result = await srv.submit_application(job_id=run.job_id, user_confirmed=True)
-        if result.get("submitted"):
-            run.status, run.need = "submitted", ""
-            run.reason = "Submitted." if result.get("confirmed") else \
-                "Submitted, but no confirmation showed. Check the page, and mark it applied if it went through."
+        if result.get("submitted") and result.get("confirmed"):
+            run.status, run.need, run.reason = "submitted", "", "Submitted."
+        elif result.get("submitted"):
+            try:
+                still = bool(await srv.browser.find_submit())
+            except Exception:
+                still = False
+            problems = "; ".join(e for e in result.get("errors") or [] if _ERRORISH.search(e))[:300]
+            if still:  # the form is still there: the site didn't take it
+                return self._pause(run, "submit_failed", "I pressed Submit, but the form is still there"
+                                   + (f": {problems}" if problems else ".") + " Fix it in the browser, then press "
+                                   "Submit again (or \u201cI submitted it\u201d if it did go through).")
+            return self._pause(run, "check_submit", "I pressed Submit, but no confirmation showed. Check the page: "
+                               "if it went through, press \u201cI submitted it\u201d.")
         else:
             run.status, run.need = "ready", ""
             run.reason = result.get("reason") or "Not submitted."
@@ -559,6 +658,49 @@ _APPLICATION_FIELD = re.compile(r"first name|last name|full name|legal name|resu
 def _application_like(data: dict[str, Any]) -> bool:
     fields = data.get("fields") or []
     return len(fields) >= 3 or sum(bool(_APPLICATION_FIELD.search(f.get("label") or "")) for f in fields) >= 1
+
+
+# A saved password is typed only into its own system's pages, on that system's own domains:
+# never into a page that just mentions one in its address (evil.example/myworkdayjobs.com).
+PASSWORD_SITES = {
+    "workday": ("myworkdayjobs.com", "myworkday.com", "myworkdaysite.com"),
+    "successfactors": ("successfactors.com", "successfactors.eu", "sapsf.com", "sapsf.eu"),
+    "icims": ("icims.com",), "taleo": ("taleo.net",), "brassring": ("brassring.com",), "avature": ("avature.net",),
+}
+
+
+def password_for(url: str) -> str | None:
+    """The name of the saved password that belongs on this page, if any."""
+    parsed = urlparse(url or "")
+    host = (parsed.hostname or "").lower()
+    for ats, domains in PASSWORD_SITES.items():
+        if parsed.scheme == "https" and any(host == d or host.endswith("." + d) for d in domains):
+            return f"{ats}_password"
+    return None
+
+
+def _secret(name: str) -> str | None:
+    try:
+        return config.get_secret(name)
+    except Exception:  # a hand-edited secrets.yaml with a typo: sign in by hand rather than fail the job
+        return None
+
+
+def _empty_required(data: dict[str, Any]) -> list[dict[str, Any]]:
+    return [f for f in data.get("fields") or [] if f.get("required") and not f.get("disabled")
+            and f.get("kind") != "password" and is_empty_value(f.get("value"))]
+
+
+def _new_required(before: dict[str, Any], after: dict[str, Any]) -> bool:
+    """Did filling the page bring up required fields that weren't there before?"""
+    seen = {f.get("id") for f in before.get("fields") or []}
+    return any(f.get("id") not in seen for f in _empty_required(after))
+
+
+def _site_key(url: str) -> str:
+    """The part of a page's address that names its site ("myworkdayjobs.com", "asml.com"), near enough."""
+    host = (urlparse(url).hostname or "").lower()
+    return ".".join(host.split(".")[-2:])
 
 
 def _site(run: Run, data: dict[str, Any]) -> str:

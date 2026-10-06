@@ -1,0 +1,20 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Contact Details</title></head>
+<body>
+<h2>Contact Details</h2>
+<form id="step" novalidate>
+  <label for="country">Country *</label>
+  <select id="country" required><option value="">Select One</option><option>Canada</option><option>United States</option></select>
+  <div id="more" hidden>
+    <label for="st">State *</label>
+    <select id="st" required><option value="">Select One</option><option>Arizona</option><option>Texas</option></select>
+  </div>
+  <button type="submit">Submit</button>
+</form>
+<script>
+  // Like Workday and Eightfold: State only shows once a country is picked.
+  document.getElementById('country').addEventListener('change', () => { document.getElementById('more').hidden = false; });
+</script>
+</body>
+</html>

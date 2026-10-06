@@ -210,6 +210,10 @@ function rememberSeen(urls) {
 const isNew = (r) => !firstVisit && seenBefore && !seenBefore.has(r.url) && !r.run && !DONE.has(r.status);
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
+// Job links come from employers' and job boards' data: only web addresses become links.
+const webUrl = (u) => /^https?:\/\//i.test(String(u || "")) ? String(u) : "";
+const link = (u, text, cls = "") => webUrl(u)
+  ? `<a class="${cls}" href="${esc(webUrl(u))}" target="_blank" rel="noopener">${text}</a>` : `<span class="${cls}">${text}</span>`;
 const $ = (id) => document.getElementById(id);
 
 async function api(path, body) {
@@ -274,6 +278,7 @@ function statusPill(row) {
 function scoreClass(s) { return s >= 75 ? "s4" : s >= 60 ? "s3" : s >= 40 ? "s2" : "s1"; }
 
 function renderRows() {
+  if (!state) return;
   // links the person added (here, or through Claude) always show: they picked those themselves
   const rows = (state.listings || []).filter((r) => filter === "all" || r.added || (r.fit && r.fit.recommended) || r.run);
   const entries = rows.map((r) => {
@@ -288,7 +293,7 @@ function renderRows() {
     return {key: r.url, html: `<li class="row ${DONE.has(r.status) ? "done" : ""}">
       <input type="checkbox" data-pick="${esc(r.url)}" ${checked} ${done ? "disabled" : ""} aria-label="Select ${esc(r.title)}">
       <span class="score ${scoreClass(fit.score)}" title="Fit score">${esc(fit.score)}</span>
-      <div><a class="title" href="${esc(r.url)}" target="_blank" rel="noopener">${esc(r.title)}</a>
+      <div>${link(r.url, esc(r.title), "title")}
         <div class="meta">${esc(r.company)} · ${esc(r.location || "location not given")}${r.posted ? " · " + esc(r.posted) : ""}</div>
         <div class="chips">${chips}</div></div>
       <div>${statusPill(r)}</div></li>`};
@@ -300,7 +305,7 @@ function renderRows() {
     entries.push({key: "empty", html: `<li class="empty">${esc(msg)}</li>`});
   }
   patch($("rows"), entries);
-  const n = [...selected].filter((u) => (state.listings || []).some((r) => r.url === u)).length;
+  const n = [...selected].filter(selectable).length;
   $("apply").disabled = n === 0;
   $("apply").textContent = n ? `Apply to ${n} selected` : "Apply to selected";
 }
@@ -352,7 +357,8 @@ function renderSide() {
     else if (form) body = form + jobButtons(r, ["fill", "show", "resume", "skip"]);  // e.g. a missing file, plus questions
     else if (["sign_in", "bot_check", "email_code"].includes(r.need)) body = jobButtons(r, ["show", r.blocking ? "later" : "resume", "skip"]);
     else if (r.need === "captcha") body = jobButtons(r, ["show", "submit", "skip"]);
-    else if (r.need === "your_submit") body = jobButtons(r, ["show", "applied", "skip"]);
+    else if (r.need === "your_submit" || r.need === "check_submit") body = jobButtons(r, ["show", "applied", "skip"]);
+    else if (r.need === "submit_failed") body = jobButtons(r, ["show", "submit", "applied", "skip"]);
     else body = jobButtons(r, ["show", "resume", "skip"]);
     const key = `${r.job_id}:${r.need}:${(r.questions || []).map((q) => q.label).join("|")}`;
     return {key, html: `<div class="task ${r.blocking ? "hands" : ""}">${head}${body}</div>`};
@@ -409,11 +415,12 @@ function renderHeader() {
   const needing = allRuns().filter((r) => r.status === "needs_you").length;
   document.title = needing ? `(${needing}) Needs you · Job Desk` : "Job Desk";
   if (p.missing && p.missing.length) notes.push({cls: "notice", html: `Your profile is missing ${p.missing.map(esc).join(", ")}. Run <code>/job-apply:setup</code> in Claude Code, or edit <code>${esc(p.path)}</code>.`});
+  if (state.answers_problem) notes.push({cls: "notice", html: `Your saved answers aren't being used: ${esc(state.answers_problem)}.`});
   if (!token) notes.push({cls: "notice", html: "This page needs the address the desk printed (it carries a key). Open it from Claude with “open the job desk”."});
   patch($("notices"), notes.map((n) => ({key: n.cls + n.html.length, html: `<p class="${n.cls}">${n.html}</p>`})));
   const skipped = sr.browser_only || [], errs = Object.entries(sr.errors || {});
   $("skipped-sites").innerHTML = skipped.length || errs.length ? `<details><summary>Not searched automatically (${skipped.length + errs.length})</summary>
-    ${skipped.map((b) => `<div>${esc(b.company)}: <a href="${esc(b.careers_url)}" target="_blank" rel="noopener">search their site</a></div>`).join("")}
+    ${skipped.map((b) => `<div>${esc(b.company)}: ${link(b.careers_url, "search their site")}</div>`).join("")}
     ${errs.map(([c, e]) => `<div>${esc(c)}: ${esc(e)}</div>`).join("")}</details>` : "";
 }
 
@@ -442,9 +449,15 @@ async function refresh() {
   }
 }
 
-async function act(fn) {
-  busy = true;
-  try { await fn(); } catch (e) { alert(e.message); } finally { busy = false; await refresh(); }
+async function act(fn, hold = true) {
+  if (hold) busy = true;  // a long one (reading pasted links) lets the page keep refreshing
+  try { await fn(); } catch (e) { alert(e.message); } finally { if (hold) busy = false; await refresh(); }
+}
+
+// Jobs that can still be applied to: in the list, not finished, not already under way.
+function selectable(url) {
+  const r = (state.listings || []).find((x) => x.url === url);
+  return !!r && !DONE.has(r.status) && !(r.run && ["submitted", "running", "queued"].includes(r.run.status));
 }
 
 document.addEventListener("click", (e) => {
@@ -457,6 +470,7 @@ document.addEventListener("click", (e) => {
     return;
   }
   const a = t.dataset.act, job = t.dataset.job, jobAct = t.dataset.jobAct;
+  if (!state && (a || jobAct)) return;  // the page hasn't loaded yet
   if (a === "find") act(() => api("/api/search", {}));
   if (a === "select-recommended") {
     (state.listings || []).forEach((r) => { if (r.fit && r.fit.recommended && !DONE.has(r.status) && !r.run) selected.add(r.url); });
@@ -464,10 +478,15 @@ document.addEventListener("click", (e) => {
   }
   if (a === "select-none") { selected.clear(); renderRows(); }
   if (a === "apply") {
-    const urls = [...selected];
+    const urls = [...selected].filter(selectable);
+    if (!urls.length) return;
     const auto = state.settings.auto_submit && !state.settings.dry_run;
     if (auto && !confirm(`Submit ${urls.length} application(s) for you wherever nothing needs you?`)) return;
-    act(async () => { await api("/api/apply", {urls, submit: auto}); selected.clear(); });
+    act(async () => {
+      const out = await api("/api/apply", {urls, submit: auto});
+      selected.clear();
+      if ((out.already_applied || []).length) alert("Already applied, so not queued again: " + out.already_applied.join(", "));
+    });
   }
   if (jobAct === "fill") {
     const form = document.querySelector(`form[data-answer="${job}"]`);
@@ -476,7 +495,7 @@ document.addEventListener("click", (e) => {
       remember: form.querySelector(`[data-remember="${CSS.escape(el.dataset.q)}"]`)?.checked ?? true,
     })).filter((x) => x.value);
     if (!answers.length) { alert("Answer at least one question first."); return; }
-    act(() => api("/api/answer", {job_id: Number(job), answers}));
+    act(async () => { const out = await api("/api/answer", {job_id: Number(job), answers}); if (out.note) alert(out.note); });
   } else if (jobAct === "submit") {
     if (confirm("Submit this application now?")) act(() => api(`/api/job/${job}/submit`, {}));
   } else if (jobAct) {
@@ -494,7 +513,7 @@ $("add-form").addEventListener("submit", (e) => {
   act(async () => {
     try {
       const out = await api("/api/add", {text});
-      out.added.filter((a) => a.job_id).forEach((a) => selected.add(a.url));  // ready for Apply
+      out.added.filter((a) => a.job_id && !DONE.has(a.status)).forEach((a) => selected.add(a.url));  // ready for Apply
       const failed = out.added.filter((a) => a.error);
       box.value = failed.map((a) => a.url).join(" ");
       if (failed.length) alert(failed.map((a) => `${a.url}: ${a.error}`).join("\n"));
@@ -502,7 +521,7 @@ $("add-form").addEventListener("submit", (e) => {
       btn.disabled = false;
       btn.textContent = "Add";
     }
-  });
+  }, false);
 });
 
 $("pw-form").addEventListener("submit", (e) => {

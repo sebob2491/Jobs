@@ -6,7 +6,7 @@ import time
 
 import httpx
 import pytest
-from conftest import browser_available, fixture_url, run
+from conftest import browser_available, fixture_url, launch_options, run
 
 import job_apply.pipeline as pipeline
 from job_apply import config
@@ -67,6 +67,8 @@ def test_desk_finds_applies_and_submits(srv, monkeypatch):
             # locked to this computer and this page
             assert (await c.get("/api/state")).status_code == 403
             assert (await c.get("/api/state", headers={"x-desk-token": "guess"})).status_code == 403
+            # a key that isn't plain ASCII is refused, not a server error
+            assert (await c.get("/api/state", headers={"x-desk-token": "gu\u00e9ss".encode("latin-1")})).status_code == 403
             assert (await c.get("/api/state", headers={**h, "host": "evil.example"})).status_code == 403
             page = await c.get("/")
             assert page.status_code == 200 and "<title>Job Desk</title>" in page.text
@@ -137,7 +139,7 @@ def test_desk_page_buttons_reach_the_api(srv, tmp_path):
         await desk.start(port=0, open_browser=False)
         try:
             async with async_playwright() as pw:
-                browser = await pw.chromium.launch()
+                browser = await pw.chromium.launch(**launch_options())
                 page = await browser.new_page()
                 await page.goto(desk.url)
                 await page.wait_for_selector("text=Field Service Engineer")
@@ -194,7 +196,23 @@ def test_jobs_added_elsewhere_show_up_ranked(srv):
     rows = {r["company"]: r for r in desk.state()["listings"]}
     assert rows["TRUMPF"]["job_id"] == added["id"] and rows["TRUMPF"]["added"] and rows["TRUMPF"]["fit"]["score"] > 0
     assert "Done Co" not in rows  # already applied
-    assert desk.apply(urls=[added["url"]], job_ids=[], submit=False) == [added["id"]]
+    assert desk.apply(urls=[added["url"]], job_ids=[], submit=False) == ([added["id"]], [])
+
+
+def test_jobs_already_applied_to_are_never_queued_again(srv):
+    """A pasted link to last week's application, or a stale tick: with "Submit for me" on,
+    queueing it again would send a second application."""
+    done = srv.add_job(url="https://example.com/old", title="Technician", company="Done Co")["job"]
+    fresh = srv.add_job(url="https://example.com/new", title="Field Service Engineer", company="New Co")["job"]
+    srv.update_job(done["id"], status="applied")
+    desk = Desk(srv)
+    queued, refused = desk.apply(urls=[done["url"], fresh["url"]], job_ids=[done["id"]], submit=True)
+    assert queued == [fresh["id"]] and refused == ["Technician"]
+    assert [jid for _, jid in desk.applier.tasks] == [fresh["id"]]
+    with pytest.raises(ValueError, match="already marked applied"):
+        desk.applier.enqueue(done["id"])
+    # a listing whose link isn't a web address is never opened in the browser
+    assert desk.apply(urls=["javascript:alert(1)"], job_ids=[], submit=False) == ([], [])
 
 
 def test_opening_the_page_searches_when_the_last_search_is_stale(srv, monkeypatch):
@@ -214,7 +232,7 @@ def test_opening_the_page_searches_when_the_last_search_is_stale(srv, monkeypatc
         await desk.start(port=0, open_browser=False)
         try:
             async with async_playwright() as pw:
-                browser = await pw.chromium.launch()
+                browser = await pw.chromium.launch(**launch_options())
                 page = await browser.new_page()
                 await page.goto(desk.url)
                 for _ in range(50):
@@ -319,7 +337,7 @@ def test_openings_new_since_the_last_visit_are_tagged(srv):
         await desk.start(port=0, open_browser=False)
         try:
             async with async_playwright() as pw:
-                browser = await pw.chromium.launch()
+                browser = await pw.chromium.launch(**launch_options())
                 page = await browser.new_page()
                 await page.goto(desk.url)
                 await page.wait_for_selector("text=Field Service Engineer")
@@ -336,3 +354,41 @@ def test_openings_new_since_the_last_visit_are_tagged(srv):
             await desk.stop()
 
     run(go())
+
+
+def test_a_typo_in_answers_yaml_doesnt_take_the_desk_down(srv, job_apply_home):
+    """answers.yaml invites hand edits. One that breaks the YAML sets the file aside (and
+    says so on the page); it isn't overwritten, and the profile still loads."""
+    path = job_apply_home / "answers.yaml"
+    broken = "answers:\n  - match: relocate\n    answer: [Yes\n"
+    path.write_text(broken)
+    assert config.saved_answers() == [] and "typo" in config.answers_problem()
+    assert config.Profile.load().get("personal.first_name") == "Sam"
+    assert "typo" in Desk(srv).state()["answers_problem"]
+    with pytest.raises(ValueError, match="typo"):
+        config.save_answer("Are you willing to relocate?", "Yes")
+    assert path.read_text() == broken  # left as the person wrote it
+
+
+def test_answers_that_cant_be_remembered_still_go_into_the_application(srv, job_apply_home):
+    from job_apply.pipeline import Run, question_key
+
+    (job_apply_home / "answers.yaml").write_text("answers: [\n")
+    job = srv.add_job(url="https://example.com/a", title="FSE", company="Example Fab")["job"]
+    desk = Desk(srv)
+    desk.applier.runs[job["id"]] = Run(job["id"], "FSE", "Example Fab", status="needs_you", need="questions")
+    note = desk.answer(job["id"], [{"label": "Are you willing to relocate?", "value": "No"}])
+    assert "this application only" in note
+    assert desk.applier.runs[job["id"]].once == {question_key("Are you willing to relocate?"): "No"}
+
+
+def test_saving_an_answer_keeps_the_rest_of_answers_yaml(job_apply_home):
+    import yaml
+
+    path = job_apply_home / "answers.yaml"
+    path.write_text("answers:\n  - question: a note to myself\n  - match: lift\n    answer: 'Yes'\nmine: keep\n")
+    config.save_answer("Are you willing to relocate?", "No", "Example Fab")
+    data = yaml.safe_load(path.read_text())
+    assert data["mine"] == "keep" and {"question": "a note to myself"} in data["answers"]
+    assert any(a.get("match") == "lift" for a in data["answers"]) and data["answers"][0]["answer"] == "No"
+    assert not path.with_name("answers.yaml.tmp").exists()

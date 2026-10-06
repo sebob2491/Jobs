@@ -234,13 +234,41 @@ def save_site_password(name: str, value: str) -> None:
     path.chmod(0o600)
 
 
-def saved_answers() -> list[dict[str, Any]]:
+def _answers_file() -> dict[str, Any]:
+    """answers.yaml as written. Raises ValueError, in plain words, if it doesn't parse."""
     path = answers_path()
     if not path.exists():
+        return {}
+    try:
+        with path.open(encoding="utf-8") as f:
+            data = yaml.safe_load(f)
+    except yaml.YAMLError as e:
+        mark = getattr(e, "problem_mark", None)
+        where = f" near line {mark.line + 1}" if mark is not None else ""
+        raise ValueError(f"{path} has a typo{where}, so it's set aside until it's fixed") from e
+    if data is not None and not isinstance(data, dict):
+        raise ValueError(f"{path} should hold a list under 'answers:'; it's set aside until it's fixed")
+    return data or {}
+
+
+def answers_problem() -> str | None:
+    """Why answers.yaml is being ignored, if it is."""
+    try:
+        _answers_file()
+    except (ValueError, OSError) as e:
+        return str(e)
+    return None
+
+
+def saved_answers() -> list[dict[str, Any]]:
+    """Answers given in the Job Desk. A hand edit that broke the file mustn't stop the
+    profile loading (or the desk with it): the file is skipped until it's fixed."""
+    try:
+        data = _answers_file()
+    except (ValueError, OSError):
         return []
-    with path.open(encoding="utf-8") as f:
-        data = yaml.safe_load(f) or {}
-    return [a for a in data.get("answers") or [] if isinstance(a, dict) and a.get("match")]
+    entries = data.get("answers")
+    return [a for a in entries if isinstance(a, dict) and a.get("match")] if isinstance(entries, list) else []
 
 
 def question_pattern(label: str) -> str:
@@ -251,11 +279,15 @@ def question_pattern(label: str) -> str:
 
 
 def save_answer(label: str, answer: Any, source: str = "") -> dict[str, Any]:
-    """Remember the answer to a question for every later application that asks it."""
+    """Remember the answer to a question for every later application that asks it.
+    Everything else in answers.yaml stays; a file that doesn't parse is left untouched
+    (ValueError) rather than overwritten."""
     match = question_pattern(label)
     if not match:
         raise ValueError("A question needs a label to be remembered")
-    entries = [a for a in saved_answers() if a.get("match") != match]
+    data = _answers_file()
+    old = data.get("answers")
+    entries = [a for a in (old if isinstance(old, list) else []) if not (isinstance(a, dict) and a.get("match") == match)]
     entry: dict[str, Any] = {"match": match, "answer": answer, "question": label.strip()}
     if source:
         entry["from"] = source
@@ -263,6 +295,9 @@ def save_answer(label: str, answer: Any, source: str = "") -> dict[str, Any]:
     ensure_home()
     header = ("# Answers you gave in the Job Desk. Each one fills the same question on later\n"
               "# applications; edit or delete entries freely. profile.yaml's own answers come after these.\n")
-    answers_path().write_text(header + yaml.safe_dump({"answers": entries}, sort_keys=False, allow_unicode=True),
-                              encoding="utf-8")
+    path = answers_path()
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(header + yaml.safe_dump({**data, "answers": entries}, sort_keys=False, allow_unicode=True),
+                   encoding="utf-8")
+    os.replace(tmp, path)  # all or nothing: a crash mid-write can't leave half a file
     return entry

@@ -370,7 +370,7 @@ async def main() -> int:
     for r in records:
         s = r.get("search_az") or {}
         p = r.get("posting") or {}
-        lines.append("| {} | {} | {} | {} | {} | {} | {} |".format(
+        lines.append("| {} | {} | {} | {} | {} | {} | {} |".format(*map(_cell, (
             r["company"],
             s.get("error") or s.get("count", "–"),
             p.get("error", "")[:40] or p.get("parse_method", "–"),
@@ -378,13 +378,18 @@ async def main() -> int:
             len((r.get("autofill") or {}).get("filled", [])) if "autofill" in r else "–",
             len((r.get("autofill") or {}).get("failed", [])) if "autofill" in r else "–",
             (r.get("crash") or (r.get("browser") or {}).get("error") or (r.get("page") or {}).get("title", ""))[:60],
-        ))
+        ))))
     (args.out / "report.md").write_text("\n".join(lines) + "\n")
     print("\n".join(lines))
     return 0
 
 
 PIPELINE_WAIT = 180
+
+
+def _cell(value: Any) -> str:
+    """A markdown table cell: a "|" in a job title would split it."""
+    return str(value).replace("|", "\\|")
 
 
 async def print_shot(name: str, page: Any) -> None:
@@ -487,11 +492,11 @@ async def pipeline_main(companies: list[dict[str, Any]], out: Path, fixtures: bo
     for r in records:
         rounds = r.get("rounds") or []
         last = rounds[-1] if rounds else {}
-        lines.append("| {} | {} | {} | {} | {} | {} |".format(
+        lines.append("| {} | {} | {} | {} | {} | {} |".format(*map(_cell, (
             r["company"], ((r.get("posting") or {}).get("title") or r.get("note") or "")[:40],
             r.get("crash", "")[:50] or last.get("status", "–"), last.get("need", ""),
             len(last.get("log") or []), sum(len(x.get("questions") or []) for x in rounds[:-1]),
-        ))
+        ))))
     (out / "report.md").write_text("\n".join(lines) + "\n")
     print("\n".join(lines))
     return 0
