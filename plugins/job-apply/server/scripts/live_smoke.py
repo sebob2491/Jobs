@@ -348,6 +348,53 @@ async def probe_form(name: str, url: str, press: str) -> dict[str, Any]:
     return rec
 
 
+# JSON a job board's page calls for, asked for directly: cold, and again after loading the
+# board's page in the same client (for its cookies). (Oct 2026: Benchmark's Infor CloudSuite
+# board lists its postings through JobPosting.JobSearchCardViewList.)
+INFOR_LIST = ("https://css-benchmark-prd.inforcloudsuite.com/hcm/Jobs/list/JobPosting.JobSearchCardViewList?pageop=load"
+              "&pagesize=100&dependentList=true&relation=JobBoard%281%2CEXTERNAL%29.Postings&csk.JobBoard=EXTERNAL"
+              "&csk.HROrganization=1&csk.IsoLocale=")
+JSON_PROBES = {
+    "Benchmark Electronics": (INFOR_LIST, PROBES["Benchmark Electronics"]),
+}
+
+
+async def probe_json(name: str, url: str, warm: str | None = None) -> dict[str, Any]:
+    import httpx
+
+    from job_apply.postings import USER_AGENT
+
+    rec: dict[str, Any] = {"json_probe": name, "url": url}
+    async with httpx.AsyncClient(headers={"User-Agent": USER_AGENT, "Accept": "application/json, text/plain, */*"},
+                                 follow_redirects=True, timeout=30) as client:
+        for label in ("cold", "warm") if warm else ("cold",):
+            if label == "warm":
+                w = await client.get(warm)
+                rec["warm_page"] = {"status": w.status_code, "cookies": sorted(client.cookies.keys())}
+            r = await client.get(url)
+            out: dict[str, Any] = {"status": r.status_code, "type": r.headers.get("content-type", "")[:60],
+                                   "chars": len(r.text)}
+            try:
+                data = r.json()
+            except ValueError:
+                out["text"] = r.text[:1500]
+            else:
+                view = data.get("dataViewSet") if isinstance(data, dict) else None
+                if isinstance(view, dict):
+                    items = view.get("data") or []
+                    field = lambda it, k: ((it.get("fields") or {}).get(k) or {}).get("value")  # noqa: E731
+                    out.update(paging=view.get("pagingInfo"), count=len(items),
+                               ids=[it.get("resourceId") for it in items[:5]],
+                               titles=[field(it, "Description") for it in items],
+                               places=[field(it, "LocationOfJobDescriptionForSort") for it in items],
+                               first=[{k: str(v.get("value") if isinstance(v, dict) else v)[:400]
+                                       for k, v in (it.get("fields") or {}).items()} for it in items[:2]])
+                else:
+                    out["keys"] = sorted(data)[:30] if isinstance(data, dict) else type(data).__name__
+            rec[label] = out
+    return rec
+
+
 # Buttons that open a menu drawn by the page's script: press one in the browser and record
 # the menu that appears around a text it shows. (Qorvo's "Apply now ▾" opens a menu of ways
 # to apply that isn't in the page's HTML.)
@@ -687,6 +734,14 @@ async def main() -> int:
         except Exception as e:  # noqa: BLE001
             probe = {"form_probe": name, "error": f"{type(e).__name__}: {str(e)[:200]}"}
         print("LIVE_FORM " + json.dumps(probe, default=str), flush=True)
+    for name, (url, warm) in JSON_PROBES.items():
+        if wanted and not any(w in name.lower() for w in wanted):
+            continue
+        try:
+            probe = await asyncio.wait_for(probe_json(name, url, warm), 90)
+        except Exception as e:  # noqa: BLE001
+            probe = {"json_probe": name, "error": f"{type(e).__name__}: {str(e)[:200]}"}
+        print("LIVE_JSON " + json.dumps(probe, default=str), flush=True)
     for name, (url, selector) in HTTP_PROBES.items():
         if wanted and not any(w in name.lower() for w in wanted):
             continue
