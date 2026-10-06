@@ -1,0 +1,218 @@
+"""SQLite application tracker."""
+
+from __future__ import annotations
+
+import csv
+import re
+import sqlite3
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+
+from . import config
+
+STATUSES = [
+    "saved",  # ingested, not started
+    "in_progress",  # form partly filled
+    "ready_to_submit",  # everything filled, waiting on a person
+    "applied",
+    "interviewing",
+    "offer",
+    "rejected",
+    "withdrawn",
+    "skipped",
+]
+
+_SCHEMA = """
+CREATE TABLE IF NOT EXISTS jobs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    url TEXT NOT NULL UNIQUE,
+    apply_url TEXT DEFAULT '',
+    title TEXT DEFAULT '',
+    company TEXT DEFAULT '',
+    location TEXT DEFAULT '',
+    ats TEXT DEFAULT '',
+    source TEXT DEFAULT '',
+    external_id TEXT DEFAULT '',
+    salary TEXT DEFAULT '',
+    employment_type TEXT DEFAULT '',
+    posted_at TEXT DEFAULT '',
+    description TEXT DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'saved',
+    notes TEXT DEFAULT '',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    applied_at TEXT DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_id INTEGER NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+    at TEXT NOT NULL,
+    status TEXT DEFAULT '',
+    note TEXT DEFAULT ''
+);
+"""
+
+_JOB_FIELDS = [
+    "url", "apply_url", "title", "company", "location", "ats", "source", "external_id",
+    "salary", "employment_type", "posted_at", "description",
+]
+
+
+_TRACKING_PARAMS = {"trk", "trackingid", "refid", "src", "source", "gh_src", "lever-source", "from", "ref"}
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def normalize_url(url: str) -> str:
+    """Strip tracking params so the same posting isn't saved twice."""
+    url = url.strip()
+    m = re.search(r"linkedin\.com/jobs/view/(?:[\w-]*?-)?(\d{6,})", url) or re.search(
+        r"linkedin\.com/.*currentJobId=(\d{6,})", url
+    )
+    if m:
+        return f"https://www.linkedin.com/jobs/view/{m.group(1)}/"
+    m = re.search(r"indeed\.com/.*[?&]jk=([0-9a-f]+)", url)
+    if m:
+        return f"https://www.indeed.com/viewjob?jk={m.group(1)}"
+    parts = urlsplit(url)
+    query = [(k, v) for k, v in parse_qsl(parts.query, keep_blank_values=True) if k.lower() not in _TRACKING_PARAMS
+             and not k.lower().startswith("utm_")]
+    return urlunsplit(parts._replace(query=urlencode(query), fragment=""))
+
+
+class Tracker:
+    def __init__(self, path: Path | None = None):
+        self.path = path or config.db_path()
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.conn = sqlite3.connect(self.path)
+        self.conn.row_factory = sqlite3.Row
+        self.conn.execute("PRAGMA foreign_keys = ON")
+        self.conn.executescript(_SCHEMA)
+
+    def close(self) -> None:
+        self.conn.close()
+
+    def _row(self, row: sqlite3.Row | None, with_description: bool = True) -> dict[str, Any] | None:
+        if row is None:
+            return None
+        d = dict(row)
+        if not with_description:
+            d.pop("description", None)
+        d["folder"] = str(self.job_dir(d["id"], d.get("company", ""), d.get("title", "")))
+        return d
+
+    def job_dir(self, job_id: int, company: str = "", title: str = "") -> Path:
+        slug = re.sub(r"[^a-z0-9]+", "-", f"{company} {title}".lower()).strip("-")[:60]
+        return config.applications_dir() / f"{job_id:04d}-{slug or 'job'}"
+
+    def upsert(self, posting: dict[str, Any], status: str | None = None) -> tuple[dict[str, Any], bool]:
+        """Insert a job, or refresh empty fields of an existing one. Returns (job, created)."""
+        url = normalize_url(posting["url"])
+        existing = self.conn.execute("SELECT * FROM jobs WHERE url = ?", (url,)).fetchone()
+        now = _now()
+        values = {k: str(posting.get(k) or "") for k in _JOB_FIELDS}
+        values["url"] = url
+        if existing:
+            updates = {k: v for k, v in values.items() if v and not existing[k]}
+            if updates:
+                sets = ", ".join(f"{k} = ?" for k in updates)
+                self.conn.execute(
+                    f"UPDATE jobs SET {sets}, updated_at = ? WHERE id = ?",
+                    (*updates.values(), now, existing["id"]),
+                )
+                self.conn.commit()
+            return self.get(existing["id"]), False
+        status = status or "saved"
+        cols = ", ".join(_JOB_FIELDS)
+        marks = ", ".join("?" for _ in _JOB_FIELDS)
+        cur = self.conn.execute(
+            f"INSERT INTO jobs ({cols}, status, created_at, updated_at) VALUES ({marks}, ?, ?, ?)",
+            (*[values[k] for k in _JOB_FIELDS], status, now, now),
+        )
+        self.conn.execute(
+            "INSERT INTO events (job_id, at, status, note) VALUES (?, ?, ?, ?)",
+            (cur.lastrowid, now, status, "added"),
+        )
+        self.conn.commit()
+        job = self.get(cur.lastrowid)
+        Path(job["folder"]).mkdir(parents=True, exist_ok=True)
+        return job, True
+
+    def get(self, job_id: int, with_description: bool = True) -> dict[str, Any] | None:
+        row = self.conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
+        return self._row(row, with_description)
+
+    def find_by_url(self, url: str) -> dict[str, Any] | None:
+        row = self.conn.execute("SELECT * FROM jobs WHERE url = ?", (normalize_url(url),)).fetchone()
+        return self._row(row)
+
+    def list(self, status: str | None = None, company: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
+        q = "SELECT * FROM jobs WHERE 1=1"
+        args: list[Any] = []
+        if status:
+            q += " AND status = ?"
+            args.append(status)
+        if company:
+            q += " AND company LIKE ?"
+            args.append(f"%{company}%")
+        q += " ORDER BY updated_at DESC LIMIT ?"
+        args.append(limit)
+        return [self._row(r, with_description=False) for r in self.conn.execute(q, args)]  # type: ignore[misc]
+
+    def update(
+        self,
+        job_id: int,
+        status: str | None = None,
+        notes: str | None = None,
+        apply_url: str | None = None,
+        note: str = "",
+    ) -> dict[str, Any]:
+        job = self.get(job_id)
+        if job is None:
+            raise KeyError(f"No job with id {job_id}")
+        if status and status not in STATUSES:
+            raise ValueError(f"Unknown status {status!r}; use one of {', '.join(STATUSES)}")
+        now = _now()
+        sets: dict[str, Any] = {"updated_at": now}
+        if status:
+            sets["status"] = status
+            if status == "applied" and not job["applied_at"]:
+                sets["applied_at"] = now
+        if notes is not None:
+            sets["notes"] = notes
+        if apply_url:
+            sets["apply_url"] = apply_url
+        self.conn.execute(
+            f"UPDATE jobs SET {', '.join(f'{k} = ?' for k in sets)} WHERE id = ?",
+            (*sets.values(), job_id),
+        )
+        if status or note:
+            self.conn.execute(
+                "INSERT INTO events (job_id, at, status, note) VALUES (?, ?, ?, ?)",
+                (job_id, now, status or "", note),
+            )
+        self.conn.commit()
+        return self.get(job_id)  # type: ignore[return-value]
+
+    def events(self, job_id: int) -> list[dict[str, Any]]:
+        rows = self.conn.execute("SELECT at, status, note FROM events WHERE job_id = ? ORDER BY id", (job_id,))
+        return [dict(r) for r in rows]
+
+    def counts(self) -> dict[str, int]:
+        rows = self.conn.execute("SELECT status, COUNT(*) AS n FROM jobs GROUP BY status")
+        return {r["status"]: r["n"] for r in rows}
+
+    def export_csv(self, path: Path) -> int:
+        rows = self.list(limit=100000)
+        cols = ["id", "status", "company", "title", "location", "ats", "source", "url", "apply_url",
+                "salary", "applied_at", "updated_at", "notes"]
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("w", newline="", encoding="utf-8") as f:
+            w = csv.DictWriter(f, fieldnames=cols, extrasaction="ignore")
+            w.writeheader()
+            w.writerows(rows)
+        return len(rows)

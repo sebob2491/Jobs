@@ -1,0 +1,91 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Workday-style application</title>
+<style>
+  ul[role=listbox] { border: 1px solid #999; list-style: none; padding: 0; margin: 0; max-height: 200px; overflow: auto; }
+  ul[role=listbox][hidden] { display: none; }
+  li[role=option] { padding: 2px 6px; }
+</style>
+</head>
+<body>
+<div data-automation-id="progressBarActiveStep">My Information</div>
+<h2>My Information</h2>
+
+<div data-automation-id="formField-countryPhoneCode">
+  <label id="cpc-label">Country Phone Code<abbr title="required">*</abbr></label>
+  <button type="button" id="cpc" aria-haspopup="listbox" aria-label="Country Phone Code Select One Required" data-value="">Select One</button>
+</div>
+
+<div data-automation-id="formField-phoneType">
+  <label>Phone Device Type<abbr title="required">*</abbr></label>
+  <button type="button" id="ptype" aria-haspopup="listbox">Select One</button>
+</div>
+
+<div data-automation-id="formField-phoneNumber">
+  <label for="phone">Phone Number<abbr title="required">*</abbr></label>
+  <input id="phone" type="text">
+</div>
+
+<div data-automation-id="formField-source">
+  <label for="src">How Did You Hear About Us?<abbr title="required">*</abbr></label>
+  <div data-automation-id="multiselectInputContainer">
+    <input id="src" role="combobox" aria-autocomplete="list" placeholder="Search">
+    <div class="pills"></div>
+  </div>
+</div>
+
+<div data-automation-id="formField-addressLine1">
+  <label for="a1">Address Line 1</label>
+  <input id="a1" type="text">
+</div>
+
+<ul role="listbox" id="popup" hidden></ul>
+
+<button type="button" data-automation-id="pageFooterNextButton" id="next">Save and Continue</button>
+
+<script>
+  const lists = {
+    cpc: ['Canada (+1)', 'Mexico (+52)', 'United Kingdom (+44)', 'United States of America (+1)'],
+    ptype: ['Home', 'Mobile', 'Work'],
+  };
+  const sources = ['LinkedIn', 'Indeed', 'Company Website', 'Career Fair'];
+  const popup = document.getElementById('popup');
+  let owner = null;
+  function show(items, onPick, anchor) {
+    popup.innerHTML = '';
+    for (const it of items) {
+      const li = document.createElement('li');
+      li.setAttribute('role', 'option');
+      li.textContent = it;
+      li.addEventListener('click', () => { onPick(it); popup.hidden = true; });
+      popup.appendChild(li);
+    }
+    popup.hidden = false;
+    anchor.after(popup);
+  }
+  for (const id of Object.keys(lists)) {
+    const btn = document.getElementById(id);
+    btn.addEventListener('click', () => {
+      // options render after a short delay, like Workday
+      setTimeout(() => show(lists[id], (v) => { btn.textContent = v; btn.dataset.value = v; }, btn), 150);
+    });
+  }
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') popup.hidden = true; });
+  const src = document.getElementById('src');
+  src.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter') return;
+    const q = src.value.toLowerCase();
+    setTimeout(() => show(sources.filter((s) => s.toLowerCase().includes(q)), (v) => {
+      const pill = document.createElement('div');
+      pill.setAttribute('data-automation-id', 'selectedItem');
+      pill.textContent = v;
+      document.querySelector('.pills').appendChild(pill);
+      src.value = '';
+    }, src.parentElement), 150);
+  });
+  document.getElementById('next').addEventListener('click', () => {
+    document.body.innerHTML = '<h2>Review</h2><p>Check your answers.</p><button type="button" id="final" onclick="document.body.innerHTML=\'<h1>Application Submitted</h1><p>Thank you for your application.</p>\'">Submit</button>';
+  });
+</script>
+</body>
+</html>
