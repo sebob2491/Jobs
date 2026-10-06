@@ -561,3 +561,21 @@ def test_paycom_search_pages_through_a_big_board():
         return {"unexpected": True}
     asyncio.run(paycom_search(odd, "KEY", "field service", []))
     assert calls == ["https://www.paycomonline.net/v4/ats/web.php/portal/KEY/career-page"]  # nothing more to ask for
+
+
+def test_workday_entries_that_arent_postings_are_left_out():
+    """Analog Devices' answer had an entry with no title or address, which became a listing
+    for the board itself and sent the desk paging through its job list."""
+    def answer(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"total": 2, "jobPostings": [
+            {"title": "", "locationsText": "", "postedOn": "", "bulletFields": []},
+            {"title": "Field Service Engineer", "externalPath": "/job/Chandler-AZ/FSE_R1", "locationsText": "Chandler, AZ",
+             "postedOn": "Posted Today", "bulletFields": ["R1"]}]})
+
+    async def go():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(answer)) as client:
+            return await search_module._workday(client, "https://adco.wd1.myworkdayjobs.com/External", "field service",
+                                                20, [])
+    found = asyncio.run(go())
+    assert [(x.title, x.url) for x in found] == [
+        ("Field Service Engineer", "https://adco.wd1.myworkdayjobs.com/External/job/Chandler-AZ/FSE_R1")]

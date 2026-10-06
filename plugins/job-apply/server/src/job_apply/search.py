@@ -211,6 +211,8 @@ async def _workday(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, 
     while True:
         postings = data.get("jobPostings") or []
         for p in postings:
+            if not p.get("externalPath") or not p.get("title"):
+                continue  # not a posting (Analog Devices' answer had one with neither)
             if nowhere_near and location_matches(p.get("locationsText", ""), terms) is None:
                 continue
             out.append(Listing(
