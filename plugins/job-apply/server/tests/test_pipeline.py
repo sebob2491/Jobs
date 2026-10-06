@@ -404,11 +404,13 @@ def test_create_account_is_filled_but_left_for_the_person(srv, monkeypatch):
     assert "filled the Create Account form with your details and saved password" in r.log
 
 
-@pytest.mark.parametrize("page", ["signin-no-account.html", "signin-no-account-link.html"])
+@pytest.mark.parametrize("page", ["signin-no-account.html", "signin-no-account-link.html",
+                                  "signin-no-account-lost-click.html"])
 def test_a_saved_password_that_doesnt_sign_in_opens_create_account(srv, monkeypatch, page):
     """A first application at a Workday employer: there's no account there yet, so the
     saved password can't get in. It's tried once, then Create Account is filled in. The way
-    there can be a button, or a link ("Create an account" on Amkor's SuccessFactors page)."""
+    there can be a button, or a link ("Create an account" on Amkor's SuccessFactors page),
+    and a click on it made while the failed sign-in reloads the page can be lost (Amkor's)."""
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
     saved_password(monkeypatch)
     job = srv.add_job(url=fixture_url(f"site/{page}"), title="FSE", company="Example Fab")["job"]
@@ -433,12 +435,15 @@ def test_a_saved_password_that_doesnt_sign_in_opens_create_account(srv, monkeypa
     assert "your saved password didn't sign in, so I opened Create Account" in r.log
 
 
-def test_a_sign_up_form_with_one_password_box_is_filled_in(srv, monkeypatch):
+@pytest.mark.parametrize("page, form", [("signin-signup-link.html", "signup.html"),
+                                        ("signin-signup-submit.html", "signup-submit.html")])
+def test_a_sign_up_form_with_one_password_box_is_filled_in(srv, monkeypatch, page, form):
     """UKG Pro (Nikon Precision): after the saved password doesn't sign in, "Sign up" opens a
-    "Create your account" form with one password box. It's filled in; Continue is the person's."""
+    "Create your account" form with one password box. It's filled in; its button (Continue,
+    or a "Create Account" that sends the form) is the person's."""
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
     saved_password(monkeypatch)
-    job = srv.add_job(url=fixture_url("site/signin-signup-link.html"), title="FSE", company="Example Fab")["job"]
+    job = srv.add_job(url=fixture_url(f"site/{page}"), title="FSE", company="Example Fab")["job"]
     applier = Applier(srv)
 
     async def go():
@@ -448,9 +453,9 @@ def test_a_sign_up_form_with_one_password_box_is_filled_in(srv, monkeypatch):
             await until(lambda: r.status == "needs_you")
             assert r.need == "sign_in" and "Create Account form" in r.reason, (r.reason, r.log)
             assert "first application" in r.reason
-            assert r.page.url.endswith("signup.html")
+            assert r.page.url.endswith(form)
             filled = await r.page.evaluate("() => [em.value, pw.value.length > 0, window.created]")
-            assert filled == ["sam.rivera@example.com", True, 0]  # filled in, Continue not pressed
+            assert filled == ["sam.rivera@example.com", True, 0]  # filled in, its button not pressed
             return r
         finally:
             await applier.stop()

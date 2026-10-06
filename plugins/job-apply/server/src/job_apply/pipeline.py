@@ -679,20 +679,26 @@ class Applier:
             await srv.click(email_button["id"])
             return "email_step"
         passwords = [f for f in fields if f["kind"] == "password"]
-        create = next((a for a in actions if _CREATE_ACCOUNT.match(a["text"].strip())), None)
+        # The way to a new account is a link or a plain button. A form's own submit button
+        # that reads "Create Account" sends that form (it creates the account), so it's never it.
+        create = next((a for a in actions if _CREATE_ACCOUNT.match(a["text"].strip()) and not a.get("form_submit")),
+                      None)
         # Where the way to a new account led: a form with one password box (UKG Pro's "Create
         # your account") is the new account's, as it no longer offers a way to one.
         signing_up = len(passwords) == 1 and bool(tried.get("create_account")) and create is None
         if len(passwords) == 1 and tried.get("submitted") and not signing_up:
             # Signed in once already and still asked to: the password didn't get in. Trying it
-            # again won't help (and can lock an account); a first visit needs an account.
-            if create is None or tried.get("create_account"):
+            # again won't help (and can lock an account); a first visit needs an account. The
+            # way there gets a second press: Amkor's sign-in page reloads after a failed sign-in,
+            # and a click on its "Create an account" made before that has finished is lost.
+            if create is None or tried.get("create_account", 0) >= 2:
                 return None
             try:
                 await srv.click(create["id"])
             except KeyError:
                 return None
-            self._log(run, "your saved password didn't sign in, so I opened Create Account")
+            if not tried.get("create_account"):
+                self._log(run, "your saved password didn't sign in, so I opened Create Account")
             return "create_account"
         boxes = [f for f in fields if f["kind"] in ("text", "email")
                  and re.search(r"e-?mail|user ?name|login", f.get("label") or "", re.I)]

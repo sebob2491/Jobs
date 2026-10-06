@@ -849,10 +849,12 @@ async def account_form() -> dict[str, Any]:
 
     try:
         form = await server.inspect_form(include_dropdown_options=False)
-        if sum(f["kind"] == "password" for f in form["fields"]) != 1:
-            return {"skipped": "not a sign-in page", "fields": [f.get("label") for f in form["fields"]][:20]}
+        if sum(f["kind"] == "password" for f in form["fields"]) != 1 or any(
+                f.get("value") for f in form["fields"] if f["kind"] in ("text", "email", "password")):
+            # an account form, or one the desk filled in (a --fake-passwords run): left as it is
+            return {"skipped": "not an untouched sign-in page", "fields": [f.get("label") for f in form["fields"]][:20]}
         link = next((a for a in form["actions"] if _CREATE_ACCOUNT.match(a["text"].strip()) and not a.get("disabled")
-                     and not a.get("is_submit")), None)
+                     and not a.get("is_submit") and not a.get("form_submit")), None)
         if link is None:
             return {"none": [a["text"] for a in form["actions"]][:20]}
         await server.click(link["id"])
