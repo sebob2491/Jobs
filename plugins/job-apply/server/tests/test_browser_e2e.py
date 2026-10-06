@@ -455,3 +455,26 @@ def test_reading_a_form_leaves_answered_dropdowns_alone(srv):
     assert run(srv.fill_form([{"id": asked[0]["id"], "value": "No"}]))["ok"]
     assert run(srv.autofill())["needs_input"] == []
     assert run(page.input_value("#rel")) == "No"  # read again without being opened, so still answered
+
+
+def test_a_short_dropdown_is_picked_without_typing(srv):
+    """Eightfold's Yes/No dropdowns need no typing, and on Micron typed keys ended up in
+    another question ("ona", the end of "Arizona"). A visible answer is clicked instead."""
+    run(srv.open_application(url=fixture_url("jsonld_posting.html")))
+    page = run(srv.browser.page())
+    run(page.set_content("""
+      <form>
+        <label for="q">Have you applied on any previous occasions for employment with Micron? *</label>
+        <input id="q" role="combobox" required aria-controls="q-list" autocomplete="off">
+        <ul id="q-list" role="listbox" hidden><li role="option">Yes</li><li role="option">No</li></ul>
+      </form>
+      <script>
+        const box = document.getElementById('q'), list = document.getElementById('q-list');
+        box.addEventListener('click', () => { list.hidden = false; });
+        box.addEventListener('input', () => { box.dataset.typed = box.value; });
+        list.addEventListener('click', (e) => { box.value = e.target.textContent; box.dataset.picked = e.target.textContent; list.hidden = true; });
+      </script>"""))
+    field = run(srv.inspect_form(include_dropdown_options=False))["fields"][0]
+    assert run(srv.fill_form([{"id": field["id"], "value": "No"}]))["ok"]
+    assert run(page.evaluate("() => [document.getElementById('q').dataset.picked, document.getElementById('q').dataset.typed]")) \
+        == ["No", None]

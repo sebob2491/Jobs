@@ -40,6 +40,7 @@ NAVIGATION_RE = re.compile(
     re.I,
 )
 # How long a click may wait for its button to become clickable, in ms.
+SHORT_MENU = 12  # a menu this short shows every choice; a longer one may show only some
 CLICK_TIMEOUT = 8000
 CONFIRMATION_RE = re.compile(
     r"thank you for (applying|your application|your interest)|application (has been |was )?(submitted|received|complete)"
@@ -304,7 +305,8 @@ class BrowserSession:
         except (PlaywrightError, PlaywrightTimeout):
             options = []
         finally:
-            await page.keyboard.press("Escape")
+            # focus away first, Escape only if that didn't close it: on some widgets
+            # Escape also clears the field
             await self._close_menus(page)
         return options
 
@@ -595,15 +597,22 @@ class BrowserSession:
     async def _type_and_pick(self, page: Page, loc: Locator, field: dict, value: Any) -> str:
         text = str(value)
         await self._open(page, field["id"], loc)
-        await loc.fill("")
-        await loc.press_sequentially(text, delay=30)
-        options = await self._field_options(page, field["id"], loc, 2500)
-        if not options and not await loc.evaluate("el => !!el.form"):
-            # Search-style pickers (Workday) list results after Enter. Inside a <form>,
-            # Enter could submit the whole form, so it's never pressed there.
-            await loc.press("Enter")
+        # Pick straight from the menu when the answer is in it: a short list (Yes / No), or
+        # the exact entry in a long one. Typing is only for search pickers and long lists,
+        # and typed keys can land in another field (Micron's ended up with "ona", the end
+        # of "Arizona", in the question below the State).
+        options = await self._field_options(page, field["id"], loc, 900)
+        choice = choose_option(text, options, exact_only=len(options) > SHORT_MENU) if options else None
+        if choice is None:
+            await loc.fill("")
+            await loc.press_sequentially(text, delay=30)
             options = await self._field_options(page, field["id"], loc, 2500)
-        choice = choose_option(text, options)
+            if not options and not await loc.evaluate("el => !!el.form"):
+                # Search-style pickers (Workday) list results after Enter. Inside a <form>,
+                # Enter could submit the whole form, so it's never pressed there.
+                await loc.press("Enter")
+                options = await self._field_options(page, field["id"], loc, 2500)
+            choice = choose_option(text, options)
         if choice is None:
             if options:
                 await page.keyboard.press("Escape")
