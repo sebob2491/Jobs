@@ -830,6 +830,29 @@ async def _question_markup(run: Any) -> list[str]:
     return out
 
 
+async def account_form() -> dict[str, Any]:
+    """At a sign-in the run stopped on: the form its way to a new account opens ("Create an
+    account", "Register", "Sign up"), which the desk fills when a saved password doesn't sign
+    in. Opened and read only, with the queue stopped, so nothing is filled in or sent."""
+    from job_apply.pipeline import _CREATE_ACCOUNT
+
+    try:
+        form = await server.inspect_form(include_dropdown_options=False)
+        link = next((a for a in form["actions"] if _CREATE_ACCOUNT.match(a["text"].strip()) and not a.get("disabled")),
+                     None)
+        if link is None:
+            return {"none": [a["text"] for a in form["actions"]][:20]}
+        await server.click(link["id"])
+        await asyncio.sleep(6)
+        after = await server.inspect_form(include_dropdown_options=False)
+        return {"pressed": link["text"], "url": after["url"], "title": after.get("title"),
+                "headings": after["headings"][:6], "actions": [a["text"] for a in after["actions"]][:20],
+                "fields": [{k: f.get(k) for k in ("label", "kind", "required", "sublabel", "options")}
+                           for f in after["fields"]][:30]}
+    except Exception as e:  # noqa: BLE001 - a probe; the run's record stands without it
+        return {"error": f"{type(e).__name__}: {str(e)[:200]}"}
+
+
 async def check_pipeline(company: dict[str, Any], out: Path, rec: dict[str, Any], fixtures: bool = False) -> None:
     from job_apply.pipeline import Applier, question_key
 
@@ -878,6 +901,8 @@ async def check_pipeline(company: dict[str, Any], out: Path, rec: dict[str, Any]
             break
     finally:
         await applier.stop()
+        if (rec.get("rounds") or [{}])[-1].get("need") == "sign_in":
+            rec["account_form"] = await account_form()
         try:
             snap = await server.debug_snapshot(note=f"live pipeline: {company['name']}")
             dest = out / "pipeline" / slug(company["name"])
