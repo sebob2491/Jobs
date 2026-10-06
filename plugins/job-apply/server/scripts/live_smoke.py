@@ -216,12 +216,91 @@ PROBES = {
     # (Oct 2026: TSMC Arizona shows Cloudflare's check; Amkor is classic SuccessFactors;
     # Benchmark is Infor CloudSuite; Qorvo's search pages are SuccessFactors HTML. Canon USA
     # and MKS block automated browsers outright.)
-    "Edwards Vacuum": "https://www.jobs.atlascopcogroup.com/search/?q=field+service&locationsearch=Arizona",
     # Equipment makers with field service engineers at Arizona fabs, not in the list yet.
     # Nikon's posting page: how its Apply button is drawn (the form reader doesn't see it)
     "Nikon Precision": "https://recruiting2.ultipro.com/NIK1001NIKON/JobBoard/f11a0b52-5153-4c12-ad2c-b7f3b0a74112/"
                        "OpportunityDetail?opportunityId=532a7dc9-8394-4cbc-8184-f43e88e906bf",
 }
+# Pages read over plain HTTP, as a search would read them: the markup of the parts a
+# reader needs. (Oct 2026: an Edwards posting names its place in the unlabelled lines under
+# its title; Qorvo's search pages are HTML tables, 25 rows a page.) Amkor's job list is on
+# SuccessFactors' older career site.
+HTTP_PROBES = {
+    "Amkor Technology": ("https://career8.successfactors.com/career?company=amkor&career_ns=job_listing_summary"
+                         "&navBarLevel=JOB_SEARCH", "a[href*='career_job_req_id'], .jobTitle, table tr, form"),
+}
+
+
+# Buttons that open a menu drawn by the page's script: press one in the browser and record
+# the menu that appears around a text it shows. (Qorvo's "Apply now ▾" opens a menu of ways
+# to apply that isn't in the page's HTML.)
+MENU_PROBES = {
+    "Qorvo": ("https://careers.qorvo.com/job/Chandler-Analog-Design-Intern-AZ-85226/1421977600/", "Apply now",
+              "Apply with LinkedIn"),
+}
+MENU_JS = r"""(needle) => {
+  const hits = [...document.querySelectorAll('body *')].filter((e) => e.children.length < 3
+    && (e.textContent || '').includes(needle));
+  return hits.slice(0, 3).map((hit) => {
+    let box = hit;
+    for (let i = 0; i < 4 && box.parentElement && box.parentElement !== document.body; i++) box = box.parentElement;
+    return {
+      html: box.outerHTML.replace(/\s+/g, ' ').slice(0, 5000),
+      parts: [...box.querySelectorAll('a, button, [role], li')].slice(0, 20).map((e) => ({
+        tag: e.tagName, role: e.getAttribute('role'), cls: e.className && String(e.className).slice(0, 80),
+        href: e.getAttribute('href'), title: e.getAttribute('title'), aria: e.getAttribute('aria-label'),
+        text: (e.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 60),
+        shown: !!(e.offsetWidth || e.offsetHeight || e.getClientRects().length)})),
+    };
+  });
+}"""
+
+
+async def probe_menu(name: str, url: str, press: str, needle: str) -> dict[str, Any]:
+    await server.browser.page()
+    ctx = server.browser._ctx  # noqa: SLF001 - test script reaching into the session on purpose
+    tab = await ctx.new_page()
+    rec: dict[str, Any] = {"menu_probe": name, "url": url}
+    try:
+        await tab.goto(url, wait_until="domcontentloaded", timeout=45000)
+        await tab.wait_for_timeout(6000)
+        rec["before"] = await tab.evaluate(MENU_JS, needle)
+        button = tab.get_by_role("button", name=press).or_(tab.get_by_role("link", name=press)).first
+        rec["button"] = await button.evaluate("(e) => e.outerHTML.replace(/\\s+/g, ' ').slice(0, 1500)")
+        await button.click(timeout=10000)
+        await tab.wait_for_timeout(2500)
+        rec["after"] = await tab.evaluate(MENU_JS, needle)
+        rec["url_after"] = tab.url
+    except Exception as e:  # noqa: BLE001
+        rec["error"] = f"{type(e).__name__}: {str(e)[:300]}"
+    finally:
+        await tab.close()
+    return rec
+
+
+async def probe_http(name: str, url: str, selector: str) -> dict[str, Any]:
+    import httpx
+    from bs4 import BeautifulSoup
+
+    from job_apply.postings import USER_AGENT
+
+    async with httpx.AsyncClient(headers={"User-Agent": USER_AGENT, "Accept-Language": "en-US,en;q=0.9"},
+                                 follow_redirects=True, timeout=30) as client:
+        r = await client.get(url)
+    soup = BeautifulSoup(r.text, "html.parser")
+    if selector.startswith("text:"):  # the markup around each place the page says this
+        found = []
+        for hit in soup.find_all(string=re.compile(re.escape(selector[5:])))[:4]:
+            box = hit.parent
+            for _ in range(4):
+                box = box.parent if box.parent is not None and box.parent.name != "body" else box
+            found.append(box)
+    else:
+        found = soup.select(selector)[:8]
+    return {"http_probe": name, "url": url, "status": r.status_code, "final_url": str(r.url), "chars": len(r.text),
+            "parts": [re.sub(r"\s+", " ", str(e))[:4000] for e in found]}
+
+
 # Job links as a page (or one of its frames) draws them, with the text of the card around
 # each and a little of its markup, to write a reader for a new job board from.
 JOB_LINKS_JS = r"""() => {
@@ -279,8 +358,10 @@ async def probe_page(name: str, url: str) -> dict[str, Any]:
             if "/discover/v2/" in r.url:  # ASML's job search (Sitecore Discover): keep the request and an answer
                 samples.append(asyncio.ensure_future(_sample(r)))
             elif any(part in r.url for part in ("jobPublication/list.json", "job-posting-previews/search",
-                                                  "LoadSearchResults", "/services/recruiting/v1/jobs")):
-                # SUSS's job list; Paycom's (Ebara); UKG Pro's (Nikon); SuccessFactors' newer one (Edwards)
+                                                  "LoadSearchResults", "/services/recruiting/v1/jobs",
+                                                  "/recruiting/career/v1/jobs")):
+                # SUSS's job list; Paycom's (Ebara); UKG Pro's (Nikon); SuccessFactors' newer one
+                # (Edwards), and the call its posting pages make
                 samples.append(asyncio.ensure_future(_sample(r, 4000)))
 
     async def _sample(r: Any, keep: int = 1500) -> dict[str, Any]:
@@ -341,6 +422,16 @@ async def probe_page(name: str, url: str) -> dict[str, Any]:
           if (!d) return null;
           const s = d.eagerLoadRefineSearch || d.refineSearch;
           return {keys: Object.keys(d).slice(0, 30), search: s ? JSON.stringify(s).slice(0, 3000) : null};
+        }""")
+        # where the page says the job is: elements named for a location, and JSON-LD
+        rec["location_bits"] = await tab.evaluate("""() => {
+          const bits = [...document.querySelectorAll('[class*="location" i], [id*="location" i], [class*="geo" i], '
+            + '[itemprop*="address" i], [data-careersite-propertyid*="city" i], [data-careersite-propertyid*="state" i]')]
+            .slice(0, 8).map((e) => e.outerHTML.slice(0, 300));
+          const ld = [...document.querySelectorAll('script[type="application/ld+json"]')].map((s) => s.textContent.slice(0, 600));
+          const text = document.body.innerText;
+          const i = text.search(/location/i);
+          return {bits, ld, around: i >= 0 ? text.slice(Math.max(0, i - 100), i + 300) : ''};
         }""")
         # the markup of anything that reads like an apply or sign-in button, whatever it's drawn with
         rec["apply_buttons"] = await tab.evaluate("""() => [...document.querySelectorAll('body *')]
@@ -443,6 +534,22 @@ async def main() -> int:
         except Exception as e:  # noqa: BLE001
             probe = {"probe": name, "error": f"{type(e).__name__}: {str(e)[:200]}"}
         print("LIVE_PROBE " + json.dumps(probe, default=str), flush=True)
+    for name, (url, press, needle) in MENU_PROBES.items():
+        if wanted and not any(w in name.lower() for w in wanted):
+            continue
+        try:
+            probe = await asyncio.wait_for(probe_menu(name, url, press, needle), 90)
+        except Exception as e:  # noqa: BLE001
+            probe = {"menu_probe": name, "error": f"{type(e).__name__}: {str(e)[:200]}"}
+        print("LIVE_MENU " + json.dumps(probe, default=str), flush=True)
+    for name, (url, selector) in HTTP_PROBES.items():
+        if wanted and not any(w in name.lower() for w in wanted):
+            continue
+        try:
+            probe = await asyncio.wait_for(probe_http(name, url, selector), 60)
+        except Exception as e:  # noqa: BLE001
+            probe = {"http_probe": name, "error": f"{type(e).__name__}: {str(e)[:200]}"}
+        print("LIVE_HTTP " + json.dumps(probe, default=str), flush=True)
 
     await server.close_browser()
     (args.out / "report.json").write_text(json.dumps(records, indent=2, default=str))
@@ -512,7 +619,13 @@ async def check_pipeline(company: dict[str, Any], out: Path, rec: dict[str, Any]
         return
     first = found["results"][0]
     rec["posting"] = {k: first.get(k) for k in ("title", "location", "url")}
-    job = server.add_job(url=first["url"], title=first["title"], company=company["name"])["job"]
+    apply_url = ""
+    try:  # as the desk does: the posting's own apply link, when it has one
+        apply_url = (await fetch_posting(first["url"])).apply_url
+    except Exception as e:  # noqa: BLE001
+        rec["posting"]["read_error"] = f"{type(e).__name__}: {str(e)[:200]}"
+    rec["posting"]["apply_url"] = apply_url
+    job = server.add_job(url=first["url"], title=first["title"], company=company["name"], apply_url=apply_url)["job"]
     applier = Applier(server)
     applier.start()
     rec["rounds"] = []

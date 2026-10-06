@@ -3,6 +3,7 @@ The shapes follow what the live smoke test (scripts/live_smoke.py) saw on real s
 
 import asyncio
 import json
+import re
 
 import httpx
 import pytest
@@ -633,3 +634,208 @@ def test_ukg_rewrite_leaves_other_calls_alone():
     assert ukg_rewrite({"filters": []}) is None and ukg_rewrite(None) is None
     assert ukg_board_url("https://recruiting2.ultipro.com/T/JobBoard/B?q=&o=postedDateDesc") == \
         "https://recruiting2.ultipro.com/T/JobBoard/B/"
+
+
+# Edwards on SuccessFactors' newer search: the page's own search call and its answer
+RMK_PAGE_BODY = {"locale": "en_US", "pageNumber": 0, "sortBy": "", "keywords": "", "location": "",
+                 "facetFilters": {"filter1": ["Edwards"], "mfield3": ["United States"]}, "brand": "", "skills": [],
+                 "categoryId": 0, "alertId": "", "rcmCandidateId": ""}
+RMK_FACETS_BODY = {"facetingOnly": True, "categoryId": 0, "locale": "en_US", "keywords": "", "location": "",
+                   "facetFields": ["filter1", "mfield3"], "facetFilters": {"filter1": ["Edwards"]}}
+
+
+def rmk_job(job_id, title, slug, start="7/27/26"):
+    return {"response": {"supportedLocales": ["en_US"], "filter1": ["Edwards"], "unifiedUrlTitle": slug,
+                         "unifiedStandardStart": start, "filter2": ["Service"], "id": job_id,
+                         "unifiedStandardTitle": title, "urlTitle": slug}}
+
+
+RMK_ANSWER = {"totalJobs": 4, "jobSearchResult": [
+    rmk_job("160986", "Workshop Technician - CA", "Workshop-Technician-CA", "5/27/26"),
+    rmk_job("172120", "Onsite Service Engineer - AZ", "Onsite-Service-Engineer-AZ"),
+    rmk_job("172852", "Assembly &amp; Test Technician (Edwards Vacuum)", "Assembly-&amp;-Test-Technician-%28Edwards-Vacuum%29",
+            "8/7/26"),
+    {"response": {"unifiedStandardTitle": "no id"}}]}
+
+
+def edwards_posting(title, *lines):
+    """An Edwards posting's header as SuccessFactors draws it: unlabelled lines under the title."""
+    token = ('<div class="joblayouttoken displayDTM marginTopNone"><div class="inner"><div class="row">'
+             '<div class="col-xs-12 fontalign-left"><span class="rtltextaligneligible"{attr} lang="en-US">{text} </span>'
+             '</div></div></div></div>')
+    return ('<html><body><div class="jobDisplay">' + token.format(attr=' itemprop="title"', text=title)
+            + "".join(token.format(attr="", text=line) for line in lines) + "<p>Job Description</p></div></body></html>")
+
+
+def test_successfactors_search_is_read_in_the_browser(srv, monkeypatch):
+    """Edwards' search answers only its page; the page's own call gets each wording. The state
+    Edwards puts at the end of some titles is their location; the others' postings say it."""
+    calls, reads = [], []
+
+    async def fake_read(url):
+        reads.append(url)
+        return edwards_posting("Assembly &amp; Test Technician (Edwards Vacuum)", "Manufacturing", "", "Chandler AZ",
+                               "United States", "On-Site")
+
+    monkeypatch.setattr(search_module, "read_page", fake_read)
+    edwards = ("https://www.jobs.atlascopcogroup.com/search/?q=&facetFilters=%7B%22filter1%22%3A%5B%22Edwards%22%5D"
+               "%2C%22mfield3%22%3A%5B%22United+States%22%5D%7D")
+
+    async def fake_capture(url, url_part, timeout=25000, want=None, rewrite=None):
+        assert not want(RMK_FACETS_BODY) and want(RMK_PAGE_BODY)  # the facet-only call is skipped
+        sent = rewrite(json.loads(json.dumps(RMK_PAGE_BODY)))
+        calls.append((url, url_part, sent["keywords"], sent["pageNumber"]))
+        assert sent["facetFilters"] == RMK_PAGE_BODY["facetFilters"]  # still Edwards, still the US
+        return RMK_ANSWER
+
+    monkeypatch.setattr(srv.browser, "capture_json", fake_capture)
+    out = asyncio.run(srv.search_company_jobs("field service", companies=["Edwards"], location="AZ"))
+    got = {r["title"]: r for r in out["results"]}
+    assert set(got) == {"Onsite Service Engineer - AZ", "Assembly & Test Technician (Edwards Vacuum)"}  # CA left out
+    onsite = got["Onsite Service Engineer - AZ"]
+    assert (onsite["location"], onsite["posted"], onsite["url"]) == (
+        "AZ", "2026-07-27", "https://www.jobs.atlascopcogroup.com/job/Onsite-Service-Engineer-AZ/172120-en_US")
+    assembly = got["Assembly & Test Technician (Edwards Vacuum)"]
+    assert (assembly["location"], assembly["notes"]) == ("Chandler, AZ", [])  # read off its posting
+    # the CA and AZ titles say where they are; only the third posting is read
+    assert [url.rsplit("/", 1)[-1] for url in reads] == ["172852-en_US"]
+    assert calls == [(edwards, "/services/recruiting/v1/jobs", "field service", 0)]  # 4 openings: one page
+    assert not out["errors"]
+
+
+def test_successfactors_search_pages_through_results():
+    from job_apply.search import Listing, rmk_search
+
+    pages = []
+
+    async def capture(url, url_part, timeout=25000, want=None, rewrite=None):
+        page = rewrite(json.loads(json.dumps(RMK_PAGE_BODY)))["pageNumber"]
+        pages.append(page)
+        return {"totalJobs": 23, "jobSearchResult": [rmk_job(f"{page}{i}", f"Service Engineer {page}{i} - AZ", "x")
+                                                      for i in range(10 if page < 2 else 3)]}
+
+    async def read(url):
+        raise AssertionError(f"read {url}, though its title says where it is")
+
+    found: list[Listing] = []
+    asyncio.run(rmk_search(capture, {"url": "https://jobs.example.com/search/?q="}, "service", found, read=read))
+    assert pages == [0, 1, 2] and len(found) == 23
+    assert found[0].url == "https://jobs.example.com/job/x/00-en_US" and found[0].location == "AZ"
+
+
+def test_edwards_postings_without_a_state_are_read_for_their_place():
+    """Most Edwards titles carry no state (live, Oct 2026: Field Service Engineer in Phoenix
+    and in San Jose); each posting's header names its city and state."""
+    from job_apply.search import Listing, rmk_search
+
+    reads = []
+    places = {"171942": ("Service", "", "Phoenix AZ", "United States", "On-Site"),
+              "170917": ("Service", "", "San Jose CA", "United States", "On-Site"),
+              "155395": ("Service", "", "United States", "On-Site")}  # no city: stays unknown
+
+    async def read(url):
+        reads.append(url)
+        job_id = url.rsplit("/", 1)[-1].split("-")[0]
+        if job_id == "160001":
+            raise httpx.ConnectError("unreachable")
+        return edwards_posting("Field Service Engineer", *places[job_id])
+
+    async def capture(url, url_part, timeout=25000, want=None, rewrite=None):
+        rewrite(json.loads(json.dumps(RMK_PAGE_BODY)))
+        return {"totalJobs": 5, "jobSearchResult": [
+            rmk_job("171942", "Field Service Engineer", "Field-Service-Engineer"),
+            rmk_job("170917", "Field Service Engineer", "Field-Service-Engineer"),
+            rmk_job("155395", "Field Service Engineer - US EG", "Field-Service-Engineer-US-EG"),
+            rmk_job("160001", "Service Engineer", "Service-Engineer"),
+            rmk_job("172120", "Onsite Service Engineer - AZ", "Onsite-Service-Engineer-AZ")]}
+
+    found: list[Listing] = []
+    site = {"url": "https://jobs.example.com/search/?q="}
+    asyncio.run(rmk_search(capture, site, "field service", found, read=read))
+    assert {x.external_id: x.location for x in found} == {
+        "171942": "Phoenix, AZ", "170917": "San Jose, CA", "155395": "", "160001": "", "172120": "AZ"}
+    assert len(reads) == 4  # not the one whose title ends with its state
+    asyncio.run(rmk_search(capture, site, "service engineer", found, read=read))  # the next wording
+    assert len(reads) == 6  # only the two still unknown are tried again
+
+
+# Qorvo's search pages (SuccessFactors), as the live site drew them in Oct 2026
+SF_ROW = """<tr class="data-row"> <td class="colTitle" headers="hdrTitle"> <span class="jobTitle hidden-phone">
+ <a class="jobTitle-link" href="{href}">{title}</a> </span> <div class="jobdetail-phone visible-phone">
+ <span class="jobTitle visible-phone"> <a class="jobTitle-link" href="{href}">{title}</a> </span>
+ <span class="jobLocation visible-phone"> <span class="jobLocation"> {where} </span></span> </div> </td>
+ <td class="colLocation hidden-phone" headers="hdrLocation"> <span class="jobLocation"> {where} </span> </td> </tr>"""
+SF_MORE = '<small class="nobr">+{} more…</small>'
+
+
+def sf_row(job_id, title, where, more=0):
+    slug = re.sub(r"\W+", "-", f"{where.split(',')[0]}-{title}")
+    return SF_ROW.format(href=f"/job/{slug}/{job_id}/", title=title,
+                         where=where + (" " + SF_MORE.format(more) if more else ""))
+
+
+def sf_page(rows, first, total):
+    last = first + len(rows) - 1
+    return (f'<html><body><span aria-label="Results {first} – {last}" class="paginationLabel">Results <b>{first} – '
+            f'{last}</b> of <b>{total}</b></span><table id="searchresults"><tbody>{"".join(rows)}</tbody></table>'
+            "</body></html>")
+
+
+QORVO_AZ = [sf_row("1421977600", "Analog Design Intern", "Chandler, AZ, US, 85226"),
+            sf_row("1420082600", "Test Engineering Intern", "Chandler, AZ, US, 85226"),
+            sf_row("1424233200", "Sr Principal Design Engineer", "Greensboro, NC, US, 27409", more=3),
+            sf_row("1434607400", "Sr. RFIC Design Engineer", "Greensboro, NC, US, 27409", more=8)]
+
+
+def run_sf(handler, **kw):
+    async def go():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            return await search_companies(client=client, companies=[
+                {"name": "Qorvo", "search": {"successfactors": "https://careers.qorvo.com"}}], **kw)
+    return asyncio.run(go())
+
+
+def test_successfactors_search_pages_use_the_sites_own_state_search():
+    """Given a state, Qorvo's own location search narrows the openings; an opening whose
+    first place is elsewhere is only listed because one of its other places is there."""
+    asked = []
+
+    def handler(request):
+        assert str(request.url).startswith("https://careers.qorvo.com/search/?")
+        asked.append(dict(request.url.params))
+        return httpx.Response(200, text=sf_page(QORVO_AZ, 1, 4))
+
+    out = run_sf(handler, query="engineer", location="AZ")
+    assert asked == [{"q": "engineer", "startrow": "0", "locationsearch": "Arizona"}]
+    got = {r["title"]: r for r in out["results"]}
+    assert got["Analog Design Intern"]["url"] == "https://careers.qorvo.com/job/Chandler-Analog-Design-Intern/1421977600/"
+    assert got["Analog Design Intern"]["location"] == "Chandler, AZ, US, 85226"
+    assert got["Sr Principal Design Engineer"]["location"] == "Greensboro, NC, US, 27409 (+3 more); Arizona"
+    assert all(not r["notes"] for r in out["results"]) and len(got) == 4
+    assert got["Analog Design Intern"]["external_id"] == "1421977600" and not out["errors"]
+
+
+def test_successfactors_search_pages_through_results_and_keeps_unclear_places():
+    """25 openings a page until the count the page gives. Without a state to search, an
+    opening shown elsewhere "+3 more" may still be in the user's city: it's kept, flagged."""
+    starts = []
+
+    def handler(request):
+        start = int(request.url.params["startrow"])
+        starts.append(start)
+        assert "locationsearch" not in request.url.params
+        if start == 0:
+            rows = [sf_row("1", "Test Engineer", "Chandler, AZ, US, 85226"),
+                    sf_row("2", "Design Engineer", "Greensboro, NC, US, 27409", more=3)]
+            rows += [sf_row(str(100 + i), "Process Engineer", "Richardson, TX, US, 75080") for i in range(23)]
+        else:
+            rows = [sf_row(str(200 + start + i), "Process Engineer", "Richardson, TX, US, 75080")
+                    for i in range(25 if start == 25 else 3)]
+        return httpx.Response(200, text=sf_page(rows, start + 1, 53))
+
+    out = run_sf(handler, query="engineer", location="Chandler|Phoenix", limit=60)
+    assert starts == [0, 25, 50]
+    assert [(r["title"], r["notes"]) for r in out["results"]] == [
+        ("Design Engineer", ["location given as 'Greensboro, NC, US, 27409 (+3 more)'; check the posting"]),
+        ("Test Engineer", [])]
+

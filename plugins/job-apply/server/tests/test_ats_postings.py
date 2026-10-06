@@ -73,6 +73,28 @@ def test_parse_without_structured_data():
     assert any("incomplete" in w for w in p.warnings)
 
 
+def test_an_apply_link_that_only_works_from_the_posting_is_left_out():
+    """Edwards' Apply now (SuccessFactors) sends a cold visit to the site's home page, so the
+    posting itself is where an application starts."""
+    raw = """<html><head><title>Field Service Engineer</title></head><body><main><h1>Field Service Engineer</h1>
+    <a class="unify-apply-now dialogApplyBtn" href="/talentcommunity/apply/171942/?locale=en_US">Apply now</a>
+    <p>Support customers in Arizona.</p></main></body></html>"""
+    p = finalize(parse_html(raw, "https://www.jobs.atlascopcogroup.com/job/Field-Service-Engineer/171942-en_US"))
+    assert p.apply_url == ""
+
+
+def test_a_successfactors_posting_says_where_it_is_under_its_title():
+    """Edwards' postings carry no structured data; the lines under the title name the place."""
+    token = ('<div class="joblayouttoken displayDTM"><div class="inner"><span class="rtltextaligneligible"{}>{}</span>'
+             '</div></div>')
+    raw = ("<html><head><title>Onsite Service Engineer AZ</title></head><body><main>"
+           + token.format(' itemprop="title"', "Onsite Service Engineer AZ")
+           + "".join(token.format("", line) for line in ("Service", " ", "Phoenix AZ", "United States", "On-Site"))
+           + "<p>Support customers in Arizona.</p></main></body></html>")
+    p = finalize(parse_html(raw, "https://www.jobs.atlascopcogroup.com/job/Onsite-Service-Engineer-AZ/172120-en_US"))
+    assert p.location == "Phoenix, AZ"
+
+
 def test_html_to_text_lists_and_entities():
     text = html_to_text("<p>Hello&nbsp;there</p><ul><li>One</li><li>Two &amp; three</li></ul>")
     assert "Hello there" in text

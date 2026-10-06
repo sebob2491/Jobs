@@ -95,9 +95,14 @@ companies:
     search: {workday: https://entegris.wd1.myworkdayjobs.com/EntegrisCareers}
   - name: Edwards Vacuum
     careers_url: https://www.jobs.atlascopcogroup.com/search/?q=&facetFilters=%7B%22filter1%22%3A%5B%22Edwards%22%5D%2C%22mfield3%22%3A%5B%22United+States%22%5D%7D
-    ats: successfactors     # Atlas Copco group job search, filtered to Edwards in the US
-    az_sites: Chandler
-    confidence: medium
+    ats: successfactors
+    az_sites: Chandler (vacuum pump factory), field service at Intel's and TSMC's fabs
+    confidence: high          # live check, Oct 2026: 107 US openings, "Onsite Service Engineer - AZ" among them
+    search:
+      # SuccessFactors' newer search answers only its own page: the page, filtered to Edwards
+      # in the United States, is read in the browser.
+      rmk:
+        url: "https://www.jobs.atlascopcogroup.com/search/?q=&facetFilters=%7B%22filter1%22%3A%5B%22Edwards%22%5D%2C%22mfield3%22%3A%5B%22United+States%22%5D%7D"
   - name: Texas Instruments
     careers_url: https://careers.ti.com/en/sites/CX
     ats: oracle_hcm
@@ -114,7 +119,8 @@ companies:
     careers_url: https://careers.qorvo.com
     ats: successfactors
     az_sites: Chandler
-    confidence: medium
+    confidence: high
+    search: {successfactors: https://careers.qorvo.com}
   - name: Analog Devices
     careers_url: https://analogdevices.wd1.myworkdayjobs.com/External
     ats: workday

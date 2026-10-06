@@ -20,6 +20,7 @@ from bs4 import BeautifulSoup
 
 from .ats import (detect_ats, greenhouse_parts, lever_parts, linkedin_job_id, oracle_parts, smartrecruiters_parts,
                   workday_parts)
+from .autofill import US_STATES
 
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -158,12 +159,32 @@ def posting_from_jsonld(ld: dict[str, Any], url: str) -> Posting:
     return p
 
 
+_CITY_STATE = re.compile(r"^([A-Za-z][A-Za-z .'-]*?),?\s+([A-Z]{2})$")  # "Phoenix AZ"
+
+
+def successfactors_place(soup: BeautifulSoup) -> str:
+    """Where a SuccessFactors posting is, from the unlabelled lines under its title (Edwards:
+    "Service", "Phoenix AZ", "United States", "On-Site"): 'Phoenix, AZ'."""
+    for token in soup.select(".joblayouttoken")[:12]:
+        if token.select_one('[itemprop="title"]') is not None:
+            continue
+        m = _CITY_STATE.match(" ".join(token.get_text(" ", strip=True).split()))
+        if m and m.group(2) in US_STATES:
+            return f"{m.group(1)}, {m.group(2)}"
+    return ""
+
+
+# Apply links that only work when pressed on the posting page itself: SuccessFactors career
+# sites send a visit straight to one to their home page. The posting is opened instead.
+_PAGE_BOUND_APPLY = re.compile(r"/talentcommunity/apply/", re.I)
+
+
 def _find_apply_link(soup: BeautifulSoup, base_url: str) -> str:
     for a in soup.find_all("a", href=True):
         text = " ".join(a.get_text(" ").split()).lower()
         label = (a.get("aria-label") or "").lower()
         if re.search(r"\bapply\b", text + " " + label) and not a["href"].startswith(("#", "javascript:", "mailto:")):
-            return urljoin(base_url, a["href"])
+            return "" if _PAGE_BOUND_APPLY.search(a["href"]) else urljoin(base_url, a["href"])
     return ""
 
 
@@ -186,6 +207,7 @@ def parse_html(raw_html: str, url: str) -> Posting:
             p.company = site["content"]
         p.warnings.append("No structured JobPosting data; title/company may need correcting.")
     p.apply_url = p.apply_url or _find_apply_link(soup, url)
+    p.location = p.location or successfactors_place(soup)
     return p
 
 

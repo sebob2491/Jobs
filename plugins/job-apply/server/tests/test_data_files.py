@@ -26,6 +26,16 @@ def test_companies_file():
         assert c["confidence"] in {"high", "medium", "low"}, c
 
 
+def test_every_search_config_names_a_reader():
+    """A misspelt search kind would leave that employer out of every search, silently."""
+    from job_apply.search import BROWSER_SEARCHES, SEARCHERS
+
+    data = yaml.safe_load((config.PLUGIN_ROOT / "data" / "companies.yaml").read_text())
+    for c in data["companies"]:
+        for kind in c.get("search") or {}:
+            assert kind in set(SEARCHERS) | BROWSER_SEARCHES, (c["name"], kind)
+
+
 def test_submit_mode_spellings():
     from job_apply.config import Settings
 
