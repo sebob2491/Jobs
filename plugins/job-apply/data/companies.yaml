@@ -152,3 +152,9 @@ companies:
     az_sites: Phoenix area (field service)
     confidence: medium        # axcelis.com/careers links here (live check, Oct 2026)
     search: {workday: https://axcelis.wd1.myworkdayjobs.com/axcelis}
+  - name: Daifuku America
+    careers_url: https://careers-daifuku-america.icims.com/jobs/search?ss=1
+    ats: icims
+    az_sites: Chandler (field service on automated material handling at fabs)
+    confidence: medium        # live check, Oct 2026: the portal's frame lists openings with location and date
+    search: {icims: careers-daifuku-america}

@@ -24,6 +24,7 @@ COMPANIES = [
     {"name": "Odd Lever Co", "search": {"lever": "oddco"}},
     {"name": "Workday Site Co", "search": {"workday": "https://wd1.myworkdaysite.com/recruiting/wsco/WS_Careers"}},
     {"name": "AS Co", "search": {"applicantstack": "asco"}},
+    {"name": "iCIMS Co", "search": {"icims": "careers-icco"}},
 ]
 # SCREEN SPE USA's board: one table of every opening, title and location
 AS_BOARD = """<h1>Job Openings</h1><table class="table"><thead><tr><th>Job Title</th><th>Location</th></tr></thead><tbody>
@@ -31,6 +32,20 @@ AS_BOARD = """<h1>Job Openings</h1><table class="table"><thead><tr><th>Job Title
 <tr><td><a href="/x/detail/a2ejxq3c5xpg">Field Service Engineer - Austin</a></td><td>Austin, TX</td></tr>
 <tr><td><a href="/x/detail/a2ejxq3tau2q">Administrative Coordinator &amp; Translator - Hillsboro</a></td><td>Hillsboro, OR</td></tr>
 </tbody></table>"""
+# Daifuku's iCIMS portal: the search results inside its frame (in_iframe=1)
+ICIMS_ROW = """<div class="row">
+ <div class="col-xs-6 header left"> <span class="sr-only field-label">Job Locations</span> <span> {where}</span> </div>
+ <div class="col-xs-6 header right"> <span class="sr-only field-label">Posted Date</span>
+  <span title="9/24/2026 6:18 PM"> 2 weeks ago<span class="sr-only">(9/24/2026 6:18 PM)</span></span> </div>
+ <div class="col-xs-12 title"> <a href="https://careers-icco.icims.com/jobs/{id}/{slug}/job?in_iframe=1"
+   class="iCIMS_Anchor" title="{id} - {title}"><span class="sr-only field-label">External Title</span> <h3>{title}</h3></a> </div>
+</div>"""
+ICIMS_PAGE = ('<div class="iCIMS_JobsTable">'
+              + ICIMS_ROW.format(where="US-AZ-Chandler", id=19224, slug="field-service-engineer-1",
+                                 title="Field Service Engineer 1")
+              + ICIMS_ROW.format(where="US-MI-Novi", id=21882, slug="apus-controls-engineer-iii",
+                                 title="Controls Engineer III")
+              + '</div><a href="https://careers-icco.icims.com/jobs/intro?in_iframe=1">Welcome page</a>')
 seen: list[httpx.Request] = []
 
 WD_FACETS = [{"facetParameter": "locationMainGroup", "descriptor": "Locations", "values": [
@@ -121,6 +136,9 @@ def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={"total": 1, "jobPostings": [
             {"title": "Field Service Engineer 1", "externalPath": "/job/Phoenix-AZ/Field-Service-Engineer-1_R1",
              "locationsText": "Phoenix, AZ", "postedOn": "Posted Today", "bulletFields": ["R1"]}]})
+    if url.startswith("https://careers-icco.icims.com/jobs/search"):
+        assert request.url.params["in_iframe"] == "1" and request.url.params["searchKeyword"]
+        return httpx.Response(200, text=ICIMS_PAGE)
     if url == "https://asco.applicantstack.com/x/openings":
         return httpx.Response(200, text=AS_BOARD)
     if url == "https://boards-api.greenhouse.io/v1/boards/broken/jobs":
@@ -200,6 +218,9 @@ def test_search_all_backends():
     assert [(r["title"], r["location"], r["url"]) for r in by_company["AS Co"]] == [
         ("Field Service Engineer - Chandler", "Chandler, AZ", "https://asco.applicantstack.com/x/detail/a2ejxq3cpz4b")]
     assert sum("applicantstack" in str(r.url) for r in seen) == 1  # whole board, fetched once
+    assert [(r["title"], r["location"], r["posted"], r["url"]) for r in by_company["iCIMS Co"]] == [
+        ("Field Service Engineer 1", "US-AZ-Chandler", "2026-09-24",
+         "https://careers-icco.icims.com/jobs/19224/field-service-engineer-1/job")]
 
     assert out["browser_only"] == [{"company": "Browser Co", "careers_url": "https://careers.browserco.com"}]
     assert set(out["errors"]) == {"Broken Co", "Odd Lever Co"}  # each fails alone; the rest still return

@@ -120,6 +120,11 @@ the page URL. Use this file for the parts of each flow that `autofill` can't do.
 - Every opening is listed on one page (`/x/openings`), with its location. The board also
   has a **My Account** page for returning to a saved or submitted application.
 
+## iCIMS (`*.icims.com`): Daifuku America
+
+- The portal draws its pages inside a frame, so field ids start with `f1-`. Its job
+  search lists each opening with its location (`US-AZ-Chandler`) and posting date.
+
 ## ASML (`asml.com/en/careers`)
 
 - Postings are on asml.com. **Apply** may lead to Workday (`asml.wd3.myworkdayjobs.com`)

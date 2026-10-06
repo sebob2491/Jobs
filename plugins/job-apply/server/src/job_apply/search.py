@@ -395,6 +395,49 @@ def parse_applicantstack(html: str, base: str) -> list[Listing]:
     return out
 
 
+async def _icims(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, terms: list[str]) -> list[Listing]:
+    """iCIMS portals (Daifuku America): the job search as the portal's own frame draws it,
+    with each opening's location and posting date."""
+    base = f"https://{cfg}.icims.com"
+    url = f"{base}/jobs/search"
+    params = {"ss": "1", "searchKeyword": query, "in_iframe": "1", "needsRedirect": "false", "mobile": "false"}
+    r = await _send(client, "GET", url, params=params)
+    _raise_for(r, url)
+    return parse_icims(r.text, base)[:limit]
+
+
+def parse_icims(html: str, base: str) -> list[Listing]:
+    soup = BeautifulSoup(html, "html.parser")
+    out: list[Listing] = []
+    seen: set[str] = set()
+    for a in soup.select('a[href*="/jobs/"]'):
+        m = re.search(r"/jobs/(\d+)/[^/?#]+/job", str(a.get("href") or ""))
+        if not m:
+            continue
+        url = urljoin(base + "/", str(a["href"]).split("?")[0])  # the full page, not the frame's copy
+        if url in seen:
+            continue
+        seen.add(url)
+        heading = a.find(["h2", "h3", "h4"])
+        for label in a.select(".sr-only, .field-label"):  # "External Title", read out to screen readers
+            label.decompose()
+        title = (heading or a).get_text(" ", strip=True) or re.sub(r"^\d+\s*-\s*", "", str(a.get("title") or ""))
+        row = a.find_parent(class_="row")
+        location = posted = ""
+        if row is not None:
+            left = row.select_one(".header.left")  # Job Locations: US-AZ-Chandler
+            if left is not None:
+                location = " ".join(s.get_text(" ", strip=True) for s in left.find_all("span", recursive=False)
+                                    if "sr-only" not in (s.get("class") or []))
+            when = row.select_one(".header.right span[title]")  # Posted Date: 9/24/2026 6:18 PM
+            if when is not None:
+                d = re.match(r"(\d{1,2})/(\d{1,2})/(\d{4})", str(when["title"]))
+                posted = f"{d.group(3)}-{int(d.group(1)):02d}-{int(d.group(2)):02d}" if d else ""
+        out.append(Listing(company="", title=title, url=url, location=location.strip(), posted=posted,
+                           external_id=m.group(1), ats="icims"))
+    return out
+
+
 async def _eightfold(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, terms: list[str]) -> list[Listing]:
     host, domain = cfg["host"], cfg["domain"]
     api = f"https://{host}/api/pcsx/search"
@@ -493,6 +536,7 @@ SEARCHERS: dict[str, Callable[[httpx.AsyncClient, Any, str, int, list[str]], Awa
     "smartrecruiters": _smartrecruiters,
     "oracle": _oracle,
     "applicantstack": _applicantstack,
+    "icims": _icims,
 }
 
 
