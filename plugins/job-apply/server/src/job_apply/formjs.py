@@ -461,6 +461,14 @@ QUIET_JS = r"""
 """
 
 
+# A click on the page itself, on no control: closes menus that ignore Escape and focus
+# moving away (Eightfold's), the way clicking beside a menu does.
+OUTSIDE_CLICK_JS = r"""
+() => { for (const t of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click'])
+  document.body.dispatchEvent(new MouseEvent(t, { bubbles: true, cancelable: true, view: window })); }
+"""
+
+
 # Is a dropdown menu open (one with options showing)?
 OPEN_MENU_JS = r"""
 () => [...document.querySelectorAll('[role="listbox"], [role="menu"]')].some((m) =>

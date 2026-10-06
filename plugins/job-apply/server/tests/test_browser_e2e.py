@@ -478,3 +478,95 @@ def test_a_short_dropdown_is_picked_without_typing(srv):
     assert run(srv.fill_form([{"id": field["id"], "value": "No"}]))["ok"]
     assert run(page.evaluate("() => [document.getElementById('q').dataset.picked, document.getElementById('q').dataset.typed]")) \
         == ["No", None]
+
+
+def test_an_open_menus_highlighted_option_isnt_the_answer(srv):
+    """Pills count as a field's answer, but the selected-looking option in an open menu doesn't."""
+    run(srv.open_application(url=fixture_url("jsonld_posting.html")))
+    page = run(srv.browser.page())
+    run(page.set_content("""
+      <form>
+        <div class="field"><label for="lang">Language of Application *</label>
+          <div class="wrap"><input id="lang" role="combobox" required readonly>
+            <ul role="listbox"><li role="option" class="selected-option"><span class="item-label">German</span></li>
+              <li role="option"><span class="item-label">English</span></li></ul></div></div>
+        <div class="field"><label for="loc">Preferred location *</label>
+          <div class="pills"><div class="tag-pill"><span class="pill-label">Singapore</span><button type="button">Remove Singapore</button></div></div>
+          <div class="wrap"><input id="loc" role="combobox" required readonly></div></div>
+      </form>"""))
+    fields = {f["label"]: f for f in run(srv.inspect_form(include_dropdown_options=False))["fields"]}
+    assert fields["Language of Application *"]["value"] == ""
+    assert fields["Preferred location *"]["value"] == "Singapore"
+
+
+EIGHTFOLD_COUNTRY_CODE = """
+  <form>
+    <label for="cc">Country code *</label>
+    <div class="wrap"><input id="cc" role="combobox" required aria-controls="cc-list" autocomplete="off"></div>
+    <ul id="cc-list" role="listbox" hidden></ul>
+    <button type="submit">Submit application</button>
+  </form>
+  <script>
+    const NAMES = ['Afghanistan', 'Albania', 'Algeria', 'Andorra', 'Angola', 'Argentina', 'Armenia', 'Australia',
+                   'Austria', 'Bahamas', 'Belgium', 'Brazil', 'Canada', 'France', 'Germany', 'Mexico'];
+    const ALL = NAMES.map((n, i) => ({flag: '🏳', code: i + 20, name: n})).concat([
+      {flag: '🇺🇸', code: 1, name: 'United States of America'}, {flag: '🇺🇲', code: 1, name: 'United States Minor Outlying Islands'}]);
+    const shown = (o) => `${o.flag} (+${o.code}) ${o.name}`;
+    const box = document.getElementById('cc'), list = document.getElementById('cc-list');
+    let chosen = '';
+    function show(q) {  // the search matches the country's name, not the flag and code it shows
+      list.innerHTML = '';
+      for (const o of ALL.filter((o) => o.name.toLowerCase().includes(q.toLowerCase()))) {
+        const li = document.createElement('li');
+        li.setAttribute('role', 'option');
+        li.textContent = shown(o);
+        list.append(li);
+      }
+      list.hidden = false;
+    }
+    const close = () => { list.hidden = true; box.value = chosen; };
+    box.addEventListener('click', () => { box.value = ''; show(''); });  // the box clears for searching while open
+    box.addEventListener('input', () => show(box.value));
+    list.addEventListener('click', (e) => { chosen = e.target.textContent; close(); });
+    box.addEventListener('blur', () => { if (list.hidden) box.value = chosen; });  // typed text that picked nothing is dropped
+    // ignores Escape and focus leaving; closes on a click beside it
+    document.addEventListener('mousedown', (e) => { if (!list.contains(e.target) && e.target !== box) close(); });
+  </script>"""
+
+
+def test_a_country_code_picker_like_eightfolds(srv):
+    """Eightfold's Country code stayed empty on every live run, its menu left open over the
+    Submit button: "United States of America (+1)" typed whole matched nothing in a list
+    showing "🇺🇸 (+1) United States of America", the miss counted as filled, and the menu
+    ignored Escape and focus leaving."""
+    run(srv.open_application(url=fixture_url("jsonld_posting.html")))
+    page = run(srv.browser.page())
+    run(page.set_content(EIGHTFOLD_COUNTRY_CODE))
+    filled = run(srv.autofill())["filled"]
+    assert [f["value"] for f in filled if f["label"].startswith("Country code")] == ["🇺🇸 (+1) United States of America"]
+    assert run(page.input_value("#cc")) == "🇺🇸 (+1) United States of America"
+    assert run(page.evaluate("() => document.getElementById('cc-list').hidden"))  # not left open over the button
+
+
+def test_a_pick_list_with_no_match_is_reported(srv):
+    run(srv.open_application(url=fixture_url("jsonld_posting.html")))
+    page = run(srv.browser.page())
+    run(page.set_content(EIGHTFOLD_COUNTRY_CODE))
+    field = run(srv.inspect_form(include_dropdown_options=False))["fields"][0]
+    out = run(srv.fill_form([{"id": field["id"], "value": "Atlantis (+999)"}]))
+    assert not out["ok"] and "nothing in its list matched 'Atlantis'" in out["results"][0]["error"]
+
+
+def test_a_picker_is_searched_by_name_not_by_flag_and_code(srv):
+    """When the entry only shows up once searched for, the search has to be words the list
+    matches: the country's name, not "🇺🇸 (+1) ..." or "... (+1)"."""
+    run(srv.open_application(url=fixture_url("jsonld_posting.html")))
+    page = run(srv.browser.page())
+    run(page.set_content(EIGHTFOLD_COUNTRY_CODE.replace(
+        "box.addEventListener('click', () => { box.value = ''; show(''); });",
+        "box.addEventListener('click', () => { box.value = ''; show(''); [...list.children].slice(8).forEach((li) => li.remove()); });")))
+    field = run(srv.inspect_form(include_dropdown_options=False))["fields"][0]
+    for value in ("United States of America (+1)", "🇺🇸 (+1) United States of America"):
+        out = run(srv.fill_form([{"id": field["id"], "value": value}]))
+        assert out["ok"], out
+        assert run(page.input_value("#cc")) == "🇺🇸 (+1) United States of America"

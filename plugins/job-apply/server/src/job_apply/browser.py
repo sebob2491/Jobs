@@ -28,7 +28,7 @@ from playwright.async_api import (
 from . import config
 from .autofill import choose_option, is_empty_value, norm, polarity
 from .formjs import (CLICK_CHOICE_JS, COVERED_JS, ELEMENT_INFO_JS, ENTRIES_JS, EXTRACT_JS, FIELD_OPTIONS_JS,
-                     MARK_OPTIONS_JS, OPEN_MENU_JS, QUIET_JS, SHOWN_VALUE_JS, VISIBLE_TEXT_JS)
+                     MARK_OPTIONS_JS, OPEN_MENU_JS, OUTSIDE_CLICK_JS, QUIET_JS, SHOWN_VALUE_JS, VISIBLE_TEXT_JS)
 
 SUBMIT_RE = re.compile(r"\bsubmit\b|send (my )?application|finish (my )?application|complete (my )?application", re.I)
 # A form's own submit button with one of these labels is the final step too ("Apply", "Send").
@@ -78,6 +78,15 @@ def launch_attempts(settings: config.Settings) -> list[dict[str, Any]]:
 
 class SubmitBlocked(Exception):
     pass
+
+
+def _search_words(text: str) -> str:
+    """What to type into a picker's search box: the words, without flags, dial codes or
+    bracketed extras. Eightfold's Country code list searches the country's name, so
+    "🇺🇸 (+1) United States of America" typed whole finds nothing; "United States of
+    America" does."""
+    words = re.sub(r"\([^)]*\)|\+\d+|[^\w\s,.'&/-]", " ", text)
+    return re.sub(r"\s+", " ", words).strip() or text
 
 
 class BrowserSession:
@@ -311,16 +320,23 @@ class BrowserSession:
         return options
 
     async def _close_menus(self, page: Page) -> None:
-        """Close a dropdown menu left open, which would catch the next field's clicks. Focus
-        moves off first (some menus, like Eightfold's, ignore Escape); Escape only follows
-        if a menu is still open, since it can also close a dialog such as Easy Apply."""
+        """Close a dropdown menu left open. An open menu catches the next field's clicks,
+        covers the buttons under it, and on Eightfold keeps its field looking empty (the
+        box is cleared for searching while the menu shows). Focus moves off first; Escape
+        follows only if a menu is still open, since it can also close a dialog such as
+        Easy Apply; a menu that ignores both (Eightfold's country lists) closes on a click
+        on the page itself."""
         try:
             if not await page.evaluate(OPEN_MENU_JS):
                 return
             await page.evaluate("() => { const a = document.activeElement; if (a && a !== document.body) a.blur(); }")
             await page.wait_for_timeout(150)
+            if not await page.evaluate(OPEN_MENU_JS):
+                return
+            await page.keyboard.press("Escape")
+            await page.wait_for_timeout(150)
             if await page.evaluate(OPEN_MENU_JS):
-                await page.keyboard.press("Escape")
+                await page.evaluate(OUTSIDE_CLICK_JS)
         except PlaywrightError:
             pass
 
@@ -472,14 +488,18 @@ class BrowserSession:
             page = await self.page()
             await self._close_menus(page)
             results = []
-            for item in values:
-                fid = str(item.get("id", ""))
-                try:
-                    field = await self._field(page, fid)
-                    outcome = await self._fill_one(page, field, item.get("value"))
-                    results.append({"id": fid, "label": field.get("label", ""), "ok": True, "result": outcome})
-                except Exception as e:  # report and keep going; one odd widget shouldn't stop the rest
-                    results.append({"id": fid, "ok": False, "error": f"{type(e).__name__}: {str(e).splitlines()[0][:300]}"})
+            try:
+                for item in values:
+                    fid = str(item.get("id", ""))
+                    try:
+                        field = await self._field(page, fid)
+                        outcome = await self._fill_one(page, field, item.get("value"))
+                        results.append({"id": fid, "label": field.get("label", ""), "ok": True, "result": outcome})
+                    except Exception as e:  # report and keep going; one odd widget shouldn't stop the rest
+                        results.append({"id": fid, "ok": False,
+                                        "error": f"{type(e).__name__}: {str(e).splitlines()[0][:300]}"})
+            finally:
+                await self._close_menus(page)  # none left open over the buttons, or over its own field
             return results
 
     async def fill_secret(self, field_id: str, secret: str) -> None:
@@ -603,9 +623,10 @@ class BrowserSession:
         # of "Arizona", in the question below the State).
         options = await self._field_options(page, field["id"], loc, 900)
         choice = choose_option(text, options, exact_only=len(options) > SHORT_MENU) if options else None
+        query = _search_words(text)
         if choice is None:
             await loc.fill("")
-            await loc.press_sequentially(text, delay=30)
+            await loc.press_sequentially(query, delay=30)
             options = await self._field_options(page, field["id"], loc, 2500)
             if not options and not await loc.evaluate("el => !!el.form"):
                 # Search-style pickers (Workday) list results after Enter. Inside a <form>,
@@ -615,8 +636,16 @@ class BrowserSession:
             choice = choose_option(text, options)
         if choice is None:
             if options:
-                await page.keyboard.press("Escape")
+                await self._close_menus(page)
                 raise ValueError(f"{text!r} doesn't match any suggestion: {options[:30]}")
+            # Nothing was listed. A pick-list (one that names its menu) needs a pick: Eightfold's
+            # Country code dropped the typed text once its menu closed, and the field stayed
+            # empty while counting as filled. Only a free-text box may keep what was typed.
+            picks = await loc.evaluate("el => !!(el.getAttribute('aria-controls') || el.getAttribute('aria-owns'))")
+            await loc.evaluate("el => el.blur()")
+            await page.wait_for_timeout(200)
+            if picks or norm(await loc.input_value()) != norm(query):
+                raise ValueError(f"nothing in its list matched {query!r}")
             return "typed (no suggestions appeared)"
         await self._click_option(page, field["id"], choice)
         await self._confirm_choice(page, loc, choice)
