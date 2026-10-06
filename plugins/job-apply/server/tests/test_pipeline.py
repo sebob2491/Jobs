@@ -567,3 +567,26 @@ def test_skip_closes_the_jobs_tabs_both_the_posting_and_the_application(srv, mon
     r, tabs = run(go())
     assert len(tabs) == 2 and tabs[0].url.endswith("signin.html") and tabs[1].url.endswith("popup-posting.html")
     assert all(t.is_closed() for t in tabs) and r.status == "skipped"
+
+
+def test_a_flow_that_goes_round_in_a_circle_stops_after_one_lap(srv, monkeypatch):
+    """Oracle's sites, refusing more codes for an address: Next leads to a Continue that goes
+    back to the posting. Going round again would only repeat it (and might email another code)."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    job = srv.add_job(url=fixture_url("site/cycle-posting.html"), title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert r.need == "stuck" and "came back round" in r.reason, (r.status, r.reason, r.log)
+    assert "too many verification codes" in r.reason
+    assert [line for line in r.log if line.startswith("clicked")] == ["clicked “Apply Now”", "clicked “Next”",
+                                                                       "clicked “Continue”"]

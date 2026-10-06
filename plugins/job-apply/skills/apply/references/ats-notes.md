@@ -104,6 +104,10 @@ the page URL. Use this file for the parts of each flow that `autofill` can't do.
 
 - Both use a single page. Greenhouse forms are often embedded in an iframe on the
   company's site, which is why field ids start with `f1-`.
+- `open_application` opens a Greenhouse job-board posting at Greenhouse's own form
+  (`job-boards.greenhouse.io/embed/job_app?for=<board>&token=<id>`). A board set to send
+  visitors to the company's page (asm.com) would otherwise land behind that site's cookie
+  banner, which can keep the embedded form from loading.
 - Custom questions and a voluntary EEO section are at the bottom. The final button,
   **Submit Application** or **Submit application**, goes through `submit_application`.
 

@@ -352,6 +352,8 @@ class Applier:
             return
         stalls, entries_done, waited, refilled = 0, set(), False, set()
         sign_ins: dict[str, int] = {}  # what the saved password was used for on this pass
+        pressed: list[tuple[Any, ...]] = []  # (page, button) for each button pressed on this pass
+        pressed_on: list[str] = []  # and where, in words
         for _ in range(MAX_STEPS):
             if run.status == "skipped":  # pressed while this job was running
                 return
@@ -447,6 +449,15 @@ class Applier:
                                        " Fix it in the browser, then press Resume.")
                 return self._pause(run, "stuck", "I couldn't find the button that moves this application on. "
                                    "Take it a step further in the browser, then press Resume.")
+            key = (data.get("url"), tuple(data.get("headings") or []), action["text"].strip().lower())
+            if key in pressed and pressed[-1] != key:
+                # Round in a circle (Oracle sent its sites back to the posting from "Continue"):
+                # going round again only repeats it, and may email the person another code.
+                back = pressed_on[-1] if pressed_on else ""
+                return self._pause(run, "stuck", f"I came back round to {_where(data)} after {back}, so the site isn't "
+                                   "letting this application on. Have a look in the browser, then press Resume.")
+            pressed.append(key)
+            pressed_on.append(f"\u201c{action['text'].strip()}\u201d on {_page_said(data)}")
             before = _fingerprint(data)
             try:
                 clicked = await srv.click(action["id"])
@@ -712,6 +723,12 @@ def _site(run: Run, data: dict[str, Any]) -> str:
 
 def question_key(label: str) -> str:
     return norm(clean_label(label))
+
+
+def _page_said(data: dict[str, Any]) -> str:
+    """A page in a few words: its heading, and what it says if it shows a message."""
+    message = next((e for e in data.get("errors") or [] if len(e) > 12), "")
+    return _where(data) + (f" (\u201c{message[:160]}\u201d)" if message else "")
 
 
 def _where(data: dict[str, Any]) -> str:
