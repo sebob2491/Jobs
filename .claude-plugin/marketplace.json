@@ -1,0 +1,16 @@
+{
+  "name": "sebob-jobs",
+  "owner": {
+    "name": "sebob2491"
+  },
+  "metadata": {
+    "description": "Job search and application tools for Claude Code."
+  },
+  "plugins": [
+    {
+      "name": "job-apply",
+      "source": "./plugins/job-apply",
+      "description": "Fill and track job applications from LinkedIn, Indeed and company career sites in a real browser, with you approving each submit."
+    }
+  ]
+}

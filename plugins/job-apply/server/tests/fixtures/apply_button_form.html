@@ -1,0 +1,88 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>One-page application</title>
+<style>
+  /* react-select style: a layer over the input swallows clicks; the menu opens on focus */
+  .rs { position: relative; width: 260px; }
+  .rs .cover { position: absolute; inset: 0; }
+  .rs ul { list-style: none; margin: 0; padding: 0; border: 1px solid #999; }
+</style>
+</head>
+<body>
+<h1>Equipment Technician</h1>
+<form id="application">
+  <label for="fn">First Name</label><input id="fn" required>
+  <label for="ln">Last Name</label><input id="ln" required>
+  <label for="em">Email</label><input id="em" type="email" required>
+  <label for="city">City</label><input id="city" role="combobox" aria-autocomplete="list">
+  <label for="hp">Leave this field blank</label><input id="hp" name="website" autocomplete="off">
+  <label for="deg">Degree</label>
+  <div class="rs"><input id="deg" role="combobox" aria-autocomplete="list"><div class="cover"></div><ul role="listbox" hidden></ul></div>
+  <label for="ear">Are you a U.S. person as defined by export control regulations (EAR)?</label>
+  <div class="rs"><input id="ear" role="combobox" aria-autocomplete="list"><div class="cover"></div><ul role="listbox" hidden></ul></div>
+  <label for="gen">Gender</label>
+  <div class="rs"><input id="gen" role="combobox" aria-autocomplete="list"><div class="cover"></div><ul role="listbox" hidden></ul></div>
+  <button>Apply</button>
+</form>
+<form id="search">
+  <input name="q" aria-label="Search jobs">
+  <button type="submit">Search</button>
+</form>
+<form id="newsletter">
+  <input name="note" aria-label="Note">
+  <button type="submit">Send it</button>
+</form>
+<div id="status"></div>
+<script>
+  const menus = {
+    deg: ["High School Diploma", "Associate's Degree", "Bachelor's Degree", "Master's Degree"],
+    ear: ["I am a U.S. citizen", "I am a lawful permanent resident", "Other"],
+    gen: ["Male", "Female", "Decline to self-identify"],
+  };
+  // Like some ATS widgets, menus stay on screen after they're used.
+  for (const id of Object.keys(menus)) {
+    const input = document.getElementById(id);
+    const list = input.parentElement.querySelector('ul');
+    const render = () => {
+      const q = input.value.toLowerCase();
+      list.innerHTML = '';
+      for (const item of menus[id].filter((m) => m.toLowerCase().includes(q))) {
+        const li = document.createElement('li');
+        li.setAttribute('role', 'option');
+        li.textContent = item;
+        li.addEventListener('mousedown', (e) => {
+          e.preventDefault();
+          if (id === 'gen') {
+            // exactly like react-select: the input empties and the choice shows beside it
+            input.value = '';
+            let shown = input.parentElement.querySelector('.single-value');
+            if (!shown) { shown = document.createElement('div'); shown.className = 'single-value'; input.before(shown); }
+            shown.textContent = item;
+          } else {
+            input.value = item;
+          }
+          list.hidden = true;
+        });
+        list.appendChild(li);
+      }
+      list.hidden = false;
+    };
+    input.addEventListener('focus', render);
+    input.addEventListener('input', render);
+
+  }
+  document.getElementById('application').addEventListener('submit', (e) => {
+    e.preventDefault();
+    document.body.innerHTML = '<h1>Thank you for applying!</h1>';
+  });
+  document.getElementById('search').addEventListener('submit', (e) => {
+    e.preventDefault();
+    document.getElementById('status').textContent = 'searched';
+  });
+  document.getElementById('newsletter').addEventListener('submit', (e) => {
+    e.preventDefault();
+    document.getElementById('status').textContent = 'sent';
+  });
+</script>
+</body>
+</html>

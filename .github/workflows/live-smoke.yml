@@ -1,0 +1,72 @@
+name: live-smoke
+
+# Read-only check of the plugin against real employer career sites, with a fake
+# profile and submitting disabled (see plugins/job-apply/server/scripts/live_smoke.py).
+# Runs on demand, or on a push whose commit message contains [live-smoke].
+# [live-fixtures] in the message (or the commit_fixtures input) also commits the
+# captured pages as regression fixtures.
+
+on:
+  workflow_dispatch:
+    inputs:
+      companies:
+        description: Comma-separated company names (blank for all)
+        required: false
+        default: ""
+      commit_fixtures:
+        description: Commit captured pages to tests/fixtures/live
+        type: boolean
+        default: false
+  push:
+
+jobs:
+  smoke:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      contains(github.event.head_commit.message, '[live-smoke]') ||
+      contains(github.event.head_commit.message, '[live-fixtures]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    permissions:
+      contents: write
+    defaults:
+      run:
+        working-directory: plugins/job-apply/server
+    env:
+      JOB_APPLY_NEVER_SUBMIT: "1"
+      FIXTURES: ${{ inputs.commit_fixtures || contains(github.event.head_commit.message, '[live-fixtures]') }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.13"
+          enable-cache: true
+          cache-dependency-glob: plugins/job-apply/server/uv.lock
+      - run: uv sync --frozen
+      - run: uv run --frozen playwright install --with-deps chromium
+      - name: Run live smoke test
+        env:
+          COMPANIES: ${{ inputs.companies }}
+        run: |
+          args=(--out live-report)
+          if [ -n "$COMPANIES" ]; then args+=(--companies "$COMPANIES"); fi
+          if [ "$FIXTURES" = "true" ]; then args+=(--fixtures); fi
+          uv run --frozen python scripts/live_smoke.py "${args[@]}"
+      - name: Summary
+        if: always()
+        run: cat live-report/report.md >> "$GITHUB_STEP_SUMMARY" || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: live-report
+          path: plugins/job-apply/server/live-report
+          retention-days: 14
+      - name: Commit fixtures
+        if: env.FIXTURES == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add tests/fixtures/live
+          if git diff --cached --quiet; then echo "no fixture changes"; exit 0; fi
+          git commit -m "Add live-site fixtures from run ${GITHUB_RUN_ID}"
+          git push origin "HEAD:${GITHUB_REF_NAME}"

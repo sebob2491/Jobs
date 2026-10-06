@@ -1,0 +1,73 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Apply - Field Service Engineer</title>
+<style>
+  .visually-hidden { position: absolute; opacity: 0; width: 1px; height: 1px; }
+  .upload input[type=file] { display: none; }
+</style>
+</head>
+<body>
+<h1>Field Service Engineer – EUV</h1>
+<h2>Your information</h2>
+<form id="app">
+  <label for="fn">First Name *</label><input id="fn" name="first_name" required>
+  <label for="ln">Last Name *</label><input id="ln" name="last_name" required>
+  <label>Email Address <input type="email" name="email" required></label>
+  <input type="tel" name="phone" placeholder="Phone number">
+  <div><span>City</span><input name="city"></div>
+  <label for="st">State</label>
+  <select id="st" name="state"><option value="">Select...</option><option>Arizona</option><option>California</option><option>Texas</option></select>
+  <label for="ctry">Country</label>
+  <select id="ctry" name="country"><option value="">Select...</option><option>Canada</option><option>United States of America</option></select>
+  <label for="li">LinkedIn Profile</label><input id="li" name="linkedin">
+
+  <fieldset>
+    <legend>Are you legally authorized to work in the United States? *</legend>
+    <label><input type="radio" name="auth" value="y" required> Yes</label>
+    <label><input type="radio" name="auth" value="n"> No</label>
+  </fieldset>
+  <fieldset>
+    <legend>Will you now or in the future require sponsorship for employment visa status (e.g., H-1B)?</legend>
+    <label><input class="visually-hidden" type="radio" name="spon" value="y"> Yes, I will require sponsorship</label>
+    <label><input class="visually-hidden" type="radio" name="spon" value="n"> No, I will not require sponsorship</label>
+  </fieldset>
+  <fieldset>
+    <legend>Which shifts can you work?</legend>
+    <label><input type="checkbox" name="shift" value="d"> Days</label>
+    <label><input type="checkbox" name="shift" value="n"> Nights</label>
+    <label><input type="checkbox" name="shift" value="w"> Weekends</label>
+  </fieldset>
+  <label for="travel">Are you willing to travel up to 75% of the time?</label>
+  <select id="travel"><option value="">Please select</option><option>Yes</option><option>No</option></select>
+  <label for="why">Why do you want to work on EUV systems? *</label>
+  <textarea id="why" required></textarea>
+  <label for="hear">How did you hear about this position?</label>
+  <select id="hear"><option value="">Select one</option><option>Company Website</option><option>LinkedIn</option><option>Indeed</option><option>Referral</option></select>
+
+  <h3>Voluntary Self-Identification</h3>
+  <label for="gender">Gender</label>
+  <select id="gender"><option value="">Select</option><option>Male</option><option>Female</option><option>I decline to self-identify</option></select>
+  <label for="vet">Veteran Status</label>
+  <select id="vet"><option value="">Select</option><option>I am a protected veteran</option><option>I am not a protected veteran</option><option>I don't wish to answer</option></select>
+
+  <div class="upload">
+    <span>Resume/CV *</span>
+    <input type="file" id="resume" name="resume" accept=".pdf,.doc,.docx">
+    <button type="button" onclick="document.getElementById('resume').click()">Attach</button>
+  </div>
+  <label><input type="checkbox" name="consent" id="consent"> I certify that the information provided is true and complete.</label>
+
+  <label for="pw">Create a password</label><input id="pw" type="password">
+
+  <div role="alert" id="err"></div>
+  <button type="button" id="next">Next</button>
+  <button type="submit">Submit Application</button>
+</form>
+<script>
+  document.getElementById('app').addEventListener('submit', (e) => {
+    e.preventDefault();
+    document.body.innerHTML = '<h1>Thank you for applying!</h1><p>Your application has been submitted.</p>';
+  });
+</script>
+</body>
+</html>

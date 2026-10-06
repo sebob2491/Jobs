@@ -1,0 +1,435 @@
+"""JavaScript run inside each frame to describe the form a person is looking at.
+
+Every control gets a stable `data-ja-id` attribute so later fill/click calls can
+find it again. Radio buttons and same-named checkboxes are reported as one
+group field whose members are tagged `<group id>.<index>`.
+"""
+
+EXTRACT_JS = r"""
+(prefix) => {
+  const W = window;
+  W.__jaCounter = W.__jaCounter || 0;
+  const newId = () => prefix + (++W.__jaCounter);
+  const clean = (s) => (s || '').replace(/\s+/g, ' ').trim();
+  const txt = (el) => clean(el ? (el.innerText || el.textContent || '') : '');
+  const byId = (id) => (id ? document.getElementById(id) : null);
+  const visible = (el) => {
+    if (!el || !el.getClientRects().length) return false;
+    const s = getComputedStyle(el);
+    return s.visibility !== 'hidden' && s.display !== 'none';
+  };
+  const labelEl = (el) => {
+    if (el.labels && el.labels.length) return el.labels[0];
+    if (el.id) {
+      const l = document.querySelector('label[for="' + CSS.escape(el.id) + '"]');
+      if (l) return l;
+    }
+    return el.closest('label');
+  };
+  const preceding = (el) => {
+    let node = el;
+    for (let depth = 0; depth < 4 && node; depth++) {
+      let sib = node.previousElementSibling;
+      while (sib) {
+        const t = txt(sib);
+        if (t && t.length < 300) return t;
+        sib = sib.previousElementSibling;
+      }
+      node = node.parentElement;
+    }
+    return '';
+  };
+  const labelledBy = (el) => {
+    const ids = (el.getAttribute('aria-labelledby') || '').split(/\s+/).filter((i) => i && i !== el.id);
+    return clean(ids.map((i) => txt(byId(i))).join(' '));
+  };
+  const labelFor = (el) => {
+    const ff = el.closest('[data-automation-id^="formField"]');
+    if (ff) {
+      const l = ff.querySelector('label, legend');
+      if (l && txt(l)) return txt(l);
+    }
+    const l = labelEl(el);
+    if (l && txt(l)) return txt(l);
+    const lb = labelledBy(el);
+    if (lb) return lb;
+    const al = el.getAttribute('aria-label');
+    if (al) return clean(al);
+    if (el.placeholder) return clean(el.placeholder);
+    if (el.title) return clean(el.title);
+    return preceding(el) || el.name || '';
+  };
+  const groupQuestion = (container, first) => {
+    if (container) {
+      const ff = container.closest('[data-automation-id^="formField"]');
+      if (ff) {
+        const l = ff.querySelector('label, legend');
+        if (l && txt(l) && !l.contains(first)) return txt(l);
+      }
+      const legend = container.querySelector(':scope > legend');
+      if (legend && txt(legend)) return txt(legend);
+      const lb = labelledBy(container);
+      if (lb) return lb;
+      const al = container.getAttribute('aria-label');
+      if (al) return clean(al);
+      return preceding(container);
+    }
+    return preceding(first);
+  };
+  const isRequired = (el, label) => {
+    if (el.required || el.getAttribute('aria-required') === 'true') return true;
+    if (/\*\s*$|\(required\)/i.test(label || '')) return true;
+    const ff = el.closest('[data-automation-id^="formField"]');
+    return !!(ff && ff.querySelector('abbr[title*="equired"], [class*="required" i]'));
+  };
+  const optionLabel = (el) => {
+    const l = labelEl(el);
+    if (l && txt(l)) return txt(l);
+    return clean(el.getAttribute('aria-label') || labelledBy(el) || el.value || txt(el));
+  };
+  // The repeated block a field sits in, e.g. "Work Experience 2" or "Education 1".
+  const HEADING = ':scope > h2, :scope > h3, :scope > h4, :scope > h5, :scope > legend, :scope > [role="heading"], :scope > div:first-child > h3, :scope > div:first-child > h4';
+  const sectionOf = (el) => {
+    let node = el.parentElement;
+    for (let d = 0; node && d < 12; d++, node = node.parentElement) {
+      const role = (node.getAttribute('role') || '').toLowerCase();
+      const container = role === 'group' || role === 'region' || node.tagName === 'FIELDSET' || node.tagName === 'SECTION';
+      let t = container ? labelledBy(node) : '';
+      if (!t) { const h = node.querySelector(HEADING); t = h ? txt(h) : ''; }
+      if (!t || t.length > 80) continue;
+      if (container || /\b\d+\s*$/.test(t)) return t;
+    }
+    return '';
+  };
+  // Text a widget displays beside its input (react-select's chosen value). Only looks inside
+  // the widget itself: stops at the first wrapper that holds other form controls.
+  const shownNear = (el) => {
+    for (let n = el.parentElement, d = 0; n && d < 3; n = n.parentElement, d++) {
+      const others = Array.from(n.querySelectorAll('input, select, textarea, button')).filter((x) => x !== el && x.type !== 'hidden');
+      if (others.length) break;
+      const copy = n.cloneNode(true);
+      copy.querySelectorAll('label, legend, input, [role="listbox"], [role="option"], [aria-live]').forEach((x) => x.remove());
+      const t = clean(copy.textContent);
+      if (t && t.length < 120) return t;
+    }
+    return '';
+  };
+  const tag = (el, id) => { el.setAttribute('data-ja-id', id); return id; };
+  const idOf = (el) => el.getAttribute('data-ja-id') || tag(el, newId());
+
+  const GENERIC_FILE = /^(attach|upload|choose (a )?file|browse|select files?|add (a )?file|drop (your )?files? here|or|enter manually)$/i;
+  const HONEYPOT = /for robots|robots only|if you('| a)?re (a )?human|not (be )?(filled|entered) by humans|honey ?pot|leave this field (blank|empty)/i;
+  const fields = [];
+  const seen = new Set();
+  const groups = new Map();
+  const sel = 'input, textarea, select, button[aria-haspopup="listbox"], [role="combobox"], [role="radio"], [role="checkbox"], [role="switch"]';
+  for (const el of document.querySelectorAll(sel)) {
+    if (seen.has(el)) continue;
+    seen.add(el);
+    const tagName = el.tagName.toLowerCase();
+    const type = (el.getAttribute('type') || '').toLowerCase();
+    const role = (el.getAttribute('role') || '').toLowerCase();
+    if (tagName === 'input' && ['hidden', 'submit', 'button', 'image', 'reset'].includes(type)) continue;
+    // ARIA 1.1 combobox wrappers contain the real input; skip the wrapper.
+    if (role === 'combobox' && tagName !== 'input' && el.querySelector('input')) continue;
+    const isChoice = type === 'radio' || type === 'checkbox' || role === 'radio' || role === 'checkbox' || role === 'switch';
+    const shown = visible(el) || (isChoice && visible(labelEl(el))) || type === 'file';
+    if (!shown) continue;
+    if (el.closest('[aria-hidden="true"]') && type !== 'file') continue;
+
+    if (isChoice) {
+      const isRadio = type === 'radio' || role === 'radio';
+      const container = el.closest('fieldset, [role="radiogroup"], [role="group"]');
+      const key = (isRadio ? 'r:' : 'c:') + (el.name ? 'n:' + el.name : container ? 'g:' + (container.getAttribute('data-ja-gid') || (container.setAttribute('data-ja-gid', newId()), container.getAttribute('data-ja-gid'))) : 'e:' + idOf(el));
+      if (!groups.has(key)) groups.set(key, { isRadio, container, members: [] });
+      groups.get(key).members.push(el);
+      continue;
+    }
+
+    let kind = 'text';
+    let options = null;
+    let value = el.value;
+    if (tagName === 'textarea') kind = 'textarea';
+    else if (tagName === 'select') {
+      kind = 'select';
+      options = Array.from(el.options).map((o) => clean(o.text)).filter(Boolean);
+      value = Array.from(el.selectedOptions).filter((o) => o.value !== '').map((o) => clean(o.text)).join(', ');
+    } else if (type === 'file') { kind = 'file'; value = Array.from(el.files || []).map((f) => f.name).join(', '); }
+    else if (type === 'password') { kind = 'password'; value = el.value ? '(set)' : ''; }
+    else if (tagName === 'button' || (role === 'combobox' && tagName !== 'input')) { kind = 'listbox'; value = txt(el); }
+    else if (role === 'combobox' || el.getAttribute('aria-autocomplete') === 'list') {
+      kind = 'combobox';
+      const container = el.closest('[data-automation-id="multiselectInputContainer"]') || el.parentElement;
+      const pills = container ? Array.from(container.querySelectorAll('[data-automation-id="selectedItem"], [class*="selected" i] [class*="label" i]')).map(txt).filter(Boolean) : [];
+      if (pills.length) value = pills.join(', ');
+      else if (!el.value) value = shownNear(el);  // react-select shows the choice beside an empty input
+    }
+    // A site's own search box (header, nav, search form) is not part of the application.
+    if (el.closest('[role="search"], header, nav, form[action*="search" i], form[id*="search" i], form[class*="search" i]')
+        || type === 'search') continue;
+    let label = labelFor(el);
+    // Upload widgets often label the input with its button ("Attach"); use the field's heading.
+    if (kind === 'file' && GENERIC_FILE.test(label)) {
+      for (let node = el.parentElement, d = 0; node && d < 5; node = node.parentElement, d++) {
+        // the nearest heading *before* the input, so a big container doesn't hand back an earlier field's label
+        const cands = Array.from(node.querySelectorAll('label, legend, [class*="label" i], h3, h4, [id$="-label"]'))
+          .filter((c) => c.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING)
+          .map(txt).filter((t) => t && t.length < 80 && !GENERIC_FILE.test(t));
+        if (cands.length) { label = cands[cands.length - 1]; break; }
+      }
+    }
+    // Bot traps ("for robots only, do not enter if you're human") must never be filled.
+    if (HONEYPOT.test(label) || HONEYPOT.test(el.name || '')) continue;
+    const f = {
+      id: idOf(el), kind, label, required: isRequired(el, label), value: kind === 'password' ? value : clean(String(value || '')),
+    };
+    if (tagName === 'input' && type && type !== 'text') f.input_type = type;
+    const section = sectionOf(el);
+    if (section && section !== label) f.section = section;
+    if (kind === 'text') {
+      const dai = el.getAttribute('data-automation-id') || '';
+      const al = clean(el.getAttribute('aria-label') || '');
+      let sub = '';
+      if (/month/i.test(dai)) sub = 'Month';
+      else if (/year/i.test(dai)) sub = 'Year';
+      else if (/day/i.test(dai) && /date/i.test(dai)) sub = 'Day';
+      else if (al && al !== label && al.length < 40 && !label.includes(al)) sub = al;
+      if (sub) f.sublabel = sub;
+      if (role === 'spinbutton') f.role = 'spinbutton';
+    }
+    if (options) f.options = options;
+    if (el.multiple) f.multiple = true;
+    if (el.disabled || el.getAttribute('aria-disabled') === 'true') f.disabled = true;
+    if (el.readOnly) f.readonly = true;
+    if (el.getAttribute('aria-invalid') === 'true') f.invalid = true;
+    if (el.maxLength > 0 && el.maxLength < 100000) f.max_length = el.maxLength;
+    fields.push(f);
+  }
+
+  for (const g of groups.values()) {
+    const first = g.members[0];
+    const checkedOf = (m) => m.checked === true || m.getAttribute('aria-checked') === 'true';
+    if (!g.isRadio && g.members.length === 1) {
+      const label = optionLabel(first);
+      const single = { id: idOf(first), kind: 'checkbox', label, required: isRequired(first, label), value: checkedOf(first) };
+      const section = sectionOf(first);
+      if (section && section !== label) single.section = section;
+      fields.push(single);
+      continue;
+    }
+    const gid = first.getAttribute('data-ja-gid-member') || newId();
+    const options = [];
+    let value = g.isRadio ? '' : [];
+    g.members.forEach((m, i) => {
+      m.setAttribute('data-ja-id', gid + '.' + i);
+      m.setAttribute('data-ja-gid-member', gid);
+      const ol = optionLabel(m);
+      options.push(ol);
+      if (checkedOf(m)) { if (g.isRadio) value = ol; else value.push(ol); }
+    });
+    const label = groupQuestion(g.container, first);
+    const group = {
+      id: gid, kind: g.isRadio ? 'radio_group' : 'checkbox_group', label, options, value,
+      required: g.members.some((m) => isRequired(m, '')) || isRequired(g.container || first, label),
+    };
+    const section = sectionOf(g.container || first);
+    if (section && section !== label) group.section = section;
+    fields.push(group);
+  }
+
+  const SUBMIT = /\bsubmit\b|send (my )?application|finish (my )?application|complete (my )?application/i;
+  const FINALISH = /^(apply( now)?|send( now)?|finish|complete( application)?|confirm( and send)?)$/i;
+  const ACTION = /apply|next|continue|review|submit|save|add|upload|sign ?in|log ?in|create account|start|back|previous|edit|done|ok\b|accept|agree|use my last|autofill|manually|verify|confirm|remove|delete/i;
+  const actions = [];
+  for (const el of document.querySelectorAll('button, [role="button"], input[type="submit"], input[type="button"], a[href]')) {
+    if (actions.length >= 60) break;
+    if (el.getAttribute('aria-haspopup') === 'listbox' || !visible(el)) continue;
+    const t = clean(txt(el) || el.value || el.getAttribute('aria-label') || '');
+    if (!t || t.length > 60) continue;
+    if (el.tagName === 'A' && !ACTION.test(t)) continue;
+    const full = t + ' ' + (el.getAttribute('aria-label') || '');
+    const a = { id: idOf(el), text: t };
+    const formSubmit = el.type === 'submit' && !!el.form;
+    if (formSubmit) a.form_submit = true;
+    if (SUBMIT.test(full) || (formSubmit && FINALISH.test(t))) a.is_submit = true;
+    if (el.disabled || el.getAttribute('aria-disabled') === 'true') a.disabled = true;
+    actions.push(a);
+  }
+
+  const errors = [];
+  for (const el of document.querySelectorAll('[role="alert"], [aria-live="assertive"], [data-automation-id="errorMessage"], [class*="error" i]:not(input):not(select):not(textarea)')) {
+    const t = txt(el);
+    if (t && t.length < 300 && visible(el) && !errors.includes(t)) errors.push(t);
+    if (errors.length >= 10) break;
+  }
+  const headings = [];
+  for (const el of document.querySelectorAll('h1, h2, h3, [data-automation-id="progressBarActiveStep"], [role="heading"]')) {
+    const t = txt(el);
+    if (t && t.length < 120 && visible(el) && !headings.includes(t)) headings.push(t);
+    if (headings.length >= 8) break;
+  }
+  return { fields, actions, errors, headings };
+}
+"""
+
+# Fallback for custom-styled radios/checkboxes whose input is display:none.
+CLICK_CHOICE_JS = r"""
+(el) => {
+  const l = (el.labels && el.labels[0]) || el.closest('label');
+  (l || el).click();
+  return el.checked === true || el.getAttribute('aria-checked') === 'true';
+}
+"""
+
+VISIBLE_TEXT_JS = r"""
+() => (document.body ? document.body.innerText : '').replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim()
+"""
+
+# Numbered entry headings ("Work Experience 2") and the Add buttons that create more.
+ENTRIES_JS = r"""
+(kindPattern) => {
+  const kind = new RegExp(kindPattern, 'i');
+  const clean = (s) => (s || '').replace(/\s+/g, ' ').trim();
+  const txt = (el) => clean(el ? (el.innerText || el.textContent || '') : '');
+  const visible = (el) => !!el && el.getClientRects().length > 0 && getComputedStyle(el).visibility !== 'hidden';
+  const headings = Array.from(document.querySelectorAll('h1, h2, h3, h4, h5, h6, legend, [role="heading"]'))
+    .filter(visible).map(txt);
+  const entries = headings.filter((t) => kind.test(t) && /\b\d+\s*$/.test(t)).length;
+  const buttons = [];
+  for (const b of document.querySelectorAll('button, [role="button"]')) {
+    if (!visible(b)) continue;
+    const label = clean(txt(b) + ' ' + (b.getAttribute('aria-label') || ''));
+    if (!/^add\b/i.test(txt(b)) && !/^add\b/i.test(b.getAttribute('aria-label') || '')) continue;
+    // What is this button adding? Its own label, else the nearest heading above it.
+    let context = label;
+    if (!kind.test(context)) {
+      for (let node = b.parentElement, d = 0; node && d < 6; node = node.parentElement, d++) {
+        const h = node.querySelector('h1, h2, h3, h4, h5, legend, [role="heading"]');
+        if (h) { context += ' ' + txt(h); break; }  // nearest section only
+      }
+    }
+    if (kind.test(context)) {
+      if (!b.getAttribute('data-ja-id')) {
+        window.__jaCounter = (window.__jaCounter || 0) + 1;
+        b.setAttribute('data-ja-id', 'add' + window.__jaCounter);
+      }
+      buttons.push({ id: b.getAttribute('data-ja-id'), text: txt(b) });
+    }
+  }
+  return { entries, buttons };
+}
+"""
+
+# Facts click() needs about an element before deciding whether it may press it.
+ELEMENT_INFO_JS = r"""
+(el) => ({
+  label: [el.innerText || el.textContent || el.value || '', el.getAttribute('aria-label') || ''].join(' ').replace(/\s+/g, ' ').trim(),
+  text: (el.innerText || el.textContent || el.value || '').replace(/\s+/g, ' ').trim(),
+  formSubmit: el.type === 'submit' && !!el.form,
+})
+"""
+
+# Is something else drawn on top of this element's centre?
+COVERED_JS = r"""
+(el) => {
+  el.scrollIntoView({ block: 'center', inline: 'nearest' });
+  const r = el.getBoundingClientRect();
+  if (!r.width || !r.height) return true;
+  const top = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+  return !(top && (top === el || el.contains(top)));
+}
+"""
+
+# Before opening a dropdown: remember which options are already showing (other menus
+# some sites leave open), so they're never mistaken for this field's choices.
+MARK_OPTIONS_JS = r"""
+() => {
+  const visible = (o) => o.getClientRects().length > 0 && getComputedStyle(o).visibility !== 'hidden';
+  for (const o of document.querySelectorAll('[role="option"]')) {
+    o.removeAttribute('data-ja-before');
+    if (visible(o)) o.setAttribute('data-ja-before', (o.innerText || o.textContent || '').replace(/\s+/g, ' ').trim());
+  }
+}
+"""
+
+# The options of *this* field's menu: its aria-controls/aria-owns listbox, else options that
+# appeared or changed since MARK_OPTIONS_JS, else (when the field says its menu is open) the
+# nearest visible menu. Each is tagged data-ja-opt=<text> so the click hits the right one.
+FIELD_OPTIONS_JS = r"""
+(el) => {
+  const clean = (s) => (s || '').replace(/\s+/g, ' ').trim();
+  const text = (o) => clean(o.innerText || o.textContent);
+  const visible = (o) => o.getClientRects().length > 0 && getComputedStyle(o).visibility !== 'hidden';
+  const all = Array.from(document.querySelectorAll('[role="option"]')).filter(visible);
+  let opts = [];
+  for (let n = el, d = 0; n && n.getAttribute && d < 4 && !opts.length; n = n.parentElement, d++) {
+    const ref = n.getAttribute('aria-controls') || n.getAttribute('aria-owns');
+    const box = ref ? document.getElementById(ref.split(/\s+/)[0]) : null;
+    if (box) opts = Array.from(box.querySelectorAll('[role="option"]')).filter(visible);
+  }
+  if (!opts.length && all.length) {
+    // No ARIA link: a field's menu is the one attached to it, opening just below (or above)
+    // it and overlapping it horizontally. Menus some sites leave open for earlier fields sit
+    // further up the page; options that were already showing before opening rank last.
+    const box = (el.closest('[role="combobox"]') || el.parentElement || el).getBoundingClientRect();
+    const groups = new Map();
+    for (const o of all) {
+      const c = o.closest('[role="listbox"]') || o.parentElement;
+      groups.set(c, (groups.get(c) || []).concat([o]));
+    }
+    let best = [], bestGap = Infinity;
+    for (const [c, os] of groups) {
+      // a menu that was already showing before this field was opened is never its menu
+      if (os.every((o) => o.getAttribute('data-ja-before') === text(o))) continue;
+      const b = c.getBoundingClientRect();
+      const overlap = Math.min(b.right, box.right) - Math.max(b.left, box.left);
+      if (overlap <= 0) continue;
+      const gap = Math.min(Math.abs(b.top - box.bottom), Math.abs(box.top - b.bottom));
+      if (gap < 120 && gap < bestGap) { bestGap = gap; best = os; }
+    }
+    opts = best;
+  }
+  for (const o of document.querySelectorAll('[data-ja-opt]')) o.removeAttribute('data-ja-opt');
+  const out = [];
+  for (const o of opts) {
+    const t = text(o);
+    if (t && !out.includes(t)) { o.setAttribute('data-ja-opt', t); out.push(t); }
+  }
+  return out;
+}
+"""
+
+# What a dropdown field currently displays: input value, button text, or selected chips.
+SHOWN_VALUE_JS = r"""
+(el) => {
+  // react-select clears its input and shows the choice in a sibling, Workday shows chips:
+  // walk up to the nearest wrapper that displays something, ignoring labels and open menus.
+  const clean = (s) => (s || '').replace(/\s+/g, ' ').trim();
+  const parts = [];
+  if (el.value) parts.push(el.value);
+  if (el.tagName !== 'INPUT') parts.push(el.innerText || el.textContent || '');
+  for (let n = el.parentElement, d = 0; n && d < 4; n = n.parentElement, d++) {
+    const others = Array.from(n.querySelectorAll('input, select, textarea, button')).filter((x) => x !== el && x.type !== 'hidden');
+    if (others.length) break;  // that's the surrounding form, not the widget
+    const copy = n.cloneNode(true);
+    copy.querySelectorAll('label, legend, input, [role="listbox"], [role="option"], [aria-live]').forEach((x) => x.remove());
+    const t = clean(copy.textContent);
+    if (t && t.length < 120) { parts.push(t); break; }
+  }
+  return clean(parts.join(' '));
+}
+"""
+
+
+# Resolves once nothing has been added to or removed from the page for `quiet` ms
+# (or after `most` ms): single-page apps draw the next step after the network is idle.
+QUIET_JS = r"""
+([quiet, most]) => new Promise((resolve) => {
+  let timer;
+  const done = () => { observer.disconnect(); clearTimeout(timer); clearTimeout(cap); resolve(true); };
+  const observer = new MutationObserver(() => { clearTimeout(timer); timer = setTimeout(done, quiet); });
+  const cap = setTimeout(done, most);
+  observer.observe(document, { childList: true, subtree: true });
+  timer = setTimeout(done, quiet);
+})
+"""

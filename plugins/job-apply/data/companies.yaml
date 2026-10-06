@@ -1,0 +1,129 @@
+# Semiconductor employers with Arizona (Phoenix / Chandler / Tempe) sites.
+# Used by the find-jobs skill. `ats` is what the careers site was observed to use
+# when this list was compiled (Oct 2026); the tools detect the real ATS from each
+# page at run time, so a stale entry only costs a search, never a wrong form.
+# confidence: how sure we are of careers_url + ats (high = seen on the live site).
+# search: how search_company_jobs queries the site's public job-search API (see
+# server/src/job_apply/search.py). Companies without one are searched in the browser.
+
+companies:
+  - name: ASML
+    careers_url: https://www.asml.com/en/careers/find-your-job
+    ats: unknown            # postings live on asml.com; its old SmartRecruiters board only lists stale roles
+    az_sites: Chandler, Phoenix
+    confidence: medium
+  - name: Lam Research
+    careers_url: https://careers.lamresearch.com/careers
+    ats: eightfold
+    az_sites: Chandler
+    confidence: medium
+    search: {eightfold: {host: careers.lamresearch.com, domain: lamresearch.com}}
+  - name: Applied Materials
+    careers_url: https://amat.wd1.myworkdayjobs.com/External
+    ats: workday
+    az_sites: Chandler, Tempe, Phoenix
+    confidence: high
+    search: {workday: https://amat.wd1.myworkdayjobs.com/External}
+  - name: KLA
+    careers_url: https://kla.wd1.myworkdayjobs.com/Search
+    ats: workday
+    az_sites: Chandler, Phoenix
+    confidence: high
+    search: {workday: https://kla.wd1.myworkdayjobs.com/Search}
+  - name: Intel
+    careers_url: https://intel.wd1.myworkdayjobs.com/External
+    ats: workday
+    az_sites: Chandler (Ocotillo)
+    confidence: high
+    search: {workday: https://intel.wd1.myworkdayjobs.com/External}
+  - name: TSMC Arizona
+    careers_url: https://careers.tsmc.com
+    ats: successfactors
+    az_sites: Phoenix
+    confidence: medium
+  - name: Microchip Technology
+    careers_url: https://microchiphr.wd5.myworkdayjobs.com/External
+    ats: workday
+    az_sites: Chandler, Tempe
+    confidence: high
+    search: {workday: https://microchiphr.wd5.myworkdayjobs.com/External}
+  - name: onsemi
+    careers_url: https://hctz.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1001/jobs
+    ats: oracle_hcm
+    az_sites: Scottsdale (HQ), Phoenix
+    confidence: high
+    search: {oracle: {host: hctz.fa.us2.oraclecloud.com, site: CX_1001}}
+  - name: NXP Semiconductors
+    careers_url: https://nxp.wd3.myworkdayjobs.com/careers
+    ats: workday
+    az_sites: Chandler (fab)
+    confidence: high
+    search: {workday: https://nxp.wd3.myworkdayjobs.com/careers}
+  - name: Amkor Technology
+    careers_url: https://amkor.com/careers/united-states/
+    ats: successfactors
+    az_sites: Peoria, Tempe (HQ)
+    confidence: medium
+  - name: ASM (ASM America)
+    careers_url: https://job-boards.greenhouse.io/asm
+    ats: greenhouse
+    az_sites: Phoenix
+    confidence: high
+    search: {greenhouse: asm}
+  - name: Tokyo Electron (TEL)
+    careers_url: https://tel.wd3.myworkdayjobs.com/TEL-Careers
+    ats: workday
+    az_sites: Chandler
+    confidence: high
+    search: {workday: https://tel.wd3.myworkdayjobs.com/TEL-Careers}
+  - name: Micron
+    careers_url: https://careers.micron.com/careers
+    ats: eightfold
+    az_sites: Tempe
+    confidence: medium
+    search: {eightfold: {host: micron.eightfold.ai, domain: micron.com}}
+  - name: Entegris
+    careers_url: https://entegris.wd1.myworkdayjobs.com/EntegrisCareers
+    ats: workday            # careers.entegris.com redirects here (live check, Oct 2026)
+    az_sites: Chandler
+    confidence: high
+    search: {workday: https://entegris.wd1.myworkdayjobs.com/EntegrisCareers}
+  - name: Edwards Vacuum
+    careers_url: https://www.jobs.atlascopcogroup.com/search/?q=&facetFilters=%7B%22filter1%22%3A%5B%22Edwards%22%5D%2C%22mfield3%22%3A%5B%22United+States%22%5D%7D
+    ats: successfactors     # Atlas Copco group job search, filtered to Edwards in the US
+    az_sites: Chandler
+    confidence: medium
+  - name: Texas Instruments
+    careers_url: https://careers.ti.com/en/sites/CX
+    ats: oracle_hcm
+    az_sites: Phoenix
+    confidence: high
+    search: {oracle: {host: edbz.fa.us2.oraclecloud.com, site: CX}}   # the Oracle pod careers.ti.com calls
+  - name: Hitachi High-Tech America
+    careers_url: https://hitachi.wd1.myworkdayjobs.com/hitachi
+    ats: workday
+    az_sites: Phoenix, Scottsdale
+    confidence: medium
+    search: {workday: https://hitachi.wd1.myworkdayjobs.com/hitachi}
+  - name: Qorvo
+    careers_url: https://careers.qorvo.com
+    ats: successfactors
+    az_sites: Chandler
+    confidence: medium
+  - name: Analog Devices
+    careers_url: https://analogdevices.wd1.myworkdayjobs.com/External
+    ats: workday
+    az_sites: Chandler
+    confidence: high
+    search: {workday: https://analogdevices.wd1.myworkdayjobs.com/External}
+  - name: Infineon
+    careers_url: https://www.infineon.com/careers
+    ats: eightfold
+    az_sites: Chandler
+    confidence: high
+    search: {eightfold: {host: jobs.infineon.com, domain: infineon.com}}
+  - name: Benchmark Electronics
+    careers_url: https://www.bench.com/careers
+    ats: unknown            # postings also appear on DirectEmployers boards (dejobs.org)
+    az_sites: Tempe (HQ), Phoenix
+    confidence: low

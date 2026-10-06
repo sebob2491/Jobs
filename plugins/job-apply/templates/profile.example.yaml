@@ -1,0 +1,123 @@
+# Applicant profile used to fill job applications.
+# Lives at ~/.job-apply/profile.yaml. Run /job-apply:setup to have Claude fill it
+# in from your resume, or edit it by hand. Leave a value empty (~) and the form
+# field is left for you to answer rather than guessed.
+
+personal:
+  first_name: ~
+  middle_name: ~
+  last_name: ~
+  preferred_name: ~
+  pronouns: ~
+  email: ~
+  phone: ~                     # digits as you'd type them, e.g. 480-555-0123
+  phone_country_code: "+1"
+  phone_type: Mobile
+  address:
+    line1: ~
+    line2: ~
+    city: ~
+    state: ~                   # "AZ" or "Arizona" both work
+    postal_code: ~
+    county: ~
+    country: United States
+  linkedin_url: ~
+  github_url: ~
+  website: ~
+
+documents:
+  resume: ~/.job-apply/resume.pdf      # default resume (PDF or DOCX)
+  cover_letter: ~                      # optional default; tailored ones go in the job folder
+
+work_authorization:
+  authorized_to_work: ~       # true/false — legally authorized to work in the US
+  requires_sponsorship: ~     # true/false — now or in the future (H-1B etc.)
+  us_citizen: ~               # true/false
+  us_person: ~                # true/false — US citizen/green card/asylee (ITAR/EAR export-control questions)
+  citizenship: ~              # e.g. "United States"
+  over_18: true
+  security_clearance: ~       # e.g. "None", "Secret (active)"
+
+experience:
+  current_title: ~
+  current_company: ~
+  total_years: ~
+
+education:
+  highest_degree: ~           # e.g. "Bachelor's Degree"
+  school: ~
+  major: ~
+  graduation_year: ~
+  gpa: ~
+
+history:
+  previous_employers: []      # companies you've worked for; answers "have you worked for X before?"
+
+# Jobs, most recent first. Fills Workday's "Work Experience 1, 2, ..." blocks (and
+# similar repeated sections elsewhere). Dates: "2021-03", "03/2021" or "Mar 2021";
+# end: present for your current job.
+work_history: []
+#  - title: Equipment Technician
+#    company: Example Fab
+#    location: Chandler, AZ
+#    start: 2021-03
+#    end: present
+#    description: |
+#      Maintained 300mm etch tools; cut unscheduled downtime 15%.
+
+# Degrees and certificates, most recent first. Fills "Education 1, 2, ..." blocks.
+education_history: []
+#  - school: Arizona State University
+#    degree: Bachelor's Degree
+#    major: Electrical Engineering
+#    gpa: 3.4
+#    start: 2016
+#    end: 2020
+
+preferences:
+  willing_to_relocate: ~      # true/false
+  willing_to_travel: ~        # true/false, or text like "Yes, up to 75%"
+  flexible_schedule: ~        # true/false — shifts, nights, weekends, on-call
+  desired_salary: ~           # e.g. "$85,000" — leave empty to be asked each time
+  earliest_start: ~           # e.g. "2 weeks after offer"
+  how_did_you_hear: LinkedIn
+  locations: []               # e.g. ["Phoenix, AZ", "Chandler, AZ", "Tempe, AZ"]
+  titles: []                  # e.g. ["Field Service Engineer", "Equipment Engineer"]
+
+# Voluntary self-identification. These are optional by law; use your own answer
+# or a decline option such as "Decline to self-identify" / "I don't wish to answer".
+eeo:
+  gender: ~
+  hispanic_latino: ~
+  race: ~
+  veteran: ~
+  disability: ~
+  sexual_orientation: ~
+
+# Reusable answers, checked before the built-in rules. `match` is a
+# case-insensitive regular expression tested against the question text.
+# Use this for questions you get on every application.
+answers:
+  - match: "clean ?room"
+    answer: ~                 # e.g. "Yes"
+  - match: "lift .*(25|35|50) ?(lb|pound)"
+    answer: ~
+  - match: "background check|drug (test|screen)"
+    answer: ~
+  - match: "relatives?|family members?.*(employ|work)"
+    answer: ~
+  - match: "non-?compete|non-?solicit"
+    answer: ~
+
+settings:
+  # review: Claude fills everything and stops at the review page; you say "submit".
+  # auto:   for the ATSs listed in auto_submit_ats, Claude submits once the form is
+  #         complete without asking. LinkedIn and Indeed always need you to click Submit.
+  # dry_run: Claude fills everything and never submits. Good for a first practice run.
+  submit_mode: review
+  auto_submit_ats: []         # e.g. [workday, greenhouse, lever, eightfold, successfactors]
+  browser_channel: chrome     # chrome, msedge, or chromium (Playwright's bundled browser)
+  headless: false
+  # Email (needs the Gmail connector in Claude). Both are off until you turn them on.
+  email_codes: false          # Claude may read sign-in / verification codes that career sites email you
+  email_tracking: false       # Claude may scan your email for replies to your applications
