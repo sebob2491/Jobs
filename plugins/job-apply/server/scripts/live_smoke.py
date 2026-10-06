@@ -226,6 +226,9 @@ PROBES = {
 # its title; Qorvo's search pages are HTML tables, 25 rows a page.) Amkor's job list is on
 # SuccessFactors' older career site.
 HTTP_PROBES = {
+    # Qorvo's Apply now is a dropdown toggle ("Apply now ▾"): the menu it opens
+    "Qorvo": ("https://careers.qorvo.com/job/Chandler-Analog-Design-Intern-AZ-85226/1421977600/",
+              ".btn-group, .dropdown-menu, [class*='apply' i], [id*='apply' i]"),
     "Amkor Technology": ("https://career8.successfactors.com/career?company=amkor&career_ns=job_listing_summary"
                          "&navBarLevel=JOB_SEARCH", "a[href*='career_job_req_id'], .jobTitle, table tr, form"),
 }
