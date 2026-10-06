@@ -71,6 +71,7 @@ FAKE_PROFILE = {
 from job_apply import server  # noqa: E402
 from job_apply.fixtures import convert  # noqa: E402
 from job_apply.postings import fetch_posting  # noqa: E402
+from job_apply.autofill import polarity  # noqa: E402
 from job_apply.search import load_companies, search_companies, sitecore_search  # noqa: E402
 
 QUERY_AZ = "field service | customer service engineer | customer engineer | equipment technician"  # in Arizona
@@ -406,7 +407,9 @@ def fake_answer(q: dict[str, Any]) -> Any:
     if q.get("kind") == "checkbox":
         return "Yes"
     if options:
-        return options[0]
+        # "No" where there is one, as most applicants answer "applied before?", "relatives
+        # here?" or "terminated?"; a "Yes" brings follow-up questions the run then has to answer
+        return next((o for o in options if polarity(o) is False), options[0])
     if re.search(r"year|salary|number|how many|zip|postal|\bgpa\b", q.get("label") or "", re.I):
         return "0"
     return "Test answer"

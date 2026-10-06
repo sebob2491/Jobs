@@ -114,6 +114,18 @@ EXTRACT_JS = r"""
     }
     return '';
   };
+  // Choices shown as pills (Eightfold's location picker shows "Singapore" with a Remove
+  // button beside a read-only input): look in the smallest wrapper that holds no other
+  // input, leaving out any open menu.
+  const pillsNear = (el) => {
+    for (let n = el.parentElement, d = 0; n && d < 6; n = n.parentElement, d++) {
+      if (Array.from(n.querySelectorAll('input, select, textarea')).some((x) => x !== el && x.type !== 'hidden')) break;
+      const pills = Array.from(n.querySelectorAll('[data-automation-id="selectedItem"], [class*="selected" i] [class*="label" i], [class*="pill" i] [class*="label" i]'))
+        .filter((p) => !p.closest('[role="listbox"], [role="option"]')).map(txt).filter(Boolean);
+      if (pills.length) return Array.from(new Set(pills));
+    }
+    return [];
+  };
   const tag = (el, id) => { el.setAttribute('data-ja-id', id); return id; };
   const idOf = (el) => el.getAttribute('data-ja-id') || tag(el, newId());
 
@@ -159,8 +171,9 @@ EXTRACT_JS = r"""
     else if (tagName === 'button' || (role === 'combobox' && tagName !== 'input')) { kind = 'listbox'; value = txt(el); }
     else if (role === 'combobox' || el.getAttribute('aria-autocomplete') === 'list') {
       kind = 'combobox';
-      const container = el.closest('[data-automation-id="multiselectInputContainer"]') || el.parentElement;
-      const pills = container ? Array.from(container.querySelectorAll('[data-automation-id="selectedItem"], [class*="selected" i] [class*="label" i]')).map(txt).filter(Boolean) : [];
+      const workday = el.closest('[data-automation-id="multiselectInputContainer"]');
+      const pills = workday ? Array.from(workday.querySelectorAll('[data-automation-id="selectedItem"], [class*="selected" i] [class*="label" i]')).map(txt).filter(Boolean)
+        : pillsNear(el);
       if (pills.length) value = pills.join(', ');
       else if (!el.value) value = shownNear(el);  // react-select shows the choice beside an empty input
     }
@@ -240,18 +253,26 @@ EXTRACT_JS = r"""
   const SUBMIT = /\bsubmit\b|send (my )?application|finish (my )?application|complete (my )?application/i;
   const FINALISH = /^(apply( now)?|send( now)?|finish|complete( application)?|confirm( and send)?)$/i;
   const ACTION = /apply|next|continue|review|submit|save|add|upload|sign ?in|log ?in|create account|start|back|previous|edit|done|ok\b|accept|agree|use my last|autofill|manually|verify|confirm|remove|delete/i;
+  // Up to 60 of the page's buttons. A dropdown's entries are choices in a field, not
+  // things to do on the page: Eightfold draws them as buttons, and an open list of
+  // referral sources or countries used to fill all 60 places before "Submit
+  // application", so it was never seen. Submit and next-step buttons always make it in.
   const actions = [];
+  const STEP = /^(next|continue|save and continue|review|submit)/i;
   for (const el of document.querySelectorAll('button, [role="button"], input[type="submit"], input[type="button"], a[href]')) {
-    if (actions.length >= 60) break;
     if (el.getAttribute('aria-haspopup') === 'listbox' || !visible(el)) continue;
+    const role = el.getAttribute('role');
+    if (role === 'option' || role === 'menuitem' || el.closest('[role="listbox"], [role="menu"]')) continue;
     const t = clean(txt(el) || el.value || el.getAttribute('aria-label') || '');
     if (!t || t.length > 60) continue;
     if (el.tagName === 'A' && !ACTION.test(t)) continue;
     const full = t + ' ' + (el.getAttribute('aria-label') || '');
-    const a = { id: idOf(el), text: t };
     const formSubmit = el.type === 'submit' && !!el.form;
+    const isSubmit = SUBMIT.test(full) || (formSubmit && FINALISH.test(t));
+    if (actions.length >= 60 && !isSubmit && !formSubmit && !STEP.test(t)) continue;
+    const a = { id: idOf(el), text: t };
     if (formSubmit) a.form_submit = true;
-    if (SUBMIT.test(full) || (formSubmit && FINALISH.test(t))) a.is_submit = true;
+    if (isSubmit) a.is_submit = true;
     if (el.disabled || el.getAttribute('aria-disabled') === 'true') a.disabled = true;
     actions.push(a);
   }
@@ -445,6 +466,14 @@ QUIET_JS = r"""
   observer.observe(document, { childList: true, subtree: true });
   timer = setTimeout(done, quiet);
 })
+"""
+
+
+# A click on the page itself, on no control: closes menus that ignore Escape and focus
+# moving away (Eightfold's), the way clicking beside a menu does.
+OUTSIDE_CLICK_JS = r"""
+() => { for (const t of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click'])
+  document.body.dispatchEvent(new MouseEvent(t, { bubbles: true, cancelable: true, view: window })); }
 """
 
 

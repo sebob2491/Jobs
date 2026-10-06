@@ -9,7 +9,7 @@
 companies:
   - name: ASML
     careers_url: https://www.asml.com/en/careers/find-your-job
-    ats: unknown            # postings live on asml.com; its old SmartRecruiters board only lists stale roles
+    ats: unknown            # postings live on asml.com; Apply opens Workday (asml.wd3, live check Oct 2026)
     az_sites: Chandler, Phoenix
     confidence: medium
     search:

@@ -1,0 +1,91 @@
+{
+  "source_url": "https://jobs.infineon.com/careers/apply?pid=563808971834447",
+  "note": "live pipeline: Infineon",
+  "fields": [
+    {
+      "label": "Preferred location for Engineer / Senior Engineer Product Engineering",
+      "kind": "combobox",
+      "required": true
+    },
+    {
+      "label": "Accepted file format: doc, docx or pdf",
+      "kind": "file",
+      "required": false
+    },
+    {
+      "label": "First Name",
+      "kind": "text",
+      "required": true
+    },
+    {
+      "label": "Last Name",
+      "kind": "text",
+      "required": true
+    },
+    {
+      "label": "Email",
+      "kind": "text",
+      "required": true
+    },
+    {
+      "label": "Country code",
+      "kind": "combobox",
+      "required": true
+    },
+    {
+      "label": "Phone Number",
+      "kind": "text",
+      "required": true
+    },
+    {
+      "label": "Gender",
+      "kind": "combobox",
+      "required": false
+    },
+    {
+      "label": "Country of Residence",
+      "kind": "combobox",
+      "required": true
+    },
+    {
+      "label": "Language of Application",
+      "kind": "combobox",
+      "required": true
+    },
+    {
+      "label": "Preferred Start Date",
+      "kind": "combobox",
+      "required": false
+    },
+    {
+      "label": "Salary Expectation",
+      "kind": "text",
+      "required": false
+    },
+    {
+      "label": "How did you hear about us?",
+      "kind": "combobox",
+      "required": false
+    },
+    {
+      "label": "Identity Type",
+      "kind": "combobox",
+      "required": true
+    },
+    {
+      "label": "Unique Identification Number",
+      "kind": "text",
+      "required": true
+    },
+    {
+      "label": "What is your expected fixed annual salary?",
+      "kind": "text",
+      "required": true
+    },
+    {
+      "label": "Save my answers for future applications",
+      "kind": "checkbox",
+      "required": false
+    }
+  ]
+}

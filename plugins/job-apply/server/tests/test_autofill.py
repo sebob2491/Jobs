@@ -23,6 +23,9 @@ def test_choose_option():
     assert choose_option("Yes, up to 75%", ["Yes", "No"]) == "Yes"
     assert choose_option("Purple", ["Red", "Blue"]) is None
     assert choose_option("No", ["None of the above", "Some"]) is None
+    # picking from a long menu before typing: only the same entry will do
+    assert choose_option("AZ", ["Alabama", "Alaska", "Arizona"], exact_only=True) == "Arizona"
+    assert choose_option("Bachelor's Degree", ["Associate's Degree", "Master's Degree"], exact_only=True) is None
 
 
 def f(label, kind="text", **kw):

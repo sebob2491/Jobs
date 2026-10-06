@@ -121,8 +121,9 @@ def _strip_codes(n: str) -> str:
     return " ".join(t for t in n.split() if not re.fullmatch(r"\+?\d+", t))
 
 
-def choose_option(desired: Any, options: list[str]) -> str | None:
-    """Pick the option that best matches `desired`, or None if nothing does."""
+def choose_option(desired: Any, options: list[str], exact_only: bool = False) -> str | None:
+    """Pick the option that best matches `desired`, or None if nothing does. With
+    exact_only, only the same text (or an alias: AZ ~ Arizona) counts."""
     opts = [o for o in options if o and not _PLACEHOLDER_VALUES.match(o.strip())]
     if not opts or desired is None or desired == "":
         return None
@@ -139,6 +140,8 @@ def choose_option(desired: Any, options: list[str]) -> str | None:
     loose = [o for o, n in normed if n in wanted or _aliases(n) & wanted or _strip_codes(n) in wanted]
     if len(loose) == 1:  # not when only a number told them apart ("Yes - 25%" / "Yes - 75%")
         return loose[0]
+    if exact_only:
+        return None
 
     # 2. declines ("Decline to self-identify", "I don't wish to answer", ...)
     if _DECLINE.search(str(desired)):

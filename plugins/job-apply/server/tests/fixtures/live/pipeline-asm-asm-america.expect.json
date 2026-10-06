@@ -1,0 +1,126 @@
+{
+  "source_url": "https://www.asm.com/open-vacancies/engineer-field-process-customer-support-4889175101?gh_jid=4889175101",
+  "note": "live pipeline: ASM (ASM America)",
+  "fields": [
+    {
+      "label": "First Name*",
+      "kind": "text",
+      "required": true
+    },
+    {
+      "label": "Last Name*",
+      "kind": "text",
+      "required": true
+    },
+    {
+      "label": "Email*",
+      "kind": "text",
+      "required": true
+    },
+    {
+      "label": "Country*",
+      "kind": "combobox",
+      "required": true
+    },
+    {
+      "label": "Phone*",
+      "kind": "text",
+      "required": true
+    },
+    {
+      "label": "Location (City)*",
+      "kind": "combobox",
+      "required": true
+    },
+    {
+      "label": "Resume/CV*",
+      "kind": "file",
+      "required": true
+    },
+    {
+      "label": "Cover Letter",
+      "kind": "file",
+      "required": false
+    },
+    {
+      "label": "School*",
+      "kind": "combobox",
+      "required": true
+    },
+    {
+      "label": "Degree*",
+      "kind": "combobox",
+      "required": true
+    },
+    {
+      "label": "Discipline*",
+      "kind": "combobox",
+      "required": true
+    },
+    {
+      "label": "Start date year*",
+      "kind": "text",
+      "required": true
+    },
+    {
+      "label": "End date year*",
+      "kind": "text",
+      "required": true
+    },
+    {
+      "label": "Are you legally authorized to work in this country?*",
+      "kind": "combobox",
+      "required": true
+    },
+    {
+      "label": "Will you now or in the future require visa sponsorship for employment?*",
+      "kind": "combobox",
+      "required": true
+    },
+    {
+      "label": "Do you have any agreement with your current employer or any other employer that you had in the past 2 years (such as any non-solicit, non-competition, or non-disclosure/confidentiality agreement)?*",
+      "kind": "combobox",
+      "required": true
+    },
+    {
+      "label": "Have you ever been employed with ASM before?*",
+      "kind": "combobox",
+      "required": true
+    },
+    {
+      "label": "How would you describe your gender?",
+      "kind": "combobox",
+      "required": false
+    },
+    {
+      "label": "ASM may work with technologies subject to U.S. export control regulations. The following questions are being asked to comply with the regulation. This is required for all ASM positions, regardless of work location. This information will not be used for any other purpose than export controls. You may read more about this here: U.S. Export Administration Regulation (EAR) 15 C.F.R. \u00a7 730 -774. Please, select which option applies to you.*",
+      "kind": "combobox",
+      "required": true
+    },
+    {
+      "label": "Please select the country where you hold citizenship / permanent residence. If you have dual citizenship / permanent residence, please select the country where you have most recently obtained citizenship or permanent residence.*",
+      "kind": "combobox",
+      "required": true
+    },
+    {
+      "label": "Have you ever relinquished, abandoned, or lost citizenship, nationality or permanent residence in the country identified in the previous question?*",
+      "kind": "combobox",
+      "required": true
+    },
+    {
+      "label": "I opt-in to receive occasional messages and/or emails from ASM with respect to career opportunities and applications I choose to submit. I understand that I can reply \u201cSTOP\u201d /unsubscribe at any time to opt-out of receiving messages. I have read and understand ASM's privacy policy and how it relates to my personal information.",
+      "kind": "combobox",
+      "required": false
+    },
+    {
+      "label": "I hereby authorize ASM to contact, obtain and verify the accuracy of information contained in this application from all previous employers, educational institutions and references. I also release from liability ASM and its representatives for seeking, gathering and using such information to make employment decision and all other persons or organization for providing such information. I understand that ASM reserves the right to and I agree that it may inquire further on any matter bearing on the company\u2019s export compliance obligations. In order to verify the information provided, I understand that ASM will require me to present an original document issued by a government agency confirming my citizenship / residency status as indicated above. I declare that the information provided in the employment application is true and complete. I understand that any misrepresentation and omission made by me on this application will be sufficient cause of cancellation of this application or immediate termination of employment if I am employed, whenever it may be discovered.*",
+      "kind": "combobox",
+      "required": true
+    },
+    {
+      "label": "I have read and agree to the Privacy notice and Terms of use.*",
+      "kind": "combobox",
+      "required": true
+    }
+  ]
+}
