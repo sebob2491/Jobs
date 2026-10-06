@@ -67,6 +67,7 @@ class Run:
     submit: bool = False  # submit once the review page is reached
     once: dict[str, Any] = field(default_factory=dict)  # answers for this application only, by question
     seen_form: bool = False  # got into the application itself (so a page with only Submit is its review page)
+    page_info: dict[str, Any] = field(default_factory=dict)  # what the page looked like when it paused
     page: Any = None  # its browser tab
     updated: float = field(default_factory=time.time)
 
@@ -104,7 +105,22 @@ def pick_next(actions: list[dict[str, Any]], in_form: bool) -> dict[str, Any] | 
 def _fingerprint(page: dict[str, Any]) -> tuple:
     fields = page.get("fields")
     count = fields if isinstance(fields, int) else len(fields or [])
-    return page.get("url"), tuple((page.get("headings") or [])[:4]), count
+    actions = tuple(a if isinstance(a, str) else a.get("text", "") for a in page.get("actions") or [])
+    return page.get("url"), tuple(page.get("headings") or []), count, actions
+
+
+_ERRORISH = re.compile(r"error|required|invalid|please|must|enter |select |missing|problem|fix|can'?t be blank", re.I)
+
+
+def _page_info(data: dict[str, Any]) -> dict[str, Any]:
+    """Enough to see why a job paused, without any of the values typed into the page."""
+    return {
+        "url": data.get("url"), "title": data.get("title"), "headings": (data.get("headings") or [])[:8],
+        "actions": [a.get("text", "") for a in data.get("actions") or []][:30],
+        "fields": [{k: f.get(k) for k in ("label", "kind", "required") if f.get(k) is not None}
+                   for f in data.get("fields") or []][:40],
+        "errors": (data.get("errors") or [])[:5],
+    }
 
 
 class Applier:
@@ -284,9 +300,10 @@ class Applier:
         run.status, run.need, run.reason = "running", "", "Working on it"
         if not await self._open(run):
             return
-        stalls, sign_ins, entries_done = 0, 0, set()
+        stalls, sign_ins, entries_done, waited = 0, 0, set(), False
         for _ in range(MAX_STEPS):
             data, text = await self._look()
+            run.page_info = _page_info(data)
             run.url = data["url"]
             run.page = srv.browser.current_tab or run.page
             kind = classify(data, text)
@@ -335,6 +352,10 @@ class Applier:
             if (kind == "form" or run.seen_form and not entry_here) and await srv.browser.find_submit():
                 return await self._finish(run, data, text)
             action = pick_next(data.get("actions") or [], in_form=kind == "form")
+            if action is None and kind == "page" and not waited:
+                waited = True  # some sites (Eightfold) draw the form well after Apply is clicked
+                if await self._wait_for_fields(10):
+                    continue
             if action is None:
                 return self._pause(run, "stuck", "I couldn't find the button that moves this application on. "
                                    "Take it a step further in the browser, then press Resume.")
@@ -346,14 +367,24 @@ class Applier:
             run.page = srv.browser.current_tab or run.page
             if _fingerprint(clicked) == before:
                 stalls += 1
-                if clicked.get("errors") or stalls >= 2:
-                    errors = "; ".join(clicked.get("errors") or [])[:300]
+                problems = [e for e in clicked.get("errors") or [] if _ERRORISH.search(e)]
+                if problems or stalls >= 2:
+                    errors = "; ".join(problems)[:300]
                     return self._pause(run, "stuck", "The page didn't move on" + (f": {errors}" if errors else ".")
                                        + " Fix it in the browser, then press Resume.")
             else:
                 stalls = 0
         self._pause(run, "stuck", "This application has more steps than I expected. Have a look in the browser, "
                     "then press Resume.")
+
+    async def _wait_for_fields(self, seconds: float) -> bool:
+        deadline = time.monotonic() + seconds
+        while time.monotonic() < deadline:
+            await asyncio.sleep(1)
+            data = await self.srv.inspect_form(include_dropdown_options=False)
+            if data.get("fields"):
+                return True
+        return False
 
     async def _fill_once(self, run: Run, data: dict[str, Any]) -> None:
         """Answers the person gave for this application only (not remembered)."""

@@ -1,0 +1,24 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Field Service Engineer - Example Fab</title>
+<style>.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }</style>
+</head>
+<body>
+<h1>Example Fab Careers</h1>
+<h2>Field Service Engineer</h2>
+<h3>Job Details:</h3>
+<h3>Job Description:</h3>
+<!-- like Workday: a screen-reader announcement that is not an error -->
+<div role="alert" class="sr-only">Field Service Engineer page is loaded</div>
+<button type="button" id="apply">Apply</button>
+<!-- like Workday: Apply opens a dialog on the same page -->
+<div role="dialog" id="start" hidden>
+  <h2>Start Your Application</h2>
+  <button type="button" onclick="location.href = 'resume-parse.html'">Autofill with Resume</button>
+  <button type="button" onclick="location.href = 'signin.html'">Apply Manually</button>
+</div>
+<script>
+  document.getElementById('apply').addEventListener('click', () => { document.getElementById('start').hidden = false; });
+</script>
+</body>
+</html>

@@ -259,6 +259,9 @@ EXTRACT_JS = r"""
   const errors = [];
   for (const el of document.querySelectorAll('[role="alert"], [aria-live="assertive"], [data-automation-id="errorMessage"], [class*="error" i]:not(input):not(select):not(textarea)')) {
     const t = txt(el);
+    const r = el.getBoundingClientRect();
+    if (r.width <= 1 || r.height <= 1) continue;  // screen-reader announcements ("… page is loaded")
+    if (/\bpage is loaded\b|^loading\b/i.test(t)) continue;
     if (t && t.length < 300 && visible(el) && !errors.includes(t)) errors.push(t);
     if (errors.length >= 10) break;
   }

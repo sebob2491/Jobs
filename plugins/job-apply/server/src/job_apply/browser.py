@@ -120,6 +120,7 @@ class BrowserSession:
             await self._pw.stop()
             self._pw = None
             raise BrowserUnavailable(UNAVAILABLE_HELP + " | ".join(errors))
+        self._ctx.set_default_timeout(15000)  # a vanished element fails in 15 s, not 30
         self._ctx.on("page", self._on_new_page)
         self._page = self._ctx.pages[0] if self._ctx.pages else await self._ctx.new_page()
 

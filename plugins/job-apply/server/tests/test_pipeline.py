@@ -136,3 +136,25 @@ def test_saved_password_signs_in_without_the_person(srv, monkeypatch):
     r = run(go())
     assert r.need == "questions", r.reason  # straight past the sign-in to the questions
     assert "signed in with your saved password" in r.log
+
+
+def test_workday_style_dialog_is_followed(srv, monkeypatch):
+    """Workday's Apply opens a dialog on the same page (a fifth heading), and announces
+    "… page is loaded" to screen readers; neither may read as "the page didn't move on"."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    job = srv.add_job(url=fixture_url("site/workday-posting.html"), title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status == "needs_you")
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert r.need == "sign_in", (r.reason, r.log)
+    assert r.log[1:3] == ["clicked “Apply”", "clicked “Apply Manually”"]
+    assert r.page_info["url"].endswith("signin.html") and "Sign In" in r.page_info["actions"]

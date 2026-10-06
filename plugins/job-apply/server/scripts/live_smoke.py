@@ -367,6 +367,7 @@ async def check_pipeline(company: dict[str, Any], out: Path, rec: dict[str, Any]
                 "status": run.status, "need": run.need, "reason": run.reason, "url": run.url, "log": list(run.log),
                 "questions": [{k: q.get(k) for k in ("label", "kind", "required", "options", "error")}
                               for q in run.questions],
+                "page": run.page_info,
             })
             if run.status == "needs_you" and run.need == "questions":
                 for q in run.questions:
