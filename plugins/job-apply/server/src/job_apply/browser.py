@@ -137,12 +137,18 @@ class BrowserSession:
     async def goto(self, url: str) -> dict[str, Any]:
         async with self._lock:
             page = await self.page()
+            failure = ""
             try:
                 await page.goto(url, wait_until="domcontentloaded", timeout=45000)
             except PlaywrightTimeout:
                 pass
+            except PlaywrightError as e:  # DNS failure, blocked host, refused connection...
+                failure = str(e).splitlines()[0][:300]
             await self._settle(page)
-            return await self._summary(page)
+            summary = await self._summary(page)
+            if failure:
+                summary["navigation_error"] = failure
+            return summary
 
     async def _settle(self, page: Page, timeout: int = 6000) -> None:
         try:
