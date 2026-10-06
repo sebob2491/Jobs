@@ -27,8 +27,9 @@ from playwright.async_api import (
 
 from . import config
 from .autofill import choose_option, is_empty_value, norm, polarity
-from .formjs import (CLICK_CHOICE_JS, COVERED_JS, ELEMENT_INFO_JS, ENTRIES_JS, EXTRACT_JS, FIELD_OPTIONS_JS,
-                     MARK_OPTIONS_JS, OPEN_MENU_JS, OUTSIDE_CLICK_JS, QUIET_JS, SHOWN_VALUE_JS, VISIBLE_TEXT_JS)
+from .formjs import (CHALLENGE_JS, CLICK_CHOICE_JS, COVERED_JS, ELEMENT_INFO_JS, ENTRIES_JS, EXTRACT_JS, FIELD_OPTIONS_JS,
+                     MARK_OPTIONS_JS, OPEN_MENU_JS, OUTSIDE_CLICK_JS, QUIET_JS, SHOWN_VALUE_JS, VISIBLE_TEXT_JS,
+                     WORKDAY_CHOSEN_JS, WORKDAY_PROMPT_JS)
 
 SUBMIT_RE = re.compile(r"\bsubmit\b|send (my )?application|finish (my )?application|complete (my )?application", re.I)
 # A form's own submit button with one of these labels is the final step too ("Apply", "Send").
@@ -78,6 +79,15 @@ def launch_attempts(settings: config.Settings) -> list[dict[str, Any]]:
 
 class SubmitBlocked(Exception):
     pass
+
+
+class PickedAGroup(ValueError):
+    """The option picked was a group (Workday's "How Did You Hear About Us?" has "Job Board"
+    holding Indeed, LinkedIn, ...): it opened its own list instead of being chosen."""
+
+    def __init__(self, group: str, entries: list[str]) -> None:
+        super().__init__(f"{group!r} is a group; pick one of its entries: {entries[:30]}")
+        self.entries = entries
 
 
 class TabClosed(Exception):
@@ -346,6 +356,18 @@ class BrowserSession:
             await page.wait_for_timeout(150)
             waited += 150
 
+    async def _new_options(self, page: Page, field_id: str, loc: Locator, stale: list[str], wait_ms: int) -> list[str]:
+        """The menu once it differs from `stale` (the list showing before a search), or
+        whatever it shows after `wait_ms`."""
+        waited, options = 0, stale
+        while waited < wait_ms:
+            await page.wait_for_timeout(150)
+            waited += 150
+            options = await self._field_options(page, field_id, loc, 0)
+            if options and options != stale:
+                break
+        return options
+
     async def _open(self, page: Page, field_id: str, loc: Locator) -> None:
         await self._frame_for(page, field_id).evaluate(MARK_OPTIONS_JS)
         await self._activate(loc)
@@ -478,6 +500,19 @@ class BrowserSession:
             finally:
                 await tab.close()
 
+    async def challenge_showing(self) -> bool:
+        """Is a CAPTCHA challenge showing on the current tab, in any of its frames? It's
+        for the person to solve; this only notices it."""
+        async with self._lock:
+            page = await self.page()
+            for frame in page.frames:
+                try:
+                    if await frame.evaluate(CHALLENGE_JS):
+                        return True
+                except PlaywrightError:  # a frame that went away meanwhile
+                    continue
+            return False
+
     async def frames_html(self, url: str) -> list[str]:
         """The HTML of `url` and of each frame on it, read in a background tab. Some job
         boards (iCIMS) turn away plain requests and list their openings inside a frame."""
@@ -560,11 +595,14 @@ class BrowserSession:
                     fid = str(item.get("id", ""))
                     try:
                         field = await self._field(page, fid)
+                        if item.get("names"):  # a school or an employer: matched by name only
+                            field = {**field, "names": True}
                         outcome = await self._fill_one(page, field, item.get("value"))
                         results.append({"id": fid, "label": field.get("label", ""), "ok": True, "result": outcome})
                     except Exception as e:  # report and keep going; one odd widget shouldn't stop the rest
                         results.append({"id": fid, "ok": False,
-                                        "error": f"{type(e).__name__}: {str(e).splitlines()[0][:300]}"})
+                                        "error": f"{type(e).__name__}: {str(e).splitlines()[0][:300]}",
+                                        **({"options": e.entries} if isinstance(e, PickedAGroup) else {})})
             finally:
                 await self._close_menus(page)  # none left open over the buttons, or over its own field
             return results
@@ -654,15 +692,16 @@ class BrowserSession:
             )
 
     async def _pick_from_listbox(self, page: Page, loc: Locator, field: dict, value: Any) -> str:
+        names = bool(field.get("names"))
         await self._open(page, field["id"], loc)
         options = await self._field_options(page, field["id"], loc, 2500)
-        choice = choose_option(value, options)
+        choice = choose_option(value, options, names=names)
         if choice is None:
             # Long lists are virtualized; typing jumps to the entry.
             await page.keyboard.type(str(value), delay=40)
             await page.wait_for_timeout(400)
             options = await self._field_options(page, field["id"], loc, 1500)
-            choice = choose_option(value, options)
+            choice = choose_option(value, options, names=names)
         if choice is None:
             await page.keyboard.press("Escape")
             raise ValueError(f"{value!r} doesn't match any option: {options[:30]}")
@@ -674,6 +713,17 @@ class BrowserSession:
         """After picking from a menu, the field must show that choice (else the click
         landed in some other menu, or the widget refused it)."""
         await page.wait_for_timeout(150)
+        pills = await loc.evaluate(WORKDAY_CHOSEN_JS)
+        if pills is not None:
+            # A Workday prompt shows what it took as a pill, so a missing one is a miss for sure
+            # (the entry was a group that opened its own list, or the pick hadn't landed yet).
+            for _ in range(8):
+                if any(norm(choice) in norm(p) or choose_option(choice, [p]) for p in pills):
+                    return
+                await page.wait_for_timeout(200)
+                pills = await loc.evaluate(WORKDAY_CHOSEN_JS) or []
+            raise ValueError(f"Picked {choice!r} but the field didn't take it"
+                             + (f" (it shows {', '.join(pills)[:80]!r})" if pills else ""))
         shown = await loc.evaluate(SHOWN_VALUE_JS)
         # Only positive evidence counts: some widgets display the value where we can't see it,
         # and search text left in the box ("C" for "Choose not to disclose") isn't a choice.
@@ -682,25 +732,28 @@ class BrowserSession:
             raise ValueError(f"Picked {choice!r} but the field shows {shown[:80]!r}; set it by hand or with click")
 
     async def _type_and_pick(self, page: Page, loc: Locator, field: dict, value: Any) -> str:
-        text = str(value)
+        text, names = str(value), bool(field.get("names"))
         await self._open(page, field["id"], loc)
         # Pick straight from the menu when the answer is in it: a short list (Yes / No), or
         # the exact entry in a long one. Typing is only for search pickers and long lists,
         # and typed keys can land in another field (Micron's ended up with "ona", the end
         # of "Arizona", in the question below the State).
         options = await self._field_options(page, field["id"], loc, 900)
-        choice = choose_option(text, options, exact_only=len(options) > SHORT_MENU) if options else None
+        choice = choose_option(text, options, exact_only=len(options) > SHORT_MENU, names=names) if options else None
         query = _search_words(text)
         if choice is None:
+            opened = options
             await loc.fill("")
             await loc.press_sequentially(query, delay=30)
             options = await self._field_options(page, field["id"], loc, 2500)
-            if not options and not await loc.evaluate("el => !!el.form"):
-                # Search-style pickers (Workday) list results after Enter. Inside a <form>,
-                # Enter could submit the whole form, so it's never pressed there.
+            # Search-style pickers (Workday) list results after Enter: nothing listed yet, or
+            # (Workday's 2026 prompts) the categories it opened with, untouched by typing.
+            # Inside a <form>, Enter could submit the whole form, so it's never pressed there.
+            unsearched = not options or (options == opened and await loc.evaluate(WORKDAY_PROMPT_JS))
+            if unsearched and not await loc.evaluate("el => !!el.form"):
                 await loc.press("Enter")
-                options = await self._field_options(page, field["id"], loc, 2500)
-            choice = choose_option(text, options)
+                options = await self._new_options(page, field["id"], loc, options, 2500)
+            choice = choose_option(text, options, names=names)
         if choice is None:
             if options:
                 await self._close_menus(page)
@@ -715,7 +768,19 @@ class BrowserSession:
                 raise ValueError(f"nothing in its list matched {query!r}")
             return "typed (no suggestions appeared)"
         await self._click_option(page, field["id"], choice)
-        await self._confirm_choice(page, loc, choice)
+        try:
+            await self._confirm_choice(page, loc, choice)
+        except ValueError:
+            inner = await self._new_options(page, field["id"], loc, options, 1500)
+            entry = choose_option(text, inner, names=names) if inner and inner != options else None
+            if entry is not None:  # the answer is in the group it opened (Onto's "ONTO Website" > "ONTO Website")
+                await self._click_option(page, field["id"], entry)
+                await self._confirm_choice(page, loc, entry)
+                return f"selected {choice} > {entry}"
+            await self._close_menus(page)
+            if inner and inner != options:
+                raise PickedAGroup(choice, inner) from None
+            raise
         return f"selected {choice}"
 
     async def click(self, target: str, allow_submit: bool = False) -> dict[str, Any]:

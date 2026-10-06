@@ -147,7 +147,13 @@ EXTRACT_JS = r"""
     const isChoice = type === 'radio' || type === 'checkbox' || role === 'radio' || role === 'checkbox' || role === 'switch';
     const shown = visible(el) || (isChoice && visible(labelEl(el))) || type === 'file';
     if (!shown) continue;
-    if (el.closest('[aria-hidden="true"]') && type !== 'file') continue;
+    const hiddenBy = el.closest('[aria-hidden="true"]');
+    if (hiddenBy && type !== 'file') {
+      // What an open dialog hides behind it isn't the form, but Paycom's Quick Apply wraps
+      // its own fields in aria-hidden inside its dialog: those are the form.
+      const dialog = el.closest('[aria-modal="true"], [role="dialog"]');
+      if (!dialog || !dialog.contains(hiddenBy)) continue;
+    }
 
     if (isChoice) {
       const isRadio = type === 'radio' || role === 'radio';
@@ -169,12 +175,16 @@ EXTRACT_JS = r"""
     } else if (type === 'file') { kind = 'file'; value = Array.from(el.files || []).map((f) => f.name).join(', '); }
     else if (type === 'password') { kind = 'password'; value = el.value ? '(set)' : ''; }
     else if (tagName === 'button' || (role === 'combobox' && tagName !== 'input')) { kind = 'listbox'; value = txt(el); }
-    else if (role === 'combobox' || el.getAttribute('aria-autocomplete') === 'list') {
+    else if (role === 'combobox' || el.getAttribute('aria-autocomplete') === 'list'
+             || el.getAttribute('data-uxi-widget-type') === 'selectinput') {  // Workday's search prompts (2026)
       kind = 'combobox';
-      const workday = el.closest('[data-automation-id="multiselectInputContainer"]');
+      // its chosen items sit beside the input's own box, in the prompt's outer container
+      const workday = el.closest('[data-automation-id="multiSelectContainer"]')
+        || el.closest('[data-automation-id="multiselectInputContainer"]');
       const pills = workday ? Array.from(workday.querySelectorAll('[data-automation-id="selectedItem"], [class*="selected" i] [class*="label" i]')).map(txt).filter(Boolean)
         : pillsNear(el);
       if (pills.length) value = pills.join(', ');
+      else if (workday) value = '';  // text left in its search box isn't a choice; nor is "0 items selected"
       else if (!el.value) value = shownNear(el);  // react-select shows the choice beside an empty input
     }
     // A site's own search box (header, nav, search form) is not part of the application.
@@ -211,6 +221,9 @@ EXTRACT_JS = r"""
       if (role === 'spinbutton') f.role = 'spinbutton';
     }
     if (options) f.options = options;
+    // a Workday search prompt: what it lists on opening is only its top level
+    if (kind === 'combobox' && (el.getAttribute('data-uxi-widget-type') === 'selectinput'
+        || el.closest('[data-automation-id="multiSelectContainer"], [data-automation-id="multiselectInputContainer"]'))) f.search = true;
     if (el.multiple) f.multiple = true;
     if (el.disabled || el.getAttribute('aria-disabled') === 'true') f.disabled = true;
     if (el.readOnly) f.readonly = true;
@@ -432,6 +445,42 @@ FIELD_OPTIONS_JS = r"""
   return out;
 }
 """
+
+# Is a CAPTCHA challenge (hCaptcha's or reCAPTCHA's pictures, Cloudflare's check) showing
+# in this frame? Their frames sit hidden in many pages until they're needed, and the
+# checkbox ones are small: only a big, visible challenge frame counts.
+CHALLENGE_JS = r"""
+() => Array.from(document.querySelectorAll('iframe')).some((f) => {
+  const src = f.getAttribute('src') || '';
+  const title = f.getAttribute('title') || '';
+  if (!/hcaptcha\.com.*challenge|recaptcha\/(api2|enterprise)\/bframe|challenges\.cloudflare\.com/i.test(src)
+      && !/(hcaptcha|recaptcha|captcha).*challenge|challenge.*(hcaptcha|recaptcha|captcha)/i.test(title)) return false;
+  const r = f.getBoundingClientRect();
+  const s = getComputedStyle(f);
+  return r.width > 150 && r.height > 150 && r.bottom > 0 && r.right > 0 && r.top < innerHeight && r.left < innerWidth
+    && s.visibility !== 'hidden' && s.display !== 'none' && Number(s.opacity || 1) > 0.1;
+})
+"""
+
+
+# Is this input one of Workday's search prompts? Those search when Enter is pressed.
+WORKDAY_PROMPT_JS = r"""
+(el) => el.getAttribute('data-uxi-widget-type') === 'selectinput'
+  || !!el.closest('[data-automation-id="multiSelectContainer"], [data-automation-id="multiselectInputContainer"]')
+"""
+
+
+# What a Workday search prompt has chosen (its pills), or null for any other field.
+WORKDAY_CHOSEN_JS = r"""
+(el) => {
+  const box = el.closest('[data-automation-id="multiSelectContainer"]')
+    || el.closest('[data-automation-id="multiselectInputContainer"]');
+  if (!box) return null;
+  return Array.from(box.querySelectorAll('[data-automation-id="selectedItem"]'))
+    .map((p) => (p.innerText || p.textContent || '').replace(/\s+/g, ' ').trim()).filter(Boolean);
+}
+"""
+
 
 # What a dropdown field currently displays: input value, button text, or selected chips.
 SHOWN_VALUE_JS = r"""

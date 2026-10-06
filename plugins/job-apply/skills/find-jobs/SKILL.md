@@ -26,14 +26,14 @@ The goal is a short, deduplicated list of real openings saved to the tracker
    (`title_match: true`). The others matched on the description, so read their
    titles before discarding them.
    It queries each company's own job search directly: Workday, Greenhouse, Lever,
-   Eightfold, SmartRecruiters, Oracle, ApplicantStack and iCIMS sites, for the companies in
+   Eightfold, SmartRecruiters, Oracle, ApplicantStack, iCIMS and Paycom sites, for the companies in
    `<plugin>/data/companies.yaml` (`companies_file` in `setup_status`). Pass
    `companies=[...]` to limit it to particular employers.
    - Results already in the tracker carry `tracked`. Skip those.
    - Eightfold sites (Lam Research, Micron, Infineon) refuse direct API calls, and
-     ASML's search only answers its own page. For these the tool loads the site's
-     search page in a background browser tab and reads the results from it, which
-     takes a few seconds per company.
+     ASML's, Daifuku's (iCIMS) and Ebara's (Paycom) searches only answer their own
+     pages. For these the tool loads the site's search page in a background browser
+     tab and reads the results from it, which takes a few seconds per company.
    - `errors` lists companies whose search failed. Fall back to the browser for
      those, and for everything in `browser_only` (SuccessFactors sites such as TSMC,
      Amkor and Qorvo): open the careers URL with `open_application(url=...)`, use the

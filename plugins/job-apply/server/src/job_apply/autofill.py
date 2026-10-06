@@ -108,6 +108,15 @@ _DEGREES = [
 ]
 
 
+def _containing(want: str, normed: list[tuple[str, str]]) -> str | None:
+    """The one option that contains `want` as whole words, or that it contains."""
+    contains = [o for o, n in normed if want and re.search(rf"(^| ){re.escape(want)}( |$)", n)]
+    if len(contains) == 1:
+        return contains[0]
+    contained = [o for o, n in normed if n and re.search(rf"(^| ){re.escape(n)}( |$)", want)]
+    return contained[0] if len(contained) == 1 and not contains else None
+
+
 def degree_key(s: str) -> str | None:
     n = norm(s)
     for key, pattern in _DEGREES:
@@ -121,9 +130,11 @@ def _strip_codes(n: str) -> str:
     return " ".join(t for t in n.split() if not re.fullmatch(r"\+?\d+", t))
 
 
-def choose_option(desired: Any, options: list[str], exact_only: bool = False) -> str | None:
+def choose_option(desired: Any, options: list[str], exact_only: bool = False, names: bool = False) -> str | None:
     """Pick the option that best matches `desired`, or None if nothing does. With
-    exact_only, only the same text (or an alias: AZ ~ Arizona) counts."""
+    exact_only, only the same text (or an alias: AZ ~ Arizona) counts. With names (a school
+    or an employer), one name must contain the other: sharing words isn't enough, since
+    "University of Arizona" is not "Arizona State University"."""
     opts = [o for o in options if o and not _PLACEHOLDER_VALUES.match(o.strip())]
     if not opts or desired is None or desired == "":
         return None
@@ -142,6 +153,8 @@ def choose_option(desired: Any, options: list[str], exact_only: bool = False) ->
         return loose[0]
     if exact_only:
         return None
+    if names:
+        return _containing(want, normed)
 
     # 2. declines ("Decline to self-identify", "I don't wish to answer", ...)
     if _DECLINE.search(str(desired)):
@@ -541,7 +554,9 @@ def resolve_field(field: dict, prof: Profile, job: dict | None = None, file_inpu
         if isinstance(ans.value, bool):
             ans.value = "Yes" if ans.value else "No"
         if kind in {"select", "radio_group", "listbox", "checkbox_group", "combobox"} and field.get("options"):
-            chosen = choose_option(ans.value, field["options"])
+            chosen = choose_option(ans.value, field["options"], names=is_name_rule(ans.rule))
+            if chosen is None and field.get("search"):
+                return ans  # a search prompt (Workday's School) lists only some: the fill searches it
             return Answer(chosen, ans.rule) if chosen else None
         return ans
 
@@ -590,12 +605,36 @@ def resolve_field(field: dict, prof: Profile, job: dict | None = None, file_inpu
     options = field.get("options")
     if kind in {"select", "radio_group", "listbox", "checkbox_group", "combobox"} and options:
         chosen = choose_option(ans.value, options)
+        if chosen is None and ans.rule == "how_heard":
+            chosen = _own_website(ans.value, options, job)
+        if chosen is None and field.get("search") and not isinstance(ans.value, (list, dict)):
+            return ans  # a search prompt lists only its top level: the fill searches it for the answer
         if chosen is None:
             return None
         return Answer(chosen, ans.rule)
     if kind == "combobox" and ans.rule in _NEEDS_OPTIONS:
         return None  # an attestation we won't answer without seeing the exact choices
     return ans
+
+
+def is_name_rule(rule: str) -> bool:
+    """Answers that are names (a school, an employer), matched by name only."""
+    return bool(re.search(r"\.(school|company|employer)$", rule or ""))
+
+
+_WEBSITE = re.compile(r"\b(web ?site|careers? (site|page|portal)|company site)\b", re.I)
+
+
+def _own_website(value: Any, options: list[str], job: dict) -> str | None:
+    """"Company Website" (how the person heard of the job) is the employer's own site, which
+    a form may call "ONTO Website" or "Careers Site"."""
+    if not re.search(r"\b(company|employer|career|careers|corporate)\b.*\b(web ?site|site|page)\b", str(value), re.I):
+        return None
+    sites = [o for o in options if _WEBSITE.search(o)]
+    if len(sites) > 1:  # "ONTO Website" over "Other Website": the one naming the employer
+        employer = set(norm(job.get("company") or "").split()) - {"inc", "corp", "corporation", "co", "ltd", "llc"}
+        sites = [o for o in sites if employer & set(norm(o).split())] or sites
+    return sites[0] if len(sites) == 1 else None
 
 
 _EDU_FIELD = re.compile(r"^(school|university|college|institution|degree|discipline|major|field of study)\b")

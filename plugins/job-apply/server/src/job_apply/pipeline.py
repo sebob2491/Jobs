@@ -49,7 +49,8 @@ _CREATE_ACCOUNT = re.compile(r"^(create (?:an |your |a new )?account|sign up|reg
 _SOCIAL = re.compile(r"\b(google|apple|linked ?in|facebook|microsoft|indeed|seek)\b", re.I)
 _STEP = re.compile(r"^(save (?:and|&) continue|continue|next|next step|review|review (?:and|&) submit|"
                    r"review application|proceed|go to next step)$", re.I)
-_ENTRY = re.compile(r"^(apply manually|apply now|apply|easy apply|apply for (?:this|the) (?:job|position|role)|"
+_ENTRY = re.compile(r"^(apply manually|apply now|apply|easy apply|quick apply|"
+                    r"apply for (?:this|the) (?:job|position|role)(?: online)?|"
                     r"apply to (?:this )?job|start (?:your |my )?application|i'?m interested|"
                     r"continue to application|apply on (?:the )?(?:company|employer)(?:'s)? (?:site|website))$", re.I)
 _AVOID = re.compile(r"autofill|with resume|resume parse|sign ?in|log ?in|create account|register|upload|back|"
@@ -90,6 +91,8 @@ class Run:
 
 def classify(data: dict[str, Any], text: str) -> str:
     """bot_check, sign_in, email_code, form or page."""
+    if data.get("challenge"):  # a CAPTCHA's pictures over the page (iCIMS after its email step)
+        return "bot_check"
     fields = [f for f in data.get("fields", []) if not f.get("disabled")]
     if not fields and (_BOT_TITLE.search(data.get("title") or "") or _BOT_TEXT.search(text[:3000])):
         return "bot_check"
@@ -124,7 +127,22 @@ def _fingerprint(page: dict[str, Any]) -> tuple:
     return page.get("url"), tuple(page.get("headings") or []), count, actions
 
 
+_BOT_CHECK_SAYS = ("The site is checking that you're a person (a bot check or CAPTCHA). Solve it in the browser "
+                   "window; the desk carries on by itself after that.")
 _ERRORISH = re.compile(r"error|required|invalid|please|must|enter |select |missing|problem|fix|can'?t be blank", re.I)
+
+
+def _flagged(data: dict[str, Any]) -> list[str]:
+    """What a page marks as wrong: its error messages, Workday's "Error-Email" links in its
+    "Errors Found" box, and fields marked invalid."""
+    out = [e for e in data.get("errors") or [] if _ERRORISH.search(e)]
+    for a in data.get("actions") or []:
+        m = re.match(r"^error\s*-\s*(.+)$", (a if isinstance(a, str) else a.get("text", "")).strip(), re.I)
+        if m:
+            out.append(f"\u201c{clean_label(m.group(1))}\u201d needs fixing")
+    out += [f"\u201c{clean_label(f.get('label') or '')}\u201d is marked invalid"
+            for f in data.get("fields") or [] if isinstance(f, dict) and f.get("invalid") and f.get("label")]
+    return list(dict.fromkeys(out))
 
 
 def _page_info(data: dict[str, Any]) -> dict[str, Any]:
@@ -327,6 +345,7 @@ class Applier:
     async def _look(self) -> tuple[dict[str, Any], str]:
         data = await self.srv.inspect_form(include_dropdown_options=False)
         text = await self.srv.page_text(4000)
+        data["challenge"] = await self.srv.browser.challenge_showing()
         return data, text
 
     async def _open(self, run: Run) -> bool:
@@ -371,8 +390,7 @@ class Applier:
                 kind = "page"  # a posting with a "send me similar jobs" box: go in through Apply
             if kind == "bot_check":
                 await self._bring_forward(run)
-                return self._pause(run, "bot_check", "The site is showing a bot check. Solve it in the browser "
-                                   "window; the desk carries on by itself after that.")
+                return self._pause(run, "bot_check", _BOT_CHECK_SAYS)
             if kind == "sign_in":
                 done = await self._sign_in(run, data, sign_ins)
                 if done in ("email_step", "submitted", "create_account"):
@@ -411,11 +429,12 @@ class Applier:
                 result = await srv.autofill(job_id=run.job_id)
                 if result["filled"]:
                     self._log(run, f"filled {len(result['filled'])} field(s) on {_where(data)}")
-                pending = [{**f, "error": once_failed[question_key(f.get("label") or "")]}
+                pending = [{**f, **once_failed[question_key(f.get("label") or "")]}
                            if question_key(f.get("label") or "") in once_failed else f
                            for f in result["needs_input"] if f.get("required") and f.get("kind") != "file"]
-                pending += [{"id": f["id"], "label": f.get("label") or "", "kind": "text", "required": True,
-                             "error": f.get("error")} for f in result["failed"]]
+                pending += [{"id": f["id"], "label": f.get("label") or "", "kind": "combobox" if f.get("options") else "text",
+                             "required": True, "error": f.get("error"),
+                             **({"options": f["options"]} if f.get("options") else {})} for f in result["failed"]]
                 missing_files = [f for f in result["needs_input"] if f.get("required") and f.get("kind") == "file"]
                 before, page_key = data, (data.get("url"), tuple(data.get("headings") or []))
                 data, text = await self._look()  # filling can add or enable things (State after Country, Submit)
@@ -473,9 +492,14 @@ class Applier:
             if _fingerprint(clicked) == before and await self._new_tab_soon(run, NEW_TAB_WAIT):
                 continue  # asml.com's Apply Now opens Workday in a new tab a moment after the click
             if _fingerprint(clicked) == before:
+                if await srv.browser.challenge_showing():  # the click brought up a CAPTCHA
+                    await self._bring_forward(run)
+                    return self._pause(run, "bot_check", _BOT_CHECK_SAYS)
                 stalls += 1
                 problems = [e for e in clicked.get("errors") or [] if _ERRORISH.search(e)]
                 if problems or stalls >= 2:
+                    # say what's wrong: Workday lists it as links ("Error-Email") and marks fields
+                    problems = _flagged(clicked) or _flagged((await self._look())[0])
                     errors = "; ".join(problems)[:300]
                     return self._pause(run, "stuck", "The page didn't move on" + (f": {errors}" if errors else ".")
                                        + " Fix it in the browser, then press Resume.")
@@ -497,18 +521,20 @@ class Applier:
         return False
 
     async def _wait_for_progress(self, seconds: float) -> bool:
-        """Wait for a form or a button that moves things on to appear."""
+        """Wait for a form, a sign-in, a bot check or a button that moves things on to appear
+        (KLA's Workday draws its "Sign in with email" button a few seconds late)."""
         deadline = time.monotonic() + seconds
         while time.monotonic() < deadline:
             await asyncio.sleep(1)
-            data = await self.srv.inspect_form(include_dropdown_options=False)
-            if data.get("fields") or pick_next(data.get("actions") or [], in_form=False):
+            data, text = await self._look()
+            if classify(data, text) != "page" or pick_next(data.get("actions") or [], in_form=False):
                 return True
         return False
 
-    async def _fill_once(self, run: Run, data: dict[str, Any]) -> dict[str, str]:
+    async def _fill_once(self, run: Run, data: dict[str, Any]) -> dict[str, dict[str, Any]]:
         """Answers the person gave for this application only (not remembered). Returns the
-        ones that didn't go in, by question, with the reason."""
+        ones that didn't go in, by question: the reason, and the entries to choose from
+        when the answer was a group of them."""
         if not run.once:
             return {}
         by_id = {f["id"]: question_key(f.get("label") or "") for f in data.get("fields") or []}
@@ -517,7 +543,9 @@ class Applier:
         if not fills:
             return {}
         out = await self.srv.fill_form(fills)
-        failed = {by_id[r["id"]]: r.get("error") or "didn't take" for r in out.get("results", []) if not r.get("ok")}
+        failed = {by_id[r["id"]]: {"error": r.get("error") or "didn't take",
+                                   **({"options": r["options"]} if r.get("options") else {})}
+                  for r in out.get("results", []) if not r.get("ok")}
         done = len(fills) - len(failed)
         if done:
             self._log(run, f"filled {done} answer(s) you gave for this application")

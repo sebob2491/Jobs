@@ -38,6 +38,8 @@ def test_pick_next_and_classify():
     assert pick_next(acts("Save for Later", "Save and Continue", "Apply"), True)["text"] == "Save and Continue"
     assert pick_next(acts("Submit"), True) is None  # never the final button
     assert pick_next(acts("Search", "Sign In"), False) is None
+    assert pick_next(acts("Log back in!", "Apply for this job online"), False)["text"] == "Apply for this job online"  # iCIMS
+    assert pick_next(acts("Sign In", "Create Account", "Quick Apply", "Accept Cookies"), False)["text"] == "Quick Apply"  # Paycom
     assert classify({"title": "Just a moment...", "fields": [], "actions": []}, "") == "bot_check"
     assert classify({"title": "Jobs", "fields": [], "actions": acts("Sign in with email", "Sign in with Google")}, "") == "sign_in"
     code = [{"id": "1", "kind": "text", "label": "Enter the verification code we sent to your email"}]
@@ -45,6 +47,17 @@ def test_pick_next_and_classify():
     # a reCAPTCHA box on a real form is part of the form, not a page-wide check
     form = [{"id": "1", "kind": "text", "label": "First Name"}]
     assert classify({"title": "Apply", "fields": form, "actions": []}, "I'm not a robot") == "form"
+
+
+def test_what_a_page_flags_is_named():
+    """Onto's Workday lists what's wrong as links ("Error-Email") in an "Errors Found" box and
+    marks the field invalid; a stalled page says so in words."""
+    page = {"errors": ["Please try again."],
+            "actions": ["Errors Found", "Error-Email", {"text": "Error - How Did You Hear About Us?*"}, "Next"],
+            "fields": [{"label": "Email*", "invalid": True}, {"label": "City*"}]}
+    assert pipeline._flagged(page) == ["Please try again.", "“Email” needs fixing",
+                                       "“How Did You Hear About Us” needs fixing", "“Email” is marked invalid"]
+    assert pipeline._flagged({"errors": ["Field Service Engineer page is loaded"], "actions": ["Next"]}) == []
 
 
 def test_one_button_apply_walks_the_whole_flow(srv, monkeypatch):
@@ -125,6 +138,31 @@ def test_bot_check_holds_the_queue_until_the_person_passes_it(srv, monkeypatch):
     run(go())
 
 
+def test_a_captcha_challenge_after_a_click_waits_for_the_person(srv, monkeypatch):
+    """Daifuku's iCIMS answers Next on its email step with hCaptcha's pictures and "Please try
+    again.": the person solves it, then the desk carries on. A challenge frame kept hidden
+    (Paycom's) is no check at all."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    job = srv.add_job(url=fixture_url("site/captcha-step.html"), title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status == "needs_you")
+            first = (r.need, r.reason, list(r.log), r.blocking)
+            await r.page.evaluate("() => window.solved()")
+            await until(lambda: r.need == "sign_in")  # carried on by itself, up to the next step
+            return first
+        finally:
+            await applier.stop()
+
+    need, reason, log, blocking = run(go())
+    assert need == "bot_check" and blocking, (reason, log)
+    assert "clicked “Next”" in log and "CAPTCHA" in reason
+
+
 def test_saved_password_signs_in_without_the_person(srv, monkeypatch):
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
     saved_password(monkeypatch)
@@ -165,6 +203,26 @@ def test_workday_style_dialog_is_followed(srv, monkeypatch):
     assert r.need == "sign_in", (r.reason, r.log)
     assert r.log[1:3] == ["clicked “Apply”", "clicked “Apply Manually”"]
     assert r.page_info["url"].endswith("signin.html") and "Sign In" in r.page_info["actions"]
+
+
+def test_sign_in_buttons_drawn_late_are_a_sign_in(srv, monkeypatch):
+    """KLA's Workday draws "Sign in with email" a few seconds after its sign-in step loads:
+    that's the person's sign-in, not a page without a way on."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    job = srv.add_job(url=fixture_url("site/late-signin.html"), title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status == "needs_you")
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert r.need == "sign_in", (r.reason, r.log)
 
 
 def test_cookie_dialog_is_declined_never_accepted(srv, monkeypatch):

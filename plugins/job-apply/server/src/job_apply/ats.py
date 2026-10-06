@@ -24,6 +24,7 @@ _PATTERNS: list[tuple[str, str]] = [
     ("jobvite", r"jobvite\.com"),
     ("phenom", r"phenompeople\.com"),
     ("applicantstack", r"applicantstack\.com"),
+    ("paycom", r"paycomonline\.(net|com)"),
 ]
 
 ATS_NAMES = {
@@ -44,6 +45,7 @@ ATS_NAMES = {
     "jobvite": "Jobvite",
     "phenom": "Phenom",
     "applicantstack": "ApplicantStack",
+    "paycom": "Paycom",
     "company_site": "Company careers site",
 }
 

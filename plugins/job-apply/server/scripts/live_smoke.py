@@ -72,11 +72,11 @@ from job_apply import server  # noqa: E402
 from job_apply.fixtures import convert  # noqa: E402
 from job_apply.postings import fetch_posting  # noqa: E402
 from job_apply.autofill import polarity  # noqa: E402
-from job_apply.search import load_companies, search_companies, sitecore_search  # noqa: E402
+from job_apply.search import load_companies, sitecore_search  # noqa: E402
 
 QUERY_AZ = "field service | customer service engineer | customer engineer | equipment technician"  # in Arizona
 QUERY_ANY = "engineer | technician"  # fallback so every company still gets a browser check
-APPLY = re.compile(r"^(apply( now| for (this|the) (job|position|role))?|apply to (this )?job|i'?m interested|"
+APPLY = re.compile(r"^(apply( now| for (this|the) (job|position|role)( online)?)?|quick apply|apply to (this )?job|i'?m interested|"
                    r"start (your |my )?application|apply manually)$", re.I)
 NEVER = re.compile(r"autofill|resume|last application|submit|sign ?in|log ?in|create account|register|upload|"
                    r"linked ?in|indeed|seek|google|facebook|next|continue|save", re.I)
@@ -129,7 +129,9 @@ async def check_company(company: dict[str, Any], out: Path, fixtures: bool, rec:
     rec["search_az"] = search_brief(az, company["name"])
     found = az
     if not az["results"]:
-        found = await search_companies(QUERY_ANY, location=None, limit=3, companies=[company])
+        # The tool again, so boards read in the browser (iCIMS, Paycom) get a posting to check too.
+        found = await server.search_company_jobs(QUERY_ANY, companies=[company["name"]], location=None,
+                                                 limit_per_company=3)
         rec["search_any"] = search_brief(found, company["name"])
     if not found["results"]:
         return
@@ -206,12 +208,9 @@ PROBES = {
     "ASML": "https://www.asml.com/en/careers/find-your-job?query=field%20service",
     "Texas Instruments": "https://careers.ti.com/en/sites/CX/jobs?keyword=technician",
     "onsemi": "https://hctz.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1001/jobs?keyword=field+service",
-    # Equipment makers that hire field service engineers around Phoenix, not in companies.yaml
-    # yet: what their job boards are built on, and how a listing looks.
-    "Daifuku America": "https://careers-daifuku-america.icims.com/jobs/search?ss=1&searchKeyword=field+service&in_iframe=1",
-    "SUSS MicroTec": "https://career.suss.com/en/jobs",
-    "Ebara Technologies": "https://www.ebaratech.com/careers/job-openings/",
-    "Thermo Fisher": "https://jobs.thermofisher.com/global/en/search-results?keywords=field%20service%20engineer%20arizona",
+    # Employers not in companies.yaml go here while their job board is worked out: what it's
+    # built on, and how a listing looks. (SUSS MicroTec, Oct 2026: an EQS board of 80
+    # openings, none in Arizona; its US ones are in Williston, VT.)
 }
 # Job links as a page (or one of its frames) draws them, with the text of the card around
 # each and a little of its markup, to write a reader for a new job board from.
@@ -237,6 +236,22 @@ ATS_HOST = re.compile(r"myworkdayjobs|myworkdaysite|myworkday\.com|icims\.com|ap
                       r"adp\.com|bamboohr|jobvite|taleo|workable|recruitee|ashbyhq|breezy|applytojob|dayforce|hrmos|softgarden", re.I)
 
 
+_PLACE_KEY = re.compile(r"locat|city|country|state|region|address|place|site", re.I)
+
+
+def _places(value: Any, key: str = "", depth: int = 0) -> list[str]:
+    """Location-like values in a job record: 'jobOpening.locations[0].city=Corona'."""
+    if depth > 5:
+        return []
+    if isinstance(value, dict):
+        return [p for k, v in value.items() for p in _places(v, f"{key}.{k}" if key else str(k), depth + 1)]
+    if isinstance(value, list):
+        return [p for i, v in enumerate(value[:5]) for p in _places(v, f"{key}[{i}]", depth + 1)]
+    if isinstance(value, (str, int, float)) and str(value) and _PLACE_KEY.search(key):
+        return [f"{key}={str(value)[:60]}"]
+    return []
+
+
 async def probe_page(name: str, url: str) -> dict[str, Any]:
     await server.browser.page()
     ctx = server.browser._ctx  # noqa: SLF001 - test script reaching into the session on purpose
@@ -253,8 +268,8 @@ async def probe_page(name: str, url: str) -> dict[str, Any]:
             seen.append({"method": r.request.method, "status": r.status, "url": r.url[:keep], "type": ctype[:40]})
             if "/discover/v2/" in r.url:  # ASML's job search (Sitecore Discover): keep the request and an answer
                 samples.append(asyncio.ensure_future(_sample(r)))
-            elif "jobPublication/list.json" in r.url or (r.url.endswith("/widgets") and r.request.method == "POST"):
-                samples.append(asyncio.ensure_future(_sample(r, 2500)))  # SUSS's job list; Phenom's (Thermo Fisher)
+            elif "jobPublication/list.json" in r.url or "job-posting-previews/search" in r.url:
+                samples.append(asyncio.ensure_future(_sample(r, 4000)))  # SUSS's job list; Paycom's (Ebara)
 
     async def _sample(r: Any, keep: int = 1500) -> dict[str, Any]:
         try:
@@ -262,6 +277,21 @@ async def probe_page(name: str, url: str) -> dict[str, Any]:
         except Exception as e:  # noqa: BLE001
             body = f"unreadable: {e}"
         out: dict[str, Any] = {"url": r.url[:600], "request": (r.request.post_data or "")[:3000], "response": body[:keep]}
+        try:  # a list of openings (SUSS; Paycom's under a key): the fields one has, and a whole one
+            items = json.loads(body)
+            if isinstance(items, dict):
+                out["keys"] = sorted(items)[:20]
+                items = next((v for v in items.values() if isinstance(v, list) and v and isinstance(v[0], dict)), items)
+            if isinstance(items, list) and items and isinstance(items[0], dict):
+                out["count"] = len(items)
+                out["item_keys"] = sorted(items[0])
+                out["first_item"] = json.dumps({k: v for k, v in items[0].items()
+                                                if not isinstance(v, str) or len(v) < 300}, default=str)[:3000]
+                # where each one is: any location-like values, wherever they sit in the item
+                out["places"] = [{"title": str(i.get("position") or i.get("jobTitle") or i.get("title") or "")[:80],
+                                  "lang": i.get("language"), "where": _places(i)[:6]} for i in items[:100]]
+        except Exception:  # noqa: BLE001
+            pass
         try:  # the answer's shape: totals, filter names and values, where the openings are
             out["widgets"] = [{
                 "keys": sorted(k for k in w if k not in ("content", "facet")),
@@ -293,6 +323,13 @@ async def probe_page(name: str, url: str) -> dict[str, Any]:
             except Exception:  # noqa: BLE001 - a frame that went away
                 continue
         rec["job_links"] = job_links[:12]
+        # Phenom career sites (Thermo Fisher) draw their search results from data in the page
+        rec["phenom"] = await tab.evaluate("""() => {
+          const d = window.phApp && window.phApp.ddo;
+          if (!d) return null;
+          const s = d.eagerLoadRefineSearch || d.refineSearch;
+          return {keys: Object.keys(d).slice(0, 30), search: s ? JSON.stringify(s).slice(0, 3000) : null};
+        }""")
         hrefs = await tab.evaluate("() => [...document.querySelectorAll('a[href], iframe[src]')].map(e => e.href || e.src)")
         rec["ats_links"] = sorted({h for h in hrefs if ATS_HOST.search(h)})[:10]
         rec["frames"] = [f.url[:200] for f in tab.frames if f is not tab.main_frame][:5]
@@ -451,7 +488,8 @@ async def check_pipeline(company: dict[str, Any], out: Path, rec: dict[str, Any]
 
     found = await server.search_company_jobs(QUERY_AZ, companies=[company["name"]], location="AZ", limit_per_company=5)
     if not found["results"]:
-        found = await search_companies(QUERY_ANY, location=None, limit=3, companies=[company])
+        found = await server.search_company_jobs(QUERY_ANY, companies=[company["name"]], location=None,
+                                                 limit_per_company=3)
     if not found["results"]:
         rec["note"] = "no postings found"
         return

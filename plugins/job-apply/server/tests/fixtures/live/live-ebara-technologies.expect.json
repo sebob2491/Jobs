@@ -1,0 +1,41 @@
+{
+  "source_url": "https://www.paycomonline.net/v4/ats/web.php/portal/95CACB007211B4A999FBE2ED52E7762E/jobs/396485",
+  "note": "live smoke: Ebara Technologies",
+  "fields": [
+    {
+      "label": "Legal First Name *",
+      "kind": "text",
+      "required": true
+    },
+    {
+      "label": "Legal Last Name *",
+      "kind": "text",
+      "required": true
+    },
+    {
+      "label": "Email Address *",
+      "kind": "text",
+      "required": true
+    },
+    {
+      "label": "Confirm Email *",
+      "kind": "text",
+      "required": true
+    },
+    {
+      "label": "Primary Phone Number",
+      "kind": "text",
+      "required": true
+    },
+    {
+      "label": "Upload a File * Select here to upload.",
+      "kind": "file",
+      "required": false
+    },
+    {
+      "label": "Opt in for texts to this number",
+      "kind": "radio_group",
+      "required": false
+    }
+  ]
+}

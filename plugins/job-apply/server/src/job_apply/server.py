@@ -12,12 +12,12 @@ from mcp.server.mcpserver import Image, MCPServer
 
 from . import config
 from .ats import ATS_NAMES, detect_ats, greenhouse_form_url
-from .autofill import is_empty_value, plan_autofill, profile_entries
+from .autofill import is_empty_value, is_name_rule, plan_autofill, profile_entries
 from .browser import BrowserSession, BrowserUnavailable, SubmitBlocked
 from .postings import FetchError, Posting, fetch_posting, finalize, parse_html
 from .render import KINDS, render_pdf, to_html
-from .search import (alternatives, eightfold_page_url, icims_search, keep_listings, load_companies, location_terms,
-                     parse_eightfold, search_companies, sitecore_search)
+from .search import (CLIENT_SIDE, alternatives, eightfold_page_url, icims_search, keep_listings, load_companies,
+                     location_terms, parse_eightfold, paycom_search, search_companies, sitecore_search)
 from .tracker import Tracker
 
 INSTRUCTIONS = """\
@@ -164,7 +164,8 @@ async def search_company_jobs(
 ) -> dict[str, Any]:
     """Search employers' own careers sites for openings through their applicant tracking
     system's public search: Workday, Greenhouse, Lever, Eightfold, SmartRecruiters, Oracle,
-    ApplicantStack. ASML's site and iCIMS portals are read in a background browser tab.
+    ApplicantStack. ASML's site, iCIMS portals and Paycom boards are read in a background
+    browser tab.
 
     query: keywords; separate alternatives with "|", e.g. "field service | equipment engineer".
     companies: names from the plugin's companies list (default: all of them).
@@ -186,21 +187,25 @@ async def search_company_jobs(
         found = parse_eightfold(data, cfg["host"])
         out["results"].extend(keep_listings(name, found, location_terms(location), limit_per_company, query))
         del out["errors"][name]
-    # Sites whose search only answers in the browser (ASML, iCIMS): one background tab per wording.
+    # Sites whose search only answers in the browser (ASML, iCIMS, Paycom): one background tab
+    # per wording, or one for the whole board when titles are matched here.
     for item in out.pop("needs_browser", []):
         name, cfg = item["company"], item["config"]
         found, failures = [], []
-        for wording in alternatives(query):
+        wordings = [query] if item["kind"] in CLIENT_SIDE else alternatives(query)
+        for wording in wordings:
             try:
                 if item["kind"] == "icims":
                     await icims_search(browser.frames_html, cfg, wording, found)
+                elif item["kind"] == "paycom":
+                    await paycom_search(browser.capture_json, cfg, wording, found)
                 else:
                     await sitecore_search(browser.capture_json, cfg, wording, found)
             except Exception as e:  # one wording failing keeps the others' results
                 failures.append(f"{type(e).__name__}: {str(e).splitlines()[0][:150] if str(e) else ''}")
         if failures:
             out["errors"][name] = f"browser search: {failures[0]}" + (
-                f" ({len(failures)} of {len(alternatives(query))} searches failed)" if found else "")
+                f" ({len(failures)} of {len(wordings)} searches failed)" if found else "")
         out["results"].extend(keep_listings(name, found, location_terms(location), limit_per_company, query))
     t = tracker()
     for r in out["results"]:
@@ -364,7 +369,8 @@ async def autofill(job_id: int | None = None, overwrite: bool = False) -> dict[s
     job = _job(job_id) if (job_id is not None or browser.current_job_id is not None) else {}
     data = await browser.inspect(include_dropdown_options=True)
     plan = plan_autofill(data["fields"], config.Profile.load(), job, overwrite=overwrite)
-    results = await browser.fill([{"id": f["id"], "value": f["value"]} for f in plan["to_fill"]]) if plan["to_fill"] else []
+    results = await browser.fill([{"id": f["id"], "value": f["value"], "names": is_name_rule(f.get("rule") or "")}
+                                  for f in plan["to_fill"]]) if plan["to_fill"] else []
     by_id = {f["id"]: f for f in plan["to_fill"]}
     filled, failed = [], []
     for r in results:
@@ -373,7 +379,7 @@ async def autofill(job_id: int | None = None, overwrite: bool = False) -> dict[s
         if r["ok"]:
             filled.append(entry)
         else:
-            failed.append({**entry, "error": r["error"]})
+            failed.append({**entry, "error": r["error"], **({"options": r["options"]} if r.get("options") else {})})
     after = await browser.inspect(include_dropdown_options=False)
     snapshot = await _auto_snapshot("autofill failures", failed) if failed else None
     return {
