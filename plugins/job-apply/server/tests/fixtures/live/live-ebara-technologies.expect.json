@@ -1,0 +1,11 @@
+{
+  "source_url": "https://www.paycomonline.net/v4/ats/web.php/portal/95CACB007211B4A999FBE2ED52E7762E/jobs/396485",
+  "note": "live smoke: Ebara Technologies",
+  "fields": [
+    {
+      "label": "Upload a File * Select here to upload.",
+      "kind": "file",
+      "required": false
+    }
+  ]
+}
