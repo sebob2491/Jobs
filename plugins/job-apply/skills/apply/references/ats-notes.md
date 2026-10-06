@@ -36,9 +36,10 @@ the page URL. Use this file for the parts of each flow that `autofill` can't do.
   Disclosures → Self Identify → Review. The Next button reads **Save and Continue**.
   The last button reads **Submit**, which goes through `submit_application`.
 - Dropdowns are `listbox` fields, and `inspect_form` opens them to read their options.
-  "How Did You Hear About Us?", School and Field of Study are search pickers
-  (`combobox`): the value is typed and Enter pressed. If the result is a category
-  rather than a final option, `click` the option text.
+  "How Did You Hear About Us?", Country Phone Code, School and Field of Study are search
+  pickers (`combobox`): the value is typed and Enter pressed. If the result is a category
+  rather than a final option, `click` the option text. Text typed into one without
+  picking from its list disappears when it loses focus, so only a picked entry counts.
 - On **My Experience**, call `add_entries("work")` and `add_entries("education")`.
   They click **Add** / **Add Another** until there is one block per entry in the
   profile's `work_history` and `education_history`. Then call `autofill`, which
@@ -125,6 +126,7 @@ the page URL. Use this file for the parts of each flow that `autofill` can't do.
 - The portal draws its pages inside a frame, so field ids start with `f1-`. Its job
   search lists each opening with its location (`US-AZ-Chandler`) and posting date. It
   turns away plain requests (HTTP 405), so the search runs in a background browser tab.
+- A posting's button reads **Apply for this job online**.
 
 ## Paycom (`paycomonline.net`): Ebara Technologies
 
@@ -132,7 +134,9 @@ the page URL. Use this file for the parts of each flow that `autofill` can't do.
   page, so the search runs in a background browser tab. Titles end in the requisition
   number, as in "Field Service Technician II (33195)"; the search drops it from the title.
 - The career page has **Sign In** and **Create Account** links: Paycom keeps an applicant
-  account per employer.
+  account per employer. A posting's button is **Quick Apply**.
+- Its cookie banner offers only **Accept Cookies**, so leave it be unless the user says
+  otherwise.
 
 ## ASML (`asml.com/en/careers`)
 

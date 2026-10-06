@@ -1,0 +1,80 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Apply - Example Fab</title></head>
+<body>
+<!-- Workday's search prompts as Onto Innovation's My Information page drew them (Oct 2026):
+     a search input with no combobox role, the choice as a pill in a list beside it. -->
+<h2>My Information</h2>
+<div data-automation-id="formField-source">
+  <label for="source--source"><span>How Did You Hear About Us?<abbr aria-hidden="true">*</abbr></span></label>
+  <div data-automation-id="multiSelectContainer" data-uxi-widget-type="multiselect" id="ms-source">
+    <div data-automation-id="multiselectInputContainer">
+      <div>
+        <input id="source--source" data-uxi-widget-type="selectinput" aria-required="true" autocomplete="off" placeholder="Search">
+        <div data-automation-id="promptSelectionLabel"></div>
+        <div aria-hidden="true" data-automation-id="promptAriaInstruction">0 items selected</div>
+      </div>
+    </div>
+    <div class="chosen"></div>
+    <span aria-hidden="true" data-automation-id="promptIcon">&#9776;</span>
+  </div>
+</div>
+<div data-automation-id="formField-countryPhoneCode">
+  <label for="phoneNumber--countryPhoneCode"><span>Country Phone Code<abbr aria-hidden="true">*</abbr></span></label>
+  <div data-automation-id="multiSelectContainer" data-uxi-widget-type="multiselect">
+    <div data-automation-id="multiselectInputContainer">
+      <div>
+        <input id="phoneNumber--countryPhoneCode" data-uxi-widget-type="selectinput" aria-required="true" placeholder="Search">
+        <div data-automation-id="promptSelectionLabel"></div>
+        <div aria-hidden="true" data-automation-id="promptAriaInstruction">1 item selected, United States of America (+1)</div>
+      </div>
+    </div>
+    <div><ul aria-label="items selected" data-automation-id="selectedItemList" role="listbox">
+      <li data-automation-id="menuItem" role="presentation"><div aria-label="United States of America (+1), press delete to clear value." data-automation-id="selectedItem" role="option">
+        <p data-automation-id="promptOption" data-automation-label="United States of America (+1)">United States of America (+1)</p></div></li>
+    </ul></div>
+  </div>
+</div>
+<div data-automation-id="formField-phoneNumber">
+  <label for="phone">Phone Number<abbr aria-hidden="true">*</abbr></label>
+  <input id="phone" type="text" aria-required="true">
+</div>
+<div data-automation-id="activeListContainer" role="listbox" id="popup" hidden></div>
+<button type="button" data-automation-id="pageFooterNextButton">Next</button>
+<script>
+  // Opening the prompt lists its categories; typing and Enter search every entry.
+  const sources = ['Company Website', 'Employee Referral', 'Indeed', 'LinkedIn'];
+  const input = document.getElementById('source--source');
+  const popup = document.getElementById('popup');
+  const chosen = document.querySelector('#ms-source .chosen');
+  function show(items) {
+    popup.innerHTML = '';
+    for (const it of items) {
+      const opt = document.createElement('div');
+      opt.setAttribute('role', 'option');
+      opt.innerHTML = '<div data-automation-id="promptOption" data-automation-label="' + it + '">' + it + '</div>';
+      opt.addEventListener('click', () => pick(it));
+      popup.appendChild(opt);
+    }
+    popup.hidden = false;
+    document.getElementById('ms-source').after(popup);
+  }
+  function pick(it) {
+    chosen.innerHTML = '<ul data-automation-id="selectedItemList" role="listbox"><li role="presentation">'
+      + '<div data-automation-id="selectedItem" role="option" aria-label="' + it + ', press delete to clear value.">'
+      + '<p data-automation-id="promptOption">' + it + '</p></div></li></ul>';
+    document.querySelector('#ms-source [data-automation-id="promptAriaInstruction"]').textContent = '1 item selected, ' + it;
+    input.value = '';
+    popup.hidden = true;
+  }
+  input.addEventListener('click', () => setTimeout(() => show(['Advertisement', 'Job Board', 'Social Media', 'Company Website']), 150));
+  input.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter') return;
+    const q = input.value.toLowerCase();
+    setTimeout(() => show(sources.filter((s) => s.toLowerCase().includes(q))), 150);
+  });
+  // typed text that isn't picked is cleared when the prompt loses focus, as on Workday
+  input.addEventListener('blur', () => setTimeout(() => { if (!chosen.textContent.trim()) input.value = ''; }, 100));
+</script>
+</body>
+</html>

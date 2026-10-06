@@ -38,6 +38,8 @@ def test_pick_next_and_classify():
     assert pick_next(acts("Save for Later", "Save and Continue", "Apply"), True)["text"] == "Save and Continue"
     assert pick_next(acts("Submit"), True) is None  # never the final button
     assert pick_next(acts("Search", "Sign In"), False) is None
+    assert pick_next(acts("Log back in!", "Apply for this job online"), False)["text"] == "Apply for this job online"  # iCIMS
+    assert pick_next(acts("Sign In", "Create Account", "Quick Apply", "Accept Cookies"), False)["text"] == "Quick Apply"  # Paycom
     assert classify({"title": "Just a moment...", "fields": [], "actions": []}, "") == "bot_check"
     assert classify({"title": "Jobs", "fields": [], "actions": acts("Sign in with email", "Sign in with Google")}, "") == "sign_in"
     code = [{"id": "1", "kind": "text", "label": "Enter the verification code we sent to your email"}]
@@ -165,6 +167,26 @@ def test_workday_style_dialog_is_followed(srv, monkeypatch):
     assert r.need == "sign_in", (r.reason, r.log)
     assert r.log[1:3] == ["clicked “Apply”", "clicked “Apply Manually”"]
     assert r.page_info["url"].endswith("signin.html") and "Sign In" in r.page_info["actions"]
+
+
+def test_sign_in_buttons_drawn_late_are_a_sign_in(srv, monkeypatch):
+    """KLA's Workday draws "Sign in with email" a few seconds after its sign-in step loads:
+    that's the person's sign-in, not a page without a way on."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    job = srv.add_job(url=fixture_url("site/late-signin.html"), title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status == "needs_you")
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert r.need == "sign_in", (r.reason, r.log)
 
 
 def test_cookie_dialog_is_declined_never_accepted(srv, monkeypatch):

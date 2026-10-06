@@ -49,7 +49,8 @@ _CREATE_ACCOUNT = re.compile(r"^(create (?:an |your |a new )?account|sign up|reg
 _SOCIAL = re.compile(r"\b(google|apple|linked ?in|facebook|microsoft|indeed|seek)\b", re.I)
 _STEP = re.compile(r"^(save (?:and|&) continue|continue|next|next step|review|review (?:and|&) submit|"
                    r"review application|proceed|go to next step)$", re.I)
-_ENTRY = re.compile(r"^(apply manually|apply now|apply|easy apply|apply for (?:this|the) (?:job|position|role)|"
+_ENTRY = re.compile(r"^(apply manually|apply now|apply|easy apply|quick apply|"
+                    r"apply for (?:this|the) (?:job|position|role)(?: online)?|"
                     r"apply to (?:this )?job|start (?:your |my )?application|i'?m interested|"
                     r"continue to application|apply on (?:the )?(?:company|employer)(?:'s)? (?:site|website))$", re.I)
 _AVOID = re.compile(r"autofill|with resume|resume parse|sign ?in|log ?in|create account|register|upload|back|"
@@ -497,12 +498,13 @@ class Applier:
         return False
 
     async def _wait_for_progress(self, seconds: float) -> bool:
-        """Wait for a form or a button that moves things on to appear."""
+        """Wait for a form, a sign-in, a bot check or a button that moves things on to appear
+        (KLA's Workday draws its "Sign in with email" button a few seconds late)."""
         deadline = time.monotonic() + seconds
         while time.monotonic() < deadline:
             await asyncio.sleep(1)
-            data = await self.srv.inspect_form(include_dropdown_options=False)
-            if data.get("fields") or pick_next(data.get("actions") or [], in_form=False):
+            data, text = await self._look()
+            if classify(data, text) != "page" or pick_next(data.get("actions") or [], in_form=False):
                 return True
         return False
 

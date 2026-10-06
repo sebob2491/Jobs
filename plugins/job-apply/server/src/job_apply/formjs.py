@@ -169,12 +169,16 @@ EXTRACT_JS = r"""
     } else if (type === 'file') { kind = 'file'; value = Array.from(el.files || []).map((f) => f.name).join(', '); }
     else if (type === 'password') { kind = 'password'; value = el.value ? '(set)' : ''; }
     else if (tagName === 'button' || (role === 'combobox' && tagName !== 'input')) { kind = 'listbox'; value = txt(el); }
-    else if (role === 'combobox' || el.getAttribute('aria-autocomplete') === 'list') {
+    else if (role === 'combobox' || el.getAttribute('aria-autocomplete') === 'list'
+             || el.getAttribute('data-uxi-widget-type') === 'selectinput') {  // Workday's search prompts (2026)
       kind = 'combobox';
-      const workday = el.closest('[data-automation-id="multiselectInputContainer"]');
+      // its chosen items sit beside the input's own box, in the prompt's outer container
+      const workday = el.closest('[data-automation-id="multiSelectContainer"]')
+        || el.closest('[data-automation-id="multiselectInputContainer"]');
       const pills = workday ? Array.from(workday.querySelectorAll('[data-automation-id="selectedItem"], [class*="selected" i] [class*="label" i]')).map(txt).filter(Boolean)
         : pillsNear(el);
       if (pills.length) value = pills.join(', ');
+      else if (workday) value = '';  // text left in its search box isn't a choice; nor is "0 items selected"
       else if (!el.value) value = shownNear(el);  // react-select shows the choice beside an empty input
     }
     // A site's own search box (header, nav, search form) is not part of the application.
@@ -432,6 +436,13 @@ FIELD_OPTIONS_JS = r"""
   return out;
 }
 """
+
+# Is this input one of Workday's search prompts? Those search when Enter is pressed.
+WORKDAY_PROMPT_JS = r"""
+(el) => el.getAttribute('data-uxi-widget-type') === 'selectinput'
+  || !!el.closest('[data-automation-id="multiSelectContainer"], [data-automation-id="multiselectInputContainer"]')
+"""
+
 
 # What a dropdown field currently displays: input value, button text, or selected chips.
 SHOWN_VALUE_JS = r"""

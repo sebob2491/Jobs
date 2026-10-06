@@ -76,7 +76,7 @@ from job_apply.search import load_companies, sitecore_search  # noqa: E402
 
 QUERY_AZ = "field service | customer service engineer | customer engineer | equipment technician"  # in Arizona
 QUERY_ANY = "engineer | technician"  # fallback so every company still gets a browser check
-APPLY = re.compile(r"^(apply( now| for (this|the) (job|position|role))?|apply to (this )?job|i'?m interested|"
+APPLY = re.compile(r"^(apply( now| for (this|the) (job|position|role)( online)?)?|quick apply|apply to (this )?job|i'?m interested|"
                    r"start (your |my )?application|apply manually)$", re.I)
 NEVER = re.compile(r"autofill|resume|last application|submit|sign ?in|log ?in|create account|register|upload|"
                    r"linked ?in|indeed|seek|google|facebook|next|continue|save", re.I)

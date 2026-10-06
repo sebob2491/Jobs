@@ -87,6 +87,21 @@ def test_workday_style_widgets(srv):
     assert run(srv.click("Submit"))["clicked"] is False
 
 
+def test_workday_2026_search_prompt_is_picked_not_typed(srv):
+    """Onto's Workday (Oct 2026): the prompt is a plain search input; typed text that isn't
+    picked from its list vanishes, and the pick shows as a pill beside the input."""
+    run(srv.browser.goto(fixture_url("workday_prompt_2026.html")))
+    fields = run(srv.inspect_form(include_dropdown_options=False))["fields"]
+    heard = by_label(fields, "how did you hear")
+    assert heard["kind"] == "combobox" and heard["value"] == ""
+    assert by_label(fields, "country phone code")["value"] == "United States of America (+1)"
+    out = run(srv.fill_form([{"id": heard["id"], "value": "LinkedIn"}]))
+    assert out["results"][0]["ok"], out
+    after = run(srv.inspect_form(include_dropdown_options=False))["fields"]
+    assert by_label(after, "how did you hear")["value"] == "LinkedIn"
+    assert by_label(after, "country phone code")["value"] == "United States of America (+1)"
+
+
 def test_iframe_form_and_linkedin_policy(srv, monkeypatch):
     job = srv.add_job(url=fixture_url("iframe_host.html"), title="Process Technician", company="Example Fab")["job"]
     run(srv.open_application(job_id=job["id"]))

@@ -4,7 +4,7 @@
   "fields": [
     {
       "label": "How Did You Hear About Us?*",
-      "kind": "text",
+      "kind": "combobox",
       "required": true
     },
     {
@@ -59,7 +59,7 @@
     },
     {
       "label": "Country Phone Code*",
-      "kind": "text",
+      "kind": "combobox",
       "required": true
     },
     {

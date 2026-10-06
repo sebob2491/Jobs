@@ -28,7 +28,8 @@ from playwright.async_api import (
 from . import config
 from .autofill import choose_option, is_empty_value, norm, polarity
 from .formjs import (CLICK_CHOICE_JS, COVERED_JS, ELEMENT_INFO_JS, ENTRIES_JS, EXTRACT_JS, FIELD_OPTIONS_JS,
-                     MARK_OPTIONS_JS, OPEN_MENU_JS, OUTSIDE_CLICK_JS, QUIET_JS, SHOWN_VALUE_JS, VISIBLE_TEXT_JS)
+                     MARK_OPTIONS_JS, OPEN_MENU_JS, OUTSIDE_CLICK_JS, QUIET_JS, SHOWN_VALUE_JS, VISIBLE_TEXT_JS,
+                     WORKDAY_PROMPT_JS)
 
 SUBMIT_RE = re.compile(r"\bsubmit\b|send (my )?application|finish (my )?application|complete (my )?application", re.I)
 # A form's own submit button with one of these labels is the final step too ("Apply", "Send").
@@ -345,6 +346,18 @@ class BrowserSession:
                 return options
             await page.wait_for_timeout(150)
             waited += 150
+
+    async def _new_options(self, page: Page, field_id: str, loc: Locator, stale: list[str], wait_ms: int) -> list[str]:
+        """The menu once it differs from `stale` (the list showing before a search), or
+        whatever it shows after `wait_ms`."""
+        waited, options = 0, stale
+        while waited < wait_ms:
+            await page.wait_for_timeout(150)
+            waited += 150
+            options = await self._field_options(page, field_id, loc, 0)
+            if options and options != stale:
+                break
+        return options
 
     async def _open(self, page: Page, field_id: str, loc: Locator) -> None:
         await self._frame_for(page, field_id).evaluate(MARK_OPTIONS_JS)
@@ -692,14 +705,17 @@ class BrowserSession:
         choice = choose_option(text, options, exact_only=len(options) > SHORT_MENU) if options else None
         query = _search_words(text)
         if choice is None:
+            opened = options
             await loc.fill("")
             await loc.press_sequentially(query, delay=30)
             options = await self._field_options(page, field["id"], loc, 2500)
-            if not options and not await loc.evaluate("el => !!el.form"):
-                # Search-style pickers (Workday) list results after Enter. Inside a <form>,
-                # Enter could submit the whole form, so it's never pressed there.
+            # Search-style pickers (Workday) list results after Enter: nothing listed yet, or
+            # (Workday's 2026 prompts) the categories it opened with, untouched by typing.
+            # Inside a <form>, Enter could submit the whole form, so it's never pressed there.
+            unsearched = not options or (options == opened and await loc.evaluate(WORKDAY_PROMPT_JS))
+            if unsearched and not await loc.evaluate("el => !!el.form"):
                 await loc.press("Enter")
-                options = await self._field_options(page, field["id"], loc, 2500)
+                options = await self._new_options(page, field["id"], loc, options, 2500)
             choice = choose_option(text, options)
         if choice is None:
             if options:

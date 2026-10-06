@@ -24,3 +24,14 @@ def test_a_chosen_pill_is_the_fields_answer(srv):
     fields = run(srv.browser.inspect(include_dropdown_options=False))["fields"]
     where = next(f for f in fields if f["label"].startswith("Preferred location"))
     assert where["value"] == "Singapore" and where.get("readonly")
+
+
+def test_workday_search_prompts_are_pickers_with_their_choice(srv):
+    """Workday's 2026 prompts (Onto, captured live) are search inputs with no ARIA combobox
+    role; what's chosen is a pill beside the input's box. Typing into one as plain text
+    is cleared when it loses focus, so it must be picked from its list."""
+    run(srv.browser.goto((FIXTURES / "live" / "live-onto-innovation.html").resolve().as_uri()))
+    fields = {f["label"]: f for f in run(srv.browser.inspect(include_dropdown_options=False))["fields"]}
+    heard, code = fields["How Did You Hear About Us?*"], fields["Country Phone Code*"]
+    assert heard["kind"] == code["kind"] == "combobox"
+    assert heard["value"] == "" and code["value"] == "United States of America (+1)"
