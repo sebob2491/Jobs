@@ -5,6 +5,7 @@ import asyncio
 import json
 
 import httpx
+import pytest
 
 from job_apply.postings import fetch_posting
 import job_apply.search as search_module
@@ -381,3 +382,49 @@ def test_search_tool_runs_asml_in_the_browser(srv, monkeypatch):
     assert [c[0] for c in calls] == ["https://www.asml.com/en/careers/find-your-job?query=field%20service",
                                      "https://www.asml.com/en/careers/find-your-job?query=customer%20engineer"]
     assert all(c[1] == "/discover/v2/" and c[2] and c[3] for c in calls)
+
+
+def test_sitecore_search_pages_through_results():
+    from job_apply.search import Listing, sitecore_search, sitecore_total
+
+    page_body = {"widget": {"items": [{"rfk_id": "asml_job_search", "search": {
+        "limit": 25, "offset": 0, "query": {"keyphrase": "field service"}}}]}}
+    offsets = []
+
+    def answer(start, count, total):
+        return {"widgets": [{"rfk_id": "asml_job_search", "total_item": total, "content": [
+            {"name": f"Field Service Engineer {i}", "type": "job_detail_page", "job_location": "Phoenix, AZ, US",
+             "url": f"https://www.asml.com/en/careers/find-your-job/fse-{i}"} for i in range(start, start + count)]}]}
+
+    async def capture(url, url_part, timeout=25000, want=None, rewrite=None):
+        sent = rewrite(json.loads(json.dumps(page_body)))  # what the page's own request becomes
+        offsets.append(sent["widget"]["items"][0]["search"]["offset"])
+        assert sent["widget"]["items"][0]["search"]["limit"] == 100
+        start = offsets[-1]
+        if start >= 200:
+            raise AssertionError("asked past the end")
+        return answer(start, min(100, 150 - start), 150)
+
+    found: list[Listing] = []
+    asyncio.run(sitecore_search(capture, {"url": "https://www.asml.com/f?query={query}"}, "field service", found))
+    assert offsets == [0, 100] and len(found) == 150 and sitecore_total(answer(0, 1, 150)) == 150
+
+    async def broken_second_page(url, url_part, timeout=25000, want=None, rewrite=None):
+        offset = rewrite(json.loads(json.dumps(page_body)))["widget"]["items"][0]["search"]["offset"]
+        if offset:
+            raise TimeoutError("page 2 never answered")
+        return answer(0, 100, 150)
+
+    kept: list[Listing] = []
+    with pytest.raises(TimeoutError):
+        asyncio.run(sitecore_search(broken_second_page, {"url": "https://www.asml.com/f?query={query}"}, "x", kept))
+    assert len(kept) == 100  # the first page survives the failure
+
+    no_total = {"widgets": [{"content": answer(0, 3, 3)["widgets"][0]["content"]}]}
+    calls = []
+
+    async def short(url, url_part, timeout=25000, want=None, rewrite=None):
+        calls.append(url)
+        return no_total
+    asyncio.run(sitecore_search(short, {"url": "https://www.asml.com/f?query={query}"}, "x", []))
+    assert len(calls) == 1  # fewer than a full page: that was all of them

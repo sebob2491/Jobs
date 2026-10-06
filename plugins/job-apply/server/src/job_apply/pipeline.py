@@ -360,14 +360,14 @@ class Applier:
                 pending += [{"id": f["id"], "label": f.get("label") or "", "kind": "text", "required": True,
                              "error": f.get("error")} for f in result["failed"]]
                 missing_files = [f for f in result["needs_input"] if f.get("required") and f.get("kind") == "file"]
+                data, text = await self._look()  # filling can add or enable things (State after Country, Submit)
+                run.page_info = _page_info(data)  # what the person sees on the desk: the page as filled
                 if missing_files:
                     return self._pause(run, "stuck", "The form needs a file the profile doesn't point to (set "
                                        "documents.resume in profile.yaml): " + ", ".join(f["label"] for f in missing_files))
                 if pending:
                     return self._pause(run, "questions", f"{len(pending)} question(s) your profile doesn't answer. "
                                        "Answer them here and the desk fills them in (and remembers them).", pending)
-                data, text = await self._look()  # filling can add or enable things (State after Country, Submit)
-                run.page_info = _page_info(data)
                 actions = data.get("actions") or []
                 entry_here = any(_ENTRY.match(a["text"].strip()) and not a.get("disabled") for a in actions)
             if (kind == "form" or run.seen_form and not entry_here) and await srv.browser.find_submit():

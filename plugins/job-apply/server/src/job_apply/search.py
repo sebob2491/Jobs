@@ -291,7 +291,8 @@ def parse_eightfold(data: Any, host: str) -> list[Listing]:
 
 
 # ------------------------------------------------- Sitecore Discover (ASML), through the browser
-SITECORE_LIMIT = 100  # the page asks for 25 at a time; one call can cover a company's whole list
+SITECORE_LIMIT = 100  # the page asks for 25 at a time; Sitecore answers up to 100 per call
+SITECORE_PAGES = 3  # 300 openings per wording; ASML's broadest search here finds about 150
 
 
 def sitecore_page_url(cfg: dict[str, Any], query: str) -> str:
@@ -308,12 +309,35 @@ def sitecore_wants(body: Any) -> bool:
     return any((s.get("query") or {}).get("keyphrase") for s in _sitecore_searches(body))
 
 
-def sitecore_rewrite(body: Any) -> Any:
-    """Ask for SITECORE_LIMIT results in one go instead of the page's first 25."""
+def sitecore_rewrite(body: Any, offset: int = 0) -> Any:
+    """Ask for SITECORE_LIMIT results from `offset` instead of the page's first 25."""
     searches = [s for s in _sitecore_searches(body) if (s.get("query") or {}).get("keyphrase")]
     for s in searches:
-        s["limit"], s["offset"] = SITECORE_LIMIT, 0
+        s["limit"], s["offset"] = SITECORE_LIMIT, offset
     return body if searches else None
+
+
+def sitecore_total(data: Any) -> int | None:
+    """How many openings the search found in all, when the answer says."""
+    widgets = data.get("widgets") or [] if isinstance(data, dict) else []
+    totals = [w.get("total_item") for w in widgets if isinstance(w, dict)]
+    return next((t for t in totals if isinstance(t, int)), None)
+
+
+async def sitecore_search(capture: Callable[..., Awaitable[Any]], cfg: dict[str, Any], query: str,
+                          found: list[Listing]) -> None:
+    """One wording through the site's own search page, SITECORE_LIMIT openings at a time.
+    `capture` is BrowserSession.capture_json. Openings go into `found` as each page
+    arrives, so a failure keeps the pages before it."""
+    for page in range(SITECORE_PAGES):
+        offset = page * SITECORE_LIMIT
+        data = await capture(sitecore_page_url(cfg, query), cfg.get("api", "/discover/v2/"), want=sitecore_wants,
+                             rewrite=lambda body, offset=offset: sitecore_rewrite(body, offset))
+        batch = parse_sitecore(data)
+        found.extend(batch)
+        total = sitecore_total(data)
+        if offset + SITECORE_LIMIT >= total if total is not None else len(batch) < SITECORE_LIMIT:
+            return
 
 
 def parse_sitecore(data: Any) -> list[Listing]:

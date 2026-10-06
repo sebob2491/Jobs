@@ -69,7 +69,7 @@ FAKE_PROFILE = {
 from job_apply import server  # noqa: E402
 from job_apply.fixtures import convert  # noqa: E402
 from job_apply.postings import fetch_posting  # noqa: E402
-from job_apply.search import load_companies, search_companies  # noqa: E402
+from job_apply.search import load_companies, search_companies, sitecore_search  # noqa: E402
 
 QUERY_AZ = "field service | customer service engineer | customer engineer | equipment technician"  # in Arizona
 QUERY_ANY = "engineer | technician"  # fallback so every company still gets a browser check
@@ -229,7 +229,17 @@ async def probe_page(name: str, url: str) -> dict[str, Any]:
             body = await r.text()
         except Exception as e:  # noqa: BLE001
             body = f"unreadable: {e}"
-        return {"request": (r.request.post_data or "")[:3000], "response": body[:6000]}
+        out: dict[str, Any] = {"request": (r.request.post_data or "")[:3000], "response": body[:1500]}
+        try:  # the answer's shape: totals, filter names and values, where the openings are
+            out["widgets"] = [{
+                "keys": sorted(k for k in w if k not in ("content", "facet")),
+                "total_item": w.get("total_item"),
+                "facets": {f.get("name"): [v.get("text") for v in f.get("value") or []][:20] for f in w.get("facet") or []},
+                "locations": [c.get("job_location") for c in w.get("content") or []],
+            } for w in json.loads(body).get("widgets") or []]
+        except Exception:  # noqa: BLE001
+            pass
+        return out
 
     tab.on("response", on_response)
     rec: dict[str, Any] = {"probe": name, "url": url}
@@ -261,6 +271,21 @@ async def probe_page(name: str, url: str) -> dict[str, Any]:
     finally:
         await tab.close()
         server.browser._background = False  # noqa: SLF001
+    return rec
+
+
+async def check_sitecore(company: dict[str, Any]) -> dict[str, Any]:
+    """Every page of one wording, before any location filter: is the user's area in there?"""
+    found: list[Any] = []
+    rec: dict[str, Any] = {"sitecore_check": company["name"]}
+    try:
+        await sitecore_search(server.browser.capture_json, company["search"]["sitecore"], "field service", found)
+    except Exception as e:  # noqa: BLE001
+        rec["error"] = f"{type(e).__name__}: {str(e)[:200]}"
+    rec["count"] = len(found)
+    rec["us_locations"] = sorted({f.location for f in found if re.search(r"\bUS\b|United States", f.location)})
+    rec["arizona"] = [{"title": f.title, "location": f.location, "url": f.url} for f in found
+                      if re.search(r"\bAZ\b|Arizona|Phoenix|Chandler", f.location)]
     return rec
 
 
@@ -323,6 +348,10 @@ async def main() -> int:
         records.append(rec)
         print("LIVE_RESULT " + json.dumps(rec, default=str), flush=True)
 
+    for company in companies:
+        if "sitecore" in (company.get("search") or {}):
+            check = await asyncio.wait_for(check_sitecore(company), 120)
+            print("LIVE_SITECORE " + json.dumps(check, default=str), flush=True)
     for name, url in PROBES.items():
         if wanted and not any(w in name.lower() for w in wanted):
             continue
