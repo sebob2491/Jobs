@@ -839,3 +839,58 @@ def test_successfactors_search_pages_through_results_and_keeps_unclear_places():
         ("Design Engineer", ["location given as 'Greensboro, NC, US, 27409 (+3 more)'; check the posting"]),
         ("Test Engineer", [])]
 
+
+
+
+# Amkor's career site (SuccessFactors' older pages), as its script drew the list in Oct 2026
+SFC_ROW = ('<tr class="jobResultItem"><td><div role="heading" aria-level="3"><a class="jobTitle" '
+           'href="/career?career%5fns=job%5flisting&amp;company=amkor&amp;navBarLevel=JOB%5fSEARCH&amp;'
+           'rcm%5fsite%5flocale=en%5fUS&amp;career_job_req_id={req}&amp;selected_lang=en_US&amp;'
+           '_s.crb=6LEX%2ba4zKBJnftf%3d">{title}</a></div><div class="noteSection" role="note"><div>Requisition ID: '
+           '<span class="jobContentEM">{req}</span> - <span class="jobContentEM">Posted on {posted}</span> - '
+           '<span class="jobContentEM">Engineering</span>&nbsp;&nbsp;-&nbsp;&nbsp;<span class="jobContentEM">Regular '
+           'Non-Exempt Full-Time Employee</span></div></div></td></tr>')
+
+
+def sfc_page(rows):
+    return f'<html><body><span class="jobCount">{len(rows)} Jobs</span><table><tbody>{"".join(rows)}</tbody></table></body></html>'
+
+
+def test_amkor_list_is_read_in_the_browser_and_its_postings_say_where(srv, monkeypatch):
+    """Amkor's list is drawn by its page's script, 50 to a page, and its rows name no place: titles
+    are matched here, and each match's posting says where the job is."""
+    rows = [SFC_ROW.format(req="29111", title="Equipment Technician (ATA)", posted="10/01/2026"),
+            SFC_ROW.format(req="29112", title="Field Service Engineer", posted="09/30/2026"),
+            SFC_ROW.format(req="29113", title="Logistics Analyst", posted="09/29/2026"),
+            SFC_ROW.format(req="29114", title="Equipment Technician", posted="09/28/2026"),
+            SFC_ROW.format(req="29115", title="Field Service Engineer II", posted="09/27/2026")]
+    places = {"29111": "This position is based at our Peoria, Arizona factory.", "29112": "Based in Austin, TX.",
+              "29114": "Join us at our headquarters in Tempe, AZ."}
+    asked, reads = [], []
+
+    async def fake_pages(url, row_selector, per_page=None, next_button=None, max_pages=5):
+        asked.append((url, row_selector, per_page, next_button))
+        return [sfc_page(rows[:3]), sfc_page(rows[3:])]
+
+    async def fake_read(url):
+        reads.append(url)
+        req = re.search(r"career_job_req_id=(\d+)", url).group(1)
+        if req not in places:
+            raise httpx.ConnectError("unreachable")
+        return f"<html><body><div>Job Description</div><p>{places[req]}</p></body></html>"
+
+    monkeypatch.setattr(srv.browser, "listing_pages", fake_pages)
+    monkeypatch.setattr(search_module, "read_page", fake_read)
+    out = asyncio.run(srv.search_company_jobs("field service | equipment technician", companies=["Amkor"], location="AZ"))
+    got = {r["title"]: (r["location"], r["posted"], r["notes"]) for r in out["results"]}
+    assert got == {  # Austin is left out, the analyst wasn't asked for, an unreadable posting is flagged
+        "Equipment Technician (ATA)": ("Peoria, AZ", "2026-10-01", []),
+        "Equipment Technician": ("Tempe, AZ", "2026-09-28", []),
+        "Field Service Engineer II": ("", "2026-09-27", ["location given as 'nothing'; check the posting"])}
+    assert len(reads) == 4  # the matches only
+    page = "https://career8.successfactors.com/career?company=amkor&career_ns=job_listing_summary&navBarLevel=JOB_SEARCH"
+    assert asked == [(page, "tr.jobResultItem", ("li.per_page select", "50"), "li.paginationArrowContainer.next > a")]
+    tech = next(r for r in out["results"] if r["title"] == "Equipment Technician (ATA)")
+    assert tech["url"] == ("https://career8.successfactors.com/career?career_ns=job_listing&company=amkor"
+                           "&navBarLevel=JOB_SEARCH&rcm_site_locale=en_US&career_job_req_id=29111&selected_lang=en_US")
+    assert not out["errors"]

@@ -174,6 +174,26 @@ def successfactors_place(soup: BeautifulSoup) -> str:
     return ""
 
 
+# A city and a US state in running text: "based at our headquarters in Tempe, AZ", "Peoria, Arizona"
+_TEXT_PLACE = re.compile(r"\b([A-Z][a-z]+(?:[ .'-]+[A-Z][a-z]+){0,2}),\s*([A-Z]{2}|[A-Z][a-z]+(?: [A-Z][a-z]+)?)\b")
+_STATE_CODES = {name.lower(): code for code, name in US_STATES.items()}
+
+
+def place_in_text(text: str) -> str:
+    """The first city and US state a posting's text names: 'Tempe, AZ'. SuccessFactors' older
+    career sites (Amkor) give no place but the one the description mentions."""
+    for m in _TEXT_PLACE.finditer(text or ""):
+        state = m.group(2)
+        code = state if state in US_STATES else _STATE_CODES.get(state.lower())
+        if code:
+            return f"{m.group(1)}, {code}"
+    return ""
+
+
+# SuccessFactors' older career sites title a posting "Career Opportunities: <title> (<req id>)"
+_SF_CLASSIC_TITLE = re.compile(r"^Career Opportunities:\s*(.+?)\s*\(\d+\)$")
+
+
 # Apply links that only work when pressed on the posting page itself: SuccessFactors career
 # sites send a visit straight to one to their home page. The posting is opened instead.
 _PAGE_BOUND_APPLY = re.compile(r"/talentcommunity/apply/", re.I)
@@ -202,12 +222,17 @@ def parse_html(raw_html: str, url: str) -> Posting:
             title = soup.title.get_text()
         main = soup.find("main") or soup.find(attrs={"role": "main"}) or soup.body or soup
         p = Posting(url=url, title=" ".join(title.split()), description=html_to_text(str(main)), parse_method="page-text")
+        m = _SF_CLASSIC_TITLE.match(p.title)
+        if m:
+            p.title = m.group(1)
         site = soup.find("meta", property="og:site_name")
         if site and site.get("content"):
             p.company = site["content"]
         p.warnings.append("No structured JobPosting data; title/company may need correcting.")
     p.apply_url = p.apply_url or _find_apply_link(soup, url)
     p.location = p.location or successfactors_place(soup)
+    if not p.location and "career_job_req_id=" in url:  # SuccessFactors' older sites: only the text says
+        p.location = place_in_text(p.description)
     return p
 
 

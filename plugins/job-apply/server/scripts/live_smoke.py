@@ -223,21 +223,16 @@ PROBES = {
 }
 # Pages read over plain HTTP, as a search would read them: the markup of the parts a
 # reader needs. (Oct 2026: an Edwards posting names its place in the unlabelled lines under
-# its title; Qorvo's search pages are HTML tables, 25 rows a page.) Amkor's job list is on
-# SuccessFactors' older career site.
-HTTP_PROBES = {
-    "Amkor Technology": ("https://career8.successfactors.com/career?company=amkor&career_ns=job_listing_summary"
-                         "&navBarLevel=JOB_SEARCH", "a[href*='career_job_req_id'], .jobTitle, table tr, form"),
-}
+# its title; Qorvo's search pages are HTML tables, 25 rows a page; Amkor's career site has a
+# search form and no list.)
+HTTP_PROBES: dict[str, tuple[str, str]] = {}
 
 
-# Search forms whose results the page only draws once the form is sent (Amkor's job list is
-# on SuccessFactors' older career site): send it in the browser, then record the requests that
-# brought the list, the list, and the form, to write a reader from.
-FORM_PROBES = {
-    "Amkor Technology": ("https://career8.successfactors.com/career?company=amkor&career_ns=job_listing_summary"
-                         "&navBarLevel=JOB_SEARCH", "Search"),
-}
+# Search forms whose results the page only draws once the form is sent: send it in the
+# browser, then record the requests that brought the list, the list, and the form, to write a
+# reader from. (Oct 2026: Amkor's SuccessFactors site draws its list over DWR calls, 10 to a
+# page or 50 when asked, and a posting opens on its own; its search reads it that way now.)
+FORM_PROBES: dict[str, tuple[str, str]] = {}
 FORMS_JS = r"""() => [...document.forms].slice(0, 6).map((f) => ({
   id: f.id, name: f.getAttribute('name'), action: f.getAttribute('action'), method: f.getAttribute('method'),
   fields: [...f.elements].slice(0, 40).map((e) => ({tag: e.tagName, type: e.type, name: e.name, id: e.id,

@@ -14,6 +14,8 @@ Each company in data/companies.yaml may carry a `search` block naming one of:
     ukg:             <job board address>    (UKG Pro / UltiPro; read in the browser)
     rmk:             {url: <search page>}   (SuccessFactors' newer job search; read in the browser)
     successfactors:  <career site address>  (SuccessFactors career sites' search pages)
+    sfclassic:       {site: https://career8.successfactors.com, company: <id>}
+                                            (SuccessFactors' older career sites; read in the browser)
     sitecore:        {url: ..., api: ...}   (ASML; read in the browser)
 
 Companies without one (SuccessFactors sites, custom pages) are searched in the
@@ -38,17 +40,18 @@ from bs4 import BeautifulSoup
 from . import config
 from .ats import workday_parts
 from .autofill import US_STATES, norm
-from .postings import USER_AGENT, successfactors_place
+from .postings import USER_AGENT, html_to_text, place_in_text, successfactors_place
 
 WORKDAY_PAGE = 20  # Workday rejects larger pages
 MAX_ALTERNATIVES = 4
 FETCH_WHEN_FILTERING = 60  # results to scan per search when filtering by location ourselves
-CLIENT_SIDE = {"greenhouse", "lever", "applicantstack", "paycom", "ukg"}  # whole board at once; titles filtered here
+CLIENT_SIDE = {"greenhouse", "lever", "applicantstack", "paycom", "ukg", "sfclassic"}  # whole board at once; titles filtered here
 # Searches whose data only comes through the site's own page in the browser (ASML's
 # Sitecore Discover widget; iCIMS portals, which turn away plain requests; Paycom, UKG
-# Pro and SuccessFactors' newer search, whose APIs want the session their page sets up).
+# Pro and SuccessFactors' newer search, whose APIs want the session their page sets up;
+# SuccessFactors' older career sites, whose list the page's script draws).
 # search_companies lists them under needs_browser and the search_company_jobs tool runs them.
-BROWSER_SEARCHES = {"sitecore", "icims", "paycom", "ukg", "rmk"}
+BROWSER_SEARCHES = {"sitecore", "icims", "paycom", "ukg", "rmk", "sfclassic"}
 RETRY_STATUS = {429, 500, 502, 503, 504}  # a passing problem on the site's side
 RETRY_DELAY = 1.0  # seconds, doubled on the second retry
 
@@ -758,6 +761,69 @@ def parse_successfactors(page: str, site: str) -> tuple[list[Listing], int | Non
     label = soup.select_one(".paginationLabel")
     total = _SF_TOTAL.search(label.get_text(" ", strip=True)) if label is not None else None
     return out, int(total.group(1).replace(",", "")) if total else None
+
+
+# SuccessFactors' older career sites (career8.successfactors.com, Amkor): the page's script
+# draws the job list (10 to a page, or 50 when asked), and its rows name no place.
+SFCLASSIC_ROWS = "tr.jobResultItem"
+SFCLASSIC_PER_PAGE = ("li.per_page select", "50")
+SFCLASSIC_NEXT = "li.paginationArrowContainer.next > a"
+SFCLASSIC_PLACE_PAGES = 30  # postings read for their place, per search
+
+
+def sfclassic_page_url(cfg: Any) -> str:
+    return f"{cfg['site'].rstrip('/')}/career?company={cfg['company']}&career_ns=job_listing_summary&navBarLevel=JOB_SEARCH"
+
+
+def sfclassic_posting_url(cfg: Any, req_id: str) -> str:
+    """A posting's address without the session the list was drawn in (it opens on its own)."""
+    return (f"{cfg['site'].rstrip('/')}/career?career_ns=job_listing&company={cfg['company']}&navBarLevel=JOB_SEARCH"
+            f"&rcm_site_locale=en_US&career_job_req_id={req_id}&selected_lang=en_US")
+
+
+def parse_sfclassic(page: str, cfg: Any) -> list[Listing]:
+    """The openings on one page of an older SuccessFactors career site's job list."""
+    out: list[Listing] = []
+    for row in BeautifulSoup(page, "html.parser").select(SFCLASSIC_ROWS):
+        link = row.select_one("a.jobTitle[href]")
+        req = re.search(r"career_job_req_id=(\d+)", str(link["href"])) if link is not None else None
+        if req is None:
+            continue
+        note = row.select_one(".noteSection")
+        posted = re.search(r"Posted on (\d{1,2}/\d{1,2}/\d{4})", note.get_text(" ", strip=True)) if note else None
+        out.append(Listing(company="", title=link.get_text(" ", strip=True), url=sfclassic_posting_url(cfg, req.group(1)),
+                           posted=_sf_date(posted.group(1)) if posted else "", external_id=req.group(1),
+                           ats="successfactors"))
+    return out
+
+
+async def sfclassic_search(pages_of: Callable[..., Awaitable[list[str]]], cfg: Any, query: str, found: list[Listing],
+                           read: Callable[[str], Awaitable[str]] | None = None) -> None:
+    """Search an older SuccessFactors career site (Amkor's): its whole list is read in the
+    browser and titles are matched here. `pages_of` is BrowserSession.listing_pages. The rows
+    say nothing of where a job is, so each match's posting is read for the place its text
+    names ("based at our headquarters in Tempe, AZ")."""
+    pages = await pages_of(sfclassic_page_url(cfg), SFCLASSIC_ROWS, per_page=SFCLASSIC_PER_PAGE,
+                           next_button=SFCLASSIC_NEXT)
+    known = {x.url for x in found}
+    mine: list[Listing] = []
+    for page in pages:
+        for listing in parse_sfclassic(page, cfg):
+            if listing.url not in known and title_matches(listing.title, query):
+                known.add(listing.url)
+                mine.append(listing)
+    read = read or read_page
+    sem = asyncio.Semaphore(4)
+
+    async def place(listing: Listing) -> None:
+        async with sem:
+            try:
+                listing.location = place_in_text(html_to_text(await read(listing.url)))
+            except Exception:  # an unreadable posting stays "check the posting"
+                return
+
+    await asyncio.gather(*(place(x) for x in mine[:SFCLASSIC_PLACE_PAGES]))
+    found.extend(mine)
 
 
 async def _eightfold(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, terms: list[str]) -> list[Listing]:

@@ -100,6 +100,12 @@ the page URL. Use this file for the parts of each flow that `autofill` can't do.
 - Qorvo's search pages are plain HTML tables, read directly. With a state to look in, the
   site's own location search is used, which also finds openings whose first place is
   elsewhere ("Greensboro, NC +3 more"); those carry the state after their first place.
+- Amkor is on SuccessFactors' older career site (`career8.successfactors.com/career?company=amkor`):
+  the page's script draws the list (about 46 US openings, 10 to a page, 50 when asked)
+  and its rows name no place, so the search reads it in the browser and takes each
+  matching posting's place from its description ("based at our headquarters in Tempe,
+  AZ"). "(ATA)" in a title is Amkor Technology Arizona, the Peoria plant. A posting opens
+  on its own with just its `career_job_req_id`.
 
 - Click **Apply now** on the posting, then sign in or create an account (email and
   password). Its link only works when pressed on the posting page: opened on its own it
