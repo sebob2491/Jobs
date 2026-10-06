@@ -891,7 +891,7 @@ async def account_form() -> dict[str, Any]:
 
     def ways(form: dict[str, Any]) -> list[dict[str, Any]]:
         return [a for a in form["actions"] if _CREATE_ACCOUNT.match(a["text"].strip()) and not a.get("disabled")
-                and not a.get("is_submit") and not a.get("form_submit")]
+                and not a.get("is_submit") and not a.get("form_submit") and not a.get("account_form")]
 
     try:
         form = await server.inspect_form(include_dropdown_options=False)

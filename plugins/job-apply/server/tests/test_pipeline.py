@@ -465,6 +465,87 @@ def test_a_sign_up_form_with_one_password_box_is_filled_in(srv, monkeypatch, pag
     assert "filled the Create Account form with your details and saved password" in r.log
 
 
+def test_the_sign_in_forms_own_button_is_pressed_not_the_headers(srv, monkeypatch):
+    """KLA's, NXP's, ASML's and Hitachi's Workday: the page's header has a "Sign In" of its own,
+    ahead of the sign-in form, which opens a sign-in pop-up and sends nothing. The form's own
+    button is pressed; when the saved password doesn't sign in, Create Account is opened and
+    filled in, and its button (a div on Workday) is left to the person."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    saved_password(monkeypatch)
+    job = srv.add_job(url=fixture_url("site/signin-header-popup.html"), title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status == "needs_you")
+            assert r.need == "sign_in" and "Create Account form" in r.reason, (r.reason, r.log)
+            assert "first application" in r.reason
+            state = await r.page.evaluate("""() => [window.popupOpened, window.signInTries, window.created,
+                em.value, pw.value === pw2.value && pw.value.length > 0, terms.checked]""")
+            assert state == [False, 1, False, "sam.rivera@example.com", True, False]
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert r.log.count("signed in with your saved password") == 1
+    assert "your saved password didn't sign in, so I opened Create Account" in r.log
+
+
+def test_a_headers_sign_in_isnt_pressed_for_a_form_whose_button_reads_otherwise(srv, monkeypatch):
+    """Nothing after the password box reads "Sign In" (the form's button says Continue): the
+    header's "Sign In" isn't pressed in its place. The form is filled in for the person to send."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    saved_password(monkeypatch)
+    job = srv.add_job(url=fixture_url("site/signin-header-popup.html") + "?button=Continue", title="FSE",
+                      company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status == "needs_you")
+            assert r.need == "sign_in" and "Press its sign-in button" in r.reason, (r.reason, r.log)
+            state = await r.page.evaluate("() => [window.popupOpened, window.signInTries, em.value, pw.value.length > 0]")
+            assert state == [False, 0, "sam.rivera@example.com", True]
+            return r
+        finally:
+            await applier.stop()
+
+    run(go())
+
+
+def test_a_create_account_forms_own_button_is_never_the_way_to_it(srv, monkeypatch):
+    """Workday's sign-in pop-up, open over its Create Account form (which pressing the header's
+    "Sign In" used to leave): the form behind it isn't read, but its "Create Account" button (a
+    div, not a form's submit) is on the page, ahead of the pop-up's own "Create Account". That
+    button creates the account; the pop-up's link is the way to the form."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    saved_password(monkeypatch)
+    job = srv.add_job(url=fixture_url("site/signin-header-popup.html") + "?start=popup", title="FSE",
+                      company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status == "needs_you")
+            state = await r.page.evaluate("""() => [window.created, window.signInTries,
+                em.value, pw.value === pw2.value && pw.value.length > 0]""")
+            assert state == [False, 1, "sam.rivera@example.com", True], (state, r.reason, r.log)
+            assert r.need == "sign_in" and "Create Account form" in r.reason, (r.reason, r.log)
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert "your saved password didn't sign in, so I opened Create Account" in r.log
+
+
 @pytest.mark.parametrize("page, expected", [
     # Amkor's SuccessFactors: the email twice, names and country; the newsletter box is left alone
     ("create-account-details.html", {"email": "sam.rivera@example.com", "email2": "sam.rivera@example.com", "same": True,

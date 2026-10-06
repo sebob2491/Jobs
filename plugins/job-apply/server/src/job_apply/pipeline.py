@@ -692,10 +692,11 @@ class Applier:
             await srv.click(email_button["id"])
             return "email_step"
         passwords = [f for f in fields if f["kind"] == "password"]
-        # The way to a new account is a link or a plain button. A form's own submit button
-        # that reads "Create Account" sends that form (it creates the account), so it's never it.
-        create = next((a for a in actions if _CREATE_ACCOUNT.match(a["text"].strip()) and not a.get("form_submit")),
-                      None)
+        # The way to a new account is a link or a plain button. A Create Account form's own
+        # button sends that form (it creates the account), so it's never it: a form's submit,
+        # or a button in a form with two password boxes (Workday's, a div).
+        create = next((a for a in actions if _CREATE_ACCOUNT.match(a["text"].strip()) and not a.get("form_submit")
+                       and not a.get("account_form")), None)
         # Where the way to a new account led: a form with one password box (UKG Pro's "Create
         # your account") is the new account's, as it no longer offers a way to one.
         signing_up = len(passwords) == 1 and bool(tried.get("create_account")) and create is None
@@ -733,8 +734,10 @@ class Applier:
         if new_account:  # accepting the site's terms, and creating the account, are the person's call
             self._log(run, "filled the Create Account form with your details and saved password")
             return "prefilled"
-        button = next((a for a in actions if _SIGN_IN_ACTION.match(a["text"].strip()) and not _SOCIAL.search(a["text"])),
-                      None)
+        # The form's own button, after its password box: a "Sign In" in the site's header opens
+        # its sign-in page or pop-up instead, and sends nothing (Workday's)
+        button = next((a for a in actions if _SIGN_IN_ACTION.match(a["text"].strip()) and not _SOCIAL.search(a["text"])
+                       and a.get("after_password")), None)
         if button is None:
             return "filled"
         await srv.click(button["id"])
