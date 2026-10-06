@@ -16,6 +16,7 @@ Each company in data/companies.yaml may carry a `search` block naming one of:
     successfactors:  <career site address>  (SuccessFactors career sites' search pages)
     sfclassic:       {site: https://career8.successfactors.com, company: <id>}
                                             (SuccessFactors' older career sites; read in the browser)
+    infor:           {url: <job board page>} (Infor CloudSuite HCM; read in the browser)
     sitecore:        {url: ..., api: ...}   (ASML; read in the browser)
 
 Companies without one (SuccessFactors sites, custom pages) are searched in the
@@ -31,7 +32,7 @@ import re
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable
-from urllib.parse import quote, urlencode, urljoin
+from urllib.parse import quote, urlencode, urljoin, urlsplit, urlunsplit
 
 import httpx
 import yaml
@@ -45,13 +46,14 @@ from .postings import USER_AGENT, html_to_text, place_in_text, successfactors_pl
 WORKDAY_PAGE = 20  # Workday rejects larger pages
 MAX_ALTERNATIVES = 4
 FETCH_WHEN_FILTERING = 60  # results to scan per search when filtering by location ourselves
-CLIENT_SIDE = {"greenhouse", "lever", "applicantstack", "paycom", "ukg", "sfclassic"}  # whole board at once; titles filtered here
+CLIENT_SIDE = {"greenhouse", "lever", "applicantstack", "paycom", "ukg", "sfclassic", "infor"}  # whole board at once; titles filtered here
 # Searches whose data only comes through the site's own page in the browser (ASML's
 # Sitecore Discover widget; iCIMS portals, which turn away plain requests; Paycom, UKG
 # Pro and SuccessFactors' newer search, whose APIs want the session their page sets up;
-# SuccessFactors' older career sites, whose list the page's script draws).
+# SuccessFactors' older career sites, whose list the page's script draws; Infor CloudSuite
+# boards, whose list call doesn't reliably answer plain requests).
 # search_companies lists them under needs_browser and the search_company_jobs tool runs them.
-BROWSER_SEARCHES = {"sitecore", "icims", "paycom", "ukg", "rmk", "sfclassic"}
+BROWSER_SEARCHES = {"sitecore", "icims", "paycom", "ukg", "rmk", "sfclassic", "infor"}
 RETRY_STATUS = {429, 500, 502, 503, 504}  # a passing problem on the site's side
 RETRY_DELAY = 1.0  # seconds, doubled on the second retry
 
@@ -824,6 +826,60 @@ async def sfclassic_search(pages_of: Callable[..., Awaitable[list[str]]], cfg: A
 
     await asyncio.gather(*(place(x) for x in mine[:SFCLASSIC_PLACE_PAGES]))
     found.extend(mine)
+
+
+# Infor CloudSuite HCM job boards (Benchmark): the board's page asks for its postings 10 at a
+# time, newest first, in its call's address ("pagesize=10").
+INFOR_LIST = "JobPosting.JobSearchCardViewList"
+INFOR_PAGE = 200
+_STATE_BY_NAME = {name.lower(): code for code, name in US_STATES.items()}
+
+
+def infor_rewrite(url: str) -> str:
+    return re.sub(r"([?&]pagesize=)\d+", rf"\g<1>{INFOR_PAGE}", url)
+
+
+async def infor_search(capture: Callable[..., Awaitable[Any]], cfg: Any, query: str, found: list[Listing]) -> None:
+    """Search an Infor CloudSuite job board: the page's own call is asked for 200 postings
+    (the newest; a board with more lists its oldest beyond those), and titles are matched
+    here. `capture` is BrowserSession.capture_json."""
+    data = await capture(cfg["url"], INFOR_LIST, rewrite_url=infor_rewrite)
+    known = {x.url for x in found}
+    found.extend(x for x in parse_infor(data) if x.url not in known and title_matches(x.title, query))
+
+
+def _infor_place(value: str) -> str:
+    """'Arizona:Tempe' -> 'Tempe, AZ'; 'MX:BC:Tijuana' -> 'Tijuana, BC, MX'."""
+    parts = [p.strip() for p in value.split(":") if p.strip()]
+    if len(parts) >= 2 and parts[0].lower() in _STATE_BY_NAME:
+        return f"{parts[-1]}, {_STATE_BY_NAME[parts[0].lower()]}"
+    return ", ".join(reversed(parts))
+
+
+def parse_infor(data: Any) -> list[Listing]:
+    view = data.get("dataViewSet") if isinstance(data, dict) else None
+    out: list[Listing] = []
+    for item in (view or {}).get("data") or []:
+        fields = item.get("fields") if isinstance(item, dict) else None
+        if not isinstance(fields, dict):
+            continue
+
+        def value(key: str) -> str:
+            v = fields.get(key)
+            return str(v.get("value") or "") if isinstance(v, dict) else ""
+
+        title = value("Description").strip()
+        # the card's link to the posting: <a href="https://CSS-...COM:443/hcm/Jobs/navigation/JobPosting...">
+        link = re.search(r'href="([^"]+)"', value("_op_JobPostingCardViewLabelLinkBack_spc_translation_cp_"))
+        if not title or not link:
+            continue
+        parts = urlsplit(html.unescape(link.group(1)))
+        begin = value("PostingDateRange_prd_Begin")
+        out.append(Listing(company="", title=title, url=urlunsplit(("https", parts.hostname or "", parts.path, parts.query, "")),
+                           location=_infor_place(value("LocationOfJob")),
+                           posted=f"{begin[:4]}-{begin[4:6]}-{begin[6:8]}" if re.fullmatch(r"\d{8}", begin) else "",
+                           external_id=value("JobId") or value("JobRequisition"), ats="infor"))
+    return out
 
 
 async def _eightfold(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, terms: list[str]) -> list[Listing]:

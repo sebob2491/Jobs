@@ -450,11 +450,13 @@ class BrowserSession:
 
     async def capture_json(self, url: str, url_part: str, timeout: int = 25000,
                            want: Callable[[Any], bool] | None = None,
-                           rewrite: Callable[[Any], Any] | None = None) -> Any:
+                           rewrite: Callable[[Any], Any] | None = None,
+                           rewrite_url: Callable[[str], str] | None = None) -> Any:
         """Open `url` in a background tab and return the JSON of the first response whose URL
         contains `url_part`: the data a careers page loads for itself, when its API refuses
         direct requests. `want` picks among several such calls by their JSON request body;
-        `rewrite` may change that body on its way out (e.g. a bigger page size)."""
+        `rewrite` may change that body on its way out (e.g. a bigger page size), and
+        `rewrite_url` the address of a call that has no body (Infor's "pagesize=10")."""
         def body_of(request: Any) -> Any:
             try:
                 return json.loads(request.post_data or "null")
@@ -467,13 +469,14 @@ class BrowserSession:
             assert self._ctx is not None
             tab = await self._ctx.new_page()  # not a popup of the job's tab, so it never becomes current
             try:
-                if rewrite is not None:
+                if rewrite is not None or rewrite_url is not None:
                     async def handle(route: Any) -> None:
-                        changed = rewrite(body_of(route.request))
+                        changed = rewrite(body_of(route.request)) if rewrite is not None else None
+                        address = rewrite_url(route.request.url) if rewrite_url is not None else route.request.url
                         if changed is None:
-                            await route.continue_()
+                            await route.continue_(url=address)
                         else:
-                            await route.continue_(post_data=json.dumps(changed))
+                            await route.continue_(url=address, post_data=json.dumps(changed))
                     await tab.route(lambda u: url_part in u, handle)
 
                 def matches(r: Any) -> bool:

@@ -191,6 +191,15 @@ the page URL. Use this file for the parts of each flow that `autofill` can't do.
   UKG's sign-in page (`signin-us.ultipro.com`), where the user signs in or creates an
   account with that employer.
 
+## Infor CloudSuite HCM (`*.inforcloudsuite.com/hcm/Jobs`): Benchmark Electronics
+
+- Benchmark's job board ("Candidate Experience") lists about 200 postings worldwide, newest
+  first, with a place on each ("Arizona:Tempe", "Arizona:Mesa"). The page asks its server for
+  them 10 at a time and that call doesn't reliably answer plain requests, so the search runs
+  in a background browser tab and asks for 200 at a time.
+- A posting's address ends in `JobPosting[JobPostingSet](1,<id>,1).JobPostingDisplayNav`.
+  Applying needs an account on the board (its **Register** / **Sign In**).
+
 ## ASML (`asml.com/en/careers`)
 
 - Postings are on asml.com. **Apply** may lead to Workday (`asml.wd3.myworkdayjobs.com`)
