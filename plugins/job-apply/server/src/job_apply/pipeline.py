@@ -26,6 +26,7 @@ from . import config
 from .ats import ATS_NAMES, detect_ats
 from .autofill import clean_label, is_empty_value, norm
 
+NEW_TAB_WAIT = 4  # seconds to wait for a tab opened late by a click before calling it a stall
 MAX_STEPS = 15
 HANDS_ON = {"bot_check", "sign_in", "email_code"}
 HANDS_ON_TIMEOUT = 15 * 60  # then the queue stops waiting and moves on
@@ -364,9 +365,11 @@ class Applier:
                 missing_files = [f for f in result["needs_input"] if f.get("required") and f.get("kind") == "file"]
                 data, text = await self._look()  # filling can add or enable things (State after Country, Submit)
                 run.page_info = _page_info(data)  # what the person sees on the desk: the page as filled
-                if missing_files:
+                if missing_files:  # questions come along, so they can be answered meanwhile
                     return self._pause(run, "stuck", "The form needs a file the profile doesn't point to (set "
-                                       "documents.resume in profile.yaml): " + ", ".join(f["label"] for f in missing_files))
+                                       "documents.resume in profile.yaml): " + ", ".join(f["label"] for f in missing_files)
+                                       + (f". It also has {len(pending)} question(s) your profile doesn't answer."
+                                          if pending else ""), pending)
                 if pending:
                     return self._pause(run, "questions", f"{len(pending)} question(s) your profile doesn't answer. "
                                        "Answer them here and the desk fills them in (and remembers them).", pending)
@@ -389,11 +392,18 @@ class Applier:
                 return self._pause(run, "stuck", "I couldn't find the button that moves this application on. "
                                    "Take it a step further in the browser, then press Resume.")
             before = _fingerprint(data)
-            clicked = await srv.click(action["id"])
+            try:
+                clicked = await srv.click(action["id"])
+            except KeyError:  # the page changed between looking and clicking (a tab opened): look again
+                self._log(run, f"“{action['text']}” was gone by the time I clicked; looking again")
+                run.page = srv.browser.current_tab or run.page
+                continue
             if clicked.get("clicked") is False:  # the guard says it's the final submit
                 return await self._finish(run, data, text)
             self._log(run, f"clicked “{action['text']}”")
             run.page = srv.browser.current_tab or run.page
+            if _fingerprint(clicked) == before and await self._new_tab_soon(run, NEW_TAB_WAIT):
+                continue  # asml.com's Apply Now opens Workday in a new tab a moment after the click
             if _fingerprint(clicked) == before:
                 stalls += 1
                 problems = [e for e in clicked.get("errors") or [] if _ERRORISH.search(e)]
@@ -405,6 +415,18 @@ class Applier:
                 stalls = 0
         self._pause(run, "stuck", "This application has more steps than I expected. Have a look in the browser, "
                     "then press Resume.")
+
+    async def _new_tab_soon(self, run: Run, seconds: float) -> bool:
+        """Follow a tab that opens a little after a click (the browser makes it current)."""
+        deadline = time.monotonic() + seconds
+        while time.monotonic() < deadline:
+            tab = self.srv.browser.current_tab
+            if tab is not None and tab is not run.page:
+                run.page = tab
+                self._log(run, "followed the application into a new tab")
+                return True
+            await asyncio.sleep(0.25)
+        return False
 
     async def _wait_for_progress(self, seconds: float) -> bool:
         """Wait for a form or a button that moves things on to appear."""

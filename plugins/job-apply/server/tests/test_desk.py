@@ -160,6 +160,13 @@ def test_desk_page_buttons_reach_the_api(srv, tmp_path):
                 assert config.saved_answers()[0]["answer"] == "Yes"
                 assert ("apply", other["id"]) in desk.applier.tasks
 
+                await page.fill("#add-links", fixture_url("jsonld_posting.html"))
+                await page.click("#add-btn")
+                row = page.locator("li.row", has_text="EUV")
+                await row.wait_for()
+                assert await row.locator("input[type=checkbox]").is_checked()  # picked, ready for Apply
+                assert await page.input_value("#add-links") == ""
+
                 await page.fill("#pw", "typed-on-the-page")
                 await page.click("#pw-form button[type=submit]")
                 await page.wait_for_selector("#pw-state:text('Saved')")
@@ -262,3 +269,32 @@ def test_saving_a_password_leaves_the_rest_of_the_file_alone(job_apply_home):
 def test_a_broken_secrets_file_doesnt_break_the_page(srv, job_apply_home):
     config.secrets_path().write_text("workday_password: [unclosed\n")
     assert Desk(srv).state()["passwords"] == {"workday": False}
+
+
+def test_pasted_links_are_read_saved_and_listed(srv):
+    """A link from LinkedIn, Indeed or a company site joins the list, picked, ready for Apply.
+    Pages plain HTTP can't read are read in a background tab, not the one an application is in."""
+    posting = fixture_url("site/posting.html")
+    desk = Desk(srv)
+    desk.applier.start = lambda: None
+    desk.search.update(status="done", at=time.time())
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            working = await srv.browser.page()  # the tab an application would be in
+            await working.goto(fixture_url("generic_form.html"))
+            async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{desk.port}", timeout=60, trust_env=False) as c:
+                h = {"x-desk-token": desk.token}
+                assert (await c.post("/api/add", json={"text": posting})).status_code == 403
+                assert (await c.post("/api/add", headers=h, json={"text": "  "})).status_code == 400
+                added = (await c.post("/api/add", headers=h, json={"text": f"{posting}\nnot-a-link"})).json()["added"]
+                assert added[0]["job_id"] and added[0]["title"].startswith("Field Service Engineer")
+                assert added[1] == {"url": "not-a-link", "error": "not a web address"}
+                rows = {r["url"]: r for r in (await c.get("/api/state", headers=h)).json()["listings"]}
+                assert rows[added[0]["url"]]["added"] and rows[added[0]["url"]]["fit"]["score"] > 0
+            assert (await srv.browser.page()).url.endswith("generic_form.html")  # left where it was
+        finally:
+            await desk.stop()
+
+    run(go())

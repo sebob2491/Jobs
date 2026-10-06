@@ -205,3 +205,49 @@ def test_create_account_is_filled_but_left_for_the_person(srv, monkeypatch):
 
     r = run(go())
     assert "filled the Create Account form with your email and saved password" in r.log
+
+
+def test_follows_an_application_that_opens_in_a_new_tab_late(srv, monkeypatch):
+    """asml.com: Apply Now opens the application system in a new tab a few seconds after the click."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    job = srv.add_job(url=fixture_url("site/popup-posting.html"), title="Sr. Field Application Engineering",
+                      company="Example Litho")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), timeout=90)
+            assert r.need == "sign_in", (r.status, r.reason, r.log)
+            assert "followed the application into a new tab" in r.log
+            assert r.page.url.endswith("signin.html")
+        finally:
+            await applier.stop()
+
+    run(go())
+
+
+def test_a_missing_file_brings_the_questions_along(srv, job_apply_home, monkeypatch):
+    """ASM: the form wants a resume the profile doesn't have and asks questions it can't
+    answer; the questions come with the pause, so they can be answered meanwhile."""
+    import yaml
+
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    prof = yaml.safe_load((job_apply_home / "profile.yaml").read_text())
+    prof["documents"] = {"resume": None}
+    (job_apply_home / "profile.yaml").write_text(yaml.safe_dump(prof))
+    job = srv.add_job(url=fixture_url("site/upload-form.html"), title="Engineer", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"))
+            assert r.need == "stuck" and "Resume/CV" in r.reason and "1 question(s)" in r.reason, r.reason
+            assert len(r.questions) == 1 and "non-compete" in r.questions[0]["label"]
+        finally:
+            await applier.stop()
+
+    run(go())

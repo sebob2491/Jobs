@@ -394,6 +394,25 @@ class BrowserSession:
                 await tab.close()
                 self._background = False
 
+    async def background_html(self, url: str) -> str:
+        """The HTML of `url`, read in a background tab so the tab an application is in
+        stays where it is (the Job Desk adds pasted links while it applies)."""
+        async with self._lock:
+            await self.page()
+            assert self._ctx is not None
+            self._background = True
+            tab = await self._ctx.new_page()
+            try:
+                await tab.goto(url, wait_until="domcontentloaded", timeout=45000)
+                try:
+                    await tab.wait_for_load_state("networkidle", timeout=8000)
+                except PlaywrightTimeout:
+                    pass  # pages that keep polling: what's drawn by now is enough
+                return await tab.content()
+            finally:
+                await tab.close()
+                self._background = False
+
     async def snapshot(self, dest: Path, note: str = "", details: Any = None) -> Path:
         """Save what's needed to debug a page later: HTML of every frame, a screenshot
         and the extracted fields. Stays on the user's machine."""

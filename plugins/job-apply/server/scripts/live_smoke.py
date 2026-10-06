@@ -13,6 +13,8 @@ Companies without a search API get a lighter check of their careers page.
 With --pipeline it instead runs the Job Desk's one-button pipeline on one posting per
 company: through Apply, sign-in pages (where it stops), every form step and the review
 page. Questions the fake profile can't answer get throwaway answers for that run only.
+With --fixtures too, a page it stopped on with questions or a problem becomes a test
+fixture (tests/fixtures/live/pipeline-<company>).
 
 Safety: JOB_APPLY_NEVER_SUBMIT=1 is forced, so nothing can be submitted. The fake
 profile has no resume, so nothing is uploaded. It never clicks sign-in, account
@@ -328,7 +330,7 @@ async def main() -> int:
     wanted = [n.strip().lower() for n in args.companies.split(",") if n.strip()]
     companies = [c for c in load_companies() if not wanted or any(w in c["name"].lower() for w in wanted)]
     if args.pipeline:
-        return await pipeline_main(companies, args.out)
+        return await pipeline_main(companies, args.out, args.fixtures)
 
     records = []
     for company in companies:
@@ -410,7 +412,7 @@ def fake_answer(q: dict[str, Any]) -> Any:
     return "Test answer"
 
 
-async def check_pipeline(company: dict[str, Any], out: Path, rec: dict[str, Any]) -> None:
+async def check_pipeline(company: dict[str, Any], out: Path, rec: dict[str, Any], fixtures: bool = False) -> None:
     from job_apply.pipeline import Applier, question_key
 
     found = await server.search_company_jobs(QUERY_AZ, companies=[company["name"]], location="AZ", limit_per_company=5)
@@ -451,19 +453,25 @@ async def check_pipeline(company: dict[str, Any], out: Path, rec: dict[str, Any]
         await applier.stop()
         try:
             snap = await server.debug_snapshot(note=f"live pipeline: {company['name']}")
-            shutil.copytree(snap["saved_to"], out / "pipeline" / slug(company["name"]), dirs_exist_ok=True)
-        except Exception:  # noqa: BLE001 - the record matters more than the snapshot
-            pass
+            dest = out / "pipeline" / slug(company["name"])
+            shutil.copytree(snap["saved_to"], dest, dirs_exist_ok=True)
+            if fixtures and (rec.get("rounds") or [{}])[-1].get("need") in ("questions", "stuck"):
+                # the page it stopped on, as a test fixture (the fake applicant's details only)
+                fixture_dir = Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "live"
+                convert(dest, f"pipeline-{slug(company['name'])}", fixture_dir)
+                rec["fixture"] = f"pipeline-{slug(company['name'])}"
+        except Exception as e:  # noqa: BLE001 - the record matters more than the snapshot
+            rec["snapshot_error"] = f"{type(e).__name__}: {str(e)[:200]}"
         await server.close_browser()
 
 
-async def pipeline_main(companies: list[dict[str, Any]], out: Path) -> int:
+async def pipeline_main(companies: list[dict[str, Any]], out: Path, fixtures: bool = False) -> int:
     records = []
     for company in [c for c in companies if c.get("search")]:
         started = time.time()
         rec: dict[str, Any] = {"company": company["name"]}
         try:
-            await asyncio.wait_for(check_pipeline(company, out, rec), 3 * PIPELINE_WAIT + 60)
+            await asyncio.wait_for(check_pipeline(company, out, rec, fixtures), 3 * PIPELINE_WAIT + 60)
         except Exception as e:  # noqa: BLE001
             rec["crash"] = f"{type(e).__name__}: {str(e)[:300]}"
             rec["trace"] = traceback.format_exc()[-1500:]

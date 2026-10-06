@@ -56,6 +56,8 @@ section.card { background: var(--surface); border: 1px solid var(--line); border
 .waiting { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin: 0; padding: 12px 14px; border-radius: 10px;
   background: var(--warn-bg); border: 1px solid var(--warn); grid-column: 1 / -1; }
 .waiting strong { color: var(--warn); }
+.addbar { display: flex; gap: 8px; padding: 10px 14px; border-bottom: 1px solid var(--line); }
+.addbar input { flex: 1; min-width: 0; font: inherit; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--text); }
 .applybar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; padding: 10px 14px; border-bottom: 1px solid var(--line); background: var(--info-bg); }
 .applybar label { display: flex; align-items: center; gap: 6px; font-size: 14px; }
 .applybar .hint { color: var(--muted); font-size: 13px; }
@@ -128,6 +130,10 @@ footer { max-width: 1240px; margin: 0 auto; padding: 0 16px 24px; color: var(--m
       <button class="link" data-act="select-recommended">Select recommended</button>
       <button class="link" data-act="select-none">Clear</button>
     </div>
+    <form class="addbar" id="add-form">
+      <input type="text" id="add-links" placeholder="Paste job links: LinkedIn, Indeed or a company site" aria-label="Job links to add" autocomplete="off">
+      <button type="submit" id="add-btn">Add</button>
+    </form>
     <div class="applybar">
       <button class="primary" id="apply" data-act="apply" disabled>Apply to selected</button>
       <label><input type="checkbox" id="auto"> Submit for me when nothing needs me</label>
@@ -245,7 +251,8 @@ function statusPill(row) {
 function scoreClass(s) { return s >= 75 ? "s4" : s >= 60 ? "s3" : s >= 40 ? "s2" : "s1"; }
 
 function renderRows() {
-  const rows = (state.listings || []).filter((r) => filter === "all" || (r.fit && r.fit.recommended) || r.run);
+  // links the person added (here, or through Claude) always show: they picked those themselves
+  const rows = (state.listings || []).filter((r) => filter === "all" || r.added || (r.fit && r.fit.recommended) || r.run);
   const entries = rows.map((r) => {
     const fit = r.fit || {score: 0, reasons: [], concerns: []};
     const done = DONE.has(r.status) || (r.run && ["submitted", "running", "queued"].includes(r.run.status));
@@ -316,7 +323,9 @@ function renderSide() {
   const needEntries = needs.map((r) => {
     const head = `<h3>${esc(r.title)} <span class="small">· ${esc(r.company)}</span></h3><p>${esc(r.reason)}</p>`;
     let body;
-    if (r.need === "questions") body = `<form data-answer="${r.job_id}">${r.questions.map((q) => question(r.job_id, q)).join("")}</form>` + jobButtons(r, ["fill", "show", "skip"]);
+    const form = (r.questions || []).length ? `<form data-answer="${r.job_id}">${r.questions.map((q) => question(r.job_id, q)).join("")}</form>` : "";
+    if (r.need === "questions") body = form + jobButtons(r, ["fill", "show", "skip"]);
+    else if (form) body = form + jobButtons(r, ["fill", "show", "resume", "skip"]);  // e.g. a missing file, plus questions
     else if (["sign_in", "bot_check", "email_code"].includes(r.need)) body = jobButtons(r, ["show", r.blocking ? "later" : "resume", "skip"]);
     else if (r.need === "captcha") body = jobButtons(r, ["show", "submit", "skip"]);
     else if (r.need === "your_submit") body = jobButtons(r, ["show", "applied", "skip"]);
@@ -444,6 +453,27 @@ document.addEventListener("click", (e) => {
   } else if (jobAct) {
     act(() => api(`/api/job/${job}/${jobAct}`, {}));
   }
+});
+
+$("add-form").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const box = $("add-links"), text = box.value.trim();
+  if (!text) return;
+  const btn = $("add-btn");
+  btn.disabled = true;
+  btn.innerHTML = `<span class="spin"></span> Reading…`;
+  act(async () => {
+    try {
+      const out = await api("/api/add", {text});
+      out.added.filter((a) => a.job_id).forEach((a) => selected.add(a.url));  // ready for Apply
+      const failed = out.added.filter((a) => a.error);
+      box.value = failed.map((a) => a.url).join(" ");
+      if (failed.length) alert(failed.map((a) => `${a.url}: ${a.error}`).join("\n"));
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "Add";
+    }
+  });
 });
 
 $("pw-form").addEventListener("submit", (e) => {

@@ -39,7 +39,9 @@ The desk is a local web page served by this plugin. It does what the `find-jobs`
    openings they want (or **Select recommended**), then **Apply to selected**. Say
    that it stops at each review page unless they turn on **Submit for me**.
 4. Jobs from Indeed or LinkedIn (via the `find-jobs` skill) that are saved with
-   `add_job` or `ingest_job` appear in the desk's list too, ranked the same way.
+   `add_job` or `ingest_job` appear in the desk's list too, ranked the same way. The
+   user can also paste job links into the box above the list. The desk reads each
+   posting (LinkedIn and Indeed in a background browser tab) and ticks it for Apply.
 5. The desk keeps running while Claude Code is open. Without Claude, the user can run
    `uv run --project <plugin>/server job-apply-desk` (the path is `plugin_root` in
    `setup_status`).

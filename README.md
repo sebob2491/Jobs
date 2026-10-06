@@ -121,8 +121,10 @@ terms and press the button) and signs you in after that. The password goes from 
 page straight into `~/.job-apply/secrets.yaml` on your computer. Claude never sees it,
 and the desk only reports whether one is saved.
 
-Jobs Claude saves from Indeed or LinkedIn show up in the same list. Without Claude
-Code, run `uv run --project <plugin>/server job-apply-desk`.
+To add jobs from anywhere else, paste their links (LinkedIn, Indeed or any company
+site) into the box above the list. The desk reads each posting, scores it and ticks it
+for Apply. Jobs Claude saves from Indeed or LinkedIn show up in the same list. Without
+Claude Code, run `uv run --project <plugin>/server job-apply-desk`.
 
 **Bot checks.** The desk never tries to get around Cloudflare, CAPTCHAs or other bot
 checks: no disguised browser, no CAPTCHA-solving services. When a site shows one, it

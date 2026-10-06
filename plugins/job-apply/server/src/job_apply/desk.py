@@ -14,6 +14,7 @@ import argparse
 import asyncio
 import contextlib
 import json
+import re
 import secrets
 import socket
 import time
@@ -30,7 +31,8 @@ from starlette.routing import Route
 
 from . import config
 from .pipeline import Applier, question_key
-from .postings import fetch_posting
+from .ats import detect_ats
+from .postings import fetch_posting, finalize, parse_html
 from .recommend import recommend, score_listing
 
 PAGE = Path(__file__).resolve().parent / "static" / "desk.html"
@@ -113,6 +115,7 @@ class Desk:
             r("/api/job/{job_id:int}/{action}", self.job_view, methods=["POST"]),
             r("/api/settings", self.settings_view, methods=["POST"]),
             r("/api/password", self.password_view, methods=["POST"]),
+            r("/api/add", self.add_view, methods=["POST"]),
         ])
 
     async def start(self, port: int = DEFAULT_PORT, open_browser: bool = True) -> str:
@@ -241,6 +244,15 @@ class Desk:
             return JSONResponse({"error": str(e)}, status_code=400)
         return JSONResponse({"saved": True})
 
+    async def add_view(self, request: Request) -> Response:
+        if not self._allowed(request, api=True):
+            return self._forbidden()
+        body = await request.json()
+        links = [u for u in re.split(r"\s+", str(body.get("text") or "")) if u]
+        if not links:
+            return JSONResponse({"error": "Paste a job link first."}, status_code=400)
+        return JSONResponse({"added": await self.add_links(links[:MAX_LINKS])})
+
     # ------------------------------------------------------------- actions
     async def find_jobs(self) -> None:
         self.search.update(status="running", error=None, started=time.time())
@@ -284,6 +296,34 @@ class Desk:
         for job_id in dict.fromkeys(ids):
             self.applier.enqueue(job_id, submit=submit)
         return list(dict.fromkeys(ids))
+
+    async def add_links(self, links: list[str]) -> list[dict[str, Any]]:
+        """Pasted job links (LinkedIn, Indeed, a company site): read each posting, save it to
+        the tracker, and so to the list, ready for Apply. LinkedIn and Indeed usually turn
+        away plain requests, so those are read in a background tab of the browser, where the
+        person may be signed in."""
+        out: list[dict[str, Any]] = []
+        for url in links:
+            if not re.match(r"(?i)^(https?|file)://", url):
+                out.append({"url": url, "error": "not a web address"})
+                continue
+            posting = None
+            try:
+                posting = await self.fetch(url)
+                if not posting.is_useful and detect_ats(url) in ("linkedin", "indeed"):
+                    posting = None
+            except Exception:  # FetchError, a timeout, an odd page: the browser gets a go
+                posting = None
+            if posting is None:
+                try:
+                    posting = finalize(parse_html(await self.srv.browser.background_html(url), url))
+                except Exception as e:  # report it on the page; the other links still go in
+                    out.append({"url": url, "error": f"couldn't read the posting: {str(e).splitlines()[0][:150]}"})
+                    continue
+            job, _ = self.srv.tracker().upsert(posting.to_dict())
+            out.append({"url": job["url"], "job_id": job["id"], "title": job.get("title"), "company": job.get("company"),
+                        "warnings": posting.warnings})
+        return out
 
     def answer(self, job_id: int, answers: list[dict[str, Any]]) -> None:
         run = self.applier.runs[job_id]
@@ -354,6 +394,8 @@ def _has_secret(name: str) -> bool:
     except (OSError, yaml.YAMLError):  # a hand-edited secrets.yaml with a typo mustn't break the page
         return False
 
+
+MAX_LINKS = 20  # pasted at once; a person's own picks, not a crawl
 
 _desk: Desk | None = None
 
