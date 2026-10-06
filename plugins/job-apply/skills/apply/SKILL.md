@@ -84,6 +84,21 @@ below.
    check `confirmed`. If it's false, read `page_text` before you call
    `update_job(status="applied")`.
 
+## When something goes wrong
+
+- When `autofill` or `fill_form` can't fill a field, the tool saves a debug snapshot
+  (HTML of every frame, a screenshot and the extracted fields) and returns its path
+  as `debug_snapshot`. For other odd behavior, such as a missed label, a button that
+  does nothing or a page the tools can't read, call `debug_snapshot(note="...")`
+  yourself. Then finish the field another way: `click` the option, or ask the user
+  to set it in the browser.
+- The first time you use an ATS, go slowly. Run `screenshot` after `autofill` and
+  check that what's on screen matches what the tool reported.
+- At the end, list the snapshot folders for the user. If they're working on the
+  plugin, offer to turn each one into a regression test with
+  `uv run --project <plugin_root>/server python -m job_apply.fixtures <snapshot> <name>`
+  (`plugin_root` comes from `setup_status`).
+
 ## Several jobs at once
 
 Ingest all of them first, then show one table: id, company, title, location, ATS,

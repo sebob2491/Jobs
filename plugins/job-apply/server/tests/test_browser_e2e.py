@@ -1,40 +1,9 @@
 """Drive the MCP tools against local mock application forms in headless Chromium."""
 
-import asyncio
-
 import pytest
-from conftest import browser_available, fixture_url
+from conftest import browser_available, by_label, fixture_url, run
 
 pytestmark = pytest.mark.skipif(not browser_available(), reason="no Playwright Chromium installed")
-
-
-@pytest.fixture
-def srv(job_apply_home, loop):
-    from job_apply import server
-
-    server._tracker = None
-    server.browser.current_job_id = None
-    yield server
-    loop.run_until_complete(server.browser.close())
-    if server._tracker:
-        server._tracker.close()
-        server._tracker = None
-
-
-def run(coro):
-    return asyncio.get_event_loop().run_until_complete(coro)
-
-
-@pytest.fixture(autouse=True)
-def loop():
-    lp = asyncio.new_event_loop()
-    asyncio.set_event_loop(lp)
-    yield lp
-    lp.close()
-
-
-def by_label(fields, text):
-    return next(f for f in fields if text.lower() in f["label"].lower())
 
 
 def test_generic_form_autofill_and_submit_guard(srv):

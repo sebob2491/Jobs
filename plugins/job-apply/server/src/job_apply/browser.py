@@ -8,6 +8,7 @@ can watch every step and take over at any time.
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import re
 from pathlib import Path
@@ -249,6 +250,32 @@ class BrowserSession:
         async with self._lock:
             page = await self.page()
             return await page.content()
+
+    async def snapshot(self, dest: Path, note: str = "", details: Any = None) -> Path:
+        """Save what's needed to debug a page later: HTML of every frame, a screenshot
+        and the extracted fields. Stays on the user's machine."""
+        async with self._lock:
+            page = await self.page()
+            dest.mkdir(parents=True, exist_ok=True)
+            data = await self._extract(page)
+            frames = []
+            for i, frame in enumerate(f for f in page.frames if not f.is_detached()):
+                name = "page.html" if frame is page.main_frame else f"frame-{i}.html"
+                try:
+                    (dest / name).write_text(await frame.content(), encoding="utf-8")
+                    frames.append({"file": name, "url": frame.url})
+                except PlaywrightError:
+                    continue
+            try:
+                (dest / "screenshot.jpg").write_bytes(
+                    await page.screenshot(type="jpeg", quality=60, full_page=True)
+                )
+            except PlaywrightError:
+                pass
+            meta = {"url": page.url, "title": await page.title(), "note": note, "frames": frames,
+                    "details": details, **data}
+            (dest / "snapshot.json").write_text(json.dumps(meta, indent=2, default=str), encoding="utf-8")
+            return dest
 
     async def screenshot(self, full_page: bool = False, save_to: Path | None = None) -> bytes:
         async with self._lock:

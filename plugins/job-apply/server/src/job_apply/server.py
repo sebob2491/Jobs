@@ -50,6 +50,22 @@ def _job(job_id: int | None) -> dict[str, Any]:
     return job
 
 
+def _snapshot_dir() -> Path:
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")[:-3]
+    jid = browser.current_job_id
+    job = tracker().get(jid) if jid is not None else None
+    base = Path(job["folder"]) if job else config.home()
+    return base / "debug" / stamp
+
+
+async def _auto_snapshot(note: str, details: Any) -> str | None:
+    """Capture the page when something didn't fill, so it can be debugged later."""
+    try:
+        return str(await browser.snapshot(_snapshot_dir(), note=note, details=details))
+    except Exception:  # never let debugging break the actual tool call
+        return None
+
+
 def _brief(job: dict[str, Any]) -> dict[str, Any]:
     keys = ["id", "status", "title", "company", "location", "ats", "source", "url", "apply_url", "salary", "folder"]
     out = {k: job.get(k) for k in keys}
@@ -243,10 +259,12 @@ async def autofill(job_id: int | None = None, overwrite: bool = False) -> dict[s
         else:
             failed.append({**entry, "error": r["error"]})
     after = await browser.inspect(include_dropdown_options=False)
+    snapshot = await _auto_snapshot("autofill failures", failed) if failed else None
     return {
         "page": {"url": after["url"], "headings": after["headings"]},
         "filled": filled,
         "failed": failed,
+        **({"debug_snapshot": snapshot} if snapshot else {}),
         "needs_input": plan["needs_input"],
         "already_filled": len(plan["already_filled"]),
         "errors": after["errors"],
@@ -260,7 +278,23 @@ async def fill_form(values: list[dict[str, Any]]) -> dict[str, Any]:
     inspect_form/autofill. Options are matched loosely ("Yes", "AZ" -> "Arizona"). For
     checkbox_group pass a list. For file fields pass a local file path."""
     results = await browser.fill(values)
-    return {"results": results, "ok": all(r["ok"] for r in results)}
+    ok = all(r["ok"] for r in results)
+    out: dict[str, Any] = {"results": results, "ok": ok}
+    if not ok:
+        failed = [{**r, "value": v.get("value")} for r, v in zip(results, values) if not r["ok"]]
+        if snapshot := await _auto_snapshot("fill_form failures", failed):
+            out["debug_snapshot"] = snapshot
+    return out
+
+
+@mcp.tool()
+async def debug_snapshot(note: str = "") -> dict[str, Any]:
+    """Save the current page (HTML of every frame, full screenshot, extracted fields) to the
+    job's debug folder. Use it when a page behaves unexpectedly — a field that won't fill,
+    a button that does nothing, a missed label — so the case can become a regression test
+    (see the README's "Turning a failure into a test")."""
+    path = await browser.snapshot(_snapshot_dir(), note=note)
+    return {"saved_to": str(path), "files": sorted(p.name for p in path.iterdir())}
 
 
 @mcp.tool()

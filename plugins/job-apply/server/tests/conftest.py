@@ -1,3 +1,4 @@
+import asyncio
 import os
 from pathlib import Path
 
@@ -51,3 +52,47 @@ def browser_available() -> bool:
         return True
     root = Path(os.environ.get("PLAYWRIGHT_BROWSERS_PATH", Path.home() / ".cache" / "ms-playwright"))
     return any(root.glob("chromium-*"))
+
+
+@pytest.fixture
+def loop():
+    lp = asyncio.new_event_loop()
+    asyncio.set_event_loop(lp)
+    yield lp
+    lp.close()
+
+
+@pytest.fixture
+def srv(job_apply_home, loop):
+    """The MCP server module with a fresh tracker; closes its browser afterwards."""
+    from job_apply import server
+
+    server._tracker = None
+    server.browser.current_job_id = None
+    yield server
+    loop.run_until_complete(server.browser.close())
+    if server._tracker:
+        server._tracker.close()
+        server._tracker = None
+
+
+def run(coro):
+    return asyncio.get_event_loop().run_until_complete(coro)
+
+
+def by_label(fields, text):
+    return next(f for f in fields if text.lower() in f["label"].lower())
+
+
+async def check_fixture_extraction(server, html: Path, expect: dict) -> list[str]:
+    """Open a saved page and report expected fields that are no longer extracted."""
+    await server.browser.goto(html.resolve().as_uri())
+    got = (await server.browser.inspect(include_dropdown_options=False))["fields"]
+    problems = []
+    for want in expect["fields"]:
+        same = [f for f in got if f.get("label") == want["label"] and f.get("kind") == want["kind"]]
+        if not same:
+            problems.append(f"missing {want['kind']} field {want['label']!r}")
+        elif "required" in want and not any(bool(f.get("required")) == want["required"] for f in same):
+            problems.append(f"required flag changed for {want['label']!r}")
+    return problems
