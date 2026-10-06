@@ -127,6 +127,31 @@ def test_bot_check_holds_the_queue_until_the_person_passes_it(srv, monkeypatch):
     run(go())
 
 
+def test_a_captcha_challenge_after_a_click_waits_for_the_person(srv, monkeypatch):
+    """Daifuku's iCIMS answers Next on its email step with hCaptcha's pictures and "Please try
+    again.": the person solves it, then the desk carries on. A challenge frame kept hidden
+    (Paycom's) is no check at all."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    job = srv.add_job(url=fixture_url("site/captcha-step.html"), title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status == "needs_you")
+            first = (r.need, r.reason, list(r.log), r.blocking)
+            await r.page.evaluate("() => window.solved()")
+            await until(lambda: r.need == "sign_in")  # carried on by itself, up to the next step
+            return first
+        finally:
+            await applier.stop()
+
+    need, reason, log, blocking = run(go())
+    assert need == "bot_check" and blocking, (reason, log)
+    assert "clicked “Next”" in log and "CAPTCHA" in reason
+
+
 def test_saved_password_signs_in_without_the_person(srv, monkeypatch):
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
     saved_password(monkeypatch)

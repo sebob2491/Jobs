@@ -237,6 +237,22 @@ ATS_HOST = re.compile(r"myworkdayjobs|myworkdaysite|myworkday\.com|icims\.com|ap
                       r"adp\.com|bamboohr|jobvite|taleo|workable|recruitee|ashbyhq|breezy|applytojob|dayforce|hrmos|softgarden", re.I)
 
 
+_PLACE_KEY = re.compile(r"locat|city|country|state|region|address|place|site", re.I)
+
+
+def _places(value: Any, key: str = "", depth: int = 0) -> list[str]:
+    """Location-like values in a job record: 'jobOpening.locations[0].city=Corona'."""
+    if depth > 5:
+        return []
+    if isinstance(value, dict):
+        return [p for k, v in value.items() for p in _places(v, f"{key}.{k}" if key else str(k), depth + 1)]
+    if isinstance(value, list):
+        return [p for i, v in enumerate(value[:5]) for p in _places(v, f"{key}[{i}]", depth + 1)]
+    if isinstance(value, (str, int, float)) and str(value) and _PLACE_KEY.search(key):
+        return [f"{key}={str(value)[:60]}"]
+    return []
+
+
 async def probe_page(name: str, url: str) -> dict[str, Any]:
     await server.browser.page()
     ctx = server.browser._ctx  # noqa: SLF001 - test script reaching into the session on purpose
@@ -272,6 +288,9 @@ async def probe_page(name: str, url: str) -> dict[str, Any]:
                 out["item_keys"] = sorted(items[0])
                 out["first_item"] = json.dumps({k: v for k, v in items[0].items()
                                                 if not isinstance(v, str) or len(v) < 300}, default=str)[:3000]
+                # where each one is: any location-like values, wherever they sit in the item
+                out["places"] = [{"title": str(i.get("position") or i.get("jobTitle") or i.get("title") or "")[:80],
+                                  "lang": i.get("language"), "where": _places(i)[:6]} for i in items[:100]]
         except Exception:  # noqa: BLE001
             pass
         try:  # the answer's shape: totals, filter names and values, where the openings are

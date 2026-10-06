@@ -378,7 +378,7 @@ async def autofill(job_id: int | None = None, overwrite: bool = False) -> dict[s
         if r["ok"]:
             filled.append(entry)
         else:
-            failed.append({**entry, "error": r["error"]})
+            failed.append({**entry, "error": r["error"], **({"options": r["options"]} if r.get("options") else {})})
     after = await browser.inspect(include_dropdown_options=False)
     snapshot = await _auto_snapshot("autofill failures", failed) if failed else None
     return {

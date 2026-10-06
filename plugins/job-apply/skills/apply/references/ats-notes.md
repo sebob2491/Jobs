@@ -21,7 +21,7 @@ the page URL. Use this file for the parts of each flow that `autofill` can't do.
   it's fine, take the privacy-preserving option: "Reject all", "Decline" or
   "Necessary only". Never accept marketing cookies on their behalf.
 
-## Workday (`*.myworkdayjobs.com`, `*.myworkdaysite.com`): Applied Materials, KLA, Intel, Microchip, NXP, TEL, Analog Devices, Hitachi High-Tech, Entegris, Axcelis, Onto Innovation, ASML (some postings)
+## Workday (`*.myworkdayjobs.com`, `*.myworkdaysite.com`): Applied Materials, KLA, Intel, Microchip, NXP, TEL, Analog Devices, Hitachi High-Tech, Entegris, Axcelis, Onto Innovation, Thermo Fisher, ASML (some postings)
 
 - Each company has its own Workday account. Use the same email each time.
 - Path: **Apply** → choose **Autofill with Resume** (Workday parses the resume
@@ -40,6 +40,9 @@ the page URL. Use this file for the parts of each flow that `autofill` can't do.
   pickers (`combobox`): the value is typed and Enter pressed. If the result is a category
   rather than a final option, `click` the option text. Text typed into one without
   picking from its list disappears when it loses focus, so only a picked entry counts.
+  In "How Did You Hear About Us?" some entries are groups ("Job Board" holds Indeed,
+  LinkedIn, ...): picking one opens its own list, and `fill_form` reports the group's
+  entries as `options` so the user can choose one.
 - On **My Experience**, call `add_entries("work")` and `add_entries("education")`.
   They click **Add** / **Add Another** until there is one block per entry in the
   profile's `work_history` and `education_history`. Then call `autofill`, which
@@ -120,6 +123,12 @@ the page URL. Use this file for the parts of each flow that `autofill` can't do.
 
 - Every opening is listed on one page (`/x/openings`), with its location. The board also
   has a **My Account** page for returning to a saved or submitted application.
+
+## CAPTCHAs
+
+- Some sites put up a CAPTCHA mid-application: Daifuku's iCIMS shows hCaptcha's picture
+  puzzle after its email step. The user solves it in the browser; never try to solve one.
+  The Job Desk notices the challenge, waits, and carries on once the page moves on.
 
 ## iCIMS (`*.icims.com`): Daifuku America
 

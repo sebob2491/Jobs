@@ -168,5 +168,5 @@ companies:
     careers_url: https://jobs.thermofisher.com/global/en/search-results?keywords=field%20service%20engineer
     ats: workday               # jobs.thermofisher.com is a Phenom front end; applications are in Workday
     az_sites: Phoenix, Chandler (field service on electron microscopes and FIB tools in fabs)
-    confidence: low           # Workday site to be confirmed by the live check
+    confidence: high          # live check, Oct 2026: Field Service Engineer II openings in Phoenix and Chandler
     search: {workday: https://thermofisher.wd5.myworkdayjobs.com/ThermoFisherCareers}

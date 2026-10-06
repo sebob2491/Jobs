@@ -42,8 +42,11 @@
 <div data-automation-id="activeListContainer" role="listbox" id="popup" hidden></div>
 <button type="button" data-automation-id="pageFooterNextButton">Next</button>
 <script>
-  // Opening the prompt lists its categories; typing and Enter search every entry.
-  const sources = ['Company Website', 'Employee Referral', 'Indeed', 'LinkedIn'];
+  // Opening the prompt lists its top level, where a group ("Job Board") opens its own list;
+  // typing and Enter search every entry.
+  const groups = {'Job Board': ['Indeed', 'LinkedIn'], 'Social Media': ['Facebook', 'X']};
+  const topLevel = ['Advertisement', 'Company Website', 'Job Board', 'Social Media'];
+  const sources = ['Advertisement', 'Company Website', 'Indeed', 'LinkedIn', 'Facebook', 'X'];
   const input = document.getElementById('source--source');
   const popup = document.getElementById('popup');
   const chosen = document.querySelector('#ms-source .chosen');
@@ -53,7 +56,7 @@
       const opt = document.createElement('div');
       opt.setAttribute('role', 'option');
       opt.innerHTML = '<div data-automation-id="promptOption" data-automation-label="' + it + '">' + it + '</div>';
-      opt.addEventListener('click', () => pick(it));
+      opt.addEventListener('click', () => (groups[it] ? setTimeout(() => show(groups[it]), 100) : pick(it)));
       popup.appendChild(opt);
     }
     popup.hidden = false;
@@ -67,7 +70,7 @@
     input.value = '';
     popup.hidden = true;
   }
-  input.addEventListener('click', () => setTimeout(() => show(['Advertisement', 'Job Board', 'Social Media', 'Company Website']), 150));
+  input.addEventListener('click', () => setTimeout(() => show(topLevel), 150));
   input.addEventListener('keydown', (e) => {
     if (e.key !== 'Enter') return;
     const q = input.value.toLowerCase();

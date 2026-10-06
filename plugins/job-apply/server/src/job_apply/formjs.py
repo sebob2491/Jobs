@@ -215,6 +215,9 @@ EXTRACT_JS = r"""
       if (role === 'spinbutton') f.role = 'spinbutton';
     }
     if (options) f.options = options;
+    // a Workday search prompt: what it lists on opening is only its top level
+    if (kind === 'combobox' && (el.getAttribute('data-uxi-widget-type') === 'selectinput'
+        || el.closest('[data-automation-id="multiSelectContainer"], [data-automation-id="multiselectInputContainer"]'))) f.search = true;
     if (el.multiple) f.multiple = true;
     if (el.disabled || el.getAttribute('aria-disabled') === 'true') f.disabled = true;
     if (el.readOnly) f.readonly = true;
@@ -437,10 +440,39 @@ FIELD_OPTIONS_JS = r"""
 }
 """
 
+# Is a CAPTCHA challenge (hCaptcha's or reCAPTCHA's pictures, Cloudflare's check) showing
+# in this frame? Their frames sit hidden in many pages until they're needed, and the
+# checkbox ones are small: only a big, visible challenge frame counts.
+CHALLENGE_JS = r"""
+() => Array.from(document.querySelectorAll('iframe')).some((f) => {
+  const src = f.getAttribute('src') || '';
+  const title = f.getAttribute('title') || '';
+  if (!/hcaptcha\.com.*challenge|recaptcha\/(api2|enterprise)\/bframe|challenges\.cloudflare\.com/i.test(src)
+      && !/(hcaptcha|recaptcha|captcha).*challenge|challenge.*(hcaptcha|recaptcha|captcha)/i.test(title)) return false;
+  const r = f.getBoundingClientRect();
+  const s = getComputedStyle(f);
+  return r.width > 150 && r.height > 150 && r.bottom > 0 && r.right > 0 && r.top < innerHeight && r.left < innerWidth
+    && s.visibility !== 'hidden' && s.display !== 'none' && Number(s.opacity || 1) > 0.1;
+})
+"""
+
+
 # Is this input one of Workday's search prompts? Those search when Enter is pressed.
 WORKDAY_PROMPT_JS = r"""
 (el) => el.getAttribute('data-uxi-widget-type') === 'selectinput'
   || !!el.closest('[data-automation-id="multiSelectContainer"], [data-automation-id="multiselectInputContainer"]')
+"""
+
+
+# What a Workday search prompt has chosen (its pills), or null for any other field.
+WORKDAY_CHOSEN_JS = r"""
+(el) => {
+  const box = el.closest('[data-automation-id="multiSelectContainer"]')
+    || el.closest('[data-automation-id="multiselectInputContainer"]');
+  if (!box) return null;
+  return Array.from(box.querySelectorAll('[data-automation-id="selectedItem"]'))
+    .map((p) => (p.innerText || p.textContent || '').replace(/\s+/g, ' ').trim()).filter(Boolean);
+}
 """
 
 

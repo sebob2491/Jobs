@@ -91,6 +91,8 @@ class Run:
 
 def classify(data: dict[str, Any], text: str) -> str:
     """bot_check, sign_in, email_code, form or page."""
+    if data.get("challenge"):  # a CAPTCHA's pictures over the page (iCIMS after its email step)
+        return "bot_check"
     fields = [f for f in data.get("fields", []) if not f.get("disabled")]
     if not fields and (_BOT_TITLE.search(data.get("title") or "") or _BOT_TEXT.search(text[:3000])):
         return "bot_check"
@@ -125,6 +127,8 @@ def _fingerprint(page: dict[str, Any]) -> tuple:
     return page.get("url"), tuple(page.get("headings") or []), count, actions
 
 
+_BOT_CHECK_SAYS = ("The site is checking that you're a person (a bot check or CAPTCHA). Solve it in the browser "
+                   "window; the desk carries on by itself after that.")
 _ERRORISH = re.compile(r"error|required|invalid|please|must|enter |select |missing|problem|fix|can'?t be blank", re.I)
 
 
@@ -328,6 +332,7 @@ class Applier:
     async def _look(self) -> tuple[dict[str, Any], str]:
         data = await self.srv.inspect_form(include_dropdown_options=False)
         text = await self.srv.page_text(4000)
+        data["challenge"] = await self.srv.browser.challenge_showing()
         return data, text
 
     async def _open(self, run: Run) -> bool:
@@ -372,8 +377,7 @@ class Applier:
                 kind = "page"  # a posting with a "send me similar jobs" box: go in through Apply
             if kind == "bot_check":
                 await self._bring_forward(run)
-                return self._pause(run, "bot_check", "The site is showing a bot check. Solve it in the browser "
-                                   "window; the desk carries on by itself after that.")
+                return self._pause(run, "bot_check", _BOT_CHECK_SAYS)
             if kind == "sign_in":
                 done = await self._sign_in(run, data, sign_ins)
                 if done in ("email_step", "submitted", "create_account"):
@@ -412,11 +416,12 @@ class Applier:
                 result = await srv.autofill(job_id=run.job_id)
                 if result["filled"]:
                     self._log(run, f"filled {len(result['filled'])} field(s) on {_where(data)}")
-                pending = [{**f, "error": once_failed[question_key(f.get("label") or "")]}
+                pending = [{**f, **once_failed[question_key(f.get("label") or "")]}
                            if question_key(f.get("label") or "") in once_failed else f
                            for f in result["needs_input"] if f.get("required") and f.get("kind") != "file"]
-                pending += [{"id": f["id"], "label": f.get("label") or "", "kind": "text", "required": True,
-                             "error": f.get("error")} for f in result["failed"]]
+                pending += [{"id": f["id"], "label": f.get("label") or "", "kind": "combobox" if f.get("options") else "text",
+                             "required": True, "error": f.get("error"),
+                             **({"options": f["options"]} if f.get("options") else {})} for f in result["failed"]]
                 missing_files = [f for f in result["needs_input"] if f.get("required") and f.get("kind") == "file"]
                 before, page_key = data, (data.get("url"), tuple(data.get("headings") or []))
                 data, text = await self._look()  # filling can add or enable things (State after Country, Submit)
@@ -474,6 +479,9 @@ class Applier:
             if _fingerprint(clicked) == before and await self._new_tab_soon(run, NEW_TAB_WAIT):
                 continue  # asml.com's Apply Now opens Workday in a new tab a moment after the click
             if _fingerprint(clicked) == before:
+                if await srv.browser.challenge_showing():  # the click brought up a CAPTCHA
+                    await self._bring_forward(run)
+                    return self._pause(run, "bot_check", _BOT_CHECK_SAYS)
                 stalls += 1
                 problems = [e for e in clicked.get("errors") or [] if _ERRORISH.search(e)]
                 if problems or stalls >= 2:
@@ -508,9 +516,10 @@ class Applier:
                 return True
         return False
 
-    async def _fill_once(self, run: Run, data: dict[str, Any]) -> dict[str, str]:
+    async def _fill_once(self, run: Run, data: dict[str, Any]) -> dict[str, dict[str, Any]]:
         """Answers the person gave for this application only (not remembered). Returns the
-        ones that didn't go in, by question, with the reason."""
+        ones that didn't go in, by question: the reason, and the entries to choose from
+        when the answer was a group of them."""
         if not run.once:
             return {}
         by_id = {f["id"]: question_key(f.get("label") or "") for f in data.get("fields") or []}
@@ -519,7 +528,9 @@ class Applier:
         if not fills:
             return {}
         out = await self.srv.fill_form(fills)
-        failed = {by_id[r["id"]]: r.get("error") or "didn't take" for r in out.get("results", []) if not r.get("ok")}
+        failed = {by_id[r["id"]]: {"error": r.get("error") or "didn't take",
+                                   **({"options": r["options"]} if r.get("options") else {})}
+                  for r in out.get("results", []) if not r.get("ok")}
         done = len(fills) - len(failed)
         if done:
             self._log(run, f"filled {done} answer(s) you gave for this application")

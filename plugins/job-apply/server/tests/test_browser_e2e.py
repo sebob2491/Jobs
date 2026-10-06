@@ -95,6 +95,12 @@ def test_workday_2026_search_prompt_is_picked_not_typed(srv):
     heard = by_label(fields, "how did you hear")
     assert heard["kind"] == "combobox" and heard["value"] == ""
     assert by_label(fields, "country phone code")["value"] == "United States of America (+1)"
+    assert heard.get("search")  # its list on opening is only the top level
+    # a group in the top level opens its own list: its entries are what to choose between
+    out = run(srv.fill_form([{"id": heard["id"], "value": "Job Board"}]))
+    assert not out["results"][0]["ok"] and out["results"][0]["options"] == ["Indeed", "LinkedIn"], out
+    assert by_label(run(srv.inspect_form(include_dropdown_options=False))["fields"], "how did you hear")["value"] == ""
+    # an entry inside a group is found by searching
     out = run(srv.fill_form([{"id": heard["id"], "value": "LinkedIn"}]))
     assert out["results"][0]["ok"], out
     after = run(srv.inspect_form(include_dropdown_options=False))["fields"]

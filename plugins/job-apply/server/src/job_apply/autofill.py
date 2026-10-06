@@ -590,12 +590,31 @@ def resolve_field(field: dict, prof: Profile, job: dict | None = None, file_inpu
     options = field.get("options")
     if kind in {"select", "radio_group", "listbox", "checkbox_group", "combobox"} and options:
         chosen = choose_option(ans.value, options)
+        if chosen is None and ans.rule == "how_heard":
+            chosen = _own_website(ans.value, options, job)
+        if chosen is None and field.get("search") and not isinstance(ans.value, (list, dict)):
+            return ans  # a search prompt lists only its top level: the fill searches it for the answer
         if chosen is None:
             return None
         return Answer(chosen, ans.rule)
     if kind == "combobox" and ans.rule in _NEEDS_OPTIONS:
         return None  # an attestation we won't answer without seeing the exact choices
     return ans
+
+
+_WEBSITE = re.compile(r"\b(web ?site|careers? (site|page|portal)|company site)\b", re.I)
+
+
+def _own_website(value: Any, options: list[str], job: dict) -> str | None:
+    """"Company Website" (how the person heard of the job) is the employer's own site, which
+    a form may call "ONTO Website" or "Careers Site"."""
+    if not re.search(r"\b(company|employer|career|careers|corporate)\b.*\b(web ?site|site|page)\b", str(value), re.I):
+        return None
+    sites = [o for o in options if _WEBSITE.search(o)]
+    if len(sites) > 1:  # "ONTO Website" over "Other Website": the one naming the employer
+        employer = set(norm(job.get("company") or "").split()) - {"inc", "corp", "corporation", "co", "ltd", "llc"}
+        sites = [o for o in sites if employer & set(norm(o).split())] or sites
+    return sites[0] if len(sites) == 1 else None
 
 
 _EDU_FIELD = re.compile(r"^(school|university|college|institution|degree|discipline|major|field of study)\b")

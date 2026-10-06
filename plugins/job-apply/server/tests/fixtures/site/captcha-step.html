@@ -1,0 +1,26 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Enter Your Information</title></head>
+<body>
+<!-- like Daifuku's iCIMS: Next on the email step brings up an hCaptcha picture challenge,
+     and the page stays where it is, saying "Please try again." -->
+<h2>Enter Your Information</h2>
+<label for="em">Email</label><input id="em" type="email">
+<button type="button" id="next">Next</button>
+<div id="err" role="alert"></div>
+<div id="challenge"></div>
+<script>
+  document.getElementById('next').addEventListener('click', () => {
+    document.getElementById('err').textContent = 'Please try again.';
+    document.getElementById('challenge').innerHTML =
+      '<iframe title="Main content of the hCaptcha challenge" src="about:blank" style="width:400px;height:480px;border:1px solid #ccc"></iframe>';
+  });
+  // the person solves it: the challenge goes and the site carries on
+  window.solved = () => { document.getElementById('challenge').innerHTML = ''; location.href = 'signin.html'; };
+</script>
+<!-- the hCaptcha frame a page keeps hidden until it's needed (Paycom's Quick Apply) -->
+<div style="visibility: hidden; position: absolute; top: -10000px">
+  <iframe title="Main content of the hCaptcha challenge" src="about:blank" style="width:400px;height:480px"></iframe>
+</div>
+</body>
+</html>

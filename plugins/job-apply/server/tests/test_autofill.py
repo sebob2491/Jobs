@@ -246,3 +246,20 @@ def test_country_lists_with_flags_and_dial_codes():
     assert choose_option("United States", lam) == lam[1]
     assert choose_option("united states of america (+1)", lam) == lam[1]
     assert choose_option("United States", ["United States Minor Outlying Islands", "United States"]) == "United States"
+
+
+def test_company_website_is_the_employers_own_site():
+    """Onto's Workday lists "ONTO Website", not "Company Website", as where you heard of the job."""
+    onto = ["Job Alert", "Job Board", "Networking", "ONTO Website", "Social Media"]
+    heard = f("How Did You Hear About Us?*", "combobox", options=onto)
+    p = prof()
+    p.data["preferences"] = {**p.data.get("preferences", {}), "how_did_you_hear": "Company Website"}
+    assert resolve_field(heard, p, {"company": "Onto Innovation"}).value == "ONTO Website"
+    two = ["Careers Website", "Other Website", "LinkedIn"]
+    assert resolve_field(f("How did you hear about us?", "select", options=two), p, {"company": "Example Fab"}) is None
+    assert resolve_field(f("How did you hear about us?", "select", options=["KLA Careers Site", "Indeed"]), p,
+                         {"company": "KLA"}).value == "KLA Careers Site"
+    p.data["preferences"]["how_did_you_hear"] = "LinkedIn"
+    assert resolve_field(heard, p, {"company": "Onto Innovation"}) is None  # not on the list: the person picks
+    # unless the list is a Workday search prompt's top level: then the fill searches for it
+    assert resolve_field({**heard, "search": True}, p, {"company": "Onto Innovation"}).value == "LinkedIn"
