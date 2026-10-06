@@ -29,9 +29,15 @@ the page URL. Use this file for the parts of each flow that `autofill` can't do.
   "How Did You Hear About Us?", School and Field of Study are search pickers
   (`combobox`): the value is typed and Enter pressed. If the result is a category
   rather than a final option, `click` the option text.
-- In My Experience, Work Experience and Education entries need **Add**. Click it,
-  run `inspect_form`, then fill Job Title, Company, Location, From and To. Dates
-  are separate Month and Year inputs, so fill them as `"03"` and `"2022"`.
+- On **My Experience**, call `add_entries("work")` and `add_entries("education")`.
+  They click **Add** / **Add Another** until there is one block per entry in the
+  profile's `work_history` and `education_history`. Then call `autofill`, which
+  fills each "Work Experience N" / "Education N" block from entry N: title,
+  company, location, "I currently work here", From/To month and year, description,
+  school, degree, field of study, GPA. If "Autofill with Resume" already created
+  blocks, check them against the profile and fix them with `fill_form`, rather than
+  adding duplicates. Dates are separate Month and Year inputs (`sublabel` in
+  `inspect_form`). To fill one by hand, pass `"03"` and `"2022"`.
 - Voluntary Disclosures includes a terms-and-conditions consent checkbox. The
   user has to agree to it, so ask.
 - Self Identify is the disability form (CC-305). Fill it from `eeo.disability`,

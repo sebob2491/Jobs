@@ -26,6 +26,16 @@ PROFILE = {
                     "willing_to_relocate": False},
     "eeo": {"gender": "Decline to self-identify", "veteran": "I don't wish to answer"},
     "answers": [{"match": "clean ?room", "answer": "Yes"}, {"match": "lift", "answer": None}],
+    "work_history": [
+        {"title": "Equipment Technician", "company": "Intel", "location": "Chandler, AZ", "start": "2021-03",
+         "end": "present", "description": "Maintained 300mm etch and deposition tools."},
+        {"title": "Maintenance Technician", "company": "Example Fab Services", "location": "Tempe, AZ",
+         "start": "Jun 2018", "end": "02/2021", "description": "PMs and troubleshooting on vacuum pumps."},
+    ],
+    "education_history": [
+        {"school": "Arizona State University", "degree": "BS Electrical Engineering", "major": "Electrical Engineering",
+         "gpa": 3.4, "start": 2016, "end": 2020},
+    ],
     "settings": {"submit_mode": "review", "browser_channel": "chromium", "headless": True},
 }
 

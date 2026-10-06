@@ -27,7 +27,7 @@ from playwright.async_api import (
 
 from . import config
 from .autofill import choose_option, is_empty_value, polarity
-from .formjs import CLICK_CHOICE_JS, EXTRACT_JS, OPTIONS_JS, VISIBLE_TEXT_JS
+from .formjs import CLICK_CHOICE_JS, ENTRIES_JS, EXTRACT_JS, OPTIONS_JS, VISIBLE_TEXT_JS
 
 SUBMIT_RE = re.compile(r"\bsubmit\b|send (my )?application|finish (my )?application|complete (my )?application", re.I)
 CONFIRMATION_RE = re.compile(
@@ -358,6 +358,13 @@ class BrowserSession:
         text = "" if value is None else str(value)
         if isinstance(value, bool):
             text = "Yes" if value else "No"
+        if field.get("role") == "spinbutton":
+            # Date parts (Workday's MM / YYYY) react to keystrokes, not a pasted value.
+            await loc.click(timeout=5000)
+            await loc.fill("")
+            await loc.press_sequentially(text, delay=40)
+            await loc.evaluate("el => el.blur()")
+            return "typed"
         await loc.fill(text)
         await loc.evaluate("el => el.blur()")
         return "filled"
@@ -460,6 +467,31 @@ class BrowserSession:
                 except PlaywrightError:
                     continue
         return None
+
+    async def add_entries(self, kind_pattern: str, count: int) -> dict[str, Any]:
+        """Click a section's Add button until it has `count` numbered entries."""
+        async with self._lock:
+            page = await self.page()
+            frame = page.main_frame
+            state = await frame.evaluate(ENTRIES_JS, kind_pattern)
+            before = state["entries"]
+            clicks = 0
+            while state["entries"] < count and clicks < count + 2:
+                if not state["buttons"]:
+                    break
+                await frame.locator(f'[data-ja-id="{state["buttons"][-1]["id"]}"]').click(timeout=5000)
+                clicks += 1
+                await page.wait_for_timeout(600)
+                new = await frame.evaluate(ENTRIES_JS, kind_pattern)
+                if new["entries"] <= state["entries"]:
+                    await page.wait_for_timeout(1200)  # slow re-render; one more look
+                    new = await frame.evaluate(ENTRIES_JS, kind_pattern)
+                    if new["entries"] <= state["entries"]:
+                        state = new
+                        break
+                state = new
+            return {"before": before, "after": state["entries"], "clicks": clicks,
+                    "add_button_found": bool(state["buttons"]) or clicks > 0}
 
     async def find_submit(self) -> list[dict[str, Any]]:
         async with self._lock:

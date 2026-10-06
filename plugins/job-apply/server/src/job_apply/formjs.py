@@ -87,6 +87,20 @@ EXTRACT_JS = r"""
     if (l && txt(l)) return txt(l);
     return clean(el.getAttribute('aria-label') || labelledBy(el) || el.value || txt(el));
   };
+  // The repeated block a field sits in, e.g. "Work Experience 2" or "Education 1".
+  const HEADING = ':scope > h2, :scope > h3, :scope > h4, :scope > h5, :scope > legend, :scope > [role="heading"], :scope > div:first-child > h3, :scope > div:first-child > h4';
+  const sectionOf = (el) => {
+    let node = el.parentElement;
+    for (let d = 0; node && d < 12; d++, node = node.parentElement) {
+      const role = (node.getAttribute('role') || '').toLowerCase();
+      const container = role === 'group' || role === 'region' || node.tagName === 'FIELDSET' || node.tagName === 'SECTION';
+      let t = container ? labelledBy(node) : '';
+      if (!t) { const h = node.querySelector(HEADING); t = h ? txt(h) : ''; }
+      if (!t || t.length > 80) continue;
+      if (container || /\b\d+\s*$/.test(t)) return t;
+    }
+    return '';
+  };
   const tag = (el, id) => { el.setAttribute('data-ja-id', id); return id; };
   const idOf = (el) => el.getAttribute('data-ja-id') || tag(el, newId());
 
@@ -139,6 +153,19 @@ EXTRACT_JS = r"""
       id: idOf(el), kind, label, required: isRequired(el, label), value: kind === 'password' ? value : clean(String(value || '')),
     };
     if (tagName === 'input' && type && type !== 'text') f.input_type = type;
+    const section = sectionOf(el);
+    if (section && section !== label) f.section = section;
+    if (kind === 'text') {
+      const dai = el.getAttribute('data-automation-id') || '';
+      const al = clean(el.getAttribute('aria-label') || '');
+      let sub = '';
+      if (/month/i.test(dai)) sub = 'Month';
+      else if (/year/i.test(dai)) sub = 'Year';
+      else if (/day/i.test(dai) && /date/i.test(dai)) sub = 'Day';
+      else if (al && al !== label && al.length < 40 && !label.includes(al)) sub = al;
+      if (sub) f.sublabel = sub;
+      if (role === 'spinbutton') f.role = 'spinbutton';
+    }
     if (options) f.options = options;
     if (el.multiple) f.multiple = true;
     if (el.disabled || el.getAttribute('aria-disabled') === 'true') f.disabled = true;
@@ -153,7 +180,10 @@ EXTRACT_JS = r"""
     const checkedOf = (m) => m.checked === true || m.getAttribute('aria-checked') === 'true';
     if (!g.isRadio && g.members.length === 1) {
       const label = optionLabel(first);
-      fields.push({ id: idOf(first), kind: 'checkbox', label, required: isRequired(first, label), value: checkedOf(first) });
+      const single = { id: idOf(first), kind: 'checkbox', label, required: isRequired(first, label), value: checkedOf(first) };
+      const section = sectionOf(first);
+      if (section && section !== label) single.section = section;
+      fields.push(single);
       continue;
     }
     const gid = first.getAttribute('data-ja-gid-member') || newId();
@@ -167,10 +197,13 @@ EXTRACT_JS = r"""
       if (checkedOf(m)) { if (g.isRadio) value = ol; else value.push(ol); }
     });
     const label = groupQuestion(g.container, first);
-    fields.push({
+    const group = {
       id: gid, kind: g.isRadio ? 'radio_group' : 'checkbox_group', label, options, value,
       required: g.members.some((m) => isRequired(m, '')) || isRequired(g.container || first, label),
-    });
+    };
+    const section = sectionOf(g.container || first);
+    if (section && section !== label) group.section = section;
+    fields.push(group);
   }
 
   const SUBMIT = /\bsubmit\b|send (my )?application|finish (my )?application|complete (my )?application/i;
@@ -229,4 +262,39 @@ CLICK_CHOICE_JS = r"""
 
 VISIBLE_TEXT_JS = r"""
 () => (document.body ? document.body.innerText : '').replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim()
+"""
+
+# Numbered entry headings ("Work Experience 2") and the Add buttons that create more.
+ENTRIES_JS = r"""
+(kindPattern) => {
+  const kind = new RegExp(kindPattern, 'i');
+  const clean = (s) => (s || '').replace(/\s+/g, ' ').trim();
+  const txt = (el) => clean(el ? (el.innerText || el.textContent || '') : '');
+  const visible = (el) => !!el && el.getClientRects().length > 0 && getComputedStyle(el).visibility !== 'hidden';
+  const headings = Array.from(document.querySelectorAll('h1, h2, h3, h4, h5, h6, legend, [role="heading"]'))
+    .filter(visible).map(txt);
+  const entries = headings.filter((t) => kind.test(t) && /\b\d+\s*$/.test(t)).length;
+  const buttons = [];
+  for (const b of document.querySelectorAll('button, [role="button"]')) {
+    if (!visible(b)) continue;
+    const label = clean(txt(b) + ' ' + (b.getAttribute('aria-label') || ''));
+    if (!/^add\b/i.test(txt(b)) && !/^add\b/i.test(b.getAttribute('aria-label') || '')) continue;
+    // What is this button adding? Its own label, else the nearest heading above it.
+    let context = label;
+    if (!kind.test(context)) {
+      for (let node = b.parentElement, d = 0; node && d < 6; node = node.parentElement, d++) {
+        const h = node.querySelector('h1, h2, h3, h4, h5, legend, [role="heading"]');
+        if (h) { context += ' ' + txt(h); break; }  // nearest section only
+      }
+    }
+    if (kind.test(context)) {
+      if (!b.getAttribute('data-ja-id')) {
+        window.__jaCounter = (window.__jaCounter || 0) + 1;
+        b.setAttribute('data-ja-id', 'add' + window.__jaCounter);
+      }
+      buttons.push({ id: b.getAttribute('data-ja-id'), text: txt(b) });
+    }
+  }
+  return { entries, buttons };
+}
 """

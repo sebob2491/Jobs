@@ -123,3 +123,34 @@ def test_auto_mode_refuses_incomplete_form(srv, job_apply_home):
     assert out["submitted"] is False
     assert any(label.startswith("Why do you want") for label in out["empty_required"])
     assert srv.get_job(job["id"])["job"]["status"] == "in_progress"
+
+
+def test_workday_experience_entries(srv):
+    job = srv.add_job(url=fixture_url("workday_experience.html"), title="FSE", company="Example Litho")["job"]
+    run(srv.open_application(job_id=job["id"]))
+
+    work = run(srv.add_entries("work"))
+    assert (work["before"], work["after"], work["wanted"]) == (0, 2, 2)
+    edu = run(srv.add_entries("education"))
+    assert (edu["after"], edu["wanted"]) == (1, 1)
+    assert run(srv.add_entries("work"))["clicks"] == 0  # already enough blocks
+
+    result = run(srv.autofill())
+    assert not result["failed"], result["failed"]
+    assert not [f for f in result["needs_input"] if f.get("section")], result["needs_input"]
+
+    fields = run(srv.inspect_form(include_dropdown_options=False))["fields"]
+    got = {(f.get("section"), f["label"].rstrip("*"), f.get("sublabel")): f["value"] for f in fields}
+    assert got[("Work Experience 1", "Job Title", None)] == "Equipment Technician"
+    assert got[("Work Experience 1", "I currently work here", None)] is True
+    assert got[("Work Experience 1", "From", "Month")] == "03"
+    assert got[("Work Experience 1", "From", "Year")] == "2021"
+    assert ("Work Experience 1", "To", "Year") not in got  # hidden once "currently work here" is checked
+    assert got[("Work Experience 2", "Company", None)] == "Example Fab Services"
+    assert got[("Work Experience 2", "To", "Month")] == "02"
+    assert got[("Work Experience 2", "Role Description", None)].startswith("PMs and troubleshooting")
+    assert got[("Education 1", "School or University", None)] == "Arizona State University"
+    assert got[("Education 1", "Degree", None)] == "Bachelor's Degree"
+    assert got[("Education 1", "Field of Study", None)] == "Electrical Engineering"
+    assert got[("Education 1", "Overall Result (GPA)", None)] == "3.4"
+    assert got[("Education 1", "To (Actual or Expected)", "Year")] == "2020"

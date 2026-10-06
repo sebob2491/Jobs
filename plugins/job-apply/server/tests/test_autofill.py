@@ -95,3 +95,57 @@ def test_plan_autofill_orders_required_first():
     assert plan["to_fill"][1]["value"] == "Decline"
     assert plan["already_filled"] == ["2"]
     assert [x["id"] for x in plan["needs_input"]] == ["4", "3"]
+
+
+def test_dates_and_degrees():
+    from job_apply.autofill import degree_key, parse_month_year
+
+    assert parse_month_year("2021-03") == ("03", "2021")
+    assert parse_month_year("02/2021") == ("02", "2021")
+    assert parse_month_year("Jun 2018") == ("06", "2018")
+    assert parse_month_year("September 2019") == ("09", "2019")
+    assert parse_month_year(2016) == (None, "2016")
+    assert parse_month_year("present") == (None, None)
+    assert degree_key("B.S. Electrical Engineering") == "bachelor"
+    assert degree_key("Master's Degree") == "master"
+    assert degree_key("Ph.D.") == "doctorate"
+    assert choose_option("BS Electrical Engineering", ["Associate's Degree", "Bachelor's Degree", "Master's Degree"]) == \
+        "Bachelor's Degree"
+    assert choose_option("Bachelor of Science", ["Bachelor of Arts", "Bachelor of Science", "Master of Science"]) == \
+        "Bachelor of Science"
+
+
+def test_work_and_education_entries():
+    p = prof()
+
+    def entry(section, label, kind="text", **kw):
+        a = resolve_field({"id": "1", "kind": kind, "label": label, "section": section, "value": "", **kw}, p)
+        return None if a is None else a.value
+
+    assert entry("Work Experience 1", "Job Title*") == "Equipment Technician"
+    assert entry("Work Experience 2", "Company") == "Example Fab Services"
+    assert entry("Work Experience 1", "I currently work here", "checkbox") is True
+    assert entry("Work Experience 2", "I currently work here", "checkbox") is False
+    assert entry("Work Experience 1", "From", sublabel="Month") == "03"
+    assert entry("Work Experience 1", "From", sublabel="Year") == "2021"
+    assert entry("Work Experience 1", "To", sublabel="Year") == "__skip__"  # current job has no end date
+    assert entry("Work Experience 2", "To", sublabel="Month") == "02"
+    assert entry("Work Experience 2", "Start Date", input_type="month") == "2018-06"
+    assert entry("Work Experience 2", "End Date") == "02/2021"
+    assert entry("Work Experience 1", "Role Description", "textarea").startswith("Maintained")
+    assert entry("Work Experience 3", "Job Title") is None  # no third job in the profile
+    assert entry("Work Experience 1", "Supervisor Phone") is None  # not the applicant's own phone
+    assert entry("Education 1", "School or University") == "Arizona State University"
+    assert entry("Education 1", "Degree", "listbox", options=["Associate's Degree", "Bachelor's Degree"]) == "Bachelor's Degree"
+    assert entry("Education 1", "Overall Result (GPA)") == "3.4"
+    assert entry("Education 1", "To (Actual or Expected)", sublabel="Year") == "2020"
+
+
+def test_plan_skips_end_date_of_current_job():
+    fields = [
+        {"id": "1", "kind": "text", "label": "To", "sublabel": "Month", "section": "Work Experience 1", "value": ""},
+        {"id": "2", "kind": "text", "label": "To", "sublabel": "Month", "section": "Work Experience 2", "value": ""},
+    ]
+    plan = plan_autofill(fields, prof())
+    assert [f["id"] for f in plan["to_fill"]] == ["2"]
+    assert plan["needs_input"] == []

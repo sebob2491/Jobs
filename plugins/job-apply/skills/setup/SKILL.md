@@ -24,7 +24,9 @@ All of the user's data lives in `~/.job-apply/`, outside the plugin:
 2. **Resume.** Ask for the resume file path, or look for a resume in the working
    directory. Copy it to `~/.job-apply/resume.pdf` (or `.docx`) and set
    `documents.resume`. Read it, then fill `personal`, `experience`, `education`,
-   and `history.previous_employers` from it.
+   `history.previous_employers`, `work_history` (every job, with start/end month)
+   and `education_history` from it. Use only what the resume says; if a date or
+   location is missing, ask rather than guess.
 
 3. **Fill in what the resume can't answer.** Ask with AskUserQuestion where the
    choices are fixed, and keep it to one or two rounds:

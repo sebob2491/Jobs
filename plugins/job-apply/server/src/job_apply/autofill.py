@@ -96,6 +96,23 @@ def _aliases(n: str) -> set[str]:
     return out
 
 
+_DEGREES = [
+    ("doctorate", r"\b(ph ?d|doctor(ate)?|d ?phil|ed ?d)\b"),
+    ("master", r"\b(master s?|masters|ms|m s|ma|m a|msc|meng|m eng|mba|mfa)\b"),
+    ("bachelor", r"\b(bachelor s?|bachelors|bs|b s|ba|b a|bsc|beng|b eng|bse|bsee|bsme)\b"),
+    ("associate", r"\b(associate s?|associates|aas|a a s)\b"),
+    ("high_school", r"\b(high school|ged)\b"),
+]
+
+
+def degree_key(s: str) -> str | None:
+    n = norm(s)
+    for key, pattern in _DEGREES:
+        if re.search(pattern, n):
+            return key
+    return None
+
+
 def choose_option(desired: Any, options: list[str]) -> str | None:
     """Pick the option that best matches `desired`, or None if nothing does."""
     opts = [o for o in options if o and not _PLACEHOLDER_VALUES.match(o.strip())]
@@ -123,7 +140,16 @@ def choose_option(desired: Any, options: list[str]) -> str | None:
             return hits[0]
         # e.g. "No, I will not require sponsorship" vs "No" — fall through to overlap
 
-    # 4. one contains the other
+    # 4. degrees: "BS Electrical Engineering" ~ "Bachelor's Degree"
+    dk = degree_key(want)
+    if dk:
+        same = [(o, n) for o, n in normed if degree_key(n) == dk]
+        if len(same) == 1:
+            return same[0][0]
+        if same:
+            normed = same
+
+    # 5. one contains the other
     contains = [o for o, n in normed if want and re.search(rf"(^| ){re.escape(want)}( |$)", n)]
     if len(contains) == 1:
         return contains[0]
@@ -131,7 +157,7 @@ def choose_option(desired: Any, options: list[str]) -> str | None:
     if len(contained) == 1:
         return contained[0]
 
-    # 5. token overlap
+    # 6. token overlap
     wt = set(want.split())
     best, best_score = None, 0.0
     for o, n in normed:
@@ -310,6 +336,116 @@ def _document(prof: Profile, job: dict, kind: str) -> str | None:
     return str(p) if p and p.exists() else None
 
 
+SKIP = "__skip__"  # deliberately left empty, e.g. the end date of a current job
+
+_ENTRY_SECTIONS = [
+    ("education_history", r"education|school|degree"),
+    ("work_history", r"experience|employment|work history|position|job"),
+]
+_WORK_FIELDS = [
+    (r"currently work|current(ly)? (employed|job|position|role)|i work here|present (job|position|employer)", "current"),
+    (r"title|^position|^role$", "title"),
+    (r"company|employer|organi[sz]ation", "company"),
+    (r"location|city", "location"),
+    (r"description|responsibilit|duties|summary|achievements", "description"),
+    (r"^from|start", "start"),
+    (r"^to$|^to |end|until", "end"),
+]
+_EDUCATION_FIELDS = [
+    (r"school|university|college|institution", "school"),
+    (r"degree|qualification", "degree"),
+    (r"field of study|major|discipline|area of study|concentration", "major"),
+    (r"gpa|overall result|grade", "gpa"),
+    (r"^from|start", "start"),
+    (r"^to$|^to |end|graduat|actual or expected", "end"),
+]
+_MONTHS = {m: i for i, m in enumerate(
+    ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"], start=1)}
+
+
+def is_present(value: Any) -> bool:
+    return str(value or "").strip().lower() in {"present", "current", "now", "ongoing", "today"}
+
+
+def parse_month_year(value: Any) -> tuple[str | None, str | None]:
+    """'2021-03', '03/2021', 'Mar 2021', 2021 -> ('03', '2021'); month may be None."""
+    s = str(value or "").strip().lower()
+    if m := re.match(r"^(\d{4})[-/.](\d{1,2})\b", s):
+        return f"{int(m.group(2)):02d}", m.group(1)
+    if m := re.match(r"^(\d{1,2})[-/.](\d{4})$", s):
+        return f"{int(m.group(1)):02d}", m.group(2)
+    if m := re.match(r"^([a-z]{3})[a-z]*\.? (\d{4})$", s):
+        month = _MONTHS.get(m.group(1))
+        return (f"{month:02d}" if month else None), m.group(2)
+    if m := re.match(r"^(\d{4})$", s):
+        return None, m.group(1)
+    return None, None
+
+
+def _date_value(field: dict, value: Any) -> str | None:
+    month, year = parse_month_year(value)
+    if not year:
+        return None
+    sub = norm(field.get("sublabel"))
+    if sub == "month":
+        return month
+    if sub == "year":
+        return year
+    if sub == "day":
+        return None
+    if field.get("input_type") == "month":
+        return f"{year}-{month or '01'}"
+    if field.get("input_type") == "date":
+        return f"{year}-{month or '01'}-01"
+    return f"{month}/{year}" if month else year
+
+
+def profile_entries(prof: Profile, key: str) -> list[dict]:
+    entries = [e for e in prof.get(key, []) or [] if isinstance(e, dict)]
+    if not entries and key == "education_history" and prof.get("education.school"):
+        entries = [{
+            "school": prof.get("education.school"), "degree": prof.get("education.highest_degree"),
+            "major": prof.get("education.major"), "gpa": prof.get("education.gpa"),
+            "end": prof.get("education.graduation_year"),
+        }]
+    return entries
+
+
+def _resolve_entry(field: dict, prof: Profile) -> tuple[bool, Answer | None]:
+    """(handled, answer) for fields inside a numbered block like "Work Experience 2"."""
+    section = norm(field.get("section"))
+    m = re.search(r"(\d+)$", section)
+    if not m:
+        return False, None
+    for key, pattern in _ENTRY_SECTIONS:
+        if re.search(pattern, section):
+            break
+    else:
+        return False, None
+    n = int(m.group(1))
+    entries = profile_entries(prof, key)
+    if not 0 < n <= len(entries):
+        return True, None
+    entry = entries[n - 1]
+    label = norm(clean_label(field.get("label") or ""))
+    for pattern, attr in _WORK_FIELDS if key == "work_history" else _EDUCATION_FIELDS:
+        if re.search(pattern, label):
+            break
+    else:
+        return True, None  # e.g. "Supervisor phone": not the applicant's own details
+    rule = f"{key}[{n}].{attr}"
+    current = is_present(entry.get("end")) or entry.get("current") is True
+    if attr == "current":
+        return True, Answer(current, rule)
+    if attr == "end" and current:
+        return True, Answer(SKIP, rule)
+    if attr in ("start", "end"):
+        value = _date_value(field, entry.get(attr))
+        return True, (Answer(value, rule) if value else None)
+    value = entry.get(attr)
+    return True, (Answer(str(value).strip(), rule) if value not in (None, "") else None)
+
+
 def resolve_field(field: dict, prof: Profile, job: dict | None = None, file_inputs_on_page: int = 1) -> Answer | None:
     job = job or {}
     kind = field.get("kind", "text")
@@ -317,6 +453,17 @@ def resolve_field(field: dict, prof: Profile, job: dict | None = None, file_inpu
     label = norm(clean_label(raw_label))
     if kind == "password":
         return None
+
+    handled, ans = _resolve_entry(field, prof)
+    if handled:
+        if ans is None or ans.value == SKIP or kind == "checkbox":
+            return ans
+        if isinstance(ans.value, bool):
+            ans.value = "Yes" if ans.value else "No"
+        if kind in {"select", "radio_group", "listbox", "checkbox_group"} and field.get("options"):
+            chosen = choose_option(ans.value, field["options"])
+            return Answer(chosen, ans.rule) if chosen else None
+        return ans
 
     if kind == "file":
         if re.search(r"cover", label):
@@ -380,11 +527,14 @@ def plan_autofill(fields: list[dict], prof: Profile, job: dict | None = None, ov
             already.append(f["id"])
             continue
         ans = resolve_field(f, prof, job, file_inputs)
+        if ans is not None and ans.value == SKIP:
+            continue
         if ans is not None:
             to_fill.append({"id": f["id"], "label": f.get("label", ""), "value": ans.value, "rule": ans.rule})
         elif f.get("kind") != "password":
             needs_input.append(
-                {k: f[k] for k in ("id", "kind", "label", "required", "options") if k in f and f[k] not in (None, [])}
+                {k: f[k] for k in ("id", "kind", "label", "section", "sublabel", "required", "options")
+                 if k in f and f[k] not in (None, [])}
             )
     needs_input.sort(key=lambda f: not f.get("required"))
     return {"to_fill": to_fill, "needs_input": needs_input, "already_filled": already}

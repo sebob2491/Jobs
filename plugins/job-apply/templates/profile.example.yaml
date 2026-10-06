@@ -53,6 +53,27 @@ education:
 history:
   previous_employers: []      # companies you've worked for; answers "have you worked for X before?"
 
+# Jobs, most recent first. Fills Workday's "Work Experience 1, 2, ..." blocks (and
+# similar repeated sections elsewhere). Dates: "2021-03", "03/2021" or "Mar 2021";
+# end: present for your current job.
+work_history: []
+#  - title: Equipment Technician
+#    company: Example Fab
+#    location: Chandler, AZ
+#    start: 2021-03
+#    end: present
+#    description: |
+#      Maintained 300mm etch tools; cut unscheduled downtime 15%.
+
+# Degrees and certificates, most recent first. Fills "Education 1, 2, ..." blocks.
+education_history: []
+#  - school: Arizona State University
+#    degree: Bachelor's Degree
+#    major: Electrical Engineering
+#    gpa: 3.4
+#    start: 2016
+#    end: 2020
+
 preferences:
   willing_to_relocate: ~      # true/false
   willing_to_travel: ~        # true/false, or text like "Yes, up to 75%"

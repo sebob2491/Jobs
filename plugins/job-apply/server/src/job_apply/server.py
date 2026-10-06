@@ -12,7 +12,7 @@ from mcp.server.mcpserver import Image, MCPServer
 
 from . import config
 from .ats import ATS_NAMES, detect_ats
-from .autofill import is_empty_value, plan_autofill
+from .autofill import is_empty_value, plan_autofill, profile_entries
 from .browser import BrowserSession, BrowserUnavailable, SubmitBlocked
 from .postings import FetchError, Posting, fetch_posting, finalize, parse_html
 from .tracker import Tracker
@@ -270,6 +270,28 @@ async def autofill(job_id: int | None = None, overwrite: bool = False) -> dict[s
         "errors": after["errors"],
         "actions": [a for a in after["actions"] if not a.get("disabled")][:25],
     }
+
+
+@mcp.tool()
+async def add_entries(section: str, count: int | None = None) -> dict[str, Any]:
+    """Create the repeated blocks for work history or education before filling them.
+
+    section is "work" or "education". Clicks the section's Add / Add Another button until
+    there is one numbered block ("Work Experience 1", "Education 1"…) per entry in the
+    profile's work_history / education_history (or `count`). Then call autofill, which
+    fills each block from the matching profile entry."""
+    key, pattern = {
+        "work": ("work_history", r"work experience|employment|work history|experience"),
+        "education": ("education_history", r"education"),
+    }[section.lower()]
+    want = count if count is not None else len(profile_entries(config.Profile.load(), key))
+    if want == 0:
+        return {"added": 0, "note": f"The profile has no {key} entries; add them to profile.yaml first."}
+    result = await browser.add_entries(pattern, want)
+    result["wanted"] = want
+    if not result["add_button_found"]:
+        result["note"] = "No Add button found for this section on the current page."
+    return result
 
 
 @mcp.tool()
