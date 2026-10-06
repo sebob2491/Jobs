@@ -1,0 +1,86 @@
+{
+  "source_url": "https://wd1.myworkdaysite.com/en-US/recruiting/onto/ONTO_Careers/job/Remote-AZ/Field-Service-Engineer--3--Non-Exempt-_R-5680/apply/applyManually",
+  "note": "live smoke: Onto Innovation",
+  "fields": [
+    {
+      "label": "How Did You Hear About Us?*",
+      "kind": "text",
+      "required": true
+    },
+    {
+      "label": "Country*",
+      "kind": "listbox",
+      "required": true
+    },
+    {
+      "label": "First Name*",
+      "kind": "text",
+      "required": true
+    },
+    {
+      "label": "Last Name*",
+      "kind": "text",
+      "required": true
+    },
+    {
+      "label": "Address Line 1*",
+      "kind": "text",
+      "required": true
+    },
+    {
+      "label": "Address Line 2",
+      "kind": "text",
+      "required": false
+    },
+    {
+      "label": "City*",
+      "kind": "text",
+      "required": true
+    },
+    {
+      "label": "State*",
+      "kind": "listbox",
+      "required": true
+    },
+    {
+      "label": "Postal Code*",
+      "kind": "text",
+      "required": true
+    },
+    {
+      "label": "Email*",
+      "kind": "text",
+      "required": true
+    },
+    {
+      "label": "Phone Device Type*",
+      "kind": "listbox",
+      "required": true
+    },
+    {
+      "label": "Country Phone Code*",
+      "kind": "text",
+      "required": true
+    },
+    {
+      "label": "Phone Number*",
+      "kind": "text",
+      "required": true
+    },
+    {
+      "label": "Phone Extension",
+      "kind": "text",
+      "required": false
+    },
+    {
+      "label": "Have you previously been employed by ONTO Innovation, Rudolph Technologies, or Nanometrics?*",
+      "kind": "radio_group",
+      "required": true
+    },
+    {
+      "label": "I have a preferred name",
+      "kind": "checkbox",
+      "required": false
+    }
+  ]
+}
