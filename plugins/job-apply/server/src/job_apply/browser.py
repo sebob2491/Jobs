@@ -508,6 +508,8 @@ class BrowserSession:
             return [a for a in data["actions"] if a.get("is_submit") and not a.get("disabled")]
 
     async def press_submit(self, action_id: str) -> dict[str, Any]:
+        if config.Profile.load().settings.dry_run:  # second lock on the door, after submit_application's
+            raise SubmitBlocked("Dry run: submitting is disabled")
         async with self._lock:
             page = await self.page()
             await self._locator(page, action_id).click(timeout=8000)

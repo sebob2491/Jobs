@@ -113,6 +113,7 @@ settings:
   # review: Claude fills everything and stops at the review page; you say "submit".
   # auto:   for the ATSs listed in auto_submit_ats, Claude submits once the form is
   #         complete without asking. LinkedIn and Indeed always need you to click Submit.
+  # dry_run: Claude fills everything and never submits. Good for a first practice run.
   submit_mode: review
   auto_submit_ats: []         # e.g. [workday, greenhouse, lever, eightfold, successfactors]
   browser_channel: chrome     # chrome, msedge, or chromium (Playwright's bundled browser)

@@ -73,9 +73,9 @@ browser so you can sign in to LinkedIn and Indeed once. The sign-ins persist.
 
 ```
 Apply to these:
-https://www.asml.com/en/careers/find-your-job/field-service-engineer-euv-j00329630
-https://www.linkedin.com/jobs/view/4402341490/
-https://www.linkedin.com/jobs/view/4402347426/
+https://www.linkedin.com/jobs/view/<job id>/
+https://<company>.wd1.myworkdayjobs.com/External/job/<location>/<title>_<req id>
+https://job-boards.greenhouse.io/<company>/jobs/<id>
 ```
 
 ```
@@ -108,7 +108,7 @@ Settings in `profile.yaml`:
 
 | Setting | Default | Effect |
 |---|---|---|
-| `submit_mode` | `review` | Set to `auto` to let Claude submit complete applications without asking, for the ATSs in `auto_submit_ats` |
+| `submit_mode` | `review` | Set to `auto` to let Claude submit complete applications without asking, for the ATSs in `auto_submit_ats`. `dry_run` fills everything and never submits, which is good for a first practice run. |
 | `email_codes` | `false` | Claude may read the sign-in codes and verification links that career sites email you (needs the Gmail connector) |
 | `email_tracking` | `false` | Claude may search your email for replies to your applications (needs the Gmail connector) |
 

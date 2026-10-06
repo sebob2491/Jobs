@@ -64,9 +64,14 @@ def expand(p: str | None) -> Path | None:
     return Path(os.path.expandvars(str(p))).expanduser()
 
 
+def never_submit() -> bool:
+    """Hard switch for tests and practice runs: nothing is ever submitted."""
+    return os.environ.get("JOB_APPLY_NEVER_SUBMIT") == "1"
+
+
 @dataclass
 class Settings:
-    submit_mode: str = "review"  # "review" | "auto"
+    submit_mode: str = "review"  # "review" | "auto" | "dry_run" (fill everything, never submit)
     auto_submit_ats: list[str] = field(default_factory=list)
     headless: bool = False
     browser_channel: str = "chrome"  # "chrome", "msedge" or "chromium" (bundled)
@@ -86,10 +91,16 @@ class Settings:
         )
         if os.environ.get("JOB_APPLY_HEADLESS") == "1":
             s.headless = True
+        if never_submit():
+            s.submit_mode = "dry_run"
         return s
 
+    @property
+    def dry_run(self) -> bool:
+        return self.submit_mode == "dry_run"
+
     def may_auto_submit(self, ats: str) -> bool:
-        if ats in HUMAN_SUBMIT_ONLY:
+        if ats in HUMAN_SUBMIT_ONLY or self.dry_run:
             return False
         return self.submit_mode == "auto" and ats in self.auto_submit_ats
 

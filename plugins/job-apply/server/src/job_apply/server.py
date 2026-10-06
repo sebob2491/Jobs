@@ -431,6 +431,8 @@ async def close_browser() -> dict[str, Any]:
 
 def _submit_policy(ats: str) -> str:
     s = config.Profile.load().settings
+    if s.dry_run:
+        return "dry_run"
     if ats in config.HUMAN_SUBMIT_ONLY:
         return "user_clicks_submit"
     return "auto" if s.may_auto_submit(ats) else "after_user_confirms"
@@ -448,6 +450,10 @@ async def submit_application(job_id: int | None = None, user_confirmed: bool = F
     page = await browser.inspect(include_dropdown_options=False)
     ats = detect_ats(page["url"])
     policy = _submit_policy(ats)
+    if policy == "dry_run":
+        tracker().update(job["id"], status="ready_to_submit", note="dry run: filled, not submitted")
+        return {"submitted": False, "reason": "Dry run (settings.submit_mode: dry_run): the form is filled and "
+                                              "left unsubmitted. Nothing was sent."}
     if policy == "user_clicks_submit":
         tracker().update(job["id"], status="ready_to_submit", note=f"filled on {ATS_NAMES.get(ats, ats)}")
         return {

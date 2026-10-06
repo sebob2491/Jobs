@@ -6,7 +6,7 @@ from job_apply.postings import finalize, html_to_text, parse_html
 
 def test_detect_ats():
     cases = {
-        "https://www.linkedin.com/jobs/view/4402341490/": "linkedin",
+        "https://www.linkedin.com/jobs/view/3900000001/": "linkedin",
         "https://www.indeed.com/viewjob?jk=abc123": "indeed",
         "https://smartapply.indeed.com/beta/indeedapply/form/questions/1": "indeed",
         "https://amat.wd1.myworkdayjobs.com/en-US/External/job/AGS-SAM_R2618358": "workday",
@@ -15,7 +15,7 @@ def test_detect_ats():
         "https://career8.successfactors.com/career?company=amkor": "successfactors",
         "https://hctz.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1001/jobs": "oracle_hcm",
         "https://micron.eightfold.ai/careers": "eightfold",
-        "https://www.asml.com/en/careers/find-your-job/field-service-engineer-euv-j00329630": "company_site",
+        "https://www.example-semi.com/careers/find-your-job/field-service-engineer-j00012345": "company_site",
         None: "company_site",
     }
     for url, ats in cases.items():
@@ -29,8 +29,8 @@ def test_url_parts():
     assert workday_parts("https://example.com/job/1") is None
     assert greenhouse_parts("https://job-boards.greenhouse.io/asm/jobs/4932681101") == {"board": "asm", "job_id": "4932681101"}
     assert lever_parts("https://jobs.lever.co/acme/0b1c2d3e-0000-1111-2222-333344445555/apply")["company"] == "acme"
-    assert linkedin_job_id("https://www.linkedin.com/jobs/view/4402341490/?trk=abc") == "4402341490"
-    assert linkedin_job_id("https://www.linkedin.com/jobs/search/?currentJobId=4402347426&f_TPR=r86400") == "4402347426"
+    assert linkedin_job_id("https://www.linkedin.com/jobs/view/3900000001/?trk=abc") == "3900000001"
+    assert linkedin_job_id("https://www.linkedin.com/jobs/search/?currentJobId=3900000002&f_TPR=r86400") == "3900000002"
 
 
 def test_parse_jsonld_posting():

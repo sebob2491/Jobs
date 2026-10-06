@@ -154,3 +154,20 @@ def test_workday_experience_entries(srv):
     assert got[("Education 1", "Field of Study", None)] == "Electrical Engineering"
     assert got[("Education 1", "Overall Result (GPA)", None)] == "3.4"
     assert got[("Education 1", "To (Actual or Expected)", "Year")] == "2020"
+
+
+def test_dry_run_never_submits(srv, monkeypatch):
+    from job_apply.browser import SubmitBlocked
+
+    monkeypatch.setenv("JOB_APPLY_NEVER_SUBMIT", "1")
+    job = srv.add_job(url=fixture_url("generic_form.html"), title="FSE", company="Example Litho")["job"]
+    assert run(srv.open_application(job_id=job["id"]))["submit_policy"] == "dry_run"
+    run(srv.autofill())
+    out = run(srv.submit_application(job_id=job["id"], user_confirmed=True))
+    assert out["submitted"] is False and "Dry run" in out["reason"]
+    assert srv.get_job(job["id"])["job"]["status"] == "ready_to_submit"
+    # even the low-level click refuses, and the page is untouched
+    submit_id = run(srv.browser.find_submit())[0]["id"]
+    with pytest.raises(SubmitBlocked):
+        run(srv.browser.press_submit(submit_id))
+    assert "Thank you" not in run(srv.page_text())
