@@ -59,6 +59,8 @@ _ENTRY = re.compile(r"^(apply manually|apply now|apply|easy apply|quick apply|"
 _AVOID = re.compile(r"autofill|with resume|resume parse|sign ?in|log ?in|create account|register|upload|back|"
                     r"previous|cancel|save for later|withdraw|delete|remove|search|share|print|email (?:me|this)", re.I)
 _EXPERIENCE_PAGE = re.compile(r"my experience|work experience|employment history", re.I)
+# A note laid over the page (Nikon's UKG board: "Accessibility Note") with nothing else to press.
+_DISMISS_NOTE = re.compile(r"^(dismiss(?: (?:note|notice|message))?|close (?:note|notice|message))$", re.I)
 # Cookie banners: only ever the privacy-preserving choice, and only when the site offers one.
 _DECLINE_COOKIES = re.compile(r"^(reject(?: all)?(?: cookies)?|decline(?: all)?(?: cookies)?|only (?:strictly )?necessary"
                               r"|necessary (?:cookies )?only|use necessary cookies only|accept (?:only )?necessary"
@@ -373,7 +375,7 @@ class Applier:
         run.status, run.need, run.reason = "running", "", "Working on it"
         if not await self._open(run):
             return
-        stalls, entries_done, waited, refilled = 0, set(), False, set()
+        stalls, entries_done, waited, refilled, dismissed = 0, set(), False, set(), set()
         sign_ins: dict[str, int] = {}  # what the saved password was used for on this pass
         pressed: list[tuple[Any, ...]] = []  # (page, button) for each button pressed on this pass
         pressed_on: list[str] = []  # and where, in words
@@ -459,6 +461,13 @@ class Applier:
             if (kind == "form" or run.seen_form and not entry_here) and await srv.browser.find_submit():
                 return await self._finish(run, data, text)
             action = pick_next(data.get("actions") or [], in_form=kind == "form")
+            note = next((a for a in data.get("actions") or [] if _DISMISS_NOTE.match(a.get("text", "").strip())
+                         and not a.get("disabled")), None) if action is None and kind == "page" else None
+            if note is not None and note["text"] not in dismissed:
+                dismissed.add(note["text"])  # the posting under it is hidden until it goes
+                await srv.click(note["id"])
+                self._log(run, f"dismissed a note (\u201c{note['text'].strip()}\u201d)")
+                continue
             sign_in_step = bool(_SIGN_IN_STEP.search(" ".join(data.get("headings") or [])))
             if action is None and kind == "page" and not waited:
                 waited = True  # slow pages (Intel's Workday, Eightfold forms) draw their buttons late

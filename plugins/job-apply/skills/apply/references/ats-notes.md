@@ -152,8 +152,8 @@ the page URL. Use this file for the parts of each flow that `autofill` can't do.
 - The job board lists every opening with its locations (Nikon's field service roles are at
   Intel's Chandler fabs) and loads them from its own API, so the search runs in a
   background browser tab. A posting's address ends in `OpportunityDetail?opportunityId=…`.
-- Applying needs an account on that employer's board, so expect a sign-in or Create
-  Account step.
+- A posting opens under an "Accessibility Note" that hides the page's buttons until
+  **Dismiss Note** is pressed. The Job Desk dismisses it; it's information, not a choice.
 
 ## ASML (`asml.com/en/careers`)
 
