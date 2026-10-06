@@ -595,6 +595,8 @@ class BrowserSession:
                     fid = str(item.get("id", ""))
                     try:
                         field = await self._field(page, fid)
+                        if item.get("names"):  # a school or an employer: matched by name only
+                            field = {**field, "names": True}
                         outcome = await self._fill_one(page, field, item.get("value"))
                         results.append({"id": fid, "label": field.get("label", ""), "ok": True, "result": outcome})
                     except Exception as e:  # report and keep going; one odd widget shouldn't stop the rest
@@ -690,15 +692,16 @@ class BrowserSession:
             )
 
     async def _pick_from_listbox(self, page: Page, loc: Locator, field: dict, value: Any) -> str:
+        names = bool(field.get("names"))
         await self._open(page, field["id"], loc)
         options = await self._field_options(page, field["id"], loc, 2500)
-        choice = choose_option(value, options)
+        choice = choose_option(value, options, names=names)
         if choice is None:
             # Long lists are virtualized; typing jumps to the entry.
             await page.keyboard.type(str(value), delay=40)
             await page.wait_for_timeout(400)
             options = await self._field_options(page, field["id"], loc, 1500)
-            choice = choose_option(value, options)
+            choice = choose_option(value, options, names=names)
         if choice is None:
             await page.keyboard.press("Escape")
             raise ValueError(f"{value!r} doesn't match any option: {options[:30]}")
@@ -729,14 +732,14 @@ class BrowserSession:
             raise ValueError(f"Picked {choice!r} but the field shows {shown[:80]!r}; set it by hand or with click")
 
     async def _type_and_pick(self, page: Page, loc: Locator, field: dict, value: Any) -> str:
-        text = str(value)
+        text, names = str(value), bool(field.get("names"))
         await self._open(page, field["id"], loc)
         # Pick straight from the menu when the answer is in it: a short list (Yes / No), or
         # the exact entry in a long one. Typing is only for search pickers and long lists,
         # and typed keys can land in another field (Micron's ended up with "ona", the end
         # of "Arizona", in the question below the State).
         options = await self._field_options(page, field["id"], loc, 900)
-        choice = choose_option(text, options, exact_only=len(options) > SHORT_MENU) if options else None
+        choice = choose_option(text, options, exact_only=len(options) > SHORT_MENU, names=names) if options else None
         query = _search_words(text)
         if choice is None:
             opened = options
@@ -750,7 +753,7 @@ class BrowserSession:
             if unsearched and not await loc.evaluate("el => !!el.form"):
                 await loc.press("Enter")
                 options = await self._new_options(page, field["id"], loc, options, 2500)
-            choice = choose_option(text, options)
+            choice = choose_option(text, options, names=names)
         if choice is None:
             if options:
                 await self._close_menus(page)
@@ -769,7 +772,7 @@ class BrowserSession:
             await self._confirm_choice(page, loc, choice)
         except ValueError:
             inner = await self._new_options(page, field["id"], loc, options, 1500)
-            entry = choose_option(text, inner) if inner and inner != options else None
+            entry = choose_option(text, inner, names=names) if inner and inner != options else None
             if entry is not None:  # the answer is in the group it opened (Onto's "ONTO Website" > "ONTO Website")
                 await self._click_option(page, field["id"], entry)
                 await self._confirm_choice(page, loc, entry)

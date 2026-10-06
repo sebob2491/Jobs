@@ -263,3 +263,26 @@ def test_company_website_is_the_employers_own_site():
     assert resolve_field(heard, p, {"company": "Onto Innovation"}) is None  # not on the list: the person picks
     # unless the list is a Workday search prompt's top level: then the fill searches for it
     assert resolve_field({**heard, "search": True}, p, {"company": "Onto Innovation"}).value == "LinkedIn"
+
+
+def test_search_prompts_in_work_and_education_blocks_are_searched():
+    """Workday's School prompt lists a few schools on opening; the profile's is searched for."""
+    field = {"id": "1", "label": "School or University*", "kind": "combobox", "value": "", "section": "Education 1",
+             "options": ["Grand Canyon University", "University of Arizona"]}
+    assert resolve_field(field, prof()) is None  # not listed: left for the person
+    assert resolve_field({**field, "search": True}, prof()).value == "Arizona State University"
+    # listed under a longer name: still found by name
+    longer = {**field, "options": ["University of Arizona", "Arizona State University - Tempe"]}
+    assert resolve_field(longer, prof()).value == "Arizona State University - Tempe"
+
+
+def test_names_are_matched_by_name_not_shared_words():
+    """Shared words made "Arizona State University" pick "University of Arizona"; a school or
+    an employer is matched only by its name."""
+    asu = "Arizona State University"
+    assert choose_option(asu, ["University of Arizona", "Grand Canyon University"]) == "University of Arizona"  # loose
+    assert choose_option(asu, ["University of Arizona", "Grand Canyon University"], names=True) is None
+    assert choose_option(asu, ["ASU", "Arizona State University"], names=True) == asu
+    assert choose_option("Mesa Community College", ["Scottsdale Community College", "Mesa Community College (AZ)"],
+                         names=True) == "Mesa Community College (AZ)"
+    assert choose_option("Intel Corporation", ["Intel", "Microchip"], names=True) == "Intel"
