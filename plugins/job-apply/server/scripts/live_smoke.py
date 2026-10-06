@@ -895,6 +895,12 @@ async def account_form() -> dict[str, Any]:
 
     try:
         form = await server.inspect_form(include_dropdown_options=False)
+        email_step = next((a for a in form["actions"] if re.match(r"^sign in with email$", a["text"].strip(), re.I)), None)
+        if not form["fields"] and email_step is not None:
+            # Workday's "Sign in with Apple / Google / email" step: this only shows the form
+            await server.click(email_step["id"])
+            await asyncio.sleep(4)
+            form = await server.inspect_form(include_dropdown_options=False)
         if sum(f["kind"] == "password" for f in form["fields"]) != 1 or any(
                 f.get("value") for f in form["fields"] if f["kind"] in ("text", "email", "password")):
             # an account form, or one the desk filled in (a --fake-passwords run): left as it is
@@ -904,12 +910,19 @@ async def account_form() -> dict[str, Any]:
             return {"none": [a["text"] for a in form["actions"]][:20]}
         page = await server.browser.page()
         signin_url = page.url
+        await print_shot("sign-in page", page)
         rec: dict[str, Any] = {"ways": [await page.evaluate(_MARKUP_JS, str(a["id"])) for a in found[:4]], "tries": []}
         for i in range(min(3, len(found))):
             if i:  # back to the sign-in page as it was
                 await page.goto(signin_url)
                 await asyncio.sleep(6)
-                found = ways(await server.inspect_form(include_dropdown_options=False))
+                again = await server.inspect_form(include_dropdown_options=False)
+                step = next((a for a in again["actions"] if re.match(r"^sign in with email$", a["text"].strip(), re.I)), None)
+                if not again["fields"] and step is not None:
+                    await server.click(step["id"])
+                    await asyncio.sleep(4)
+                    again = await server.inspect_form(include_dropdown_options=False)
+                found = ways(again)
                 if i >= len(found):
                     break
             await server.click(found[i]["id"])
