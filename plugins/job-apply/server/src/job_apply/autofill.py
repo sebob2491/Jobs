@@ -205,12 +205,12 @@ def _p(path: str) -> Getter:
     return lambda prof, job: prof.get(path)
 
 
-def _yn(path: str) -> Getter:
+def _yn(path: str, invert: bool = False) -> Getter:
     def g(prof: Profile, job: dict) -> Any:
         v = prof.get(path)
         if isinstance(v, bool):
-            return "Yes" if v else "No"
-        return v
+            return "Yes" if v != invert else "No"
+        return None if invert else v  # free text can't be turned around
 
     return g
 
@@ -313,16 +313,25 @@ RULES: list[tuple[str, str, Getter, int | None, set[str] | None]] = [
     ("signature", r"(electronic |e )?signature|sign your (full )?name", _full_name, 80, {"text"}),
     ("signed_date", r"today s date|date signed|signature date", _today, 45, {"text"}),
     # questions (any length)
+    # the same facts asked the other way round come first
+    ("under_18", r"under (the age of )?(18|eighteen)|younger than (18|eighteen)", _yn("work_authorization.over_18", invert=True), None, None),
     ("over_18", r"(18|eighteen) years|at least 18|over the age|age of 18|legal age", _yn("work_authorization.over_18"), None, None),
+    ("no_sponsorship", r"without .{0,40}sponsor", _yn("work_authorization.requires_sponsorship", invert=True), None, None),
     ("sponsorship", r"sponsor", _yn("work_authorization.requires_sponsorship"), None, None),
     ("authorized", r"authori[sz]ed to work|eligible to work|legally (able|permitted|allowed) to work|right to work|work authori[sz]ation|employment eligibility", _yn("work_authorization.authorized_to_work"), None, None),
-    ("us_person", r"u ?s person|itar|export (control|administration|regulation)|\bear\b", _yn("work_authorization.us_person"), None, None),
+    # Only questions that ask whether you are a U.S. person: export-control wording
+    # also comes with other questions, e.g. Micron's "are you a citizen of Cuba, Iran ...?"
+    ("us_person", r"\bu ?s person\b|citizen.{0,80}(permanent resident|green card|refugee|asyl|protected individual)",
+     _yn("work_authorization.us_person"), None, None),
     ("us_citizen", r"are you a (u s |united states )?citizen", _yn("work_authorization.us_citizen"), None, None),
     ("citizenship", r"citizenship|country of citizen|are you a (u ?s )?citizen", _p("work_authorization.citizenship"), None, None),
     ("clearance", r"security clearance|active clearance", _p("work_authorization.security_clearance"), None, None),
     ("relocate", r"relocat", _relocate, None, None),
     ("travel", r"travel", _travel, None, None),
     ("shift", r"shift work|rotating shift|nights and weekends|work (nights|weekends)|on ?call", _yn("preferences.flexible_schedule"), None, None),
+    # desired_salary is one yearly figure: not an answer to "current salary" or a monthly/hourly rate
+    ("other_salary", r"(current|last|previous|present|most recent|drawn) .{0,25}(salary|compensation|pay\b)"
+     r"|(monthly|per month|hourly|per hour|weekly|per week) .{0,25}(salary|compensation|pay\b|rate)", lambda p, j: None, None, None),
     ("salary", r"salary|compensation|pay (expectation|requirement)|desired pay|expected pay", _p("preferences.desired_salary"), None, None),
     ("start_date", r"start date|available to start|earliest (date|start)|when can you start|notice period", _p("preferences.earliest_start"), None, None),
     ("previous_employee", r"(previously|ever|formerly) (been )?(employed|worked)|former employee|have you (ever )?worked (for|at)|worked .{0,40} before", _previously_employed, None, None),
@@ -367,6 +376,10 @@ def _document(prof: Profile, job: dict, kind: str) -> str | None:
 SKIP = "__skip__"  # deliberately left empty, e.g. the end date of a current job
 # Legal attestations answered only when the exact choices are known.
 _NEEDS_OPTIONS = {"us_person", "citizenship", "us_citizen", "clearance"}
+# Questions the profile can't answer honestly (ties to sanctioned countries, dual
+# citizenship, export licences). Only the user's own answers bank may answer them.
+_NEVER_GUESS = re.compile(r"\b(cuba|iran|north korea|syria|crimea|ofac)\b|\bsanction|\bembargo|denied part"
+                          r"|dual (citizen|national)|export licen[cs]")
 
 _ENTRY_SECTIONS = [
     ("education_history", r"education|school|degree"),
@@ -518,6 +531,8 @@ def resolve_field(field: dict, prof: Profile, job: dict | None = None, file_inpu
         return None
 
     ans = _answer_bank(prof, raw_label)
+    if ans is None and _NEVER_GUESS.search(label):
+        return None
     if ans is None:
         for name, pattern, getter, max_len, kinds in RULES:
             if max_len is not None and len(label) > max_len:

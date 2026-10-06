@@ -53,6 +53,12 @@ def test_resolve_questions():
     assert resolve_field(f("Have you ever worked for Lam Research?", "select", options=yes_no), p, {"company": "Lam Research"}).value == "No"
     assert resolve_field(f("Have you previously been employed by Intel?", "select", options=yes_no), p, {"company": "Intel Corporation"}).value == "Yes"
     assert resolve_field(f("Are you comfortable working in a cleanroom environment?", "radio_group", options=yes_no), p).value == "Yes"
+    # the same facts asked the other way round
+    assert resolve_field(f("Are you legally authorized to work in the U.S. without employer sponsorship?", "radio_group",
+                           options=yes_no), p).value == "Yes"
+    assert resolve_field(f("Can you work for us without requiring visa sponsorship now or in the future?", "select",
+                           options=yes_no), p).value == "Yes"
+    assert resolve_field(f("Are you under the age of 18?", "radio_group", options=yes_no), p).value == "No"
     # "How did you hear" must not be answered with the LinkedIn profile URL
     assert resolve_field(f("How did you hear about us? (LinkedIn, Indeed, etc.)"), p).value == "LinkedIn"
 
@@ -172,6 +178,32 @@ def test_attestations_need_known_choices():
     assert resolve_field(f(q, "combobox"), p) is None  # choices unknown: leave it for a person
     assert resolve_field(f(q, "combobox", options=["Yes", "No"]), p).value == "Yes"
     assert resolve_field(f(q, "combobox", options=["I am a U.S. citizen", "I am a lawful permanent resident", "Other"]), p) is None
+
+
+def test_export_questions_that_are_not_about_being_a_us_person():
+    p = prof()
+    yes_no = ["Yes", "No"]
+    # Micron, live: answering this from "U.S. person: yes" said Yes, the opposite of the truth
+    micron = ("All Micron sites must observe U.S. export control rules that control information that may be provided "
+              "to persons from Cuba, Iran, North Korea, and Syria. Are you a citizen of, or do you hold dual citizenship "
+              "with any of these countries?")
+    assert resolve_field(f(micron, "combobox", options=yes_no), p) is None
+    for q in ("Will you require an export license to access our technology?",
+              "This role involves export-controlled technology. Can you comply with these requirements?",
+              "Do you hold dual citizenship?"):
+        assert resolve_field(f(q, "radio_group", options=yes_no), p) is None, q
+    # the U.S. person definition spelled out is still the U.S. person question
+    listed = "Are you a U.S. citizen, lawful permanent resident, refugee or asylee?"
+    assert resolve_field(f(listed, "radio_group", options=yes_no), p).value == "Yes"
+    # a yearly desired salary doesn't answer current or monthly pay questions (Micron, live)
+    p.data.setdefault("preferences", {})["desired_salary"] = "$85,000"
+    assert resolve_field(f("Expected salary"), p).value == "$85,000"
+    for q in ("Current/Last Drawn Monthly Basic Salary:", "Expected Monthly Basic Salary (exclude allowance & overtime)",
+              "Please describe your current compensation package."):
+        assert resolve_field(f(q, "textarea" if q.startswith("Please") else "text"), p) is None, q
+    # the user's own answer still applies
+    p.data["answers"] = [{"match": "Cuba, Iran", "answer": "No"}]
+    assert resolve_field(f(micron, "combobox", options=yes_no), p).value == "No"
 
 
 def test_choices_seen_on_live_forms():
