@@ -231,6 +231,76 @@ HTTP_PROBES = {
 }
 
 
+# Search forms whose results the page only draws once the form is sent (Amkor's job list is
+# on SuccessFactors' older career site): send it in the browser, then record the requests that
+# brought the list, the list, and the form, to write a reader from.
+FORM_PROBES = {
+    "Amkor Technology": ("https://career8.successfactors.com/career?company=amkor&career_ns=job_listing_summary"
+                         "&navBarLevel=JOB_SEARCH", "Search"),
+}
+FORMS_JS = r"""() => [...document.forms].slice(0, 6).map((f) => ({
+  id: f.id, name: f.getAttribute('name'), action: f.getAttribute('action'), method: f.getAttribute('method'),
+  fields: [...f.elements].slice(0, 40).map((e) => ({tag: e.tagName, type: e.type, name: e.name, id: e.id,
+    value: String(e.value || '').slice(0, 80), shown: !!(e.offsetWidth || e.offsetHeight),
+    label: ((e.labels && e.labels[0] && e.labels[0].innerText) || e.getAttribute('aria-label') || e.innerText || '')
+      .replace(/\s+/g, ' ').trim().slice(0, 60)}))}))"""
+REQ_LINKS_JS = r"""() => {
+  const links = [...document.querySelectorAll('a[href]')]
+    .filter((a) => /career_job_req_id|job_listing&|jobReqId|requisition/i.test(a.getAttribute('href') || ''));
+  const first = links[0];
+  const box = first && (first.closest('table') || first.parentElement);
+  return {count: links.length,
+          links: links.slice(0, 12).map((a) => {
+            const row = a.closest('tr') || a.parentElement;
+            return {href: a.href.slice(0, 400), text: (a.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 120),
+                    row: (row.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 300)};
+          }),
+          markup: box ? box.outerHTML.replace(/\s+/g, ' ').slice(0, 6000) : null};
+}"""
+
+
+async def probe_form(name: str, url: str, press: str) -> dict[str, Any]:
+    await server.browser.page()
+    ctx = server.browser._ctx  # noqa: SLF001 - test script reaching into the session on purpose
+    tab = await ctx.new_page()
+    sent: list[dict[str, Any]] = []
+
+    def on_request(r: Any) -> None:
+        if r.resource_type in ("document", "xhr", "fetch"):
+            sent.append({"method": r.method, "type": r.resource_type, "url": r.url[:700],
+                         "post": (r.post_data or "")[:2500]})
+
+    tab.on("request", on_request)
+    rec: dict[str, Any] = {"form_probe": name, "url": url}
+    try:
+        await tab.goto(url, wait_until="domcontentloaded", timeout=45000)
+        await tab.wait_for_timeout(8000)
+        decline = tab.get_by_role("button", name=re.compile(r"^(reject|decline)( all)?$|necessary only", re.I))
+        if await decline.count():
+            await decline.first.click(timeout=5000)
+            rec["cookies"] = "declined"
+        rec["title"] = await tab.title()
+        rec["forms"] = await tab.evaluate(FORMS_JS)
+        rec["frames"] = [f.url[:300] for f in tab.frames if f is not tab.main_frame][:5]
+        rec["before"] = await tab.evaluate(REQ_LINKS_JS)
+        rec["requests_before"] = sent[:20]
+        n = len(sent)
+        button = tab.get_by_role("button", name=re.compile(press, re.I)).or_(
+            tab.locator(f"input[type=submit][value*='{press}' i], input[type=button][value*='{press}' i]")).first
+        rec["button"] = await button.evaluate("(e) => e.outerHTML.replace(/\\s+/g, ' ').slice(0, 800)")
+        await button.click(timeout=10000)
+        await tab.wait_for_timeout(9000)
+        rec["url_after"] = tab.url
+        rec["requests_after"] = sent[n:n + 20]
+        rec["after"] = await tab.evaluate(REQ_LINKS_JS)
+        rec["text_after"] = re.sub(r"\s+", " ", await tab.inner_text("body"))[:2000]
+    except Exception as e:  # noqa: BLE001
+        rec["error"] = f"{type(e).__name__}: {str(e)[:300]}"
+    finally:
+        await tab.close()
+    return rec
+
+
 # Buttons that open a menu drawn by the page's script: press one in the browser and record
 # the menu that appears around a text it shows. (Qorvo's "Apply now ▾" opens a menu of ways
 # to apply that isn't in the page's HTML.)
@@ -556,6 +626,14 @@ async def main() -> int:
         except Exception as e:  # noqa: BLE001
             probe = {"menu_probe": name, "error": f"{type(e).__name__}: {str(e)[:200]}"}
         print("LIVE_MENU " + json.dumps(probe, default=str), flush=True)
+    for name, (url, press) in FORM_PROBES.items():
+        if wanted and not any(w in name.lower() for w in wanted):
+            continue
+        try:
+            probe = await asyncio.wait_for(probe_form(name, url, press), 90)
+        except Exception as e:  # noqa: BLE001
+            probe = {"form_probe": name, "error": f"{type(e).__name__}: {str(e)[:200]}"}
+        print("LIVE_FORM " + json.dumps(probe, default=str), flush=True)
     for name, (url, selector) in HTTP_PROBES.items():
         if wanted and not any(w in name.lower() for w in wanted):
             continue
