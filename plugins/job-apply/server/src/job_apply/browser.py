@@ -333,7 +333,11 @@ class BrowserSession:
                 data = await self._extract(page)
             if include_dropdown_options:
                 for f in data["fields"]:
-                    if f["kind"] in ("listbox", "combobox") and not f.get("options") and not f.get("disabled"):
+                    # Only empty ones: opening a dropdown that has its answer (and pressing
+                    # Escape after) can clear it, as Micron's did, so the same question
+                    # came back after every fill.
+                    if (f["kind"] in ("listbox", "combobox") and not f.get("options") and not f.get("disabled")
+                            and is_empty_value(f.get("value"))):
                         f["options"] = await self._read_listbox_options(page, f)
                         self._fields[f["id"]] = f
             return {"url": page.url, "title": await page.title(), **data}

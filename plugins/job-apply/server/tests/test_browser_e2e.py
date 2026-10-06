@@ -428,3 +428,30 @@ def test_a_pick_only_dropdown_is_asked_about_and_filled(srv):
     out = run(srv.fill_form([{"id": asked[0]["id"], "value": "Kulim"}]))
     assert out["ok"], out
     assert run(page.input_value("#loc")) == "Kulim"
+
+
+def test_reading_a_form_leaves_answered_dropdowns_alone(srv):
+    """Micron: reading every dropdown's options opened answered ones too, and the Escape
+    that closes the menu cleared the answer, so the same question came back each round."""
+    run(srv.open_application(url=fixture_url("jsonld_posting.html")))
+    page = run(srv.browser.page())
+    run(page.set_content("""
+      <form>
+        <label for="rel">Do you have any friends/relatives presently employed by Micron? *</label>
+        <input id="rel" role="combobox" required aria-controls="rel-list" autocomplete="off">
+        <ul id="rel-list" role="listbox" hidden><li role="option">Yes</li><li role="option">No</li></ul>
+      </form>
+      <script>
+        const box = document.getElementById('rel'), list = document.getElementById('rel-list');
+        box.addEventListener('click', () => { list.hidden = false; });
+        box.addEventListener('keydown', (e) => {
+          if (e.key === 'ArrowDown') list.hidden = false;
+          if (e.key === 'Escape') { box.value = ''; list.hidden = true; }  // like Micron's: Escape clears it
+        });
+        list.addEventListener('click', (e) => { box.value = e.target.textContent; list.hidden = true; });
+      </script>"""))
+    asked = run(srv.autofill())["needs_input"]
+    assert [f["options"] for f in asked] == [["Yes", "No"]]
+    assert run(srv.fill_form([{"id": asked[0]["id"], "value": "No"}]))["ok"]
+    assert run(srv.autofill())["needs_input"] == []
+    assert run(page.input_value("#rel")) == "No"  # read again without being opened, so still answered
