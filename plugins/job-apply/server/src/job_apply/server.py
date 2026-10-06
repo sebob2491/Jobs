@@ -16,6 +16,7 @@ from .autofill import is_empty_value, plan_autofill, profile_entries
 from .browser import BrowserSession, BrowserUnavailable, SubmitBlocked
 from .postings import FetchError, Posting, fetch_posting, finalize, parse_html
 from .render import KINDS, render_pdf, to_html
+from .search import search_companies
 from .tracker import Tracker
 
 INSTRUCTIONS = """\
@@ -148,6 +149,32 @@ async def ingest_job(url: str, use_browser: bool = False) -> dict[str, Any]:
             return {"saved": False, "error": str(e)}
     job, created = tracker().upsert(posting.to_dict())
     return {"saved": True, "created": created, "job": job, "warnings": posting.warnings}
+
+
+@mcp.tool()
+async def search_company_jobs(
+    query: str,
+    companies: list[str] | None = None,
+    location: str | None = "AZ",
+    limit_per_company: int = 20,
+) -> dict[str, Any]:
+    """Search employers' own careers sites for openings (no browser needed) through
+    their applicant tracking system's public search: Workday, Greenhouse, Lever,
+    Eightfold, SmartRecruiters, Oracle.
+
+    query: keywords; separate alternatives with "|", e.g. "field service | equipment engineer".
+    companies: names from the plugin's companies list (default: all of them).
+    location: state code/name or city alternatives ("AZ", "Phoenix|Chandler"); null for anywhere.
+    Results already in the tracker carry `tracked`. Companies in `browser_only` have no
+    search API; open their careers_url and use the site's search."""
+    out = await search_companies(query, companies, location, limit_per_company)
+    t = tracker()
+    for r in out["results"]:
+        job = t.find_by_url(r["url"])
+        if job:
+            r["tracked"] = {"id": job["id"], "status": job["status"]}
+    out["count"] = len(out["results"])
+    return out
 
 
 @mcp.tool()

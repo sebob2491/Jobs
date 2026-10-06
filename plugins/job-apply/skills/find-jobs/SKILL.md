@@ -17,18 +17,20 @@ The goal is a short, deduplicated list of real openings saved to the tracker
    get its details and save it with `add_job(url, title, company, description,
    location, salary, source="indeed")`.
 
-3. **Company career sites.**
-   The `companies_file` path that `setup_status` returns
-   (`<plugin>/data/companies.yaml`) lists semiconductor employers with
-   Arizona sites, with each one's careers URL and ATS. For the companies the user
-   cares about:
-   - Workday sites (`*.myworkdayjobs.com/<site>`) have a search box. Open the site
-     with `open_application(url=...)`, `fill_form` the search field, `click` Search,
-     and read results with `page_text`.
-   - For other sites, open the careers URL and use the site's own search the same
-     way, or use WebSearch with `site:` on the careers domain.
+3. **Company career sites.** Run
+   `search_company_jobs(query="field service | equipment engineer", location="AZ")`.
+   It queries each company's own job search directly: Workday, Greenhouse, Lever,
+   Eightfold, SmartRecruiters and Oracle sites, for the companies in
+   `<plugin>/data/companies.yaml` (`companies_file` in `setup_status`). Pass
+   `companies=[...]` to limit it to particular employers.
+   - Results already in the tracker carry `tracked`. Skip those.
+   - `errors` lists companies whose search failed. Fall back to the browser for
+     those, and for everything in `browser_only` (SuccessFactors sites such as TSMC,
+     Amkor and Qorvo): open the careers URL with `open_application(url=...)`, use the
+     site's search box with `fill_form` and `click`, and read the results with
+     `page_text`. WebSearch with `site:` on the careers domain also works.
    - `ingest_job(url)` each posting worth saving. It stores the full description.
-   Read only the first page or two of results, at a normal pace. This is one
+   Look at the first page or two of results only, at a normal pace. This is one
    person's job search, not a crawl.
 
 4. **LinkedIn.** Don't search or scrape LinkedIn automatically. Its terms prohibit
