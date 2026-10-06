@@ -1,0 +1,46 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Career Opportunities</title></head>
+<body>
+<!-- like Amkor's career site on SuccessFactors' older pages (Oct 2026): the job list is drawn
+     by the page's script a moment after it loads, 10 to a page; "Items per page" draws more,
+     and the next-page arrow is a script link that's gone on the last page. -->
+<h1>Career Opportunities</h1>
+<div id="results"></div>
+<script>
+  const JOBS = Array.from({length: 23}, (_, i) => ({
+    id: 29000 + i,
+    title: i === 4 ? 'Equipment Technician (ATA)' : i === 17 ? 'Field Service Engineer' : `Analyst ${i}`,
+    posted: `09/${String(28 - i).padStart(2, '0')}/2026`,
+  }));
+  let size = 10, page = 0;
+  function draw() {
+    const shown = JOBS.slice(page * size, page * size + size);
+    const last = (page + 1) * size >= JOBS.length;
+    const rows = shown.map((j) => `
+      <tr class="jobResultItem"><td><div role="heading" aria-level="3"><a class="jobTitle"
+        href="/career?career%5fns=job%5flisting&amp;company=example&amp;career_job_req_id=${j.id}&amp;_s.crb=SESSION">${j.title}</a></div>
+        <div class="noteSection" role="note"><div>Requisition ID: <span class="jobContentEM">${j.id}</span> -
+        <span class="jobContentEM">Posted on ${j.posted}</span> - <span class="jobContentEM">Engineering</span></div></div>
+      </td></tr>`).join('');
+    document.getElementById('results').innerHTML = `
+      <div class="jobCount">${JOBS.length} Jobs</div>
+      <ul class="pagination">
+        <li class="per_page"><label for="pp">Items per page</label>
+          <select id="pp"><option value="10" ${size === 10 ? 'selected' : ''}>10</option>
+          <option value="20" ${size === 20 ? 'selected' : ''}>20</option></select></li>
+        ${last ? '<li class="paginationArrowContainer next_disabled"><span>Next Page</span></li>'
+               : '<li class="paginationArrowContainer next"><a href="javascript:void(0);" title="Next Page"> </a></li>'}
+      </ul>
+      <table><tbody>${rows}</tbody></table>`;
+    document.getElementById('pp').addEventListener('change', (e) => {
+      size = Number(e.target.value); page = 0; later(draw);
+    });
+    const next = document.querySelector('li.next > a');
+    if (next) next.addEventListener('click', () => { page += 1; later(draw); });
+  }
+  const later = (f) => setTimeout(f, 300);  // the list comes back from the server a moment later
+  later(draw);
+</script>
+</body>
+</html>

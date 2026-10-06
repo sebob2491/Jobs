@@ -147,6 +147,51 @@ def test_a_successfactors_list_is_searched_and_a_search_that_picks_nothing_is_em
     assert [(f["label"], f["kind"], f["required"], len(f["options"])) for f in failed] == [("Country", "combobox", True, 100)]
     assert by_label(run(srv.inspect_form(include_dropdown_options=False))["fields"], "country")["value"] == ""
 
+
+def test_a_list_the_page_draws_is_read_page_by_page(srv):
+    """Amkor's career site (SuccessFactors' older pages) draws its job list with a script,
+    10 to a page: a bigger page is chosen, then the next-page arrow pressed until it's gone."""
+    from job_apply.search import SFCLASSIC_NEXT, SFCLASSIC_ROWS, parse_sfclassic
+
+    pages = run(srv.browser.listing_pages(fixture_url("site/sf-classic-list.html"), SFCLASSIC_ROWS,
+                                          per_page=("li.per_page select", "20"), next_button=SFCLASSIC_NEXT))
+    cfg = {"site": "https://career8.successfactors.com", "company": "example"}
+    listings = [x for page in pages for x in parse_sfclassic(page, cfg)]
+    assert [len(parse_sfclassic(page, cfg)) for page in pages] == [20, 3]
+    assert len({x.external_id for x in listings}) == 23
+    tech = next(x for x in listings if x.title == "Equipment Technician (ATA)")
+    assert (tech.external_id, tech.posted, tech.url) == ("29004", "2026-09-24", (
+        "https://career8.successfactors.com/career?career_ns=job_listing&company=example&navBarLevel=JOB_SEARCH"
+        "&rcm_site_locale=en_US&career_job_req_id=29004&selected_lang=en_US"))  # no session in it
+
+
+SF_POSTING_QUERY = "?career_ns=job_listing&company=example&career_job_req_id=29107"
+
+
+def test_an_older_successfactors_posting_is_entered_through_its_apply(srv, monkeypatch):
+    """Amkor's postings (SuccessFactors' older sites) sit in a form whose submit is "Apply". With
+    nothing in the form to fill, it opens the application, so it's pressed like any way in,
+    even in a dry run. An "Apply" whose form has something to fill still sends it."""
+    monkeypatch.setenv("JOB_APPLY_NEVER_SUBMIT", "1")
+    posting = fixture_url("site/sf-classic-posting.html") + SF_POSTING_QUERY
+    run(srv.browser.goto(posting))
+    applies = [a for a in run(srv.inspect_form(include_dropdown_options=False))["actions"] if a["text"] == "Apply"]
+    assert len(applies) == 2 and not any(a.get("is_submit") for a in applies)
+    out = run(srv.click(applies[0]["id"]))
+    assert out["clicked"] and out["headings"] == ["Sign In"], out
+
+    # the same page with a box to fill in its form: Apply would send that
+    run(srv.browser.goto(posting))
+    page = run(srv.browser.page())
+    run(page.evaluate("() => { const box = document.createElement('input'); box.name = 'name';"
+                      " document.getElementById('careerform').prepend(box); }"))
+    applies = [a for a in run(srv.inspect_form(include_dropdown_options=False))["actions"] if a["text"] == "Apply"]
+    assert applies and all(a.get("is_submit") for a in applies)
+    assert run(srv.click(applies[0]["id"]))["clicked"] is False
+    # and a page that isn't a posting: an "Apply" submit is the final one, as before
+    run(srv.browser.goto(fixture_url("site/sf-classic-posting.html")))
+    assert run(srv.click("Apply"))["clicked"] is False
+
 def test_iframe_form_and_linkedin_policy(srv, monkeypatch):
     job = srv.add_job(url=fixture_url("iframe_host.html"), title="Process Technician", company="Example Fab")["job"]
     run(srv.open_application(job_id=job["id"]))

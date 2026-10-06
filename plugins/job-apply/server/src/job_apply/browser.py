@@ -40,6 +40,9 @@ NAVIGATION_RE = re.compile(
     r"sign ?in|log ?in|create account|verify|send (me a )?code|ok|accept( all)?( cookies)?|i agree|apply manually|start)\b",
     re.I,
 )
+# SuccessFactors' older career sites show a posting inside a form whose submit button is
+# "Apply". With nothing in the form to fill, it opens the application; it sends nothing.
+POSTING_PAGE_RE = re.compile(r"career(?:_|%5f)ns=job(?:_|%5f)listing(?:&|#|$)", re.I)
 SHORT_MENU = 12  # a menu this short shows every choice; a longer one may show only some
 # How long a click may wait for its button to become clickable, in ms.
 CLICK_TIMEOUT = 8000
@@ -537,6 +540,58 @@ class BrowserSession:
             finally:
                 await tab.close()
 
+    async def listing_pages(self, url: str, rows: str, per_page: tuple[str, str] | None = None,
+                            next_button: str | None = None, max_pages: int = 5) -> list[str]:
+        """The HTML of a job list the page's script draws (SuccessFactors' older career sites),
+        a page at a time, read in a background tab: wait for its `rows`, choose a bigger page
+        size where it offers one (`per_page`: the select and the option), then press
+        `next_button` until it's gone or `max_pages` are read."""
+        async with self._lock:
+            if self._ctx is None:
+                await self._launch()
+            assert self._ctx is not None
+            tab = await self._ctx.new_page()
+            try:
+                await tab.goto(url, wait_until="domcontentloaded", timeout=45000)
+                await tab.wait_for_selector(rows, timeout=20000)
+                if per_page is not None and await tab.locator(per_page[0]).count():
+                    shown = await self._rows_shown(tab, rows)
+                    await tab.locator(per_page[0]).first.select_option(per_page[1])
+                    await self._rows_change(tab, rows, shown)
+                pages = [await tab.content()]
+                while next_button and len(pages) < max_pages:
+                    nxt = tab.locator(next_button)
+                    if not await nxt.count():
+                        break
+                    shown = await self._rows_shown(tab, rows)
+                    await nxt.first.evaluate("el => el.click()")  # an icon-only arrow: its own click handler
+                    if not await self._rows_change(tab, rows, shown):
+                        break  # the list didn't move on: what's read so far is the list
+                    pages.append(await tab.content())
+                return pages
+            finally:
+                await tab.close()
+
+    @staticmethod
+    async def _rows_shown(tab: Page, rows: str) -> tuple[int, str]:
+        loc = tab.locator(rows)
+        n = await loc.count()
+        return n, (await loc.first.inner_text() if n else "")
+
+    async def _rows_change(self, tab: Page, rows: str, shown: tuple[int, str], wait_ms: int = 8000) -> bool:
+        """Wait until the list shows other rows than `shown` (how many, and the first)."""
+        waited = 0
+        while waited < wait_ms:
+            await tab.wait_for_timeout(250)
+            waited += 250
+            try:
+                if await self._rows_shown(tab, rows) != shown:
+                    await tab.wait_for_timeout(500)  # the rest of the list is drawn with it
+                    return True
+            except PlaywrightError:  # redrawn while being read
+                continue
+        return False
+
     async def snapshot(self, dest: Path, note: str = "", details: Any = None) -> Path:
         """Save what's needed to debug a page later: HTML of every frame, a screenshot
         and the extracted fields. Stays on the user's machine."""
@@ -848,7 +903,7 @@ class BrowserSession:
                 loc = None
                 continue
             if not allow_submit:
-                self._check_clickable(info)
+                self._check_clickable(info, page.url)
             if await self._present(loc):
                 return loc, info
             loc = None
@@ -862,15 +917,19 @@ class BrowserSession:
             return False
 
     @staticmethod
-    def _check_clickable(info: dict[str, Any]) -> None:
+    def _check_clickable(info: dict[str, Any], url: str = "") -> None:
         label = " ".join((info.get("label") or "").split())
         text = (info.get("text") or "").strip()
-        if SUBMIT_RE.search(label) or (info.get("formSubmit") and FINALISH_RE.match(text)):
+        # a posting's own Apply on SuccessFactors' older sites: an empty form, so nothing is sent
+        opens = bool(info.get("formSubmit") and POSTING_PAGE_RE.search(url) and re.match(r"^apply( now)?$", text, re.I)
+                     and not info.get("formFields"))
+        if SUBMIT_RE.search(label) or (info.get("formSubmit") and FINALISH_RE.match(text) and not opens):
             raise SubmitBlocked(
                 f"{label!r} looks like the final submit button. Use submit_application "
                 "(after the user confirms), or let the user click it in the browser."
             )
-        if info.get("formSubmit") and not NAVIGATION_RE.match(text) and config.Profile.load().settings.dry_run:
+        if (info.get("formSubmit") and not NAVIGATION_RE.match(text) and not opens
+                and config.Profile.load().settings.dry_run):
             raise SubmitBlocked(f"Dry run: {label!r} submits a form, and it isn't a recognised step button.")
 
     async def _find_by_text(self, page: Page, text: str) -> Locator | None:

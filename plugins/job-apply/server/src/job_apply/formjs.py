@@ -267,6 +267,7 @@ EXTRACT_JS = r"""
 
   const SUBMIT = /\bsubmit\b|send (my )?application|finish (my )?application|complete (my )?application/i;
   const FINALISH = /^(apply( now)?|send( now)?|finish|complete( application)?|confirm( and send)?)$/i;
+  const POSTING_PAGE = /career(?:_|%5f)ns=job(?:_|%5f)listing(?:&|#|$)/i;  // browser.POSTING_PAGE_RE
   const ACTION = /apply|next|continue|review|submit|save|add|upload|sign ?in|log ?in|create account|start|back|previous|edit|done|ok\b|accept|agree|use my last|autofill|manually|verify|confirm|remove|delete/i;
   // Up to 60 of the page's buttons. A dropdown's entries are choices in a field, not
   // things to do on the page: Eightfold draws them as buttons, and an open list of
@@ -293,7 +294,12 @@ EXTRACT_JS = r"""
     if (el.tagName === 'A' && !ACTION.test(t)) continue;
     const full = t + ' ' + (el.getAttribute('aria-label') || '');
     const formSubmit = el.type === 'submit' && !!el.form;
-    const isSubmit = SUBMIT.test(full) || (formSubmit && FINALISH.test(t));
+    // SuccessFactors' older sites show a posting inside a form whose submit is "Apply": with
+    // nothing in the form to fill, it opens the application and sends nothing
+    const opensApplication = formSubmit && POSTING_PAGE.test(location.href) && /^apply( now)?$/i.test(t)
+      && ![...el.form.elements].some((e) => /^(INPUT|SELECT|TEXTAREA)$/.test(e.tagName)
+        && !/^(hidden|submit|button|image|reset)$/i.test(e.type || '') && e.getClientRects().length > 0);
+    const isSubmit = SUBMIT.test(full) || (formSubmit && FINALISH.test(t) && !opensApplication);
     if (actions.length >= 60 && !isSubmit && !formSubmit && !STEP.test(t)) continue;
     const a = { id: idOf(el), text: t };
     if (applyItem) a.menu = true;
@@ -380,6 +386,9 @@ ELEMENT_INFO_JS = r"""
   label: [el.innerText || el.textContent || el.value || '', el.getAttribute('aria-label') || ''].join(' ').replace(/\s+/g, ' ').trim(),
   text: (el.innerText || el.textContent || el.value || '').replace(/\s+/g, ' ').trim(),
   formSubmit: el.type === 'submit' && !!el.form,
+  // what its form has to fill in, where it can be seen
+  formFields: el.form ? [...el.form.elements].filter((e) => /^(INPUT|SELECT|TEXTAREA)$/.test(e.tagName)
+    && !/^(hidden|submit|button|image|reset)$/i.test(e.type || '') && e.getClientRects().length > 0).length : 0,
 })
 """
 

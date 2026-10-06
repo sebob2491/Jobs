@@ -68,7 +68,8 @@ companies:
     careers_url: https://amkor.com/careers/united-states/
     ats: successfactors
     az_sites: Peoria, Tempe (HQ)
-    confidence: medium
+    confidence: high
+    search: {sfclassic: {site: https://career8.successfactors.com, company: amkor}}
   - name: ASM (ASM America)
     careers_url: https://job-boards.greenhouse.io/asm
     ats: greenhouse

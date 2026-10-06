@@ -1,7 +1,7 @@
 from conftest import FIXTURES
 
 from job_apply.ats import detect_ats, greenhouse_form_url, greenhouse_parts, lever_parts, linkedin_job_id, workday_parts
-from job_apply.postings import finalize, html_to_text, parse_html
+from job_apply.postings import finalize, html_to_text, parse_html, place_in_text
 
 
 def test_detect_ats():
@@ -119,3 +119,23 @@ def test_fetch_posting_over_http():
         httpd.shutdown()
     assert p.title == "Field Service Engineer – EUV"
     assert p.ats == "workday" and p.source == "company_site"
+
+
+def test_an_older_successfactors_posting_names_its_place_in_its_text():
+    """Amkor's postings (SuccessFactors' older career site) have no place field; the description
+    says where the job is. The page's title carries the requisition number."""
+    page = ("<html><head><title>Career Opportunities: Equipment Technician (ATA) (29111)</title></head><body>"
+            "<div>Requisition ID 29111 - Posted 10/01/2026 - Engineering</div><div>Job Description</div>"
+            "<p>Amkor Technology, Inc. leads in packaging. This position is based at our Peoria, Arizona factory.</p>"
+            "</body></html>")
+    url = "https://career8.successfactors.com/career?career_ns=job_listing&company=amkor&career_job_req_id=29111"
+    p = parse_html(page, url)
+    assert (p.title, p.location) == ("Equipment Technician (ATA)", "Peoria, AZ")
+    assert parse_html(page, "https://www.example.com/news/1").location == ""  # other pages' text isn't guessed at
+
+
+def test_a_place_is_a_city_and_a_us_state():
+    assert place_in_text("based at our corporate headquarters in Tempe, AZ.") == "Tempe, AZ"
+    assert place_in_text("Work from New York, NY or Salt Lake City, UT") == "New York, NY"
+    assert place_in_text("Amkor Technology, Inc. (Nasdaq: AMKR) builds packages") == ""
+    assert place_in_text("Openings in Arizona, USA") == ""

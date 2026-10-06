@@ -217,18 +217,133 @@ PROBES = {
     # Benchmark is Infor CloudSuite; Qorvo's search pages are SuccessFactors HTML. Canon USA
     # and MKS block automated browsers outright.)
     # Equipment makers with field service engineers at Arizona fabs, not in the list yet.
+    # (Oct 2026: Amkor's posting page wraps the posting in a form whose submit is "Apply"; the
+    # pipeline check now presses it through to Amkor's sign-in page.)
     # Nikon's posting page: how its Apply button is drawn (the form reader doesn't see it)
     "Nikon Precision": "https://recruiting2.ultipro.com/NIK1001NIKON/JobBoard/f11a0b52-5153-4c12-ad2c-b7f3b0a74112/"
                        "OpportunityDetail?opportunityId=532a7dc9-8394-4cbc-8184-f43e88e906bf",
 }
 # Pages read over plain HTTP, as a search would read them: the markup of the parts a
 # reader needs. (Oct 2026: an Edwards posting names its place in the unlabelled lines under
-# its title; Qorvo's search pages are HTML tables, 25 rows a page.) Amkor's job list is on
-# SuccessFactors' older career site.
-HTTP_PROBES = {
-    "Amkor Technology": ("https://career8.successfactors.com/career?company=amkor&career_ns=job_listing_summary"
-                         "&navBarLevel=JOB_SEARCH", "a[href*='career_job_req_id'], .jobTitle, table tr, form"),
-}
+# its title; Qorvo's search pages are HTML tables, 25 rows a page; Amkor's career site has a
+# search form and no list.)
+HTTP_PROBES: dict[str, tuple[str, str]] = {}
+
+
+# Search forms whose results the page only draws once the form is sent: send it in the
+# browser, then record the requests that brought the list, the list, and the form, to write a
+# reader from. (Oct 2026: Amkor's SuccessFactors site draws its list over DWR calls, 10 to a
+# page or 50 when asked, and a posting opens on its own; its search reads it that way now.)
+FORM_PROBES: dict[str, tuple[str, str]] = {}
+FORMS_JS = r"""() => [...document.forms].slice(0, 6).map((f) => ({
+  id: f.id, name: f.getAttribute('name'), action: f.getAttribute('action'), method: f.getAttribute('method'),
+  fields: [...f.elements].slice(0, 40).map((e) => ({tag: e.tagName, type: e.type, name: e.name, id: e.id,
+    value: String(e.value || '').slice(0, 80), shown: !!(e.offsetWidth || e.offsetHeight),
+    label: ((e.labels && e.labels[0] && e.labels[0].innerText) || e.getAttribute('aria-label') || e.innerText || '')
+      .replace(/\s+/g, ' ').trim().slice(0, 60)}))}))"""
+REQ_LINKS_JS = r"""() => {
+  const links = [...document.querySelectorAll('a[href]')]
+    .filter((a) => /career_job_req_id|job_listing&|jobReqId|requisition/i.test(a.getAttribute('href') || ''));
+  const first = links[0];
+  const box = first && (first.closest('table') || first.parentElement);
+  return {count: links.length,
+          links: links.slice(0, 12).map((a) => {
+            const row = a.closest('tr') || a.parentElement;
+            return {href: a.href.slice(0, 400), text: (a.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 120),
+                    row: (row.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 300)};
+          }),
+          markup: box ? box.outerHTML.replace(/\s+/g, ' ').slice(0, 6000) : null};
+}"""
+
+
+async def probe_form(name: str, url: str, press: str) -> dict[str, Any]:
+    await server.browser.page()
+    ctx = server.browser._ctx  # noqa: SLF001 - test script reaching into the session on purpose
+    tab = await ctx.new_page()
+    sent: list[dict[str, Any]] = []
+
+    def on_request(r: Any) -> None:
+        if r.resource_type in ("document", "xhr", "fetch"):
+            sent.append({"method": r.method, "type": r.resource_type, "url": r.url[:700],
+                         "post": (r.post_data or "")[:2500]})
+
+    replies: list[Any] = []
+
+    async def _reply(r: Any) -> dict[str, Any]:
+        try:
+            body = await r.text()
+        except Exception as e:  # noqa: BLE001
+            body = f"unreadable: {e}"
+        return {"url": r.url[:300], "type": r.headers.get("content-type", "")[:60], "chars": len(body),
+                "body": body[:6000]}
+
+    def on_response(r: Any) -> None:
+        if ".dwr" in r.url:  # SuccessFactors' older pages talk to their server over DWR
+            replies.append(asyncio.ensure_future(_reply(r)))
+
+    tab.on("request", on_request)
+    tab.on("response", on_response)
+    rec: dict[str, Any] = {"form_probe": name, "url": url}
+    try:
+        await tab.goto(url, wait_until="domcontentloaded", timeout=45000)
+        await tab.wait_for_timeout(8000)
+        decline = tab.get_by_role("button", name=re.compile(r"^(reject|decline)( all)?$|necessary only", re.I))
+        if await decline.count():
+            await decline.first.click(timeout=5000)
+            rec["cookies"] = "declined"
+        rec["title"] = await tab.title()
+        rec["forms"] = await tab.evaluate(FORMS_JS)
+        rec["frames"] = [f.url[:300] for f in tab.frames if f is not tab.main_frame][:5]
+        rec["before"] = await tab.evaluate(REQ_LINKS_JS)
+        rec["requests_before"] = sent[:20]
+        n = len(sent)
+        button = tab.get_by_role("button", name=re.compile(press, re.I)).or_(
+            tab.locator(f"input[type=submit][value*='{press}' i], input[type=button][value*='{press}' i]")).first
+        rec["button"] = await button.evaluate("(e) => e.outerHTML.replace(/\\s+/g, ' ').slice(0, 800)")
+        await button.click(timeout=10000)
+        await tab.wait_for_timeout(9000)
+        rec["url_after"] = tab.url
+        rec["requests_after"] = sent[n:n + 20]
+        rec["after"] = await tab.evaluate(REQ_LINKS_JS)
+        rec["text_after"] = re.sub(r"\s+", " ", await tab.inner_text("body"))[:2000]
+        # more to a page: what's sent, and how many show
+        per_page = tab.locator("li.per_page select")
+        if await per_page.count():
+            n = len(sent)
+            await per_page.first.select_option("50")
+            await tab.wait_for_timeout(6000)
+            rec["requests_per_page"] = sent[n:n + 10]
+            rec["after_per_page"] = (await tab.evaluate(REQ_LINKS_JS))["count"]
+        rec["replies"] = [await r for r in replies[:6]]
+        # a posting, opened on its own (without the session's _s.crb), in a fresh tab and over HTTP
+        links = (rec["after"] or {}).get("links") or []
+        if links:
+            posting = re.sub(r"&_s\.crb=[^&]*", "", links[0]["href"])
+            rec["posting_url"] = posting
+            page = await ctx.new_page()
+            try:
+                await page.goto(posting, wait_until="domcontentloaded", timeout=45000)
+                await page.wait_for_timeout(6000)
+                rec["posting_title"] = await page.title()
+                rec["posting_url_after"] = page.url
+                rec["posting_text"] = re.sub(r"\s+", " ", await page.inner_text("body"))[:3000]
+            finally:
+                await page.close()
+            import httpx
+
+            from job_apply.postings import USER_AGENT
+            async with httpx.AsyncClient(headers={"User-Agent": USER_AGENT}, follow_redirects=True, timeout=30) as client:
+                r = await client.get(posting)
+            text = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", r.text))
+            i = text.find(links[0]["text"][:20])
+            rec["posting_http"] = {"status": r.status_code, "final_url": str(r.url)[:300], "chars": len(r.text),
+                                   "has_title": i >= 0, "around_title": text[max(0, i - 200):i + 1500] if i >= 0
+                                   else text[:1500]}
+    except Exception as e:  # noqa: BLE001
+        rec["error"] = f"{type(e).__name__}: {str(e)[:300]}"
+    finally:
+        await tab.close()
+    return rec
 
 
 # Buttons that open a menu drawn by the page's script: press one in the browser and record
@@ -450,7 +565,11 @@ async def probe_page(name: str, url: str) -> dict[str, Any]:
         # the markup of anything that reads like an apply or sign-in button, whatever it's drawn with
         rec["apply_buttons"] = await tab.evaluate("""() => [...document.querySelectorAll('body *')]
           .filter((e) => /^\\s*(apply( now)?|quick apply|sign in)\\s*$/i.test(e.textContent || '') && e.children.length < 4)
-          .slice(0, 8).map((e) => ({tag: e.tagName, html: e.outerHTML.slice(0, 500),
+          .slice(0, 8).map((e) => ({tag: e.tagName, type: e.type || null, html: e.outerHTML.slice(0, 500),
+                                   form: e.form ? (e.form.id || e.form.getAttribute('name') || 'unnamed') : null,
+                                   form_fields: e.form ? [...e.form.elements].filter((f) => /^(INPUT|SELECT|TEXTAREA)$/.test(f.tagName)
+                                     && !/^(hidden|submit|button|image|reset)$/i.test(f.type || '')
+                                     && !!(f.offsetWidth || f.offsetHeight)).length : null,
                                    parent: (e.parentElement ? e.parentElement.outerHTML : '').slice(0, 300)}))""")
         hrefs = await tab.evaluate("() => [...document.querySelectorAll('a[href], iframe[src]')].map(e => e.href || e.src)")
         rec["ats_links"] = sorted({h for h in hrefs if ATS_HOST.search(h)})[:10]
@@ -556,6 +675,14 @@ async def main() -> int:
         except Exception as e:  # noqa: BLE001
             probe = {"menu_probe": name, "error": f"{type(e).__name__}: {str(e)[:200]}"}
         print("LIVE_MENU " + json.dumps(probe, default=str), flush=True)
+    for name, (url, press) in FORM_PROBES.items():
+        if wanted and not any(w in name.lower() for w in wanted):
+            continue
+        try:
+            probe = await asyncio.wait_for(probe_form(name, url, press), 150)
+        except Exception as e:  # noqa: BLE001
+            probe = {"form_probe": name, "error": f"{type(e).__name__}: {str(e)[:200]}"}
+        print("LIVE_FORM " + json.dumps(probe, default=str), flush=True)
     for name, (url, selector) in HTTP_PROBES.items():
         if wanted and not any(w in name.lower() for w in wanted):
             continue
