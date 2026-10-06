@@ -24,11 +24,13 @@ Job application assistant. Typical flow for one posting:
   fill_form([...]) for remaining answers -> click("Next"/"Continue") -> repeat ->
   on the review page: screenshot() for the user -> submit_application(job_id, user_confirmed=true)
   only after the user says to submit.
+Repeated sections (Workday "My Experience"): add_entries("work"/"education"), then autofill.
+Tailored documents: render_document(kind, markdown, job_id) before autofill uploads files.
 Rules: never invent facts about the applicant; answers must come from the profile or the
 user. LinkedIn and Indeed applications are always submitted by the user clicking the
 button themselves. Passwords go through fill_secret, never fill_form."""
 
-mcp = MCPServer("job-apply", instructions=INSTRUCTIONS, version="0.1.0")
+mcp = MCPServer("job-apply", instructions=INSTRUCTIONS, version="0.2.0")
 browser = BrowserSession()
 _tracker: Tracker | None = None
 

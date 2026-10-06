@@ -15,7 +15,12 @@ company careers site) and Claude does the rest:
    answers from your resume for you to approve.
 5. **Stops at the review page** and submits when you say so.
 6. **Tracks everything** in a local tracker: saved, in progress, applied,
-   interviewing and so on.
+   interviewing and so on. With your permission it can also check your Gmail for
+   replies and update the tracker.
+
+It also fills Workday's "My Experience" section, with one block per job and
+degree in your profile, and it can write a tailored resume or cover letter for
+each job as a PDF that it uploads in place of your default.
 
 It works with any careers site, plus specific handling for the systems common
 at semiconductor companies: Workday (Applied Materials, KLA, Intel, Microchip,
@@ -78,6 +83,10 @@ https://www.linkedin.com/jobs/view/4402347426/
 ```
 
 ```
+/job-apply:track-responses        (did anyone reply? updates the tracker from Gmail)
+```
+
+```
 What have I applied to this month?   ·   Mark the Lam job as interviewing   ·   Export my tracker to CSV
 ```
 
@@ -93,10 +102,15 @@ Everything personal stays on your machine in `~/.job-apply/`. Set
 | `secrets.yaml` | Optional career-site passwords (you write this file; run `chmod 600` on it) |
 | `tracker.db` | Application tracker (SQLite). `export_jobs_csv` writes a spreadsheet. |
 | `browser/` | The automation browser's profile, which keeps your sign-ins |
-| `applications/<id>-<company>-<title>/` | Tailored resume and cover letter, screenshots, submission record |
+| `applications/<id>-<company>-<title>/` | Tailored resume and cover letter, screenshots, submission record, `debug/` snapshots |
 
-`settings.submit_mode` in `profile.yaml` switches between `review` (the default)
-and `auto`. `settings.auto_submit_ats` lists the ATSs auto mode applies to.
+Settings in `profile.yaml`:
+
+| Setting | Default | Effect |
+|---|---|---|
+| `submit_mode` | `review` | Set to `auto` to let Claude submit complete applications without asking, for the ATSs in `auto_submit_ats` |
+| `email_codes` | `false` | Claude may read the sign-in codes and verification links that career sites email you (needs the Gmail connector) |
+| `email_tracking` | `false` | Claude may search your email for replies to your applications (needs the Gmail connector) |
 
 ## What's inside
 
@@ -109,6 +123,7 @@ plugins/job-apply/
     setup/        build the profile from your resume, sign in to sites
     apply/        the application workflow + per-ATS notes (references/ats-notes.md)
     find-jobs/    search Indeed (via the Indeed connector) and company career sites
+    track-responses/  read replies from Gmail and update the tracker
   data/companies.yaml                semiconductor employers in Arizona, careers URL + ATS
   templates/profile.example.yaml
   server/                            Python MCP server (Playwright browser automation)
@@ -124,9 +139,13 @@ plugins/job-apply/
 | `open_application`, `click`, `tabs` | Navigate the browser. `click` refuses final submit buttons. |
 | `inspect_form` | Every field on the page, including iframes and custom dropdowns: label, type, options, required |
 | `autofill` | Fill everything the profile answers and return the fields that still need a decision |
+| `add_entries` | Click "Add" until there's one Work Experience / Education block per profile entry |
 | `fill_form`, `fill_secret` | Fill specific fields; type a stored password without exposing it |
 | `screenshot`, `page_text` | See the page |
+| `debug_snapshot` | Save the page (HTML of every frame, a screenshot, the extracted fields). This also happens automatically when a field fails. |
+| `render_document` | Markdown resume or cover letter → PDF in the job folder |
 | `submit_application` | Final submit, enforcing the rules above, and record the result |
+| `log_email`, `logged_emails` | Record employer replies; each email counts once and statuses only move forward |
 
 ## Development
 
@@ -138,16 +157,38 @@ uv run pytest
 ```
 
 The tests cover ATS detection, posting parsing, the profile-to-field matching
-rules, the tracker, and end-to-end browser runs (headless Chromium) against mock
-forms: a generic form, Workday-style dropdowns and search pickers, an embedded
-iframe form, the submit guard, and the LinkedIn/Indeed submit rule.
+rules, the tracker and email log, PDF rendering, fixture redaction, and
+end-to-end browser runs (headless Chromium) against mock forms: a generic form,
+Workday-style dropdowns, search pickers and My Experience blocks, an embedded
+iframe form, the submit guard, and the LinkedIn/Indeed submit rule. GitHub
+Actions runs them on Python 3.10 and 3.13 and validates the plugin manifests.
+
+### Turning a failure into a test
+
+When a field won't fill on a real site, the plugin saves a snapshot to
+`~/.job-apply/applications/<job>/debug/<time>/`. To turn it into a regression
+test, run:
+
+```
+cd plugins/job-apply/server
+uv run python -m job_apply.fixtures ~/.job-apply/applications/<job>/debug/<time> workday-my-information
+```
+
+This writes `tests/fixtures/live/<name>.html`, with scripts removed and your
+profile details replaced by `REDACTED`, plus `<name>.expect.json`, which lists the
+fields the extractor must keep finding. Fix the extractor or the matching rules,
+trim the expectations to fields you've checked, look the HTML over for any other
+personal data, and commit. `tests/test_live_fixtures.py` picks it up
+automatically.
 
 ## Limitations
 
-- The tests run against local mock forms. Real ATS pages change often, so expect
-  Claude to sometimes fall back to `inspect_form` and `screenshot` and work field
-  by field. That fallback is built into the workflow.
-- Many company ATSs (Workday, SuccessFactors) need an account per company and an
-  emailed verification code. That step is yours.
+- So far the tests run only against local mock forms. Real ATS pages change often,
+  so expect Claude to sometimes fall back to `inspect_form` and `screenshot` and
+  work field by field. The debug snapshots exist to turn those cases into fixes
+  quickly.
+- Many company ATSs (Workday, SuccessFactors) need an account per company. Creating
+  the account is up to you, and so is the emailed verification code unless you
+  turn on `email_codes`.
 - The first launch of the MCP server installs its Python dependencies, which takes
   a minute. If `/mcp` shows `job-apply` as failed right after install, reconnect it.

@@ -1,6 +1,6 @@
 [project]
 name = "job-apply"
-version = "0.1.0"
+version = "0.2.0"
 description = "MCP server that ingests job postings, tracks applications, and fills application forms in a real browser."
 requires-python = ">=3.10"
 dependencies = [
