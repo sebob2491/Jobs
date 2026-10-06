@@ -522,29 +522,53 @@ class BrowserSession:
         """Click an action/field by id, or the first visible button/link with that text."""
         async with self._lock:
             page = await self.page()
-            if target in self._actions or target in self._fields or re.fullmatch(r"(f\d+-)?\d+(\.\d+)?", target):
-                loc = self._locator(page, target)
-            else:
-                loc = await self._find_by_text(page, target)
-            if (loc is None or not await loc.count()) and target in self._actions:
-                # the page re-rendered since inspect_form; the same button by its text
-                loc = await self._find_by_text(page, self._actions[target]["text"])
-            if loc is None or not await loc.count():
-                raise KeyError(f"Nothing clickable matches {target!r}; call inspect_form for ids")
-            info = await loc.evaluate(ELEMENT_INFO_JS, timeout=5000)
-            if not allow_submit:
-                self._check_clickable(info)
+            by_id = target in self._actions or target in self._fields or re.fullmatch(r"(f\d+-)?\d+(\.\d+)?", target)
+            loc = self._locator(page, target) if by_id else None
+            text = self._actions[target]["text"] if target in self._actions else "" if by_id else target
+            loc, info = await self._clickable(page, loc, text, allow_submit, target)
             try:
                 await loc.click(timeout=8000)
-            except PlaywrightTimeout as e:
+            except PlaywrightTimeout:
                 # Knockout/React can swap the button out mid-click, or a cookie banner sits on
-                # top: find it again by its text if it was replaced, then click it directly.
-                if "detached" in str(e) and info["text"]:
-                    loc = await self._find_by_text(page, info["text"]) or loc
+                # top: click it directly, after finding and checking it again.
+                loc, info = await self._clickable(
+                    page, loc if await self._present(loc) else None, info["text"] or text, allow_submit, target)
                 await loc.evaluate("el => el.click()", timeout=5000)
             await self._settle(page)
             page = await self.page()  # the click may have opened a new tab
             return await self._summary(page)
+
+    async def _clickable(self, page: Page, loc: Locator | None, text: str, allow_submit: bool,
+                         target: str) -> tuple[Locator, dict[str, Any]]:
+        """The element to click and what it is; final submit buttons are refused.
+
+        Oracle's and other Knockout/React pages replace buttons as they re-render, so one
+        that's gone (since inspect_form, or while it was being read) is found again by its
+        text, and whatever is found is checked again.
+        """
+        for _ in range(3):
+            if (loc is None or not await self._present(loc)) and text:
+                loc = await self._find_by_text(page, text)
+            if loc is None or not await self._present(loc):
+                break
+            try:
+                info = await loc.evaluate(ELEMENT_INFO_JS, timeout=5000)
+            except PlaywrightTimeout:
+                loc = None
+                continue
+            if not allow_submit:
+                self._check_clickable(info)
+            if await self._present(loc):
+                return loc, info
+            loc = None
+        raise KeyError(f"Nothing clickable matches {target!r}; call inspect_form for ids")
+
+    @staticmethod
+    async def _present(loc: Locator) -> bool:
+        try:
+            return bool(await loc.count())
+        except PlaywrightError:
+            return False
 
     @staticmethod
     def _check_clickable(info: dict[str, Any]) -> None:

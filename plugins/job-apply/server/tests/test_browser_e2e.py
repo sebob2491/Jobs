@@ -214,6 +214,32 @@ def test_final_apply_button_honeypot_and_enter(srv, monkeypatch):
     assert done["submitted"] and done["confirmed"]
 
 
+def test_click_finds_a_replaced_button_and_checks_it_again(srv, monkeypatch):
+    """Oracle's pages swap a button out between reading it and clicking it."""
+    import job_apply.browser as browser_module
+
+    run(srv.open_application(url=fixture_url("apply_button_form.html")))
+    page = run(srv.browser.page())
+    run(page.evaluate("() => { const a = document.createElement('a'); a.href = '#top'; a.textContent = 'Apply'; "
+                      "document.body.prepend(a); }"))
+    form = run(srv.inspect_form(include_dropdown_options=False))
+    search = next(a for a in form["actions"] if a["text"] == "Search")
+    link = next(a for a in form["actions"] if a["text"] == "Apply" and not a.get("form_submit"))
+    # The first look at an element replaces it: with a copy (Search), or with nothing (the
+    # link), so finding it again by its text lands on the form's own final Apply button.
+    monkeypatch.setattr(browser_module, "ELEMENT_INFO_JS", (
+        "(el) => { const info = (" + browser_module.ELEMENT_INFO_JS.strip() + ")(el);"
+        " if (!window.swapped) { window.swapped = true;"
+        "   if (el.tagName === 'A') el.remove();"
+        "   else { const copy = el.cloneNode(true); copy.removeAttribute('data-ja-id'); el.replaceWith(copy); } }"
+        " return info; }"))
+    assert run(srv.click(search["id"]))["clicked"]
+    assert "searched" in run(srv.page_text())
+    run(page.evaluate("() => { window.swapped = false; }"))
+    assert run(srv.click(link["id"]))["clicked"] is False
+    assert "Thank you" not in run(srv.page_text())
+
+
 def test_dry_run_keeps_later_statuses(srv, monkeypatch):
     monkeypatch.setenv("JOB_APPLY_NEVER_SUBMIT", "1")
     job = srv.add_job(url=fixture_url("generic_form.html"), title="FSE", company="Example Litho")["job"]
