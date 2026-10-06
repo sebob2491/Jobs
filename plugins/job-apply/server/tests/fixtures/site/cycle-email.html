@@ -1,0 +1,16 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Apply</title></head>
+<body>
+<h2>Authentication screen. You don't need to have an account</h2>
+<form id="step" novalidate>
+  <label for="em">Email Address *</label><input id="em" type="email" required>
+  <label for="ph">Phone Number *</label><input id="ph" type="tel" required>
+  <label for="nm">Full Name *</label><input id="nm" required>
+  <button type="submit">Next</button>
+</form>
+<script>
+  document.getElementById('step').addEventListener('submit', (e) => { e.preventDefault(); location.href = 'cycle-limit.html'; });
+</script>
+</body>
+</html>

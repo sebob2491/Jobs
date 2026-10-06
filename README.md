@@ -118,9 +118,17 @@ opens a page on your computer (served by the plugin on `127.0.0.1`):
 
 Each employer on Workday has its own account. Save a password in the desk's
 **Workday password** card and it fills in their Create Account forms (you tick their
-terms and press the button) and signs you in after that. The password goes from the
-page straight into `~/.job-apply/secrets.yaml` on your computer. Claude never sees it,
+terms and press the button) and signs you in after that. When it doesn't sign in at an
+employer, usually because it's your first application there, the desk tries it once and
+then fills in that employer's Create Account form instead. The password goes from the page
+straight into `~/.job-apply/secrets.yaml` on your computer, and is only ever typed into
+Workday's own addresses (`*.myworkdayjobs.com`, `*.myworkday.com`). Claude never sees it,
 and the desk only reports whether one is saved.
+
+The desk works in each job's own browser tab and follows only the tabs an application
+opens itself, so a tab you open (to check your email, say) is left alone. Jobs already
+marked applied are never queued again. If Submit doesn't bring up a confirmation, the job
+waits in **Needs you** with **I submitted it** rather than being counted as sent.
 
 To add jobs from anywhere else, paste their links (LinkedIn, Indeed or any company
 site) into the box above the list. The desk reads each posting, scores it and ticks it

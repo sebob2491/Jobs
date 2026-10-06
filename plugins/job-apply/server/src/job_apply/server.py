@@ -11,7 +11,7 @@ from typing import Any
 from mcp.server.mcpserver import Image, MCPServer
 
 from . import config
-from .ats import ATS_NAMES, detect_ats
+from .ats import ATS_NAMES, detect_ats, greenhouse_form_url
 from .autofill import is_empty_value, plan_autofill, profile_entries
 from .browser import BrowserSession, BrowserUnavailable, SubmitBlocked
 from .postings import FetchError, Posting, fetch_posting, finalize, parse_html
@@ -327,6 +327,7 @@ async def open_application(job_id: int | None = None, url: str | None = None) ->
     if job_id is not None:
         job = _job(job_id)
         target = url or job.get("apply_url") or job["url"]
+        target = greenhouse_form_url(target) or target
         browser.current_job_id = job_id
         if job["status"] == "saved":
             tracker().update(job_id, status="in_progress", note="opened application")

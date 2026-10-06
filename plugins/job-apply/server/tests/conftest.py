@@ -57,6 +57,12 @@ def fixture_url(name: str) -> str:
     return (FIXTURES / name).resolve().as_uri()
 
 
+def launch_options() -> dict:
+    """For tests that start a browser of their own: the same Chromium the app is told to use."""
+    exe = os.environ.get("JOB_APPLY_CHROMIUM_PATH")
+    return {"executable_path": exe} if exe else {}
+
+
 def browser_available() -> bool:
     if os.environ.get("JOB_APPLY_CHROMIUM_PATH"):
         return True

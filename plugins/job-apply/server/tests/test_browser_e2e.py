@@ -588,3 +588,17 @@ def test_a_long_open_menu_doesnt_hide_the_submit_button(srv):
     actions = run(srv.inspect_form(include_dropdown_options=False))["actions"]
     assert not any(a["text"].startswith("Source") for a in actions)
     assert [a["text"] for a in run(srv.browser.find_submit())] == ["Submit application"]
+
+
+def test_the_browser_comes_back_after_its_window_is_closed(srv):
+    """The person closes the automation browser's window: the next job opens a fresh one,
+    instead of every job failing until the desk is restarted."""
+    async def go():
+        await srv.browser.page()
+        await srv.browser._ctx.close()  # the window is closed
+        tab = await srv.browser.new_tab()
+        await tab.goto(fixture_url("site/step1.html"))
+        return (await srv.inspect_form())["fields"]
+
+    fields = run(go())
+    assert any(f["label"].startswith("First Name") for f in fields)

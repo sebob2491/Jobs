@@ -95,6 +95,17 @@ def greenhouse_parts(url: str) -> dict[str, str] | None:
     return None
 
 
+def greenhouse_form_url(url: str) -> str | None:
+    """Greenhouse's own application form for one of its job-board postings. A board set to
+    send visitors to the employer's careers page redirects the posting there, where the form
+    sits in a frame that the site's cookie banner can hold back (asm.com); the form itself
+    has no banner."""
+    if not (urlparse(url).hostname or "").endswith("greenhouse.io"):
+        return None
+    gh = greenhouse_parts(url)
+    return f"https://job-boards.greenhouse.io/embed/job_app?for={gh['board']}&token={gh['job_id']}" if gh else None
+
+
 def lever_parts(url: str) -> dict[str, str] | None:
     m = re.search(r"jobs\.lever\.co/([\w.-]+)/([0-9a-f-]{36})", url)
     if m:

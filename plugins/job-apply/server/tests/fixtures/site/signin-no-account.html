@@ -1,0 +1,22 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Sign In</title></head>
+<body>
+<h2>Sign In</h2>
+<form id="signin" novalidate>
+  <label for="em">Email Address</label><input id="em" type="email" required>
+  <label for="pw">Password</label><input id="pw" type="password" required>
+  <button type="submit">Sign In</button>
+</form>
+<p>Don't have an account yet? <button type="button" id="create">Create Account</button></p>
+<div id="err" role="alert"></div>
+<script>
+  // No account exists for anyone here: every sign-in fails, as at an employer applied to for the first time.
+  document.getElementById('signin').addEventListener('submit', (e) => {
+    e.preventDefault();
+    document.getElementById('err').textContent = 'Wrong email address or password. Try again, or create an account.';
+  });
+  document.getElementById('create').addEventListener('click', () => { location.href = 'create-account.html'; });
+</script>
+</body>
+</html>

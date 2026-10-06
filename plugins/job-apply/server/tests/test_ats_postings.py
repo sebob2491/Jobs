@@ -1,6 +1,6 @@
 from conftest import FIXTURES
 
-from job_apply.ats import detect_ats, greenhouse_parts, lever_parts, linkedin_job_id, workday_parts
+from job_apply.ats import detect_ats, greenhouse_form_url, greenhouse_parts, lever_parts, linkedin_job_id, workday_parts
 from job_apply.postings import finalize, html_to_text, parse_html
 
 
@@ -31,6 +31,16 @@ def test_url_parts():
     assert lever_parts("https://jobs.lever.co/acme/0b1c2d3e-0000-1111-2222-333344445555/apply")["company"] == "acme"
     assert linkedin_job_id("https://www.linkedin.com/jobs/view/3900000001/?trk=abc") == "3900000001"
     assert linkedin_job_id("https://www.linkedin.com/jobs/search/?currentJobId=3900000002&f_TPR=r86400") == "3900000002"
+
+
+def test_greenhouse_postings_open_at_greenhouses_own_form():
+    """asm.com's posting page holds the form in a frame behind its cookie banner."""
+    form = "https://job-boards.greenhouse.io/embed/job_app?for=asm&token=4889175101"
+    assert greenhouse_form_url("https://job-boards.greenhouse.io/asm/jobs/4889175101") == form
+    assert greenhouse_form_url("https://boards.greenhouse.io/asm/jobs/4889175101?gh_src=abc") == form
+    assert greenhouse_form_url(form) == form
+    assert greenhouse_form_url("https://www.asm.com/open-vacancies/engineer-4889175101?gh_jid=4889175101") is None
+    assert greenhouse_form_url("https://evil.example/greenhouse.io/asm/jobs/1") is None
 
 
 def test_parse_jsonld_posting():
