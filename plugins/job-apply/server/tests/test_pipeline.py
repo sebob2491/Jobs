@@ -11,7 +11,7 @@ from conftest import browser_available, fixture_url, run
 
 import job_apply.pipeline as pipeline
 from job_apply import config
-from job_apply.pipeline import Applier, classify, pick_next, question_key
+from job_apply.pipeline import Applier, Run, classify, pick_next, question_key
 
 pytestmark = pytest.mark.skipif(not browser_available(), reason="no Playwright Chromium installed")
 
@@ -757,6 +757,25 @@ def test_skip_closes_the_jobs_tabs_both_the_posting_and_the_application(srv, mon
     r, tabs = run(go())
     assert len(tabs) == 2 and tabs[0].url.endswith("signin.html") and tabs[1].url.endswith("popup-posting.html")
     assert all(t.is_closed() for t in tabs) and r.status == "skipped"
+
+
+def test_a_job_skipped_while_its_paused_tab_is_looked_at_isnt_started_again(srv, monkeypatch):
+    """Skip pressed while the desk was checking a job paused for a sign-in: the tab Skip closed
+    read as "they got past it", and the skipped job was queued again. The test above failed
+    now and then on this."""
+    job = srv.add_job(url=fixture_url("site/posting.html"), title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+    paused = Run(job["id"], "FSE", "Example Fab", status="needs_you", need="sign_in", blocking=True)
+    paused.paused_at = time.time()
+    applier.runs[job["id"]] = paused
+
+    async def moved_on(r):
+        await applier.skip(job["id"])  # pressed meanwhile; its tab is gone, which reads as moved on
+        return True
+
+    monkeypatch.setattr(applier, "_moved_on", moved_on)
+    run(applier._tick())
+    assert paused.status == "skipped" and not applier.tasks
 
 
 def test_a_flow_that_goes_round_in_a_circle_stops_after_one_lap(srv, monkeypatch):

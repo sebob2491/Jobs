@@ -308,6 +308,10 @@ class Applier:
                 blocker.reason += " (stopped waiting; press Resume when you're ready)"
             elif await self._strict(self._moved_on(blocker)):
                 blocker.blocking = False
+                if blocker.status != "needs_you":
+                    # skipped (or resumed) while its tab was being looked at: a tab closed by
+                    # Skip reads as moved on, and the job would start again by itself
+                    return
                 try:
                     self.enqueue(blocker.job_id, submit=blocker.submit, front=True)
                 except ValueError:  # marked applied meanwhile
