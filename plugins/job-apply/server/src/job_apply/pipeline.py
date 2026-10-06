@@ -461,8 +461,7 @@ class Applier:
                     return self._pause(run, "sign_in", f"I filled in your email and saved password on {_site(run, data)}'s "
                                        "sign-in form. Press its sign-in button in the browser window; the desk carries on "
                                        "after that.")
-                tip = (" Save a Workday password on the desk and it fills these in for you next time."
-                       if password_for(data["url"]) == "workday_password" and _secret("workday_password") is None else "")
+                tip = _password_tip(data["url"])
                 failed = " Your saved password didn't sign in there." if sign_ins.get("submitted") else ""
                 return self._pause(run, "sign_in", f"Sign in (or create your account) on {_site(run, data)} in "
                                    "the browser window; the desk carries on by itself after that." + failed + tip)
@@ -868,6 +867,19 @@ def password_for(url: str) -> str | None:
         if parsed.scheme == "https" and any(host == d or host.endswith("." + d) for d in domains):
             return f"{ats}_password"
     return None
+
+
+# The systems whose password the desk page lets the person save, by the name it shows
+DESK_PASSWORDS = {"workday_password": "Workday", "successfactors_password": "SuccessFactors", "icims_password": "iCIMS"}
+
+
+def _password_tip(url: str) -> str:
+    """At a sign-in the person does by hand: that a password saved on the desk would do it
+    for them next time, when one can be saved for this system and none is."""
+    name = password_for(url)
+    if name not in DESK_PASSWORDS or _secret(name) is not None:
+        return ""
+    return f" Save a {DESK_PASSWORDS[name]} password on the desk and it fills these in for you next time."
 
 
 def _secret(name: str) -> str | None:

@@ -404,12 +404,14 @@ def test_create_account_is_filled_but_left_for_the_person(srv, monkeypatch):
     assert "filled the Create Account form with your email and saved password" in r.log
 
 
-def test_a_saved_password_that_doesnt_sign_in_opens_create_account(srv, monkeypatch):
+@pytest.mark.parametrize("page", ["signin-no-account.html", "signin-no-account-link.html"])
+def test_a_saved_password_that_doesnt_sign_in_opens_create_account(srv, monkeypatch, page):
     """A first application at a Workday employer: there's no account there yet, so the
-    saved password can't get in. It's tried once, then Create Account is filled in."""
+    saved password can't get in. It's tried once, then Create Account is filled in. The way
+    there can be a button, or a link ("Create an account" on Amkor's SuccessFactors page)."""
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
     saved_password(monkeypatch)
-    job = srv.add_job(url=fixture_url("site/signin-no-account.html"), title="FSE", company="Example Fab")["job"]
+    job = srv.add_job(url=fixture_url(f"site/{page}"), title="FSE", company="Example Fab")["job"]
     applier = Applier(srv)
 
     async def go():
@@ -997,3 +999,15 @@ def test_an_older_successfactors_posting_is_applied_to_through_its_apply(srv, mo
     r = run(go())
     assert r.need == "sign_in", (r.reason, r.log)
     assert "clicked \u201cApply\u201d" in r.log
+
+
+def test_a_sign_in_by_hand_mentions_the_password_the_desk_could_save(monkeypatch):
+    """The tip at a sign-in names the system whose password the desk page saves; none for a
+    system it doesn't, or once that password is saved."""
+    monkeypatch.setattr(pipeline, "_secret", lambda name: None)
+    assert "Save a SuccessFactors password" in pipeline._password_tip("https://career8.successfactors.com/career?x=1")
+    assert "Save a Workday password" in pipeline._password_tip("https://intel.wd1.myworkdayjobs.com/External/login")
+    assert pipeline._password_tip("https://www.taleo.net/careersection/login") == ""  # not offered on the page
+    assert pipeline._password_tip("https://example.com/careers/login") == ""
+    monkeypatch.setattr(pipeline, "_secret", lambda name: "saved")
+    assert pipeline._password_tip("https://career8.successfactors.com/career?x=1") == ""

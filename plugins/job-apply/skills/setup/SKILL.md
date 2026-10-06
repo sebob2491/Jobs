@@ -70,8 +70,8 @@ All of the user's data lives in `~/.job-apply/`, outside the plugin:
    the profile.
 
 6. **Passwords (optional).** Company sites on Workday and SuccessFactors need an
-   account per company. The easiest way to store a Workday password is the Job Desk's
-   **Workday password** card (`open_job_desk`). Otherwise the user creates
+   account per company. The easiest way to store a password for either (or for iCIMS)
+   is the Job Desk's **Site passwords** card (`open_job_desk`). Otherwise the user creates
    `~/.job-apply/secrets.yaml` themselves, for example
    `workday_password: "..."`, and runs `chmod 600` on it. Never ask them to paste a
    password into the chat.

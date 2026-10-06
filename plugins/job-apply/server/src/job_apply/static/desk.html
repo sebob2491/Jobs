@@ -97,7 +97,9 @@ ul.rows { list-style: none; margin: 0; padding: 0; }
 .small { font-size: 13px; color: var(--muted); }
 .counts { display: flex; flex-wrap: wrap; gap: 6px; padding: 12px 14px; }
 .pw { padding: 2px 14px 14px; }
-.pw-row { display: flex; gap: 8px; }
+.pw-row { display: flex; gap: 8px; margin-top: 8px; }
+.pw-row select { flex: 1; min-width: 0; font: inherit; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--text); }
+.pills { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 0; }
 .pw-row input { flex: 1; min-width: 0; font: inherit; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--text); }
 details { padding: 10px 14px; border-top: 1px solid var(--line); font-size: 13px; color: var(--muted); }
 details a { color: var(--accent); }
@@ -161,13 +163,22 @@ footer { max-width: 1240px; margin: 0 auto; padding: 0 16px 24px; color: var(--m
       <div class="counts" id="counts"></div>
     </section>
     <section class="card" aria-labelledby="pw-h">
-      <div class="card-head"><h2 id="pw-h">Workday password</h2><span class="pill" id="pw-state"></span></div>
+      <div class="card-head"><h2 id="pw-h">Site passwords</h2></div>
       <form class="pw" id="pw-form" autocomplete="off">
-        <p class="small">Each employer on Workday has its own account. Save one password here and the desk fills in their
-          Create Account forms and signs you in. It stays on this computer, in <code>~/.job-apply/secrets.yaml</code>, and
-          Claude never sees it. Use a password you don't use anywhere else.</p>
-        <div class="pw-row"><input type="password" id="pw" autocomplete="new-password" aria-label="Workday password">
+        <p class="small">Each employer has its own account on its job site. Save one password for a job system and the
+          desk fills in that system's Create Account forms and signs you in, on that system's own sites only. It stays on
+          this computer, in <code>~/.job-apply/secrets.yaml</code>, and Claude never sees it. Use passwords you don't use
+          anywhere else.</p>
+        <div class="pw-row">
+          <select id="pw-site" aria-label="Job system">
+            <option value="workday">Workday: Intel, Applied, KLA and 10 more</option>
+            <option value="successfactors">SuccessFactors: Edwards, Qorvo, Amkor</option>
+            <option value="icims">iCIMS: Daifuku</option>
+          </select>
+        </div>
+        <div class="pw-row"><input type="password" id="pw" autocomplete="new-password" aria-label="Password">
           <button class="primary" type="submit">Save</button></div>
+        <p class="pills" id="pw-state"></p>
       </form>
     </section>
   </div>
@@ -419,9 +430,9 @@ function renderHeader() {
   const tailor = $("tailor");
   if (document.activeElement !== tailor) tailor.checked = !!s.tailor_resumes;
   $("tailor-hint").textContent = s.tailor_resumes ? "On: each job waits for Claude to write a resume for it." : "Off: your usual resume goes with every application.";
-  const saved = !!(state.passwords && state.passwords.workday);
-  $("pw-state").textContent = saved ? "Saved" : "Not saved";
-  $("pw-state").className = "pill " + (saved ? "good" : "");
+  const systems = {workday: "Workday", successfactors: "SuccessFactors", icims: "iCIMS"};
+  $("pw-state").innerHTML = Object.entries(state.passwords || {}).map(([site, saved]) =>
+    `<span class="pill ${saved ? "good" : ""}" data-site="${esc(site)}">${esc(systems[site] || site)}: ${saved ? "saved" : "not saved"}</span>`).join(" ");
   const notes = [];
   const waiting = allRuns().find((r) => r.blocking);
   if (waiting) notes.push({cls: "waiting", html: `<strong>Waiting for you in the browser window.</strong>
@@ -601,7 +612,8 @@ $("pw-form").addEventListener("submit", (e) => {
   e.preventDefault();
   const box = $("pw"), value = box.value;
   if (!value.trim()) { alert("Type the password first."); return; }
-  act(async () => { await api("/api/password", {name: "workday_password", value}); box.value = ""; });
+  const name = `${$("pw-site").value}_password`;
+  act(async () => { await api("/api/password", {name, value}); box.value = ""; });
 });
 
 document.addEventListener("change", (e) => {
