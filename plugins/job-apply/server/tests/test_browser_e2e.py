@@ -100,6 +100,13 @@ def test_workday_2026_search_prompt_is_picked_not_typed(srv):
     out = run(srv.fill_form([{"id": heard["id"], "value": "Job Board"}]))
     assert not out["results"][0]["ok"] and out["results"][0]["options"] == ["Indeed", "LinkedIn"], out
     assert by_label(run(srv.inspect_form(include_dropdown_options=False))["fields"], "how did you hear")["value"] == ""
+    # a group that holds an entry of its own name: that entry is the answer
+    out = run(srv.fill_form([{"id": heard["id"], "value": "Company Website"}]))
+    assert out["results"][0]["ok"], out
+    assert by_label(run(srv.inspect_form(include_dropdown_options=False))["fields"], "how did you hear")["value"] == \
+        "Company Website"
+    run(srv.browser.goto(fixture_url("workday_prompt_2026.html")))
+    heard = by_label(run(srv.inspect_form(include_dropdown_options=False))["fields"], "how did you hear")
     # an entry inside a group is found by searching
     out = run(srv.fill_form([{"id": heard["id"], "value": "LinkedIn"}]))
     assert out["results"][0]["ok"], out

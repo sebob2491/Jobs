@@ -147,7 +147,13 @@ EXTRACT_JS = r"""
     const isChoice = type === 'radio' || type === 'checkbox' || role === 'radio' || role === 'checkbox' || role === 'switch';
     const shown = visible(el) || (isChoice && visible(labelEl(el))) || type === 'file';
     if (!shown) continue;
-    if (el.closest('[aria-hidden="true"]') && type !== 'file') continue;
+    const hiddenBy = el.closest('[aria-hidden="true"]');
+    if (hiddenBy && type !== 'file') {
+      // What an open dialog hides behind it isn't the form, but Paycom's Quick Apply wraps
+      // its own fields in aria-hidden inside its dialog: those are the form.
+      const dialog = el.closest('[aria-modal="true"], [role="dialog"]');
+      if (!dialog || !dialog.contains(hiddenBy)) continue;
+    }
 
     if (isChoice) {
       const isRadio = type === 'radio' || role === 'radio';

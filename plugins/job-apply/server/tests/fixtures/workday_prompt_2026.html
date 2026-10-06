@@ -44,19 +44,20 @@
 <script>
   // Opening the prompt lists its top level, where a group ("Job Board") opens its own list;
   // typing and Enter search every entry.
-  const groups = {'Job Board': ['Indeed', 'LinkedIn'], 'Social Media': ['Facebook', 'X']};
+  const groups = {'Job Board': ['Indeed', 'LinkedIn'], 'Social Media': ['Facebook', 'X'],
+                  'Company Website': ['Company Website']};  // Onto's "ONTO Website" holds "ONTO Website"
   const topLevel = ['Advertisement', 'Company Website', 'Job Board', 'Social Media'];
   const sources = ['Advertisement', 'Company Website', 'Indeed', 'LinkedIn', 'Facebook', 'X'];
   const input = document.getElementById('source--source');
   const popup = document.getElementById('popup');
   const chosen = document.querySelector('#ms-source .chosen');
-  function show(items) {
+  function show(items, inGroup) {
     popup.innerHTML = '';
     for (const it of items) {
       const opt = document.createElement('div');
       opt.setAttribute('role', 'option');
       opt.innerHTML = '<div data-automation-id="promptOption" data-automation-label="' + it + '">' + it + '</div>';
-      opt.addEventListener('click', () => (groups[it] ? setTimeout(() => show(groups[it]), 100) : pick(it)));
+      opt.addEventListener('click', () => (groups[it] && !inGroup ? setTimeout(() => show(groups[it], true), 100) : pick(it)));
       popup.appendChild(opt);
     }
     popup.hidden = false;
@@ -74,7 +75,7 @@
   input.addEventListener('keydown', (e) => {
     if (e.key !== 'Enter') return;
     const q = input.value.toLowerCase();
-    setTimeout(() => show(sources.filter((s) => s.toLowerCase().includes(q))), 150);
+    setTimeout(() => show(sources.filter((s) => s.toLowerCase().includes(q)), true), 150);  // search results are entries
   });
   // typed text that isn't picked is cleared when the prompt loses focus, as on Workday
   input.addEventListener('blur', () => setTimeout(() => { if (!chosen.textContent.trim()) input.value = ''; }, 100));

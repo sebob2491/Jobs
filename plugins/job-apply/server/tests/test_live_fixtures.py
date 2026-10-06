@@ -35,3 +35,14 @@ def test_workday_search_prompts_are_pickers_with_their_choice(srv):
     heard, code = fields["How Did You Hear About Us?*"], fields["Country Phone Code*"]
     assert heard["kind"] == code["kind"] == "combobox"
     assert heard["value"] == "" and code["value"] == "United States of America (+1)"
+
+
+def test_a_dialogs_own_fields_count_even_inside_aria_hidden(srv):
+    """Paycom's Quick Apply (Ebara, captured live) wraps its contact fields in aria-hidden
+    inside its open dialog; the page behind the dialog stays out."""
+    run(srv.browser.goto((FIXTURES / "live" / "live-ebara-technologies.html").resolve().as_uri()))
+    fields = run(srv.browser.inspect(include_dropdown_options=False))["fields"]
+    labels = [f["label"] for f in fields]
+    for want in ("Legal First Name *", "Legal Last Name *", "Email Address *", "Confirm Email *"):
+        assert any(label.startswith(want.rstrip(" *")) for label in labels), (want, labels)
+    assert any(f["kind"] == "file" for f in fields)

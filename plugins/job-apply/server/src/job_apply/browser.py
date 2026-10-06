@@ -769,6 +769,11 @@ class BrowserSession:
             await self._confirm_choice(page, loc, choice)
         except ValueError:
             inner = await self._new_options(page, field["id"], loc, options, 1500)
+            entry = choose_option(text, inner) if inner and inner != options else None
+            if entry is not None:  # the answer is in the group it opened (Onto's "ONTO Website" > "ONTO Website")
+                await self._click_option(page, field["id"], entry)
+                await self._confirm_choice(page, loc, entry)
+                return f"selected {choice} > {entry}"
             await self._close_menus(page)
             if inner and inner != options:
                 raise PickedAGroup(choice, inner) from None

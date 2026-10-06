@@ -208,10 +208,9 @@ PROBES = {
     "ASML": "https://www.asml.com/en/careers/find-your-job?query=field%20service",
     "Texas Instruments": "https://careers.ti.com/en/sites/CX/jobs?keyword=technician",
     "onsemi": "https://hctz.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1001/jobs?keyword=field+service",
-    # Equipment makers that hire field service engineers around Phoenix, not in companies.yaml
-    # yet: what their job boards are built on, and how a listing looks.
-    "SUSS MicroTec": "https://career.suss.com/en/jobs",
-    "Thermo Fisher": "https://jobs.thermofisher.com/global/en/search-results?keywords=field%20service%20engineer%20arizona",
+    # Employers not in companies.yaml go here while their job board is worked out: what it's
+    # built on, and how a listing looks. (SUSS MicroTec, Oct 2026: an EQS board of 80
+    # openings, none in Arizona; its US ones are in Williston, VT.)
 }
 # Job links as a page (or one of its frames) draws them, with the text of the card around
 # each and a little of its markup, to write a reader for a new job board from.
