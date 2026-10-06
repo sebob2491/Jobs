@@ -226,12 +226,56 @@ PROBES = {
 # its title; Qorvo's search pages are HTML tables, 25 rows a page.) Amkor's job list is on
 # SuccessFactors' older career site.
 HTTP_PROBES = {
-    # Qorvo's Apply now is a dropdown toggle ("Apply now ▾"): the menu it opens
-    "Qorvo": ("https://careers.qorvo.com/job/Chandler-Analog-Design-Intern-AZ-85226/1421977600/",
-              "text:Apply with LinkedIn"),
     "Amkor Technology": ("https://career8.successfactors.com/career?company=amkor&career_ns=job_listing_summary"
                          "&navBarLevel=JOB_SEARCH", "a[href*='career_job_req_id'], .jobTitle, table tr, form"),
 }
+
+
+# Buttons that open a menu drawn by the page's script: press one in the browser and record
+# the menu that appears around a text it shows. (Qorvo's "Apply now ▾" opens a menu of ways
+# to apply that isn't in the page's HTML.)
+MENU_PROBES = {
+    "Qorvo": ("https://careers.qorvo.com/job/Chandler-Analog-Design-Intern-AZ-85226/1421977600/", "Apply now",
+              "Apply with LinkedIn"),
+}
+MENU_JS = r"""(needle) => {
+  const hits = [...document.querySelectorAll('body *')].filter((e) => e.children.length < 3
+    && (e.textContent || '').includes(needle));
+  return hits.slice(0, 3).map((hit) => {
+    let box = hit;
+    for (let i = 0; i < 4 && box.parentElement && box.parentElement !== document.body; i++) box = box.parentElement;
+    return {
+      html: box.outerHTML.replace(/\s+/g, ' ').slice(0, 5000),
+      parts: [...box.querySelectorAll('a, button, [role], li')].slice(0, 20).map((e) => ({
+        tag: e.tagName, role: e.getAttribute('role'), cls: e.className && String(e.className).slice(0, 80),
+        href: e.getAttribute('href'), title: e.getAttribute('title'), aria: e.getAttribute('aria-label'),
+        text: (e.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 60),
+        shown: !!(e.offsetWidth || e.offsetHeight || e.getClientRects().length)})),
+    };
+  });
+}"""
+
+
+async def probe_menu(name: str, url: str, press: str, needle: str) -> dict[str, Any]:
+    await server.browser.page()
+    ctx = server.browser._ctx  # noqa: SLF001 - test script reaching into the session on purpose
+    tab = await ctx.new_page()
+    rec: dict[str, Any] = {"menu_probe": name, "url": url}
+    try:
+        await tab.goto(url, wait_until="domcontentloaded", timeout=45000)
+        await tab.wait_for_timeout(6000)
+        rec["before"] = await tab.evaluate(MENU_JS, needle)
+        button = tab.get_by_role("button", name=press).or_(tab.get_by_role("link", name=press)).first
+        rec["button"] = await button.evaluate("(e) => e.outerHTML.replace(/\\s+/g, ' ').slice(0, 1500)")
+        await button.click(timeout=10000)
+        await tab.wait_for_timeout(2500)
+        rec["after"] = await tab.evaluate(MENU_JS, needle)
+        rec["url_after"] = tab.url
+    except Exception as e:  # noqa: BLE001
+        rec["error"] = f"{type(e).__name__}: {str(e)[:300]}"
+    finally:
+        await tab.close()
+    return rec
 
 
 async def probe_http(name: str, url: str, selector: str) -> dict[str, Any]:
@@ -490,6 +534,14 @@ async def main() -> int:
         except Exception as e:  # noqa: BLE001
             probe = {"probe": name, "error": f"{type(e).__name__}: {str(e)[:200]}"}
         print("LIVE_PROBE " + json.dumps(probe, default=str), flush=True)
+    for name, (url, press, needle) in MENU_PROBES.items():
+        if wanted and not any(w in name.lower() for w in wanted):
+            continue
+        try:
+            probe = await asyncio.wait_for(probe_menu(name, url, press, needle), 90)
+        except Exception as e:  # noqa: BLE001
+            probe = {"menu_probe": name, "error": f"{type(e).__name__}: {str(e)[:200]}"}
+        print("LIVE_MENU " + json.dumps(probe, default=str), flush=True)
     for name, (url, selector) in HTTP_PROBES.items():
         if wanted and not any(w in name.lower() for w in wanted):
             continue

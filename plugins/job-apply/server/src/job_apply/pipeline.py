@@ -580,11 +580,13 @@ class Applier:
 
     async def _decline_cookies(self, run: Run, data: dict[str, Any], text: str) -> bool:
         """Press Reject / Decline / Necessary only on a cookie banner (never Accept). Banners
-        cover forms and catch clicks; ones with no way to decline are left for the person."""
-        if "cookie" not in text.lower():
-            return False
+        cover forms and catch clicks; ones with no way to decline are left for the person.
+        A banner is known by its text, or by its buttons sitting in a cookie/consent box: on
+        a long page the banner comes after the part of the text that's read."""
+        mentioned = "cookie" in text.lower()
         button = next((a for a in data.get("actions") or []
-                       if _DECLINE_COOKIES.match(a.get("text", "").strip()) and not a.get("disabled")), None)
+                       if _DECLINE_COOKIES.match(a.get("text", "").strip()) and not a.get("disabled")
+                       and (mentioned or a.get("cookie"))), None)
         if button is None:
             return False
         result = await self.srv.click(button["id"])

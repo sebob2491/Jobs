@@ -272,6 +272,8 @@ EXTRACT_JS = r"""
   // application", so it was never seen. Submit and next-step buttons always make it in.
   const actions = [];
   const STEP = /^(next|continue|save and continue|review|submit)/i;
+  const COOKIE_BOX = '[id*="cookie" i], [class*="cookie" i], [aria-label*="cookie" i], [id*="consent" i], '
+    + '[class*="consent" i], [id*="onetrust" i], [class*="onetrust" i], [id*="cybot" i], [id*="gdpr" i], [id*="truste" i]';
   // Buttons drawn as web components (UKG's <ukg-button>, whose real button is in its shadow root) count too.
   const BUTTONS = 'button, [role="button"], input[type="submit"], input[type="button"], a[href], [data-tag-name="button"], '
     + 'ukg-button, sl-button, mwc-button, ion-button, vaadin-button, fluent-button, md-filled-button, md-outlined-button, '
@@ -288,6 +290,10 @@ EXTRACT_JS = r"""
     const isSubmit = SUBMIT.test(full) || (formSubmit && FINALISH.test(t));
     if (actions.length >= 60 && !isSubmit && !formSubmit && !STEP.test(t)) continue;
     const a = { id: idOf(el), text: t };
+    // A cookie banner's own buttons (OneTrust's sits at the very end of a long page, past
+    // the page text the desk reads)
+    const box = el.closest(COOKIE_BOX);
+    if (box && box !== document.body && box !== document.documentElement) a.cookie = true;
     if (formSubmit) a.form_submit = true;
     if (isSubmit) a.is_submit = true;
     if (el.disabled || el.getAttribute('aria-disabled') === 'true') a.disabled = true;

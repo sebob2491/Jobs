@@ -330,6 +330,27 @@ def test_cookie_dialog_is_declined_never_accepted(srv, monkeypatch):
     assert "declined cookies (“Reject”)" in r.log and accepted == 0
 
 
+def test_a_cookie_banner_after_a_long_posting_is_still_declined(srv, monkeypatch):
+    """Qorvo's cookie banner comes after a long posting, past the page text the desk reads.
+    Its buttons sit in the banner's own box, so it's still turned down, and never accepted."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    job = srv.add_job(url=fixture_url("site/long-posting-cookies.html"), title="ET", company="Example Semi")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status == "needs_you")
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert r.need == "sign_in", (r.reason, r.log)
+    assert r.log[1:3] == ["declined cookies (“Reject All”)", "clicked “Apply now”"], r.log
+
+
 def test_create_account_is_filled_but_left_for_the_person(srv, monkeypatch):
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
     saved_password(monkeypatch)
