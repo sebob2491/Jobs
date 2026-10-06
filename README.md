@@ -124,6 +124,7 @@ plugins/job-apply/
     apply/        the application workflow + per-ATS notes (references/ats-notes.md)
     find-jobs/    search Indeed (via the Indeed connector) and company career sites
     track-responses/  read replies from Gmail and update the tracker
+    interview-prep/   research, likely questions and STAR stories for an interview
   data/companies.yaml                semiconductor employers in Arizona, careers URL + ATS
   templates/profile.example.yaml
   server/                            Python MCP server (Playwright browser automation)
@@ -134,7 +135,8 @@ plugins/job-apply/
 | Tool | Purpose |
 |---|---|
 | `setup_status`, `get_profile` | Check what's missing and read the profile |
-| `ingest_job`, `add_job` | Save a posting. Parses Workday, Greenhouse and Lever APIs, schema.org JobPosting data, or page text. |
+| `search_company_jobs` | Search employers' own job boards (Workday, Greenhouse, Lever, Eightfold, SmartRecruiters, Oracle) by keyword and location, with no browser needed |
+| `ingest_job`, `add_job` | Save a posting. Parses Workday, Greenhouse, Lever and SmartRecruiters APIs, schema.org JobPosting data, or page text. |
 | `list_jobs`, `get_job`, `update_job`, `export_jobs_csv` | Application tracker |
 | `open_application`, `click`, `tabs` | Navigate the browser. `click` refuses final submit buttons. |
 | `inspect_form` | Every field on the page, including iframes and custom dropdowns: label, type, options, required |
@@ -162,6 +164,22 @@ end-to-end browser runs (headless Chromium) against mock forms: a generic form,
 Workday-style dropdowns, search pickers and My Experience blocks, an embedded
 iframe form, the submit guard, and the LinkedIn/Indeed submit rule. GitHub
 Actions runs them on Python 3.10 and 3.13 and validates the plugin manifests.
+
+### Testing against real career sites
+
+The `live-smoke` workflow (Actions tab → live-smoke → Run workflow) runs
+`scripts/live_smoke.py` on GitHub's runners, which can reach the job sites. For
+every company in `companies.yaml` it:
+- searches for Arizona field-service and equipment roles;
+- reads one real posting;
+- opens its application in headless Chromium;
+- clicks through "Apply" and "Apply Manually";
+- lists the form's fields and autofills them with a fake test profile.
+
+It is read-only. Submitting is disabled, nothing is uploaded, it never signs in or
+creates accounts, and it never contacts LinkedIn or Indeed. The job summary shows
+a table, and the log has one `LIVE_RESULT` line of JSON per company. Tick
+"Commit captured pages" to save the pages as regression fixtures.
 
 ### Turning a failure into a test
 
