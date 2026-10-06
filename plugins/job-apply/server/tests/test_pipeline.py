@@ -849,3 +849,45 @@ def test_turning_tailoring_off_lets_waiting_jobs_go(srv):
     run(go())
     assert run_.status == "queued" and ("apply", job["id"]) in applier.tasks
 
+
+def account_apply_run(srv, monkeypatch, saved=None):
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    if saved:  # a password saved for this site (the fixture page stands in for SuccessFactors)
+        monkeypatch.setattr(pipeline, "password_for", lambda url: "successfactors_password")
+        monkeypatch.setenv("JOB_APPLY_SECRET_SUCCESSFACTORS_PASSWORD", saved)
+    job = srv.add_job(url=fixture_url("site/account-apply.html"), title="ET", company="Example Semi")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status == "needs_you")
+            values = await r.page.evaluate("() => Object.fromEntries([...document.querySelectorAll('input')].map((i) => [i.id, i.value]))")
+            return r, values
+        finally:
+            await applier.stop()
+
+    r, values = run(go())
+    return job, r, values
+
+
+def test_a_page_that_creates_the_account_as_it_applies_is_filled_around_the_password(srv, monkeypatch):
+    """Qorvo's SuccessFactors application is also its Create Account form, and its Apply
+    sends both. The desk fills the application, leaves the password and that button to
+    the person, and says so."""
+    job, r, values = account_apply_run(srv, monkeypatch)
+    assert r.need == "your_submit", (r.reason, r.log)
+    assert "Choose a password" in r.reason and "press its Apply button yourself" in r.reason
+    assert values["em"] == values["em2"] == "sam.rivera@example.com"
+    assert (values["fn"], values["ln"], values["city"], values["zip"]) == ("Sam", "Rivera", "Chandler", "85225")
+    assert values["pw"] == values["pw2"] == ""  # the person's to choose
+    assert srv.tracker().get(job["id"])["status"] == "ready_to_submit"
+    assert not any("clicked" in line for line in r.log)  # Apply sends it: never pressed
+
+
+def test_a_saved_password_goes_into_both_boxes_of_such_a_page(srv, monkeypatch):
+    job, r, values = account_apply_run(srv, monkeypatch, saved="Fake-Pass-123")
+    assert r.need == "your_submit" and "Your saved password is in its password boxes" in r.reason, (r.reason, r.log)
+    assert values["pw"] == values["pw2"] == "Fake-Pass-123"
+

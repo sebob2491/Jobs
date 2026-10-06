@@ -1,0 +1,29 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Career Opportunities: Equipment Technician (10555)</title></head>
+<body>
+<!-- like Qorvo's SuccessFactors application: Create Account and the whole application on one
+     page. Pressing Apply creates the account and sends the application together. -->
+<h1>Career Opportunities: Equipment Technician (10555)</h1>
+<form id="apply" novalidate>
+  <label for="em">Email Address: *</label><input id="em" type="text" required>
+  <label for="em2">Retype Email Address: *</label><input id="em2" type="text" required>
+  <label for="pw">Choose Password: *</label><input id="pw" type="password" required>
+  <label for="pw2">Retype Password: *</label><input id="pw2" type="password" required>
+  <label for="fn">Legal First Name *</label><input id="fn" required>
+  <label for="ln">Legal Last Name *</label><input id="ln" required>
+  <label for="ph">Mobile Phone*</label><input id="ph" required>
+  <label for="a1">Address Line 1*</label><input id="a1" required>
+  <label for="city">City*</label><input id="city" required>
+  <label for="zip">Postal Code*</label><input id="zip" required>
+  <button type="button" id="privacy">Read and accept the data privacy statement.</button>
+  <button type="submit">Apply</button>
+</form>
+<script>
+  document.getElementById('apply').addEventListener('submit', (e) => {
+    e.preventDefault();
+    document.body.innerHTML = '<h1>Thank you for applying!</h1>';
+  });
+</script>
+</body>
+</html>

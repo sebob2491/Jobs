@@ -324,7 +324,7 @@ RULES: list[tuple[str, str, Getter, int | None, set[str] | None]] = [
     ("how_heard", r"how did you (hear|find|learn)|where did you (hear|find|learn)|source of (application|referral)|^source$", _p("preferences.how_did_you_hear"), None, None),
     # contact details: short labels only, so long questions that merely mention
     # "state" or "name" don't match
-    ("email", r"^(confirm |re ?enter |verify )?e ?mail( address)?( again)?$|^(your )?email\b|^enter (your )?e ?mail\b",
+    ("email", r"^(confirm |re ?enter |re ?type |verify )?e ?mail( address)?( again)?$|^(your )?email\b|^enter (your )?e ?mail\b",
      _p("personal.email"), 45, None),  # "Enter email to start application process" (Qorvo)
     ("first_name", r"^(legal )?(first|given)( name)?$|^(legal )?first name|^given name|^forename", _p("personal.first_name"), 45, None),
     ("middle_name", r"^middle (name|initial)", _p("personal.middle_name"), 45, None),

@@ -439,6 +439,8 @@ class Applier:
             if kind == "bot_check":
                 await self._bring_forward(run)
                 return self._pause(run, "bot_check", _BOT_CHECK_SAYS)
+            if kind == "sign_in" and _account_and_application(data):
+                return await self._apply_with_account(run, data)
             if kind == "sign_in":
                 done = await self._sign_in(run, data, sign_ins)
                 if done in ("email_step", "submitted", "create_account"):
@@ -477,13 +479,7 @@ class Applier:
                 result = await srv.autofill(job_id=run.job_id)
                 if result["filled"]:
                     self._log(run, f"filled {len(result['filled'])} field(s) on {_where(data)}")
-                pending = [{**f, **once_failed[question_key(f.get("label") or "")]}
-                           if question_key(f.get("label") or "") in once_failed else f
-                           for f in result["needs_input"] if f.get("required") and f.get("kind") != "file"]
-                pending += [{"id": f["id"], "label": f.get("label") or "", "kind": "combobox" if f.get("options") else "text",
-                             "required": True, "error": f.get("error"),
-                             **({"options": f["options"]} if f.get("options") else {})} for f in result["failed"]]
-                missing_files = [f for f in result["needs_input"] if f.get("required") and f.get("kind") == "file"]
+                pending, missing_files = _pending(result, once_failed)
                 before, page_key = data, (data.get("url"), tuple(data.get("headings") or []))
                 data, text = await self._look()  # filling can add or enable things (State after Country, Submit)
                 run.page_info = _page_info(data)  # what the person sees on the desk: the page as filled
@@ -682,7 +678,8 @@ class Applier:
             return None
         await srv.fill_form([{"id": email["id"], "value": address}])
         for box in passwords:
-            await srv.fill_secret(box["id"], secret)
+            if not (await srv.fill_secret(box["id"], secret)).get("ok"):
+                return None  # it didn't go in: say nothing about a saved password
         if len(passwords) == 2:  # a new account: accepting the site's terms is the person's call
             self._log(run, "filled the Create Account form with your email and saved password")
             return "prefilled"
@@ -693,6 +690,32 @@ class Applier:
         await srv.click(button["id"])
         self._log(run, "signed in with your saved password")
         return "submitted"
+
+    async def _apply_with_account(self, run: Run, data: dict[str, Any]) -> None:
+        """A page that creates the account as it applies: Qorvo's SuccessFactors puts Create
+        Account and the whole application on one page. The application is filled in around
+        the password boxes; choosing the password and pressing the site's own Apply, which
+        sends the application, are the person's."""
+        srv = self.srv
+        run.seen_form = True
+        once_failed = await self._fill_once(run, data)
+        result = await srv.autofill(job_id=run.job_id)
+        if result["filled"]:
+            self._log(run, f"filled {len(result['filled'])} field(s) on {_where(data)}")
+        pending, missing_files = _pending(result, once_failed)
+        if missing_files:
+            return self._pause(run, "stuck", "The form needs a file the profile doesn't point to (set documents.resume "
+                               "in profile.yaml): " + ", ".join(f["label"] for f in missing_files), pending)
+        if pending:
+            return self._pause(run, "questions", f"{len(pending)} question(s) your profile doesn't answer. Answer them "
+                               "here and the desk fills them in (and remembers them).", pending)
+        saved = await self._sign_in(run, data, {}) == "prefilled"
+        srv._mark_ready(srv.tracker().get(run.job_id), "filled by the Job Desk; the site creates the account as it applies")
+        await self._bring_forward(run)
+        password = "Your saved password is in its password boxes" if saved else "Choose a password in its password boxes"
+        return self._pause(run, "your_submit", f"Filled in on {_site(run, data)}, which creates your account as you "
+                           f"apply. {password}, check the page, then press its Apply button yourself: that sends the "
+                           "application. Then press \u201cI submitted it\u201d here.")
 
     async def _bring_forward(self, run: Run) -> None:
         if run.page is not None and not run.page.is_closed():
@@ -762,6 +785,33 @@ class Applier:
 
 _APPLICATION_FIELD = re.compile(r"first name|last name|full name|legal name|resume|\bcv\b|phone|address|"
                                 r"authori[sz]ed|sponsor|start (?:the |your |an? )?appl", re.I)  # "email to start application"
+
+
+_ACCOUNT_FIELD = re.compile(r"e-?mail|password|user ?name|log ?in|terms|privacy|captcha|language|locale", re.I)
+
+
+def _account_and_application(data: dict[str, Any]) -> bool:
+    """A Create Account form that is also the whole application (Qorvo's SuccessFactors):
+    password boxes, and five or more fields an application asks for, a name or address
+    among them."""
+    fields = data.get("fields") or []
+    if not any(f.get("kind") == "password" for f in fields):
+        return False
+    others = [f for f in fields if f.get("kind") != "password" and not _ACCOUNT_FIELD.search(f.get("label") or "")]
+    return len(others) >= 5 and any(_APPLICATION_FIELD.search(f.get("label") or "") for f in others)
+
+
+def _pending(result: dict[str, Any], once_failed: dict[str, dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """After autofill: the required questions to put to the person (with any answer of theirs
+    the page turned down), and the required file inputs nothing could go in."""
+    pending = [{**f, **once_failed[question_key(f.get("label") or "")]}
+               if question_key(f.get("label") or "") in once_failed else f
+               for f in result["needs_input"] if f.get("required") and f.get("kind") != "file"]
+    pending += [{"id": f["id"], "label": f.get("label") or "", "kind": "combobox" if f.get("options") else "text",
+                 "required": True, "error": f.get("error"),
+                 **({"options": f["options"]} if f.get("options") else {})} for f in result["failed"]]
+    missing_files = [f for f in result["needs_input"] if f.get("required") and f.get("kind") == "file"]
+    return pending, missing_files
 
 
 def tailored_ready(job: dict[str, Any]) -> bool:
