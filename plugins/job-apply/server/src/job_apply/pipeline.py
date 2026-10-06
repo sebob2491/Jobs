@@ -116,9 +116,9 @@ def _page_info(data: dict[str, Any]) -> dict[str, Any]:
     """Enough to see why a job paused, without any of the values typed into the page."""
     return {
         "url": data.get("url"), "title": data.get("title"), "headings": (data.get("headings") or [])[:8],
-        "actions": [a.get("text", "") for a in data.get("actions") or []][:30],
-        "fields": [{k: f.get(k) for k in ("label", "kind", "required") if f.get(k) is not None}
-                   for f in data.get("fields") or []][:40],
+        "actions": [a.get("text", "") + (" (disabled)" if a.get("disabled") else "") for a in data.get("actions") or []][:30],
+        "fields": [{**{k: f.get(k) for k in ("label", "kind", "required") if f.get(k) is not None},
+                    "empty": is_empty_value(f.get("value"))} for f in data.get("fields") or []][:40],
         "errors": (data.get("errors") or [])[:5],
     }
 
@@ -353,8 +353,8 @@ class Applier:
                 return await self._finish(run, data, text)
             action = pick_next(data.get("actions") or [], in_form=kind == "form")
             if action is None and kind == "page" and not waited:
-                waited = True  # some sites (Eightfold) draw the form well after Apply is clicked
-                if await self._wait_for_fields(10):
+                waited = True  # slow pages (Intel's Workday, Eightfold forms) draw their buttons late
+                if await self._wait_for_progress(10):
                     continue
             if action is None:
                 return self._pause(run, "stuck", "I couldn't find the button that moves this application on. "
@@ -377,12 +377,13 @@ class Applier:
         self._pause(run, "stuck", "This application has more steps than I expected. Have a look in the browser, "
                     "then press Resume.")
 
-    async def _wait_for_fields(self, seconds: float) -> bool:
+    async def _wait_for_progress(self, seconds: float) -> bool:
+        """Wait for a form or a button that moves things on to appear."""
         deadline = time.monotonic() + seconds
         while time.monotonic() < deadline:
             await asyncio.sleep(1)
             data = await self.srv.inspect_form(include_dropdown_options=False)
-            if data.get("fields"):
+            if data.get("fields") or pick_next(data.get("actions") or [], in_form=False):
                 return True
         return False
 

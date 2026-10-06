@@ -328,6 +328,20 @@ async def main() -> int:
 PIPELINE_WAIT = 180
 
 
+async def print_shot(name: str, page: Any) -> None:
+    """A small screenshot in the log, where it can be read without the run's artifacts.
+    The page only ever holds the fake applicant's details."""
+    import base64
+
+    if page is None or page.is_closed():
+        return
+    try:
+        data = await page.screenshot(type="jpeg", quality=35, full_page=False, scale="css")
+        print(f"LIVE_SHOT {json.dumps(name)} {base64.b64encode(data).decode()}", flush=True)
+    except Exception as e:  # noqa: BLE001
+        print(f"LIVE_SHOT {json.dumps(name)} failed: {e}", flush=True)
+
+
 def fake_answer(q: dict[str, Any]) -> Any:
     """A throwaway answer for a question the fake profile can't answer (this run only)."""
     options = [o for o in q.get("options") or [] if o and not re.match(r"^(select|choose|--|please)", o, re.I)]
@@ -369,6 +383,8 @@ async def check_pipeline(company: dict[str, Any], out: Path, rec: dict[str, Any]
                               for q in run.questions],
                 "page": run.page_info,
             })
+            if run.need == "stuck":
+                await print_shot(company["name"], run.page)
             if run.status == "needs_you" and run.need == "questions":
                 for q in run.questions:
                     run.once[question_key(q.get("label") or "")] = fake_answer(q)

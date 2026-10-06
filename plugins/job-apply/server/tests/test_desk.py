@@ -130,6 +130,7 @@ def test_desk_page_buttons_reach_the_api(srv, tmp_path):
                                                                           "kind": "select", "options": ["Select One", "Yes", "No"],
                                                                           "required": True}])
     desk.applier.start = lambda: None  # the queue isn't worked in this test
+    desk.search.update(status="done", at=time.time())  # recent, so opening the page doesn't search the real sites
 
     async def go():
         await desk.start(port=0, open_browser=False)
@@ -175,3 +176,35 @@ def test_jobs_added_elsewhere_show_up_ranked(srv):
     assert rows["TRUMPF"]["job_id"] == added["id"] and rows["TRUMPF"]["added"] and rows["TRUMPF"]["fit"]["score"] > 0
     assert "Done Co" not in rows  # already applied
     assert desk.apply(urls=[added["url"]], job_ids=[], submit=False) == [added["id"]]
+
+
+def test_opening_the_page_searches_when_the_last_search_is_stale(srv, monkeypatch):
+    from playwright.async_api import async_playwright
+
+    searched = []
+
+    async def fake_search(query, companies=None, location=None, limit_per_company=10):
+        searched.append(query)
+        return {"results": [], "errors": {}, "browser_only": []}
+
+    monkeypatch.setattr(srv, "search_company_jobs", fake_search)
+    desk = Desk(srv)
+    desk.applier.start = lambda: None
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with async_playwright() as pw:
+                browser = await pw.chromium.launch()
+                page = await browser.new_page()
+                await page.goto(desk.url)
+                for _ in range(50):
+                    if searched and desk.search["status"] == "done":
+                        break
+                    await asyncio.sleep(0.1)
+                await browser.close()
+        finally:
+            await desk.stop()
+
+    run(go())
+    assert len(searched) == 1 and desk.search["status"] == "done"

@@ -134,6 +134,10 @@ class Desk:
 
     async def stop(self) -> None:
         await self.applier.stop()
+        if self._search_task is not None and not self._search_task.done():
+            self._search_task.cancel()
+            with contextlib.suppress(BaseException):
+                await self._search_task
         if self._server is not None:
             self._server.should_exit = True
         if self._serve_task is not None:

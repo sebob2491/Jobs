@@ -43,6 +43,9 @@ section.card { background: var(--surface); border: 1px solid var(--line); border
 .tabs button[aria-pressed="true"] { background: var(--chip); border-color: var(--muted); }
 .notice { margin: 0 0 16px; padding: 10px 14px; border-radius: 10px; background: var(--warn-bg); color: var(--text); grid-column: 1 / -1; }
 .notice code { font-size: 13px; }
+.waiting { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin: 0; padding: 12px 14px; border-radius: 10px;
+  background: var(--warn-bg); border: 1px solid var(--warn); grid-column: 1 / -1; }
+.waiting strong { color: var(--warn); }
 .applybar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; padding: 10px 14px; border-bottom: 1px solid var(--line); background: var(--info-bg); }
 .applybar label { display: flex; align-items: center; gap: 6px; font-size: 14px; }
 .applybar .hint { color: var(--muted); font-size: 13px; }
@@ -151,6 +154,8 @@ const selected = new Set();
 let filter = "recommended";
 let state = null;
 let busy = false;
+let autoSearched = false;
+const STALE_SEARCH = 12 * 3600;  // seconds: open with fresh listings
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
 const $ = (id) => document.getElementById(id);
@@ -336,9 +341,15 @@ function renderHeader() {
   auto.disabled = s.dry_run;
   $("auto-hint").textContent = s.dry_run ? "Off in practice mode (settings.submit_mode: dry_run)." : s.auto_submit ? "On: complete applications are submitted without asking." : "Off: you press Submit for each one.";
   const notes = [];
-  if (p.missing && p.missing.length) notes.push(`Your profile is missing ${p.missing.map(esc).join(", ")}. Run <code>/job-apply:setup</code> in Claude Code, or edit <code>${esc(p.path)}</code>.`);
-  if (!token) notes.push("This page needs the address the desk printed (it carries a key). Open it from Claude with “open the job desk”.");
-  $("notices").innerHTML = notes.map((n) => `<p class="notice">${n}</p>`).join("");
+  const waiting = allRuns().find((r) => r.blocking);
+  if (waiting) notes.push({cls: "waiting", html: `<strong>Waiting for you in the browser window.</strong>
+    <span>${esc(waiting.title)} (${esc(waiting.company)}): ${esc(waiting.reason)}</span>
+    <button data-job="${waiting.job_id}" data-job-act="show">Show me</button>`});
+  const needing = allRuns().filter((r) => r.status === "needs_you").length;
+  document.title = needing ? `(${needing}) Needs you · Job Desk` : "Job Desk";
+  if (p.missing && p.missing.length) notes.push({cls: "notice", html: `Your profile is missing ${p.missing.map(esc).join(", ")}. Run <code>/job-apply:setup</code> in Claude Code, or edit <code>${esc(p.path)}</code>.`});
+  if (!token) notes.push({cls: "notice", html: "This page needs the address the desk printed (it carries a key). Open it from Claude with “open the job desk”."});
+  patch($("notices"), notes.map((n) => ({key: n.cls + n.html.length, html: `<p class="${n.cls}">${n.html}</p>`})));
   const skipped = sr.browser_only || [], errs = Object.entries(sr.errors || {});
   $("skipped-sites").innerHTML = skipped.length || errs.length ? `<details><summary>Not searched automatically (${skipped.length + errs.length})</summary>
     ${skipped.map((b) => `<div>${esc(b.company)}: <a href="${esc(b.careers_url)}" target="_blank" rel="noopener">search their site</a></div>`).join("")}
@@ -357,6 +368,11 @@ async function refresh() {
   try {
     state = await api("/api/state");
     render();
+    const sr = state.search;
+    if (!autoSearched && sr.status !== "running" && (!sr.at || Date.now() / 1000 - sr.at > STALE_SEARCH)) {
+      autoSearched = true;  // open on fresh listings
+      await api("/api/search", {});
+    }
   } catch (e) {
     $("notices").innerHTML = `<p class="notice">Can't reach the desk (${esc(e.message)}). Is Claude Code (or job-apply-desk) still running?</p>`;
   }
