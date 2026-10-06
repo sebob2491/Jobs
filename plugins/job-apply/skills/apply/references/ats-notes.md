@@ -93,11 +93,17 @@ the page URL. Use this file for the parts of each flow that `autofill` can't do.
 
 - Edwards' openings are on the Atlas Copco group's site, whose search answers only its own
   page, so it runs in a background browser tab, filtered to Edwards in the United States.
-  Its answer has no locations; Edwards ends titles with the state ("Onsite Service
-  Engineer - AZ"), and the search reads it from there. Openings without one are listed
-  with a note to check the posting.
+  Its answer has no locations. Some titles end with the state ("Onsite Service Engineer -
+  AZ"); for the rest the search reads each posting's header, which names the city and
+  state ("Phoenix AZ United States On-Site"). A posting it can't read is listed with a
+  note to check it.
+- Qorvo's search pages are plain HTML tables, read directly. With a state to look in, the
+  site's own location search is used, which also finds openings whose first place is
+  elsewhere ("Greensboro, NC +3 more"); those carry the state after their first place.
 
-- Click **Apply now**, then sign in or create an account (email and password).
+- Click **Apply now** on the posting, then sign in or create an account (email and
+  password). Its link only works when pressed on the posting page: opened on its own it
+  lands on the site's home page, so jobs from these sites start at the posting.
 - The application is usually one long page with sections and attachments, so a single
   `autofill` covers most of it. Scroll and run `inspect_form` again if sections expand.
 

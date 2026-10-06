@@ -72,7 +72,7 @@ from job_apply import server  # noqa: E402
 from job_apply.fixtures import convert  # noqa: E402
 from job_apply.postings import fetch_posting  # noqa: E402
 from job_apply.autofill import polarity  # noqa: E402
-from job_apply.search import load_companies, rmk_search, rmk_wants, sitecore_search  # noqa: E402
+from job_apply.search import load_companies, sitecore_search  # noqa: E402
 
 QUERY_AZ = "field service | customer service engineer | customer engineer | equipment technician"  # in Arizona
 QUERY_ANY = "engineer | technician"  # fallback so every company still gets a browser check
@@ -216,20 +216,18 @@ PROBES = {
     # (Oct 2026: TSMC Arizona shows Cloudflare's check; Amkor is classic SuccessFactors;
     # Benchmark is Infor CloudSuite; Qorvo's search pages are SuccessFactors HTML. Canon USA
     # and MKS block automated browsers outright.)
-    # An Edwards posting with no state in its title: where its page says it is
-    "Edwards Vacuum": "https://www.jobs.atlascopcogroup.com/job/Field-Service-Engineer-3/173840-en_US",
     # Equipment makers with field service engineers at Arizona fabs, not in the list yet.
     # Nikon's posting page: how its Apply button is drawn (the form reader doesn't see it)
     "Nikon Precision": "https://recruiting2.ultipro.com/NIK1001NIKON/JobBoard/f11a0b52-5153-4c12-ad2c-b7f3b0a74112/"
                        "OpportunityDetail?opportunityId=532a7dc9-8394-4cbc-8184-f43e88e906bf",
 }
 # Pages read over plain HTTP, as a search would read them: the markup of the parts a
-# reader needs (an Edwards posting's header, where its place is; Qorvo's search table).
+# reader needs. (Oct 2026: an Edwards posting names its place in the unlabelled lines under
+# its title; Qorvo's search pages are HTML tables, 25 rows a page.) Amkor's job list is on
+# SuccessFactors' older career site.
 HTTP_PROBES = {
-    "Edwards Vacuum": ("https://www.jobs.atlascopcogroup.com/job/Field-Service-Engineer/171942-en_US",
-                       ".joblayouttoken"),
-    "Qorvo": ("https://careers.qorvo.com/search/?q=&locationsearch=Arizona", "tr.data-row, .paginationLabel"),
-    "Qorvo (page 2)": ("https://careers.qorvo.com/search/?q=engineer&startrow=25", "tr.data-row, .paginationLabel"),
+    "Amkor Technology": ("https://career8.successfactors.com/career?company=amkor&career_ns=job_listing_summary"
+                         "&navBarLevel=JOB_SEARCH", "a[href*='career_job_req_id'], .jobTitle, table tr, form"),
 }
 
 
@@ -409,78 +407,6 @@ async def check_sitecore(company: dict[str, Any]) -> dict[str, Any]:
     return rec
 
 
-# Places to hand SuccessFactors' own location search, to see whether it narrows the openings
-RMK_PLACES = ("Arizona", "AZ", "Chandler, AZ", "Phoenix")
-# What a posting page labels its parts as, and any US place its text names
-POSTING_PLACES_JS = r"""() => {
-  const clean = (t) => (t || '').replace(/\s+/g, ' ').trim();
-  const props = [...document.querySelectorAll('[data-careersite-propertyid]')].slice(0, 40)
-    .map((e) => [e.getAttribute('data-careersite-propertyid'), clean(e.innerText).slice(0, 160)]);
-  const metas = [...document.querySelectorAll('meta[name], meta[property], meta[itemprop]')].slice(0, 40)
-    .map((m) => [m.getAttribute('name') || m.getAttribute('property') || m.getAttribute('itemprop'),
-                 (m.getAttribute('content') || '').slice(0, 160)]);
-  const text = document.body.innerText;
-  const place = /\b(Arizona|Chandler|Phoenix|Tempe|Mesa|Gilbert|Hillsboro|Oregon|Texas|Austin|Boise|Idaho|Malta|New York|California|Santa Clara|San Jose|Fremont|Ohio|Columbus|Utah|Colorado|Massachusetts|Vermont|New Mexico|Albuquerque|Rio Rancho)\b|,\s*(?:AZ|OR|TX|ID|NY|CA|OH|UT|CO|MA|VT|NM)\b/g;
-  const places = [];
-  let m;
-  while ((m = place.exec(text)) && places.length < 12) {
-    places.push(clean(text.slice(Math.max(0, m.index - 60), m.index + 60)));
-  }
-  const classes = [...new Set([...document.querySelectorAll('[class]')].flatMap((e) => [...e.classList])
-    .filter((c) => /job|loc|geo|city|state|country|site|req/i.test(c)))].slice(0, 60);
-  return {props, metas, places, classes};
-}"""
-
-
-async def check_rmk(company: dict[str, Any]) -> dict[str, Any]:
-    """Edwards' search answer carries no locations and most of its titles no state: does its
-    own location search narrow the openings, and does a posting page say where it is?"""
-    cfg = company["search"]["rmk"]
-    url = cfg["url"] if isinstance(cfg, dict) else cfg
-    rec: dict[str, Any] = {"rmk_check": company["name"], "places": {}}
-    sent: list[Any] = []
-
-    def ask(place: str):
-        def rewrite(body: Any) -> Any:
-            if not rmk_wants(body):
-                return None
-            sent.append(sorted(body))
-            return {**body, "keywords": "", "location": place, "pageNumber": 0}
-        return rewrite
-
-    for place in RMK_PLACES:
-        try:
-            data = await server.browser.capture_json(url, "/services/recruiting/v1/jobs", want=rmk_wants,
-                                                     rewrite=ask(place))
-            jobs = [(i.get("response") or {}) for i in data.get("jobSearchResult") or []]
-            rec["places"][place] = {"total": data.get("totalJobs"),
-                                    "titles": [str(j.get("unifiedStandardTitle") or "")[:80] for j in jobs][:10],
-                                    "keys": sorted({k for j in jobs for k in j})[:40]}
-        except Exception as e:  # noqa: BLE001
-            rec["places"][place] = {"error": f"{type(e).__name__}: {str(e)[:200]}"}
-    rec["body_keys"] = sent[:1]
-    found: list[Any] = []
-    try:
-        await rmk_search(server.browser.capture_json, cfg, "field service", found)
-    except Exception as e:  # noqa: BLE001
-        rec["search_error"] = f"{type(e).__name__}: {str(e)[:200]}"
-    await server.browser.page()
-    ctx = server.browser._ctx  # noqa: SLF001 - test script reaching into the session on purpose
-    rec["postings"] = []
-    for listing in found[:4]:
-        tab = await ctx.new_page()
-        try:
-            await tab.goto(listing.url, wait_until="domcontentloaded", timeout=45000)
-            await tab.wait_for_timeout(5000)
-            rec["postings"].append({"title": listing.title, "url": listing.url,
-                                    **await tab.evaluate(POSTING_PLACES_JS)})
-        except Exception as e:  # noqa: BLE001
-            rec["postings"].append({"title": listing.title, "error": f"{type(e).__name__}: {str(e)[:200]}"})
-        finally:
-            await tab.close()
-    return rec
-
-
 async def check_careers_page(company: dict[str, Any], rec: dict[str, Any]) -> None:
     """Companies without a search API: can the browser read their careers page at all?"""
     rec.update(careers_url=company.get("careers_url"), ats=company.get("ats"))
@@ -544,12 +470,6 @@ async def main() -> int:
         if "sitecore" in (company.get("search") or {}):
             check = await asyncio.wait_for(check_sitecore(company), 120)
             print("LIVE_SITECORE " + json.dumps(check, default=str), flush=True)
-        if "rmk" in (company.get("search") or {}):
-            try:
-                check = await asyncio.wait_for(check_rmk(company), 300)
-            except Exception as e:  # noqa: BLE001
-                check = {"rmk_check": company["name"], "error": f"{type(e).__name__}: {str(e)[:200]}"}
-            print("LIVE_RMK " + json.dumps(check, default=str), flush=True)
     for name, url in PROBES.items():
         if wanted and not any(w in name.lower() for w in wanted):
             continue

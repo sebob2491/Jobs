@@ -27,7 +27,7 @@ The goal is a short, deduplicated list of real openings saved to the tracker
    titles before discarding them.
    It queries each company's own job search directly: Workday, Greenhouse, Lever,
    Eightfold, SmartRecruiters, Oracle, ApplicantStack, iCIMS, Paycom, UKG Pro and SuccessFactors
-   (Edwards) sites, for the companies in
+   (Edwards, Qorvo) sites, for the companies in
    `<plugin>/data/companies.yaml` (`companies_file` in `setup_status`). Pass
    `companies=[...]` to limit it to particular employers.
    - Results already in the tracker carry `tracked`. Skip those.
@@ -36,8 +36,8 @@ The goal is a short, deduplicated list of real openings saved to the tracker
      searches only answer their own pages. For these the tool loads the site's search page in a background browser
      tab and reads the results from it, which takes a few seconds per company.
    - `errors` lists companies whose search failed. Fall back to the browser for
-     those, and for everything in `browser_only` (SuccessFactors sites such as TSMC,
-     Amkor and Qorvo): open the careers URL with `open_application(url=...)`, use the
+     those, and for everything in `browser_only` (SuccessFactors sites such as TSMC
+     and Amkor): open the careers URL with `open_application(url=...)`, use the
      site's search box with `fill_form` and `click`, and read the results with
      `page_text`. WebSearch with `site:` on the careers domain also works.
    - `ingest_job(url)` each posting worth saving. It stores the full description.

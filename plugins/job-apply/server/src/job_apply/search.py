@@ -13,6 +13,7 @@ Each company in data/companies.yaml may carry a `search` block naming one of:
     paycom:          <career portal key>    (read in the browser)
     ukg:             <job board address>    (UKG Pro / UltiPro; read in the browser)
     rmk:             {url: <search page>}   (SuccessFactors' newer job search; read in the browser)
+    successfactors:  <career site address>  (SuccessFactors career sites' search pages)
     sitecore:        {url: ..., api: ...}   (ASML; read in the browser)
 
 Companies without one (SuccessFactors sites, custom pages) are searched in the
@@ -37,7 +38,7 @@ from bs4 import BeautifulSoup
 from . import config
 from .ats import workday_parts
 from .autofill import US_STATES, norm
-from .postings import USER_AGENT
+from .postings import USER_AGENT, successfactors_place
 
 WORKDAY_PAGE = 20  # Workday rejects larger pages
 MAX_ALTERNATIVES = 4
@@ -139,7 +140,7 @@ def location_matches(text: str, terms: list[str]) -> bool | None:
     padded = f" {n} "
     if any(f" {t} " in padded for t in terms):
         return True
-    if not n or _BROAD.fullmatch(n):
+    if not n or _BROAD.fullmatch(n) or re.search(r"\+\d+ more\b", n):  # "Greensboro, NC (+3 more)"
         return None
     if re.search(r"\bremote\b", n):
         # "Remote - US" could be done from anywhere; "Remote, Japan" can't
@@ -598,22 +599,59 @@ def rmk_rewrite(body: Any, query: str, page: int) -> Any:
     return {**body, "keywords": query, "pageNumber": page}
 
 
-async def rmk_search(capture: Callable[..., Awaitable[Any]], cfg: Any, query: str, found: list[Listing]) -> None:
+async def rmk_search(capture: Callable[..., Awaitable[Any]], cfg: Any, query: str, found: list[Listing],
+                     read: Callable[[str], Awaitable[str]] | None = None) -> None:
     """SuccessFactors' newer career sites (Edwards on jobs.atlascopcogroup.com) search through
     /services/recruiting/v1/jobs, which answers only the page's own session, so the search page
     (filtered to the employer and country by its address) is read in the browser, its own search
-    call given the wording and a page number. The answer carries no locations: Edwards ends
-    titles with the state ("Onsite Service Engineer - AZ"), which is read off the title."""
+    call given the wording and a page number. The answer carries no locations, and the site's
+    own location search finds nothing (Oct 2026): some titles end with the state ("Onsite
+    Service Engineer - AZ"); the rest are read off each posting."""
     url = str(cfg["url"] if isinstance(cfg, dict) else cfg)
     origin = re.match(r"https?://[^/]+", url).group(0)
+    mine: list[Listing] = []
     for page in range(RMK_PAGES):
         data = await capture(url, "/services/recruiting/v1/jobs", want=rmk_wants,
                              rewrite=lambda body, page=page: rmk_rewrite(body, query, page))
         batch = parse_rmk(data, origin)
-        found.extend(batch)
+        mine.extend(batch)
         total = data.get("totalJobs") if isinstance(data, dict) else None
         if (page + 1) * RMK_PAGE >= total if isinstance(total, int) else len(batch) < RMK_PAGE:
-            return
+            break
+    known = {x.url: x.location for x in found if x.location}  # read for an earlier wording
+    for listing in mine:
+        listing.location = listing.location or known.get(listing.url, "")
+    await rmk_places(mine, read)
+    found.extend(mine)
+
+
+RMK_PLACE_PAGES = 30  # postings read for their place, per search
+
+
+async def read_page(url: str) -> str:
+    """A page over plain HTTP, as the searches read them."""
+    async with httpx.AsyncClient(headers={"User-Agent": USER_AGENT, "Accept-Language": "en-US,en;q=0.9"},
+                                 follow_redirects=True, timeout=20) as client:
+        r = await _send(client, "GET", url)
+        _raise_for(r, url)
+        return r.text
+
+
+async def rmk_places(listings: list[Listing], read: Callable[[str], Awaitable[str]] | None = None) -> None:
+    """Fill in the place of each listing that has none from its posting, whose header names
+    the city and state ("Field Service Engineer · Service · Phoenix AZ · United States")."""
+    read = read or read_page
+    sem = asyncio.Semaphore(4)
+
+    async def one(listing: Listing) -> None:
+        async with sem:
+            try:
+                page = await read(listing.url)
+            except Exception:  # an unreadable posting stays "check the posting"
+                return
+        listing.location = successfactors_place(BeautifulSoup(page, "html.parser")) or listing.location
+
+    await asyncio.gather(*(one(x) for x in [x for x in listings if not x.location][:RMK_PLACE_PAGES]))
 
 
 def _rmk_date(value: Any) -> str:
@@ -642,6 +680,85 @@ def parse_rmk(data: Any, origin: str) -> list[Listing]:
             posted=_rmk_date(job.get("unifiedStandardStart")), external_id=str(job["id"]), ats="successfactors",
         ))
     return out
+
+
+# ------------------------------------------------- SuccessFactors career sites' search pages (Qorvo)
+SF_PAGES = 4  # pages per wording; the site draws 25 rows a page
+_SF_MORE = re.compile(r"\+\s*(\d+)\s*more\W*$", re.I)  # "Greensboro, NC, US, 27409 +3 more…"
+_SF_MORE_SHOWN = re.compile(r"\(\+\d+ more\)")
+_SF_TOTAL = re.compile(r"of\s+([\d,]+)")  # "Results 1 – 25 of 120"
+
+
+def _sf_state(terms: list[str]) -> str:
+    """The state to hand the site's own location search ('Arizona' for 'AZ'), so openings
+    elsewhere don't crowd the user's area off the pages read."""
+    return next((name for name in US_STATES.values() if norm(name) in terms), "")
+
+
+async def _successfactors(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, terms: list[str]) -> list[Listing]:
+    """SuccessFactors career sites (Qorvo) draw their search results as an HTML table, 25
+    openings a page. Given a state, the site's own location search narrows them; it also
+    finds openings whose first place is elsewhere ("Greensboro, NC +3 more")."""
+    site = str(cfg["url"] if isinstance(cfg, dict) else cfg).rstrip("/")
+    if "://" not in site:
+        site = f"https://{site}"
+    state = _sf_state(terms)
+    url = f"{site}/search/"
+    out: list[Listing] = []
+    for _ in range(SF_PAGES):
+        params: dict[str, Any] = {"q": query, "startrow": len(out)}
+        if state:
+            params["locationsearch"] = state
+        r = await _send(client, "GET", url, params=params)
+        _raise_for(r, url)
+        batch, total = parse_successfactors(r.text, site)
+        for listing in batch:
+            if state and _SF_MORE_SHOWN.search(listing.location) and location_matches(listing.location, terms) is not True:
+                # one of its other places is in the state, or the site wouldn't have listed it
+                listing.location = f"{listing.location}; {state}"
+        out.extend(batch)
+        if not batch or len(out) >= (total if total is not None else limit) or len(out) >= limit:
+            break
+    return out
+
+
+def _sf_date(text: str) -> str:
+    for fmt in ("%b %d, %Y", "%d %b %Y", "%m/%d/%Y", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(text.strip(), fmt).date().isoformat()
+        except ValueError:
+            continue
+    return ""
+
+
+def parse_successfactors(page: str, site: str) -> tuple[list[Listing], int | None]:
+    """The openings on one page of a SuccessFactors search, and how many the search found."""
+    soup = BeautifulSoup(page, "html.parser")
+    out: list[Listing] = []
+    seen: set[str] = set()
+    for row in soup.select("tr.data-row"):
+        link = row.select_one("a.jobTitle-link[href]")
+        if link is None:
+            continue
+        url = urljoin(site + "/", str(link["href"]))
+        title = link.get_text(" ", strip=True)
+        if not title or url in seen:
+            continue
+        seen.add(url)
+        cell = row.select_one(".colLocation") or row.select_one(".jobLocation")
+        where = re.sub(r"\s+", " ", cell.get_text(" ", strip=True)) if cell is not None else ""
+        more = _SF_MORE.search(where)
+        if more:  # "Greensboro, NC, US, 27409 (+3 more)"
+            where = f"{where[:more.start()].strip()} (+{more.group(1)} more)"
+        when = row.select_one(".colDate .jobDate") or row.select_one(".jobDate")
+        job_id = re.search(r"/(\d+)/?(?:\?|$)", str(link["href"]))
+        out.append(Listing(company="", title=title, url=url, location=where,
+                           posted=_sf_date(when.get_text(" ", strip=True)) if when is not None else "",
+                           external_id=job_id.group(1) if job_id else "", ats="successfactors"))
+    label = soup.select_one(".paginationLabel")
+    total = _SF_TOTAL.search(label.get_text(" ", strip=True)) if label is not None else None
+    return out, int(total.group(1).replace(",", "")) if total else None
+
 
 async def _eightfold(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, terms: list[str]) -> list[Listing]:
     host, domain = cfg["host"], cfg["domain"]
@@ -741,6 +858,7 @@ SEARCHERS: dict[str, Callable[[httpx.AsyncClient, Any, str, int, list[str]], Awa
     "smartrecruiters": _smartrecruiters,
     "oracle": _oracle,
     "applicantstack": _applicantstack,
+    "successfactors": _successfactors,
 }
 
 

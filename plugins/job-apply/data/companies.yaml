@@ -119,7 +119,8 @@ companies:
     careers_url: https://careers.qorvo.com
     ats: successfactors
     az_sites: Chandler
-    confidence: medium
+    confidence: high
+    search: {successfactors: https://careers.qorvo.com}
   - name: Analog Devices
     careers_url: https://analogdevices.wd1.myworkdayjobs.com/External
     ats: workday
