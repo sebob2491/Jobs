@@ -213,17 +213,12 @@ PROBES = {
     # openings, none in Arizona; its US ones are in Williston, VT.)
     # Employers in companies.yaml with no search yet (SuccessFactors and unknown sites):
     # their search pages, to see whether a list of openings can be read off them.
-    "TSMC Arizona": "https://careers.tsmc.com/en_US/careers/SearchJobs/?listFilterMode=1&jobRecordsPerPage=25&jobOffset=0",
-    "Amkor Technology": "https://amkor.com/careers/united-states/",
+    # (Oct 2026: TSMC Arizona shows Cloudflare's check; Amkor is classic SuccessFactors;
+    # Benchmark is Infor CloudSuite; Qorvo's search pages are SuccessFactors HTML. Canon USA
+    # and MKS block automated browsers outright.)
     "Edwards Vacuum": "https://www.jobs.atlascopcogroup.com/search/?q=field+service&locationsearch=Arizona",
-    "Qorvo": "https://careers.qorvo.com/search/?q=&locationsearch=Arizona",
-    "Benchmark Electronics": "https://www.bench.com/careers",
     # Equipment makers with field service engineers at Arizona fabs, not in the list yet.
-    "Nikon Precision": "https://www.nikonprecision.com/careers/",
-    "Canon USA": "https://www.usa.canon.com/about-us/careers",
-    "MKS Instruments": "https://www.mks.com/n/careers",
-    "Advanced Energy": "https://www.advancedenergy.com/en-us/about/careers/",
-    "DISCO Hi-Tec America": "https://www.discousa.com/careers/",
+    "Nikon Precision": "https://recruiting2.ultipro.com/NIK1001NIKON/JobBoard/f11a0b52-5153-4c12-ad2c-b7f3b0a74112/?q=&o=postedDateDesc",
 }
 # Job links as a page (or one of its frames) draws them, with the text of the card around
 # each and a little of its markup, to write a reader for a new job board from.
@@ -281,8 +276,10 @@ async def probe_page(name: str, url: str) -> dict[str, Any]:
             seen.append({"method": r.request.method, "status": r.status, "url": r.url[:keep], "type": ctype[:40]})
             if "/discover/v2/" in r.url:  # ASML's job search (Sitecore Discover): keep the request and an answer
                 samples.append(asyncio.ensure_future(_sample(r)))
-            elif "jobPublication/list.json" in r.url or "job-posting-previews/search" in r.url:
-                samples.append(asyncio.ensure_future(_sample(r, 4000)))  # SUSS's job list; Paycom's (Ebara)
+            elif any(part in r.url for part in ("jobPublication/list.json", "job-posting-previews/search",
+                                                  "LoadSearchResults", "/services/recruiting/v1/jobs")):
+                # SUSS's job list; Paycom's (Ebara); UKG Pro's (Nikon); SuccessFactors' newer one (Edwards)
+                samples.append(asyncio.ensure_future(_sample(r, 4000)))
 
     async def _sample(r: Any, keep: int = 1500) -> dict[str, Any]:
         try:
