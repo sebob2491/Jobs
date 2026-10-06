@@ -217,10 +217,7 @@ PROBES = {
     # (Oct 2026: TSMC Arizona shows Cloudflare's check; Qorvo's search pages are SuccessFactors
     # HTML; Amkor's older SuccessFactors list is read in the browser now, and its posting page
     # wraps the posting in a form whose submit is "Apply". Canon USA and MKS block automated
-    # browsers outright.) Benchmark's job board is Infor CloudSuite HCM:
-    "Benchmark Electronics": "https://css-benchmark-prd.inforcloudsuite.com/hcm/Jobs/form/JobBoard%281,EXTERNAL%29."
-                             "JobSearchCompositeForm?navigation=JobBoard%281,EXTERNAL%29.JobSearchCompositeFormNav"
-                             "&csk.JobBoard=EXTERNAL&csk.HROrganization=1&csk.IsoLocale=",
+    # browsers outright. Benchmark's Infor CloudSuite board is searched through its own page now.)
     # Equipment makers with field service engineers at Arizona fabs, not in the list yet.
     # Nikon's posting page: how its Apply button is drawn (the form reader doesn't see it)
     "Nikon Precision": "https://recruiting2.ultipro.com/NIK1001NIKON/JobBoard/f11a0b52-5153-4c12-ad2c-b7f3b0a74112/"
@@ -350,14 +347,11 @@ async def probe_form(name: str, url: str, press: str) -> dict[str, Any]:
 
 
 # JSON a job board's page calls for, asked for directly: cold, and again after loading the
-# board's page in the same client (for its cookies). (Oct 2026: Benchmark's Infor CloudSuite
-# board lists its postings through JobPosting.JobSearchCardViewList.)
-INFOR_LIST = ("https://css-benchmark-prd.inforcloudsuite.com/hcm/Jobs/list/JobPosting.JobSearchCardViewList?pageop=load"
-              "&pagesize=100&dependentList=true&relation=JobBoard%281%2CEXTERNAL%29.Postings&csk.JobBoard=EXTERNAL"
-              "&csk.HROrganization=1&csk.IsoLocale=")
-JSON_PROBES = {
-    "Benchmark Electronics": (INFOR_LIST, PROBES["Benchmark Electronics"]),
-}
+# board's page in the same client (for its cookies), then through the page itself with a
+# bigger page size: {name: (call's address, board page)}. (Oct 2026: Benchmark's Infor
+# CloudSuite list timed out two times in three when asked directly; its page's own call,
+# asked for 200, brought all 197 postings.)
+JSON_PROBES: dict[str, tuple[str, str]] = {}
 
 
 async def probe_json(name: str, url: str, warm: str | None = None) -> dict[str, Any]:
