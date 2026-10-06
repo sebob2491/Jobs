@@ -36,6 +36,7 @@ import time
 import traceback
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 os.environ["JOB_APPLY_NEVER_SUBMIT"] = "1"
 os.environ["JOB_APPLY_HEADLESS"] = "1"
@@ -365,33 +366,46 @@ async def probe_json(name: str, url: str, warm: str | None = None) -> dict[str, 
     from job_apply.postings import USER_AGENT
 
     rec: dict[str, Any] = {"json_probe": name, "url": url}
+
+    def summary(data: Any) -> dict[str, Any]:
+        view = data.get("dataViewSet") if isinstance(data, dict) else None
+        if not isinstance(view, dict):
+            return {"keys": sorted(data)[:30] if isinstance(data, dict) else type(data).__name__}
+        items = view.get("data") or []
+        field = lambda it, k: ((it.get("fields") or {}).get(k) or {}).get("value")  # noqa: E731
+        return {"paging": view.get("pagingInfo"), "count": len(items), "ids": [it.get("resourceId") for it in items[:5]],
+                "titles": [field(it, "Description") for it in items],
+                "places": [field(it, "LocationOfJobDescriptionForSort") for it in items],
+                "first": [{k: str(v.get("value") if isinstance(v, dict) else v)[:600]
+                           for k, v in (it.get("fields") or {}).items()} for it in items[:2]],
+                "item_keys": sorted(items[0]) if items else []}
+
     async with httpx.AsyncClient(headers={"User-Agent": USER_AGENT, "Accept": "application/json, text/plain, */*"},
-                                 follow_redirects=True, timeout=30) as client:
-        for label in ("cold", "warm") if warm else ("cold",):
-            if label == "warm":
-                w = await client.get(warm)
-                rec["warm_page"] = {"status": w.status_code, "cookies": sorted(client.cookies.keys())}
-            r = await client.get(url)
-            out: dict[str, Any] = {"status": r.status_code, "type": r.headers.get("content-type", "")[:60],
-                                   "chars": len(r.text)}
+                                 follow_redirects=True, timeout=45) as client:
+        for label in ("warm", "cold") if warm else ("cold",):
             try:
-                data = r.json()
-            except ValueError:
-                out["text"] = r.text[:1500]
-            else:
-                view = data.get("dataViewSet") if isinstance(data, dict) else None
-                if isinstance(view, dict):
-                    items = view.get("data") or []
-                    field = lambda it, k: ((it.get("fields") or {}).get(k) or {}).get("value")  # noqa: E731
-                    out.update(paging=view.get("pagingInfo"), count=len(items),
-                               ids=[it.get("resourceId") for it in items[:5]],
-                               titles=[field(it, "Description") for it in items],
-                               places=[field(it, "LocationOfJobDescriptionForSort") for it in items],
-                               first=[{k: str(v.get("value") if isinstance(v, dict) else v)[:400]
-                                       for k, v in (it.get("fields") or {}).items()} for it in items[:2]])
-                else:
-                    out["keys"] = sorted(data)[:30] if isinstance(data, dict) else type(data).__name__
+                if label == "warm":
+                    w = await client.get(warm)
+                    rec["warm_page"] = {"status": w.status_code, "cookies": sorted(client.cookies.keys())}
+                r = await client.get(url)
+                out: dict[str, Any] = {"status": r.status_code, "type": r.headers.get("content-type", "")[:60],
+                                       "chars": len(r.text)}
+                try:
+                    out.update(summary(r.json()))
+                except ValueError:
+                    out["text"] = r.text[:1500]
+            except Exception as e:  # noqa: BLE001 - each way of asking on its own
+                out = {"error": f"{type(e).__name__}: {str(e)[:200]}"}
             rec[label] = out
+            client.cookies.clear()
+    if warm:  # the board's page makes the call itself, asked for 200 at a time
+        part = urlsplit(url).path.rsplit("/", 1)[-1]
+        try:
+            data = await server.browser.capture_json(
+                warm, part, timeout=40000, rewrite_url=lambda u: re.sub(r"pagesize=\d+", "pagesize=200", u))
+            rec["browser"] = summary(data)
+        except Exception as e:  # noqa: BLE001
+            rec["browser"] = {"error": f"{type(e).__name__}: {str(e)[:200]}"}
     return rec
 
 
