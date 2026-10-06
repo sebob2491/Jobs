@@ -1,0 +1,101 @@
+{
+  "source_url": "https://careers.lamresearch.com/careers/apply?pid=1099555380657",
+  "note": "live smoke: Lam Research",
+  "fields": [
+    {
+      "label": "Accepted file format: .pdf, .doc, .docx, . tct, .rtf",
+      "kind": "file",
+      "required": false
+    },
+    {
+      "label": "Legal First Name",
+      "kind": "text",
+      "required": true
+    },
+    {
+      "label": "Legal Last Name",
+      "kind": "text",
+      "required": true
+    },
+    {
+      "label": "Email",
+      "kind": "text",
+      "required": true
+    },
+    {
+      "label": "Country code",
+      "kind": "combobox",
+      "required": true
+    },
+    {
+      "label": "Phone Number",
+      "kind": "text",
+      "required": true
+    },
+    {
+      "label": "Country/Region of Residence",
+      "kind": "combobox",
+      "required": true
+    },
+    {
+      "label": "Address",
+      "kind": "text",
+      "required": true
+    },
+    {
+      "label": "City",
+      "kind": "text",
+      "required": true
+    },
+    {
+      "label": "Zip/Postal Code",
+      "kind": "text",
+      "required": true
+    },
+    {
+      "label": "For the sole purpose of determining export licensing requirements, please provide your most recent country/region of citizenship or legal permanent residence. If your country/region is not listed please choose \"Other\".",
+      "kind": "combobox",
+      "required": true
+    },
+    {
+      "label": "Do you have unrestricted right to work in the United States?",
+      "kind": "combobox",
+      "required": true
+    },
+    {
+      "label": "Will you now or in the future require visa sponsorship for employment?",
+      "kind": "combobox",
+      "required": true
+    },
+    {
+      "label": "Gender",
+      "kind": "combobox",
+      "required": true
+    },
+    {
+      "label": "Ethnicity",
+      "kind": "combobox",
+      "required": true
+    },
+    {
+      "label": "Disability",
+      "kind": "combobox",
+      "required": true
+    },
+    {
+      "label": "Veteran",
+      "kind": "combobox",
+      "required": true
+    },
+    {
+      "label": "I consent to make my profile visible for and receive communications including by email, about positions at Lam. By proceeding, I would like to be considered for roles at Lam Research and for Lam's recruitment team to contact me as follows:",
+      "kind": "combobox",
+      "required": true
+    },
+    {
+      "label": "Save my answers for future applications",
+      "kind": "checkbox",
+      "required": false
+    }
+  ]
+}
