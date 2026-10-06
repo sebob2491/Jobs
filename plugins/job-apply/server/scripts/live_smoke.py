@@ -223,6 +223,30 @@ PROBES = {
     "Nikon Precision": "https://recruiting2.ultipro.com/NIK1001NIKON/JobBoard/f11a0b52-5153-4c12-ad2c-b7f3b0a74112/"
                        "OpportunityDetail?opportunityId=532a7dc9-8394-4cbc-8184-f43e88e906bf",
 }
+# Pages read over plain HTTP, as a search would read them: the markup of the parts a
+# reader needs (an Edwards posting's header, where its place is; Qorvo's search table).
+HTTP_PROBES = {
+    "Edwards Vacuum": ("https://www.jobs.atlascopcogroup.com/job/Field-Service-Engineer/171942-en_US",
+                       ".joblayouttoken"),
+    "Qorvo": ("https://careers.qorvo.com/search/?q=&locationsearch=Arizona", "tr.data-row, .paginationLabel"),
+    "Qorvo (page 2)": ("https://careers.qorvo.com/search/?q=engineer&startrow=25", "tr.data-row, .paginationLabel"),
+}
+
+
+async def probe_http(name: str, url: str, selector: str) -> dict[str, Any]:
+    import httpx
+    from bs4 import BeautifulSoup
+
+    from job_apply.postings import USER_AGENT
+
+    async with httpx.AsyncClient(headers={"User-Agent": USER_AGENT, "Accept-Language": "en-US,en;q=0.9"},
+                                 follow_redirects=True, timeout=30) as client:
+        r = await client.get(url)
+    soup = BeautifulSoup(r.text, "html.parser")
+    return {"http_probe": name, "url": url, "status": r.status_code, "final_url": str(r.url), "chars": len(r.text),
+            "parts": [re.sub(r"\s+", " ", str(e))[:2500] for e in soup.select(selector)[:8]]}
+
+
 # Job links as a page (or one of its frames) draws them, with the text of the card around
 # each and a little of its markup, to write a reader for a new job board from.
 JOB_LINKS_JS = r"""() => {
@@ -534,6 +558,14 @@ async def main() -> int:
         except Exception as e:  # noqa: BLE001
             probe = {"probe": name, "error": f"{type(e).__name__}: {str(e)[:200]}"}
         print("LIVE_PROBE " + json.dumps(probe, default=str), flush=True)
+    for name, (url, selector) in HTTP_PROBES.items():
+        if wanted and not any(w in name.lower() for w in wanted):
+            continue
+        try:
+            probe = await asyncio.wait_for(probe_http(name, url, selector), 60)
+        except Exception as e:  # noqa: BLE001
+            probe = {"http_probe": name, "error": f"{type(e).__name__}: {str(e)[:200]}"}
+        print("LIVE_HTTP " + json.dumps(probe, default=str), flush=True)
 
     await server.close_browser()
     (args.out / "report.json").write_text(json.dumps(records, indent=2, default=str))
