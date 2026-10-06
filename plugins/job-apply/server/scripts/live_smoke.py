@@ -216,9 +216,8 @@ PROBES = {
     # (Oct 2026: TSMC Arizona shows Cloudflare's check; Amkor is classic SuccessFactors;
     # Benchmark is Infor CloudSuite; Qorvo's search pages are SuccessFactors HTML. Canon USA
     # and MKS block automated browsers outright.)
-    # Edwards' US openings (11 pages in Oct 2026): the answer of SuccessFactors' newer jobs API
-    "Edwards Vacuum": "https://www.jobs.atlascopcogroup.com/search/?q=&facetFilters=%7B%22filter1%22%3A%5B%22Edwards%22%5D"
-                      "%2C%22mfield3%22%3A%5B%22United+States%22%5D%7D",
+    # An Edwards posting with no state in its title: where its page says it is
+    "Edwards Vacuum": "https://www.jobs.atlascopcogroup.com/job/Field-Service-Engineer-3/173840-en_US",
     # Equipment makers with field service engineers at Arizona fabs, not in the list yet.
     # Nikon's posting page: how its Apply button is drawn (the form reader doesn't see it)
     "Nikon Precision": "https://recruiting2.ultipro.com/NIK1001NIKON/JobBoard/f11a0b52-5153-4c12-ad2c-b7f3b0a74112/"
@@ -343,6 +342,16 @@ async def probe_page(name: str, url: str) -> dict[str, Any]:
           if (!d) return null;
           const s = d.eagerLoadRefineSearch || d.refineSearch;
           return {keys: Object.keys(d).slice(0, 30), search: s ? JSON.stringify(s).slice(0, 3000) : null};
+        }""")
+        # where the page says the job is: elements named for a location, and JSON-LD
+        rec["location_bits"] = await tab.evaluate("""() => {
+          const bits = [...document.querySelectorAll('[class*="location" i], [id*="location" i], [class*="geo" i], '
+            + '[itemprop*="address" i], [data-careersite-propertyid*="city" i], [data-careersite-propertyid*="state" i]')]
+            .slice(0, 8).map((e) => e.outerHTML.slice(0, 300));
+          const ld = [...document.querySelectorAll('script[type="application/ld+json"]')].map((s) => s.textContent.slice(0, 600));
+          const text = document.body.innerText;
+          const i = text.search(/location/i);
+          return {bits, ld, around: i >= 0 ? text.slice(Math.max(0, i - 100), i + 300) : ''};
         }""")
         # the markup of anything that reads like an apply or sign-in button, whatever it's drawn with
         rec["apply_buttons"] = await tab.evaluate("""() => [...document.querySelectorAll('body *')]
