@@ -50,9 +50,16 @@ below.
    skips the job, call `update_job(status="skipped")`.
 
 4. **Tailored documents (optional; ask once per batch).** If the user wants them,
-   write a cover letter (and/or a tailored resume) grounded in their real resume.
-   Save it in the job's `folder` as `cover_letter.pdf`/`.docx` (and `resume.pdf`/`.docx`).
-   `autofill` uploads files from the job folder ahead of the profile defaults.
+   write a cover letter and/or a tailored resume in Markdown, then call
+   `render_document(kind, markdown, job_id)`. It saves a PDF in the job's folder, and
+   `autofill` uploads that PDF ahead of the profile defaults.
+   - Tailoring means choosing, ordering and rewording what the real resume says, to
+     match the posting's wording. Never add tools, certifications, numbers or duties
+     the user didn't list.
+   - Show the user the text before rendering the first one in a batch. After they
+     approve the style, keep going without asking.
+   - If the result has a `warning` about length, tighten the text and render it again.
+     A resume should be at most 2 pages, a cover letter 1 page.
 
 5. **Open the form.** Run `open_application(job_id)`, then click through to the form:
    "Apply", "Easy Apply", "Apply now", "Apply Manually", "Autofill with Resume".

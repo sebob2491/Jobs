@@ -329,9 +329,10 @@ def _document(prof: Profile, job: dict, kind: str) -> str | None:
     stem = "cover_letter" if kind == "cover_letter" else "resume"
     if folder and folder.exists():
         for ext in (".pdf", ".docx", ".doc"):
-            p = folder / f"{stem}{ext}"
-            if p.exists():
-                return str(p)
+            # resume.pdf, Sam_Rivera_Resume.pdf, Sam_Rivera_Cover_Letter.pdf ...
+            hits = sorted(p for p in folder.glob(f"*{ext}") if p.stem.lower().endswith(stem))
+            if hits:
+                return str(hits[0])
     p = expand(prof.get(f"documents.{kind}"))
     return str(p) if p and p.exists() else None
 

@@ -41,6 +41,25 @@ class BrowserUnavailable(Exception):
     pass
 
 
+UNAVAILABLE_HELP = (
+    "Could not start a browser. Install Google Chrome, or run "
+    "`uv run --project <plugin>/server playwright install chromium`. Details: "
+)
+
+
+def launch_attempts(settings: config.Settings) -> list[dict[str, Any]]:
+    """Browser choices to try in order: an explicit executable, the installed
+    Chrome/Edge, then Playwright's bundled Chromium."""
+    exe = os.environ.get("JOB_APPLY_CHROMIUM_PATH")
+    if exe:
+        return [{"executable_path": exe}]
+    attempts: list[dict[str, Any]] = []
+    if settings.browser_channel in ("chrome", "msedge", "chrome-beta"):
+        attempts.append({"channel": settings.browser_channel})
+    attempts.append({})
+    return attempts
+
+
 class SubmitBlocked(Exception):
     pass
 
@@ -74,16 +93,8 @@ class BrowserSession:
         }
         if settings.headless:
             kwargs["viewport"] = {"width": 1280, "height": 900}
-        exe = os.environ.get("JOB_APPLY_CHROMIUM_PATH")
-        attempts: list[dict[str, Any]] = []
-        if exe:
-            attempts.append({"executable_path": exe})
-        else:
-            if settings.browser_channel in ("chrome", "msedge", "chrome-beta"):
-                attempts.append({"channel": settings.browser_channel})
-            attempts.append({})  # Playwright's bundled Chromium
         errors = []
-        for extra in attempts:
+        for extra in launch_attempts(settings):
             try:
                 self._ctx = await self._pw.chromium.launch_persistent_context(**kwargs, **extra)
                 break
@@ -92,10 +103,7 @@ class BrowserSession:
         if self._ctx is None:
             await self._pw.stop()
             self._pw = None
-            raise BrowserUnavailable(
-                "Could not start a browser. Install Google Chrome, or run "
-                "`uv run --project <plugin>/server playwright install chromium`. Details: " + " | ".join(errors)
-            )
+            raise BrowserUnavailable(UNAVAILABLE_HELP + " | ".join(errors))
         self._ctx.on("page", self._on_new_page)
         self._page = self._ctx.pages[0] if self._ctx.pages else await self._ctx.new_page()
 

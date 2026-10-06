@@ -15,6 +15,7 @@ from .ats import ATS_NAMES, detect_ats
 from .autofill import is_empty_value, plan_autofill, profile_entries
 from .browser import BrowserSession, BrowserUnavailable, SubmitBlocked
 from .postings import FetchError, Posting, fetch_posting, finalize, parse_html
+from .render import KINDS, render_pdf, to_html
 from .tracker import Tracker
 
 INSTRUCTIONS = """\
@@ -188,6 +189,37 @@ def update_job(job_id: int, status: str | None = None, notes: str | None = None,
     ready_to_submit, applied, interviewing, offer, rejected, withdrawn, skipped."""
     job = tracker().update(job_id, status=status, notes=notes, apply_url=apply_url, note=event_note)
     return {"job": _brief(job)}
+
+
+@mcp.tool()
+async def render_document(kind: str, markdown: str, job_id: int | None = None) -> dict[str, Any]:
+    """Turn a tailored resume or cover letter written in Markdown into a PDF in the job's
+    folder. autofill uploads it there ahead of the profile's default documents.
+
+    kind: "resume" or "cover_letter".
+    Resume layout: `# Full Name`, a contact line, `## Section` headings,
+    `### Job Title — Company, City *Mar 2021 – Present*` (the *italic* dates sit on the
+    right) and bullet lists. Cover letter: `# Full Name`, a contact line, then paragraphs.
+    Only reorder, trim and rephrase what the user's real resume says."""
+    if kind not in KINDS:
+        raise ValueError(f"kind must be one of {KINDS}")
+    job = _job(job_id)
+    folder = Path(job["folder"])
+    prof = config.Profile.load()
+    stem = "_".join(p for p in [prof.get("personal.first_name"), prof.get("personal.last_name")] if p)
+    name = f"{stem}_{'Resume' if kind == 'resume' else 'Cover_Letter'}" if stem else kind
+    source = folder / f"{name}.md"
+    folder.mkdir(parents=True, exist_ok=True)
+    source.write_text(markdown, encoding="utf-8")
+    try:
+        pages = await render_pdf(to_html(markdown, kind, title=name.replace("_", " ")), folder / f"{name}.pdf")
+    except BrowserUnavailable as e:
+        return {"error": str(e), "source": str(source)}
+    limit = 2 if kind == "resume" else 1
+    out: dict[str, Any] = {"path": str(folder / f"{name}.pdf"), "pages": pages, "source": str(source)}
+    if pages > limit:
+        out["warning"] = f"{pages} pages; aim for at most {limit}. Tighten the text and render again."
+    return out
 
 
 @mcp.tool()
