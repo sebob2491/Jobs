@@ -621,6 +621,20 @@ def fake_answer(q: dict[str, Any]) -> Any:
     return "Test answer"
 
 
+async def _question_markup(run: Any) -> list[str]:
+    if run.page is None or run.page.is_closed():
+        return []
+    out = []
+    for q in run.questions[:12]:
+        try:
+            out.append(await run.page.evaluate(
+                """(id) => { const e = document.querySelector(`[data-ja-id="${id}"]`);
+                  return e ? e.outerHTML.replace(/\\s+/g, ' ').slice(0, 700) : 'not found'; }""", str(q.get("id"))))
+        except Exception as e:  # noqa: BLE001
+            out.append(f"{type(e).__name__}: {str(e)[:100]}")
+    return out
+
+
 async def check_pipeline(company: dict[str, Any], out: Path, rec: dict[str, Any], fixtures: bool = False) -> None:
     from job_apply.pipeline import Applier, question_key
 
@@ -655,6 +669,8 @@ async def check_pipeline(company: dict[str, Any], out: Path, rec: dict[str, Any]
                 "status": run.status, "need": run.need, "reason": run.reason, "url": run.url, "log": list(run.log),
                 "questions": [{k: q.get(k) for k in ("label", "kind", "required", "options", "error")}
                               for q in run.questions],
+                # each asked-about field's markup, to see what kind of control it is
+                "markup": await _question_markup(run),
                 "page": run.page_info,
             })
             if run.need == "stuck":
