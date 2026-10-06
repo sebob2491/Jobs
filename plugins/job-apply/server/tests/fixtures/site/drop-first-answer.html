@@ -1,0 +1,21 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Application</title></head>
+<body>
+<h1>Application</h1>
+<form id="app" novalidate>
+  <label for="fn">First Name</label><input id="fn" required>
+  <label for="badge">Which badge color do you prefer?</label>
+  <select id="badge" required><option value="">Select</option><option>Blue</option><option>Green</option></select>
+  <button type="submit">Submit application</button>
+</form>
+<script>
+  // Like Eightfold's dropdowns now and then (Lam's and Micron's consent questions, live): the
+  // first answer chosen doesn't stick, and the box reads empty again a moment later.
+  let dropped = false;
+  document.getElementById('badge').addEventListener('change', (e) => {
+    if (!dropped) { dropped = true; setTimeout(() => { e.target.value = ''; }, 100); }
+  });
+</script>
+</body>
+</html>
