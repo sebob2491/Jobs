@@ -36,6 +36,8 @@ The goal is a short, deduplicated list of real openings saved to the tracker
      Amkor's (SuccessFactors) and Benchmark's (Infor) searches only answer their own pages. For these the tool loads the site's search page in a
      background browser tab and reads the results from it, which takes a few seconds per company. Amkor's
      list doesn't say where each job is, so each matching posting is read for the place it names.
+   - Workday lists a job in several places as "7 Locations". The search reads those postings
+     for their places, the ones in the area first ("Phoenix, AZ; Austin, TX; ...").
    - `errors` lists companies whose search failed. Fall back to the browser for
      those, and for everything in `browser_only` (TSMC Arizona's SuccessFactors site): open
      the careers URL with `open_application(url=...)`, use the

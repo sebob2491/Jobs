@@ -224,6 +224,12 @@ function rememberSeen(urls) {
 const isNew = (r) => !firstVisit && seenBefore && !seenBefore.has(r.url) && !r.run && !DONE.has(r.status);
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
+// A posting in many places ("Phoenix, AZ; Austin, TX; ..."): the first three (the ones in the
+// area come first), then how many more; the full list is in the tooltip
+const places = (loc) => {
+  const all = String(loc || "").split("; ");
+  return all.length > 3 ? `${all.slice(0, 3).join("; ")} and ${all.length - 3} more` : String(loc || "");
+};
 // Job links come from employers' and job boards' data: only web addresses become links.
 const webUrl = (u) => /^https?:\/\//i.test(String(u || "")) ? String(u) : "";
 const link = (u, text, cls = "") => webUrl(u)
@@ -308,7 +314,7 @@ function renderRows() {
       <input type="checkbox" data-pick="${esc(r.url)}" ${checked} ${done ? "disabled" : ""} aria-label="Select ${esc(r.title)}">
       <span class="score ${scoreClass(fit.score)}" title="Fit score">${esc(fit.score)}</span>
       <div>${link(r.url, esc(r.title), "title")}
-        <div class="meta">${esc(r.company)} · ${esc(r.location || "location not given")}${r.posted ? " · " + esc(r.posted) : ""}</div>
+        <div class="meta">${esc(r.company)} · <span title="${esc(r.location)}">${esc(places(r.location) || "location not given")}</span>${r.posted ? " · " + esc(r.posted) : ""}</div>
         <div class="chips">${chips}</div></div>
       <div>${statusPill(r)}</div></li>`};
   });
