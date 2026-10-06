@@ -17,6 +17,7 @@ def test_detect_ats():
         "https://micron.eightfold.ai/careers": "eightfold",
         "https://www.paycomonline.net/v4/ats/web.php/portal/95CACB007211B4A999FBE2ED52E7762E/jobs/389228": "paycom",
         "https://seus.applicantstack.com/x/detail/a2ejxq3cpz4b": "applicantstack",
+        "https://recruiting2.ultipro.com/NIK1001NIKON/JobBoard/f11a0b52/OpportunityDetail?opportunityId=532a7dc9": "ukg",
         "https://www.example-semi.com/careers/find-your-job/field-service-engineer-j00012345": "company_site",
         None: "company_site",
     }

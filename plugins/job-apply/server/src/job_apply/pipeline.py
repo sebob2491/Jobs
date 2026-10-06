@@ -516,8 +516,8 @@ class Applier:
                 if problems or stalls >= 2:
                     # say what's wrong: Workday lists it as links ("Error-Email") and marks fields
                     problems = _flagged(clicked) or _flagged((await self._look())[0])
-                    errors = "; ".join(problems)[:300]
-                    return self._pause(run, "stuck", "The page didn't move on" + (f": {errors}" if errors else ".")
+                    errors = "; ".join(problems)[:300].rstrip(" .")
+                    return self._pause(run, "stuck", "The page didn't move on" + (f": {errors}." if errors else ".")
                                        + " Fix it in the browser, then press Resume.")
             else:
                 stalls = 0

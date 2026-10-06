@@ -170,3 +170,9 @@ companies:
     az_sites: Phoenix, Chandler (field service on electron microscopes and FIB tools in fabs)
     confidence: high          # live check, Oct 2026: Field Service Engineer II openings in Phoenix and Chandler
     search: {workday: https://thermofisher.wd5.myworkdayjobs.com/ThermoFisherCareers}
+  - name: Nikon Precision
+    careers_url: https://recruiting2.ultipro.com/NIK1001NIKON/JobBoard/f11a0b52-5153-4c12-ad2c-b7f3b0a74112/
+    ats: ukg
+    az_sites: Chandler, Phoenix (lithography field service at Intel's fabs)
+    confidence: high          # live check, Oct 2026: a Field Service Engineer opening in Chandler and Phoenix
+    search: {ukg: https://recruiting2.ultipro.com/NIK1001NIKON/JobBoard/f11a0b52-5153-4c12-ad2c-b7f3b0a74112/}

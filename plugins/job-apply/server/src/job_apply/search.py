@@ -11,6 +11,7 @@ Each company in data/companies.yaml may carry a `search` block naming one of:
     applicantstack:  <board name>
     icims:           <portal name>          (read in the browser)
     paycom:          <career portal key>    (read in the browser)
+    ukg:             <job board address>    (UKG Pro / UltiPro; read in the browser)
     sitecore:        {url: ..., api: ...}   (ASML; read in the browser)
 
 Companies without one (SuccessFactors sites, custom pages) are searched in the
@@ -39,12 +40,12 @@ from .postings import USER_AGENT
 WORKDAY_PAGE = 20  # Workday rejects larger pages
 MAX_ALTERNATIVES = 4
 FETCH_WHEN_FILTERING = 60  # results to scan per search when filtering by location ourselves
-CLIENT_SIDE = {"greenhouse", "lever", "applicantstack", "paycom"}  # whole board comes back at once; titles are filtered here
+CLIENT_SIDE = {"greenhouse", "lever", "applicantstack", "paycom", "ukg"}  # whole board at once; titles filtered here
 # Searches whose data only comes through the site's own page in the browser (ASML's
-# Sitecore Discover widget; iCIMS portals, which turn away plain requests; Paycom, whose
-# API wants the session its career page sets up).
+# Sitecore Discover widget; iCIMS portals, which turn away plain requests; Paycom and UKG
+# Pro, whose APIs want the session their job board page sets up).
 # search_companies lists them under needs_browser and the search_company_jobs tool runs them.
-BROWSER_SEARCHES = {"sitecore", "icims", "paycom"}
+BROWSER_SEARCHES = {"sitecore", "icims", "paycom", "ukg"}
 RETRY_STATUS = {429, 500, 502, 503, 504}  # a passing problem on the site's side
 RETRY_DELAY = 1.0  # seconds, doubled on the second retry
 
@@ -516,6 +517,66 @@ def _paycom_date(value: Any) -> str:
         return f"{us.group(3)}-{int(us.group(1)):02d}-{int(us.group(2)):02d}"
     return text[:10] if re.match(r"\d{4}-\d{2}-\d{2}", text) else ""
 
+
+
+# ------------------------------------------------------- UKG Pro / UltiPro (Nikon), through the browser
+UKG_TOP = 200  # the page asks for 50 at a time
+UKG_PAGES = 3
+
+
+def ukg_board_url(cfg: Any) -> str:
+    """'https://recruiting2.ultipro.com/<TENANT>/JobBoard/<board id>/' (the board's own page)."""
+    return str(cfg).split("?")[0].rstrip("/") + "/"
+
+
+def ukg_rewrite(body: Any, skip: int = 0) -> Any:
+    """Ask for UKG_TOP openings from `skip` instead of the page's first 50."""
+    search = body.get("opportunitySearch") if isinstance(body, dict) else None
+    if not isinstance(search, dict) or "Top" not in search:
+        return None
+    return {**body, "opportunitySearch": {**search, "Top": UKG_TOP, "Skip": skip}}
+
+
+async def ukg_search(capture: Callable[..., Awaitable[Any]], cfg: Any, query: str, found: list[Listing]) -> None:
+    """UKG Pro job boards (Nikon Precision) load their openings from the board's own API
+    under the session its page sets up, so the board is read in the browser, UKG_TOP
+    openings per call, and titles are matched here. `capture` is BrowserSession.capture_json."""
+    board = ukg_board_url(cfg)
+    for page in range(UKG_PAGES):
+        skip = page * UKG_TOP
+        data = await capture(board + "?q=&o=postedDateDesc", "/JobBoardView/LoadSearchResults",
+                             rewrite=lambda body, skip=skip: ukg_rewrite(body, skip))
+        batch = parse_ukg(data, board)
+        found.extend(listing for listing in batch if title_matches(listing.title, query))
+        total = data.get("totalCount") if isinstance(data, dict) else None
+        if skip + UKG_TOP >= total if isinstance(total, int) else len(batch) < UKG_TOP:
+            return
+
+
+def _ukg_place(loc: Any) -> str:
+    """'Chandler, AZ' from the address, else the board's own words for it ('Phoenix, AZ')."""
+    if not isinstance(loc, dict):
+        return ""
+    address = loc.get("Address") or {}
+    state = (address.get("State") or {}).get("Code") or (address.get("State") or {}).get("Name") or ""
+    if address.get("City"):
+        return ", ".join(x for x in (address["City"], state) if x)
+    return loc.get("LocalizedDescription") or loc.get("LocalizedName") or state
+
+
+def parse_ukg(data: Any, board: str) -> list[Listing]:
+    opportunities = data.get("opportunities") or [] if isinstance(data, dict) else []
+    out = []
+    for o in opportunities:
+        if not isinstance(o, dict) or not o.get("Id") or not o.get("Title"):
+            continue
+        places = list(dict.fromkeys(p for p in (_ukg_place(loc) for loc in o.get("Locations") or []) if p))
+        out.append(Listing(
+            company="", title=str(o["Title"]).strip(), url=f"{board}OpportunityDetail?opportunityId={o['Id']}",
+            location="; ".join(places), posted=str(o.get("PostedDate") or "")[:10],
+            external_id=str(o.get("RequisitionNumber") or o["Id"]), ats="ukg",
+        ))
+    return out
 
 async def _eightfold(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, terms: list[str]) -> list[Listing]:
     host, domain = cfg["host"], cfg["domain"]

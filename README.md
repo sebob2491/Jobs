@@ -26,8 +26,8 @@ It works with any careers site, plus specific handling for the systems common
 at semiconductor companies: Workday (Applied Materials, KLA, Intel, Microchip,
 NXP, TEL, ADI, Onto Innovation, Axcelis, Thermo Fisher), Eightfold (Lam Research, Micron, Infineon),
 SuccessFactors (TSMC Arizona, Amkor, Qorvo), Oracle (onsemi, TI), Greenhouse (ASM),
-ApplicantStack (SCREEN), iCIMS (Daifuku), Paycom (Ebara) and Lever.
-`plugins/job-apply/data/companies.yaml` lists 27 semiconductor employers with
+ApplicantStack (SCREEN), iCIMS (Daifuku), Paycom (Ebara), UKG Pro (Nikon Precision) and Lever.
+`plugins/job-apply/data/companies.yaml` lists 28 semiconductor employers with
 Arizona sites, including equipment makers whose field service engineers work at
 Arizona fabs.
 

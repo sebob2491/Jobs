@@ -695,6 +695,10 @@ class BrowserSession:
         names = bool(field.get("names"))
         await self._open(page, field["id"], loc)
         options = await self._field_options(page, field["id"], loc, 2500)
+        if not options:  # its menu didn't open (Onto's Phone Device Type, once): close up and try again
+            await self._close_menus(page)
+            await self._open(page, field["id"], loc)
+            options = await self._field_options(page, field["id"], loc, 3000)
         choice = choose_option(value, options, names=names)
         if choice is None:
             # Long lists are virtualized; typing jumps to the entry.
