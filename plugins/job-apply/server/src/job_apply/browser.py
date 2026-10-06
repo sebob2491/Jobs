@@ -517,6 +517,8 @@ class BrowserSession:
         if kind == "listbox":
             return await self._pick_from_listbox(page, loc, field, value)
         if kind == "combobox":
+            if field.get("readonly"):  # pick-only: open the menu and choose, nothing to type into
+                return await self._pick_from_listbox(page, loc, field, value)
             return await self._type_and_pick(page, loc, field, value)
         text = "" if value is None else str(value)
         if isinstance(value, bool):

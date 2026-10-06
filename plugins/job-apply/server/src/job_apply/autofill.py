@@ -403,6 +403,7 @@ def _document(prof: Profile, job: dict, kind: str) -> str | None:
     return str(p) if p and p.exists() else None
 
 
+_CHOICE_KINDS = {"select", "listbox", "combobox", "radio_group", "checkbox_group", "checkbox"}
 SKIP = "__skip__"  # deliberately left empty, e.g. the end date of a current job
 # Legal attestations answered only when the exact choices are known.
 _NEEDS_OPTIONS = {"us_person", "citizenship", "us_citizen", "clearance"}
@@ -624,7 +625,9 @@ def plan_autofill(fields: list[dict], prof: Profile, job: dict | None = None, ov
     needs_input: list[dict] = []
     already: list[str] = []
     for f in fields:
-        if f.get("disabled") or f.get("readonly"):
+        # a read-only text box can't be typed in, but a read-only dropdown is a pick-only
+        # menu (Infineon's "Preferred location"): it still takes a choice
+        if f.get("disabled") or f.get("readonly") and f.get("kind") not in _CHOICE_KINDS:
             continue
         has_value = not is_empty_value(f.get("value"))
         if has_value and not overwrite:

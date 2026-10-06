@@ -400,3 +400,31 @@ def test_a_menu_left_over_the_next_field_isnt_its_options(srv):
     fields = run(srv.inspect_form(include_dropdown_options=True))["fields"]
     assert by_label(fields, "available")["options"][0] == "Immediately after offer acceptance"
     assert by_label(fields, "friends")["options"] == ["Yes", "No"]
+
+
+def test_a_pick_only_dropdown_is_asked_about_and_filled(srv):
+    """Infineon: a required read-only dropdown ("Preferred location") was neither filled
+    nor asked about, so the application stalled with nothing to answer."""
+    run(srv.open_application(url=fixture_url("jsonld_posting.html")))
+    page = run(srv.browser.page())
+    run(page.set_content("""
+      <form>
+        <label for="loc">Preferred location for Engineer / Senior Engineer Product Engineering *</label>
+        <input id="loc" role="combobox" readonly required aria-controls="loc-list" aria-expanded="false">
+        <ul id="loc-list" role="listbox" hidden>
+          <li role="option">Singapore</li><li role="option">Kulim</li><li role="option">Melaka</li>
+        </ul>
+      </form>
+      <script>
+        const box = document.getElementById('loc'), list = document.getElementById('loc-list');
+        const open = () => { list.hidden = false; box.setAttribute('aria-expanded', 'true'); };
+        box.addEventListener('click', open);
+        box.addEventListener('keydown', (e) => { if (e.key === 'ArrowDown') open(); });
+        list.addEventListener('click', (e) => { box.value = e.target.textContent; list.hidden = true; });
+      </script>"""))
+    asked = run(srv.autofill())["needs_input"]
+    assert [(f["label"], f["options"]) for f in asked] == [
+        ("Preferred location for Engineer / Senior Engineer Product Engineering *", ["Singapore", "Kulim", "Melaka"])]
+    out = run(srv.fill_form([{"id": asked[0]["id"], "value": "Kulim"}]))
+    assert out["ok"], out
+    assert run(page.input_value("#loc")) == "Kulim"
