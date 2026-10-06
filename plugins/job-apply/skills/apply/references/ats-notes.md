@@ -16,6 +16,10 @@ the page URL. Use this file for the parts of each flow that `autofill` can't do.
   any terms checkbox. Workday then emails a "verify your account" link. Open it
   yourself if `settings.email_codes` is on, otherwise the user clicks it.
 - If you see a CAPTCHA or a "verify you are human" check, ask the user to solve it.
+- **Cookie banners** can cover the form, and then clicks fail or no fields show up.
+  Which cookies to allow is the user's choice. Ask once per session. If they've said
+  it's fine, take the privacy-preserving option: "Reject all", "Decline" or
+  "Necessary only". Never accept marketing cookies on their behalf.
 
 ## Workday (`*.myworkdayjobs.com`): Applied Materials, KLA, Intel, Microchip, NXP, TEL, Analog Devices, Hitachi High-Tech, ASML (some postings)
 

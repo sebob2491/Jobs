@@ -172,3 +172,14 @@ def test_attestations_need_known_choices():
     assert resolve_field(f(q, "combobox"), p) is None  # choices unknown: leave it for a person
     assert resolve_field(f(q, "combobox", options=["Yes", "No"]), p).value == "Yes"
     assert resolve_field(f(q, "combobox", options=["I am a U.S. citizen", "I am a lawful permanent resident", "Other"]), p) is None
+
+
+def test_choices_seen_on_live_forms():
+    asm_prev = ["I have NEVER been employed by ASM", "I was PREVIOUSLY employed by ASM", "I am CURRENTLY employed by ASM"]
+    assert choose_option("No", asm_prev) == "I have NEVER been employed by ASM"
+    asm_auth = ["I require sponsorship to work in this country",
+                "I am authorized to work in this country for my current employer",
+                "I am authorized to work in this country for any employer", "My status to work in this country is unknown"]
+    assert choose_option("Yes", asm_auth) is None  # two "authorized" answers: a person decides
+    lam_eeo = ["Male", "Female", "Choose not to disclose"]
+    assert choose_option("Decline to self-identify", lam_eeo) == "Choose not to disclose"

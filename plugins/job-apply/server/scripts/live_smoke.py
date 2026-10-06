@@ -74,6 +74,18 @@ APPLY = re.compile(r"^(apply( now| for (this|the) (job|position|role))?|apply to
 NEVER = re.compile(r"autofill|resume|last application|submit|sign ?in|log ?in|create account|register|upload|"
                    r"linked ?in|indeed|seek|google|facebook|next|continue|save", re.I)
 COMPANY_TIMEOUT = 150
+# Cookie banners: the test always takes the privacy-preserving choice.
+REJECT_COOKIES = re.compile(r"^(reject( all)?( cookies)?|decline( all)?|only (strictly )?necessary|necessary only|"
+                            r"use necessary cookies only|accept (only )?necessary( cookies)?)$", re.I)
+
+
+async def dismiss_cookies() -> str | None:
+    form = await server.inspect_form(include_dropdown_options=False)
+    for a in form["actions"]:
+        if REJECT_COOKIES.match(a["text"].strip()):
+            await server.click(a["id"])
+            return a["text"]
+    return None
 
 
 def slug(s: str) -> str:
@@ -136,6 +148,8 @@ async def check_company(company: dict[str, Any], out: Path, fixtures: bool) -> d
     steps.append({"step": "open", "url": opened["url"], "title": opened["title"], "headings": opened["headings"][:4],
                   "fields": opened["fields"], "actions": opened["actions"][:15],
                   "navigation_error": opened.get("navigation_error")})
+    if dismissed := await dismiss_cookies():
+        steps.append({"step": f"cookies: {dismissed}"})
     for _ in range(3):
         form = await server.inspect_form(include_dropdown_options=False)
         if len([f for f in form["fields"] if f["kind"] != "file"]) >= 3:
@@ -147,6 +161,8 @@ async def check_company(company: dict[str, Any], out: Path, fixtures: bool) -> d
         steps.append({"step": f"click {action['text']!r}", "clicked": clicked.get("clicked"),
                       "url": clicked.get("url"), "headings": (clicked.get("headings") or [])[:4],
                       "fields": clicked.get("fields"), "blocked": clicked.get("blocked")})
+        if dismissed := await dismiss_cookies():
+            steps.append({"step": f"cookies: {dismissed}"})
     form = await server.inspect_form(include_dropdown_options=True)
     rec["form"] = {
         "url": form["url"], "ats": form["ats"], "headings": form["headings"][:6], "errors": form["errors"][:5],

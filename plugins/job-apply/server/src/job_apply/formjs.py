@@ -353,19 +353,25 @@ FIELD_OPTIONS_JS = r"""
     const box = ref ? document.getElementById(ref.split(/\s+/)[0]) : null;
     if (box) opts = Array.from(box.querySelectorAll('[role="option"]')).filter(visible);
   }
-  if (!opts.length) opts = all.filter((o) => o.getAttribute('data-ja-before') !== text(o));
-  if (!opts.length && el.getAttribute('aria-expanded') === 'true' && all.length) {
-    const r = el.getBoundingClientRect();
+  if (!opts.length && all.length) {
+    // No ARIA link: a field's menu is the one attached to it, opening just below (or above)
+    // it and overlapping it horizontally. Menus some sites leave open for earlier fields sit
+    // further up the page; options that were already showing before opening rank last.
+    const box = (el.closest('[role="combobox"]') || el.parentElement || el).getBoundingClientRect();
     const groups = new Map();
     for (const o of all) {
       const c = o.closest('[role="listbox"]') || o.parentElement;
       groups.set(c, (groups.get(c) || []).concat([o]));
     }
-    let best = [], bestD = Infinity;
+    let best = [], bestScore = Infinity;
     for (const [c, os] of groups) {
       const b = c.getBoundingClientRect();
-      const dist = Math.abs(b.top - r.bottom) + Math.abs(b.left - r.left);
-      if (dist < bestD) { bestD = dist; best = os; }
+      const overlap = Math.min(b.right, box.right) - Math.max(b.left, box.left);
+      if (overlap <= 0) continue;
+      const gap = Math.min(Math.abs(b.top - box.bottom), Math.abs(box.top - b.bottom));
+      const stale = os.every((o) => o.getAttribute('data-ja-before') === text(o));
+      const score = gap + (stale ? 1000 : 0);
+      if (gap < 120 && score < bestScore) { bestScore = score; best = os; }
     }
     opts = best;
   }
@@ -376,5 +382,19 @@ FIELD_OPTIONS_JS = r"""
     if (t && !out.includes(t)) { o.setAttribute('data-ja-opt', t); out.push(t); }
   }
   return out;
+}
+"""
+
+# What a dropdown field currently displays: input value, button text, or selected chips.
+SHOWN_VALUE_JS = r"""
+(el) => {
+  const clean = (s) => (s || '').replace(/\s+/g, ' ').trim();
+  const parts = [];
+  if (el.value) parts.push(el.value);
+  if (el.tagName !== 'INPUT') parts.push(el.innerText || el.textContent || '');
+  const box = el.closest('[data-automation-id="multiselectInputContainer"], [class*="select" i], [class*="combobox" i]')
+    || el.parentElement;
+  if (box) parts.push(box.innerText || '');
+  return clean(parts.join(' '));
 }
 """

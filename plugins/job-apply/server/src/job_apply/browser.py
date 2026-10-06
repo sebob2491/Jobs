@@ -26,9 +26,9 @@ from playwright.async_api import (
 )
 
 from . import config
-from .autofill import choose_option, is_empty_value, polarity
+from .autofill import choose_option, is_empty_value, norm, polarity
 from .formjs import (CLICK_CHOICE_JS, COVERED_JS, ELEMENT_INFO_JS, ENTRIES_JS, EXTRACT_JS, FIELD_OPTIONS_JS,
-                     MARK_OPTIONS_JS, VISIBLE_TEXT_JS)
+                     MARK_OPTIONS_JS, SHOWN_VALUE_JS, VISIBLE_TEXT_JS)
 
 SUBMIT_RE = re.compile(r"\bsubmit\b|send (my )?application|finish (my )?application|complete (my )?application", re.I)
 # A form's own submit button with one of these labels is the final step too ("Apply", "Send").
@@ -485,7 +485,16 @@ class BrowserSession:
             await page.keyboard.press("Escape")
             raise ValueError(f"{value!r} doesn't match any option: {options[:30]}")
         await self._click_option(page, field["id"], choice)
+        await self._confirm_choice(page, loc, choice)
         return f"selected {choice}"
+
+    async def _confirm_choice(self, page: Page, loc: Locator, choice: str) -> None:
+        """After picking from a menu, the field must show that choice (else the click
+        landed in some other menu, or the widget refused it)."""
+        await page.wait_for_timeout(150)
+        shown = await loc.evaluate(SHOWN_VALUE_JS)
+        if norm(choice) not in norm(shown) and choose_option(choice, [shown]) is None:
+            raise ValueError(f"Picked {choice!r} but the field shows {shown[:80]!r}; set it by hand or with click")
 
     async def _type_and_pick(self, page: Page, loc: Locator, field: dict, value: Any) -> str:
         text = str(value)
@@ -505,6 +514,7 @@ class BrowserSession:
                 raise ValueError(f"{text!r} doesn't match any suggestion: {options[:30]}")
             return "typed (no suggestions appeared)"
         await self._click_option(page, field["id"], choice)
+        await self._confirm_choice(page, loc, choice)
         return f"selected {choice}"
 
     async def click(self, target: str, allow_submit: bool = False) -> dict[str, Any]:
@@ -515,9 +525,12 @@ class BrowserSession:
                 loc = self._locator(page, target)
             else:
                 loc = await self._find_by_text(page, target)
+            if (loc is None or not await loc.count()) and target in self._actions:
+                # the page re-rendered since inspect_form; the same button by its text
+                loc = await self._find_by_text(page, self._actions[target]["text"])
             if loc is None or not await loc.count():
                 raise KeyError(f"Nothing clickable matches {target!r}; call inspect_form for ids")
-            info = await loc.evaluate(ELEMENT_INFO_JS)
+            info = await loc.evaluate(ELEMENT_INFO_JS, timeout=5000)
             if not allow_submit:
                 self._check_clickable(info)
             try:

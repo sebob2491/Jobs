@@ -46,7 +46,8 @@ _PLACEHOLDER_VALUES = re.compile(
     re.I,
 )
 _YES = re.compile(r"^(yes|y|true|i am\b(?! not)|i do\b(?! not)|i will\b(?! not)|i have\b(?! not)|i can\b(?! not)|agree)", re.I)
-_NO = re.compile(r"^(no|n|false|i am not|i do not|i don'?t|i will not|i won'?t|i have not|i haven'?t|i can ?not|i can'?t)\b", re.I)
+_NO = re.compile(r"^(no|n|false|never|i am not|i do not|i don'?t|i will not|i won'?t|i have not|i haven'?t|i have never|"
+                 r"i'?ve never|i can ?not|i can'?t)\b", re.I)
 _DECLINE = re.compile(r"decline|not (wish|want) to|prefer not|choose not|do not want|don'?t wish|not to (answer|disclose|self)|rather not", re.I)
 
 
@@ -134,9 +135,11 @@ def choose_option(desired: Any, options: list[str]) -> str | None:
 
     # 3. yes / no questions
     pol = polarity(desired)
-    if pol is not None and all(polarity(o) is not None for o, _ in normed if not _DECLINE.search(o)):
+    if pol is not None:
         hits = [o for o, _ in normed if polarity(o) is pol]
-        if len(hits) == 1 or (hits and len(want.split()) == 1):
+        if len(hits) == 1:
+            return hits[0]  # e.g. "No" -> "I have NEVER been employed by ASM"
+        if hits and len(want.split()) == 1 and all(polarity(o) is not None for o, _ in normed if not _DECLINE.search(o)):
             return hits[0]
         # e.g. "No, I will not require sponsorship" vs "No" — fall through to overlap
 
