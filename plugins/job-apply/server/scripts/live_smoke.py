@@ -270,7 +270,22 @@ async def probe_form(name: str, url: str, press: str) -> dict[str, Any]:
             sent.append({"method": r.method, "type": r.resource_type, "url": r.url[:700],
                          "post": (r.post_data or "")[:2500]})
 
+    replies: list[Any] = []
+
+    async def _reply(r: Any) -> dict[str, Any]:
+        try:
+            body = await r.text()
+        except Exception as e:  # noqa: BLE001
+            body = f"unreadable: {e}"
+        return {"url": r.url[:300], "type": r.headers.get("content-type", "")[:60], "chars": len(body),
+                "body": body[:6000]}
+
+    def on_response(r: Any) -> None:
+        if ".dwr" in r.url:  # SuccessFactors' older pages talk to their server over DWR
+            replies.append(asyncio.ensure_future(_reply(r)))
+
     tab.on("request", on_request)
+    tab.on("response", on_response)
     rec: dict[str, Any] = {"form_probe": name, "url": url}
     try:
         await tab.goto(url, wait_until="domcontentloaded", timeout=45000)
@@ -294,6 +309,39 @@ async def probe_form(name: str, url: str, press: str) -> dict[str, Any]:
         rec["requests_after"] = sent[n:n + 20]
         rec["after"] = await tab.evaluate(REQ_LINKS_JS)
         rec["text_after"] = re.sub(r"\s+", " ", await tab.inner_text("body"))[:2000]
+        # more to a page: what's sent, and how many show
+        per_page = tab.locator("li.per_page select")
+        if await per_page.count():
+            n = len(sent)
+            await per_page.first.select_option("50")
+            await tab.wait_for_timeout(6000)
+            rec["requests_per_page"] = sent[n:n + 10]
+            rec["after_per_page"] = (await tab.evaluate(REQ_LINKS_JS))["count"]
+        rec["replies"] = [await r for r in replies[:6]]
+        # a posting, opened on its own (without the session's _s.crb), in a fresh tab and over HTTP
+        links = (rec["after"] or {}).get("links") or []
+        if links:
+            posting = re.sub(r"&_s\.crb=[^&]*", "", links[0]["href"])
+            rec["posting_url"] = posting
+            page = await ctx.new_page()
+            try:
+                await page.goto(posting, wait_until="domcontentloaded", timeout=45000)
+                await page.wait_for_timeout(6000)
+                rec["posting_title"] = await page.title()
+                rec["posting_url_after"] = page.url
+                rec["posting_text"] = re.sub(r"\s+", " ", await page.inner_text("body"))[:3000]
+            finally:
+                await page.close()
+            import httpx
+
+            from job_apply.postings import USER_AGENT
+            async with httpx.AsyncClient(headers={"User-Agent": USER_AGENT}, follow_redirects=True, timeout=30) as client:
+                r = await client.get(posting)
+            text = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", r.text))
+            i = text.find(links[0]["text"][:20])
+            rec["posting_http"] = {"status": r.status_code, "final_url": str(r.url)[:300], "chars": len(r.text),
+                                   "has_title": i >= 0, "around_title": text[max(0, i - 200):i + 1500] if i >= 0
+                                   else text[:1500]}
     except Exception as e:  # noqa: BLE001
         rec["error"] = f"{type(e).__name__}: {str(e)[:300]}"
     finally:
@@ -630,7 +678,7 @@ async def main() -> int:
         if wanted and not any(w in name.lower() for w in wanted):
             continue
         try:
-            probe = await asyncio.wait_for(probe_form(name, url, press), 90)
+            probe = await asyncio.wait_for(probe_form(name, url, press), 150)
         except Exception as e:  # noqa: BLE001
             probe = {"form_probe": name, "error": f"{type(e).__name__}: {str(e)[:200]}"}
         print("LIVE_FORM " + json.dumps(probe, default=str), flush=True)
