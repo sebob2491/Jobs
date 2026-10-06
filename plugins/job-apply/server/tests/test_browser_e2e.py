@@ -182,9 +182,17 @@ def test_final_apply_button_honeypot_and_enter(srv, monkeypatch):
     assert actions["Apply"].get("is_submit") and actions["Apply"].get("form_submit")
     assert actions["Search"].get("form_submit") and not actions["Search"].get("is_submit")
 
+    deg = next(f for f in form["fields"] if f["label"] == "Degree")
+    assert deg["kind"] == "combobox" and "Bachelor's Degree" in deg["options"]  # read through the click-blocking layer
+
     result = run(srv.autofill())
-    assert {f["label"] for f in result["filled"]} >= {"First Name", "Last Name", "Email", "City"}
+    assert not result["failed"], result["failed"]
+    assert {f["label"] for f in result["filled"]} >= {"First Name", "Last Name", "Email", "City", "Degree"}
     assert "Thank you" not in run(srv.page_text())  # typing into the in-form combobox pressed no Enter
+    # the export-control question offers no plain yes/no, so it's left for the person
+    assert any(n["label"].startswith("Are you a U.S. person") for n in result["needs_input"])
+    after = {f["label"]: f["value"] for f in run(srv.inspect_form(include_dropdown_options=False))["fields"]}
+    assert after["Degree"] == "Bachelor's Degree"
 
     blocked = run(srv.click("Apply"))  # a form's own "Apply" button is the final submit
     assert blocked["clicked"] is False

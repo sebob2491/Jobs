@@ -349,6 +349,8 @@ def _document(prof: Profile, job: dict, kind: str) -> str | None:
 
 
 SKIP = "__skip__"  # deliberately left empty, e.g. the end date of a current job
+# Legal attestations answered only when the exact choices are known.
+_NEEDS_OPTIONS = {"us_person", "citizenship", "us_citizen", "clearance"}
 
 _ENTRY_SECTIONS = [
     ("education_history", r"education|school|degree"),
@@ -399,6 +401,9 @@ def _date_value(field: dict, value: Any) -> str | None:
     if not year:
         return None
     sub = norm(field.get("sublabel"))
+    if not sub:  # "Start date year", "End date month"
+        label = norm(clean_label(field.get("label") or ""))
+        sub = "year" if re.search(r"\byear\b", label) else "month" if re.search(r"\bmonth\b", label) else ""
     if sub == "month":
         return month
     if sub == "year":
@@ -472,7 +477,7 @@ def resolve_field(field: dict, prof: Profile, job: dict | None = None, file_inpu
             return ans
         if isinstance(ans.value, bool):
             ans.value = "Yes" if ans.value else "No"
-        if kind in {"select", "radio_group", "listbox", "checkbox_group"} and field.get("options"):
+        if kind in {"select", "radio_group", "listbox", "checkbox_group", "combobox"} and field.get("options"):
             chosen = choose_option(ans.value, field["options"])
             return Answer(chosen, ans.rule) if chosen else None
         return ans
@@ -517,16 +522,41 @@ def resolve_field(field: dict, prof: Profile, job: dict | None = None, file_inpu
         ans.value = "Yes" if ans.value else "No"
 
     options = field.get("options")
-    if kind in {"select", "radio_group", "listbox", "checkbox_group"} and options:
+    if kind in {"select", "radio_group", "listbox", "checkbox_group", "combobox"} and options:
         chosen = choose_option(ans.value, options)
         if chosen is None:
             return None
         return Answer(chosen, ans.rule)
+    if kind == "combobox" and ans.rule in _NEEDS_OPTIONS:
+        return None  # an attestation we won't answer without seeing the exact choices
     return ans
+
+
+_EDU_FIELD = re.compile(r"^(school|university|college|institution|degree|discipline|major|field of study)\b")
+_JOB_FIELD = re.compile(r"^(company|employer|job title|title|position)\b")
+_DATE_PART = re.compile(r"^(start|end|from|to)( date)?( (year|month))?$")
+
+
+def _with_context(fields: list[dict]) -> list[dict]:
+    """Greenhouse-style forms put "Start date year" right after School/Degree with no
+    section heading; treat such unsectioned date fields as belonging to that block."""
+    out, block = [], None
+    for f in fields:
+        label = norm(clean_label(f.get("label") or ""))
+        if not f.get("section"):
+            if _EDU_FIELD.match(label):
+                block = "Education 1"
+            elif _JOB_FIELD.match(label):
+                block = "Work Experience 1"
+            elif block and _DATE_PART.match(label):
+                f = {**f, "section": block}
+        out.append(f)
+    return out
 
 
 def plan_autofill(fields: list[dict], prof: Profile, job: dict | None = None, overwrite: bool = False) -> dict[str, Any]:
     """Split fields into ones we can fill and ones that need a decision."""
+    fields = _with_context(fields)
     file_inputs = sum(1 for f in fields if f.get("kind") == "file")
     to_fill: list[dict] = []
     needs_input: list[dict] = []

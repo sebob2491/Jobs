@@ -149,3 +149,26 @@ def test_plan_skips_end_date_of_current_job():
     plan = plan_autofill(fields, prof())
     assert [f["id"] for f in plan["to_fill"]] == ["2"]
     assert plan["needs_input"] == []
+
+
+def test_unsectioned_education_dates_follow_school_fields():
+    fields = [
+        {"id": "1", "kind": "combobox", "label": "School*", "value": ""},
+        {"id": "2", "kind": "combobox", "label": "Degree*", "value": "", "options": ["Associate's Degree", "Bachelor's Degree"]},
+        {"id": "3", "kind": "text", "label": "Start date year*", "value": ""},
+        {"id": "4", "kind": "text", "label": "End date year*", "value": ""},
+        {"id": "5", "kind": "text", "label": "Start date", "value": "", "section": "Availability"},
+    ]
+    plan = {f["id"]: f["value"] for f in plan_autofill(fields, prof())["to_fill"]}
+    assert plan["1"] == "Arizona State University"
+    assert plan["2"] == "Bachelor's Degree"  # "BS Electrical Engineering" in the profile
+    assert (plan["3"], plan["4"]) == ("2016", "2020")
+    assert "5" not in plan  # a start date in another section is not an education date
+
+
+def test_attestations_need_known_choices():
+    p = prof()
+    q = "Are you a U.S. person as defined by U.S. export control regulations (EAR)?"
+    assert resolve_field(f(q, "combobox"), p) is None  # choices unknown: leave it for a person
+    assert resolve_field(f(q, "combobox", options=["Yes", "No"]), p).value == "Yes"
+    assert resolve_field(f(q, "combobox", options=["I am a U.S. citizen", "I am a lawful permanent resident", "Other"]), p) is None

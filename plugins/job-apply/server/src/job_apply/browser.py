@@ -27,7 +27,7 @@ from playwright.async_api import (
 
 from . import config
 from .autofill import choose_option, is_empty_value, polarity
-from .formjs import CLICK_CHOICE_JS, ELEMENT_INFO_JS, ENTRIES_JS, EXTRACT_JS, OPTIONS_JS, VISIBLE_TEXT_JS
+from .formjs import CLICK_CHOICE_JS, COVERED_JS, ELEMENT_INFO_JS, ENTRIES_JS, EXTRACT_JS, OPTIONS_JS, VISIBLE_TEXT_JS
 
 SUBMIT_RE = re.compile(r"\bsubmit\b|send (my )?application|finish (my )?application|complete (my )?application", re.I)
 # A form's own submit button with one of these labels is the final step too ("Apply", "Send").
@@ -233,12 +233,26 @@ class BrowserSession:
             "errors": data["errors"],
         }
 
+    async def _activate(self, loc: Locator) -> None:
+        """Click a dropdown, or focus it when an overlay covers it (react-select puts its
+        placeholder on top of the input). Checking first avoids waiting out a click timeout."""
+        covered = await loc.evaluate(COVERED_JS)
+        if not covered:
+            try:
+                await loc.click(timeout=2500)
+                return
+            except (PlaywrightError, PlaywrightTimeout):
+                pass
+        await loc.focus()
+        await loc.press("ArrowDown")
+
     async def _read_listbox_options(self, page: Page, field: dict) -> list[str]:
         loc = self._locator(page, field["id"])
+        wait = 2000 if field["kind"] == "listbox" else 900  # search pickers often show nothing until typed into
         try:
             frame = self._frame_for(page, field["id"])
-            await loc.click(timeout=3000)
-            await frame.wait_for_selector('[role="option"]', state="visible", timeout=2000)
+            await self._activate(loc)
+            await frame.wait_for_selector('[role="option"]', state="visible", timeout=wait)
             options = await frame.evaluate(OPTIONS_JS)
         except (PlaywrightError, PlaywrightTimeout):
             options = []
@@ -252,7 +266,7 @@ class BrowserSession:
             data = await self._extract(page)
             if include_dropdown_options:
                 for f in data["fields"]:
-                    if f["kind"] == "listbox" and not f.get("options") and not f.get("disabled"):
+                    if f["kind"] in ("listbox", "combobox") and not f.get("options") and not f.get("disabled"):
                         f["options"] = await self._read_listbox_options(page, f)
                         self._fields[f["id"]] = f
             return {"url": page.url, "title": await page.title(), **data}
@@ -433,10 +447,17 @@ class BrowserSession:
         opt = frame.locator('[role="option"]:visible').filter(has_text=text)
         exact = opt.filter(has_text=re.compile(rf"^\s*{re.escape(text)}\s*$"))
         target = exact.first if await exact.count() else opt.first
-        await target.click(timeout=3000)
+        try:
+            await target.click(timeout=3000)
+        except PlaywrightTimeout:
+            # Something sits over the menu; send the events to the option itself.
+            await target.evaluate(
+                "el => ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click'].forEach("
+                "t => el.dispatchEvent(new MouseEvent(t, {bubbles: true, cancelable: true, view: window})))"
+            )
 
     async def _pick_from_listbox(self, page: Page, loc: Locator, field: dict, value: Any) -> str:
-        await loc.click(timeout=5000)
+        await self._activate(loc)
         options = await self._visible_options(page, field["id"]) or field.get("options") or []
         choice = choose_option(value, options)
         if choice is None:
@@ -453,7 +474,7 @@ class BrowserSession:
 
     async def _type_and_pick(self, page: Page, loc: Locator, field: dict, value: Any) -> str:
         text = str(value)
-        await loc.click(timeout=5000)
+        await self._activate(loc)
         await loc.fill("")
         await loc.press_sequentially(text, delay=30)
         options = await self._visible_options(page, field["id"])

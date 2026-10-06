@@ -78,15 +78,15 @@ def handler(request: httpx.Request) -> httpx.Response:
         ])
     if url.startswith("https://api.lever.co/v0/postings/oddco"):
         return httpx.Response(200, json={"ok": False, "error": "Document not found"})
-    if url.startswith("https://careers.efco.com/api/apply/v2/jobs"):
+    if url.startswith("https://careers.efco.com/api/pcsx/search"):
         assert request.headers["Referer"] == "https://careers.efco.com/careers"
         start = int(request.url.params["start"])
         positions = [
             {"id": 100 + start + i, "name": "Field Service Engineer 2", "locations": ["Chandler, AZ, United States"],
-             "canonicalPositionUrl": f"https://careers.efco.com/careers/job/{100 + start + i}", "t_create": 1790000000}
+             "positionUrl": f"/careers/job/{100 + start + i}", "postedTs": 1790000000}
             for i in range(10)
         ] if start < 10 else []
-        return httpx.Response(200, json={"count": 10, "positions": positions})
+        return httpx.Response(200, json={"status": 200, "data": {"count": 10, "positions": positions}})
     if url.startswith("https://api.smartrecruiters.com/v1/companies/SRCO1/postings"):
         return httpx.Response(200, json={"totalFound": 2, "content": [
             {"id": "744000001", "name": "Regional Lead - Installs", "refNumber": "REF1", "releasedDate": "2026-09-30T10:00:00Z",
@@ -127,6 +127,8 @@ def test_helpers():
     for broad in ("3 Locations", "", "Remote", "Remote - US", "United States (Remote)", "United States", "USA"):
         assert location_matches(broad, az) is None, broad
     assert location_matches("Remote - Arizona", az) is True
+    assert location_matches("Remote, Japan", az) is False
+    assert location_matches("Remote - Staffordshire, United Kingdom", az) is False
     assert eightfold_page_url({"host": "careers.x.com", "domain": "x.com"}, "field service | equipment", "AZ") == \
         "https://careers.x.com/careers?query=field+service+equipment&domain=x.com&location=Arizona"
 
@@ -156,7 +158,8 @@ def test_search_all_backends():
 
     assert [r["url"] for r in by_company["Lever Co"]] == ["https://jobs.lever.co/leverco/abc"]
     assert by_company["Lever Co"][0]["posted"] == "2026-09-21"
-    assert len(by_company["Eightfold Co"]) == 10
+    ef = by_company["Eightfold Co"]
+    assert len(ef) == 10 and ef[0]["url"].startswith("https://careers.efco.com/careers/job/1")
     sr = {r["url"]: r for r in by_company["SR Co"]}
     assert sr["https://jobs.smartrecruiters.com/SRCO1/744000001"]["location"] == "Chandler, AZ, US"
     assert sr["https://jobs.smartrecruiters.com/SRCO1/744000002"]["location"] == "Phoenix, AZ"  # country: null
@@ -257,4 +260,18 @@ def test_tool_falls_back_to_browser_for_eightfold(srv, monkeypatch):
     assert [(r["title"], r["title_match"]) for r in out["results"]] == \
         [("Field Service Engineer 2", True), ("Payroll Specialist", False)]
     assert pages == [("https://careers.lamresearch.com/careers?query=field+service&domain=lamresearch.com&location=Arizona",
-                      "/api/apply/v2/jobs")]
+                      "/api/pcsx/search")]
+
+
+def test_parse_eightfold_shapes():
+    from job_apply.search import parse_eightfold
+
+    v2 = {"count": 1, "positions": [{"id": 7, "name": "FSE", "locations": ["Chandler, AZ"],
+                                     "canonicalPositionUrl": "https://c.x.com/careers/job/7"}]}
+    pcsx = {"data": {"count": 1, "positions": [{"id": 8, "name": "FSE 2", "locations": [{"name": "Phoenix, AZ"}],
+                                                "positionUrl": "/careers/job/8"}]}}
+    assert [(x.title, x.url, x.location) for x in parse_eightfold(v2, "c.x.com")] == \
+        [("FSE", "https://c.x.com/careers/job/7", "Chandler, AZ")]
+    assert [(x.title, x.url, x.location) for x in parse_eightfold(pcsx, "c.x.com")] == \
+        [("FSE 2", "https://c.x.com/careers/job/8", "Phoenix, AZ")]
+    assert parse_eightfold({"unexpected": True}, "c.x.com") == []

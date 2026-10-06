@@ -124,8 +124,13 @@ def location_matches(text: str, terms: list[str]) -> bool | None:
     padded = f" {n} "
     if any(f" {t} " in padded for t in terms):
         return True
-    if not n or _BROAD.fullmatch(n) or re.search(r"\bremote\b", n):
+    if not n or _BROAD.fullmatch(n):
         return None
+    if re.search(r"\bremote\b", n):
+        # "Remote - US" could be done from anywhere; "Remote, Japan" can't
+        rest = set(re.sub(r"\bremote\b", " ", n).split()) - {"us", "usa", "u", "s", "a", "united", "states", "of",
+                                                                "america", "north", "nationwide", "anywhere", "in"}
+        return None if not rest else False
     return False
 
 
@@ -234,15 +239,36 @@ async def _lever(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, te
     return out
 
 
-def parse_eightfold(data: dict[str, Any], host: str) -> list[Listing]:
+def _eightfold_positions(data: Any) -> list[dict[str, Any]]:
+    """Positions from either Eightfold API shape (v2 `positions`, or pcsx `data.positions`)."""
+    if isinstance(data, dict):
+        for key in ("positions", "results", "jobs"):
+            if isinstance(data.get(key), list):
+                return [p for p in data[key] if isinstance(p, dict)]
+        if isinstance(data.get("data"), (dict, list)):
+            return _eightfold_positions(data["data"])
+    return []
+
+
+def _place(value: Any) -> str:
+    if isinstance(value, dict):
+        return str(value.get("name") or value.get("location") or value.get("displayName") or "")
+    return str(value or "")
+
+
+def parse_eightfold(data: Any, host: str) -> list[Listing]:
     out = []
-    for p in data.get("positions") or []:
-        locs = p.get("locations") or [p.get("location") or ""]
+    for p in _eightfold_positions(data):
+        locs = [_place(x) for x in (p.get("locations") or p.get("standardizedLocations") or [p.get("location")])]
+        link = p.get("canonicalPositionUrl") or p.get("positionUrl") or p.get("url") or ""
+        if link.startswith("/"):
+            link = f"https://{host}{link}"
         out.append(Listing(
-            company="", title=p.get("name", ""),
-            url=p.get("canonicalPositionUrl") or f"https://{host}/careers/job/{p.get('id')}",
-            location="; ".join(l for l in locs if l), external_id=str(p.get("display_job_id") or p.get("id") or ""),
-            posted=_epoch_date(p.get("t_create")), ats="eightfold",
+            company="", title=p.get("name") or p.get("title") or "",
+            url=link or f"https://{host}/careers/job/{p.get('id')}",
+            location="; ".join(l for l in locs if l),
+            external_id=str(p.get("display_job_id") or p.get("displayJobId") or p.get("id") or ""),
+            posted=_epoch_date(p.get("t_create") or p.get("postedTs") or p.get("creationTs")), ats="eightfold",
         ))
     return out
 
@@ -258,19 +284,20 @@ def eightfold_page_url(cfg: dict[str, Any], query: str, location: str | None) ->
 
 async def _eightfold(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, terms: list[str]) -> list[Listing]:
     host, domain = cfg["host"], cfg["domain"]
-    api = f"https://{host}/api/apply/v2/jobs"
+    api = f"https://{host}/api/pcsx/search"
     headers = {"Accept": "application/json", "Referer": f"https://{host}/careers"}
     out: list[Listing] = []
     start = 0
     while len(out) < limit:
-        params = {"domain": domain, "start": start, "num": 10, "query": query, "sort_by": "relevance"}
+        params = {"domain": domain, "query": query, "location": "", "start": start}
         r = await client.get(api, params=params, headers=headers)
         _raise_for(r, api)
         data = r.json()
         batch = parse_eightfold(data, host)
         out.extend(batch)
-        start += 10
-        if not batch or start >= int(data.get("count") or 0):
+        start += len(batch)
+        total = (data.get("data") or {}).get("count") if isinstance(data.get("data"), dict) else data.get("count")
+        if not batch or start >= int(total or 0):
             break
     return out[:limit]
 

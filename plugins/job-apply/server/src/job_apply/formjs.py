@@ -324,3 +324,14 @@ ELEMENT_INFO_JS = r"""
   formSubmit: el.type === 'submit' && !!el.form,
 })
 """
+
+# Is something else drawn on top of this element's centre?
+COVERED_JS = r"""
+(el) => {
+  el.scrollIntoView({ block: 'center', inline: 'nearest' });
+  const r = el.getBoundingClientRect();
+  if (!r.width || !r.height) return true;
+  const top = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+  return !(top && (top === el || el.contains(top)));
+}
+"""

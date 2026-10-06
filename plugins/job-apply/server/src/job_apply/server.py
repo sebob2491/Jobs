@@ -178,7 +178,7 @@ async def search_company_jobs(
         if not cfg or "403" not in err:
             continue
         try:
-            data = await browser.capture_json(eightfold_page_url(cfg, query, location), "/api/apply/v2/jobs")
+            data = await browser.capture_json(eightfold_page_url(cfg, query, location), "/api/pcsx/search")
         except Exception as e:  # keep the original error, add why the fallback failed too
             out["errors"][name] = f"{err}; browser fallback: {type(e).__name__}: {str(e).splitlines()[0][:150]}"
             continue

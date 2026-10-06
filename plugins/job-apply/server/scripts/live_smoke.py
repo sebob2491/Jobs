@@ -180,6 +180,7 @@ PROBES = {
     "Infineon": "https://jobs.infineon.com/careers?query=field%20service&domain=infineon.com",
     "ASML": "https://www.asml.com/en/careers/find-your-job?query=field%20service",
     "Texas Instruments": "https://careers.ti.com/en/sites/CX/jobs?keyword=technician",
+    "onsemi": "https://hctz.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1001/jobs?keyword=field+service",
 }
 
 
@@ -194,7 +195,8 @@ async def probe_page(name: str, url: str) -> dict[str, Any]:
     def on_response(r: Any) -> None:
         ctype = r.headers.get("content-type", "")
         if "json" in ctype or "/api/" in r.url:
-            seen.append({"method": r.request.method, "status": r.status, "url": r.url[:300], "type": ctype[:40]})
+            keep = 1500 if ("recruitingCEJobRequisitions" in r.url or "pcsx/search" in r.url) else 300
+            seen.append({"method": r.request.method, "status": r.status, "url": r.url[:keep], "type": ctype[:40]})
 
     tab.on("response", on_response)
     rec: dict[str, Any] = {"probe": name, "url": url}
