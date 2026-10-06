@@ -114,8 +114,9 @@ def search_brief(found: dict[str, Any], name: str) -> dict[str, Any]:
     }
 
 
-async def check_company(company: dict[str, Any], out: Path, fixtures: bool) -> dict[str, Any]:
-    rec: dict[str, Any] = {"company": company["name"], "search_config": company.get("search")}
+async def check_company(company: dict[str, Any], out: Path, fixtures: bool, rec: dict[str, Any]) -> None:
+    """Fills in rec as it goes, so whatever was found survives a crash."""
+    rec["search_config"] = company.get("search")
     # The MCP tool, so the Eightfold browser fallback and tracker marking run too.
     az = await server.search_company_jobs(QUERY_AZ, companies=[company["name"]], location="AZ", limit_per_company=5)
     rec["search_az"] = search_brief(az, company["name"])
@@ -124,7 +125,7 @@ async def check_company(company: dict[str, Any], out: Path, fixtures: bool) -> d
         found = await search_companies(QUERY_ANY, location=None, limit=3, companies=[company])
         rec["search_any"] = search_brief(found, company["name"])
     if not found["results"]:
-        return rec
+        return
     first = found["results"][0]
 
     posting = None
@@ -141,10 +142,11 @@ async def check_company(company: dict[str, Any], out: Path, fixtures: bool) -> d
     job = server.add_job(url=first["url"], title=first["title"], company=company["name"],
                          apply_url=(posting.apply_url if posting else "") or "")["job"]
     steps: list[dict[str, Any]] = []
+    rec["steps"] = steps
     opened = await server.open_application(job_id=job["id"])
     if "error" in opened:
         rec["browser"] = {"error": opened["error"]}
-        return rec
+        return
     steps.append({"step": "open", "url": opened["url"], "title": opened["title"], "headings": opened["headings"][:4],
                   "fields": opened["fields"], "actions": opened["actions"][:15],
                   "navigation_error": opened.get("navigation_error")})
@@ -157,10 +159,12 @@ async def check_company(company: dict[str, Any], out: Path, fixtures: bool) -> d
         action = pick_action(form["actions"])
         if action is None:
             break
+        step: dict[str, Any] = {"step": f"click {action['text']!r}"}
+        steps.append(step)  # before clicking, so a crash shows which button it was
         clicked = await server.click(action["id"])
-        steps.append({"step": f"click {action['text']!r}", "clicked": clicked.get("clicked"),
-                      "url": clicked.get("url"), "headings": (clicked.get("headings") or [])[:4],
-                      "fields": clicked.get("fields"), "blocked": clicked.get("blocked")})
+        step.update(clicked=clicked.get("clicked"), url=clicked.get("url"),
+                    headings=(clicked.get("headings") or [])[:4], fields=clicked.get("fields"),
+                    blocked=clicked.get("blocked"), note=clicked.get("note"))
         if dismissed := await dismiss_cookies():
             steps.append({"step": f"cookies: {dismissed}"})
     form = await server.inspect_form(include_dropdown_options=True)
@@ -169,7 +173,6 @@ async def check_company(company: dict[str, Any], out: Path, fixtures: bool) -> d
         "fields": [field_brief(f) for f in form["fields"]],
         "actions": [a["text"] for a in form["actions"]][:30],
     }
-    rec["steps"] = steps
     if form["fields"]:
         filled = await server.autofill(job_id=job["id"])
         rec["autofill"] = {
@@ -185,7 +188,6 @@ async def check_company(company: dict[str, Any], out: Path, fixtures: bool) -> d
         fixture_dir = Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "live"
         convert(dest, f"live-{slug(company['name'])}", fixture_dir)
         rec["fixture"] = f"live-{slug(company['name'])}"
-    return rec
 
 
 # Career pages whose job data comes from a call we haven't pinned down yet: record what
@@ -231,13 +233,13 @@ async def probe_page(name: str, url: str) -> dict[str, Any]:
     return rec
 
 
-async def check_careers_page(company: dict[str, Any]) -> dict[str, Any]:
+async def check_careers_page(company: dict[str, Any], rec: dict[str, Any]) -> None:
     """Companies without a search API: can the browser read their careers page at all?"""
-    rec: dict[str, Any] = {"company": company["name"], "careers_url": company.get("careers_url"), "ats": company.get("ats")}
+    rec.update(careers_url=company.get("careers_url"), ats=company.get("ats"))
     opened = await server.open_application(url=company["careers_url"])
     if "error" in opened:
         rec["browser"] = {"error": opened["error"]}
-        return rec
+        return
     form = await server.inspect_form(include_dropdown_options=False)
     text = await server.page_text(4000)
     rec["page"] = {
@@ -247,7 +249,16 @@ async def check_careers_page(company: dict[str, Any]) -> dict[str, Any]:
         "actions": [a["text"] for a in form["actions"]][:20],
         "text_sample": re.sub(r"\s+", " ", text)[:600],
     }
-    return rec
+
+
+async def page_state() -> dict[str, Any]:
+    """Where the browser was when something failed."""
+    try:
+        form = await asyncio.wait_for(server.inspect_form(include_dropdown_options=False), 20)
+        return {"url": form["url"], "headings": form["headings"][:6], "fields": len(form["fields"]),
+                "actions": [a["text"] for a in form["actions"]][:20]}
+    except Exception as e:  # noqa: BLE001
+        return {"error": f"{type(e).__name__}: {str(e)[:200]}"}
 
 
 async def main() -> int:
@@ -263,15 +274,16 @@ async def main() -> int:
     records = []
     for company in companies:
         started = time.time()
-        check = check_company if company.get("search") else None
+        rec: dict[str, Any] = {"company": company["name"]}
         try:
-            if check:
-                rec = await asyncio.wait_for(check_company(company, args.out, args.fixtures), COMPANY_TIMEOUT)
+            if company.get("search"):
+                await asyncio.wait_for(check_company(company, args.out, args.fixtures, rec), COMPANY_TIMEOUT)
             else:
-                rec = await asyncio.wait_for(check_careers_page(company), 60)
+                await asyncio.wait_for(check_careers_page(company, rec), 60)
         except Exception as e:  # noqa: BLE001
-            rec = {"company": company["name"], "crash": f"{type(e).__name__}: {str(e)[:300]}",
-                   "trace": traceback.format_exc()[-1500:]}
+            rec["crash"] = f"{type(e).__name__}: {str(e)[:300]}"
+            rec["trace"] = traceback.format_exc()[-1500:]
+            rec["page_at_crash"] = await page_state()
             await server.close_browser()  # start the next company with a fresh browser
         rec["seconds"] = round(time.time() - started, 1)
         records.append(rec)

@@ -240,6 +240,35 @@ def test_click_finds_a_replaced_button_and_checks_it_again(srv, monkeypatch):
     assert "Thank you" not in run(srv.page_text())
 
 
+def test_click_is_not_repeated_on_a_page_that_moved_on(srv, monkeypatch):
+    """When a click times out because the page already went to the next step, the
+    same-named button there must not be clicked as well."""
+    import job_apply.browser as browser_module
+
+    monkeypatch.setattr(browser_module, "CLICK_TIMEOUT", 1500)
+    run(srv.open_application(url=fixture_url("apply_button_form.html")))
+    page = run(srv.browser.page())
+    run(page.evaluate("""() => {
+      window.clicks = 0;
+      const next = document.createElement('button');
+      next.type = 'button';
+      next.textContent = 'Continue';
+      next.addEventListener('mouseover', () => {
+        history.pushState({}, '', '#step-2');  // the next step, with its own Continue
+        const again = next.cloneNode(true);
+        again.removeAttribute('data-ja-id');
+        again.addEventListener('click', () => { window.clicks += 1; });
+        next.replaceWith(again);
+      }, {once: true});
+      document.body.prepend(next);
+    }"""))
+    form = run(srv.inspect_form(include_dropdown_options=False))
+    cont = next(a for a in form["actions"] if a["text"] == "Continue")
+    out = run(srv.click(cont["id"]))
+    assert out["clicked"] and out["url"].endswith("#step-2") and "moved on" in out["note"]
+    assert run(page.evaluate("() => window.clicks")) == 0
+
+
 def test_dry_run_keeps_later_statuses(srv, monkeypatch):
     monkeypatch.setenv("JOB_APPLY_NEVER_SUBMIT", "1")
     job = srv.add_job(url=fixture_url("generic_form.html"), title="FSE", company="Example Litho")["job"]

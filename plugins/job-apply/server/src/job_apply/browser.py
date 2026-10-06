@@ -39,6 +39,8 @@ NAVIGATION_RE = re.compile(
     r"sign ?in|log ?in|create account|verify|send (me a )?code|ok|accept( all)?( cookies)?|i agree|apply manually|start)\b",
     re.I,
 )
+# How long a click may wait for its button to become clickable, in ms.
+CLICK_TIMEOUT = 8000
 CONFIRMATION_RE = re.compile(
     r"thank you for (applying|your application|your interest)|application (has been |was )?(submitted|received|complete)"
     r"|we('ve| have) received your application|successfully (submitted|applied)|your application is (in|on its way)",
@@ -526,17 +528,26 @@ class BrowserSession:
             loc = self._locator(page, target) if by_id else None
             text = self._actions[target]["text"] if target in self._actions else "" if by_id else target
             loc, info = await self._clickable(page, loc, text, allow_submit, target)
+            before, note = page.url, None
             try:
-                await loc.click(timeout=8000)
+                await loc.click(timeout=CLICK_TIMEOUT)
             except PlaywrightTimeout:
-                # Knockout/React can swap the button out mid-click, or a cookie banner sits on
-                # top: click it directly, after finding and checking it again.
-                loc, info = await self._clickable(
-                    page, loc if await self._present(loc) else None, info["text"] or text, allow_submit, target)
-                await loc.evaluate("el => el.click()", timeout=5000)
+                present = await self._present(loc)
+                # A page that moved on took the click (a slow navigation can outlast the
+                # timeout); clicking again could act on the next page.
+                if present or page.url == before:
+                    # Knockout/React swapped the button out, or a cookie banner sits on top:
+                    # click it directly, after finding and checking it again.
+                    loc, info = await self._clickable(
+                        page, loc if present else None, info["text"] or text, allow_submit, target)
+                    await loc.evaluate("el => el.click()", timeout=5000)
+                    note = "clicked directly: the button was covered or replaced"
+                else:
+                    note = "the click timed out but the page moved on, so it wasn't repeated; check the page"
             await self._settle(page)
             page = await self.page()  # the click may have opened a new tab
-            return await self._summary(page)
+            summary = await self._summary(page)
+            return {**summary, "note": note} if note else summary
 
     async def _clickable(self, page: Page, loc: Locator | None, text: str, allow_submit: bool,
                          target: str) -> tuple[Locator, dict[str, Any]]:
