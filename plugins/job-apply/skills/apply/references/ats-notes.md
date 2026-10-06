@@ -104,8 +104,10 @@ the page URL. Use this file for the parts of each flow that `autofill` can't do.
   the page's script draws the list (about 46 US openings, 10 to a page, 50 when asked)
   and its rows name no place, so the search reads it in the browser and takes each
   matching posting's place from its description ("based at our headquarters in Tempe,
-  AZ"). "(ATA)" in a title is Amkor Technology Arizona, the Peoria plant. A posting opens
-  on its own with just its `career_job_req_id`.
+  AZ"). "(ATA)" in a title marks the Peoria plant (Amkor Technology Arizona). A posting
+  opens on its own with just its `career_job_req_id`. Its **Apply** is the submit button
+  of a form with nothing to fill, which opens Amkor's Sign In page ("Already have an
+  account?" / "Not a registered user yet?"); the user signs in or creates the account.
 
 - Click **Apply now** on the posting, then sign in or create an account (email and
   password). Its link only works when pressed on the posting page: opened on its own it

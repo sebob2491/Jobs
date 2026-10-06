@@ -217,10 +217,8 @@ PROBES = {
     # Benchmark is Infor CloudSuite; Qorvo's search pages are SuccessFactors HTML. Canon USA
     # and MKS block automated browsers outright.)
     # Equipment makers with field service engineers at Arizona fabs, not in the list yet.
-    # Amkor's posting page (SuccessFactors' older pages): how its Apply button is drawn; the
-    # desk took it for a final submit and didn't press it
-    "Amkor Technology": "https://career8.successfactors.com/career?career_ns=job_listing&company=amkor"
-                        "&navBarLevel=JOB_SEARCH&rcm_site_locale=en_US&career_job_req_id=29107&selected_lang=en_US",
+    # (Oct 2026: Amkor's posting page wraps the posting in a form whose submit is "Apply"; the
+    # pipeline check now presses it through to Amkor's sign-in page.)
     # Nikon's posting page: how its Apply button is drawn (the form reader doesn't see it)
     "Nikon Precision": "https://recruiting2.ultipro.com/NIK1001NIKON/JobBoard/f11a0b52-5153-4c12-ad2c-b7f3b0a74112/"
                        "OpportunityDetail?opportunityId=532a7dc9-8394-4cbc-8184-f43e88e906bf",
