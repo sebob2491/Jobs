@@ -596,19 +596,22 @@ class Applier:
 
     async def _fill_once(self, run: Run, data: dict[str, Any]) -> dict[str, dict[str, Any]]:
         """Answers the person gave for this application only (not remembered). Returns the
-        ones that didn't go in, by question: the reason, and the entries to choose from
-        when the answer was a group of them."""
+        ones that didn't go in, by question: the field, the reason, and the entries to
+        choose from when the answer was a group of them."""
         if not run.once:
             return {}
-        by_id = {f["id"]: question_key(f.get("label") or "") for f in data.get("fields") or []}
+        fields = {f["id"]: f for f in data.get("fields") or []}
+        by_id = {fid: question_key(f.get("label") or "") for fid, f in fields.items()}
         fills = [{"id": fid, "value": run.once[key]} for fid, key in by_id.items()
-                 if key in run.once and is_empty_value(next(f.get("value") for f in data["fields"] if f["id"] == fid))]
+                 if key in run.once and is_empty_value(fields[fid].get("value"))]
         if not fills:
             return {}
         out = await self.srv.fill_form(fills)
-        failed = {by_id[r["id"]]: {"error": r.get("error") or "didn't take",
+        failed = {by_id[r["id"]]: {**{k: fields[r["id"]][k] for k in ("id", "kind", "label", "section", "required", "options")
+                                      if fields[r["id"]].get(k) not in (None, [])},
+                                   "error": r.get("error") or "didn't take",
                                    **({"options": r["options"]} if r.get("options") else {})}
-                  for r in out.get("results", []) if not r.get("ok")}
+                  for r in out.get("results", []) if not r.get("ok") and r.get("id") in fields}
         done = len(fills) - len(failed)
         if done:
             self._log(run, f"filled {done} answer(s) you gave for this application")
@@ -810,6 +813,11 @@ def _pending(result: dict[str, Any], once_failed: dict[str, dict[str, Any]]) -> 
     pending += [{"id": f["id"], "label": f.get("label") or "", "kind": "combobox" if f.get("options") else "text",
                  "required": True, "error": f.get("error"),
                  **({"options": f["options"]} if f.get("options") else {})} for f in result["failed"]]
+    # an answer of theirs the page turned down is asked again, even when the box isn't empty
+    # (words left in a picker's search box read as an answer), unless the profile's answer
+    # went in after it
+    asked = {question_key(f.get("label") or "") for f in pending + (result.get("filled") or [])}
+    pending += [f for key, f in once_failed.items() if key not in asked and f.get("kind") != "file"]
     missing_files = [f for f in result["needs_input"] if f.get("required") and f.get("kind") == "file"]
     return pending, missing_files
 

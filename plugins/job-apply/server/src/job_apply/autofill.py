@@ -42,7 +42,8 @@ _COUNTRY_ALIASES = [
     {"taiwan", "taiwan province of china", "chinese taipei"},
 ]
 _PLACEHOLDER_VALUES = re.compile(
-    r"^(|select|select one|select\.\.\.|-+|choose|choose one|please select|none selected|--\s*select\s*--|mm/dd/yyyy|mm/yyyy)$",
+    r"^(|select|select one|select\.\.\.|-+|choose|choose one|please select|none selected|no selection|"
+    r"--\s*select\s*--|mm/dd/yyyy|mm/yyyy)$",  # "No Selection": SuccessFactors' empty dropdowns
     re.I,
 )
 _YES = re.compile(r"^(yes|y|true|i am\b(?! not)|i do\b(?! not)|i will\b(?! not)|i have\b(?! not)|i can\b(?! not)|agree)", re.I)

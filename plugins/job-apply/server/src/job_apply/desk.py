@@ -358,6 +358,7 @@ class Desk:
             if a.get("remember", True):
                 try:
                     config.save_answer(label, value, run.company)
+                    run.once.pop(question_key(label), None)  # an earlier answer for this application only
                     continue
                 except (ValueError, OSError) as e:
                     problem = f"Couldn't remember your answers ({e}); they're used for this application only."

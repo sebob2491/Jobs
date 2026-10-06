@@ -891,3 +891,52 @@ def test_a_saved_password_goes_into_both_boxes_of_such_a_page(srv, monkeypatch):
     assert r.need == "your_submit" and "Your saved password is in its password boxes" in r.reason, (r.reason, r.log)
     assert values["pw"] == values["pw2"] == "Fake-Pass-123"
 
+
+
+def test_an_answer_the_page_turns_down_is_asked_again(srv, monkeypatch):
+    """Qorvo, live: an answer that matched nothing in a SuccessFactors dropdown left its words
+    in the box, the desk took the box for answered, and went on to the submit step while the
+    site still said "Preferred Locale/Language is required"."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    job = srv.add_job(url=fixture_url("site/sf-select-form.html"), title="ET", company="Example Semi")["job"]
+    applier = Applier(srv)
+    locale = question_key("Preferred Locale/Language")
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status == "needs_you")
+            assert r.need == "questions", (r.reason, r.log)
+            assert [q["label"] for q in r.questions] == ["Preferred Locale/Language"]  # Country was searched for
+
+            r.once[locale] = "Klingon"
+            applier.enqueue(job["id"], front=True)
+            await until(lambda: any("didn't go in" in line for line in r.log) and r.status not in ("queued", "running"))
+            assert r.need == "questions", (r.status, r.reason, r.log)
+            assert [q["label"] for q in r.questions] == ["Preferred Locale/Language"]
+            assert "Klingon" in r.questions[0]["error"]
+            assert await r.page.input_value("[aria-label='Preferred Locale/Language']") == ""
+
+            r.once[locale] = "English"
+            applier.enqueue(job["id"], front=True)
+            await until(lambda: r.status in ("ready", "failed") or r.status == "needs_you" and r.need != "questions")
+            assert r.status == "ready", (r.reason, r.log)
+            return await r.page.evaluate("() => [...document.querySelectorAll('input')].map((i) => i.value)")
+        finally:
+            await applier.stop()
+
+    assert run(go()) == ["Sam", "United States", "English"]
+
+
+def test_a_turned_down_answer_is_asked_again_whatever_the_box_shows():
+    """A widget that keeps the words after a failed pick still gets its question asked again,
+    unless the profile's own answer went in after."""
+    turned_down = {question_key("Preferred Locale/Language"): {
+        "id": "28", "label": "Preferred Locale/Language", "kind": "combobox", "required": True,
+        "error": "nothing in its list matched 'Klingon'"}}
+    nothing_left = {"needs_input": [], "failed": [], "filled": []}
+    pending, _ = pipeline._pending(nothing_left, turned_down)
+    assert [(q["label"], q["error"]) for q in pending] == [("Preferred Locale/Language", "nothing in its list matched 'Klingon'")]
+    profile_filled = {**nothing_left, "filled": [{"id": "28", "label": "Preferred Locale/Language", "value": "English"}]}
+    assert pipeline._pending(profile_filled, turned_down)[0] == []

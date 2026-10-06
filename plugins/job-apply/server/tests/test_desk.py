@@ -130,9 +130,13 @@ def test_desk_page_buttons_reach_the_api(srv, tmp_path):
     ]
     other = srv.add_job(url=fixture_url("generic_form.html"), title="Technician", company="Example Litho")["job"]
     desk.applier.runs[other["id"]] = Run(other["id"], "Technician", "Example Litho", status="needs_you", need="questions",
-                                         reason="1 question", questions=[{"id": "9", "label": "Do you have a valid driver's license?",
-                                                                          "kind": "select", "options": ["Select One", "Yes", "No"],
-                                                                          "required": True}])
+                                         reason="2 questions", questions=[{"id": "9", "label": "Do you have a valid driver's license?",
+                                                                           "kind": "select", "options": ["Select One", "Yes", "No"],
+                                                                           "required": True},
+                                                                          # SuccessFactors' list: its first page only
+                                                                          {"id": "10", "label": "Country", "kind": "combobox",
+                                                                           "options": ["No Selection", "Afghanistan", "Albania"],
+                                                                           "required": True}])
     desk.applier.start = lambda: None  # the queue isn't worked in this test
     desk.search.update(status="done", at=time.time())  # recent, so opening the page doesn't search the real sites
 
@@ -155,12 +159,19 @@ def test_desk_page_buttons_reach_the_api(srv, tmp_path):
                 assert [srv.tracker().get(j)["title"] for j in queued] == ["Field Service Engineer"]
 
                 await page.select_option("select[data-q]", "Yes")
+                # a searchable list: typed in, the entry needn't be among those shown
+                country = page.locator("input[list][data-q='Country']")
+                assert await page.locator(f"datalist#{await country.get_attribute('list')} option").evaluate_all(
+                    "os => os.map((o) => o.value)") == ["Afghanistan", "Albania"]  # no "No Selection"
+                await country.fill("United States")
+                await asyncio.sleep(3.5)  # the page refreshes every 1.5 s: answers being given stay put
                 await page.click(f"button[data-job='{other['id']}'][data-job-act='fill']")
                 for _ in range(50):
-                    if config.saved_answers():
+                    if len(config.saved_answers()) == 2:
                         break
                     await asyncio.sleep(0.1)
-                assert config.saved_answers()[0]["answer"] == "Yes"
+                saved = {a["question"]: a["answer"] for a in config.saved_answers()}
+                assert saved == {"Do you have a valid driver's license?": "Yes", "Country": "United States"}
                 assert ("apply", other["id"]) in desk.applier.tasks
 
                 await page.fill("#add-links", fixture_url("jsonld_posting.html"))
@@ -433,6 +444,20 @@ def test_answers_that_cant_be_remembered_still_go_into_the_application(srv, job_
     assert "this application only" in note
     assert desk.applier.runs[job["id"]].once == {question_key("Are you willing to relocate?"): "No"}
 
+
+
+def test_a_remembered_answer_replaces_one_given_for_this_application_only(srv, job_apply_home):
+    """The page turned down an answer given for this application only, and the person answers
+    again, remembering it: the earlier answer isn't tried again ahead of it."""
+    from job_apply.pipeline import Run, question_key
+
+    job = srv.add_job(url="https://example.com/a", title="FSE", company="Example Fab")["job"]
+    desk = Desk(srv)
+    desk.applier.runs[job["id"]] = Run(job["id"], "FSE", "Example Fab", status="needs_you", need="questions",
+                                       once={question_key("Preferred Locale/Language"): "Klingon"})
+    assert desk.answer(job["id"], [{"label": "Preferred Locale/Language", "value": "English"}]) is None
+    assert desk.applier.runs[job["id"]].once == {}
+    assert config.saved_answers()[0]["answer"] == "English"
 
 def test_saving_an_answer_keeps_the_rest_of_answers_yaml(job_apply_home):
     import yaml

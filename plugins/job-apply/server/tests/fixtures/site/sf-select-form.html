@@ -1,0 +1,84 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Career Opportunities: Equipment Technician (10556)</title>
+<style>
+  .rcmpaginatedselectlist { display: none; border: 1px solid #999; max-height: 200px; overflow: auto; }
+  .rcmpaginatedselectlist.open { display: block; }
+  .rcmpaginatedselectlist [role="option"] { padding: 2px 4px; cursor: pointer; }
+</style>
+</head>
+<body>
+<!-- like SuccessFactors' application questions (Qorvo, Oct 2026): its dropdowns are
+     "paginated selects", a text box that lists 10 entries here (100 on the live site) and
+     filters the whole list as you type. "No Selection" is the empty choice, and words typed
+     into the box stay there when nothing is picked. -->
+<h1>Career Opportunities: Equipment Technician (10556)</h1>
+<form id="apply" novalidate>
+  <label for="fn">Legal First Name *</label><input id="fn" required>
+  <div class="sel">
+    <input aria-label="Country" autocomplete="off" type="text" placeholder="No Selection" role="combobox"
+           aria-owns="10:_listSelect" aria-required="true" aria-expanded="false" id="9:_input"
+           class="rcmpaginatedselectinput rcmpaginatedselectitem">
+    <div id="10:_listSelect" role="listbox" class="rcmpaginatedselectlist"></div>
+  </div>
+  <div class="sel">
+    <input aria-label="Preferred Locale/Language" autocomplete="off" type="text" placeholder="No Selection"
+           role="combobox" aria-owns="38:_listSelect" aria-required="true" aria-expanded="false" id="37:_input"
+           class="rcmpaginatedselectinput rcmpaginatedselectitem">
+    <div id="38:_listSelect" role="listbox" class="rcmpaginatedselectlist"></div>
+  </div>
+  <button type="submit">Apply</button>
+</form>
+<script>
+  const PAGE = 10;
+  const LISTS = {
+    '9:_input': ['No Selection', 'Afghanistan', 'Aland Islands', 'Albania', 'Algeria', 'American Samoa', 'Andorra',
+                 'Angola', 'Anguilla', 'Antarctica', 'Argentina', 'Armenia', 'Brazil', 'Canada', 'France', 'Germany',
+                 'Mexico', 'United Kingdom', 'United States', 'United States Minor Outlying Islands', 'Zambia'],
+    '37:_input': ['No Selection', 'Afrikaans', 'Arabic', 'Chinese', 'Dutch', 'English', 'French', 'German', 'Hindi',
+                  'Japanese', 'Korean', 'Portuguese', 'Spanish', 'Vietnamese'],
+  };
+  for (const [id, all] of Object.entries(LISTS)) {
+    const box = document.getElementById(id);
+    const list = document.getElementById(box.getAttribute('aria-owns'));
+    const show = () => {
+      const q = box.value.trim().toLowerCase();
+      list.innerHTML = '';
+      for (const name of all.filter((n) => !q || n.toLowerCase().includes(q)).slice(0, PAGE)) {
+        const o = document.createElement('div');
+        o.setAttribute('role', 'option');
+        o.textContent = name;
+        o.addEventListener('mousedown', (e) => e.preventDefault());  // keeps the box focused
+        o.addEventListener('click', () => {
+          box.value = name === 'No Selection' ? '' : name;
+          box.classList.remove('invalidInput');
+          close();
+        });
+        list.append(o);
+      }
+      list.classList.add('open');
+      box.setAttribute('aria-expanded', 'true');
+    };
+    const close = () => { list.classList.remove('open'); box.setAttribute('aria-expanded', 'false'); };
+    box.addEventListener('click', show);
+    box.addEventListener('keyup', (e) => { if (e.key === 'Escape') close(); else show(); });
+    box.addEventListener('blur', () => {
+      close();
+      // typed words stay in the box; the site only marks them as not a choice
+      if (box.value && !all.includes(box.value)) box.classList.add('invalidInput');
+    });
+  }
+  document.getElementById('apply').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const missing = [...document.querySelectorAll('[aria-required="true"], [required]')]
+      .filter((el) => !el.value || el.classList.contains('invalidInput'));
+    if (missing.length) {
+      document.getElementById('apply').insertAdjacentHTML('beforebegin',
+        `<p class="error" role="alert">${missing.map((el) => el.getAttribute('aria-label') || el.id).join(', ')} is required</p>`);
+      return;
+    }
+    document.body.innerHTML = '<h1>Thank you for applying!</h1>';
+  });
+</script>
+</body>
+</html>

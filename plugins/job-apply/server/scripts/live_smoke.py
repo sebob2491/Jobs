@@ -71,7 +71,7 @@ FAKE_PROFILE = {
 from job_apply import server  # noqa: E402
 from job_apply.fixtures import convert  # noqa: E402
 from job_apply.postings import fetch_posting  # noqa: E402
-from job_apply.autofill import polarity  # noqa: E402
+from job_apply.autofill import is_empty_value, polarity  # noqa: E402
 from job_apply.search import load_companies, sitecore_search  # noqa: E402
 
 QUERY_AZ = "field service | customer service engineer | customer engineer | equipment technician"  # in Arizona
@@ -609,7 +609,8 @@ async def print_shot(name: str, page: Any) -> None:
 
 def fake_answer(q: dict[str, Any]) -> Any:
     """A throwaway answer for a question the fake profile can't answer (this run only)."""
-    options = [o for o in q.get("options") or [] if o and not re.match(r"^(select|choose|--|please)", o, re.I)]
+    options = [o for o in q.get("options") or []
+               if o and not is_empty_value(o) and not re.match(r"^(select|choose|--|please)", o, re.I)]
     if q.get("kind") == "checkbox":
         return "Yes"
     if options:

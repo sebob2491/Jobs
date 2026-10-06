@@ -1,4 +1,9 @@
-from job_apply.autofill import choose_option, plan_autofill, resolve_field
+from job_apply.autofill import (
+    choose_option,
+    is_empty_value,
+    plan_autofill,
+    resolve_field,
+)
 from job_apply.config import Profile
 
 
@@ -288,3 +293,13 @@ def test_names_are_matched_by_name_not_shared_words():
     assert choose_option("Mesa Community College", ["Scottsdale Community College", "Mesa Community College (AZ)"],
                          names=True) == "Mesa Community College (AZ)"
     assert choose_option("Intel Corporation", ["Intel", "Microchip"], names=True) == "Intel"
+
+
+def test_no_selection_is_nothing_chosen():
+    """SuccessFactors' dropdowns read "No Selection" when nothing is picked: the box is empty,
+    and the entry is no "No" answer."""
+    assert is_empty_value("No Selection")
+    assert choose_option("I do not", ["No Selection", "Yes", "No"]) == "No"
+    country = {"id": "1", "label": "Country", "kind": "combobox", "value": "", "search": True,
+               "options": ["No Selection", "Afghanistan", "Aland Islands", "Albania"]}
+    assert resolve_field(country, prof()).value == "United States"  # searched for: the list starts at A

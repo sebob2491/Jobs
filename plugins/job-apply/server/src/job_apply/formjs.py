@@ -221,9 +221,11 @@ EXTRACT_JS = r"""
       if (role === 'spinbutton') f.role = 'spinbutton';
     }
     if (options) f.options = options;
-    // a Workday search prompt: what it lists on opening is only its top level
+    // a Workday search prompt: what it lists on opening is only its top level; SuccessFactors'
+    // paginated select lists its first 100 entries (Qorvo's countries stop at Iran), the rest by search
     if (kind === 'combobox' && (el.getAttribute('data-uxi-widget-type') === 'selectinput'
-        || el.closest('[data-automation-id="multiSelectContainer"], [data-automation-id="multiselectInputContainer"]'))) f.search = true;
+        || el.closest('[data-automation-id="multiSelectContainer"], [data-automation-id="multiselectInputContainer"]')
+        || el.classList.contains('rcmpaginatedselectinput'))) f.search = true;
     if (el.multiple) f.multiple = true;
     if (el.disabled || el.getAttribute('aria-disabled') === 'true') f.disabled = true;
     if (el.readOnly) f.readonly = true;

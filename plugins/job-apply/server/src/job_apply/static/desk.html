@@ -313,13 +313,20 @@ function renderRows() {
   $("apply").textContent = n ? `Apply to ${n} selected` : "Apply to selected";
 }
 
-function question(jobId, q) {
+function question(jobId, q, i) {
   const name = `q-${jobId}-${q.label}`;
   const consent = /agree|consent|certify|acknowledge|terms|attest/i.test(q.label);
-  const opts = (q.options || []).filter((o) => o && !/^(select|choose|--)/i.test(o));
+  const opts = (q.options || []).filter((o) => o && !/^(select|choose|--|no selection$)/i.test(o));
   let input;
   if (q.kind === "checkbox") {
     input = `<select data-q="${esc(q.label)}"><option value=""></option><option>Yes</option><option>No</option></select>`;
+  } else if (opts.length && (q.kind === "combobox" || opts.length > 25)) {
+    // a long or searchable list (countries, schools): type to narrow it, or type an answer
+    // the site's list only shows once you search for it. The same id on every refresh, so
+    // the form isn't redrawn (and what's typed into it lost) each time the page refreshes.
+    const list = `dl-${jobId}-${i}`;
+    input = `<input type="text" list="${list}" data-q="${esc(q.label)}" autocomplete="off" placeholder="Type or pick">
+      <datalist id="${list}">${opts.map((o) => `<option value="${esc(o)}"></option>`).join("")}</datalist>`;
   } else if (opts.length) {
     input = `<select data-q="${esc(q.label)}"><option value=""></option>${opts.map((o) => `<option>${esc(o)}</option>`).join("")}</select>`;
   } else {
@@ -356,7 +363,7 @@ function renderSide() {
   const needEntries = needs.map((r) => {
     const head = `<h3>${esc(r.title)} <span class="small">· ${esc(r.company)}</span></h3><p>${esc(r.reason)}</p>`;
     let body;
-    const form = (r.questions || []).length ? `<form data-answer="${r.job_id}">${r.questions.map((q) => question(r.job_id, q)).join("")}</form>` : "";
+    const form = (r.questions || []).length ? `<form data-answer="${r.job_id}">${r.questions.map((q, i) => question(r.job_id, q, i)).join("")}</form>` : "";
     if (r.need === "questions") body = form + jobButtons(r, ["fill", "show", "skip"]);
     else if (form) body = form + jobButtons(r, ["fill", "show", "resume", "skip"]);  // e.g. a missing file, plus questions
     else if (["sign_in", "bot_check", "email_code"].includes(r.need)) body = jobButtons(r, ["show", r.blocking ? "later" : "resume", "skip"]);
