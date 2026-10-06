@@ -586,7 +586,7 @@ def test_a_flow_that_goes_round_in_a_circle_stops_after_one_lap(srv, monkeypatch
             await applier.stop()
 
     r = run(go())
-    assert r.need == "stuck" and "came back round" in r.reason, (r.status, r.reason, r.log)
-    assert "too many verification codes" in r.reason
+    assert r.need == "stuck" and "went round in a circle" in r.reason, (r.status, r.reason, r.log)
+    assert "“Continue” on “Confirm Your Identity” (“You've requested too many verification codes" in r.reason
     assert [line for line in r.log if line.startswith("clicked")] == ["clicked “Apply Now”", "clicked “Next”",
                                                                        "clicked “Continue”"]

@@ -96,6 +96,10 @@ the page URL. Use this file for the parts of each flow that `autofill` can't do.
 - The flow asks for the email first, then sends a one-time code to that address.
   If `settings.email_codes` is on, fetch the code as the apply skill describes.
   Otherwise the user enters it, or reads it out to you.
+- If **Next** leads to a page whose **Continue** goes back to the job posting, don't go
+  round again. Read what that page says. In live checks (Oct 2026) both onsemi and TI
+  started doing this for a test address that had asked for many codes in one day,
+  probably a limit on codes per address. The Job Desk stops after one lap.
 - Texas Instruments shows a privacy banner whose only button is **AGREE AND PROCEED**.
   It covers **Apply Now** and the email step, so no fields appear until it's gone.
   Agreeing is the user's call, like any cookie choice: ask once per session.

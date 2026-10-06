@@ -453,9 +453,10 @@ class Applier:
             if key in pressed and pressed[-1] != key:
                 # Round in a circle (Oracle sent its sites back to the posting from "Continue"):
                 # going round again only repeats it, and may email the person another code.
-                back = pressed_on[-1] if pressed_on else ""
-                return self._pause(run, "stuck", f"I came back round to {_where(data)} after {back}, so the site isn't "
-                                   "letting this application on. Have a look in the browser, then press Resume.")
+                lap = " \u2192 ".join(pressed_on[pressed.index(key):])
+                return self._pause(run, "stuck", f"I went round in a circle ({lap}, then back to {_where(data)}), so "
+                                   "the site isn't letting this application on. Have a look in the browser, then press "
+                                   "Resume.")
             pressed.append(key)
             pressed_on.append(f"\u201c{action['text'].strip()}\u201d on {_page_said(data)}")
             before = _fingerprint(data)
