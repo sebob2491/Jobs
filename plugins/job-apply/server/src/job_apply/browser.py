@@ -137,6 +137,25 @@ class BrowserSession:
             self._page = live[-1] if live else await self._ctx.new_page()
         return self._page
 
+    async def new_tab(self) -> Page:
+        """Open a tab and make it the one the tools act on (the Job Desk gives each job its own)."""
+        async with self._lock:
+            await self.page()
+            assert self._ctx is not None
+            self._page = await self._ctx.new_page()
+            return self._page
+
+    def use_tab(self, page: Page | None) -> bool:
+        """Act on this tab from now on; False if it has been closed."""
+        if page is None or page.is_closed() or self._ctx is None:
+            return False
+        self._page = page
+        return True
+
+    @property
+    def current_tab(self) -> Page | None:
+        return self._page if self._page is not None and not self._page.is_closed() else None
+
     async def close(self) -> None:
         if self._ctx is not None:
             try:

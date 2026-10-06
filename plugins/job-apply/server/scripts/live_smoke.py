@@ -10,6 +10,10 @@ For each company with a `search` config in data/companies.yaml:
   4. save a debug snapshot (and, with --fixtures, a test fixture).
 Companies without a search API get a lighter check of their careers page.
 
+With --pipeline it instead runs the Job Desk's one-button pipeline on one posting per
+company: through Apply, sign-in pages (where it stops), every form step and the review
+page. Questions the fake profile can't answer get throwaway answers for that run only.
+
 Safety: JOB_APPLY_NEVER_SUBMIT=1 is forced, so nothing can be submitted. The fake
 profile has no resume, so nothing is uploaded. It never clicks sign-in, account
 creation, "Autofill with Resume", "Next", or third-party apply buttons (LinkedIn,
@@ -266,10 +270,13 @@ async def main() -> int:
     ap.add_argument("--out", type=Path, default=Path("live-report"))
     ap.add_argument("--companies", default="", help="comma-separated names (default: all)")
     ap.add_argument("--fixtures", action="store_true", help="also write tests/fixtures/live/ fixtures")
+    ap.add_argument("--pipeline", action="store_true", help="run the one-button apply pipeline instead")
     args = ap.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
     wanted = [n.strip().lower() for n in args.companies.split(",") if n.strip()]
     companies = [c for c in load_companies() if not wanted or any(w in c["name"].lower() for w in wanted)]
+    if args.pipeline:
+        return await pipeline_main(companies, args.out)
 
     records = []
     for company in companies:
@@ -314,6 +321,94 @@ async def main() -> int:
             (r.get("crash") or (r.get("browser") or {}).get("error") or (r.get("page") or {}).get("title", ""))[:60],
         ))
     (args.out / "report.md").write_text("\n".join(lines) + "\n")
+    print("\n".join(lines))
+    return 0
+
+
+PIPELINE_WAIT = 180
+
+
+def fake_answer(q: dict[str, Any]) -> Any:
+    """A throwaway answer for a question the fake profile can't answer (this run only)."""
+    options = [o for o in q.get("options") or [] if o and not re.match(r"^(select|choose|--|please)", o, re.I)]
+    if q.get("kind") == "checkbox":
+        return "Yes"
+    if options:
+        return options[0]
+    if re.search(r"year|salary|number|how many|zip|postal|\bgpa\b", q.get("label") or "", re.I):
+        return "0"
+    return "Test answer"
+
+
+async def check_pipeline(company: dict[str, Any], out: Path, rec: dict[str, Any]) -> None:
+    from job_apply.pipeline import Applier, question_key
+
+    found = await server.search_company_jobs(QUERY_AZ, companies=[company["name"]], location="AZ", limit_per_company=5)
+    if not found["results"]:
+        found = await search_companies(QUERY_ANY, location=None, limit=3, companies=[company])
+    if not found["results"]:
+        rec["note"] = "no postings found"
+        return
+    first = found["results"][0]
+    rec["posting"] = {k: first.get(k) for k in ("title", "location", "url")}
+    job = server.add_job(url=first["url"], title=first["title"], company=company["name"])["job"]
+    applier = Applier(server)
+    applier.start()
+    rec["rounds"] = []
+    try:
+        run = applier.enqueue(job["id"])
+        for _ in range(3):
+            start = time.monotonic()
+            while run.status in ("queued", "running"):
+                if time.monotonic() - start > PIPELINE_WAIT:
+                    raise TimeoutError(f"still {run.status} after {PIPELINE_WAIT}s; log: {run.log[-3:]}")
+                await asyncio.sleep(0.5)
+            rec["rounds"].append({
+                "status": run.status, "need": run.need, "reason": run.reason, "url": run.url, "log": list(run.log),
+                "questions": [{k: q.get(k) for k in ("label", "kind", "required", "options", "error")}
+                              for q in run.questions],
+            })
+            if run.status == "needs_you" and run.need == "questions":
+                for q in run.questions:
+                    run.once[question_key(q.get("label") or "")] = fake_answer(q)
+                applier.enqueue(job["id"], front=True)
+                continue
+            break
+    finally:
+        await applier.stop()
+        try:
+            snap = await server.debug_snapshot(note=f"live pipeline: {company['name']}")
+            shutil.copytree(snap["saved_to"], out / "pipeline" / slug(company["name"]), dirs_exist_ok=True)
+        except Exception:  # noqa: BLE001 - the record matters more than the snapshot
+            pass
+        await server.close_browser()
+
+
+async def pipeline_main(companies: list[dict[str, Any]], out: Path) -> int:
+    records = []
+    for company in [c for c in companies if c.get("search")]:
+        started = time.time()
+        rec: dict[str, Any] = {"company": company["name"]}
+        try:
+            await asyncio.wait_for(check_pipeline(company, out, rec), 3 * PIPELINE_WAIT + 60)
+        except Exception as e:  # noqa: BLE001
+            rec["crash"] = f"{type(e).__name__}: {str(e)[:300]}"
+            rec["trace"] = traceback.format_exc()[-1500:]
+            await server.close_browser()
+        rec["seconds"] = round(time.time() - started, 1)
+        records.append(rec)
+        print("LIVE_PIPELINE " + json.dumps(rec, default=str), flush=True)
+    (out / "pipeline.json").write_text(json.dumps(records, indent=2, default=str))
+    lines = ["| Company | Posting | Ended | Waiting on | Steps | Questions answered |", "|---|---|---|---|---|---|"]
+    for r in records:
+        rounds = r.get("rounds") or []
+        last = rounds[-1] if rounds else {}
+        lines.append("| {} | {} | {} | {} | {} | {} |".format(
+            r["company"], ((r.get("posting") or {}).get("title") or r.get("note") or "")[:40],
+            r.get("crash", "")[:50] or last.get("status", "–"), last.get("need", ""),
+            len(last.get("log") or []), sum(len(x.get("questions") or []) for x in rounds[:-1]),
+        ))
+    (out / "report.md").write_text("\n".join(lines) + "\n")
     print("\n".join(lines))
     return 0
 

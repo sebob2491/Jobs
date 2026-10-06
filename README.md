@@ -90,6 +90,41 @@ https://job-boards.greenhouse.io/<company>/jobs/<id>
 What have I applied to this month?   ·   Mark the Lam job as interviewing   ·   Export my tracker to CSV
 ```
 
+### The Job Desk: recommended jobs and one Apply button
+
+```
+/job-apply:desk
+```
+
+opens a page on your computer (served by the plugin on `127.0.0.1`):
+
+1. **Find jobs** searches every employer's career site for your target titles in
+   your area. Each opening gets a fit score, with the reasons and concerns under it:
+   "title matches", "posted this week", "requires a Bachelor's (you have an
+   Associate's)", "senior-level role", "requires an active clearance".
+2. Tick the ones you want, or press **Select recommended**, then **Apply to
+   selected**. The desk works through them one at a time in the browser window. It
+   clicks into each application, fills every page, adds Workday's work and
+   education blocks, and stops at each review page.
+3. **Needs you** lists what it can't do alone:
+   - Questions your profile doesn't answer. You answer them on the page, and they're
+     remembered for later applications unless you untick that.
+   - Sign-ins, bot checks and emailed codes. You deal with those in the browser
+     window, and the desk carries on by itself.
+4. Press **Submit** on each finished application, or turn on **Submit for me**, so
+   that every application that needs nothing from you is sent. LinkedIn and Indeed
+   are always yours to submit.
+
+Jobs Claude saves from Indeed or LinkedIn show up in the same list. Without Claude
+Code, run `uv run --project <plugin>/server job-apply-desk`.
+
+**Bot checks.** The desk never tries to get around Cloudflare, CAPTCHAs or other bot
+checks: no disguised browser, no CAPTCHA-solving services. When a site shows one, it
+pauses that job and brings its tab to the front for you. The automation browser keeps
+its own profile, so once you've passed a site's check, that site usually lets it
+through for a while. TSMC's careers site turns automated browsers away entirely, so
+apply there in your everyday browser, or through the same posting on Indeed.
+
 ## Where your data lives
 
 Everything personal stays on your machine in `~/.job-apply/`. Set
@@ -101,6 +136,8 @@ Everything personal stays on your machine in `~/.job-apply/`. Set
 | `resume.pdf` | Default resume |
 | `secrets.yaml` | Optional career-site passwords (you write this file; run `chmod 600` on it) |
 | `tracker.db` | Application tracker (SQLite). `export_jobs_csv` writes a spreadsheet. |
+| `answers.yaml` | Answers you gave in the Job Desk, reused on later applications. Edit or delete entries freely. |
+| `recommendations.json`, `desk.json` | The Job Desk's last search, and whether "Submit for me" is on |
 | `browser/` | The automation browser's profile, which keeps your sign-ins |
 | `applications/<id>-<company>-<title>/` | Tailored resume and cover letter, screenshots, submission record, `debug/` snapshots |
 
@@ -125,6 +162,7 @@ plugins/job-apply/
     find-jobs/    search Indeed (via the Indeed connector) and company career sites
     track-responses/  read replies from Gmail and update the tracker
     interview-prep/   research, likely questions and STAR stories for an interview
+    desk/         open the Job Desk page (recommended jobs, one-button applying)
   data/companies.yaml                semiconductor employers in Arizona, careers URL + ATS
   templates/profile.example.yaml
   server/                            Python MCP server (Playwright browser automation)
@@ -148,6 +186,7 @@ plugins/job-apply/
 | `render_document` | Markdown resume or cover letter → PDF in the job folder |
 | `submit_application` | Final submit, enforcing the rules above, and record the result |
 | `log_email`, `logged_emails` | Record employer replies; each email counts once and statuses only move forward |
+| `open_job_desk` | Open the Job Desk page: recommended openings ranked against the profile, one-button applying |
 
 ## Development
 

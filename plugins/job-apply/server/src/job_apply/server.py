@@ -31,7 +31,7 @@ Rules: never invent facts about the applicant; answers must come from the profil
 user. LinkedIn and Indeed applications are always submitted by the user clicking the
 button themselves. Passwords go through fill_secret, never fill_form."""
 
-mcp = MCPServer("job-apply", instructions=INSTRUCTIONS, version="0.2.0")
+mcp = MCPServer("job-apply", instructions=INSTRUCTIONS, version="0.3.0")
 browser = BrowserSession()
 _tracker: Tracker | None = None
 
@@ -472,6 +472,24 @@ async def close_browser() -> dict[str, Any]:
     """Close the automation browser (sign-ins are kept in the profile for next time)."""
     await browser.close()
     return {"closed": True}
+
+
+@mcp.tool()
+async def open_job_desk(open_browser: bool = True) -> dict[str, Any]:
+    """Open the Job Desk: a page on this computer that lists recommended openings from
+    every employer, ranked against the profile, and applies to the ones the user picks
+    with one button. It fills each application in the automation browser up to its
+    review page, pauses for anything that needs the user (questions it can't answer,
+    sign-ins, bot checks, emailed codes), and submits only when they press Submit or turn
+    on "Submit for me". Returns the page's address; it stays up while Claude Code runs."""
+    import sys
+
+    from .desk import get_desk
+
+    desk = get_desk(sys.modules[__name__])
+    url = await desk.start(open_browser=open_browser)
+    return {"url": url, "opened_in_browser": open_browser,
+            "note": "The address carries a private key; share it with no one. Press Find jobs on the page to search."}
 
 
 def _mark_ready(job: dict[str, Any], note: str) -> None:

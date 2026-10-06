@@ -1,0 +1,420 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Job Desk</title>
+<style>
+:root {
+  --bg: #f6f7f9; --surface: #ffffff; --text: #1b1f24; --muted: #5d6673; --line: #e2e6ea;
+  --accent: #1f6feb; --accent-text: #ffffff; --good: #1a7f37; --good-bg: #e7f5ec; --warn: #9a6700; --warn-bg: #fff4d6;
+  --bad: #cf222e; --bad-bg: #ffebe9; --info-bg: #eef4ff; --chip: #eef0f3; --shadow: 0 1px 2px rgba(0,0,0,.06);
+  --body: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #0f1216; --surface: #171b21; --text: #e6e9ee; --muted: #9aa4b2; --line: #2a313a;
+    --accent: #4c8dff; --good: #4ac26b; --good-bg: #13291b; --warn: #d4a72c; --warn-bg: #2c2410;
+    --bad: #ff7b72; --bad-bg: #3a1716; --info-bg: #15223a; --chip: #232a33; --shadow: none; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.45 var(--body); }
+header { position: sticky; top: 0; z-index: 5; background: var(--surface); border-bottom: 1px solid var(--line); }
+.bar { max-width: 1240px; margin: 0 auto; padding: 12px 16px; display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; }
+h1 { font-size: 18px; margin: 0; }
+.who { color: var(--muted); font-size: 14px; }
+.spacer { flex: 1; }
+.pill { display: inline-block; font-size: 12px; font-weight: 600; padding: 3px 9px; border-radius: 999px; background: var(--chip); color: var(--muted); white-space: nowrap; }
+.pill.good { background: var(--good-bg); color: var(--good); }
+.pill.warn { background: var(--warn-bg); color: var(--warn); }
+.pill.bad { background: var(--bad-bg); color: var(--bad); }
+.pill.info { background: var(--info-bg); color: var(--accent); }
+button { font: inherit; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); color: var(--text); padding: 7px 12px; cursor: pointer; }
+button:hover { border-color: var(--muted); }
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); font-weight: 600; }
+button.primary:disabled { opacity: .5; cursor: default; }
+button.link { border: 0; background: none; color: var(--accent); padding: 0; }
+main { max-width: 1240px; margin: 0 auto; padding: 16px; display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); gap: 16px; align-items: start; }
+@media (max-width: 900px) { main { grid-template-columns: 1fr; } .side { order: -1; } }
+section.card { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); }
+.card-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 12px 14px; border-bottom: 1px solid var(--line); }
+.card-head h2 { font-size: 15px; margin: 0; }
+.tabs { display: flex; gap: 4px; }
+.tabs button { padding: 4px 10px; font-size: 13px; }
+.tabs button[aria-pressed="true"] { background: var(--chip); border-color: var(--muted); }
+.notice { margin: 0 0 16px; padding: 10px 14px; border-radius: 10px; background: var(--warn-bg); color: var(--text); grid-column: 1 / -1; }
+.notice code { font-size: 13px; }
+.applybar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; padding: 10px 14px; border-bottom: 1px solid var(--line); background: var(--info-bg); }
+.applybar label { display: flex; align-items: center; gap: 6px; font-size: 14px; }
+.applybar .hint { color: var(--muted); font-size: 13px; }
+ul.rows { list-style: none; margin: 0; padding: 0; }
+.row { display: grid; grid-template-columns: auto auto minmax(0, 1fr) auto; gap: 10px; padding: 12px 14px; border-top: 1px solid var(--line); align-items: start; }
+.row:first-child { border-top: 0; }
+@media (max-width: 600px) { .row { grid-template-columns: auto auto minmax(0, 1fr); } .row > div:last-child { grid-column: 3; } }
+.row.done { opacity: .6; }
+.row input[type=checkbox] { margin-top: 4px; width: 17px; height: 17px; }
+.score { min-width: 38px; text-align: center; font-weight: 700; font-size: 14px; padding: 3px 0; border-radius: 8px; background: var(--chip); }
+.score.s4 { background: var(--good-bg); color: var(--good); }
+.score.s3 { background: var(--info-bg); color: var(--accent); }
+.score.s2 { background: var(--warn-bg); color: var(--warn); }
+.score.s1 { color: var(--muted); }
+.title { font-weight: 600; color: var(--text); text-decoration: none; overflow-wrap: anywhere; }
+.title:hover { text-decoration: underline; }
+.meta { color: var(--muted); font-size: 13px; margin-top: 2px; }
+.chips { display: flex; flex-wrap: wrap; gap: 4px 6px; margin-top: 6px; }
+.chip { font-size: 12px; padding: 2px 8px; border-radius: 999px; background: var(--chip); color: var(--muted); }
+.chip.plus { background: var(--good-bg); color: var(--good); }
+.chip.minus { background: var(--warn-bg); color: var(--warn); }
+.chip.stop { background: var(--bad-bg); color: var(--bad); }
+.empty { padding: 28px 16px; text-align: center; color: var(--muted); }
+.side { display: grid; gap: 16px; }
+.task { padding: 12px 14px; border-top: 1px solid var(--line); }
+.task:first-child { border-top: 0; }
+.task h3 { font-size: 14px; margin: 0 0 4px; }
+.task p { margin: 4px 0 8px; font-size: 14px; }
+.task .actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.task.hands { background: var(--warn-bg); }
+.q { display: grid; gap: 4px; margin: 10px 0; }
+.q > span { font-size: 14px; }
+.q input[type=text], .q select { font: inherit; width: 100%; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--text); }
+.q .remember { font-size: 12px; color: var(--muted); display: flex; gap: 6px; align-items: center; }
+.log { font-size: 12px; color: var(--muted); margin: 6px 0 0; padding-left: 16px; }
+.small { font-size: 13px; color: var(--muted); }
+.counts { display: flex; flex-wrap: wrap; gap: 6px; padding: 12px 14px; }
+details { padding: 10px 14px; border-top: 1px solid var(--line); font-size: 13px; color: var(--muted); }
+details a { color: var(--accent); }
+footer { max-width: 1240px; margin: 0 auto; padding: 0 16px 24px; color: var(--muted); font-size: 12px; }
+.spin { display: inline-block; width: 12px; height: 12px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin .8s linear infinite; vertical-align: -1px; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spin { animation: none; } }
+</style>
+</head>
+<body>
+<header>
+  <div class="bar">
+    <h1>Job Desk</h1>
+    <span class="who" id="who"></span>
+    <span id="mode"></span>
+    <span class="spacer"></span>
+    <span class="small" id="searched"></span>
+    <button id="find" data-act="find">Find jobs</button>
+  </div>
+</header>
+<main>
+  <div id="notices" style="grid-column: 1 / -1; display: grid; gap: 8px;"></div>
+  <section class="card" aria-labelledby="list-h">
+    <div class="card-head">
+      <h2 id="list-h">Openings</h2>
+      <div class="tabs" role="group" aria-label="Which openings">
+        <button data-filter="recommended" aria-pressed="true">Recommended</button>
+        <button data-filter="all" aria-pressed="false">All</button>
+      </div>
+      <span class="spacer"></span>
+      <button class="link" data-act="select-recommended">Select recommended</button>
+      <button class="link" data-act="select-none">Clear</button>
+    </div>
+    <div class="applybar">
+      <button class="primary" id="apply" data-act="apply" disabled>Apply to selected</button>
+      <label><input type="checkbox" id="auto"> Submit for me when nothing needs me</label>
+      <span class="hint" id="auto-hint"></span>
+    </div>
+    <ul class="rows" id="rows"></ul>
+    <div id="skipped-sites"></div>
+  </section>
+  <div class="side">
+    <section class="card" aria-labelledby="needs-h">
+      <div class="card-head"><h2 id="needs-h">Needs you</h2><span class="pill" id="needs-count">0</span></div>
+      <div id="needs"></div>
+    </section>
+    <section class="card" aria-labelledby="work-h">
+      <div class="card-head"><h2 id="work-h">Working on</h2></div>
+      <div id="work"></div>
+    </section>
+    <section class="card" aria-labelledby="done-h">
+      <div class="card-head"><h2 id="done-h">Ready and done</h2></div>
+      <div id="done"></div>
+      <div class="counts" id="counts"></div>
+    </section>
+  </div>
+</main>
+<footer>
+  The desk fills applications in the automation browser window and stops at each review page.
+  It only submits when you press Submit, or when "Submit for me" is on. LinkedIn and Indeed are always submitted by you.
+  Answers you give here are saved in <code>~/.job-apply/answers.yaml</code> unless you untick "remember".
+</footer>
+<script>
+"use strict";
+const params = new URLSearchParams(location.search);
+let token = params.get("t") || "";
+try { if (token) sessionStorage.setItem("desk-token", token); else token = sessionStorage.getItem("desk-token") || ""; } catch (e) {}
+
+const selected = new Set();
+let filter = "recommended";
+let state = null;
+let busy = false;
+
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
+const $ = (id) => document.getElementById(id);
+
+async function api(path, body) {
+  const res = await fetch(path, {
+    method: body === undefined ? "GET" : "POST",
+    headers: {"x-desk-token": token, "content-type": "application/json"},
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || res.statusText);
+  return data;
+}
+
+function ago(t) {
+  if (!t) return "";
+  const s = Math.max(0, Date.now() / 1000 - t);
+  if (s < 60) return "just now";
+  if (s < 3600) return Math.round(s / 60) + " min ago";
+  if (s < 86400) return Math.round(s / 3600) + " h ago";
+  return Math.round(s / 86400) + " days ago";
+}
+
+// Replace only the children whose markup changed, so typing and focus survive the refresh.
+function patch(container, entries) {
+  const existing = new Map([...container.children].map((el) => [el.dataset.key, el]));
+  let prev = null;
+  for (const {key, html} of entries) {
+    let el = existing.get(key);
+    if (el && el.dataset.html !== html) { el.remove(); el = null; }
+    if (!el) {
+      const t = document.createElement("template");
+      t.innerHTML = html.trim();
+      el = t.content.firstElementChild;
+      el.dataset.key = key;
+      el.dataset.html = html;
+    }
+    existing.delete(key);
+    const ref = prev ? prev.nextSibling : container.firstChild;
+    if (el !== ref) container.insertBefore(el, ref);
+    prev = el;
+  }
+  for (const el of existing.values()) el.remove();
+}
+
+const STATUS = {
+  applied: ["Applied", "good"], interviewing: ["Interviewing", "good"], offer: ["Offer", "good"],
+  rejected: ["Rejected", ""], withdrawn: ["Withdrawn", ""], skipped: ["Skipped", ""],
+  ready_to_submit: ["Ready to submit", "info"], in_progress: ["Started", ""], saved: ["Saved", ""],
+};
+const RUN = {
+  queued: ["Queued", "info"], running: ["Working…", "info"], needs_you: ["Needs you", "warn"],
+  ready: ["Ready to submit", "info"], submitted: ["Submitted", "good"], failed: ["Didn't finish", "bad"], skipped: ["Skipped", ""],
+};
+const DONE = new Set(["applied", "interviewing", "offer", "rejected", "withdrawn", "skipped"]);
+
+function statusPill(row) {
+  const r = row.run;
+  const [text, cls] = r ? RUN[r.status] || [r.status, ""] : STATUS[row.status] || ["", ""];
+  return text ? `<span class="pill ${cls}">${esc(text)}</span>` : "";
+}
+
+function scoreClass(s) { return s >= 75 ? "s4" : s >= 60 ? "s3" : s >= 40 ? "s2" : "s1"; }
+
+function renderRows() {
+  const rows = (state.listings || []).filter((r) => filter === "all" || (r.fit && r.fit.recommended) || r.run);
+  const entries = rows.map((r) => {
+    const fit = r.fit || {score: 0, reasons: [], concerns: []};
+    const done = DONE.has(r.status) || (r.run && ["submitted", "running", "queued"].includes(r.run.status));
+    const chips = [
+      ...fit.reasons.map((x) => `<span class="chip plus">${esc(x)}</span>`),
+      ...fit.concerns.map((x) => `<span class="chip ${fit.blocked ? "stop" : "minus"}">${esc(x)}</span>`),
+    ].join("");
+    const checked = selected.has(r.url) && !done ? "checked" : "";
+    return {key: r.url, html: `<li class="row ${DONE.has(r.status) ? "done" : ""}">
+      <input type="checkbox" data-pick="${esc(r.url)}" ${checked} ${done ? "disabled" : ""} aria-label="Select ${esc(r.title)}">
+      <span class="score ${scoreClass(fit.score)}" title="Fit score">${esc(fit.score)}</span>
+      <div><a class="title" href="${esc(r.url)}" target="_blank" rel="noopener">${esc(r.title)}</a>
+        <div class="meta">${esc(r.company)} · ${esc(r.location || "location not given")}${r.posted ? " · " + esc(r.posted) : ""}</div>
+        <div class="chips">${chips}</div></div>
+      <div>${statusPill(r)}</div></li>`};
+  });
+  if (!entries.length) {
+    const msg = state.search.status === "running" ? "Searching employers' career sites…"
+      : (state.listings || []).length ? "Nothing recommended. Switch to All to see every opening."
+      : "Press Find jobs to search every employer's career site for openings that fit your profile.";
+    entries.push({key: "empty", html: `<li class="empty">${esc(msg)}</li>`});
+  }
+  patch($("rows"), entries);
+  const n = [...selected].filter((u) => (state.listings || []).some((r) => r.url === u)).length;
+  $("apply").disabled = n === 0;
+  $("apply").textContent = n ? `Apply to ${n} selected` : "Apply to selected";
+}
+
+function question(jobId, q) {
+  const name = `q-${jobId}-${q.label}`;
+  const consent = /agree|consent|certify|acknowledge|terms|attest/i.test(q.label);
+  const opts = (q.options || []).filter((o) => o && !/^(select|choose|--)/i.test(o));
+  let input;
+  if (q.kind === "checkbox") {
+    input = `<select data-q="${esc(q.label)}"><option value=""></option><option>Yes</option><option>No</option></select>`;
+  } else if (opts.length) {
+    input = `<select data-q="${esc(q.label)}"><option value=""></option>${opts.map((o) => `<option>${esc(o)}</option>`).join("")}</select>`;
+  } else {
+    input = `<input type="text" data-q="${esc(q.label)}" autocomplete="off">`;
+  }
+  return `<label class="q"><span>${esc(q.label)}${q.error ? ` <span class="small">(${esc(q.error)})</span>` : ""}</span>${input}
+    <span class="remember"><input type="checkbox" data-remember="${esc(q.label)}" ${consent ? "" : "checked"}> Remember for later applications</span></label>`;
+}
+
+function jobButtons(r, which) {
+  const b = (act, text, cls = "") => `<button class="${cls}" data-job="${r.job_id}" data-job-act="${act}">${text}</button>`;
+  const out = [];
+  if (which.includes("show")) out.push(b("show", "Show me"));
+  if (which.includes("fill")) out.push(b("fill", "Fill these in", "primary"));
+  if (which.includes("submit")) out.push(b("submit", "Submit", "primary"));
+  if (which.includes("applied")) out.push(b("applied", "I submitted it", "primary"));
+  if (which.includes("resume")) out.push(b("resume", "Resume"));
+  if (which.includes("later")) out.push(b("later", "Later"));
+  if (which.includes("skip")) out.push(b("skip", "Skip job"));
+  return `<div class="actions">${out.join("")}</div>`;
+}
+
+function allRuns() {
+  const rows = [...(state.listings || []), ...(state.others || [])].filter((r) => r.run);
+  return rows.map((r) => ({...r.run, job_id: r.job_id, title: r.title || r.run.title, company: r.company || r.run.company}));
+}
+
+function renderSide() {
+  const runs = allRuns();
+  const needs = runs.filter((r) => r.status === "needs_you").sort((a, b) => b.blocking - a.blocking);
+  $("needs-count").textContent = needs.length;
+  $("needs-count").className = "pill " + (needs.length ? "warn" : "");
+  const needEntries = needs.map((r) => {
+    const head = `<h3>${esc(r.title)} <span class="small">· ${esc(r.company)}</span></h3><p>${esc(r.reason)}</p>`;
+    let body;
+    if (r.need === "questions") body = `<form data-answer="${r.job_id}">${r.questions.map((q) => question(r.job_id, q)).join("")}</form>` + jobButtons(r, ["fill", "show", "skip"]);
+    else if (["sign_in", "bot_check", "email_code"].includes(r.need)) body = jobButtons(r, ["show", r.blocking ? "later" : "resume", "skip"]);
+    else if (r.need === "captcha") body = jobButtons(r, ["show", "submit", "skip"]);
+    else if (r.need === "your_submit") body = jobButtons(r, ["show", "applied", "skip"]);
+    else body = jobButtons(r, ["show", "resume", "skip"]);
+    const key = `${r.job_id}:${r.need}:${(r.questions || []).map((q) => q.label).join("|")}`;
+    return {key, html: `<div class="task ${r.blocking ? "hands" : ""}">${head}${body}</div>`};
+  });
+  if (!needEntries.length) needEntries.push({key: "none", html: `<div class="empty">Nothing right now.</div>`});
+  patch($("needs"), needEntries);
+
+  const working = runs.filter((r) => r.status === "running");
+  const queued = runs.filter((r) => r.status === "queued").length;
+  const workEntries = working.map((r) => ({key: "w" + r.job_id, html: `<div class="task"><h3><span class="spin"></span> ${esc(r.title)} <span class="small">· ${esc(r.company)}</span></h3>
+    <ul class="log">${(r.log || []).slice(-4).map((l) => `<li>${esc(l)}</li>`).join("")}</ul></div>`}));
+  if (queued) workEntries.push({key: "q", html: `<div class="task small">${queued} more queued.</div>`});
+  if (!workEntries.length) workEntries.push({key: "idle", html: `<div class="empty">Idle.</div>`});
+  patch($("work"), workEntries);
+
+  const done = runs.filter((r) => ["ready", "submitted", "failed"].includes(r.status));
+  const doneEntries = done.map((r) => {
+    const buttons = r.status === "ready" ? jobButtons(r, ["show", "submit", "skip"])
+      : r.status === "failed" ? jobButtons(r, ["show", "resume", "skip"]) : "";
+    const [text, cls] = RUN[r.status];
+    return {key: "d" + r.job_id + r.status, html: `<div class="task"><h3>${esc(r.title)} <span class="small">· ${esc(r.company)}</span>
+      <span class="pill ${cls}">${esc(text)}</span></h3><p>${esc(r.reason)}</p>${buttons}</div>`};
+  });
+  if (!doneEntries.length) doneEntries.push({key: "none", html: `<div class="empty">Nothing yet.</div>`});
+  patch($("done"), doneEntries);
+  const c = state.counts || {};
+  $("counts").innerHTML = ["applied", "ready_to_submit", "interviewing", "offer"].filter((k) => c[k])
+    .map((k) => `<span class="pill ${STATUS[k][1]}">${esc(STATUS[k][0])}: ${c[k]}</span>`).join("") || `<span class="small">No applications tracked yet.</span>`;
+}
+
+function renderHeader() {
+  const p = state.profile, s = state.settings;
+  $("who").textContent = p.name ? `for ${p.name}` : "";
+  const mode = s.dry_run ? ["Practice mode: nothing is sent", "warn"] : state.settings.auto_submit ? ["Submits for you", "bad"] : ["Stops at each review page", "good"];
+  $("mode").innerHTML = `<span class="pill ${mode[1]}">${esc(mode[0])}</span>`;
+  const sr = state.search;
+  $("find").innerHTML = sr.status === "running" ? `<span class="spin"></span> Searching…` : "Find jobs";
+  $("find").disabled = sr.status === "running";
+  $("searched").textContent = sr.status === "failed" ? "Search failed: " + (sr.error || "") : sr.at ? "Searched " + ago(sr.at) : "";
+  const auto = $("auto");
+  if (document.activeElement !== auto) auto.checked = !!s.auto_submit;
+  auto.disabled = s.dry_run;
+  $("auto-hint").textContent = s.dry_run ? "Off in practice mode (settings.submit_mode: dry_run)." : s.auto_submit ? "On: complete applications are submitted without asking." : "Off: you press Submit for each one.";
+  const notes = [];
+  if (p.missing && p.missing.length) notes.push(`Your profile is missing ${p.missing.map(esc).join(", ")}. Run <code>/job-apply:setup</code> in Claude Code, or edit <code>${esc(p.path)}</code>.`);
+  if (!token) notes.push("This page needs the address the desk printed (it carries a key). Open it from Claude with “open the job desk”.");
+  $("notices").innerHTML = notes.map((n) => `<p class="notice">${n}</p>`).join("");
+  const skipped = sr.browser_only || [], errs = Object.entries(sr.errors || {});
+  $("skipped-sites").innerHTML = skipped.length || errs.length ? `<details><summary>Not searched automatically (${skipped.length + errs.length})</summary>
+    ${skipped.map((b) => `<div>${esc(b.company)}: <a href="${esc(b.careers_url)}" target="_blank" rel="noopener">search their site</a></div>`).join("")}
+    ${errs.map(([c, e]) => `<div>${esc(c)}: ${esc(e)}</div>`).join("")}</details>` : "";
+}
+
+function render() {
+  if (!state) return;
+  renderHeader();
+  renderRows();
+  renderSide();
+}
+
+async function refresh() {
+  if (busy) return;
+  try {
+    state = await api("/api/state");
+    render();
+  } catch (e) {
+    $("notices").innerHTML = `<p class="notice">Can't reach the desk (${esc(e.message)}). Is Claude Code (or job-apply-desk) still running?</p>`;
+  }
+}
+
+async function act(fn) {
+  busy = true;
+  try { await fn(); } catch (e) { alert(e.message); } finally { busy = false; await refresh(); }
+}
+
+document.addEventListener("click", (e) => {
+  const t = e.target.closest("button");
+  if (!t) return;
+  if (t.dataset.filter) {
+    filter = t.dataset.filter;
+    document.querySelectorAll("[data-filter]").forEach((b) => b.setAttribute("aria-pressed", String(b === t)));
+    renderRows();
+    return;
+  }
+  const a = t.dataset.act, job = t.dataset.job, jobAct = t.dataset.jobAct;
+  if (a === "find") act(() => api("/api/search", {}));
+  if (a === "select-recommended") {
+    (state.listings || []).forEach((r) => { if (r.fit && r.fit.recommended && !DONE.has(r.status) && !r.run) selected.add(r.url); });
+    renderRows();
+  }
+  if (a === "select-none") { selected.clear(); renderRows(); }
+  if (a === "apply") {
+    const urls = [...selected];
+    const auto = state.settings.auto_submit && !state.settings.dry_run;
+    if (auto && !confirm(`Submit ${urls.length} application(s) for you wherever nothing needs you?`)) return;
+    act(async () => { await api("/api/apply", {urls, submit: auto}); selected.clear(); });
+  }
+  if (jobAct === "fill") {
+    const form = document.querySelector(`form[data-answer="${job}"]`);
+    const answers = [...form.querySelectorAll("[data-q]")].map((el) => ({
+      label: el.dataset.q, value: el.value,
+      remember: form.querySelector(`[data-remember="${CSS.escape(el.dataset.q)}"]`)?.checked ?? true,
+    })).filter((x) => x.value);
+    if (!answers.length) { alert("Answer at least one question first."); return; }
+    act(() => api("/api/answer", {job_id: Number(job), answers}));
+  } else if (jobAct === "submit") {
+    if (confirm("Submit this application now?")) act(() => api(`/api/job/${job}/submit`, {}));
+  } else if (jobAct) {
+    act(() => api(`/api/job/${job}/${jobAct}`, {}));
+  }
+});
+
+document.addEventListener("change", (e) => {
+  const t = e.target;
+  if (t.dataset.pick) { t.checked ? selected.add(t.dataset.pick) : selected.delete(t.dataset.pick); renderRows(); }
+  if (t.id === "auto") {
+    if (t.checked && !confirm("Submit complete applications without asking you first? You can turn this off any time.")) { t.checked = false; return; }
+    act(() => api("/api/settings", {auto_submit: t.checked}));
+  }
+});
+
+refresh();
+setInterval(refresh, 1500);
+</script>
+</body>
+</html>
