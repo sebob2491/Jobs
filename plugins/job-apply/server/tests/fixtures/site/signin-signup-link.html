@@ -1,0 +1,22 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Log in</title></head>
+<body>
+<!-- like UKG Pro's sign-in (Nikon Precision): a new account starts at a "Sign up" link -->
+<h1>Welcome, come on in!</h1>
+<form id="signin" novalidate>
+  <label for="em">Email address *</label><input id="em" type="text" required>
+  <label for="pw">Password *</label><input id="pw" type="password" required>
+  <button type="submit">Sign in</button>
+</form>
+<p>Don't have an account? <a href="signup.html">Sign up</a></p>
+<div id="err" role="alert"></div>
+<script>
+  // No account exists for anyone here: every sign-in fails, as at an employer applied to for the first time.
+  document.getElementById('signin').addEventListener('submit', (e) => {
+    e.preventDefault();
+    document.getElementById('err').textContent = 'Wrong email or password';
+  });
+</script>
+</body>
+</html>

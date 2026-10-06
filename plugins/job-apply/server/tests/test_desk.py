@@ -333,7 +333,8 @@ def test_a_site_password_goes_to_secrets_only(srv):
                 h = {"x-desk-token": desk.token}
                 body = {"name": "workday_password", "value": "s3cret: #1"}
                 assert (await c.post("/api/password", json=body)).status_code == 403
-                none = {"workday": False, "successfactors": False, "icims": False}
+                none = {"workday": False, "successfactors": False, "icims": False, "applicantstack": False,
+                        "ukg": False, "infor": False}
                 assert (await c.get("/api/state", headers=h)).json()["passwords"] == none
                 assert (await c.post("/api/password", headers=h, json=body)).json() == {"saved": True}
                 after = await c.get("/api/state", headers=h)
@@ -366,7 +367,8 @@ def test_saving_a_password_leaves_the_rest_of_the_file_alone(job_apply_home):
 
 def test_a_broken_secrets_file_doesnt_break_the_page(srv, job_apply_home):
     config.secrets_path().write_text("workday_password: [unclosed\n")
-    assert Desk(srv).state()["passwords"] == {"workday": False, "successfactors": False, "icims": False}
+    assert Desk(srv).state()["passwords"] == {"workday": False, "successfactors": False, "icims": False,
+                                              "applicantstack": False, "ukg": False, "infor": False}
 
 
 def test_pasted_links_are_read_saved_and_listed(srv):

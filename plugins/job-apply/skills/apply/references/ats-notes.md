@@ -108,6 +108,8 @@ the page URL. Use this file for the parts of each flow that `autofill` can't do.
   opens on its own with just its `career_job_req_id`. Its **Apply** is the submit button
   of a form with nothing to fill, which opens Amkor's Sign In page ("Already have an
   account?" / "Not a registered user yet?"); the user signs in or creates the account.
+  **Create an account** asks for the email twice, a password twice, names and country, and
+  has a "Hear more about career opportunities" box, which is the user's choice.
 
 - Click **Apply now** on the posting, then sign in or create an account (email and
   password). Its link only works when pressed on the posting page: opened on its own it
@@ -156,6 +158,9 @@ the page URL. Use this file for the parts of each flow that `autofill` can't do.
 
 - Every opening is listed on one page (`/x/openings`), with its location. The board also
   has a **My Account** page for returning to a saved or submitted application.
+- Applying needs an account: a posting's apply link leads to `/x/login` (Username, Password,
+  **Login**). **Create an Account** (`/x/createaccount`) asks for a username, the password twice,
+  a name and an email; use the email as the username. Its **Submit** creates the account.
 
 ## CAPTCHAs
 
@@ -188,8 +193,9 @@ the page URL. Use this file for the parts of each flow that `autofill` can't do.
 - A posting can open under an "Accessibility Note" that hides the page's buttons until
   **Dismiss Note** is pressed. The Job Desk dismisses it; it's information, not a choice.
 - **Apply now** and **Sign In** are web components (`<ukg-button>`). Apply now leads to
-  UKG's sign-in page (`signin-us.ultipro.com`), where the user signs in or creates an
-  account with that employer.
+  UKG's sign-in page (`signin-us.ultipro.com`: Email address, Password, **Sign in**), where
+  the user signs in or creates an account with that employer. **Sign up** opens "Create your
+  account" (the email and one password box); its **Continue** creates it.
 
 ## Infor CloudSuite HCM (`*.inforcloudsuite.com/hcm/Jobs`): Benchmark Electronics
 
@@ -198,7 +204,10 @@ the page URL. Use this file for the parts of each flow that `autofill` can't do.
   them 10 at a time and that call doesn't reliably answer plain requests, so the search runs
   in a background browser tab and asks for 200 at a time.
 - A posting's address ends in `JobPosting[JobPostingSet](1,<id>,1).JobPostingDisplayNav`.
-  Applying needs an account on the board (its **Register** / **Sign In**).
+  Applying needs an account on the board: **Apply** leads to Infor's sign-in (User Name,
+  Password). **Register** opens a registration form: names, the email as the user name, the
+  password twice, a picture code the user types, and an optional resume upload. It only
+  creates the account; the application comes after it.
 
 ## ASML (`asml.com/en/careers`)
 

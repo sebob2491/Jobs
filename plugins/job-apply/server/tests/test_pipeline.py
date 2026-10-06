@@ -401,7 +401,7 @@ def test_create_account_is_filled_but_left_for_the_person(srv, monkeypatch):
             await applier.stop()
 
     r = run(go())
-    assert "filled the Create Account form with your email and saved password" in r.log
+    assert "filled the Create Account form with your details and saved password" in r.log
 
 
 @pytest.mark.parametrize("page", ["signin-no-account.html", "signin-no-account-link.html"])
@@ -431,6 +431,69 @@ def test_a_saved_password_that_doesnt_sign_in_opens_create_account(srv, monkeypa
     r = run(go())
     assert r.log.count("signed in with your saved password") == 1  # not tried again
     assert "your saved password didn't sign in, so I opened Create Account" in r.log
+
+
+def test_a_sign_up_form_with_one_password_box_is_filled_in(srv, monkeypatch):
+    """UKG Pro (Nikon Precision): after the saved password doesn't sign in, "Sign up" opens a
+    "Create your account" form with one password box. It's filled in; Continue is the person's."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    saved_password(monkeypatch)
+    job = srv.add_job(url=fixture_url("site/signin-signup-link.html"), title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status == "needs_you")
+            assert r.need == "sign_in" and "Create Account form" in r.reason, (r.reason, r.log)
+            assert "first application" in r.reason
+            assert r.page.url.endswith("signup.html")
+            filled = await r.page.evaluate("() => [em.value, pw.value.length > 0, window.created]")
+            assert filled == ["sam.rivera@example.com", True, 0]  # filled in, Continue not pressed
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert r.log.count("signed in with your saved password") == 1  # not tried again
+    assert "filled the Create Account form with your details and saved password" in r.log
+
+
+@pytest.mark.parametrize("page, expected", [
+    # Amkor's SuccessFactors: the email twice, names and country; the newsletter box is left alone
+    ("create-account-details.html", {"email": "sam.rivera@example.com", "email2": "sam.rivera@example.com", "same": True,
+                                     "first": "Sam", "last": "Rivera", "country": "United States", "news": False}),
+    # SCREEN's ApplicantStack: the user name is the email, then the name and the email again
+    ("create-account-username.html", {"user": "sam.rivera@example.com", "same": True, "name": "Sam Rivera",
+                                      "email": "sam.rivera@example.com"}),
+    # Benchmark's Infor: the picture code, the resume upload and the "no resume" box are the person's
+    ("register-picture-code.html", {"first": "Sam", "last": "Rivera", "email": "sam.rivera@example.com", "same": True,
+                                    "code": "", "upload": "", "files": 0, "nores": False}),
+])
+def test_a_create_account_form_is_filled_from_the_profile(srv, monkeypatch, page, expected):
+    """A new account's form asks for more than the email and password. The rest comes from
+    the profile; the form isn't sent, and the job isn't taken for a filled-in application."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    saved_password(monkeypatch)
+    job = srv.add_job(url=fixture_url(f"site/{page}"), title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status == "needs_you")
+            assert r.need == "sign_in" and "Create Account form" in r.reason, (r.reason, r.log)
+            assert await r.page.evaluate("() => window.result()") == expected
+            assert await r.page.evaluate("() => window.created") == 0
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert "filled the Create Account form with your details and saved password" in r.log
+    assert srv.tracker().get(job["id"])["status"] != "ready"
 
 
 def test_follows_an_application_that_opens_in_a_new_tab_late(srv, monkeypatch):
@@ -708,6 +771,10 @@ def test_the_saved_password_only_goes_to_its_own_system():
     assert password_for("https://asml.wd3.myworkdayjobs.com/en-US/ASMLExternal/login") == "workday_password"
     assert password_for("https://wd5.myworkday.com/acme/login.htmld") == "workday_password"
     assert password_for("https://career4.successfactors.com/career?company=acme") == "successfactors_password"
+    # SCREEN's ApplicantStack, UKG Pro's sign-in (Nikon Precision), Benchmark's Infor board
+    assert password_for("https://seus.applicantstack.com/x/login") == "applicantstack_password"
+    assert password_for("https://signin-us.ultipro.com/u/login?state=abc") == "ukg_password"
+    assert password_for("https://css-benchmark-prd.inforcloudsuite.com/sso/SSOServlet") == "infor_password"
     # lookalikes that only mention Workday in their address
     assert password_for("https://evil.example/myworkdayjobs.com/login") is None
     assert password_for("https://acme.myworkdayjobs.com.evil.example/login") is None

@@ -27,7 +27,7 @@ from urllib.parse import urlparse
 
 from . import config
 from .ats import ATS_NAMES, detect_ats
-from .autofill import clean_label, is_empty_value, norm, tailored_document
+from .autofill import clean_label, is_empty_value, norm, plan_autofill, tailored_document
 from .browser import TabClosed
 
 NEW_TAB_WAIT = 4  # seconds to wait for a tab opened late by a click before calling it a stall
@@ -50,6 +50,7 @@ _CODE_FIELD = re.compile(r"verification code|one[- ]time (?:pass)?code|passcode|
                          r"(?:sent|email)|enter (?:the )?(?:\d-digit )?code|\botp\b", re.I)
 _SIGN_IN_ACTION = re.compile(r"^(sign in|log ?in|sign in with email)$", re.I)
 _CREATE_ACCOUNT = re.compile(r"^(create (?:an |your |a new )?account|sign up|register)[.!]?$", re.I)
+_ACCOUNT_KINDS = {"text", "email", "tel", "select", "combobox", "listbox"}  # not check boxes or files
 _SOCIAL = re.compile(r"\b(google|apple|linked ?in|facebook|microsoft|indeed|seek)\b", re.I)
 _STEP = re.compile(r"^(save (?:and|&) continue|continue|next|next step|review|review (?:and|&) submit|"
                    r"review application|proceed|go to next step|start)$", re.I)
@@ -454,9 +455,10 @@ class Applier:
                 if done == "prefilled":
                     first = (" Your saved password didn't sign in there, so this is probably your first application "
                              "with them; if you do have an account, sign in instead." if sign_ins.get("create_account") else "")
-                    return self._pause(run, "sign_in", f"I filled in your email and saved password on {_site(run, data)}'s "
-                                       "Create Account form. Tick their terms box if there is one and create the account "
-                                       "(then verify your email if they ask); the desk carries on after that." + first)
+                    return self._pause(run, "sign_in", f"I filled in {_site(run, data)}'s Create Account form with your "
+                                       "details and saved password. Fill in anything it still asks for (a picture code, "
+                                       "say), tick their terms box if there is one and create the account (then verify "
+                                       "your email if they ask); the desk carries on after that." + first)
                 if done == "filled":
                     return self._pause(run, "sign_in", f"I filled in your email and saved password on {_site(run, data)}'s "
                                        "sign-in form. Press its sign-in button in the browser window; the desk carries on "
@@ -647,7 +649,7 @@ class Applier:
             return True
         return False
 
-    async def _sign_in(self, run: Run, data: dict[str, Any], tried: dict[str, int]) -> str | None:
+    async def _sign_in(self, run: Run, data: dict[str, Any], tried: dict[str, int], details: bool = True) -> str | None:
         """With the profile email and a stored <ats>_password (if the person saved one):
 
         - "email_step": pressed Workday's "Sign in with email" to reach the form;
@@ -658,7 +660,8 @@ class Applier:
           the person;
         - "filled": filled in a sign-in form whose button it doesn't recognise.
 
-        None when there's nothing (more) to do. `tried` counts what this pass already did."""
+        None when there's nothing (more) to do. `tried` counts what this pass already did;
+        `details=False` leaves a Create Account form's other boxes as they are."""
         srv = self.srv
         secret = password_for(data["url"])
         if secret is None or _secret(secret) is None:
@@ -673,10 +676,13 @@ class Applier:
             await srv.click(email_button["id"])
             return "email_step"
         passwords = [f for f in fields if f["kind"] == "password"]
-        if len(passwords) == 1 and tried.get("submitted"):
+        create = next((a for a in actions if _CREATE_ACCOUNT.match(a["text"].strip())), None)
+        # Where the way to a new account led: a form with one password box (UKG Pro's "Create
+        # your account") is the new account's, as it no longer offers a way to one.
+        signing_up = len(passwords) == 1 and bool(tried.get("create_account")) and create is None
+        if len(passwords) == 1 and tried.get("submitted") and not signing_up:
             # Signed in once already and still asked to: the password didn't get in. Trying it
             # again won't help (and can lock an account); a first visit needs an account.
-            create = next((a for a in actions if _CREATE_ACCOUNT.match(a["text"].strip())), None)
             if create is None or tried.get("create_account"):
                 return None
             try:
@@ -685,17 +691,25 @@ class Applier:
                 return None
             self._log(run, "your saved password didn't sign in, so I opened Create Account")
             return "create_account"
-        email = next((f for f in fields if f["kind"] in ("text", "email")
-                      and re.search(r"e-?mail|user ?name|login", f.get("label") or "", re.I)), None)
+        boxes = [f for f in fields if f["kind"] in ("text", "email")
+                 and re.search(r"e-?mail|user ?name|login", f.get("label") or "", re.I)]
         address = config.Profile.load().get("personal.email")
-        if email is None or not address or not 1 <= len(passwords) <= 2:
+        if not boxes or not address or not 1 <= len(passwords) <= 2:
             return None
-        await srv.fill_form([{"id": email["id"], "value": address}])
+        new_account = len(passwords) == 2 or signing_up
+        if new_account:
+            # The email in every box that asks for it ("Retype Email Address"; the user name
+            # SCREEN's form asks for is the email too), and the rest from the profile.
+            if details:
+                await self._fill_account_details(fields)
+            await srv.fill_form([{"id": f["id"], "value": address} for f in boxes])
+        else:
+            await srv.fill_form([{"id": boxes[0]["id"], "value": address}])
         for box in passwords:
             if not (await srv.fill_secret(box["id"], secret)).get("ok"):
                 return None  # it didn't go in: say nothing about a saved password
-        if len(passwords) == 2:  # a new account: accepting the site's terms is the person's call
-            self._log(run, "filled the Create Account form with your email and saved password")
+        if new_account:  # accepting the site's terms, and creating the account, are the person's call
+            self._log(run, "filled the Create Account form with your details and saved password")
             return "prefilled"
         button = next((a for a in actions if _SIGN_IN_ACTION.match(a["text"].strip()) and not _SOCIAL.search(a["text"])),
                       None)
@@ -704,6 +718,15 @@ class Applier:
         await srv.click(button["id"])
         self._log(run, "signed in with your saved password")
         return "submitted"
+
+    async def _fill_account_details(self, fields: list[dict[str, Any]]) -> None:
+        """A Create Account form's other boxes, from the profile: names, country. Its check
+        boxes (a newsletter, the site's terms) and file boxes ("upload your resume now?") are
+        left alone, as is anything the profile doesn't answer (Benchmark's picture code)."""
+        empty = [f for f in fields if f.get("kind") in _ACCOUNT_KINDS and is_empty_value(f.get("value"))]
+        plan = plan_autofill(empty, config.Profile.load(), {})
+        if plan["to_fill"]:
+            await self.srv.fill_form([{"id": f["id"], "value": f["value"]} for f in plan["to_fill"]])
 
     async def _apply_with_account(self, run: Run, data: dict[str, Any]) -> None:
         """A page that creates the account as it applies: Qorvo's SuccessFactors puts Create
@@ -726,7 +749,7 @@ class Applier:
         if pending:
             return self._pause(run, "questions", f"{len(pending)} question(s) your profile doesn't answer. Answer them "
                                "here and the desk fills them in (and remembers them).", pending)
-        saved = await self._sign_in(run, data, {}) == "prefilled"
+        saved = await self._sign_in(run, data, {}, details=False) == "prefilled"  # filled in above
         srv._mark_ready(srv.tracker().get(run.job_id), "filled by the Job Desk; the site creates the account as it applies")
         await self._bring_forward(run)
         password = "Your saved password is in its password boxes" if saved else "Choose a password in its password boxes"
@@ -804,17 +827,20 @@ _APPLICATION_FIELD = re.compile(r"first name|last name|full name|legal name|resu
                                 r"authori[sz]ed|sponsor|start (?:the |your |an? )?appl", re.I)  # "email to start application"
 
 
-_ACCOUNT_FIELD = re.compile(r"e-?mail|password|user ?name|log ?in|terms|privacy|captcha|language|locale", re.I)
+_ACCOUNT_FIELD = re.compile(r"e-?mail|password|user ?name|log ?in|terms|privacy|captcha|language|locale|"
+                            r"text in (?:the )?(?:image|picture)", re.I)  # Benchmark's "Enter the text in image above"
 
 
 def _account_and_application(data: dict[str, Any]) -> bool:
     """A Create Account form that is also the whole application (Qorvo's SuccessFactors):
     password boxes, and five or more fields an application asks for, a name or address
-    among them."""
+    among them. Check boxes and file boxes don't count: Benchmark's registration asks for
+    names, offers a resume upload and a "no resume" box, and is still only an account."""
     fields = data.get("fields") or []
     if not any(f.get("kind") == "password" for f in fields):
         return False
-    others = [f for f in fields if f.get("kind") != "password" and not _ACCOUNT_FIELD.search(f.get("label") or "")]
+    others = [f for f in fields if f.get("kind") not in ("password", "checkbox", "file")
+              and not _ACCOUNT_FIELD.search(f.get("label") or "")]
     return len(others) >= 5 and any(_APPLICATION_FIELD.search(f.get("label") or "") for f in others)
 
 
@@ -855,7 +881,9 @@ def _application_like(data: dict[str, Any]) -> bool:
 PASSWORD_SITES = {
     "workday": ("myworkdayjobs.com", "myworkday.com", "myworkdaysite.com"),
     "successfactors": ("successfactors.com", "successfactors.eu", "sapsf.com", "sapsf.eu"),
-    "icims": ("icims.com",), "taleo": ("taleo.net",), "brassring": ("brassring.com",), "avature": ("avature.net",),
+    "icims": ("icims.com",), "applicantstack": ("applicantstack.com",), "ukg": ("ultipro.com",),
+    "infor": ("inforcloudsuite.com",), "taleo": ("taleo.net",), "brassring": ("brassring.com",),
+    "avature": ("avature.net",),
 }
 
 
@@ -870,7 +898,8 @@ def password_for(url: str) -> str | None:
 
 
 # The systems whose password the desk page lets the person save, by the name it shows
-DESK_PASSWORDS = {"workday_password": "Workday", "successfactors_password": "SuccessFactors", "icims_password": "iCIMS"}
+DESK_PASSWORDS = {"workday_password": "Workday", "successfactors_password": "SuccessFactors", "icims_password": "iCIMS",
+                  "applicantstack_password": "ApplicantStack", "ukg_password": "UKG Pro", "infor_password": "Infor"}
 
 
 def _password_tip(url: str) -> str:

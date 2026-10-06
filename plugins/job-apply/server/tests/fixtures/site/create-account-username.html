@@ -1,0 +1,21 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Create an Account - Example Fab</title></head>
+<body>
+<!-- like SCREEN's ApplicantStack "Create an Account": a user name, then the name and email -->
+<form id="create" novalidate>
+  <label for="un">* Username:</label><input id="un" type="text">
+  <label for="pw">* Password:</label><input id="pw" type="password">
+  <label for="pw2">* Confirm Password:</label><input id="pw2" type="password">
+  <label for="nm">* Name:</label><input id="nm" type="text">
+  <label for="em">* Email:</label><input id="em" type="text">
+  <input type="submit" value="Submit">
+</form>
+<script>
+  window.created = 0;
+  document.getElementById('create').addEventListener('submit', (e) => { e.preventDefault(); window.created += 1; });
+  window.result = () => ({user: un.value, same: pw.value === pw2.value && pw.value.length > 0, name: nm.value,
+                          email: em.value});
+</script>
+</body>
+</html>
