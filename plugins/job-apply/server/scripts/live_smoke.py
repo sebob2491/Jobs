@@ -206,15 +206,29 @@ PROBES = {
     "ASML": "https://www.asml.com/en/careers/find-your-job?query=field%20service",
     "Texas Instruments": "https://careers.ti.com/en/sites/CX/jobs?keyword=technician",
     "onsemi": "https://hctz.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1001/jobs?keyword=field+service",
+    # Equipment makers that hire field service engineers around Phoenix, not in companies.yaml
+    # yet: what their job boards are built on, and how a listing looks.
+    "SCREEN SPE USA": "https://seus.applicantstack.com/x/openings",
+    "Daifuku America": "https://careers-daifuku-america.icims.com/jobs/search?ss=1&searchKeyword=field+service&in_iframe=1",
+    "Onto Innovation": "https://ontoinnovation.com/careers",
+    "Axcelis": "https://www.axcelis.com/careers/",
+    "SUSS MicroTec": "https://career.suss.com/en/jobs",
+    "Kokusai Semiconductor Equipment": "https://www.ksec.com/careers",
+    "Ebara Technologies": "https://www.ebaratech.com/careers",
+    "Thermo Fisher": "https://jobs.thermofisher.com/global/en/search-results?keywords=field%20service%20engineer%20arizona",
 }
+# Hosts of the job systems the search knows, or might learn: a careers page's links to one
+# of these say where its openings really live.
+ATS_HOST = re.compile(r"myworkdayjobs|myworkdaysite|myworkday\.com|icims\.com|applicantstack|greenhouse\.io|lever\.co|"
+                      r"eightfold\.ai|successfactors|sapsf|oraclecloud|smartrecruiters|phenompeople|paylocity|ultipro|ukg|"
+                      r"adp\.com|bamboohr|jobvite|taleo|workable|recruitee|ashbyhq|breezy|applytojob|dayforce|hrmos|softgarden", re.I)
 
 
 async def probe_page(name: str, url: str) -> dict[str, Any]:
     await server.browser.page()
     ctx = server.browser._ctx  # noqa: SLF001 - test script reaching into the session on purpose
     assert ctx is not None
-    server.browser._background = True  # noqa: SLF001
-    tab = await ctx.new_page()
+    tab = await ctx.new_page()  # a tab of its own, not a popup, so it never becomes the current one
     seen: list[dict[str, Any]] = []
 
     samples: list[Any] = []
@@ -260,7 +274,7 @@ async def probe_page(name: str, url: str) -> dict[str, Any]:
           const out = [];
           for (const a of document.querySelectorAll('a[href]')) {
             const href = a.href;
-            if (!/\/job|find-your-job\/.+|jobid|requisition/i.test(href)) continue;
+            if (!/\/job|find-your-job\/.+|jobid|requisition|\/detail\/|\/opening|\/position/i.test(href)) continue;
             let card = a;
             for (let i = 0; i < 4 && card.parentElement && (card.innerText || '').length < 80; i++) card = card.parentElement;
             out.push({href, text: (a.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 120),
@@ -269,11 +283,13 @@ async def probe_page(name: str, url: str) -> dict[str, Any]:
           }
           return out;
         }""")
+        hrefs = await tab.evaluate("() => [...document.querySelectorAll('a[href], iframe[src]')].map(e => e.href || e.src)")
+        rec["ats_links"] = sorted({h for h in hrefs if ATS_HOST.search(h)})[:10]
+        rec["frames"] = [f.url[:200] for f in tab.frames if f is not tab.main_frame][:5]
     except Exception as e:  # noqa: BLE001
         rec["error"] = f"{type(e).__name__}: {str(e)[:300]}"
     finally:
         await tab.close()
-        server.browser._background = False  # noqa: SLF001
     return rec
 
 

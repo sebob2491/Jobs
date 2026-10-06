@@ -34,6 +34,7 @@ def test_pick_next_and_classify():
         return [{"id": str(i), "text": t, **kw} for i, t in enumerate(texts)]
     assert pick_next(acts("Back to Job Posting", "Autofill with Resume", "Apply Manually"), False)["text"] == "Apply Manually"
     assert pick_next(acts("Apply with LinkedIn", "Apply"), False)["text"] == "Apply"
+    assert pick_next(acts("Save", "Apply on company site"), False)["text"] == "Apply on company site"  # Indeed
     assert pick_next(acts("Save for Later", "Save and Continue", "Apply"), True)["text"] == "Save and Continue"
     assert pick_next(acts("Submit"), True) is None  # never the final button
     assert pick_next(acts("Search", "Sign In"), False) is None

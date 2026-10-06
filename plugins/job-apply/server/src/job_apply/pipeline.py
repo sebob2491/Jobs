@@ -51,7 +51,7 @@ _STEP = re.compile(r"^(save (?:and|&) continue|continue|next|next step|review|re
                    r"review application|proceed|go to next step)$", re.I)
 _ENTRY = re.compile(r"^(apply manually|apply now|apply|easy apply|apply for (?:this|the) (?:job|position|role)|"
                     r"apply to (?:this )?job|start (?:your |my )?application|i'?m interested|"
-                    r"continue to application)$", re.I)
+                    r"continue to application|apply on (?:the )?(?:company|employer)(?:'s)? (?:site|website))$", re.I)
 _AVOID = re.compile(r"autofill|with resume|resume parse|sign ?in|log ?in|create account|register|upload|back|"
                     r"previous|cancel|save for later|withdraw|delete|remove|search|share|print|email (?:me|this)", re.I)
 _EXPERIENCE_PAGE = re.compile(r"my experience|work experience|employment history", re.I)
