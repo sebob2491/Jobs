@@ -894,3 +894,60 @@ def test_amkor_list_is_read_in_the_browser_and_its_postings_say_where(srv, monke
     assert tech["url"] == ("https://career8.successfactors.com/career?career_ns=job_listing&company=amkor"
                            "&navBarLevel=JOB_SEARCH&rcm_site_locale=en_US&career_job_req_id=29111&selected_lang=en_US")
     assert not out["errors"]
+
+
+
+# Benchmark's Infor CloudSuite board: the page's list call and a posting card, as seen in Oct 2026
+INFOR_CALL = ("https://css-benchmark-prd.inforcloudsuite.com/hcm/Jobs/list/JobPosting.JobSearchCardViewList?pageop=load"
+              "&pagesize=10&dependentList=true&relation=JobBoard%281%2CEXTERNAL%29.Postings&csk.JobBoard=EXTERNAL")
+
+
+def infor_card(job_id, title, where, begin, link=True):
+    href = (f"https://CSS-BENCHMARK-PRD.INFORCLOUDSUITE.COM:443/hcm/Jobs/navigation/JobPosting%5BJobPostingSet%5D"
+            f"%281%2C{job_id}%2C1%29.JobPostingDisplayNav?csk.HROrganization&#61;1&amp;csk.JobBoard&#61;EXTERNAL"
+            "&amp;web10x&#61;true")
+    fields = {"Description": {"value": title, "size": 100}, "LocationOfJob": {"value": where},
+              "PostingDateRange_prd_Begin": {"value": begin}, "JobId": {"value": job_id},
+              "CategoryDescriptionForSort": {"value": "Manufacturing / Production"}}
+    if link:
+        fields["_op_JobPostingCardViewLabelLinkBack_spc_translation_cp_"] = {
+            "value": f'<a href="{href}">{title} - {job_id}</a>'}
+    return {"resourceId": f"JobPosting[JobPostingSet](1,{job_id},1)", "fields": fields}
+
+
+def test_benchmark_board_is_read_in_the_browser(srv, monkeypatch):
+    """Benchmark's Infor board answers its own page, 10 postings at a time: that call is asked
+    for 200, and titles and places are matched here."""
+    cfg_url = next(c for c in search_module.load_companies() if c["name"] == "Benchmark Electronics")["search"]["infor"]["url"]
+    calls = []
+
+    async def fake_capture(url, url_part, timeout=25000, want=None, rewrite=None, rewrite_url=None):
+        calls.append((url, url_part, rewrite_url(INFOR_CALL)))
+        return {"dataViewSet": {"pagingInfo": {"pageSize": 200, "hasNext": False}, "data": [
+            infor_card("12460", "Manufacturing Technician I", "Arizona:Mesa", "20260930"),
+            infor_card("12529", "Precision Inspector II", "Arizona:Tempe", "20261006"),
+            infor_card("12554", "Production Inspector I", "Minnesota:Rochester", "20261006"),
+            infor_card("12555", "Test Technician", "Arizona:Tempe", "20261001", link=False),  # no way to it
+            infor_card("12497", "PCB Assembler II", "ROU:BV:Ghimbav", "20261006")]}}
+
+    monkeypatch.setattr(srv.browser, "capture_json", fake_capture)
+    out = asyncio.run(srv.search_company_jobs("technician | inspector", companies=["Benchmark"], location="AZ"))
+    got = {r["title"]: (r["location"], r["posted"], r["url"]) for r in out["results"]}
+    assert got == {  # Rochester left out; the assembler wasn't asked for
+        "Manufacturing Technician I": ("Mesa, AZ", "2026-09-30", (
+            "https://css-benchmark-prd.inforcloudsuite.com/hcm/Jobs/navigation/JobPosting%5BJobPostingSet%5D%281%2C12460"
+            "%2C1%29.JobPostingDisplayNav?csk.HROrganization=1&csk.JobBoard=EXTERNAL&web10x=true")),
+        "Precision Inspector II": ("Tempe, AZ", "2026-10-06", (
+            "https://css-benchmark-prd.inforcloudsuite.com/hcm/Jobs/navigation/JobPosting%5BJobPostingSet%5D%281%2C12529"
+            "%2C1%29.JobPostingDisplayNav?csk.HROrganization=1&csk.JobBoard=EXTERNAL&web10x=true"))}
+    assert calls == [(cfg_url, "JobPosting.JobSearchCardViewList", INFOR_CALL.replace("pagesize=10", "pagesize=200"))]
+    assert not out["errors"]
+
+
+def test_infor_places():
+    from job_apply.search import _infor_place
+
+    assert _infor_place("Arizona:Tempe") == "Tempe, AZ"
+    assert _infor_place("MX:BC:Tijuana") == "Tijuana, BC, MX"
+    assert _infor_place("Jalisco: El Salto") == "El Salto, Jalisco"
+    assert _infor_place("Remote") == "Remote"

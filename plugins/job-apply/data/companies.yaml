@@ -136,9 +136,10 @@ companies:
     search: {eightfold: {host: jobs.infineon.com, domain: infineon.com}}
   - name: Benchmark Electronics
     careers_url: https://www.bench.com/careers
-    ats: unknown            # postings also appear on DirectEmployers boards (dejobs.org)
-    az_sites: Tempe (HQ), Phoenix
-    confidence: low
+    ats: infor
+    az_sites: Tempe (HQ), Mesa
+    confidence: high
+    search: {infor: {url: "https://css-benchmark-prd.inforcloudsuite.com/hcm/Jobs/form/JobBoard%281,EXTERNAL%29.JobSearchCompositeForm?navigation=JobBoard%281,EXTERNAL%29.JobSearchCompositeFormNav&csk.JobBoard=EXTERNAL&csk.HROrganization=1&csk.IsoLocale="}}
   # Equipment makers whose field service engineers work at Arizona fabs (Intel, TSMC,
   # Microchip, onsemi). Found Oct 2026; their job systems were read off their careers pages.
   - name: SCREEN SPE USA
