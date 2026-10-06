@@ -1,0 +1,25 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Field Service Engineer | Career Opportunities</title></head>
+<body>
+<!-- like Nikon Precision's UKG board: an accessibility note sits over the posting, which is
+     hidden from the page's buttons until the note is dismissed -->
+<div role="dialog" aria-modal="true" id="note">
+  <h3>Accessibility Note:</h3>
+  <p>If you need an accommodation to apply, see <a href="#">Accessibility Accommodation for Applicants</a>.</p>
+  <button type="button" id="dismiss">Dismiss Note</button>
+</div>
+<div id="main" aria-hidden="true" style="visibility: hidden">
+  <h1>Field Service Engineer</h1>
+  <p>Requisition Number: FIELD001451</p>
+  <button type="button" onclick="location.href = 'signin.html'">Apply now</button>
+</div>
+<script>
+  document.getElementById('dismiss').addEventListener('click', () => {
+    document.getElementById('note').remove();
+    document.getElementById('main').removeAttribute('aria-hidden');
+    document.getElementById('main').style.visibility = 'visible';
+  });
+</script>
+</body>
+</html>

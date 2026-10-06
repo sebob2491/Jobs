@@ -269,6 +269,47 @@ def test_a_list_of_jobs_isnt_paged_through(srv, monkeypatch):
     assert sum(entry == "clicked “next”" for entry in r.log) == 2
 
 
+def test_a_note_over_the_posting_is_dismissed(srv, monkeypatch):
+    """Nikon's UKG board lays an accessibility note over the posting and hides the posting's
+    buttons until it's dismissed."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    job = srv.add_job(url=fixture_url("site/note-posting.html"), title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status == "needs_you")
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert r.need == "sign_in", (r.reason, r.log)
+    assert r.log[1:3] == ["dismissed a note (“Dismiss Note”)", "clicked “Apply now”"]
+
+
+def test_a_button_drawn_as_a_web_component_is_pressed(srv, monkeypatch):
+    """UKG's Apply now is a <ukg-button> whose real button is in its shadow root."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 1)
+    job = srv.add_job(url=fixture_url("site/webcomponent-posting.html"), title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status == "needs_you")
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert r.need == "sign_in" and "clicked “Apply now”" in r.log, (r.reason, r.log)
+
+
 def test_cookie_dialog_is_declined_never_accepted(srv, monkeypatch):
     """Infineon's cookie dialog covers the whole form; the desk presses Reject, never Accept."""
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)

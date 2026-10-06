@@ -26,6 +26,7 @@ COMPANIES = [
     {"name": "AS Co", "search": {"applicantstack": "asco"}},
     {"name": "iCIMS Co", "search": {"icims": "careers-icco"}},
     {"name": "Paycom Co", "search": {"paycom": "PAYCOMKEY"}},
+    {"name": "UKG Co", "search": {"ukg": "https://recruiting2.ultipro.com/UKGCO/JobBoard/b0a4d/"}},
 ]
 # SCREEN SPE USA's board: one table of every opening, title and location
 AS_BOARD = """<h1>Job Openings</h1><table class="table"><thead><tr><th>Job Title</th><th>Location</th></tr></thead><tbody>
@@ -220,6 +221,8 @@ def test_search_all_backends():
     assert "iCIMS Co" not in by_company and not any("icims" in str(r.url) for r in seen)
     assert {"company": "iCIMS Co", "kind": "icims", "config": "careers-icco"} in out["needs_browser"]
     assert {"company": "Paycom Co", "kind": "paycom", "config": "PAYCOMKEY"} in out["needs_browser"]
+    assert {"company": "UKG Co", "kind": "ukg", "config": "https://recruiting2.ultipro.com/UKGCO/JobBoard/b0a4d/"} \
+        in out["needs_browser"]
     assert not any("paycom" in str(r.url) for r in seen)
 
     assert out["browser_only"] == [{"company": "Browser Co", "careers_url": "https://careers.browserco.com"}]
@@ -579,3 +582,54 @@ def test_workday_entries_that_arent_postings_are_left_out():
     found = asyncio.run(go())
     assert [(x.title, x.url) for x in found] == [
         ("Field Service Engineer", "https://adco.wd1.myworkdayjobs.com/External/job/Chandler-AZ/FSE_R1")]
+
+
+# Nikon Precision's UKG Pro board: the page's own search call (50 at a time) and its answer
+UKG_PAGE_BODY = {"opportunitySearch": {"Top": 50, "Skip": 0, "QueryString": "", "OrderBy": [
+    {"Value": "postedDateDesc", "PropertyName": "PostedDate", "Ascending": False}],
+    "Filters": [{"t": "TermsSearchFilterDto", "fieldName": 4, "extra": None, "values": []}]},
+    "matchCriteria": {"PreferredJobs": [], "Educations": [], "LicenseAndCertifications": [], "Skills": [],
+                      "hasNoLicenses": False, "SkippedSkills": []}}
+
+
+def ukg_place(city, code, description):
+    return {"LocalizedDescription": description, "Address": {"City": city, "State": {"Code": code, "Name": "Arizona"}}}
+
+
+UKG_ANSWER = {"totalCount": 3, "opportunities": [
+    {"Id": "a0a2a8f5", "Title": "NRCA Optical Scientist Graduate-Level Intern (Summer 2027)", "RequisitionNumber": "NRCAO001457",
+     "Locations": [ukg_place("Oro Valley", "AZ", "Tucson, Arizona")], "PostedDate": "2026-09-29T22:59:48.553Z"},
+    {"Id": "532a7dc9", "Title": "Field Service Engineer", "RequisitionNumber": "FIELD001451",
+     "Locations": [ukg_place("Chandler", "AZ", "Arizona"), ukg_place(None, "AZ", "Phoenix, AZ")],
+     "PostedDate": "2026-07-10T18:41:41.306Z"},
+    {"Id": "77aa", "Title": "Field Service Engineer", "RequisitionNumber": "FIELD001460",
+     "Locations": [{"LocalizedDescription": "Hillsboro, OR", "Address": {"City": "Hillsboro", "State": {"Code": "OR"}}}],
+     "PostedDate": "2026-08-01T00:00:00Z"}]}
+
+
+def test_ukg_board_is_read_in_the_browser(srv, monkeypatch):
+    """Nikon Precision's UKG Pro board loads its openings from its own API; the page makes
+    the call, asked for the whole board, and titles are matched here."""
+    calls = []
+
+    async def fake_capture(url, url_part, timeout=25000, want=None, rewrite=None):
+        sent = rewrite(json.loads(json.dumps(UKG_PAGE_BODY)))
+        calls.append((url, url_part, sent["opportunitySearch"]["Skip"], sent["opportunitySearch"]["Top"]))
+        assert sent["matchCriteria"] == UKG_PAGE_BODY["matchCriteria"]  # the rest of the page's call kept
+        return UKG_ANSWER
+
+    monkeypatch.setattr(srv.browser, "capture_json", fake_capture)
+    out = asyncio.run(srv.search_company_jobs("field service | customer engineer", companies=["Nikon"], location="AZ"))
+    board = "https://recruiting2.ultipro.com/NIK1001NIKON/JobBoard/f11a0b52-5153-4c12-ad2c-b7f3b0a74112/"
+    assert [(r["title"], r["location"], r["url"], r["external_id"], r["posted"], r["ats"]) for r in out["results"]] == [
+        ("Field Service Engineer", "Chandler, AZ; Phoenix, AZ", f"{board}OpportunityDetail?opportunityId=532a7dc9",
+         "FIELD001451", "2026-07-10", "ukg")]  # the intern and the Oregon opening are left out
+    assert calls == [(f"{board}?q=&o=postedDateDesc", "/JobBoardView/LoadSearchResults", 0, 200)]
+    assert not out["errors"] and out["results"][0]["company"] == "Nikon Precision"
+
+
+def test_ukg_rewrite_leaves_other_calls_alone():
+    from job_apply.search import ukg_board_url, ukg_rewrite
+    assert ukg_rewrite({"filters": []}) is None and ukg_rewrite(None) is None
+    assert ukg_board_url("https://recruiting2.ultipro.com/T/JobBoard/B?q=&o=postedDateDesc") == \
+        "https://recruiting2.ultipro.com/T/JobBoard/B/"

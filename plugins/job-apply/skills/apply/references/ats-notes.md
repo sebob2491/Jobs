@@ -147,6 +147,17 @@ the page URL. Use this file for the parts of each flow that `autofill` can't do.
 - Its cookie banner offers only **Accept Cookies**, so leave it be unless the user says
   otherwise.
 
+## UKG Pro / UltiPro (`recruiting*.ultipro.com`): Nikon Precision
+
+- The job board lists every opening with its locations (Nikon's field service roles are at
+  Intel's Chandler fabs) and loads them from its own API, so the search runs in a
+  background browser tab. A posting's address ends in `OpportunityDetail?opportunityId=…`.
+- A posting can open under an "Accessibility Note" that hides the page's buttons until
+  **Dismiss Note** is pressed. The Job Desk dismisses it; it's information, not a choice.
+- **Apply now** and **Sign In** are web components (`<ukg-button>`). Apply now leads to
+  UKG's sign-in page (`signin-us.ultipro.com`), where the user signs in or creates an
+  account with that employer.
+
 ## ASML (`asml.com/en/careers`)
 
 - Postings are on asml.com. **Apply** may lead to Workday (`asml.wd3.myworkdayjobs.com`)

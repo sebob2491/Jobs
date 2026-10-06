@@ -213,17 +213,14 @@ PROBES = {
     # openings, none in Arizona; its US ones are in Williston, VT.)
     # Employers in companies.yaml with no search yet (SuccessFactors and unknown sites):
     # their search pages, to see whether a list of openings can be read off them.
-    "TSMC Arizona": "https://careers.tsmc.com/en_US/careers/SearchJobs/?listFilterMode=1&jobRecordsPerPage=25&jobOffset=0",
-    "Amkor Technology": "https://amkor.com/careers/united-states/",
+    # (Oct 2026: TSMC Arizona shows Cloudflare's check; Amkor is classic SuccessFactors;
+    # Benchmark is Infor CloudSuite; Qorvo's search pages are SuccessFactors HTML. Canon USA
+    # and MKS block automated browsers outright.)
     "Edwards Vacuum": "https://www.jobs.atlascopcogroup.com/search/?q=field+service&locationsearch=Arizona",
-    "Qorvo": "https://careers.qorvo.com/search/?q=&locationsearch=Arizona",
-    "Benchmark Electronics": "https://www.bench.com/careers",
     # Equipment makers with field service engineers at Arizona fabs, not in the list yet.
-    "Nikon Precision": "https://www.nikonprecision.com/careers/",
-    "Canon USA": "https://www.usa.canon.com/about-us/careers",
-    "MKS Instruments": "https://www.mks.com/n/careers",
-    "Advanced Energy": "https://www.advancedenergy.com/en-us/about/careers/",
-    "DISCO Hi-Tec America": "https://www.discousa.com/careers/",
+    # Nikon's posting page: how its Apply button is drawn (the form reader doesn't see it)
+    "Nikon Precision": "https://recruiting2.ultipro.com/NIK1001NIKON/JobBoard/f11a0b52-5153-4c12-ad2c-b7f3b0a74112/"
+                       "OpportunityDetail?opportunityId=532a7dc9-8394-4cbc-8184-f43e88e906bf",
 }
 # Job links as a page (or one of its frames) draws them, with the text of the card around
 # each and a little of its markup, to write a reader for a new job board from.
@@ -281,8 +278,10 @@ async def probe_page(name: str, url: str) -> dict[str, Any]:
             seen.append({"method": r.request.method, "status": r.status, "url": r.url[:keep], "type": ctype[:40]})
             if "/discover/v2/" in r.url:  # ASML's job search (Sitecore Discover): keep the request and an answer
                 samples.append(asyncio.ensure_future(_sample(r)))
-            elif "jobPublication/list.json" in r.url or "job-posting-previews/search" in r.url:
-                samples.append(asyncio.ensure_future(_sample(r, 4000)))  # SUSS's job list; Paycom's (Ebara)
+            elif any(part in r.url for part in ("jobPublication/list.json", "job-posting-previews/search",
+                                                  "LoadSearchResults", "/services/recruiting/v1/jobs")):
+                # SUSS's job list; Paycom's (Ebara); UKG Pro's (Nikon); SuccessFactors' newer one (Edwards)
+                samples.append(asyncio.ensure_future(_sample(r, 4000)))
 
     async def _sample(r: Any, keep: int = 1500) -> dict[str, Any]:
         try:
@@ -343,6 +342,11 @@ async def probe_page(name: str, url: str) -> dict[str, Any]:
           const s = d.eagerLoadRefineSearch || d.refineSearch;
           return {keys: Object.keys(d).slice(0, 30), search: s ? JSON.stringify(s).slice(0, 3000) : null};
         }""")
+        # the markup of anything that reads like an apply or sign-in button, whatever it's drawn with
+        rec["apply_buttons"] = await tab.evaluate("""() => [...document.querySelectorAll('body *')]
+          .filter((e) => /^\\s*(apply( now)?|quick apply|sign in)\\s*$/i.test(e.textContent || '') && e.children.length < 4)
+          .slice(0, 8).map((e) => ({tag: e.tagName, html: e.outerHTML.slice(0, 500),
+                                   parent: (e.parentElement ? e.parentElement.outerHTML : '').slice(0, 300)}))""")
         hrefs = await tab.evaluate("() => [...document.querySelectorAll('a[href], iframe[src]')].map(e => e.href || e.src)")
         rec["ats_links"] = sorted({h for h in hrefs if ATS_HOST.search(h)})[:10]
         rec["frames"] = [f.url[:200] for f in tab.frames if f is not tab.main_frame][:5]
