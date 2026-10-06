@@ -178,3 +178,30 @@ def test_cookie_dialog_is_declined_never_accepted(srv, monkeypatch):
     r, accepted = run(go())
     assert r.status == "ready", (r.reason, r.log)
     assert "declined cookies (“Reject”)" in r.log and accepted == 0
+
+
+def test_create_account_is_filled_but_left_for_the_person(srv, monkeypatch):
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setenv("JOB_APPLY_SECRET_COMPANY_SITE_PASSWORD", "not-a-real-password")
+    job = srv.add_job(url=fixture_url("site/create-account.html"), title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status == "needs_you")
+            assert r.need == "sign_in" and "Create Account form" in r.reason, r.reason
+            page = r.page
+            filled = await page.evaluate("() => [em.value, pw.value === pw2.value && pw.value.length > 0, terms.checked]")
+            assert filled == ["sam.rivera@example.com", True, False]  # terms untouched
+            assert await page.evaluate("() => window.created") == 0  # and the button not pressed
+            await page.check("#terms")  # the person agrees and creates the account
+            await page.click("button:has-text('Create Account')")
+            await until(lambda: r.need == "questions" or r.status == "ready")  # the desk carried on by itself
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert "filled the Create Account form with your email and saved password" in r.log

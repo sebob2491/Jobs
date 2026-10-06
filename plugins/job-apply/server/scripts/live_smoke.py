@@ -214,11 +214,22 @@ async def probe_page(name: str, url: str) -> dict[str, Any]:
     tab = await ctx.new_page()
     seen: list[dict[str, Any]] = []
 
+    samples: list[Any] = []
+
     def on_response(r: Any) -> None:
         ctype = r.headers.get("content-type", "")
         if "json" in ctype or "/api/" in r.url:
             keep = 1500 if ("recruitingCEJobRequisitions" in r.url or "pcsx/search" in r.url) else 300
             seen.append({"method": r.request.method, "status": r.status, "url": r.url[:keep], "type": ctype[:40]})
+            if "/discover/v2/" in r.url:  # ASML's job search (Sitecore Discover): keep the request and an answer
+                samples.append(asyncio.ensure_future(_sample(r)))
+
+    async def _sample(r: Any) -> dict[str, Any]:
+        try:
+            body = await r.text()
+        except Exception as e:  # noqa: BLE001
+            body = f"unreadable: {e}"
+        return {"request": (r.request.post_data or "")[:3000], "response": body[:6000]}
 
     tab.on("response", on_response)
     rec: dict[str, Any] = {"probe": name, "url": url}
@@ -229,6 +240,8 @@ async def probe_page(name: str, url: str) -> dict[str, Any]:
         rec["title"] = await tab.title()
         rec["json_calls"] = seen[:30]
         rec["text_sample"] = re.sub(r"\s+", " ", await tab.inner_text("body"))[:500]
+        if samples:
+            rec["api_samples"] = [await s for s in samples[-2:]]
         # job links as the page draws them, with the text of the card around each
         rec["job_links"] = await tab.evaluate(r"""() => {
           const out = [];

@@ -37,6 +37,7 @@ _BOT_TEXT = re.compile(r"verify (?:that )?you are (?:a )?human|are you a robot|c
                        r"your browser)|press (?:&|and) hold|complete the security check|unusual traffic from your|"
                        r"enable javascript and cookies to continue|request unsuccessful|you have been blocked", re.I)
 _CAPTCHA = re.compile(r"i'?m not a robot|i am human|hcaptcha|recaptcha challenge", re.I)
+_VERIFY_EMAIL = re.compile(r"verif(?:y|ication)\b.{0,40}\b(?:e-?mail|account|link)|check your (?:e-?mail|inbox)", re.I)
 _CODE_FIELD = re.compile(r"verification code|one[- ]time (?:pass)?code|passcode|security code|\bcode\b.{0,40}"
                          r"(?:sent|email)|enter (?:the )?(?:\d-digit )?code|\botp\b", re.I)
 _SIGN_IN_ACTION = re.compile(r"^(sign in|log ?in|sign in with email)$", re.I)
@@ -91,6 +92,8 @@ def classify(data: dict[str, Any], text: str) -> str:
         return "sign_in"  # Workday: "Sign in with email / Google / Apple"
     if any(_CODE_FIELD.search(f.get("label") or "") for f in fields if f["kind"] in ("text", "number")):
         return "email_code"
+    if not fields and _VERIFY_EMAIL.search(text[:3000]) and not any(_ENTRY.match(a.strip()) for a in actions):
+        return "email_code"  # "we sent you a link to verify your account"
     return "form" if fields else "page"
 
 
@@ -323,16 +326,21 @@ class Applier:
                 return self._pause(run, "bot_check", "The site is showing a bot check. Solve it in the browser "
                                    "window; the desk carries on by itself after that.")
             if kind == "sign_in":
-                if sign_ins < 2 and await self._sign_in(run, data):
+                done = await self._sign_in(run, data) if sign_ins < 2 else None
+                if done == "signed_in":
                     sign_ins += 1
                     continue
                 await self._bring_forward(run)
+                if done == "prefilled":
+                    return self._pause(run, "sign_in", f"I filled in your email and saved password on {_site(run, data)}'s "
+                                       "Create Account form. Tick their terms box if there is one and create the account "
+                                       "(then verify your email if they ask); the desk carries on after that.")
                 return self._pause(run, "sign_in", f"Sign in (or create your account) on {_site(run, data)} in "
                                    "the browser window; the desk carries on by itself after that.")
             if kind == "email_code":
                 await self._bring_forward(run)
-                return self._pause(run, "email_code", "Enter the code the site emailed you in the browser window; "
-                                   "the desk carries on by itself after that.")
+                return self._pause(run, "email_code", "The site emailed you a code or a link. Enter the code in the "
+                                   "browser window, or open the link; the desk carries on by itself after that.")
             if kind == "form":
                 run.seen_form = True
                 once_failed = await self._fill_once(run, data)
@@ -440,34 +448,41 @@ class Applier:
             return True
         return False
 
-    async def _sign_in(self, run: Run, data: dict[str, Any]) -> bool:
-        """Sign in with the profile email and a stored <ats>_password, if the person set one up.
-        Creating accounts (a second password box, terms to accept) stays with the person."""
+    async def _sign_in(self, run: Run, data: dict[str, Any]) -> str | None:
+        """With the profile email and a stored <ats>_password (if the person saved one): sign
+        in ("signed_in"), or fill a Create Account form and leave its terms and button to the
+        person ("prefilled"). None when there's nothing to do."""
         srv = self.srv
         secret = f"{detect_ats(data['url'])}_password"
         if config.get_secret(secret) is None:
-            return False
+            return None
         fields = data.get("fields") or []
         actions = data.get("actions") or []
         if not fields:
             email_button = next((a for a in actions if re.match(r"^sign in with email$", a["text"], re.I)), None)
             if email_button is None:
-                return False
+                return None
             await srv.click(email_button["id"])
-            return True
+            return "signed_in"
         passwords = [f for f in fields if f["kind"] == "password"]
         email = next((f for f in fields if f["kind"] in ("text", "email")
                       and re.search(r"e-?mail|user ?name|login", f.get("label") or "", re.I)), None)
+        address = config.Profile.load().get("personal.email")
+        if email is None or not address or not 1 <= len(passwords) <= 2:
+            return None
+        await srv.fill_form([{"id": email["id"], "value": address}])
+        for box in passwords:
+            await srv.fill_secret(box["id"], secret)
+        if len(passwords) == 2:  # a new account: accepting the site's terms is the person's call
+            self._log(run, "filled the Create Account form with your email and saved password")
+            return "prefilled"
         button = next((a for a in actions if _SIGN_IN_ACTION.match(a["text"].strip()) and not _SOCIAL.search(a["text"])),
                       None)
-        address = config.Profile.load().get("personal.email")
-        if len(passwords) != 1 or email is None or button is None or not address:
-            return False
-        await srv.fill_form([{"id": email["id"], "value": address}])
-        await srv.fill_secret(passwords[0]["id"], secret)
+        if button is None:
+            return "prefilled"
         await srv.click(button["id"])
         self._log(run, "signed in with your saved password")
-        return True
+        return "signed_in"
 
     async def _bring_forward(self, run: Run) -> None:
         if run.page is not None and not run.page.is_closed():
