@@ -210,7 +210,7 @@ PROBES = {
     # yet: what their job boards are built on, and how a listing looks.
     "Daifuku America": "https://careers-daifuku-america.icims.com/jobs/search?ss=1&searchKeyword=field+service&in_iframe=1",
     "SUSS MicroTec": "https://career.suss.com/en/jobs",
-    "Ebara Technologies": "https://www.ebaratech.com/careers/job-openings/",
+    "Ebara Technologies": "https://www.paycomonline.net/v4/ats/web.php/portal/95CACB007211B4A999FBE2ED52E7762E/career-page",
     "Thermo Fisher": "https://jobs.thermofisher.com/global/en/search-results?keywords=field%20service%20engineer%20arizona",
 }
 # Job links as a page (or one of its frames) draws them, with the text of the card around
@@ -262,6 +262,15 @@ async def probe_page(name: str, url: str) -> dict[str, Any]:
         except Exception as e:  # noqa: BLE001
             body = f"unreadable: {e}"
         out: dict[str, Any] = {"url": r.url[:600], "request": (r.request.post_data or "")[:3000], "response": body[:keep]}
+        try:  # a list of openings (SUSS): the fields one has, and a whole one to read them from
+            items = json.loads(body)
+            if isinstance(items, list) and items and isinstance(items[0], dict):
+                out["count"] = len(items)
+                out["item_keys"] = sorted(items[0])
+                out["first_item"] = json.dumps({k: v for k, v in items[0].items()
+                                                if not isinstance(v, str) or len(v) < 300}, default=str)[:3000]
+        except Exception:  # noqa: BLE001
+            pass
         try:  # the answer's shape: totals, filter names and values, where the openings are
             out["widgets"] = [{
                 "keys": sorted(k for k in w if k not in ("content", "facet")),
@@ -293,6 +302,13 @@ async def probe_page(name: str, url: str) -> dict[str, Any]:
             except Exception:  # noqa: BLE001 - a frame that went away
                 continue
         rec["job_links"] = job_links[:12]
+        # Phenom career sites (Thermo Fisher) draw their search results from data in the page
+        rec["phenom"] = await tab.evaluate("""() => {
+          const d = window.phApp && window.phApp.ddo;
+          if (!d) return null;
+          const s = d.eagerLoadRefineSearch || d.refineSearch;
+          return {keys: Object.keys(d).slice(0, 30), search: s ? JSON.stringify(s).slice(0, 3000) : null};
+        }""")
         hrefs = await tab.evaluate("() => [...document.querySelectorAll('a[href], iframe[src]')].map(e => e.href || e.src)")
         rec["ats_links"] = sorted({h for h in hrefs if ATS_HOST.search(h)})[:10]
         rec["frames"] = [f.url[:200] for f in tab.frames if f is not tab.main_frame][:5]
