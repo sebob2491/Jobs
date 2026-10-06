@@ -186,6 +186,57 @@ def test_desk_page_buttons_reach_the_api(srv, tmp_path):
     run(go())
 
 
+def test_the_page_alerts_when_a_job_needs_you(srv):
+    """With alerts on, a job that comes to need the person (or is ready to submit) brings up
+    one desktop notification; what was already waiting when the page opened doesn't."""
+    from playwright.async_api import async_playwright
+
+    from job_apply.pipeline import Run
+
+    desk = Desk(srv)
+    desk.applier.start = lambda: None
+    desk.search.update(status="done", at=time.time())
+    first = srv.add_job(url=fixture_url("generic_form.html"), title="Technician", company="Example Litho")["job"]
+    second = srv.add_job(url=fixture_url("site/posting.html"), title="Field Service Engineer", company="Example Fab")["job"]
+    desk.applier.runs[first["id"]] = Run(first["id"], "Technician", "Example Litho", status="needs_you", need="questions",
+                                         reason="1 question")
+    fake = """
+      window.__shown = [];
+      class FakeNotification {
+        constructor(title, opts) { window.__shown.push({title, body: (opts || {}).body}); }
+        close() {}
+      }
+      FakeNotification.permission = "default";
+      FakeNotification.requestPermission = async () => (FakeNotification.permission = "granted");
+      window.Notification = FakeNotification;
+    """
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with async_playwright() as pw:
+                browser = await pw.chromium.launch(**launch_options())
+                page = await browser.new_page()
+                await page.add_init_script(fake)
+                await page.goto(desk.url)
+                await page.wait_for_selector("#alerts:text('Alert me')")
+                await page.click("#alerts")
+                await page.wait_for_selector("#alerts:text('Alerts on')")
+                await asyncio.sleep(2)  # a refresh or two: the job already waiting isn't announced
+                assert await page.evaluate("window.__shown") == []
+                desk.applier.runs[second["id"]] = Run(second["id"], "Field Service Engineer", "Example Fab",
+                                                      status="needs_you", need="sign_in", reason="Sign in on Workday")
+                await page.wait_for_function("window.__shown.length > 0", timeout=10000)
+                await asyncio.sleep(2)  # announced once, not on every refresh
+                shown = await page.evaluate("window.__shown")
+                assert shown == [{"title": "Example Fab needs you", "body": "Field Service Engineer: Sign in on Workday"}]
+                await browser.close()
+        finally:
+            await desk.stop()
+
+    run(go())
+
+
 def test_jobs_added_elsewhere_show_up_ranked(srv):
     """Openings Claude saved from Indeed or LinkedIn join the list, so one button covers them too."""
     added = srv.add_job(url="https://www.indeed.com/viewjob?jk=abc123", title="Field Service Engineer",
