@@ -150,6 +150,9 @@ EXTRACT_JS = r"""
       const pills = container ? Array.from(container.querySelectorAll('[data-automation-id="selectedItem"], [class*="selected" i] [class*="label" i]')).map(txt).filter(Boolean) : [];
       if (pills.length) value = pills.join(', ');
     }
+    // A site's own search box (header, nav, search form) is not part of the application.
+    if (el.closest('[role="search"], header, nav, form[action*="search" i], form[id*="search" i], form[class*="search" i]')
+        || type === 'search') continue;
     let label = labelFor(el);
     // Upload widgets often label the input with its button ("Attach"); use the field's heading.
     if (kind === 'file' && GENERIC_FILE.test(label)) {
@@ -255,19 +258,6 @@ EXTRACT_JS = r"""
 }
 """
 
-# Options of an open listbox/autocomplete popup.
-OPTIONS_JS = r"""
-() => {
-  const out = [];
-  for (const el of document.querySelectorAll('[role="option"]')) {
-    if (!el.getClientRects().length) continue;
-    const t = (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim();
-    if (t && !out.includes(t)) out.push(t);
-  }
-  return out;
-}
-"""
-
 # Fallback for custom-styled radios/checkboxes whose input is display:none.
 CLICK_CHOICE_JS = r"""
 (el) => {
@@ -333,5 +323,58 @@ COVERED_JS = r"""
   if (!r.width || !r.height) return true;
   const top = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
   return !(top && (top === el || el.contains(top)));
+}
+"""
+
+# Before opening a dropdown: remember which options are already showing (other menus
+# some sites leave open), so they're never mistaken for this field's choices.
+MARK_OPTIONS_JS = r"""
+() => {
+  const visible = (o) => o.getClientRects().length > 0 && getComputedStyle(o).visibility !== 'hidden';
+  for (const o of document.querySelectorAll('[role="option"]')) {
+    o.removeAttribute('data-ja-before');
+    if (visible(o)) o.setAttribute('data-ja-before', (o.innerText || o.textContent || '').replace(/\s+/g, ' ').trim());
+  }
+}
+"""
+
+# The options of *this* field's menu: its aria-controls/aria-owns listbox, else options that
+# appeared or changed since MARK_OPTIONS_JS, else (when the field says its menu is open) the
+# nearest visible menu. Each is tagged data-ja-opt=<text> so the click hits the right one.
+FIELD_OPTIONS_JS = r"""
+(el) => {
+  const clean = (s) => (s || '').replace(/\s+/g, ' ').trim();
+  const text = (o) => clean(o.innerText || o.textContent);
+  const visible = (o) => o.getClientRects().length > 0 && getComputedStyle(o).visibility !== 'hidden';
+  const all = Array.from(document.querySelectorAll('[role="option"]')).filter(visible);
+  let opts = [];
+  for (let n = el, d = 0; n && n.getAttribute && d < 4 && !opts.length; n = n.parentElement, d++) {
+    const ref = n.getAttribute('aria-controls') || n.getAttribute('aria-owns');
+    const box = ref ? document.getElementById(ref.split(/\s+/)[0]) : null;
+    if (box) opts = Array.from(box.querySelectorAll('[role="option"]')).filter(visible);
+  }
+  if (!opts.length) opts = all.filter((o) => o.getAttribute('data-ja-before') !== text(o));
+  if (!opts.length && el.getAttribute('aria-expanded') === 'true' && all.length) {
+    const r = el.getBoundingClientRect();
+    const groups = new Map();
+    for (const o of all) {
+      const c = o.closest('[role="listbox"]') || o.parentElement;
+      groups.set(c, (groups.get(c) || []).concat([o]));
+    }
+    let best = [], bestD = Infinity;
+    for (const [c, os] of groups) {
+      const b = c.getBoundingClientRect();
+      const dist = Math.abs(b.top - r.bottom) + Math.abs(b.left - r.left);
+      if (dist < bestD) { bestD = dist; best = os; }
+    }
+    opts = best;
+  }
+  for (const o of document.querySelectorAll('[data-ja-opt]')) o.removeAttribute('data-ja-opt');
+  const out = [];
+  for (const o of opts) {
+    const t = text(o);
+    if (t && !out.includes(t)) { o.setAttribute('data-ja-opt', t); out.push(t); }
+  }
+  return out;
 }
 """

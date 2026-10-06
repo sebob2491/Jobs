@@ -319,32 +319,28 @@ async def _smartrecruiters(client: httpx.AsyncClient, cfg: Any, query: str, limi
 
 
 async def _oracle(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, terms: list[str]) -> list[Listing]:
+    # The same request the career site's own search makes (copied from a live probe):
+    # one relevance-ranked page; the keyword is ignored if the finder differs.
     host, site = cfg["host"], cfg["site"]
-    keyword = query.replace('"', "")
-    out: list[Listing] = []
-    offset = 0
-    while len(out) < limit:
-        page_size = min(25, limit - len(out))
-        sort = "RELEVANCY" if keyword.strip() else "POSTING_DATES_DESC"
-        finder = (f'findReqs;siteNumber={site},limit={page_size},offset={offset},keyword="{keyword}",'
-                  f"sortBy={sort}")
-        api = (f"https://{host}/hcmRestApi/resources/latest/recruitingCEJobRequisitions"
-               f"?onlyData=true&expand=requisitionList.secondaryLocations&finder={quote(finder, safe='=;,')}")
-        r = await client.get(api, headers={"Accept": "application/json"})
-        _raise_for(r, api)
-        batch = []
-        for item in r.json().get("items") or []:
-            for req in item.get("requisitionList") or []:
-                batch.append(Listing(
-                    company="", title=req.get("Title") or "",
-                    url=f"https://{host}/hcmUI/CandidateExperience/en/sites/{site}/job/{req.get('Id')}",
-                    location=req.get("PrimaryLocation") or "", posted=req.get("PostedDate") or "",
-                    external_id=str(req.get("Id") or ""), ats="oracle_hcm",
-                ))
-        out.extend(batch)
-        offset += page_size
-        if len(batch) < page_size:
-            break
+    keyword = query.replace('"', "").strip()
+    facets = "%3B".join(["WORK_LOCATIONS", "WORKPLACE_TYPES", "TITLES", "CATEGORIES", "ORGANIZATIONS",
+                         "POSTING_DATES", "FLEX_FIELDS", "LOCATIONS"])
+    finder = (f"findReqs;siteNumber={site},facetsList={facets},limit={min(limit, 25)},"
+              f"keyword={quote(chr(34) + keyword + chr(34), safe='')},sortBy={'RELEVANCY' if keyword else 'POSTING_DATES_DESC'}")
+    api = (f"https://{host}/hcmRestApi/resources/latest/recruitingCEJobRequisitions?onlyData=true"
+           "&expand=requisitionList.workLocation,requisitionList.otherWorkLocations,requisitionList.secondaryLocations,"
+           f"flexFieldsFacet.values,requisitionList.requisitionFlexFields&finder={finder}")
+    r = await client.get(api, headers={"Accept": "application/json"})
+    _raise_for(r, api)
+    out = []
+    for item in r.json().get("items") or []:
+        for req in item.get("requisitionList") or []:
+            out.append(Listing(
+                company="", title=req.get("Title") or "",
+                url=f"https://{host}/hcmUI/CandidateExperience/en/sites/{site}/job/{req.get('Id')}",
+                location=req.get("PrimaryLocation") or "", posted=req.get("PostedDate") or "",
+                external_id=str(req.get("Id") or ""), ats="oracle_hcm",
+            ))
     return out[:limit]
 
 

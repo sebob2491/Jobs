@@ -20,6 +20,8 @@
   <div class="rs"><input id="deg" role="combobox" aria-autocomplete="list"><div class="cover"></div><ul role="listbox" hidden></ul></div>
   <label for="ear">Are you a U.S. person as defined by export control regulations (EAR)?</label>
   <div class="rs"><input id="ear" role="combobox" aria-autocomplete="list"><div class="cover"></div><ul role="listbox" hidden></ul></div>
+  <label for="gen">Gender</label>
+  <div class="rs"><input id="gen" role="combobox" aria-autocomplete="list"><div class="cover"></div><ul role="listbox" hidden></ul></div>
   <button>Apply</button>
 </form>
 <form id="search">
@@ -35,7 +37,9 @@
   const menus = {
     deg: ["High School Diploma", "Associate's Degree", "Bachelor's Degree", "Master's Degree"],
     ear: ["I am a U.S. citizen", "I am a lawful permanent resident", "Other"],
+    gen: ["Male", "Female", "Decline to self-identify"],
   };
+  // Like some ATS widgets, menus stay on screen after they're used.
   for (const id of Object.keys(menus)) {
     const input = document.getElementById(id);
     const list = input.parentElement.querySelector('ul');
@@ -53,8 +57,7 @@
     };
     input.addEventListener('focus', render);
     input.addEventListener('input', render);
-    input.addEventListener('keydown', (e) => { if (e.key === 'Escape') list.hidden = true; });
-    input.addEventListener('blur', () => { list.hidden = true; });
+
   }
   document.getElementById('application').addEventListener('submit', (e) => {
     e.preventDefault();

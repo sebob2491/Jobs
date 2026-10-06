@@ -93,7 +93,10 @@ def handler(request: httpx.Request) -> httpx.Response:
              "location": {"city": "Chandler", "region": "AZ", "country": "us"}},
             {"id": "744000002", "name": "Install Engineer", "location": {"city": "Phoenix", "region": "AZ", "country": None}}]})
     if url.startswith("https://abcd.fa.us2.oraclecloud.com/hcmRestApi/resources/latest/recruitingCEJobRequisitions"):
-        assert "siteNumber=CX_1" in url and "keyword=%22" in url and "offset=0" in url
+        # exactly the request the career site makes, or Oracle ignores the keyword
+        assert "finder=findReqs;siteNumber=CX_1,facetsList=WORK_LOCATIONS%3B" in url
+        assert ("keyword=%22field%20service%22,sortBy=RELEVANCY" in url
+                or "keyword=%22equipment%20engineer%22,sortBy=RELEVANCY" in url) and "offset" not in url
         return httpx.Response(200, json={"items": [{"TotalJobsCount": 1, "requisitionList": [
             {"Id": "25011541", "Title": "Equipment Engineer", "PrimaryLocation": "Phoenix, AZ, United States",
              "PostedDate": "2026-09-29"}]}]})

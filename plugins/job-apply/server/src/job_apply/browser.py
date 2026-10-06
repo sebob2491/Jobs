@@ -27,7 +27,8 @@ from playwright.async_api import (
 
 from . import config
 from .autofill import choose_option, is_empty_value, polarity
-from .formjs import CLICK_CHOICE_JS, COVERED_JS, ELEMENT_INFO_JS, ENTRIES_JS, EXTRACT_JS, OPTIONS_JS, VISIBLE_TEXT_JS
+from .formjs import (CLICK_CHOICE_JS, COVERED_JS, ELEMENT_INFO_JS, ENTRIES_JS, EXTRACT_JS, FIELD_OPTIONS_JS,
+                     MARK_OPTIONS_JS, VISIBLE_TEXT_JS)
 
 SUBMIT_RE = re.compile(r"\bsubmit\b|send (my )?application|finish (my )?application|complete (my )?application", re.I)
 # A form's own submit button with one of these labels is the final step too ("Apply", "Send").
@@ -43,6 +44,10 @@ CONFIRMATION_RE = re.compile(
     r"|we('ve| have) received your application|successfully (submitted|applied)|your application is (in|on its way)",
     re.I,
 )
+
+
+def _css_string(text: str) -> str:
+    return text.replace("\\", "\\\\").replace('"', '\\"')
 
 
 class BrowserUnavailable(Exception):
@@ -246,14 +251,30 @@ class BrowserSession:
         await loc.focus()
         await loc.press("ArrowDown")
 
+    async def _field_options(self, page: Page, field_id: str, loc: Locator, wait_ms: int) -> list[str]:
+        """This field's menu options, polling while the menu renders."""
+        frame = self._frame_for(page, field_id)
+        waited = 0
+        while True:
+            try:
+                options = await loc.evaluate(FIELD_OPTIONS_JS)
+            except PlaywrightError:
+                options = []
+            if options or waited >= wait_ms:
+                return options
+            await page.wait_for_timeout(150)
+            waited += 150
+
+    async def _open(self, page: Page, field_id: str, loc: Locator) -> None:
+        await self._frame_for(page, field_id).evaluate(MARK_OPTIONS_JS)
+        await self._activate(loc)
+
     async def _read_listbox_options(self, page: Page, field: dict) -> list[str]:
         loc = self._locator(page, field["id"])
         wait = 2000 if field["kind"] == "listbox" else 900  # search pickers often show nothing until typed into
         try:
-            frame = self._frame_for(page, field["id"])
-            await self._activate(loc)
-            await frame.wait_for_selector('[role="option"]', state="visible", timeout=wait)
-            options = await frame.evaluate(OPTIONS_JS)
+            await self._open(page, field["id"], loc)
+            options = await self._field_options(page, field["id"], loc, wait)
         except (PlaywrightError, PlaywrightTimeout):
             options = []
         finally:
@@ -434,19 +455,13 @@ class BrowserSession:
         if checked != want:
             await loc.evaluate(CLICK_CHOICE_JS)
 
-    async def _visible_options(self, page: Page, field_id: str) -> list[str]:
-        frame = self._frame_for(page, field_id)
-        try:
-            await frame.wait_for_selector('[role="option"]', state="visible", timeout=2500)
-        except PlaywrightTimeout:
-            return []
-        return await frame.evaluate(OPTIONS_JS)
-
     async def _click_option(self, page: Page, field_id: str, text: str) -> None:
         frame = self._frame_for(page, field_id)
-        opt = frame.locator('[role="option"]:visible').filter(has_text=text)
-        exact = opt.filter(has_text=re.compile(rf"^\s*{re.escape(text)}\s*$"))
-        target = exact.first if await exact.count() else opt.first
+        target = frame.locator(f'[data-ja-opt="{_css_string(text)}"]').first
+        if not await target.count():  # the menu re-rendered after it was read
+            opt = frame.locator('[role="option"]:visible').filter(has_text=text)
+            exact = opt.filter(has_text=re.compile(rf"^\s*{re.escape(text)}\s*$"))
+            target = exact.first if await exact.count() else opt.first
         try:
             await target.click(timeout=3000)
         except PlaywrightTimeout:
@@ -457,14 +472,14 @@ class BrowserSession:
             )
 
     async def _pick_from_listbox(self, page: Page, loc: Locator, field: dict, value: Any) -> str:
-        await self._activate(loc)
-        options = await self._visible_options(page, field["id"]) or field.get("options") or []
+        await self._open(page, field["id"], loc)
+        options = await self._field_options(page, field["id"], loc, 2500)
         choice = choose_option(value, options)
         if choice is None:
             # Long lists are virtualized; typing jumps to the entry.
             await page.keyboard.type(str(value), delay=40)
             await page.wait_for_timeout(400)
-            options = await self._visible_options(page, field["id"])
+            options = await self._field_options(page, field["id"], loc, 1500)
             choice = choose_option(value, options)
         if choice is None:
             await page.keyboard.press("Escape")
@@ -474,15 +489,15 @@ class BrowserSession:
 
     async def _type_and_pick(self, page: Page, loc: Locator, field: dict, value: Any) -> str:
         text = str(value)
-        await self._activate(loc)
+        await self._open(page, field["id"], loc)
         await loc.fill("")
         await loc.press_sequentially(text, delay=30)
-        options = await self._visible_options(page, field["id"])
+        options = await self._field_options(page, field["id"], loc, 2500)
         if not options and not await loc.evaluate("el => !!el.form"):
             # Search-style pickers (Workday) list results after Enter. Inside a <form>,
             # Enter could submit the whole form, so it's never pressed there.
             await loc.press("Enter")
-            options = await self._visible_options(page, field["id"])
+            options = await self._field_options(page, field["id"], loc, 2500)
         choice = choose_option(text, options)
         if choice is None:
             if options:
@@ -508,13 +523,15 @@ class BrowserSession:
             try:
                 await loc.click(timeout=8000)
             except PlaywrightTimeout as e:
-                # Knockout/React re-renders can swap the button out mid-click; find it again once.
-                if "detached" not in str(e) or not info["text"]:
-                    raise
-                again = await self._find_by_text(page, info["text"])
-                if again is None:
-                    raise
-                await again.click(timeout=8000)
+                if "detached" in str(e) and info["text"]:
+                    # Knockout/React re-renders can swap the button out mid-click; find it again once.
+                    again = await self._find_by_text(page, info["text"])
+                    if again is None:
+                        raise
+                    await again.click(timeout=8000)
+                else:
+                    # Something (often a cookie banner) sits on top; click the element directly.
+                    await loc.evaluate("el => el.click()")
             await self._settle(page)
             page = await self.page()  # the click may have opened a new tab
             return await self._summary(page)

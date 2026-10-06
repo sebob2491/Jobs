@@ -193,6 +193,12 @@ def test_final_apply_button_honeypot_and_enter(srv, monkeypatch):
     assert any(n["label"].startswith("Are you a U.S. person") for n in result["needs_input"])
     after = {f["label"]: f["value"] for f in run(srv.inspect_form(include_dropdown_options=False))["fields"]}
     assert after["Degree"] == "Bachelor's Degree"
+    assert after["Gender"] == "Decline to self-identify"
+    # menus stay open on this page, so when inspect opened them one after another each field
+    # still had to list only its own choices
+    menus = {f["label"]: f.get("options") for f in form["fields"] if f["kind"] == "combobox"}
+    assert menus["Gender"] == ["Male", "Female", "Decline to self-identify"]
+    assert "Male" not in menus["Degree"] and "Other" in menus["Are you a U.S. person as defined by export control regulations (EAR)?"]
 
     blocked = run(srv.click("Apply"))  # a form's own "Apply" button is the final submit
     assert blocked["clicked"] is False

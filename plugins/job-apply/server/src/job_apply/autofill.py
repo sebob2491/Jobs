@@ -483,10 +483,11 @@ def resolve_field(field: dict, prof: Profile, job: dict | None = None, file_inpu
         return ans
 
     if kind == "file":
-        if re.search(r"cover", label):
+        where = f"{label} {norm(field.get('section'))}"
+        if re.search(r"cover", where):
             path = _document(prof, job, "cover_letter")
             return Answer(path, "documents.cover_letter") if path else None
-        if re.search(r"resume|cv|curriculum", label) or file_inputs_on_page == 1:
+        if re.search(r"resume|cv|curriculum", where) or file_inputs_on_page == 1:
             path = _document(prof, job, "resume")
             return Answer(path, "documents.resume") if path else None
         return None
