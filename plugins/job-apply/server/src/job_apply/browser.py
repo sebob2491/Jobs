@@ -12,7 +12,7 @@ import json
 import os
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from playwright.async_api import (
     BrowserContext,
@@ -28,7 +28,7 @@ from playwright.async_api import (
 from . import config
 from .autofill import choose_option, is_empty_value, norm, polarity
 from .formjs import (CLICK_CHOICE_JS, COVERED_JS, ELEMENT_INFO_JS, ENTRIES_JS, EXTRACT_JS, FIELD_OPTIONS_JS,
-                     MARK_OPTIONS_JS, QUIET_JS, SHOWN_VALUE_JS, VISIBLE_TEXT_JS)
+                     MARK_OPTIONS_JS, OPEN_MENU_JS, QUIET_JS, SHOWN_VALUE_JS, VISIBLE_TEXT_JS)
 
 SUBMIT_RE = re.compile(r"\bsubmit\b|send (my )?application|finish (my )?application|complete (my )?application", re.I)
 # A form's own submit button with one of these labels is the final step too ("Apply", "Send").
@@ -120,6 +120,7 @@ class BrowserSession:
             await self._pw.stop()
             self._pw = None
             raise BrowserUnavailable(UNAVAILABLE_HELP + " | ".join(errors))
+        self._ctx.set_default_timeout(15000)  # a vanished element fails in 15 s, not 30
         self._ctx.on("page", self._on_new_page)
         self._page = self._ctx.pages[0] if self._ctx.pages else await self._ctx.new_page()
 
@@ -136,6 +137,25 @@ class BrowserSession:
             live = [p for p in self._ctx.pages if not p.is_closed()]
             self._page = live[-1] if live else await self._ctx.new_page()
         return self._page
+
+    async def new_tab(self) -> Page:
+        """Open a tab and make it the one the tools act on (the Job Desk gives each job its own)."""
+        async with self._lock:
+            await self.page()
+            assert self._ctx is not None
+            self._page = await self._ctx.new_page()
+            return self._page
+
+    def use_tab(self, page: Page | None) -> bool:
+        """Act on this tab from now on; False if it has been closed."""
+        if page is None or page.is_closed() or self._ctx is None:
+            return False
+        self._page = page
+        return True
+
+    @property
+    def current_tab(self) -> Page | None:
+        return self._page if self._page is not None and not self._page.is_closed() else None
 
     async def close(self) -> None:
         if self._ctx is not None:
@@ -259,7 +279,7 @@ class BrowserSession:
 
     async def _field_options(self, page: Page, field_id: str, loc: Locator, wait_ms: int) -> list[str]:
         """This field's menu options, polling while the menu renders."""
-        frame = self._frame_for(page, field_id)
+        self._frame_for(page, field_id)  # fails clearly if the field's frame has gone
         waited = 0
         while True:
             try:
@@ -285,7 +305,22 @@ class BrowserSession:
             options = []
         finally:
             await page.keyboard.press("Escape")
+            await self._close_menus(page)
         return options
+
+    async def _close_menus(self, page: Page) -> None:
+        """Close a dropdown menu left open, which would catch the next field's clicks. Focus
+        moves off first (some menus, like Eightfold's, ignore Escape); Escape only follows
+        if a menu is still open, since it can also close a dialog such as Easy Apply."""
+        try:
+            if not await page.evaluate(OPEN_MENU_JS):
+                return
+            await page.evaluate("() => { const a = document.activeElement; if (a && a !== document.body) a.blur(); }")
+            await page.wait_for_timeout(150)
+            if await page.evaluate(OPEN_MENU_JS):
+                await page.keyboard.press("Escape")
+        except PlaywrightError:
+            pass
 
     async def inspect(self, include_dropdown_options: bool = True) -> dict[str, Any]:
         async with self._lock:
@@ -321,19 +356,59 @@ class BrowserSession:
             page = await self.page()
             return await page.content()
 
-    async def capture_json(self, url: str, url_part: str, timeout: int = 25000) -> Any:
+    async def capture_json(self, url: str, url_part: str, timeout: int = 25000,
+                           want: Callable[[Any], bool] | None = None,
+                           rewrite: Callable[[Any], Any] | None = None) -> Any:
         """Open `url` in a background tab and return the JSON of the first response whose URL
         contains `url_part`: the data a careers page loads for itself, when its API refuses
-        direct requests."""
+        direct requests. `want` picks among several such calls by their JSON request body;
+        `rewrite` may change that body on its way out (e.g. a bigger page size)."""
+        def body_of(request: Any) -> Any:
+            try:
+                return json.loads(request.post_data or "null")
+            except (ValueError, TypeError):
+                return None
+
         async with self._lock:
             await self.page()
             assert self._ctx is not None
             self._background = True
             tab = await self._ctx.new_page()
             try:
-                async with tab.expect_response(lambda r: url_part in r.url and r.ok, timeout=timeout) as info:
+                if rewrite is not None:
+                    async def handle(route: Any) -> None:
+                        changed = rewrite(body_of(route.request))
+                        if changed is None:
+                            await route.continue_()
+                        else:
+                            await route.continue_(post_data=json.dumps(changed))
+                    await tab.route(lambda u: url_part in u, handle)
+
+                def matches(r: Any) -> bool:
+                    return url_part in r.url and r.ok and (want is None or bool(want(body_of(r.request))))
+
+                async with tab.expect_response(matches, timeout=timeout) as info:
                     await tab.goto(url, wait_until="domcontentloaded", timeout=45000)
                 return await (await info.value).json()
+            finally:
+                await tab.close()
+                self._background = False
+
+    async def background_html(self, url: str) -> str:
+        """The HTML of `url`, read in a background tab so the tab an application is in
+        stays where it is (the Job Desk adds pasted links while it applies)."""
+        async with self._lock:
+            await self.page()
+            assert self._ctx is not None
+            self._background = True
+            tab = await self._ctx.new_page()
+            try:
+                await tab.goto(url, wait_until="domcontentloaded", timeout=45000)
+                try:
+                    await tab.wait_for_load_state("networkidle", timeout=8000)
+                except PlaywrightTimeout:
+                    pass  # pages that keep polling: what's drawn by now is enough
+                return await tab.content()
             finally:
                 await tab.close()
                 self._background = False
@@ -389,6 +464,7 @@ class BrowserSession:
         """Fill fields by id. Each item: {"id": ..., "value": ...}."""
         async with self._lock:
             page = await self.page()
+            await self._close_menus(page)
             results = []
             for item in values:
                 fid = str(item.get("id", ""))
@@ -441,6 +517,8 @@ class BrowserSession:
         if kind == "listbox":
             return await self._pick_from_listbox(page, loc, field, value)
         if kind == "combobox":
+            if field.get("readonly"):  # pick-only: open the menu and choose, nothing to type into
+                return await self._pick_from_listbox(page, loc, field, value)
             return await self._type_and_pick(page, loc, field, value)
         text = "" if value is None else str(value)
         if isinstance(value, bool):

@@ -1,6 +1,6 @@
 [project]
 name = "job-apply"
-version = "0.2.0"
+version = "0.3.0"
 description = "MCP server that ingests job postings, tracks applications, and fills application forms in a real browser."
 requires-python = ">=3.10"
 dependencies = [
@@ -17,6 +17,7 @@ dev = ["pytest>=8"]
 
 [project.scripts]
 job-apply-mcp = "job_apply.server:main"
+job-apply-desk = "job_apply.desk:main"
 
 [build-system]
 requires = ["hatchling"]

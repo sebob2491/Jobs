@@ -10,6 +10,12 @@ For each company with a `search` config in data/companies.yaml:
   4. save a debug snapshot (and, with --fixtures, a test fixture).
 Companies without a search API get a lighter check of their careers page.
 
+With --pipeline it instead runs the Job Desk's one-button pipeline on one posting per
+company: through Apply, sign-in pages (where it stops), every form step and the review
+page. Questions the fake profile can't answer get throwaway answers for that run only.
+With --fixtures too, a page it stopped on with questions or a problem becomes a test
+fixture (tests/fixtures/live/pipeline-<company>).
+
 Safety: JOB_APPLY_NEVER_SUBMIT=1 is forced, so nothing can be submitted. The fake
 profile has no resume, so nothing is uploaded. It never clicks sign-in, account
 creation, "Autofill with Resume", "Next", or third-party apply buttons (LinkedIn,
@@ -65,7 +71,7 @@ FAKE_PROFILE = {
 from job_apply import server  # noqa: E402
 from job_apply.fixtures import convert  # noqa: E402
 from job_apply.postings import fetch_posting  # noqa: E402
-from job_apply.search import load_companies, search_companies  # noqa: E402
+from job_apply.search import load_companies, search_companies, sitecore_search  # noqa: E402
 
 QUERY_AZ = "field service | customer service engineer | customer engineer | equipment technician"  # in Arizona
 QUERY_ANY = "engineer | technician"  # fallback so every company still gets a browser check
@@ -210,11 +216,32 @@ async def probe_page(name: str, url: str) -> dict[str, Any]:
     tab = await ctx.new_page()
     seen: list[dict[str, Any]] = []
 
+    samples: list[Any] = []
+
     def on_response(r: Any) -> None:
         ctype = r.headers.get("content-type", "")
         if "json" in ctype or "/api/" in r.url:
             keep = 1500 if ("recruitingCEJobRequisitions" in r.url or "pcsx/search" in r.url) else 300
             seen.append({"method": r.request.method, "status": r.status, "url": r.url[:keep], "type": ctype[:40]})
+            if "/discover/v2/" in r.url:  # ASML's job search (Sitecore Discover): keep the request and an answer
+                samples.append(asyncio.ensure_future(_sample(r)))
+
+    async def _sample(r: Any) -> dict[str, Any]:
+        try:
+            body = await r.text()
+        except Exception as e:  # noqa: BLE001
+            body = f"unreadable: {e}"
+        out: dict[str, Any] = {"request": (r.request.post_data or "")[:3000], "response": body[:1500]}
+        try:  # the answer's shape: totals, filter names and values, where the openings are
+            out["widgets"] = [{
+                "keys": sorted(k for k in w if k not in ("content", "facet")),
+                "total_item": w.get("total_item"),
+                "facets": {f.get("name"): [v.get("text") for v in f.get("value") or []][:20] for f in w.get("facet") or []},
+                "locations": [c.get("job_location") for c in w.get("content") or []],
+            } for w in json.loads(body).get("widgets") or []]
+        except Exception:  # noqa: BLE001
+            pass
+        return out
 
     tab.on("response", on_response)
     rec: dict[str, Any] = {"probe": name, "url": url}
@@ -225,11 +252,42 @@ async def probe_page(name: str, url: str) -> dict[str, Any]:
         rec["title"] = await tab.title()
         rec["json_calls"] = seen[:30]
         rec["text_sample"] = re.sub(r"\s+", " ", await tab.inner_text("body"))[:500]
+        if samples:
+            rec["api_samples"] = [await s for s in samples[-2:]]
+        # job links as the page draws them, with the text of the card around each
+        rec["job_links"] = await tab.evaluate(r"""() => {
+          const out = [];
+          for (const a of document.querySelectorAll('a[href]')) {
+            const href = a.href;
+            if (!/\/job|find-your-job\/.+|jobid|requisition/i.test(href)) continue;
+            let card = a;
+            for (let i = 0; i < 4 && card.parentElement && (card.innerText || '').length < 80; i++) card = card.parentElement;
+            out.push({href, text: (a.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 120),
+                      card: (card.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 300)});
+            if (out.length >= 12) break;
+          }
+          return out;
+        }""")
     except Exception as e:  # noqa: BLE001
         rec["error"] = f"{type(e).__name__}: {str(e)[:300]}"
     finally:
         await tab.close()
         server.browser._background = False  # noqa: SLF001
+    return rec
+
+
+async def check_sitecore(company: dict[str, Any]) -> dict[str, Any]:
+    """Every page of one wording, before any location filter: is the user's area in there?"""
+    found: list[Any] = []
+    rec: dict[str, Any] = {"sitecore_check": company["name"]}
+    try:
+        await sitecore_search(server.browser.capture_json, company["search"]["sitecore"], "field service", found)
+    except Exception as e:  # noqa: BLE001
+        rec["error"] = f"{type(e).__name__}: {str(e)[:200]}"
+    rec["count"] = len(found)
+    rec["us_locations"] = sorted({f.location for f in found if re.search(r"\bUS\b|United States", f.location)})
+    rec["arizona"] = [{"title": f.title, "location": f.location, "url": f.url} for f in found
+                      if re.search(r"\bAZ\b|Arizona|Phoenix|Chandler", f.location)]
     return rec
 
 
@@ -266,10 +324,13 @@ async def main() -> int:
     ap.add_argument("--out", type=Path, default=Path("live-report"))
     ap.add_argument("--companies", default="", help="comma-separated names (default: all)")
     ap.add_argument("--fixtures", action="store_true", help="also write tests/fixtures/live/ fixtures")
+    ap.add_argument("--pipeline", action="store_true", help="run the one-button apply pipeline instead")
     args = ap.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
     wanted = [n.strip().lower() for n in args.companies.split(",") if n.strip()]
     companies = [c for c in load_companies() if not wanted or any(w in c["name"].lower() for w in wanted)]
+    if args.pipeline:
+        return await pipeline_main(companies, args.out, args.fixtures)
 
     records = []
     for company in companies:
@@ -289,6 +350,10 @@ async def main() -> int:
         records.append(rec)
         print("LIVE_RESULT " + json.dumps(rec, default=str), flush=True)
 
+    for company in companies:
+        if "sitecore" in (company.get("search") or {}):
+            check = await asyncio.wait_for(check_sitecore(company), 120)
+            print("LIVE_SITECORE " + json.dumps(check, default=str), flush=True)
     for name, url in PROBES.items():
         if wanted and not any(w in name.lower() for w in wanted):
             continue
@@ -314,6 +379,117 @@ async def main() -> int:
             (r.get("crash") or (r.get("browser") or {}).get("error") or (r.get("page") or {}).get("title", ""))[:60],
         ))
     (args.out / "report.md").write_text("\n".join(lines) + "\n")
+    print("\n".join(lines))
+    return 0
+
+
+PIPELINE_WAIT = 180
+
+
+async def print_shot(name: str, page: Any) -> None:
+    """A small screenshot in the log, where it can be read without the run's artifacts.
+    The page only ever holds the fake applicant's details."""
+    import base64
+
+    if page is None or page.is_closed():
+        return
+    try:
+        data = await page.screenshot(type="jpeg", quality=35, full_page=False, scale="css")
+        print(f"LIVE_SHOT {json.dumps(name)} {base64.b64encode(data).decode()}", flush=True)
+    except Exception as e:  # noqa: BLE001
+        print(f"LIVE_SHOT {json.dumps(name)} failed: {e}", flush=True)
+
+
+def fake_answer(q: dict[str, Any]) -> Any:
+    """A throwaway answer for a question the fake profile can't answer (this run only)."""
+    options = [o for o in q.get("options") or [] if o and not re.match(r"^(select|choose|--|please)", o, re.I)]
+    if q.get("kind") == "checkbox":
+        return "Yes"
+    if options:
+        return options[0]
+    if re.search(r"year|salary|number|how many|zip|postal|\bgpa\b", q.get("label") or "", re.I):
+        return "0"
+    return "Test answer"
+
+
+async def check_pipeline(company: dict[str, Any], out: Path, rec: dict[str, Any], fixtures: bool = False) -> None:
+    from job_apply.pipeline import Applier, question_key
+
+    found = await server.search_company_jobs(QUERY_AZ, companies=[company["name"]], location="AZ", limit_per_company=5)
+    if not found["results"]:
+        found = await search_companies(QUERY_ANY, location=None, limit=3, companies=[company])
+    if not found["results"]:
+        rec["note"] = "no postings found"
+        return
+    first = found["results"][0]
+    rec["posting"] = {k: first.get(k) for k in ("title", "location", "url")}
+    job = server.add_job(url=first["url"], title=first["title"], company=company["name"])["job"]
+    applier = Applier(server)
+    applier.start()
+    rec["rounds"] = []
+    try:
+        run = applier.enqueue(job["id"])
+        for _ in range(3):
+            start = time.monotonic()
+            while run.status in ("queued", "running"):
+                if time.monotonic() - start > PIPELINE_WAIT:
+                    raise TimeoutError(f"still {run.status} after {PIPELINE_WAIT}s; log: {run.log[-3:]}")
+                await asyncio.sleep(0.5)
+            rec["rounds"].append({
+                "status": run.status, "need": run.need, "reason": run.reason, "url": run.url, "log": list(run.log),
+                "questions": [{k: q.get(k) for k in ("label", "kind", "required", "options", "error")}
+                              for q in run.questions],
+                "page": run.page_info,
+            })
+            if run.need == "stuck":
+                await print_shot(company["name"], run.page)
+            if run.status == "needs_you" and run.need == "questions":
+                for q in run.questions:
+                    run.once[question_key(q.get("label") or "")] = fake_answer(q)
+                applier.enqueue(job["id"], front=True)
+                continue
+            break
+    finally:
+        await applier.stop()
+        try:
+            snap = await server.debug_snapshot(note=f"live pipeline: {company['name']}")
+            dest = out / "pipeline" / slug(company["name"])
+            shutil.copytree(snap["saved_to"], dest, dirs_exist_ok=True)
+            if fixtures and (rec.get("rounds") or [{}])[-1].get("need") in ("questions", "stuck"):
+                # the page it stopped on, as a test fixture (the fake applicant's details only)
+                fixture_dir = Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "live"
+                convert(dest, f"pipeline-{slug(company['name'])}", fixture_dir)
+                rec["fixture"] = f"pipeline-{slug(company['name'])}"
+        except Exception as e:  # noqa: BLE001 - the record matters more than the snapshot
+            rec["snapshot_error"] = f"{type(e).__name__}: {str(e)[:200]}"
+        await server.close_browser()
+
+
+async def pipeline_main(companies: list[dict[str, Any]], out: Path, fixtures: bool = False) -> int:
+    records = []
+    for company in [c for c in companies if c.get("search")]:
+        started = time.time()
+        rec: dict[str, Any] = {"company": company["name"]}
+        try:
+            await asyncio.wait_for(check_pipeline(company, out, rec, fixtures), 3 * PIPELINE_WAIT + 60)
+        except Exception as e:  # noqa: BLE001
+            rec["crash"] = f"{type(e).__name__}: {str(e)[:300]}"
+            rec["trace"] = traceback.format_exc()[-1500:]
+            await server.close_browser()
+        rec["seconds"] = round(time.time() - started, 1)
+        records.append(rec)
+        print("LIVE_PIPELINE " + json.dumps(rec, default=str), flush=True)
+    (out / "pipeline.json").write_text(json.dumps(records, indent=2, default=str))
+    lines = ["| Company | Posting | Ended | Waiting on | Steps | Questions answered |", "|---|---|---|---|---|---|"]
+    for r in records:
+        rounds = r.get("rounds") or []
+        last = rounds[-1] if rounds else {}
+        lines.append("| {} | {} | {} | {} | {} | {} |".format(
+            r["company"], ((r.get("posting") or {}).get("title") or r.get("note") or "")[:40],
+            r.get("crash", "")[:50] or last.get("status", "–"), last.get("need", ""),
+            len(last.get("log") or []), sum(len(x.get("questions") or []) for x in rounds[:-1]),
+        ))
+    (out / "report.md").write_text("\n".join(lines) + "\n")
     print("\n".join(lines))
     return 0
 

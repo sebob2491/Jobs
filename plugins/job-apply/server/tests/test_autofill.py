@@ -222,7 +222,17 @@ def test_choices_seen_on_live_forms():
     asm_auth = ["I require sponsorship to work in this country",
                 "I am authorized to work in this country for my current employer",
                 "I am authorized to work in this country for any employer", "My status to work in this country is unknown"]
-    assert choose_option("Yes", asm_auth) is None  # two "authorized" answers: a person decides
+    assert choose_option("Yes", asm_auth) is None  # two "authorized" answers: a bare yes can't pick
+    assert choose_option("Yes, for any employer", asm_auth) == asm_auth[2]
+    assert choose_option("Yes, for any employer", ["Yes", "No"]) == "Yes"
+    assert choose_option("Yes, for any employer", ["Yes", "Yes, with restrictions", "No"]) == "Yes"
+    assert choose_option("Yes - 75%", ["Yes - 25%", "Yes - 50%", "Yes - 75%", "No"]) == "Yes - 75%"
+    # the profile settles it: authorized and needing no sponsorship is "any employer"
+    auth_q = f("Are you legally authorized to work in this country?*", "combobox", options=asm_auth)
+    p = prof()
+    assert resolve_field(auth_q, p).value == asm_auth[2]
+    p.data["work_authorization"] = {**p.data["work_authorization"], "requires_sponsorship": True}
+    assert resolve_field(auth_q, p) is None  # current employer only, or not yet: the user says
     lam_eeo = ["Male", "Female", "Choose not to disclose"]
     assert choose_option("Decline to self-identify", lam_eeo) == "Choose not to disclose"
 

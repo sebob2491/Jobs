@@ -4,7 +4,8 @@ name: live-smoke
 # profile and submitting disabled (see plugins/job-apply/server/scripts/live_smoke.py).
 # Runs on demand, or on a push whose commit message contains [live-smoke].
 # [live-fixtures] in the message (or the commit_fixtures input) also commits the
-# captured pages as regression fixtures.
+# captured pages as regression fixtures. [live-pipeline] (or the pipeline input) runs
+# the Job Desk's one-button pipeline on one posting per company instead.
 
 on:
   workflow_dispatch:
@@ -17,6 +18,10 @@ on:
         description: Commit captured pages to tests/fixtures/live
         type: boolean
         default: false
+      pipeline:
+        description: Run the one-button apply pipeline instead of the field check
+        type: boolean
+        default: false
   push:
 
 jobs:
@@ -24,9 +29,10 @@ jobs:
     if: >-
       github.event_name == 'workflow_dispatch' ||
       contains(github.event.head_commit.message, '[live-smoke]') ||
-      contains(github.event.head_commit.message, '[live-fixtures]')
+      contains(github.event.head_commit.message, '[live-fixtures]') ||
+      contains(github.event.head_commit.message, '[live-pipeline]')
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 60
     permissions:
       contents: write
     defaults:
@@ -35,6 +41,7 @@ jobs:
     env:
       JOB_APPLY_NEVER_SUBMIT: "1"
       FIXTURES: ${{ inputs.commit_fixtures || contains(github.event.head_commit.message, '[live-fixtures]') }}
+      PIPELINE: ${{ inputs.pipeline || contains(github.event.head_commit.message, '[live-pipeline]') }}
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
@@ -51,6 +58,7 @@ jobs:
           args=(--out live-report)
           if [ -n "$COMPANIES" ]; then args+=(--companies "$COMPANIES"); fi
           if [ "$FIXTURES" = "true" ]; then args+=(--fixtures); fi
+          if [ "$PIPELINE" = "true" ]; then args+=(--pipeline); fi
           uv run --frozen python scripts/live_smoke.py "${args[@]}"
       - name: Summary
         if: always()

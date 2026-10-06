@@ -12,6 +12,11 @@ companies:
     ats: unknown            # postings live on asml.com; its old SmartRecruiters board only lists stale roles
     az_sites: Chandler, Phoenix
     confidence: medium
+    search:
+      # asml.com's job search is a Sitecore Discover widget that only answers the page itself,
+      # so the search runs in a background browser tab and reads the page's own results.
+      sitecore:
+        url: "https://www.asml.com/en/careers/find-your-job?query={query}"
   - name: Lam Research
     careers_url: https://careers.lamresearch.com/careers
     ats: eightfold

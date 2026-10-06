@@ -41,6 +41,11 @@ def db_path() -> Path:
     return home() / "tracker.db"
 
 
+def answers_path() -> Path:
+    """Answers given in the Job Desk, kept apart so profile.yaml (and its comments) is never rewritten."""
+    return home() / "answers.yaml"
+
+
 def browser_profile_dir() -> Path:
     return home() / "browser"
 
@@ -132,11 +137,17 @@ class Profile:
 
     @classmethod
     def load(cls, path: Path | None = None) -> "Profile":
+        own = path is None
         path = path or profile_path()
-        if not path.exists():
-            return cls({}, path)
-        with path.open(encoding="utf-8") as f:
-            return cls(yaml.safe_load(f) or {}, path)
+        data: dict[str, Any] = {}
+        if path.exists():
+            with path.open(encoding="utf-8") as f:
+                data = yaml.safe_load(f) or {}
+        if own:
+            saved = saved_answers()
+            if saved:  # exact questions answered in the Job Desk come before the general patterns
+                data["answers"] = saved + list(data.get("answers") or [])
+        return cls(data, path)
 
     def get(self, dotted: str, default: Any = None) -> Any:
         cur: Any = self.data
@@ -191,3 +202,67 @@ def get_secret(name: str) -> str | None:
         if value is not None:
             return str(value)
     return None
+
+
+SITE_PASSWORD = re.compile(r"^[a-z][a-z0-9]{1,30}_password$")  # e.g. workday_password
+
+
+def save_site_password(name: str, value: str) -> None:
+    """Store a career-site password the person typed into the Job Desk. Only its own
+    entry in secrets.yaml changes; the rest of the file, comments included, stays as
+    they wrote it. The file is readable by the person alone."""
+    if not SITE_PASSWORD.match(name):
+        raise ValueError(f"not a site password name: {name!r}")
+    if not value or not value.strip() or "\n" in value or "\r" in value:
+        raise ValueError("the password is empty or has a line break")
+    ensure_home()
+    path = secrets_path()
+    old = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
+    kept, skipping = [], False
+    for line in old:
+        if re.match(rf"{re.escape(name)}\s*:", line):
+            skipping = True  # drop the old entry and any lines continuing it
+            continue
+        if skipping and (line.startswith((" ", "\t")) or not line.strip()):
+            continue
+        skipping = False
+        kept.append(line)
+    entry = yaml.safe_dump({name: value}, default_flow_style=False, allow_unicode=True, width=10**6).strip()
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write("\n".join([*kept, entry]) + "\n")
+    path.chmod(0o600)
+
+
+def saved_answers() -> list[dict[str, Any]]:
+    path = answers_path()
+    if not path.exists():
+        return []
+    with path.open(encoding="utf-8") as f:
+        data = yaml.safe_load(f) or {}
+    return [a for a in data.get("answers") or [] if isinstance(a, dict) and a.get("match")]
+
+
+def question_pattern(label: str) -> str:
+    """A pattern that matches this question's label again, however its spacing and
+    required-markers come out ("Are you willing to relocate?*")."""
+    text = re.sub(r"\(required\)|\*", " ", label or "", flags=re.I).strip(" :?")
+    return r"\s+".join(re.escape(w) for w in text.split())
+
+
+def save_answer(label: str, answer: Any, source: str = "") -> dict[str, Any]:
+    """Remember the answer to a question for every later application that asks it."""
+    match = question_pattern(label)
+    if not match:
+        raise ValueError("A question needs a label to be remembered")
+    entries = [a for a in saved_answers() if a.get("match") != match]
+    entry: dict[str, Any] = {"match": match, "answer": answer, "question": label.strip()}
+    if source:
+        entry["from"] = source
+    entries.insert(0, entry)
+    ensure_home()
+    header = ("# Answers you gave in the Job Desk. Each one fills the same question on later\n"
+              "# applications; edit or delete entries freely. profile.yaml's own answers come after these.\n")
+    answers_path().write_text(header + yaml.safe_dump({"answers": entries}, sort_keys=False, allow_unicode=True),
+                              encoding="utf-8")
+    return entry

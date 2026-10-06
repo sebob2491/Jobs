@@ -5,6 +5,7 @@ import asyncio
 import json
 
 import httpx
+import pytest
 
 from job_apply.postings import fetch_posting
 import job_apply.search as search_module
@@ -322,3 +323,108 @@ def test_passing_server_errors_are_retried_and_one_failure_keeps_the_rest(monkey
     assert tries.count("customer engineer") == 3
     assert out["errors"]["Workday Co"].startswith("SearchError: HTTP 502")
     assert "1 of 2 searches failed" in out["errors"]["Workday Co"]
+
+
+# The shape of asml.com's Sitecore Discover answer (live probe, Oct 2026; descriptions trimmed).
+ASML_ANSWER = {"widgets": [{"rfk_id": "asml_job_search", "type": "content_grid", "content": [
+    {"description": "<p>Install and repair EUV systems.</p>", "id": "J-00327683", "job_city": "Hefei",
+     "job_country": "China", "job_date_posted": "2025-09-25T00:00:00", "job_degrees": ["Bachelor", "Master"],
+     "job_id": "J-00327683", "job_location": "Hefei, China", "job_state": "AH", "job_teams": ["Customer Support"],
+     "job_type": "Fix", "name": "Field Service Engineer", "type": "job_detail_page",
+     "url": "https://www.asml.com/en/careers/find-your-job/field-service-engineer-j00327683"},
+    {"id": "J-00329630", "job_city": "Phoenix", "job_country": "US", "job_date_posted": "2026-09-14T00:00:00",
+     "job_id": "J-00329630", "job_location": "Phoenix, AZ, US", "job_state": "AZ", "job_type": "Fix",
+     "name": "Field Service Engineer - EUV", "type": "job_detail_page",
+     "url": "https://www.asml.com/en/careers/find-your-job/field-service-engineer-euv-j00329630"},
+    {"name": "Life at ASML", "type": "article", "url": "https://www.asml.com/en/careers/life"},
+]}]}
+
+
+def test_asml_sitecore_answer_and_request():
+    from job_apply.search import parse_sitecore, sitecore_page_url, sitecore_rewrite, sitecore_wants
+
+    jobs = parse_sitecore(ASML_ANSWER)
+    assert [(j.title, j.location, j.posted, j.external_id) for j in jobs] == [
+        ("Field Service Engineer", "Hefei, China", "2025-09-25", "J-00327683"),
+        ("Field Service Engineer - EUV", "Phoenix, AZ, US", "2026-09-14", "J-00329630"),
+    ]  # the article isn't a job
+    facets_only = {"widget": {"items": [{"rfk_id": "asml_job_search", "search": {"limit": 25, "facet": {"all": True}}}]}}
+    keyword = {"widget": {"items": [{"rfk_id": "asml_job_search", "search": {
+        "limit": 25, "offset": 0, "query": {"keyphrase": "field service", "operator": "and"}}}]}}
+    assert not sitecore_wants(facets_only) and sitecore_wants(keyword)
+    assert sitecore_rewrite(facets_only) is None  # left alone
+    assert sitecore_rewrite(keyword)["widget"]["items"][0]["search"]["limit"] == 100
+    assert sitecore_page_url({"url": "https://www.asml.com/en/careers/find-your-job?query={query}"}, "field service") == \
+        "https://www.asml.com/en/careers/find-your-job?query=field%20service"
+
+    async def go():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            return await search_companies("field service", client=client, location="AZ", companies=[
+                {"name": "ASML", "search": {"sitecore": {"url": "https://www.asml.com/f?query={query}"}}}])
+    out = asyncio.run(go())
+    assert out["results"] == [] and out["needs_browser"] == [
+        {"company": "ASML", "kind": "sitecore", "config": {"url": "https://www.asml.com/f?query={query}"}}]
+
+
+def test_search_tool_runs_asml_in_the_browser(srv, monkeypatch):
+    calls = []
+
+    async def fake_capture(url, url_part, timeout=25000, want=None, rewrite=None):
+        calls.append((url, url_part, want is not None, rewrite is not None))
+        return ASML_ANSWER
+
+    monkeypatch.setattr(srv.browser, "capture_json", fake_capture)
+    monkeypatch.setattr(srv, "load_companies", lambda: [
+        {"name": "ASML", "search": {"sitecore": {"url": "https://www.asml.com/en/careers/find-your-job?query={query}"}}}])
+    out = asyncio.run(srv.search_company_jobs("field service | customer engineer", companies=["ASML"], location="AZ"))
+    assert [r["title"] for r in out["results"]] == ["Field Service Engineer - EUV"]  # Hefei is filtered out
+    assert out["results"][0]["company"] == "ASML" and "needs_browser" not in out
+    assert [c[0] for c in calls] == ["https://www.asml.com/en/careers/find-your-job?query=field%20service",
+                                     "https://www.asml.com/en/careers/find-your-job?query=customer%20engineer"]
+    assert all(c[1] == "/discover/v2/" and c[2] and c[3] for c in calls)
+
+
+def test_sitecore_search_pages_through_results():
+    from job_apply.search import Listing, sitecore_search, sitecore_total
+
+    page_body = {"widget": {"items": [{"rfk_id": "asml_job_search", "search": {
+        "limit": 25, "offset": 0, "query": {"keyphrase": "field service"}}}]}}
+    offsets = []
+
+    def answer(start, count, total):
+        return {"widgets": [{"rfk_id": "asml_job_search", "total_item": total, "content": [
+            {"name": f"Field Service Engineer {i}", "type": "job_detail_page", "job_location": "Phoenix, AZ, US",
+             "url": f"https://www.asml.com/en/careers/find-your-job/fse-{i}"} for i in range(start, start + count)]}]}
+
+    async def capture(url, url_part, timeout=25000, want=None, rewrite=None):
+        sent = rewrite(json.loads(json.dumps(page_body)))  # what the page's own request becomes
+        offsets.append(sent["widget"]["items"][0]["search"]["offset"])
+        assert sent["widget"]["items"][0]["search"]["limit"] == 100
+        start = offsets[-1]
+        if start >= 200:
+            raise AssertionError("asked past the end")
+        return answer(start, min(100, 150 - start), 150)
+
+    found: list[Listing] = []
+    asyncio.run(sitecore_search(capture, {"url": "https://www.asml.com/f?query={query}"}, "field service", found))
+    assert offsets == [0, 100] and len(found) == 150 and sitecore_total(answer(0, 1, 150)) == 150
+
+    async def broken_second_page(url, url_part, timeout=25000, want=None, rewrite=None):
+        offset = rewrite(json.loads(json.dumps(page_body)))["widget"]["items"][0]["search"]["offset"]
+        if offset:
+            raise TimeoutError("page 2 never answered")
+        return answer(0, 100, 150)
+
+    kept: list[Listing] = []
+    with pytest.raises(TimeoutError):
+        asyncio.run(sitecore_search(broken_second_page, {"url": "https://www.asml.com/f?query={query}"}, "x", kept))
+    assert len(kept) == 100  # the first page survives the failure
+
+    no_total = {"widgets": [{"content": answer(0, 3, 3)["widgets"][0]["content"]}]}
+    calls = []
+
+    async def short(url, url_part, timeout=25000, want=None, rewrite=None):
+        calls.append(url)
+        return no_total
+    asyncio.run(sitecore_search(short, {"url": "https://www.asml.com/f?query={query}"}, "x", []))
+    assert len(calls) == 1  # fewer than a full page: that was all of them

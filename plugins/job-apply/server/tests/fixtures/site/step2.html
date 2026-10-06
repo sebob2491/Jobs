@@ -1,0 +1,29 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Application Questions</title></head>
+<body>
+<div>current step 2 of 3</div>
+<h2>Application Questions</h2>
+<form id="step" novalidate>
+  <fieldset>
+    <legend>Are you legally authorized to work in the United States? *</legend>
+    <label><input type="radio" name="auth" value="Yes" required> Yes</label>
+    <label><input type="radio" name="auth" value="No"> No</label>
+  </fieldset>
+  <label for="dl">Do you have a valid driver's license? *</label>
+  <select id="dl" required><option value="">Select One</option><option>Yes</option><option>No</option></select>
+  <label for="terms">I agree to the terms of this application *</label><input id="terms" type="checkbox" required>
+  <button type="submit">Save and Continue</button>
+</form>
+<div id="err" role="alert"></div>
+<script>
+  document.getElementById('step').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const ok = document.querySelector('input[name=auth]:checked') && document.getElementById('dl').value
+      && document.getElementById('terms').checked;
+    if (ok) location.href = 'review.html';
+    else document.getElementById('err').textContent = 'Error: please answer every required question';
+  });
+</script>
+</body>
+</html>

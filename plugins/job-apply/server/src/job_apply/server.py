@@ -16,7 +16,8 @@ from .autofill import is_empty_value, plan_autofill, profile_entries
 from .browser import BrowserSession, BrowserUnavailable, SubmitBlocked
 from .postings import FetchError, Posting, fetch_posting, finalize, parse_html
 from .render import KINDS, render_pdf, to_html
-from .search import eightfold_page_url, keep_listings, load_companies, location_terms, parse_eightfold, search_companies
+from .search import (alternatives, eightfold_page_url, keep_listings, load_companies, location_terms, parse_eightfold,
+                     search_companies, sitecore_search)
 from .tracker import Tracker
 
 INSTRUCTIONS = """\
@@ -31,7 +32,7 @@ Rules: never invent facts about the applicant; answers must come from the profil
 user. LinkedIn and Indeed applications are always submitted by the user clicking the
 button themselves. Passwords go through fill_secret, never fill_form."""
 
-mcp = MCPServer("job-apply", instructions=INSTRUCTIONS, version="0.2.0")
+mcp = MCPServer("job-apply", instructions=INSTRUCTIONS, version="0.3.0")
 browser = BrowserSession()
 _tracker: Tracker | None = None
 
@@ -185,6 +186,19 @@ async def search_company_jobs(
         found = parse_eightfold(data, cfg["host"])
         out["results"].extend(keep_listings(name, found, location_terms(location), limit_per_company, query))
         del out["errors"][name]
+    # Sites whose search only answers their own page (ASML): run it there, one tab per wording.
+    for item in out.pop("needs_browser", []):
+        name, cfg = item["company"], item["config"]
+        found, failures = [], []
+        for wording in alternatives(query):
+            try:
+                await sitecore_search(browser.capture_json, cfg, wording, found)
+            except Exception as e:  # one wording failing keeps the others' results
+                failures.append(f"{type(e).__name__}: {str(e).splitlines()[0][:150] if str(e) else ''}")
+        if failures:
+            out["errors"][name] = f"browser search: {failures[0]}" + (
+                f" ({len(failures)} of {len(alternatives(query))} searches failed)" if found else "")
+        out["results"].extend(keep_listings(name, found, location_terms(location), limit_per_company, query))
     t = tracker()
     for r in out["results"]:
         job = t.find_by_url(r["url"])
@@ -472,6 +486,24 @@ async def close_browser() -> dict[str, Any]:
     """Close the automation browser (sign-ins are kept in the profile for next time)."""
     await browser.close()
     return {"closed": True}
+
+
+@mcp.tool()
+async def open_job_desk(open_browser: bool = True) -> dict[str, Any]:
+    """Open the Job Desk: a page on this computer that lists recommended openings from
+    every employer, ranked against the profile, and applies to the ones the user picks
+    with one button. It fills each application in the automation browser up to its
+    review page, pauses for anything that needs the user (questions it can't answer,
+    sign-ins, bot checks, emailed codes), and submits only when they press Submit or turn
+    on "Submit for me". Returns the page's address; it stays up while Claude Code runs."""
+    import sys
+
+    from .desk import get_desk
+
+    desk = get_desk(sys.modules[__name__])
+    url = await desk.start(open_browser=open_browser)
+    return {"url": url, "opened_in_browser": open_browser,
+            "note": "The address carries a private key; share it with no one. Press Find jobs on the page to search."}
 
 
 def _mark_ready(job: dict[str, Any], note: str) -> None:
