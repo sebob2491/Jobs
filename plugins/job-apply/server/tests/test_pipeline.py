@@ -1026,6 +1026,34 @@ def test_an_answer_the_page_turns_down_is_asked_again(srv, monkeypatch):
     assert run(go()) == ["Sam", "United States", "English", ""]  # the optional veteran question is left
 
 
+def test_an_answer_that_doesnt_stick_the_first_time_is_filled_again_not_asked_again(srv, monkeypatch):
+    """Lam's and Micron's consent questions (Eightfold), live: an answer the person gave didn't
+    stick the first time, and the desk asked for it again. It's filled in a second time first."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    job = srv.add_job(url=fixture_url("site/drop-first-answer.html"), title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+    badge = question_key("Which badge color do you prefer?")
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status == "needs_you")
+            assert r.need == "questions" and [q["label"] for q in r.questions] == ["Which badge color do you prefer?"]
+            r.once[badge] = "Green"
+            applier.enqueue(job["id"], front=True)
+            await until(lambda: r.status in ("ready", "failed") or r.status == "needs_you" and r.log[-1] != r.reason[:0])
+            await until(lambda: r.status not in ("queued", "running"))
+            assert r.status == "ready", (r.status, r.reason, r.log)
+            return r, await r.page.input_value("#badge")
+        finally:
+            await applier.stop()
+
+    r, value = run(go())
+    assert value == "Green"
+    assert sum("question(s) your profile doesn't answer" in line for line in r.log) == 1  # asked once
+
+
 def test_a_turned_down_answer_is_asked_again_whatever_the_box_shows():
     """A widget that keeps the words after a failed pick still gets its question asked again,
     unless the profile's own answer went in after."""
@@ -1081,6 +1109,9 @@ def test_a_sign_in_by_hand_mentions_the_password_the_desk_could_save(monkeypatch
     monkeypatch.setattr(pipeline, "_secret", lambda name: None)
     assert "Save a SuccessFactors password" in pipeline._password_tip("https://career8.successfactors.com/career?x=1")
     assert "Save a Workday password" in pipeline._password_tip("https://intel.wd1.myworkdayjobs.com/External/login")
+    assert "Save an Infor password" in pipeline._password_tip("https://css-benchmark-prd.inforcloudsuite.com/sso/SSOServlet")
+    assert "Save an ApplicantStack password" in pipeline._password_tip("https://seus.applicantstack.com/x/login")
+    assert "Save a UKG Pro password" in pipeline._password_tip("https://signin-us.ultipro.com/u/login")
     assert pipeline._password_tip("https://www.taleo.net/careersection/login") == ""  # not offered on the page
     assert pipeline._password_tip("https://example.com/careers/login") == ""
     monkeypatch.setattr(pipeline, "_secret", lambda name: "saved")

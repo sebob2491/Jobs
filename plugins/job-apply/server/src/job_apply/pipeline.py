@@ -31,6 +31,7 @@ from .autofill import clean_label, is_empty_value, norm, plan_autofill, tailored
 from .browser import TabClosed
 
 NEW_TAB_WAIT = 4  # seconds to wait for a tab opened late by a click before calling it a stall
+ONCE_SETTLE = 1.0  # seconds after filling the person's answers before checking they stayed in
 MAX_STEPS = 15
 LATE_BUTTONS_WAIT = 10  # seconds for a page's buttons to be drawn
 SIGN_IN_STEP_WAIT = 25  # Workday's sign-in step can take longer to draw its buttons (Applied's)
@@ -606,24 +607,36 @@ class Applier:
     async def _fill_once(self, run: Run, data: dict[str, Any]) -> dict[str, dict[str, Any]]:
         """Answers the person gave for this application only (not remembered). Returns the
         ones that didn't go in, by question: the field, the reason, and the entries to
-        choose from when the answer was a group of them."""
+        choose from when the answer was a group of them.
+
+        An answer that didn't go in, or went in and was gone a moment later, gets a second
+        try before the person is asked for it again: Eightfold's dropdowns (Lam's and
+        Micron's consent questions, live) now and then take one only the second time."""
         if not run.once:
             return {}
-        fields = {f["id"]: f for f in data.get("fields") or []}
-        by_id = {fid: question_key(f.get("label") or "") for fid, f in fields.items()}
-        fills = [{"id": fid, "value": run.once[key]} for fid, key in by_id.items()
-                 if key in run.once and is_empty_value(fields[fid].get("value"))]
-        if not fills:
-            return {}
-        out = await self.srv.fill_form(fills)
-        failed = {by_id[r["id"]]: {**{k: fields[r["id"]][k] for k in ("id", "kind", "label", "section", "required", "options")
-                                      if fields[r["id"]].get(k) not in (None, [])},
-                                   "error": r.get("error") or "didn't take",
-                                   **({"options": r["options"]} if r.get("options") else {})}
-                  for r in out.get("results", []) if not r.get("ok") and r.get("id") in fields}
-        done = len(fills) - len(failed)
-        if done:
-            self._log(run, f"filled {done} answer(s) you gave for this application")
+        filled: set[str] = set()
+        failed: dict[str, dict[str, Any]] = {}
+        for attempt in range(2):
+            fields = {f["id"]: f for f in data.get("fields") or []}
+            by_id = {fid: question_key(f.get("label") or "") for fid, f in fields.items()}
+            fills = [{"id": fid, "value": run.once[key]} for fid, key in by_id.items()
+                     if key in run.once and is_empty_value(fields[fid].get("value"))]
+            if not fills:
+                break
+            out = await self.srv.fill_form(fills)
+            failed = {by_id[r["id"]]: {**{k: fields[r["id"]][k] for k in ("id", "kind", "label", "section", "required",
+                                                                          "options")
+                                          if fields[r["id"]].get(k) not in (None, [])},
+                                       "error": r.get("error") or "didn't take",
+                                       **({"options": r["options"]} if r.get("options") else {})}
+                      for r in out.get("results", []) if not r.get("ok") and r.get("id") in fields}
+            filled |= {by_id[f["id"]] for f in fills} - set(failed)
+            if attempt == 0:
+                await asyncio.sleep(ONCE_SETTLE)  # long enough for an answer that won't stick to be gone
+                data, _ = await self._look()
+        filled -= set(failed)
+        if filled:
+            self._log(run, f"filled {len(filled)} answer(s) you gave for this application")
         if failed:
             self._log(run, f"{len(failed)} of your answers didn't go in")
         return failed
@@ -917,7 +930,9 @@ def _password_tip(url: str) -> str:
     name = password_for(url)
     if name not in DESK_PASSWORDS or _secret(name) is not None:
         return ""
-    return f" Save a {DESK_PASSWORDS[name]} password on the desk and it fills these in for you next time."
+    system = DESK_PASSWORDS[name]
+    article = "an" if system[0].lower() in "aeio" else "a"  # an iCIMS, an Infor; a UKG Pro, a Workday
+    return f" Save {article} {system} password on the desk and it fills these in for you next time."
 
 
 def _secret(name: str) -> str | None:
