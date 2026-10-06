@@ -123,7 +123,8 @@ the page URL. Use this file for the parts of each flow that `autofill` can't do.
 ## iCIMS (`*.icims.com`): Daifuku America
 
 - The portal draws its pages inside a frame, so field ids start with `f1-`. Its job
-  search lists each opening with its location (`US-AZ-Chandler`) and posting date.
+  search lists each opening with its location (`US-AZ-Chandler`) and posting date. It
+  turns away plain requests (HTTP 405), so the search runs in a background browser tab.
 
 ## ASML (`asml.com/en/careers`)
 

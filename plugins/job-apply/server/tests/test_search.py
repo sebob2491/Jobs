@@ -136,9 +136,6 @@ def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={"total": 1, "jobPostings": [
             {"title": "Field Service Engineer 1", "externalPath": "/job/Phoenix-AZ/Field-Service-Engineer-1_R1",
              "locationsText": "Phoenix, AZ", "postedOn": "Posted Today", "bulletFields": ["R1"]}]})
-    if url.startswith("https://careers-icco.icims.com/jobs/search"):
-        assert request.url.params["in_iframe"] == "1" and request.url.params["searchKeyword"]
-        return httpx.Response(200, text=ICIMS_PAGE)
     if url == "https://asco.applicantstack.com/x/openings":
         return httpx.Response(200, text=AS_BOARD)
     if url == "https://boards-api.greenhouse.io/v1/boards/broken/jobs":
@@ -218,9 +215,9 @@ def test_search_all_backends():
     assert [(r["title"], r["location"], r["url"]) for r in by_company["AS Co"]] == [
         ("Field Service Engineer - Chandler", "Chandler, AZ", "https://asco.applicantstack.com/x/detail/a2ejxq3cpz4b")]
     assert sum("applicantstack" in str(r.url) for r in seen) == 1  # whole board, fetched once
-    assert [(r["title"], r["location"], r["posted"], r["url"]) for r in by_company["iCIMS Co"]] == [
-        ("Field Service Engineer 1", "US-AZ-Chandler", "2026-09-24",
-         "https://careers-icco.icims.com/jobs/19224/field-service-engineer-1/job")]
+    # iCIMS answers plain requests with HTTP 405: it's left for the browser
+    assert "iCIMS Co" not in by_company and not any("icims" in str(r.url) for r in seen)
+    assert {"company": "iCIMS Co", "kind": "icims", "config": "careers-icco"} in out["needs_browser"]
 
     assert out["browser_only"] == [{"company": "Browser Co", "careers_url": "https://careers.browserco.com"}]
     assert set(out["errors"]) == {"Broken Co", "Odd Lever Co"}  # each fails alone; the rest still return
@@ -470,3 +467,24 @@ def test_sitecore_search_pages_through_results():
         return no_total
     asyncio.run(sitecore_search(short, {"url": "https://www.asml.com/f?query={query}"}, "x", []))
     assert len(calls) == 1  # fewer than a full page: that was all of them
+
+
+def test_icims_board_is_read_in_the_browser(srv, monkeypatch):
+    """Daifuku's portal turns away plain requests; its search page is read in a background
+    tab, where the openings sit inside the portal's frame."""
+    from job_apply.search import icims_page_url
+
+    pages = []
+
+    async def fake_frames_html(url):
+        pages.append(url)
+        return ['<html><body><iframe id="icims_content_iframe"></iframe></body></html>', ICIMS_PAGE]
+
+    monkeypatch.setattr(srv.browser, "frames_html", fake_frames_html)
+    out = asyncio.run(srv.search_company_jobs("field service", companies=["Daifuku"], location="AZ"))
+    assert [(r["title"], r["location"], r["posted"], r["url"]) for r in out["results"]] == [
+        ("Field Service Engineer 1", "US-AZ-Chandler", "2026-09-24",
+         "https://careers-icco.icims.com/jobs/19224/field-service-engineer-1/job")]  # Novi, MI left out
+    assert pages == [icims_page_url("careers-daifuku-america", "field service")] == [
+        "https://careers-daifuku-america.icims.com/jobs/search?ss=1&searchKeyword=field+service&in_iframe=1"]
+    assert not out["errors"]

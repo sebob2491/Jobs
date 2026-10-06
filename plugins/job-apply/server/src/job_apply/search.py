@@ -37,9 +37,9 @@ MAX_ALTERNATIVES = 4
 FETCH_WHEN_FILTERING = 60  # results to scan per search when filtering by location ourselves
 CLIENT_SIDE = {"greenhouse", "lever", "applicantstack"}  # whole board comes back at once; titles are filtered here
 # Searches whose data only comes through the site's own page in the browser (ASML's
-# Sitecore Discover widget). search_companies lists them under needs_browser and the
-# search_company_jobs tool runs them.
-BROWSER_SEARCHES = {"sitecore"}
+# Sitecore Discover widget; iCIMS portals, which turn away plain requests).
+# search_companies lists them under needs_browser and the search_company_jobs tool runs them.
+BROWSER_SEARCHES = {"sitecore", "icims"}
 RETRY_STATUS = {429, 500, 502, 503, 504}  # a passing problem on the site's side
 RETRY_DELAY = 1.0  # seconds, doubled on the second retry
 
@@ -395,15 +395,18 @@ def parse_applicantstack(html: str, base: str) -> list[Listing]:
     return out
 
 
-async def _icims(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, terms: list[str]) -> list[Listing]:
-    """iCIMS portals (Daifuku America): the job search as the portal's own frame draws it,
-    with each opening's location and posting date."""
+def icims_page_url(cfg: Any, query: str) -> str:
+    return f"https://{cfg}.icims.com/jobs/search?" + urlencode({"ss": "1", "searchKeyword": query, "in_iframe": "1"})
+
+
+async def icims_search(frames_html: Callable[[str], Awaitable[list[str]]], cfg: Any, query: str,
+                       found: list[Listing]) -> None:
+    """iCIMS portals (Daifuku America) answer plain requests with HTTP 405, so the search
+    page is read in the browser. The openings are drawn inside the portal's frame, each
+    with its location and posting date."""
     base = f"https://{cfg}.icims.com"
-    url = f"{base}/jobs/search"
-    params = {"ss": "1", "searchKeyword": query, "in_iframe": "1", "needsRedirect": "false", "mobile": "false"}
-    r = await _send(client, "GET", url, params=params)
-    _raise_for(r, url)
-    return parse_icims(r.text, base)[:limit]
+    for html in await frames_html(icims_page_url(cfg, query)):
+        found.extend(parse_icims(html, base))
 
 
 def parse_icims(html: str, base: str) -> list[Listing]:
@@ -536,7 +539,6 @@ SEARCHERS: dict[str, Callable[[httpx.AsyncClient, Any, str, int, list[str]], Awa
     "smartrecruiters": _smartrecruiters,
     "oracle": _oracle,
     "applicantstack": _applicantstack,
-    "icims": _icims,
 }
 
 
