@@ -1081,6 +1081,9 @@ def test_a_sign_in_by_hand_mentions_the_password_the_desk_could_save(monkeypatch
     monkeypatch.setattr(pipeline, "_secret", lambda name: None)
     assert "Save a SuccessFactors password" in pipeline._password_tip("https://career8.successfactors.com/career?x=1")
     assert "Save a Workday password" in pipeline._password_tip("https://intel.wd1.myworkdayjobs.com/External/login")
+    assert "Save an Infor password" in pipeline._password_tip("https://css-benchmark-prd.inforcloudsuite.com/sso/SSOServlet")
+    assert "Save an ApplicantStack password" in pipeline._password_tip("https://seus.applicantstack.com/x/login")
+    assert "Save a UKG Pro password" in pipeline._password_tip("https://signin-us.ultipro.com/u/login")
     assert pipeline._password_tip("https://www.taleo.net/careersection/login") == ""  # not offered on the page
     assert pipeline._password_tip("https://example.com/careers/login") == ""
     monkeypatch.setattr(pipeline, "_secret", lambda name: "saved")

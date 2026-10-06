@@ -917,7 +917,9 @@ def _password_tip(url: str) -> str:
     name = password_for(url)
     if name not in DESK_PASSWORDS or _secret(name) is not None:
         return ""
-    return f" Save a {DESK_PASSWORDS[name]} password on the desk and it fills these in for you next time."
+    system = DESK_PASSWORDS[name]
+    article = "an" if system[0].lower() in "aeio" else "a"  # an iCIMS, an Infor; a UKG Pro, a Workday
+    return f" Save {article} {system} password on the desk and it fills these in for you next time."
 
 
 def _secret(name: str) -> str | None:
