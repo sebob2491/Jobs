@@ -213,12 +213,14 @@ PROBES = {
     # openings, none in Arizona; its US ones are in Williston, VT.)
     # Employers in companies.yaml with no search yet (SuccessFactors and unknown sites):
     # their search pages, to see whether a list of openings can be read off them.
-    # (Oct 2026: TSMC Arizona shows Cloudflare's check; Amkor is classic SuccessFactors;
-    # Benchmark is Infor CloudSuite; Qorvo's search pages are SuccessFactors HTML. Canon USA
-    # and MKS block automated browsers outright.)
+    # (Oct 2026: TSMC Arizona shows Cloudflare's check; Qorvo's search pages are SuccessFactors
+    # HTML; Amkor's older SuccessFactors list is read in the browser now, and its posting page
+    # wraps the posting in a form whose submit is "Apply". Canon USA and MKS block automated
+    # browsers outright.) Benchmark's job board is Infor CloudSuite HCM:
+    "Benchmark Electronics": "https://css-benchmark-prd.inforcloudsuite.com/hcm/Jobs/form/JobBoard%281,EXTERNAL%29."
+                             "JobSearchCompositeForm?navigation=JobBoard%281,EXTERNAL%29.JobSearchCompositeFormNav"
+                             "&csk.JobBoard=EXTERNAL&csk.HROrganization=1&csk.IsoLocale=",
     # Equipment makers with field service engineers at Arizona fabs, not in the list yet.
-    # (Oct 2026: Amkor's posting page wraps the posting in a form whose submit is "Apply"; the
-    # pipeline check now presses it through to Amkor's sign-in page.)
     # Nikon's posting page: how its Apply button is drawn (the form reader doesn't see it)
     "Nikon Precision": "https://recruiting2.ultipro.com/NIK1001NIKON/JobBoard/f11a0b52-5153-4c12-ad2c-b7f3b0a74112/"
                        "OpportunityDetail?opportunityId=532a7dc9-8394-4cbc-8184-f43e88e906bf",
@@ -481,16 +483,17 @@ async def probe_page(name: str, url: str) -> dict[str, Any]:
 
     def on_response(r: Any) -> None:
         ctype = r.headers.get("content-type", "")
-        if "json" in ctype or "/api/" in r.url:
+        infor = "inforcloudsuite.com" in r.url and r.request.resource_type in ("xhr", "fetch")
+        if "json" in ctype or "/api/" in r.url or infor:
             keep = 1500 if ("recruitingCEJobRequisitions" in r.url or "pcsx/search" in r.url) else 300
             seen.append({"method": r.request.method, "status": r.status, "url": r.url[:keep], "type": ctype[:40]})
             if "/discover/v2/" in r.url:  # ASML's job search (Sitecore Discover): keep the request and an answer
                 samples.append(asyncio.ensure_future(_sample(r)))
-            elif any(part in r.url for part in ("jobPublication/list.json", "job-posting-previews/search",
-                                                  "LoadSearchResults", "/services/recruiting/v1/jobs",
-                                                  "/recruiting/career/v1/jobs")):
+            elif infor or any(part in r.url for part in ("jobPublication/list.json", "job-posting-previews/search",
+                                                           "LoadSearchResults", "/services/recruiting/v1/jobs",
+                                                           "/recruiting/career/v1/jobs")):
                 # SUSS's job list; Paycom's (Ebara); UKG Pro's (Nikon); SuccessFactors' newer one
-                # (Edwards), and the call its posting pages make
+                # (Edwards), and the call its posting pages make; Infor's (Benchmark)
                 samples.append(asyncio.ensure_future(_sample(r, 4000)))
 
     async def _sample(r: Any, keep: int = 1500) -> dict[str, Any]:
@@ -533,9 +536,10 @@ async def probe_page(name: str, url: str) -> dict[str, Any]:
         await tab.wait_for_timeout(12000)
         rec["title"] = await tab.title()
         rec["json_calls"] = seen[:30]
-        rec["text_sample"] = re.sub(r"\s+", " ", await tab.inner_text("body"))[:500]
+        text = re.sub(r"\s+", " ", await tab.inner_text("body"))
+        rec["text_sample"], rec["text_more"] = text[:500], text[500:3500]
         if samples:
-            rec["api_samples"] = [await s for s in samples[-3:]]
+            rec["api_samples"] = [await s for s in samples[-6:]]
         # job links as the page draws them (and its frames: iCIMS lists jobs in one), with the
         # text of the card around each and the card's markup
         job_links: list[Any] = []
