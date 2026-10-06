@@ -91,6 +91,12 @@ the page URL. Use this file for the parts of each flow that `autofill` can't do.
 
 ## SAP SuccessFactors (`successfactors.com`, `/job/City-Title-ST-Zip/<id>/` URLs): TSMC Arizona, Amkor, Qorvo, Edwards Vacuum
 
+- Edwards' openings are on the Atlas Copco group's site, whose search answers only its own
+  page, so it runs in a background browser tab, filtered to Edwards in the United States.
+  Its answer has no locations; Edwards ends titles with the state ("Onsite Service
+  Engineer - AZ"), and the search reads it from there. Openings without one are listed
+  with a note to check the posting.
+
 - Click **Apply now**, then sign in or create an account (email and password).
 - The application is usually one long page with sections and attachments, so a single
   `autofill` covers most of it. Scroll and run `inspect_form` again if sections expand.

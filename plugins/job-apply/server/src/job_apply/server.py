@@ -17,7 +17,8 @@ from .browser import BrowserSession, BrowserUnavailable, SubmitBlocked
 from .postings import FetchError, Posting, fetch_posting, finalize, parse_html
 from .render import KINDS, render_pdf, to_html
 from .search import (CLIENT_SIDE, alternatives, eightfold_page_url, icims_search, keep_listings, load_companies,
-                     location_terms, parse_eightfold, paycom_search, search_companies, sitecore_search, ukg_search)
+                     location_terms, parse_eightfold, paycom_search, rmk_search, search_companies, sitecore_search,
+                     ukg_search)
 from .tracker import Tracker
 
 INSTRUCTIONS = """\
@@ -164,8 +165,8 @@ async def search_company_jobs(
 ) -> dict[str, Any]:
     """Search employers' own careers sites for openings through their applicant tracking
     system's public search: Workday, Greenhouse, Lever, Eightfold, SmartRecruiters, Oracle,
-    ApplicantStack. ASML's site, iCIMS portals, Paycom and UKG Pro boards are read in a
-    background browser tab.
+    ApplicantStack. ASML's site, iCIMS portals, Paycom and UKG Pro boards and SuccessFactors'
+    newer search (Edwards) are read in a background browser tab.
 
     query: keywords; separate alternatives with "|", e.g. "field service | equipment engineer".
     companies: names from the plugin's companies list (default: all of them).
@@ -201,6 +202,8 @@ async def search_company_jobs(
                     await paycom_search(browser.capture_json, cfg, wording, found)
                 elif item["kind"] == "ukg":
                     await ukg_search(browser.capture_json, cfg, wording, found)
+                elif item["kind"] == "rmk":
+                    await rmk_search(browser.capture_json, cfg, wording, found)
                 else:
                     await sitecore_search(browser.capture_json, cfg, wording, found)
             except Exception as e:  # one wording failing keeps the others' results

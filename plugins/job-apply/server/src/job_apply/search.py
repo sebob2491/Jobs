@@ -12,6 +12,7 @@ Each company in data/companies.yaml may carry a `search` block naming one of:
     icims:           <portal name>          (read in the browser)
     paycom:          <career portal key>    (read in the browser)
     ukg:             <job board address>    (UKG Pro / UltiPro; read in the browser)
+    rmk:             {url: <search page>}   (SuccessFactors' newer job search; read in the browser)
     sitecore:        {url: ..., api: ...}   (ASML; read in the browser)
 
 Companies without one (SuccessFactors sites, custom pages) are searched in the
@@ -22,6 +23,7 @@ requests are few and sequential per company.
 from __future__ import annotations
 
 import asyncio
+import html
 import re
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
@@ -42,10 +44,10 @@ MAX_ALTERNATIVES = 4
 FETCH_WHEN_FILTERING = 60  # results to scan per search when filtering by location ourselves
 CLIENT_SIDE = {"greenhouse", "lever", "applicantstack", "paycom", "ukg"}  # whole board at once; titles filtered here
 # Searches whose data only comes through the site's own page in the browser (ASML's
-# Sitecore Discover widget; iCIMS portals, which turn away plain requests; Paycom and UKG
-# Pro, whose APIs want the session their job board page sets up).
+# Sitecore Discover widget; iCIMS portals, which turn away plain requests; Paycom, UKG
+# Pro and SuccessFactors' newer search, whose APIs want the session their page sets up).
 # search_companies lists them under needs_browser and the search_company_jobs tool runs them.
-BROWSER_SEARCHES = {"sitecore", "icims", "paycom", "ukg"}
+BROWSER_SEARCHES = {"sitecore", "icims", "paycom", "ukg", "rmk"}
 RETRY_STATUS = {429, 500, 502, 503, 504}  # a passing problem on the site's side
 RETRY_DELAY = 1.0  # seconds, doubled on the second retry
 
@@ -575,6 +577,69 @@ def parse_ukg(data: Any, board: str) -> list[Listing]:
             company="", title=str(o["Title"]).strip(), url=f"{board}OpportunityDetail?opportunityId={o['Id']}",
             location="; ".join(places), posted=str(o.get("PostedDate") or "")[:10],
             external_id=str(o.get("RequisitionNumber") or o["Id"]), ats="ukg",
+        ))
+    return out
+
+
+# ---------------------------------- SuccessFactors' newer job search (Edwards), through the browser
+RMK_PAGE = 10  # the API answers 10 at a time
+RMK_PAGES = 5
+_STATE_SUFFIX = re.compile(r"(?:\s[-–]\s|\s\(|,\s)([A-Z]{2})\)?\s*$")  # "Onsite Service Engineer - AZ"
+
+
+def rmk_wants(body: Any) -> bool:
+    """The page's search call, not its facet-only first one."""
+    return isinstance(body, dict) and "pageNumber" in body and not body.get("facetingOnly")
+
+
+def rmk_rewrite(body: Any, query: str, page: int) -> Any:
+    if not rmk_wants(body):
+        return None
+    return {**body, "keywords": query, "pageNumber": page}
+
+
+async def rmk_search(capture: Callable[..., Awaitable[Any]], cfg: Any, query: str, found: list[Listing]) -> None:
+    """SuccessFactors' newer career sites (Edwards on jobs.atlascopcogroup.com) search through
+    /services/recruiting/v1/jobs, which answers only the page's own session, so the search page
+    (filtered to the employer and country by its address) is read in the browser, its own search
+    call given the wording and a page number. The answer carries no locations: Edwards ends
+    titles with the state ("Onsite Service Engineer - AZ"), which is read off the title."""
+    url = str(cfg["url"] if isinstance(cfg, dict) else cfg)
+    origin = re.match(r"https?://[^/]+", url).group(0)
+    for page in range(RMK_PAGES):
+        data = await capture(url, "/services/recruiting/v1/jobs", want=rmk_wants,
+                             rewrite=lambda body, page=page: rmk_rewrite(body, query, page))
+        batch = parse_rmk(data, origin)
+        found.extend(batch)
+        total = data.get("totalJobs") if isinstance(data, dict) else None
+        if (page + 1) * RMK_PAGE >= total if isinstance(total, int) else len(batch) < RMK_PAGE:
+            return
+
+
+def _rmk_date(value: Any) -> str:
+    """'7/27/26' -> '2026-07-27'."""
+    m = re.match(r"(\d{1,2})/(\d{1,2})/(\d{2,4})$", str(value or "").strip())
+    if not m:
+        return ""
+    year = int(m.group(3))
+    return f"{year + 2000 if year < 100 else year}-{int(m.group(1)):02d}-{int(m.group(2)):02d}"
+
+
+def parse_rmk(data: Any, origin: str) -> list[Listing]:
+    results = data.get("jobSearchResult") or [] if isinstance(data, dict) else []
+    out = []
+    for item in results:
+        job = item.get("response") if isinstance(item, dict) else None
+        if not isinstance(job, dict) or not job.get("id"):
+            continue
+        title = html.unescape(str(job.get("unifiedStandardTitle") or job.get("title") or "")).strip()
+        slug = job.get("unifiedUrlTitle") or job.get("urlTitle") or re.sub(r"\W+", "-", title)
+        locale = (job.get("supportedLocales") or ["en_US"])[0]
+        state = _STATE_SUFFIX.search(title)
+        out.append(Listing(
+            company="", title=title, url=f"{origin}/job/{slug}/{job['id']}-{locale}",
+            location=state.group(1) if state and state.group(1) in US_STATES else "",
+            posted=_rmk_date(job.get("unifiedStandardStart")), external_id=str(job["id"]), ats="successfactors",
         ))
     return out
 

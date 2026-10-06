@@ -633,3 +633,68 @@ def test_ukg_rewrite_leaves_other_calls_alone():
     assert ukg_rewrite({"filters": []}) is None and ukg_rewrite(None) is None
     assert ukg_board_url("https://recruiting2.ultipro.com/T/JobBoard/B?q=&o=postedDateDesc") == \
         "https://recruiting2.ultipro.com/T/JobBoard/B/"
+
+
+# Edwards on SuccessFactors' newer search: the page's own search call and its answer
+RMK_PAGE_BODY = {"locale": "en_US", "pageNumber": 0, "sortBy": "", "keywords": "", "location": "",
+                 "facetFilters": {"filter1": ["Edwards"], "mfield3": ["United States"]}, "brand": "", "skills": [],
+                 "categoryId": 0, "alertId": "", "rcmCandidateId": ""}
+RMK_FACETS_BODY = {"facetingOnly": True, "categoryId": 0, "locale": "en_US", "keywords": "", "location": "",
+                   "facetFields": ["filter1", "mfield3"], "facetFilters": {"filter1": ["Edwards"]}}
+
+
+def rmk_job(job_id, title, slug, start="7/27/26"):
+    return {"response": {"supportedLocales": ["en_US"], "filter1": ["Edwards"], "unifiedUrlTitle": slug,
+                         "unifiedStandardStart": start, "filter2": ["Service"], "id": job_id,
+                         "unifiedStandardTitle": title, "urlTitle": slug}}
+
+
+RMK_ANSWER = {"totalJobs": 4, "jobSearchResult": [
+    rmk_job("160986", "Workshop Technician - CA", "Workshop-Technician-CA", "5/27/26"),
+    rmk_job("172120", "Onsite Service Engineer - AZ", "Onsite-Service-Engineer-AZ"),
+    rmk_job("172852", "Assembly &amp; Test Technician (Edwards Vacuum)", "Assembly-&amp;-Test-Technician-%28Edwards-Vacuum%29",
+            "8/7/26"),
+    {"response": {"unifiedStandardTitle": "no id"}}]}
+
+
+def test_successfactors_search_is_read_in_the_browser(srv, monkeypatch):
+    """Edwards' search answers only its page; the page's own call gets each wording, and the
+    state Edwards puts at the end of a title is its location."""
+    calls = []
+    edwards = ("https://www.jobs.atlascopcogroup.com/search/?q=&facetFilters=%7B%22filter1%22%3A%5B%22Edwards%22%5D"
+               "%2C%22mfield3%22%3A%5B%22United+States%22%5D%7D")
+
+    async def fake_capture(url, url_part, timeout=25000, want=None, rewrite=None):
+        assert not want(RMK_FACETS_BODY) and want(RMK_PAGE_BODY)  # the facet-only call is skipped
+        sent = rewrite(json.loads(json.dumps(RMK_PAGE_BODY)))
+        calls.append((url, url_part, sent["keywords"], sent["pageNumber"]))
+        assert sent["facetFilters"] == RMK_PAGE_BODY["facetFilters"]  # still Edwards, still the US
+        return RMK_ANSWER
+
+    monkeypatch.setattr(srv.browser, "capture_json", fake_capture)
+    out = asyncio.run(srv.search_company_jobs("field service", companies=["Edwards"], location="AZ"))
+    got = {r["title"]: r for r in out["results"]}
+    assert set(got) == {"Onsite Service Engineer - AZ", "Assembly & Test Technician (Edwards Vacuum)"}  # CA left out
+    onsite = got["Onsite Service Engineer - AZ"]
+    assert (onsite["location"], onsite["posted"], onsite["url"]) == (
+        "AZ", "2026-07-27", "https://www.jobs.atlascopcogroup.com/job/Onsite-Service-Engineer-AZ/172120-en_US")
+    assert got["Assembly & Test Technician (Edwards Vacuum)"]["notes"] == ["location given as 'nothing'; check the posting"]
+    assert calls == [(edwards, "/services/recruiting/v1/jobs", "field service", 0)]  # 4 openings: one page
+    assert not out["errors"]
+
+
+def test_successfactors_search_pages_through_results():
+    from job_apply.search import Listing, rmk_search
+
+    pages = []
+
+    async def capture(url, url_part, timeout=25000, want=None, rewrite=None):
+        page = rewrite(json.loads(json.dumps(RMK_PAGE_BODY)))["pageNumber"]
+        pages.append(page)
+        return {"totalJobs": 23, "jobSearchResult": [rmk_job(f"{page}{i}", f"Service Engineer {page}{i} - AZ", "x")
+                                                      for i in range(10 if page < 2 else 3)]}
+
+    found: list[Listing] = []
+    asyncio.run(rmk_search(capture, {"url": "https://jobs.example.com/search/?q="}, "service", found))
+    assert pages == [0, 1, 2] and len(found) == 23
+    assert found[0].url == "https://jobs.example.com/job/x/00-en_US" and found[0].location == "AZ"
