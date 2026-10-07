@@ -22,12 +22,18 @@ def saved_password(monkeypatch):
     monkeypatch.setattr(pipeline, "password_for", lambda url: "test_site_password")
 
 
-async def until(condition, timeout=60):
+async def until(condition, timeout=60, about=None):
+    """Wait for condition(); on a timeout, say what about() shows (a run's state and log)."""
     start = time.monotonic()
     while not condition():
         if time.monotonic() - start > timeout:
-            raise AssertionError("timed out waiting")
+            raise AssertionError("timed out waiting" + (f": {about()!r}" if about else ""))
         await asyncio.sleep(0.2)
+
+
+def state(r):
+    """A run's state and the end of its log, for a test that times out waiting on it."""
+    return lambda: (r.status, r.need, r.reason, r.url, r.log[-8:])
 
 
 def test_pick_next_and_classify():
@@ -679,7 +685,7 @@ def test_an_emailed_link_or_code_is_waited_for(srv, monkeypatch, query):
                 assert r.need == "email_code"  # the tab doesn't change by itself
                 await r.page.evaluate("() => sessionStorage.setItem('verified', 'yes')")  # the link, opened elsewhere
                 await r.page.reload()
-            await until(lambda: r.need == "questions" or r.status == "ready")  # the desk carried on by itself
+            await until(lambda: r.need == "questions" or r.status == "ready", about=state(r))  # carried on by itself
             return r
         finally:
             await applier.stop()
