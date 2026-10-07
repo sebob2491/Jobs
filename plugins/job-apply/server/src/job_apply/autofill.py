@@ -651,12 +651,24 @@ def place_words(rule: str, prof: Profile) -> list[str]:
     return [str(w) for w in words if w]
 
 
+# A street as address lookups list it: "1234 East Some Road" is their "1234 E SOME RD"
+_STREET_WORDS = {"north": "n", "south": "s", "east": "e", "west": "w", "northeast": "ne", "northwest": "nw",
+                 "southeast": "se", "southwest": "sw", "street": "st", "road": "rd", "avenue": "ave", "drive": "dr",
+                 "lane": "ln", "boulevard": "blvd", "court": "ct", "place": "pl", "parkway": "pkwy", "circle": "cir",
+                 "highway": "hwy", "terrace": "ter", "trail": "trl", "apartment": "apt", "suite": "ste"}
+
+
+def _place_part(s: Any) -> str:
+    return " ".join(_STREET_WORDS.get(w, w) for w in norm(s).split())
+
+
 def choose_place(value: Any, options: list[str], near: list[str]) -> str | None:
     """A place lookup's entry ("Chandler, Maricopa, AZ"; "85225, Chandler, Maricopa, AZ"): of
-    those whose first part is the value (not "Chandler Heights, …"), the one naming most of
+    those whose first part is the value (not "Chandler Heights, …"; a street matches with
+    its words abbreviated, "1234 East Some Road" ~ "1234 E SOME RD"), the one naming most of
     the rest of the address. None when no entry starts with the value."""
-    v = norm(value)
-    first = [o for o in options if v and norm(o.split(",")[0]) == v]
+    v = _place_part(value)
+    first = [o for o in options if v and _place_part(o.split(",")[0]) == v]
     if not first:
         return None
     words = {norm(w) for w in near} - {"", v}

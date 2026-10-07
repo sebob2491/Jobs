@@ -1,6 +1,8 @@
 from job_apply.autofill import (
     choose_option,
+    choose_place,
     is_empty_value,
+    place_words,
     plan_autofill,
     resolve_field,
 )
@@ -313,3 +315,30 @@ def test_a_paged_list_is_searched_only_when_it_shows_a_full_page():
     veteran = {"id": "2", "label": "Pre-Offer : Are you a Protected Veteran?", "kind": "combobox", "value": "",
                "paged": True, "options": ["No Selection", "I am a protected veteran", "I am not a protected veteran"]}
     assert resolve_field(veteran, prof()) is None  # the profile's "I don't wish to answer" isn't offered
+
+
+def test_a_place_lookup_picks_the_entry_in_the_rest_of_the_address():
+    """Oracle's address lookups, as listed live at Texas Instruments: the first Chandler is in
+    Texas, and ZIP 85225 covers Chandler Heights and Chandler. The rest of the address tells
+    them apart, by whole parts ("Chandler Heights" is not "Chandler")."""
+    near = ["Chandler", "85225", "AZ", "Arizona"]
+    cities = ["Chandler Heights, Maricopa, AZ", "Chandler, Henderson, TX", "Chandler, Lincoln, OK",
+              "Chandler, Maricopa, AZ", "Chandlerville, Cass, IL"]
+    assert choose_option("Chandler", cities) == "Chandler, Henderson, TX"  # the plain pick, before
+    assert choose_place("Chandler", cities, near) == "Chandler, Maricopa, AZ"
+    zips = ["85225, Chandler Heights, Maricopa, AZ", "85225, Chandler, Maricopa, AZ"]
+    assert choose_place("85225", zips, near) == "85225, Chandler, Maricopa, AZ"
+    streets = ["1234 E SOME RD, MESA, ARIZONA, 85201", "1234 E SOME RD, CHANDLER, ARIZONA, 85225",
+               "1234 E SOME RD, CHANDLER, OKLAHOMA, 74834"]
+    # a street matches with its words abbreviated as the lookup lists them
+    assert choose_place("1234 East Some Road", streets, near) == "1234 E SOME RD, CHANDLER, ARIZONA, 85225"
+    assert choose_place("1234 E. Some Rd.", streets, near) == "1234 E SOME RD, CHANDLER, ARIZONA, 85225"
+    assert choose_place("1 Test Way", ["1 TEST RD, RICHMOND, INDIANA"], near) is None  # no entry starts with it
+    assert choose_place("Arizona", ["Arizona", "Arkansas"], near) == "Arizona"
+
+
+def test_place_words_are_the_rest_of_the_address(job_apply_home):
+    p = prof()
+    words = place_words("city", p)
+    assert "AZ" in words and "Arizona" in words and str(p.get("personal.address.postal_code")) in words
+    assert place_words("phone", p) == []  # not an address part
