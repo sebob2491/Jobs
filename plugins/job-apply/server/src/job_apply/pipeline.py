@@ -35,6 +35,7 @@ ONCE_SETTLE = 1.0  # seconds after filling the person's answers before checking 
 MAX_STEPS = 15
 LATE_BUTTONS_WAIT = 10  # seconds for a page's buttons to be drawn
 SIGN_IN_STEP_WAIT = 25  # Workday's sign-in step can take longer to draw its buttons (Applied's)
+ACCOUNT_DRAW_WAIT = 4  # for the application below a Create Account form to be drawn (Qorvo's)
 HANDS_ON = {"bot_check", "sign_in", "email_code"}
 HANDS_ON_TIMEOUT = 15 * 60  # then the queue stops waiting and moves on
 POLL_SECONDS = 3.0
@@ -424,6 +425,7 @@ class Applier:
         if not await self._open(run):
             return
         stalls, entries_done, waited, refilled, dismissed = 0, set(), False, set(), set()
+        account_waited = False
         sign_ins: dict[str, int] = {}  # what the saved password was used for on this pass
         pressed: list[tuple[Any, ...]] = []  # (page, button) for each button pressed on this pass
         pressed_on: list[str] = []  # and where, in words
@@ -445,6 +447,12 @@ class Applier:
             if kind == "bot_check":
                 await self._bring_forward(run)
                 return self._pause(run, "bot_check", _BOT_CHECK_SAYS)
+            if (kind == "sign_in" and not account_waited and not _account_and_application(data)
+                    and sum(f.get("kind") == "password" for f in data.get("fields") or []) >= 2):
+                # A Create Account form: Qorvo's draws its application below it a moment later
+                account_waited = True
+                await self._wait_for_application()
+                continue
             if kind == "sign_in" and _account_and_application(data):
                 return await self._apply_with_account(run, data)
             if kind == "sign_in":
@@ -456,6 +464,8 @@ class Applier:
                 if done in ("prefilled", "filled"):
                     data, _ = await self._look()
                     run.page_info = _page_info(data)  # the page as filled
+                if done == "prefilled" and _account_and_application(data):
+                    return await self._apply_with_account(run, data)  # its application was drawn after all
                 if done == "prefilled":
                     first = (" Your saved password didn't sign in there, so this is probably your first application "
                              "with them; if you do have an account, sign in instead." if sign_ins.get("create_account") else "")
@@ -592,6 +602,14 @@ class Applier:
                 return True
             await asyncio.sleep(0.25)
         return False
+
+    async def _wait_for_application(self) -> None:
+        """Give a Create Account form a moment to draw an application below it."""
+        deadline = time.monotonic() + ACCOUNT_DRAW_WAIT
+        while time.monotonic() < deadline:
+            await asyncio.sleep(1)
+            if _account_and_application((await self._look())[0]):
+                return
 
     async def _wait_for_progress(self, seconds: float) -> bool:
         """Wait for a form, a sign-in, a bot check or a button that moves things on to appear

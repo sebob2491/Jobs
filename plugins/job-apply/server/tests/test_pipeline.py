@@ -1026,12 +1026,12 @@ def test_turning_tailoring_off_lets_waiting_jobs_go(srv):
     assert run_.status == "queued" and ("apply", job["id"]) in applier.tasks
 
 
-def account_apply_run(srv, monkeypatch, saved=None):
+def account_apply_run(srv, monkeypatch, saved=None, query=""):
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
     if saved:  # a password saved for this site (the fixture page stands in for SuccessFactors)
         monkeypatch.setattr(pipeline, "password_for", lambda url: "successfactors_password")
         monkeypatch.setenv("JOB_APPLY_SECRET_SUCCESSFACTORS_PASSWORD", saved)
-    job = srv.add_job(url=fixture_url("site/account-apply.html"), title="ET", company="Example Semi")["job"]
+    job = srv.add_job(url=fixture_url("site/account-apply.html") + query, title="ET", company="Example Semi")["job"]
     applier = Applier(srv)
 
     async def go():
@@ -1068,6 +1068,20 @@ def test_a_saved_password_goes_into_both_boxes_of_such_a_page(srv, monkeypatch):
     job, r, values = account_apply_run(srv, monkeypatch, saved="Fake-Pass-123")
     assert r.need == "your_submit" and "Your saved password is in its password boxes" in r.reason, (r.reason, r.log)
     assert values["pw"] == values["pw2"] == "Fake-Pass-123"
+
+
+@pytest.mark.parametrize("saved, late", [(None, "1500"), ("Fake-Pass-123", "1500"), ("Fake-Pass-123", "input")])
+def test_such_a_page_is_known_when_its_application_draws_late(srv, monkeypatch, saved, late):
+    """Qorvo's draws its application a moment after the account boxes above it. Live, with a
+    saved password, the desk acted on the first look: it took the page for a plain Create
+    Account form, filled in only the account part and asked the person to create the account.
+    It waits a moment now, and looks again after filling the account part."""
+    monkeypatch.setattr(pipeline, "ACCOUNT_DRAW_WAIT", 3)
+    job, r, values = account_apply_run(srv, monkeypatch, saved=saved, query=f"?late={late}")
+    assert r.need == "your_submit" and "press its Apply button yourself" in r.reason, (r.reason, r.log)
+    assert (values["fn"], values["ln"], values["city"], values["zip"]) == ("Sam", "Rivera", "Chandler", "85225")
+    assert values["pw"] == values["pw2"] == (saved or "")
+    assert srv.tracker().get(job["id"])["status"] == "ready_to_submit"
 
 
 
