@@ -573,6 +573,11 @@ def resolve_field(field: dict, prof: Profile, job: dict | None = None, file_inpu
 
     if kind == "file":
         where = f"{label} {norm(field.get('section'))}"
+        # A box that reads the resume to fill the form in ("Import your profile from resume" on
+        # TI's and onsemi's Oracle), beside the one that attaches it: the site would refill the
+        # form from its own reading while the desk fills it, so only the attachment gets it
+        if file_inputs_on_page > 1 and re.search(r"\b(import|autofill|auto fill|parse|populate)\b", where):
+            return Answer(SKIP, "documents.resume")
         if re.search(r"cover", where):
             path = _document(prof, job, "cover_letter")
             return Answer(path, "documents.cover_letter") if path else None
