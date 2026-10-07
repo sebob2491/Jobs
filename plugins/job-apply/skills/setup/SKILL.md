@@ -33,6 +33,15 @@ All of the user's data lives in `~/.job-apply/`, outside the plugin:
    and `education_history` from it. Use only what the resume says; if a date or
    location is missing, ask rather than guess.
 
+   **Confirm every degree before writing it.** A resume, an Indeed one especially,
+   can list a degree that was never finished. Ask "Did you complete the <degree>?"
+   for each one. If it wasn't completed, record that school in `education_history`
+   with `degree: ""` and the classes as the major or a note, and set
+   `education.highest_degree` to the highest one completed (a GED or high school
+   diploma, say). Applications ask about degrees and employers check, so a wrong
+   one costs more than a missing one. If the source resume lists it wrongly, tell
+   the user where to fix it (for Indeed, profile.indeed.com).
+
 3. **Fill in what the resume can't answer.** Ask with AskUserQuestion where the
    choices are fixed, and keep it to one or two rounds:
    - Work authorization: authorized to work in the US, sponsorship needed now or
