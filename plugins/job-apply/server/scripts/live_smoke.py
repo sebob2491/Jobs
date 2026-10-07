@@ -43,11 +43,16 @@ os.environ["JOB_APPLY_HEADLESS"] = "1"
 _HOME = Path(tempfile.mkdtemp(prefix="job-apply-live-"))
 os.environ["JOB_APPLY_HOME"] = str(_HOME)
 
+import secrets  # noqa: E402
+
 import yaml  # noqa: E402
 
+# A fresh address each run, on example.com (which takes no mail): Oracle's sites stop sending
+# codes to an address after a day of runs ("Too Many Attempts. Try Again Later.").
+FAKE_EMAIL = f"testy.mctestface.{secrets.token_hex(3)}@example.com"
 FAKE_PROFILE = {
     "personal": {
-        "first_name": "Testy", "last_name": "McTestface", "email": "testy.mctestface@example.com",
+        "first_name": "Testy", "last_name": "McTestface", "email": FAKE_EMAIL,
         "phone": "480-555-0199", "phone_country_code": "+1",
         "address": {"line1": "1 Test Way", "city": "Chandler", "state": "AZ", "postal_code": "85225",
                     "country": "United States"},
@@ -698,8 +703,6 @@ async def main() -> int:
     companies = [c for c in load_companies() if not wanted or any(w in c["name"].lower() for w in wanted)]
     if args.pipeline:
         if args.fake_passwords:
-            import secrets
-
             from job_apply.pipeline import DESK_PASSWORDS
             for name in DESK_PASSWORDS:  # this run's environment only; never written anywhere
                 os.environ[f"JOB_APPLY_SECRET_{name.upper()}"] = f"Throwaway-{secrets.token_urlsafe(12)}-1!"
