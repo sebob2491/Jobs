@@ -793,6 +793,8 @@ class Applier:
             return self._pause(run, "questions", f"{len(pending)} question(s) your profile doesn't answer. Answer them "
                                "here and the desk fills them in (and remembers them).", pending)
         saved = await self._sign_in(run, data, {}, details=False) == "prefilled"  # filled in above
+        if saved:  # the record of the page shows its password boxes filled, too
+            run.page_info = _page_info((await self._look())[0])
         srv._mark_ready(srv.tracker().get(run.job_id), "filled by the Job Desk; the site creates the account as it applies")
         await self._bring_forward(run)
         password = "Your saved password is in its password boxes" if saved else "Choose a password in its password boxes"

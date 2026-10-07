@@ -1068,6 +1068,8 @@ def test_a_saved_password_goes_into_both_boxes_of_such_a_page(srv, monkeypatch):
     job, r, values = account_apply_run(srv, monkeypatch, saved="Fake-Pass-123")
     assert r.need == "your_submit" and "Your saved password is in its password boxes" in r.reason, (r.reason, r.log)
     assert values["pw"] == values["pw2"] == "Fake-Pass-123"
+    # and the desk's record of the page says so (it was read before they were filled)
+    assert [f["empty"] for f in r.page_info["fields"] if f["kind"] == "password"] == [False, False]
 
 
 @pytest.mark.parametrize("saved, late", [(None, "1500"), ("Fake-Pass-123", "1500"), ("Fake-Pass-123", "input")])
