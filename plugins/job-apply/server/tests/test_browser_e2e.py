@@ -396,6 +396,20 @@ def test_errors_are_read_without_icon_glyphs(srv):
     assert run(srv.browser.inspect(False))["errors"] == ["Invalid email address or password."]
 
 
+def test_sign_in_and_create_account_buttons_say_where_they_are(srv):
+    """Workday's sign-in pop-up open over its Create Account form: the header's "Sign In" comes
+    before the pop-up's password box, the pop-up's own buttons after it, and the form behind it
+    (whose boxes aren't read) has its own "Create Account", which creates the account."""
+    run(srv.open_application(url=fixture_url("site/signin-header-popup.html") + "?start=popup"))
+    form = run(srv.browser.inspect(False))
+    assert [f["label"] for f in form["fields"]] == ["Email Address", "Password"]  # the pop-up's
+    flags = [(a["text"], bool(a.get("after_password")), bool(a.get("account_form"))) for a in form["actions"]]
+    assert flags[0] == ("Sign In", False, False)  # the header's
+    assert ("Create Account", False, True) in flags  # the form's own button (a div), behind the pop-up
+    assert flags[-4:] == [("Sign In", True, False), ("Create Account", True, False),
+                          ("Forgot your password?", True, False), ("Close", True, False)]  # the pop-up's
+
+
 def test_search_text_left_in_a_picker_is_no_evidence(srv):
     run(srv.open_application(url=fixture_url("jsonld_posting.html")))
     page = run(srv.browser.page())

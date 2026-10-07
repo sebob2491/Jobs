@@ -465,6 +465,87 @@ def test_a_sign_up_form_with_one_password_box_is_filled_in(srv, monkeypatch, pag
     assert "filled the Create Account form with your details and saved password" in r.log
 
 
+def test_the_sign_in_forms_own_button_is_pressed_not_the_headers(srv, monkeypatch):
+    """KLA's, NXP's, ASML's and Hitachi's Workday: the page's header has a "Sign In" of its own,
+    ahead of the sign-in form, which opens a sign-in pop-up and sends nothing. The form's own
+    button is pressed; when the saved password doesn't sign in, Create Account is opened and
+    filled in, and its button (a div on Workday) is left to the person."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    saved_password(monkeypatch)
+    job = srv.add_job(url=fixture_url("site/signin-header-popup.html"), title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status == "needs_you")
+            assert r.need == "sign_in" and "Create Account form" in r.reason, (r.reason, r.log)
+            assert "first application" in r.reason
+            state = await r.page.evaluate("""() => [window.popupOpened, window.signInTries, window.created,
+                em.value, pw.value === pw2.value && pw.value.length > 0, terms.checked]""")
+            assert state == [False, 1, False, "sam.rivera@example.com", True, False]
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert r.log.count("signed in with your saved password") == 1
+    assert "your saved password didn't sign in, so I opened Create Account" in r.log
+
+
+def test_a_headers_sign_in_isnt_pressed_for_a_form_whose_button_reads_otherwise(srv, monkeypatch):
+    """Nothing after the password box reads "Sign In" (the form's button says Continue): the
+    header's "Sign In" isn't pressed in its place. The form is filled in for the person to send."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    saved_password(monkeypatch)
+    job = srv.add_job(url=fixture_url("site/signin-header-popup.html") + "?button=Continue", title="FSE",
+                      company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status == "needs_you")
+            assert r.need == "sign_in" and "Press its sign-in button" in r.reason, (r.reason, r.log)
+            state = await r.page.evaluate("() => [window.popupOpened, window.signInTries, em.value, pw.value.length > 0]")
+            assert state == [False, 0, "sam.rivera@example.com", True]
+            return r
+        finally:
+            await applier.stop()
+
+    run(go())
+
+
+def test_a_create_account_forms_own_button_is_never_the_way_to_it(srv, monkeypatch):
+    """Workday's sign-in pop-up, open over its Create Account form (which pressing the header's
+    "Sign In" used to leave): the form behind it isn't read, but its "Create Account" button (a
+    div, not a form's submit) is on the page, ahead of the pop-up's own "Create Account". That
+    button creates the account; the pop-up's link is the way to the form."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    saved_password(monkeypatch)
+    job = srv.add_job(url=fixture_url("site/signin-header-popup.html") + "?start=popup", title="FSE",
+                      company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status == "needs_you")
+            state = await r.page.evaluate("""() => [window.created, window.signInTries,
+                em.value, pw.value === pw2.value && pw.value.length > 0]""")
+            assert state == [False, 1, "sam.rivera@example.com", True], (state, r.reason, r.log)
+            assert r.need == "sign_in" and "Create Account form" in r.reason, (r.reason, r.log)
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert "your saved password didn't sign in, so I opened Create Account" in r.log
+
+
 @pytest.mark.parametrize("page, expected", [
     # Amkor's SuccessFactors: the email twice, names and country; the newsletter box is left alone
     ("create-account-details.html", {"email": "sam.rivera@example.com", "email2": "sam.rivera@example.com", "same": True,
@@ -945,12 +1026,12 @@ def test_turning_tailoring_off_lets_waiting_jobs_go(srv):
     assert run_.status == "queued" and ("apply", job["id"]) in applier.tasks
 
 
-def account_apply_run(srv, monkeypatch, saved=None):
+def account_apply_run(srv, monkeypatch, saved=None, query=""):
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
     if saved:  # a password saved for this site (the fixture page stands in for SuccessFactors)
         monkeypatch.setattr(pipeline, "password_for", lambda url: "successfactors_password")
         monkeypatch.setenv("JOB_APPLY_SECRET_SUCCESSFACTORS_PASSWORD", saved)
-    job = srv.add_job(url=fixture_url("site/account-apply.html"), title="ET", company="Example Semi")["job"]
+    job = srv.add_job(url=fixture_url("site/account-apply.html") + query, title="ET", company="Example Semi")["job"]
     applier = Applier(srv)
 
     async def go():
@@ -987,6 +1068,22 @@ def test_a_saved_password_goes_into_both_boxes_of_such_a_page(srv, monkeypatch):
     job, r, values = account_apply_run(srv, monkeypatch, saved="Fake-Pass-123")
     assert r.need == "your_submit" and "Your saved password is in its password boxes" in r.reason, (r.reason, r.log)
     assert values["pw"] == values["pw2"] == "Fake-Pass-123"
+    # and the desk's record of the page says so (it was read before they were filled)
+    assert [f["empty"] for f in r.page_info["fields"] if f["kind"] == "password"] == [False, False]
+
+
+@pytest.mark.parametrize("saved, late", [(None, "1500"), ("Fake-Pass-123", "1500"), ("Fake-Pass-123", "input")])
+def test_such_a_page_is_known_when_its_application_draws_late(srv, monkeypatch, saved, late):
+    """Qorvo's draws its application a moment after the account boxes above it. Live, with a
+    saved password, the desk acted on the first look: it took the page for a plain Create
+    Account form, filled in only the account part and asked the person to create the account.
+    It waits a moment now, and looks again after filling the account part."""
+    monkeypatch.setattr(pipeline, "ACCOUNT_DRAW_WAIT", 3)
+    job, r, values = account_apply_run(srv, monkeypatch, saved=saved, query=f"?late={late}")
+    assert r.need == "your_submit" and "press its Apply button yourself" in r.reason, (r.reason, r.log)
+    assert (values["fn"], values["ln"], values["city"], values["zip"]) == ("Sam", "Rivera", "Chandler", "85225")
+    assert values["pw"] == values["pw2"] == (saved or "")
+    assert srv.tracker().get(job["id"])["status"] == "ready_to_submit"
 
 
 

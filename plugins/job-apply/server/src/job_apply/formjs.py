@@ -132,6 +132,7 @@ EXTRACT_JS = r"""
   const GENERIC_FILE = /^(attach|upload|choose (a )?file|browse|select files?|add (a )?file|drop (your )?files? here|or|enter manually)$/i;
   const HONEYPOT = /for robots|robots only|if you('| a)?re (a )?human|not (be )?(filled|entered) by humans|honey ?pot|leave this field (blank|empty)/i;
   const fields = [];
+  const passwordBoxes = [];
   const seen = new Set();
   const groups = new Map();
   const sel = 'input, textarea, select, button[aria-haspopup="listbox"], [role="combobox"], [role="radio"], [role="checkbox"], [role="switch"]';
@@ -232,6 +233,7 @@ EXTRACT_JS = r"""
     if (el.getAttribute('aria-invalid') === 'true') f.invalid = true;
     if (el.maxLength > 0 && el.maxLength < 100000) f.max_length = el.maxLength;
     fields.push(f);
+    if (kind === 'password') passwordBoxes.push(el);
   }
 
   for (const g of groups.values()) {
@@ -309,6 +311,18 @@ EXTRACT_JS = r"""
     if (box && box !== document.body && box !== document.documentElement) a.cookie = true;
     if (formSubmit) a.form_submit = true;
     if (isSubmit) a.is_submit = true;
+    // A button after a password box: a sign-in form's own "Sign In", not the one in the
+    // site's header (Workday's opens a sign-in pop-up, and sends nothing)
+    if (passwordBoxes.some((p) => p.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING)) a.after_password = true;
+    // A "Create Account" in a form with two password boxes is that form's own button, which
+    // creates the account (Workday draws it as a div, not a form's submit): never the way to
+    // the form. Boxes a pop-up hides count too.
+    if (/account|sign ?up|register/i.test(t)) {
+      for (let n = el.parentElement; n && n !== document.body; n = n.parentElement) {
+        const boxes = n.querySelectorAll('input[type="password"]').length;
+        if (boxes) { if (boxes >= 2) a.account_form = true; break; }
+      }
+    }
     if (el.disabled || el.getAttribute('aria-disabled') === 'true') a.disabled = true;
     actions.push(a);
   }

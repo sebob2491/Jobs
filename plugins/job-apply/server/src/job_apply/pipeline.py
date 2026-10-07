@@ -35,6 +35,7 @@ ONCE_SETTLE = 1.0  # seconds after filling the person's answers before checking 
 MAX_STEPS = 15
 LATE_BUTTONS_WAIT = 10  # seconds for a page's buttons to be drawn
 SIGN_IN_STEP_WAIT = 25  # Workday's sign-in step can take longer to draw its buttons (Applied's)
+ACCOUNT_DRAW_WAIT = 4  # for the application below a Create Account form to be drawn (Qorvo's)
 HANDS_ON = {"bot_check", "sign_in", "email_code"}
 HANDS_ON_TIMEOUT = 15 * 60  # then the queue stops waiting and moves on
 POLL_SECONDS = 3.0
@@ -424,6 +425,7 @@ class Applier:
         if not await self._open(run):
             return
         stalls, entries_done, waited, refilled, dismissed = 0, set(), False, set(), set()
+        account_waited = False
         sign_ins: dict[str, int] = {}  # what the saved password was used for on this pass
         pressed: list[tuple[Any, ...]] = []  # (page, button) for each button pressed on this pass
         pressed_on: list[str] = []  # and where, in words
@@ -445,6 +447,12 @@ class Applier:
             if kind == "bot_check":
                 await self._bring_forward(run)
                 return self._pause(run, "bot_check", _BOT_CHECK_SAYS)
+            if (kind == "sign_in" and not account_waited and not _account_and_application(data)
+                    and sum(f.get("kind") == "password" for f in data.get("fields") or []) >= 2):
+                # A Create Account form: Qorvo's draws its application below it a moment later
+                account_waited = True
+                await self._wait_for_application()
+                continue
             if kind == "sign_in" and _account_and_application(data):
                 return await self._apply_with_account(run, data)
             if kind == "sign_in":
@@ -456,6 +464,8 @@ class Applier:
                 if done in ("prefilled", "filled"):
                     data, _ = await self._look()
                     run.page_info = _page_info(data)  # the page as filled
+                if done == "prefilled" and _account_and_application(data):
+                    return await self._apply_with_account(run, data)  # its application was drawn after all
                 if done == "prefilled":
                     first = (" Your saved password didn't sign in there, so this is probably your first application "
                              "with them; if you do have an account, sign in instead." if sign_ins.get("create_account") else "")
@@ -593,6 +603,14 @@ class Applier:
             await asyncio.sleep(0.25)
         return False
 
+    async def _wait_for_application(self) -> None:
+        """Give a Create Account form a moment to draw an application below it."""
+        deadline = time.monotonic() + ACCOUNT_DRAW_WAIT
+        while time.monotonic() < deadline:
+            await asyncio.sleep(1)
+            if _account_and_application((await self._look())[0]):
+                return
+
     async def _wait_for_progress(self, seconds: float) -> bool:
         """Wait for a form, a sign-in, a bot check or a button that moves things on to appear
         (KLA's Workday draws its "Sign in with email" button a few seconds late)."""
@@ -692,10 +710,11 @@ class Applier:
             await srv.click(email_button["id"])
             return "email_step"
         passwords = [f for f in fields if f["kind"] == "password"]
-        # The way to a new account is a link or a plain button. A form's own submit button
-        # that reads "Create Account" sends that form (it creates the account), so it's never it.
-        create = next((a for a in actions if _CREATE_ACCOUNT.match(a["text"].strip()) and not a.get("form_submit")),
-                      None)
+        # The way to a new account is a link or a plain button. A Create Account form's own
+        # button sends that form (it creates the account), so it's never it: a form's submit,
+        # or a button in a form with two password boxes (Workday's, a div).
+        create = next((a for a in actions if _CREATE_ACCOUNT.match(a["text"].strip()) and not a.get("form_submit")
+                       and not a.get("account_form")), None)
         # Where the way to a new account led: a form with one password box (UKG Pro's "Create
         # your account") is the new account's, as it no longer offers a way to one.
         signing_up = len(passwords) == 1 and bool(tried.get("create_account")) and create is None
@@ -733,8 +752,10 @@ class Applier:
         if new_account:  # accepting the site's terms, and creating the account, are the person's call
             self._log(run, "filled the Create Account form with your details and saved password")
             return "prefilled"
-        button = next((a for a in actions if _SIGN_IN_ACTION.match(a["text"].strip()) and not _SOCIAL.search(a["text"])),
-                      None)
+        # The form's own button, after its password box: a "Sign In" in the site's header opens
+        # its sign-in page or pop-up instead, and sends nothing (Workday's)
+        button = next((a for a in actions if _SIGN_IN_ACTION.match(a["text"].strip()) and not _SOCIAL.search(a["text"])
+                       and a.get("after_password")), None)
         if button is None:
             return "filled"
         await srv.click(button["id"])
@@ -772,6 +793,8 @@ class Applier:
             return self._pause(run, "questions", f"{len(pending)} question(s) your profile doesn't answer. Answer them "
                                "here and the desk fills them in (and remembers them).", pending)
         saved = await self._sign_in(run, data, {}, details=False) == "prefilled"  # filled in above
+        if saved:  # the record of the page shows its password boxes filled, too
+            run.page_info = _page_info((await self._look())[0])
         srv._mark_ready(srv.tracker().get(run.job_id), "filled by the Job Desk; the site creates the account as it applies")
         await self._bring_forward(run)
         password = "Your saved password is in its password boxes" if saved else "Choose a password in its password boxes"

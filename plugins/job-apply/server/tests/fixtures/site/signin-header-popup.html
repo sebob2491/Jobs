@@ -1,0 +1,83 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Sign In</title>
+<style>
+  #popup { display: none; position: fixed; top: 40px; right: 20px; background: #fff; border: 1px solid #999; padding: 12px; }
+  #popup.open { display: block; }
+</style>
+</head>
+<body>
+<!-- like KLA's, NXP's, ASML's and Hitachi's Workday: the page's header has a "Sign In" of its
+     own, ahead of the sign-in form, which opens a sign-in pop-up (and hides the page behind
+     it) instead of sending the form. The step starts with "Sign in with Google / email", and
+     the Create Account form's own button is drawn as a div. No account exists for anyone
+     here: every sign-in fails, as at an employer applied to for the first time.
+     ?button=Continue: the sign-in form's own button reads "Continue".
+     ?start=popup: the pop-up is open over the Create Account form, as pressing the header's
+     "Sign In" and then the page's "Create Account" left Workday's page. -->
+<header><button type="button" id="header-signin">Sign In</button> <a href="#">Careers</a></header>
+<main id="main">
+  <a href="#">Back to Job Posting</a>
+  <h2>Field Service Engineer</h2>
+  <h3>current step 1 of 7 Create Account/Sign In</h3>
+  <div id="step">
+    <h2>Sign In</h2>
+    <button type="button">Sign in with Google</button>
+    <button type="button" id="with-email">Sign in with email</button>
+  </div>
+</main>
+<div id="popup" role="dialog" aria-modal="true">
+  <h2>Sign In</h2>
+  <label for="pop-em">Email Address</label><input id="pop-em" type="text">
+  <label for="pop-pw">Password</label><input id="pop-pw" type="password">
+  <button type="button" id="pop-send">Sign In</button>
+  <div id="pop-err" role="alert"></div>
+  <button type="button" id="pop-create">Create Account</button>
+  <button type="button">Forgot your password?</button>
+  <button type="button" id="close">Close</button>
+</div>
+<script>
+  window.signInTries = 0; window.popupOpened = false; window.created = false;
+  const params = new URLSearchParams(location.search);
+  const button = params.get('button') || 'Sign In';
+  const step = document.getElementById('step');
+  const popup = document.getElementById('popup');
+  const main = document.getElementById('main');
+  function openPopup() { popup.classList.add('open'); main.setAttribute('aria-hidden', 'true'); }
+  function closePopup() { popup.classList.remove('open'); main.removeAttribute('aria-hidden'); }
+  function signInForm() {
+    step.innerHTML = '<h2>Sign In</h2>'
+      + '<label for="em">Email Address</label><input id="em" type="text">'
+      + '<label for="pw">Password</label><input id="pw" type="password">'
+      + '<button type="button" id="send">' + button + '</button>'
+      + '<div id="err" role="alert"></div>'
+      + '<div>Don\'t have an account yet? <button type="button" id="create">Create Account</button></div>'
+      + '<button type="button">Forgot your password?</button>';
+    document.getElementById('send').addEventListener('click', () => {
+      window.signInTries += 1;
+      document.getElementById('err').textContent = 'Wrong email address or password. Try again, or create an account.';
+    });
+    document.getElementById('create').addEventListener('click', createForm);
+  }
+  function createForm() {
+    step.innerHTML = '<h2>Create Account</h2>'
+      + '<label for="em">Email Address</label><input id="em" type="text">'
+      + '<label for="pw">Password</label><input id="pw" type="password">'
+      + '<label for="pw2">Verify New Password</label><input id="pw2" type="password">'
+      + '<input id="terms" type="checkbox"><label for="terms">Yes, I have read and consent to the terms and conditions</label>'
+      + '<div role="button" tabindex="0" id="make">Create Account</div>'
+      + '<div>Already have an account? <button type="button">Sign In</button></div>';
+    document.getElementById('make').addEventListener('click', () => { window.created = true; });
+  }
+  document.getElementById('header-signin').addEventListener('click', () => { window.popupOpened = true; openPopup(); });
+  document.getElementById('close').addEventListener('click', closePopup);
+  document.getElementById('pop-send').addEventListener('click', () => {
+    window.signInTries += 1;
+    document.getElementById('pop-err').textContent = 'Wrong email address or password.';
+  });
+  document.getElementById('pop-create').addEventListener('click', () => { closePopup(); createForm(); });
+  document.getElementById('with-email').addEventListener('click', signInForm);
+  if (params.get('start') === 'popup') { createForm(); openPopup(); }
+</script>
+</body>
+</html>

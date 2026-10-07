@@ -839,31 +839,100 @@ async def _question_markup(run: Any) -> list[str]:
     return out
 
 
+# An element's markup and the elements around it, with only the attributes that say what
+# it is and whether it shows (the page holds only the fake applicant's details)
+_MARKUP_JS = r"""
+(id) => {
+  const el = document.querySelector(`[data-ja-id="${id}"]`);
+  if (!el) return null;
+  const KEEP = /^(data-automation-id|role|aria-label|aria-hidden|aria-expanded|aria-disabled|aria-modal|type|tabindex|hidden|href|inert|disabled)$/;
+  const short = (node) => {
+    const c = node.cloneNode(true);
+    for (const n of [c, ...c.querySelectorAll('*')]) {
+      if (/^(SCRIPT|STYLE|SVG|PATH)$/i.test(n.tagName)) { n.remove(); continue; }
+      for (const a of [...n.attributes]) if (!KEEP.test(a.name)) n.removeAttribute(a.name);
+    }
+    return c.outerHTML.replace(/\s+/g, ' ');
+  };
+  const chain = [];
+  for (let n = el.parentElement, d = 0; n && d < 8; n = n.parentElement, d++) {
+    const s = getComputedStyle(n);
+    chain.push([n.tagName.toLowerCase(), n.getAttribute('data-automation-id') || '', n.getAttribute('role') || '',
+                n.getAttribute('aria-hidden') || '', s.display, s.visibility, s.opacity,
+                Math.round(n.getBoundingClientRect().width) + 'x' + Math.round(n.getBoundingClientRect().height)].join('|'));
+  }
+  const r = el.getBoundingClientRect();
+  const hit = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
+  return { markup: short(el).slice(0, 600), parent: short(el.parentElement).slice(0, 1200), chain,
+           box: [Math.round(r.x), Math.round(r.y), Math.round(r.width), Math.round(r.height)],
+           on_top: hit === el || el.contains(hit) ? 'itself' : (hit ? short(hit).slice(0, 300) : null) };
+}
+"""
+
+
+async def _account_page(press: str | None) -> dict[str, Any]:
+    form = await server.inspect_form(include_dropdown_options=False)
+    return {"pressed": press, "url": form["url"], "title": form.get("title"),
+            "headings": form["headings"][:10], "actions": [a["text"] for a in form["actions"]][:24],
+            "fields": [{k: f.get(k) for k in ("label", "kind", "required", "sublabel", "options")}
+                       for f in form["fields"]][:30]}
+
+
 async def account_form() -> dict[str, Any]:
     """At a sign-in the run stopped on: the form its way to a new account opens ("Create an
     account", "Register", "Sign up"), which the desk fills when a saved password doesn't sign
     in. Opened and read only, with the queue stopped, so nothing is filled in or sent. Only
     from a sign-in page (one password box): on a Create Account form, its own "Create
-    Account" button would create the account."""
+    Account" button would create the account.
+
+    Each way in is recorded with its markup; when one doesn't open a form with a second
+    password box, the next one is tried (up to three)."""
     from job_apply.pipeline import _CREATE_ACCOUNT
+
+    def ways(form: dict[str, Any]) -> list[dict[str, Any]]:
+        return [a for a in form["actions"] if _CREATE_ACCOUNT.match(a["text"].strip()) and not a.get("disabled")
+                and not a.get("is_submit") and not a.get("form_submit") and not a.get("account_form")]
 
     try:
         form = await server.inspect_form(include_dropdown_options=False)
+        email_step = next((a for a in form["actions"] if re.match(r"^sign in with email$", a["text"].strip(), re.I)), None)
+        if not form["fields"] and email_step is not None:
+            # Workday's "Sign in with Apple / Google / email" step: this only shows the form
+            await server.click(email_step["id"])
+            await asyncio.sleep(4)
+            form = await server.inspect_form(include_dropdown_options=False)
         if sum(f["kind"] == "password" for f in form["fields"]) != 1 or any(
                 f.get("value") for f in form["fields"] if f["kind"] in ("text", "email", "password")):
             # an account form, or one the desk filled in (a --fake-passwords run): left as it is
             return {"skipped": "not an untouched sign-in page", "fields": [f.get("label") for f in form["fields"]][:20]}
-        link = next((a for a in form["actions"] if _CREATE_ACCOUNT.match(a["text"].strip()) and not a.get("disabled")
-                     and not a.get("is_submit") and not a.get("form_submit")), None)
-        if link is None:
+        found = ways(form)
+        if not found:
             return {"none": [a["text"] for a in form["actions"]][:20]}
-        await server.click(link["id"])
-        await asyncio.sleep(6)
-        after = await server.inspect_form(include_dropdown_options=False)
-        return {"pressed": link["text"], "url": after["url"], "title": after.get("title"),
-                "headings": after["headings"][:6], "actions": [a["text"] for a in after["actions"]][:20],
-                "fields": [{k: f.get(k) for k in ("label", "kind", "required", "sublabel", "options")}
-                           for f in after["fields"]][:30]}
+        page = await server.browser.page()
+        signin_url = page.url
+        await print_shot("sign-in page", page)
+        rec: dict[str, Any] = {"ways": [await page.evaluate(_MARKUP_JS, str(a["id"])) for a in found[:4]], "tries": []}
+        for i in range(min(3, len(found))):
+            if i:  # back to the sign-in page as it was
+                await page.goto(signin_url)
+                await asyncio.sleep(6)
+                again = await server.inspect_form(include_dropdown_options=False)
+                step = next((a for a in again["actions"] if re.match(r"^sign in with email$", a["text"].strip(), re.I)), None)
+                if not again["fields"] and step is not None:
+                    await server.click(step["id"])
+                    await asyncio.sleep(4)
+                    again = await server.inspect_form(include_dropdown_options=False)
+                found = ways(again)
+                if i >= len(found):
+                    break
+            await server.click(found[i]["id"])
+            await asyncio.sleep(6)
+            after = await _account_page(f"{found[i]['text']} (way {i + 1} of {len(found)})")
+            rec["tries"].append(after)
+            await print_shot(f"account form, way {i + 1}", page)
+            if sum(f["kind"] == "password" for f in after["fields"]) != 1:
+                break
+        return rec
     except Exception as e:  # noqa: BLE001 - a probe; the run's record stands without it
         return {"error": f"{type(e).__name__}: {str(e)[:200]}"}
 

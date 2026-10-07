@@ -32,6 +32,15 @@ the page URL. Use this file for the parts of each flow that `autofill` can't do.
   with email**, then run `inspect_form` again for the email and password fields.
   Never use the Apple, Google or LinkedIn buttons: they sign in with the user's
   other accounts, so the user does that themselves if they want to.
+- The page's header has a **Sign In** of its own, listed first in `actions`. It
+  opens a sign-in pop-up and sends nothing. The pop-up hides the page behind it,
+  whose fields then drop out of `inspect_form`. Press the form's own **Sign In**:
+  the one marked `after_password`. If the pop-up is open, press its **Close**.
+- Its **Create Account** form's own **Create Account** button is a div, not a
+  form's submit, so `inspect_form` marks it `account_form`. It creates the
+  account: press it only once the user has agreed. The way to that form from
+  the sign-in page is the **Create Account** link under "Don't have an account
+  yet?".
 - Steps: My Information → My Experience → Application Questions → Voluntary
   Disclosures → Self Identify → Review. The Next button reads **Save and Continue**.
   The last button reads **Submit**, which goes through `submit_application`.
