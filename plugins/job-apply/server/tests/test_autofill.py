@@ -357,3 +357,41 @@ def test_a_box_that_imports_the_resume_is_left_beside_the_one_that_attaches_it()
     # the only file box on a page gets the resume, whatever it's called
     alone = plan_autofill([{"id": "1", "kind": "file", "label": "Import your profile from resume"}], prof())
     assert [f["id"] for f in alone["to_fill"]] == ["1"]
+
+
+def test_a_signed_forms_date_is_today_in_the_boxes_it_asks_for(job_apply_home):
+    """Workday's disability self-identification (CC-305) is signed with a Name and a Date in
+    Month / Day / Year boxes."""
+    from datetime import date
+
+    today, p = date.today(), prof()
+    assert resolve_field(f("Date*", sublabel="Month", role="spinbutton"), p).value == f"{today.month:02d}"
+    assert resolve_field(f("Date*", sublabel="Day", role="spinbutton"), p).value == f"{today.day:02d}"
+    assert resolve_field(f("Date*", sublabel="Year", role="spinbutton"), p).value == str(today.year)
+    assert resolve_field(f("Date"), p).value == today.strftime("%m/%d/%Y")
+    assert resolve_field(f("Today's Date", input_type="date"), p).value == today.isoformat()
+    signed = resolve_field(f("Signature Date"), p)
+    assert signed.rule == "signed_date" and signed.value == today.strftime("%m/%d/%Y")  # not the name
+    assert resolve_field(f("Signature"), p).value == "Sam Rivera"
+    assert resolve_field(f("Date of Birth"), p) is None
+    assert resolve_field(f("Date available to start"), p) is None
+
+
+def test_a_question_whose_choices_say_what_it_asks(job_apply_home):
+    """Workday's disability form asks "Please check one of the boxes below:"; its choices
+    are about a disability."""
+    import yaml
+
+    data = yaml.safe_load((job_apply_home / "profile.yaml").read_text())
+    data["eeo"]["disability"] = "I don't wish to answer"
+    (job_apply_home / "profile.yaml").write_text(yaml.safe_dump(data))
+    boxes = ["Yes, I have a disability, or have had one in the past",
+             "No, I do not have a disability and have not had one in the past", "I do not want to answer"]
+    ans = resolve_field(f("Please check one of the boxes below:*", "checkbox_group", options=boxes), prof())
+    assert (ans.rule, ans.value) == ("disability", "I do not want to answer")
+    # one choice that mentions it is not enough to tell
+    assert resolve_field(f("Please choose one", "radio_group", options=["Yes", "No, no disability"]), prof()) is None
+    # and with no answer in the profile, the person is asked
+    del data["eeo"]["disability"]
+    (job_apply_home / "profile.yaml").write_text(yaml.safe_dump(data))
+    assert resolve_field(f("Please check one of the boxes below:*", "checkbox_group", options=boxes), prof()) is None

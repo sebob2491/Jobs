@@ -748,3 +748,25 @@ def test_the_browser_comes_back_after_its_window_is_closed(srv):
 
     fields = run(go())
     assert any(f["label"].startswith("First Name") for f in fields)
+
+
+def test_workdays_disability_form_is_signed_and_answered(srv, job_apply_home):
+    """Workday's "Self Identify" step: Name, today's Date in its Month / Day / Year boxes, and
+    the profile's answer among checkboxes whose label doesn't say what they ask."""
+    import datetime
+
+    import yaml
+
+    data = yaml.safe_load((job_apply_home / "profile.yaml").read_text())
+    data["eeo"]["disability"] = "Decline to self-identify"
+    (job_apply_home / "profile.yaml").write_text(yaml.safe_dump(data))
+    run(srv.open_application(url=fixture_url("workday_self_identify.html")))
+    result = run(srv.autofill())
+    assert not result["failed"], result["failed"]
+    assert [f["label"] for f in result["needs_input"]] == ["Employee ID"]  # optional, and not the applicant's
+    after = run(srv.inspect_form(include_dropdown_options=False))["fields"]
+    today = datetime.date.today()
+    assert {f.get("sublabel"): f["value"] for f in after if f["label"].startswith("Date")} == \
+        {"Month": f"{today.month:02d}", "Day": f"{today.day:02d}", "Year": str(today.year)}
+    assert by_label(after, "Name")["value"] == "Sam Rivera"
+    assert by_label(after, "check one of the boxes")["value"] == ["I do not want to answer"]
