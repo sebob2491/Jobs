@@ -1,0 +1,26 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Verify your account</title></head>
+<body>
+<!-- A job site's page after Create Account: it has emailed a link to confirm the address. The
+     link opens in the person's own browser, so this tab only moves on once it's reloaded (the
+     tab's sessionStorage stands in for the site knowing the address is confirmed).
+     ?code: it asks for an emailed code instead (123456). -->
+<h2>Verify your account</h2>
+<div id="body"></div>
+<script>
+  const body = document.getElementById('body');
+  if (sessionStorage.getItem('verified') === 'yes') location.replace('step1.html');
+  else if (new URLSearchParams(location.search).has('code')) {
+    body.innerHTML = '<form id="f" novalidate><label for="code">Enter the verification code we sent to your email</label>'
+      + '<input id="code"><button type="submit">Verify</button></form>';
+    document.getElementById('f').addEventListener('submit', (e) => {
+      e.preventDefault();
+      if (document.getElementById('code').value === '123456') location.href = 'step1.html';
+    });
+  } else {
+    body.innerHTML = '<p>We\'ve sent a link to your email address. Check your email and open the link to continue.</p>';
+  }
+</script>
+</body>
+</html>

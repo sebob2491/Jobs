@@ -183,7 +183,7 @@ def test_saved_password_signs_in_without_the_person(srv, monkeypatch):
 
     r = run(go())
     assert r.need == "questions", r.reason  # straight past the sign-in to the questions
-    assert "signed in with your saved password" in r.log
+    assert "pressed “Sign In” with your saved password" in r.log
 
 
 def test_workday_style_dialog_is_followed(srv, monkeypatch):
@@ -431,7 +431,7 @@ def test_a_saved_password_that_doesnt_sign_in_opens_create_account(srv, monkeypa
             await applier.stop()
 
     r = run(go())
-    assert r.log.count("signed in with your saved password") == 1  # not tried again
+    assert r.log.count("pressed “Sign In” with your saved password") == 1  # not tried again
     assert "your saved password didn't sign in, so I opened Create Account" in r.log
 
 
@@ -461,8 +461,42 @@ def test_a_sign_up_form_with_one_password_box_is_filled_in(srv, monkeypatch, pag
             await applier.stop()
 
     r = run(go())
-    assert r.log.count("signed in with your saved password") == 1  # not tried again
+    assert r.log.count("pressed “Sign in” with your saved password") == 1  # not tried again
     assert "filled the Create Account form with your details and saved password" in r.log
+
+
+@pytest.mark.parametrize("query", ["", "?code"])
+def test_an_emailed_link_or_code_is_waited_for(srv, monkeypatch, query):
+    """After Create Account, a site emails a link to confirm the address, or a code. The link
+    opens in the person's own browser, which leaves the desk's tab where it was: the desk says
+    to reload that tab, and carries on once it has been. A code is typed into the tab."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    job = srv.add_job(url=fixture_url("site/verify-email.html") + query, title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status == "needs_you")
+            assert r.need == "email_code", (r.reason, r.log)
+            if query:
+                assert "emailed you a code" in r.reason and "reload" not in r.reason, r.reason
+                await r.page.fill("#code", "123456")
+                await r.page.click("button:has-text('Verify')")
+            else:
+                assert "emailed you a link" in r.reason and "reload this job's tab" in r.reason, r.reason
+                await asyncio.sleep(1.5)
+                assert r.need == "email_code"  # the tab doesn't change by itself
+                await r.page.evaluate("() => sessionStorage.setItem('verified', 'yes')")  # the link, opened elsewhere
+                await r.page.reload()
+            await until(lambda: r.need == "questions" or r.status == "ready")  # the desk carried on by itself
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert any(line.startswith("filled") for line in r.log), r.log
 
 
 def test_the_sign_in_forms_own_button_is_pressed_not_the_headers(srv, monkeypatch):
@@ -490,7 +524,7 @@ def test_the_sign_in_forms_own_button_is_pressed_not_the_headers(srv, monkeypatc
             await applier.stop()
 
     r = run(go())
-    assert r.log.count("signed in with your saved password") == 1
+    assert r.log.count("pressed “Sign In” with your saved password") == 1
     assert "your saved password didn't sign in, so I opened Create Account" in r.log
 
 

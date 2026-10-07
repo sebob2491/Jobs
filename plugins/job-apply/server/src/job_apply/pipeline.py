@@ -483,8 +483,13 @@ class Applier:
                                    "the browser window; the desk carries on by itself after that." + failed + tip)
             if kind == "email_code":
                 await self._bring_forward(run)
-                return self._pause(run, "email_code", "The site emailed you a code or a link. Enter the code in the "
-                                   "browser window, or open the link; the desk carries on by itself after that.")
+                if any(_CODE_FIELD.search(f.get("label") or "") for f in data.get("fields") or []):
+                    return self._pause(run, "email_code", "The site emailed you a code. Enter it in the browser "
+                                       "window; the desk carries on by itself after that.")
+                # The link opens in the person's own browser, which leaves this tab where it is
+                return self._pause(run, "email_code", "The site emailed you a link to confirm your email. Open it, then "
+                                   "reload this job's tab in the desk's browser window: the link opens in your usual "
+                                   "browser, so the tab doesn't change by itself. The desk carries on after that.")
             if kind == "form":
                 run.seen_form = True
                 once_failed = await self._fill_once(run, data)
@@ -759,7 +764,8 @@ class Applier:
         if button is None:
             return "filled"
         await srv.click(button["id"])
-        self._log(run, "signed in with your saved password")
+        # whether that signed in is the next look's to say
+        self._log(run, f"pressed \u201c{button['text'].strip()}\u201d with your saved password")
         return "submitted"
 
     async def _fill_account_details(self, fields: list[dict[str, Any]]) -> None:
