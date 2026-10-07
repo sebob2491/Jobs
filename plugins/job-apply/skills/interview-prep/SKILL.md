@@ -14,10 +14,17 @@ interview, grounded in their real experience and in this specific posting.
    company and status. Run `update_job(job_id, status="interviewing")` if it isn't
    already set.
 2. Read the user's resume (`documents.resume` in `get_profile`) and the profile.
-3. Ask only what you can't find: the date and time, the format (phone, video or
-   onsite), the interviewers' names and roles, and whether there's a technical
+3. If a Gmail connector is available, search the user's email for the recruiter's or
+   company's thread and the booking or calendar emails: the time, who will call and
+   from what number, and what they said about the role, pay, shifts and locations.
+   The email may be in any of the user's linked accounts.
+4. Ask only what you still can't find: the date and time, the format (phone, video
+   or onsite), the interviewers' names and roles, and whether there's a technical
    assessment.
-4. Research the company:
+5. Research the company:
+   - A recruiting agency often won't name its client. Work out the likely employer
+     from what the recruiter wrote (its fabs, locations, customer count), say it's a
+     guess, and add "Who is the employer?" to the questions to ask.
    - If the Indeed connector is available, use `get_company_data` for ratings,
      salary data for this title, and interview-process reviews.
    - Use WebSearch for recent news relevant to the role, such as Arizona fab
@@ -55,9 +62,13 @@ Build the sheet in this order:
 5. **Questions to ask them:** training program length, the certification path, the
    real travel percentage, the shift pattern and on-call, which customer site the
    role supports, and how people move up from this level.
-6. **Logistics:** time zone, the dial-in or address, what to bring or wear, and the
-   names to remember. If the Google Calendar connector is available and the user
-   agrees, add the interview to their calendar.
+6. **Logistics:** the time in the user's own time zone, the dial-in or address, what
+   to bring or wear, and the names to remember. Booking emails and invites often give
+   the sender's zone without saying so. Check which zone it is (the thread usually
+   says), and convert it. Arizona keeps Mountain Standard Time all year, so from
+   March to November it is two hours behind Central, not one: 10:00 AM Central is
+   8:00 AM in Phoenix. Put both times on the sheet. If the Google Calendar connector
+   is available and the user agrees, add the interview to their calendar.
 
 Ask the user whether they want the sheet in chat or as a document they can keep.
 Keep it scannable: short bullets, with the answers as outlines rather than scripts.
