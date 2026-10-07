@@ -23,6 +23,9 @@ The desk is a local web page served by this plugin. It does what the `find-jobs`
     browser window, and the desk carries on by itself once the page moves past them. A
     link a site emails to confirm the address opens in the user's usual browser, which
     leaves the desk's tab where it was: the user reloads that tab after opening the link.
+    The queue waits while the user works in that tab. After 5 minutes with nothing
+    happening there, the other jobs go ahead, and the desk picks the job up again once
+    its tab is past the pause.
   - **Alert me** (in the header) turns on desktop notifications for jobs that come to
     need the user or are ready to submit, so the desk can be left in the background.
 - **Site passwords** stores one password per job system: Workday (most of the

@@ -37,7 +37,11 @@ LATE_BUTTONS_WAIT = 10  # seconds for a page's buttons to be drawn
 SIGN_IN_STEP_WAIT = 25  # Workday's sign-in step can take longer to draw its buttons (Applied's)
 ACCOUNT_DRAW_WAIT = 4  # for the application below a Create Account form to be drawn (Qorvo's)
 HANDS_ON = {"bot_check", "sign_in", "email_code"}
-HANDS_ON_TIMEOUT = 15 * 60  # then the queue stops waiting and moves on
+# A pause that needs the person holds the queue while they're at it. Nothing done in its tab
+# for HANDS_ON_IDLE (no one's at the browser) and the other jobs go ahead; it's watched still,
+# and carried on with once its tab is past the pause.
+HANDS_ON_IDLE = 5 * 60
+HANDS_ON_TIMEOUT = 45 * 60  # the longest it holds the queue, even for someone at work in the tab
 POLL_SECONDS = 3.0
 FINISHED = {"applied", "interviewing", "offer", "rejected", "withdrawn"}  # tracker statuses never applied to again
 
@@ -91,17 +95,22 @@ class Run:
     blocking: bool = False  # the queue waits on this one
     paused_at: float = 0.0
     paused_site: str = ""  # the site it paused on, so a tab taken to webmail isn't "moved on"
+    paused_host: str = ""  # and the exact address host (one employer's Workday, not any)
     submit: bool = False  # submit once the review page is reached
     usual_resume: bool = False  # the person chose to go ahead without a tailored resume
     once: dict[str, Any] = field(default_factory=dict)  # answers for this application only, by question
     seen_form: bool = False  # got into the application itself (so a page with only Submit is its review page)
     try_later: bool = False  # left on a "Try Again Later" page: only the person's Resume goes on from it
+    active_at: float = 0.0  # when its paused tab last changed: someone at work in it
+    tab_mark: int = 0  # what its paused tab looked like then (address and box values)
+    left: bool = False  # paused for the person, and the queue went on without it
+    moved_since: float = 0.0  # since when every look has found its paused tab past the pause
     page_info: dict[str, Any] = field(default_factory=dict)  # what the page looked like when it paused
     page: Any = None  # its browser tab
     updated: float = field(default_factory=time.time)
 
     def public(self) -> dict[str, Any]:
-        return {k: v for k, v in self.__dict__.items() if k != "page"}
+        return {k: v for k, v in self.__dict__.items() if k not in ("page", "tab_mark")}
 
 
 def classify(data: dict[str, Any], text: str) -> str:
@@ -215,6 +224,7 @@ class Applier:
         if run.status == "running" and self.current == job_id:
             return run
         run.status, run.need, run.reason, run.blocking, run.questions = "queued", "", "", False, []
+        run.left = False
         run.submit = submit
         run.updated = time.time()
         self._cancel(job_id)
@@ -262,8 +272,10 @@ class Applier:
                     self.enqueue(run.job_id, submit=run.submit)
 
     def later(self, job_id: int) -> Run:
-        """Stop holding the queue for this job; it stays paused until resumed."""
+        """Stop holding the queue for this job. It stays paused until resumed, or until its tab
+        is past the pause (then the desk carries on with it between jobs)."""
         run = self.runs[job_id]
+        run.left = run.left or run.blocking
         run.blocking = False
         self._wake.set()
         return run
@@ -293,6 +305,38 @@ class Applier:
     def _cancel(self, job_id: int) -> None:
         self.tasks = deque(t for t in self.tasks if t[1] != job_id)
 
+    def _go_on_without(self, run: Run, why: str) -> None:
+        """Stop holding the queue for a job that waits on the person; it's still watched."""
+        run.blocking, run.left = False, True
+        run.reason += " (" + why + ": finish it in its tab and the desk carries on with it, or press Resume)"
+        self._log(run, why)
+        self._wake.set()
+
+    async def _pick_up_left(self) -> None:
+        """Between jobs: carry on with any the queue went on without whose tab the person has
+        since got past its sign-in, check or code. A closed tab waits for Resume."""
+        for run in [r for r in self.runs.values() if r.left and r.status == "needs_you" and not r.blocking]:
+            if run.page is None or run.page.is_closed():
+                continue
+            try:
+                moved = await self._past_pause(run)
+            except Exception:  # a tab mid-way through loading: looked at again next time, not holding the rest
+                continue
+            if moved and run.left and run.status == "needs_you":
+                try:
+                    self.enqueue(run.job_id, submit=run.submit, front=True)
+                except (KeyError, ValueError):  # gone, or marked applied meanwhile: nothing to watch for
+                    run.left = False
+
+    async def _past_pause(self, run: Run) -> bool:
+        """Is a job's tab, left waiting for the person, past its sign-in, check or code? Read
+        without taking over the tools' tab (Claude may be using it), and only while it's on the
+        address it paused on: a tab the person has taken to another posting, even one on the
+        same job system, is no application of this job's."""
+        data, text = await self.srv.browser.peek(run.page)
+        here = (urlparse(data.get("url") or "").hostname or "") == run.paused_host
+        return self._twice(run, here and not data.get("loading") and classify(data, text) != run.need)
+
     # ------------------------------------------------------------- worker
     async def _worker(self) -> None:
         while True:
@@ -310,8 +354,7 @@ class Applier:
         blocker = next((r for r in self.runs.values() if r.blocking), None)
         if blocker is not None and submit is None:
             if time.time() - blocker.paused_at > HANDS_ON_TIMEOUT:
-                blocker.blocking = False
-                blocker.reason += " (stopped waiting; press Resume when you're ready)"
+                self._go_on_without(blocker, "the other jobs went ahead after a long wait")
             elif await self._strict(self._moved_on(blocker)):
                 blocker.blocking = False
                 if blocker.status != "needs_you":
@@ -322,13 +365,18 @@ class Applier:
                     self.enqueue(blocker.job_id, submit=blocker.submit, front=True)
                 except ValueError:  # marked applied meanwhile
                     pass
+            elif time.time() - blocker.active_at > HANDS_ON_IDLE:
+                self._go_on_without(blocker, f"nothing happened in its tab for {HANDS_ON_IDLE // 60} minutes, "
+                                    "so the other jobs went ahead")
             else:
                 self._wake.clear()  # sleep the poll out, unless something new comes in
                 await self._sleep(POLL_SECONDS)
                 return
+        await self._pick_up_left()
         if not self.tasks:
             self._wake.clear()
-            await self._sleep(30)
+            # with a job left waiting on the person, look at its tab again soon
+            await self._sleep(POLL_SECONDS if any(r.left and r.status == "needs_you" for r in self.runs.values()) else 30)
             return
         task = submit or self.tasks[0]
         self.tasks.remove(task)
@@ -372,13 +420,32 @@ class Applier:
         """Has the person got the paused tab past its sign-in, check or code? Only on the
         same site, or on into an application system: a tab they've taken to their webmail
         or a sign-in provider isn't the application moving on."""
-        if not self.srv.browser.use_tab(run.page):
+        if run.page is None or run.page.is_closed():
             return True  # they closed it: start the job again
-        data, text = await self._look()
-        if classify(data, text) == run.need:
-            return False
+        # read without taking over the tools' tab: Claude may be using them meanwhile
+        data, text = await self.srv.browser.peek(run.page)
+        # the address and what's in the boxes: a change is the person at work in the tab
+        mark = hash((data.get("url"), tuple((f.get("id"), str(f.get("value"))) for f in data.get("fields") or [])))
+        if run.tab_mark and mark != run.tab_mark:
+            run.active_at = time.time()
+        run.tab_mark = mark
         url = data.get("url") or ""
-        return _site_key(url) == run.paused_site or detect_ats(url) not in ("company_site", "linkedin", "indeed")
+        moved = (not data.get("loading") and classify(data, text) != run.need
+                 and (_site_key(url) == run.paused_site or detect_ats(url) not in ("company_site", "linkedin", "indeed")))
+        return self._twice(run, moved)
+
+    @staticmethod
+    def _twice(run: Run, moved: bool) -> bool:
+        """Past the pause on looks at least a poll apart, with none between them saying
+        otherwise: a page caught mid-way between two states (a moment with nothing drawn, a
+        spinner) isn't the person having got past it."""
+        if not moved:
+            run.moved_since = 0.0
+            return False
+        if not run.moved_since:
+            run.moved_since = time.time()
+            return False
+        return time.time() - run.moved_since >= POLL_SECONDS
 
     # ------------------------------------------------------------- one job
     def _log(self, run: Run, text: str) -> None:
@@ -392,8 +459,10 @@ class Applier:
         run.status, run.need, run.reason = "needs_you", need, reason
         run.questions = questions or []
         run.blocking = need in HANDS_ON
-        run.paused_at = time.time()
+        run.paused_at = run.active_at = time.time()
+        run.tab_mark, run.left, run.moved_since = 0, False, 0.0
         run.paused_site = _site_key(run.url)
+        run.paused_host = urlparse(run.url).hostname or ""
         self._log(run, reason)
 
     async def _look(self) -> tuple[dict[str, Any], str]:

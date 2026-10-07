@@ -141,6 +141,118 @@ def test_bot_check_holds_the_queue_until_the_person_passes_it(srv, monkeypatch):
     run(go())
 
 
+def test_with_no_one_at_the_browser_the_other_jobs_go_ahead(srv, monkeypatch):
+    """Apply pressed on a batch, then the person walks away. A job that needs them (a bot
+    check) holds the queue only while something happens in its tab; then the other jobs go
+    ahead. When the person gets past the check later, the desk carries on with it by itself."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "HANDS_ON_IDLE", 2)
+    checked = srv.add_job(url=fixture_url("site/botcheck.html"), title="FSE", company="Example Fab")["job"]
+    other = srv.add_job(url=fixture_url("generic_form.html"), title="Technician", company="Example Litho")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            first = applier.enqueue(checked["id"])
+            second = applier.enqueue(other["id"])
+            await until(lambda: first.status == "needs_you")
+            assert first.need == "bot_check" and first.blocking
+            await until(lambda: second.status not in ("queued", "running"))  # went ahead
+            assert first.status == "needs_you" and first.need == "bot_check" and not first.blocking
+            assert "nothing happened in its tab for" in first.reason and "carries on with it" in first.reason
+            await first.page.click("#human")  # the person, back, passes the check
+            await until(lambda: first.need == "sign_in")  # carried on by itself, up to the sign-in
+            return first
+        finally:
+            await applier.stop()
+
+    run(go())
+
+
+def test_a_job_left_waiting_is_watched_without_taking_over_the_tools(srv, monkeypatch):
+    """The desk looks in on a job left waiting for the person while Claude may be using the
+    tools: their tab stays Claude's, and what Claude opens there is never driven as that job."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "HANDS_ON_IDLE", 1)
+    job = srv.add_job(url=fixture_url("site/posting.html"), title="FSE", company="Example Fab")["job"]
+    other = srv.add_job(url=fixture_url("site/step1.html"), title="Technician", company="Example Litho")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            first = applier.enqueue(job["id"])
+            await until(lambda: first.status == "needs_you" and first.need == "sign_in")
+            await until(lambda: first.left)  # nobody at the browser: left, and watched
+            claude_tab = await srv.browser.new_tab()  # Claude, helping with another job
+            await asyncio.sleep(1.5)  # the idle queue looks in on the left tab meanwhile
+            mine = srv.browser.current_tab is claude_tab
+            await srv.open_application(job_id=other["id"])
+            await asyncio.sleep(2)
+            return first, mine, claude_tab
+        finally:
+            await applier.stop()
+
+    first, mine, claude_tab = run(go())
+    assert mine  # the tools' tab is still Claude's
+    assert claude_tab.url.endswith("step1.html") and first.page.url.endswith("signin.html")
+    assert first.status == "needs_you" and first.need == "sign_in", (first.reason, first.log)
+
+
+def test_a_left_tab_taken_to_another_posting_isnt_driven_as_its_job(srv, monkeypatch):
+    """The person uses a left job's tab to look at another posting: that isn't this job's
+    application moving on, so the desk leaves it be."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "HANDS_ON_IDLE", 1)
+    job = srv.add_job(url=fixture_url("site/posting.html"), title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            first = applier.enqueue(job["id"])
+            await until(lambda: first.status == "needs_you" and first.need == "sign_in")
+            await until(lambda: first.left)
+            first.paused_host = "careers.example.com"  # as if it paused on that employer's own host
+            await first.page.goto(fixture_url("site/step1.html"))  # another posting's form
+            await asyncio.sleep(2)
+            return first
+        finally:
+            await applier.stop()
+
+    first = run(go())
+    assert first.status == "needs_you" and first.need == "sign_in" and first.left, (first.reason, first.log)
+
+
+def test_someone_at_work_in_the_paused_tab_holds_the_queue(srv, monkeypatch):
+    """Typing in the paused tab (signing in) is someone there: the queue keeps waiting."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "HANDS_ON_IDLE", 2)
+    job = srv.add_job(url=fixture_url("site/posting.html"), title="FSE", company="Example Fab")["job"]
+    other = srv.add_job(url=fixture_url("generic_form.html"), title="Technician", company="Example Litho")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            first = applier.enqueue(job["id"])
+            second = applier.enqueue(other["id"])
+            await until(lambda: first.status == "needs_you")
+            assert first.need == "sign_in" and first.blocking, first.reason
+            for ch in "sam.rivera@example.com"[:10]:  # about 4 seconds of typing
+                await first.page.type("#em", ch)
+                await asyncio.sleep(0.4)
+            held = (first.blocking, second.status)
+            await until(lambda: second.status not in ("queued", "running"))  # stopped: it goes ahead
+            return held
+        finally:
+            await applier.stop()
+
+    blocking, second_status = run(go())
+    assert blocking and second_status == "queued"
+
+
 def test_a_captcha_challenge_after_a_click_waits_for_the_person(srv, monkeypatch):
     """Daifuku's iCIMS answers Next on its email step with hCaptcha's pictures and "Please try
     again.": the person solves it, then the desk carries on. A challenge frame kept hidden
@@ -1324,3 +1436,19 @@ def test_a_sign_in_by_hand_mentions_the_password_the_desk_could_save(monkeypatch
     assert pipeline._password_tip("https://example.com/careers/login") == ""
     monkeypatch.setattr(pipeline, "_secret", lambda name: "saved")
     assert pipeline._password_tip("https://career8.successfactors.com/career?x=1") == ""
+
+
+def test_past_a_pause_takes_looks_a_poll_apart(monkeypatch):
+    """Two looks a moment apart (a page between two states) don't make a pause passed; looks
+    a poll apart, with none between them saying otherwise, do."""
+    clock = [1000.0]
+    monkeypatch.setattr(pipeline.time, "time", lambda: clock[0])
+    r = Run(1)
+    assert not Applier._twice(r, True)
+    clock[0] += 0.2
+    assert not Applier._twice(r, True)  # too soon
+    clock[0] += pipeline.POLL_SECONDS
+    assert Applier._twice(r, True)
+    assert not Applier._twice(r, False)  # a look that says otherwise starts it over
+    clock[0] += pipeline.POLL_SECONDS
+    assert not Applier._twice(r, True)
