@@ -940,6 +940,67 @@ async def account_form() -> dict[str, Any]:
         return {"error": f"{type(e).__name__}: {str(e)[:200]}"}
 
 
+_NO_MATCH = re.compile(r"nothing in its list matched '(.+)'")
+# A search box the desk couldn't pick from: the list it shows once a value is typed. Its
+# markup with only the attributes that say what each part is (the page holds only the fake
+# applicant's details), and how many of each role are showing.
+_LIST_JS = r"""
+(id) => {
+  const el = document.querySelector(`[data-ja-id="${id}"]`);
+  if (!el) return null;
+  const KEEP = /^(data-automation-id|role|aria-label|aria-selected|aria-hidden|aria-expanded|aria-activedescendant|id|class|tabindex|type|name)$/;
+  const short = (node) => {
+    const c = node.cloneNode(true);
+    for (const n of [c, ...c.querySelectorAll('*')]) {
+      if (/^(SCRIPT|STYLE|SVG|PATH)$/i.test(n.tagName)) { n.remove(); continue; }
+      for (const a of [...n.attributes]) {
+        if (!KEEP.test(a.name)) n.removeAttribute(a.name);
+        else if (a.name === 'class') n.setAttribute('class', a.value.split(/\s+/).slice(0, 3).join(' '));
+      }
+    }
+    return c.outerHTML.replace(/\s+/g, ' ');
+  };
+  const shown = (n) => n.getClientRects().length > 0 && getComputedStyle(n).visibility !== 'hidden';
+  const ref = el.getAttribute('aria-controls') || el.getAttribute('aria-owns') || '';
+  const box = ref ? document.getElementById(ref.split(/\s+/)[0]) : null;
+  const roles = {};
+  for (const n of (box || document).querySelectorAll('[role]')) {
+    if (shown(n)) roles[n.getAttribute('role')] = (roles[n.getAttribute('role')] || 0) + 1;
+  }
+  return { controls: ref, box: box ? short(box).slice(0, 3000) : null, box_shown: box ? shown(box) : null,
+           roles, value: el.value, expanded: el.getAttribute('aria-expanded'),
+           active: el.getAttribute('aria-activedescendant') };
+}
+"""
+
+
+async def list_probe(questions: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """For up to three search boxes whose list the desk couldn't pick from: type the value
+    again and record the list that shows (the run is over; nothing is sent)."""
+    out: list[dict[str, Any]] = []
+    try:
+        page = await server.browser.page()
+        for q in questions:
+            m = _NO_MATCH.search(q.get("error") or "")
+            if not m or len(out) >= 3:
+                continue
+            loc = page.locator(f'[data-ja-id="{q["id"]}"]')
+            try:
+                await loc.click(timeout=5000)
+                await loc.fill("")
+                await loc.press_sequentially(m.group(1), delay=80)
+                await asyncio.sleep(3)
+                info = await page.evaluate(_LIST_JS, str(q["id"])) or {}
+                await print_shot(f"list for {q.get('label')}", page)
+                await page.keyboard.press("Escape")
+            except Exception as e:  # noqa: BLE001
+                info = {"error": f"{type(e).__name__}: {str(e)[:200]}"}
+            out.append({"label": q.get("label"), "typed": m.group(1), **info})
+    except Exception as e:  # noqa: BLE001 - a probe; the run's record stands without it
+        out.append({"error": f"{type(e).__name__}: {str(e)[:200]}"})
+    return out
+
+
 async def check_pipeline(company: dict[str, Any], out: Path, rec: dict[str, Any], fixtures: bool = False) -> None:
     from job_apply.pipeline import Applier, question_key
 
@@ -962,6 +1023,7 @@ async def check_pipeline(company: dict[str, Any], out: Path, rec: dict[str, Any]
     applier = Applier(server)
     applier.start()
     rec["rounds"] = []
+    run = None
     try:
         run = applier.enqueue(job["id"])
         for _ in range(3):
@@ -990,6 +1052,8 @@ async def check_pipeline(company: dict[str, Any], out: Path, rec: dict[str, Any]
         await applier.stop()
         if (rec.get("rounds") or [{}])[-1].get("need") == "sign_in":
             rec["account_form"] = await account_form()
+        if run is not None and any(_NO_MATCH.search(q.get("error") or "") for q in run.questions):
+            rec["lists"] = await list_probe(run.questions)
         try:
             snap = await server.debug_snapshot(note=f"live pipeline: {company['name']}")
             dest = out / "pipeline" / slug(company["name"])
