@@ -370,6 +370,17 @@ class BrowserSession:
             await page.wait_for_timeout(150)
             waited += 150
 
+    async def _results_for(self, page: Page, field_id: str, loc: Locator, query: str, wait_ms: int) -> list[str]:
+        """The menu once it lists something with the words searched for, or [] after `wait_ms`."""
+        waited = 0
+        while waited < wait_ms:
+            await page.wait_for_timeout(200)
+            waited += 200
+            options = await self._field_options(page, field_id, loc, 0)
+            if any(norm(query) in norm(o) for o in options):
+                return options
+        return []
+
     async def _new_options(self, page: Page, field_id: str, loc: Locator, stale: list[str], wait_ms: int) -> list[str]:
         """The menu once it differs from `stale` (the list showing before a search), or
         whatever it shows after `wait_ms`."""
@@ -668,6 +679,9 @@ class BrowserSession:
                             field = {**field, "names": True}
                         if item.get("near"):  # an address part: the rest of the address, for a place lookup
                             field = {**field, "near": item["near"]}
+                        if await self._holds(page, field, item.get("value")):
+                            results.append({"id": fid, "label": field.get("label", ""), "ok": True, "result": "already set"})
+                            continue
                         outcome = await self._fill_one(page, field, item.get("value"))
                         results.append({"id": fid, "label": field.get("label", ""), "ok": True, "result": outcome})
                     except Exception as e:  # report and keep going; one odd widget shouldn't stop the rest
@@ -683,6 +697,24 @@ class BrowserSession:
             page = await self.page()
             await self._field(page, field_id)
             await self._locator(page, field_id).fill(secret)
+
+    async def _holds(self, page: Page, field: dict, value: Any) -> bool:
+        """Does this box already show the answer? The site may have filled it from an earlier
+        one (Oracle fills City, State and County from the ZIP picked), and filling it again can
+        undo that: picking a State there empties the City and ZIP below it. A box the site marks
+        invalid, or a Workday prompt (whose box holds search words, not its choice), never counts."""
+        if field.get("kind") not in ("text", "combobox") or value is None or isinstance(value, (bool, list, dict)):
+            return False
+        loc = self._locator(page, field["id"])
+        try:
+            current = (await loc.input_value(timeout=2000)).strip()
+            if not current or await loc.evaluate(
+                    "el => el.getAttribute('aria-invalid') === 'true' || el.tagName !== 'INPUT'") \
+                    or await loc.evaluate(WORKDAY_PROMPT_JS):
+                return False
+        except (PlaywrightError, PlaywrightTimeout):
+            return False
+        return norm(current) == norm(str(value)) or choose_option(str(value), [current], exact_only=True) is not None
 
     async def _fill_one(self, page: Page, field: dict, value: Any) -> str:
         kind = field["kind"]
@@ -833,6 +865,10 @@ class BrowserSession:
             await loc.fill("")
             await loc.press_sequentially(query, delay=30)
             options = await self._field_options(page, field["id"], loc, 2500)
+            if options and options == opened and not await loc.evaluate(WORKDAY_PROMPT_JS):
+                # still the list from before the search (Oracle's ZIP lists "00000, …" on opening):
+                # its results come a moment later
+                options = await self._results_for(page, field["id"], loc, query, 3000) or options
             # Search-style pickers (Workday) list results after Enter: nothing listed yet, or
             # (Workday's 2026 prompts) the categories it opened with, untouched by typing.
             # Inside a <form>, Enter could submit the whole form, so it's never pressed there.

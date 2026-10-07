@@ -225,6 +225,9 @@ EXTRACT_JS = r"""
     // a Workday search prompt: what it lists on opening is only its top level
     if (kind === 'combobox' && (el.getAttribute('data-uxi-widget-type') === 'selectinput'
         || el.closest('[data-automation-id="multiSelectContainer"], [data-automation-id="multiselectInputContainer"]'))) f.search = true;
+    // Oracle's lookups (ZIP, City): what they list on opening is a default page ("00000, …"),
+    // not the place searched for
+    if (kind === 'combobox' && el.getAttribute('aria-haspopup') === 'grid') f.search = true;
     // SuccessFactors' paginated select: lists 100 entries at a time, the rest by search
     if (kind === 'combobox' && el.classList.contains('rcmpaginatedselectinput')) f.paged = true;
     if (el.multiple) f.multiple = true;
