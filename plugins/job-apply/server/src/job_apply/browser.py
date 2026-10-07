@@ -541,6 +541,30 @@ class BrowserSession:
                     continue
             return False
 
+    async def peek(self, tab: Page, max_chars: int = 4000) -> tuple[dict[str, Any], str]:
+        """What a tab shows (its fields, buttons, text and any CAPTCHA), read without making it
+        the tab the tools act on and without touching what they last read: the Job Desk looks
+        in on jobs left waiting for the person this way, while Claude may be using the tools."""
+        async with self._lock:
+            data: dict[str, Any] = {"fields": [], "actions": [], "errors": [], "headings": []}
+            parts, challenge = [], False
+            for frame in tab.frames:
+                if frame.is_detached() or frame is not tab.main_frame and (not frame.url or frame.url == "about:blank"):
+                    continue
+                try:
+                    found = await frame.evaluate(EXTRACT_JS, self._frame_prefix(frame, tab))
+                    text = await frame.evaluate(VISIBLE_TEXT_JS)
+                    challenge = challenge or bool(await frame.evaluate(CHALLENGE_JS))
+                except PlaywrightError:
+                    continue
+                for key in data:
+                    data[key].extend(found.get(key, []))
+                if text:
+                    parts.append(text)
+            loading = await tab.evaluate("() => document.readyState !== 'complete'")
+            return ({"url": tab.url, "title": await tab.title(), **data, "challenge": challenge, "loading": loading},
+                    "\n\n".join(parts)[:max_chars])
+
     async def frames_html(self, url: str) -> list[str]:
         """The HTML of `url` and of each frame on it, read in a background tab. Some job
         boards (iCIMS) turn away plain requests and list their openings inside a frame."""

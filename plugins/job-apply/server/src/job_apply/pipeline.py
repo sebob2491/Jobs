@@ -95,6 +95,7 @@ class Run:
     blocking: bool = False  # the queue waits on this one
     paused_at: float = 0.0
     paused_site: str = ""  # the site it paused on, so a tab taken to webmail isn't "moved on"
+    paused_host: str = ""  # and the exact address host (one employer's Workday, not any)
     submit: bool = False  # submit once the review page is reached
     usual_resume: bool = False  # the person chose to go ahead without a tailored resume
     once: dict[str, Any] = field(default_factory=dict)  # answers for this application only, by question
@@ -103,6 +104,7 @@ class Run:
     active_at: float = 0.0  # when its paused tab last changed: someone at work in it
     tab_mark: int = 0  # what its paused tab looked like then (address and box values)
     left: bool = False  # paused for the person, and the queue went on without it
+    moved_looks: int = 0  # looks in a row that found its paused tab past the pause
     page_info: dict[str, Any] = field(default_factory=dict)  # what the page looked like when it paused
     page: Any = None  # its browser tab
     updated: float = field(default_factory=time.time)
@@ -314,15 +316,26 @@ class Applier:
         """Between jobs: carry on with any the queue went on without whose tab the person has
         since got past its sign-in, check or code. A closed tab waits for Resume."""
         for run in [r for r in self.runs.values() if r.left and r.status == "needs_you" and not r.blocking]:
-            if not self.srv.browser.use_tab(run.page):
+            if run.page is None or run.page.is_closed():
                 continue
             try:
-                moved = await self._strict(self._moved_on(run))
+                moved = await self._past_pause(run)
             except Exception:  # a tab mid-way through loading: looked at again next time, not holding the rest
                 continue
             if moved and run.left and run.status == "needs_you":
-                with contextlib.suppress(KeyError, ValueError):  # gone, or marked applied meanwhile
+                try:
                     self.enqueue(run.job_id, submit=run.submit, front=True)
+                except (KeyError, ValueError):  # gone, or marked applied meanwhile: nothing to watch for
+                    run.left = False
+
+    async def _past_pause(self, run: Run) -> bool:
+        """Is a job's tab, left waiting for the person, past its sign-in, check or code? Read
+        without taking over the tools' tab (Claude may be using it), and only while it's on the
+        address it paused on: a tab the person has taken to another posting, even one on the
+        same job system, is no application of this job's."""
+        data, text = await self.srv.browser.peek(run.page)
+        here = (urlparse(data.get("url") or "").hostname or "") == run.paused_host
+        return self._twice(run, here and not data.get("loading") and classify(data, text) != run.need)
 
     # ------------------------------------------------------------- worker
     async def _worker(self) -> None:
@@ -407,20 +420,26 @@ class Applier:
         """Has the person got the paused tab past its sign-in, check or code? Only on the
         same site, or on into an application system: a tab they've taken to their webmail
         or a sign-in provider isn't the application moving on."""
-        if not self.srv.browser.use_tab(run.page):
+        if run.page is None or run.page.is_closed():
             return True  # they closed it: start the job again
-        data, text = await self._look()
-        # the address and what's in the boxes (a password only by its length): a change is the
-        # person at work in the tab
-        mark = hash((data.get("url"), tuple((f.get("id"), len(str(f.get("value") or "")) if f.get("kind") == "password"
-                                             else str(f.get("value"))) for f in data.get("fields") or [])))
+        # read without taking over the tools' tab: Claude may be using them meanwhile
+        data, text = await self.srv.browser.peek(run.page)
+        # the address and what's in the boxes: a change is the person at work in the tab
+        mark = hash((data.get("url"), tuple((f.get("id"), str(f.get("value"))) for f in data.get("fields") or [])))
         if run.tab_mark and mark != run.tab_mark:
             run.active_at = time.time()
         run.tab_mark = mark
-        if classify(data, text) == run.need:
-            return False
         url = data.get("url") or ""
-        return _site_key(url) == run.paused_site or detect_ats(url) not in ("company_site", "linkedin", "indeed")
+        moved = (not data.get("loading") and classify(data, text) != run.need
+                 and (_site_key(url) == run.paused_site or detect_ats(url) not in ("company_site", "linkedin", "indeed")))
+        return self._twice(run, moved)
+
+    @staticmethod
+    def _twice(run: Run, moved: bool) -> bool:
+        """Past the pause on two looks in a row: a page caught mid-way between two states (a
+        moment with nothing drawn) isn't the person having got past it."""
+        run.moved_looks = run.moved_looks + 1 if moved else 0
+        return run.moved_looks >= 2
 
     # ------------------------------------------------------------- one job
     def _log(self, run: Run, text: str) -> None:
@@ -435,8 +454,9 @@ class Applier:
         run.questions = questions or []
         run.blocking = need in HANDS_ON
         run.paused_at = run.active_at = time.time()
-        run.tab_mark, run.left = 0, False
+        run.tab_mark, run.left, run.moved_looks = 0, False, 0
         run.paused_site = _site_key(run.url)
+        run.paused_host = urlparse(run.url).hostname or ""
         self._log(run, reason)
 
     async def _look(self) -> tuple[dict[str, Any], str]:
