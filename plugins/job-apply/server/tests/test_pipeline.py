@@ -1436,3 +1436,19 @@ def test_a_sign_in_by_hand_mentions_the_password_the_desk_could_save(monkeypatch
     assert pipeline._password_tip("https://example.com/careers/login") == ""
     monkeypatch.setattr(pipeline, "_secret", lambda name: "saved")
     assert pipeline._password_tip("https://career8.successfactors.com/career?x=1") == ""
+
+
+def test_past_a_pause_takes_looks_a_poll_apart(monkeypatch):
+    """Two looks a moment apart (a page between two states) don't make a pause passed; looks
+    a poll apart, with none between them saying otherwise, do."""
+    clock = [1000.0]
+    monkeypatch.setattr(pipeline.time, "time", lambda: clock[0])
+    r = Run(1)
+    assert not Applier._twice(r, True)
+    clock[0] += 0.2
+    assert not Applier._twice(r, True)  # too soon
+    clock[0] += pipeline.POLL_SECONDS
+    assert Applier._twice(r, True)
+    assert not Applier._twice(r, False)  # a look that says otherwise starts it over
+    clock[0] += pipeline.POLL_SECONDS
+    assert not Applier._twice(r, True)

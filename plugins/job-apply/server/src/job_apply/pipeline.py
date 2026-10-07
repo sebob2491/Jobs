@@ -104,7 +104,7 @@ class Run:
     active_at: float = 0.0  # when its paused tab last changed: someone at work in it
     tab_mark: int = 0  # what its paused tab looked like then (address and box values)
     left: bool = False  # paused for the person, and the queue went on without it
-    moved_looks: int = 0  # looks in a row that found its paused tab past the pause
+    moved_since: float = 0.0  # since when every look has found its paused tab past the pause
     page_info: dict[str, Any] = field(default_factory=dict)  # what the page looked like when it paused
     page: Any = None  # its browser tab
     updated: float = field(default_factory=time.time)
@@ -436,10 +436,16 @@ class Applier:
 
     @staticmethod
     def _twice(run: Run, moved: bool) -> bool:
-        """Past the pause on two looks in a row: a page caught mid-way between two states (a
-        moment with nothing drawn) isn't the person having got past it."""
-        run.moved_looks = run.moved_looks + 1 if moved else 0
-        return run.moved_looks >= 2
+        """Past the pause on looks at least a poll apart, with none between them saying
+        otherwise: a page caught mid-way between two states (a moment with nothing drawn, a
+        spinner) isn't the person having got past it."""
+        if not moved:
+            run.moved_since = 0.0
+            return False
+        if not run.moved_since:
+            run.moved_since = time.time()
+            return False
+        return time.time() - run.moved_since >= POLL_SECONDS
 
     # ------------------------------------------------------------- one job
     def _log(self, run: Run, text: str) -> None:
@@ -454,7 +460,7 @@ class Applier:
         run.questions = questions or []
         run.blocking = need in HANDS_ON
         run.paused_at = run.active_at = time.time()
-        run.tab_mark, run.left, run.moved_looks = 0, False, 0
+        run.tab_mark, run.left, run.moved_since = 0, False, 0.0
         run.paused_site = _site_key(run.url)
         run.paused_host = urlparse(run.url).hostname or ""
         self._log(run, reason)
