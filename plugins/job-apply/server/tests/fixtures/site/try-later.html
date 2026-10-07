@@ -1,0 +1,33 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Job application form</title></head>
+<body>
+<!-- like Texas Instruments' and onsemi's Oracle sites after many sign-up emails in a day: NEXT
+     on the email step answers "Too Many Attempts. Try Again Later.", whose CONTINUE goes back
+     to the posting. Until the person has waited (the tab's sessionStorage "waited", set by the
+     test), and then NEXT goes on into the application. -->
+<div id="page"></div>
+<script>
+  const step = new URLSearchParams(location.search).get('step') || 'posting';
+  const go = (s) => { location.href = location.pathname + '?step=' + s; };
+  const page = document.getElementById('page');
+  if (step === 'posting') {
+    page.innerHTML = '<h2>JOB INFO</h2><h1>Field Service Engineer</h1><p>Install and repair wafer fab equipment.</p>'
+      + '<button type="button" id="apply">Apply Now</button>';
+    document.getElementById('apply').addEventListener('click', () => go('email'));
+  } else if (step === 'email') {
+    page.innerHTML = '<h2>Authentication screen. You don\'t need to have an account</h2>'
+      + '<form id="f" novalidate><label for="em">Email Address</label><input id="em" type="email" required>'
+      + '<button type="submit">NEXT</button></form>';
+    document.getElementById('f').addEventListener('submit', (e) => {
+      e.preventDefault();
+      if (sessionStorage.getItem('waited') === 'yes') location.href = 'step1.html';
+      else go('wait');
+    });
+  } else {
+    page.innerHTML = '<h2>Too Many Attempts. Try Again Later.</h2><button type="button" id="cont">CONTINUE</button>';
+    document.getElementById('cont').addEventListener('click', () => go('posting'));
+  }
+</script>
+</body>
+</html>

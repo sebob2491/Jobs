@@ -465,6 +465,35 @@ def test_a_sign_up_form_with_one_password_box_is_filled_in(srv, monkeypatch, pag
     assert "filled the Create Account form with your details and saved password" in r.log
 
 
+def test_a_site_that_says_try_again_later_is_left_until_the_person_resumes(srv, monkeypatch):
+    """Texas Instruments' and onsemi's Oracle sites, after many sign-up emails in a day: NEXT
+    answers "Too Many Attempts. Try Again Later.", whose CONTINUE goes back to the posting.
+    Live, the desk pressed on round that circle until it noticed. It stops on that page now
+    and says to leave the job a while; when the person presses Resume, it carries on from
+    there."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    job = srv.add_job(url=fixture_url("site/try-later.html"), title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status == "needs_you")
+            assert r.need == "stuck" and not r.blocking, (r.reason, r.log)
+            assert "says “Too Many Attempts. Try Again Later.” Leave this job for a while" in r.reason, r.reason
+            assert r.log.count("clicked “Apply Now”") == 1  # not round again
+            await r.page.evaluate("() => sessionStorage.setItem('waited', 'yes')")
+            applier.enqueue(job["id"], front=True)  # the person presses Resume
+            await until(lambda: r.need == "questions" or r.status == "ready")
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert "clicked “CONTINUE”" in r.log and r.log.count("clicked “Apply Now”") == 2, r.log
+
+
 @pytest.mark.parametrize("query", ["", "?code"])
 def test_an_emailed_link_or_code_is_waited_for(srv, monkeypatch, query):
     """After Create Account, a site emails a link to confirm the address, or a code. The link
@@ -970,8 +999,8 @@ def test_a_job_skipped_while_its_paused_tab_is_looked_at_isnt_started_again(srv,
 
 
 def test_a_flow_that_goes_round_in_a_circle_stops_after_one_lap(srv, monkeypatch):
-    """Oracle's sites, refusing more codes for an address: Next leads to a Continue that goes
-    back to the posting. Going round again would only repeat it (and might email another code)."""
+    """Oracle's sites, refusing a code for an address: Next leads to a Continue that goes back
+    to the posting. Going round again would only repeat it (and might email another code)."""
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
     job = srv.add_job(url=fixture_url("site/cycle-posting.html"), title="FSE", company="Example Fab")["job"]
     applier = Applier(srv)
@@ -987,7 +1016,7 @@ def test_a_flow_that_goes_round_in_a_circle_stops_after_one_lap(srv, monkeypatch
 
     r = run(go())
     assert r.need == "stuck" and "went round in a circle" in r.reason, (r.status, r.reason, r.log)
-    assert "“Continue” on “Confirm Your Identity” (“You've requested too many verification codes" in r.reason
+    assert "“Continue” on “Confirm Your Identity” (“We couldn't send a verification code" in r.reason
     assert [line for line in r.log if line.startswith("clicked")] == ["clicked “Apply Now”", "clicked “Next”",
                                                                        "clicked “Continue”"]
 
