@@ -116,7 +116,9 @@ opens a page on your computer (served by the plugin on `127.0.0.1`):
    - Questions your profile doesn't answer. You answer them on the page, and they're
      remembered for later applications unless you untick that.
    - Sign-ins, bot checks, CAPTCHAs and emailed codes. You deal with those in the
-     browser window, and the desk carries on by itself.
+     browser window, and the desk carries on by itself. A link a site emails you to
+     confirm your address opens in your usual browser, so reload that job's tab in the
+     desk's window once you've opened it.
    - Press **Alert me** in the desk's header to get a desktop notification whenever a
      job needs you or is ready to submit, so you can leave the desk working in the
      background.
