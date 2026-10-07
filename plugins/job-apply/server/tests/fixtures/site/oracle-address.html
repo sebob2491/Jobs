@@ -11,8 +11,8 @@
 <!-- like Texas Instruments' and onsemi's Oracle application (markup as captured live): the
      address boxes are lookups whose entries are a grid's cells (role="grid" > row >
      gridcell), and the first entries for a city or a street can be in another state.
-     Picking a ZIP fills City, State and County too, and picking a State empties the County,
-     City and ZIP below it, as Oracle does. The ZIP box lists "00000, …" on opening, and its
+     Picking a ZIP fills City, State and County too (drawing those boxes afresh), and picking
+     a State empties the County, City and ZIP below it, as Oracle does. The ZIP box lists "00000, …" on opening, and its
      search results come a moment after the typing. Words typed without a pick are no answer.
      Next shows "Thank you" once every box holds a pick. -->
 <h2>Address</h2>
@@ -71,6 +71,12 @@
     render(id, q ? DATA[id].filter((e) => e.toLowerCase().includes(q)) : []);
   }
   function clear(id) { box(id).value = ''; delete window.picked[id]; }
+  function redraw(id) {  // a new element, without the marks an earlier reading put on the old one
+    const old = box(id), fresh = old.cloneNode(true);
+    fresh.removeAttribute('data-ja-id');
+    fresh.value = old.value;
+    old.replaceWith(fresh);
+  }
   function set(id, entry) {
     box(id).value = entry.split(', ')[0];
     window.picked[id] = entry;
@@ -86,21 +92,26 @@
       set('city', city + ', ' + county + ', ' + st);
       set('region2', st === 'AZ' ? 'Arizona' : st);
       set('region1', county);
+      ['city', 'region2', 'region1'].forEach(redraw);
     }
   }
-  for (const id of Object.keys(DATA)) {
-    box(id).addEventListener('input', () => { delete window.picked[id]; show(id); });
-    box(id).addEventListener('focus', () => { if (!box(id).value) show(id); });
-    list(id).addEventListener('click', (e) => {
-      const cell = e.target.closest('[role="gridcell"]');
-      if (cell) pick(id, cell.textContent.trim());
-    });
-    box(id).addEventListener('blur', () => setTimeout(() => {
+  const form = box('f');
+  const field = (e) => (DATA[e.target.id] ? e.target.id : null);
+  form.addEventListener('input', (e) => { const id = field(e); if (id) { delete window.picked[id]; show(id); } });
+  form.addEventListener('focusin', (e) => { const id = field(e); if (id && !box(id).value) show(id); });
+  form.addEventListener('focusout', (e) => {
+    const id = field(e);
+    if (!id) return;
+    setTimeout(() => {
       list(id).hidden = true;
       box(id).setAttribute('aria-expanded', 'false');
       if (box(id).value && !window.picked[id]) box(id).setAttribute('aria-invalid', 'true');
-    }, 300));
-  }
+    }, 300);
+  });
+  form.addEventListener('click', (e) => {
+    const cell = e.target.closest('[role="gridcell"]');
+    if (cell) pick(cell.closest('[role="grid"]').id.replace('-listbox', ''), cell.textContent.trim());
+  });
   box('f').addEventListener('submit', (e) => {
     e.preventDefault();
     if (Object.keys(DATA).every((id) => window.picked[id])) document.body.innerHTML = '<h1>Thank you for applying</h1>';

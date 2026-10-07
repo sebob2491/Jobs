@@ -664,17 +664,31 @@ class BrowserSession:
             raise KeyError(f"No field {field_id!r} on the current page; call inspect_form to refresh ids")
         return self._fields[field_id]
 
+    async def _current(self, page: Page, field: dict) -> dict:
+        """The field as the page has it now. A site that draws a box afresh (Oracle redraws City,
+        State and County once a ZIP is picked) drops the id it was given: the box is found
+        again by its label, when only one box has it."""
+        if await self._present(self._locator(page, field["id"])):
+            return field
+        await self._extract(page)
+        same = [f for f in self._fields.values()
+                if f.get("label") == field.get("label") and f.get("kind") == field.get("kind")]
+        if len(same) != 1:
+            raise KeyError(f"{field.get('label')!r} was drawn again and can't be told apart; call inspect_form")
+        return same[0]
+
     async def fill(self, values: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Fill fields by id. Each item: {"id": ..., "value": ...}."""
         async with self._lock:
             page = await self.page()
             await self._close_menus(page)
             results = []
+            known = dict(self._fields)  # the boxes as read before filling, by the ids given out then
             try:
                 for item in values:
                     fid = str(item.get("id", ""))
                     try:
-                        field = await self._field(page, fid)
+                        field = await self._current(page, known.get(fid) or await self._field(page, fid))
                         if item.get("names"):  # a school or an employer: matched by name only
                             field = {**field, "names": True}
                         if item.get("near"):  # an address part: the rest of the address, for a place lookup
