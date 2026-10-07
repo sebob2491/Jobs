@@ -63,8 +63,10 @@ the page URL. Use this file for the parts of each flow that `autofill` can't do.
   `inspect_form`). To fill one by hand, pass `"03"` and `"2022"`.
 - Voluntary Disclosures includes a terms-and-conditions consent checkbox. The
   user has to agree to it, so ask.
-- Self Identify is the disability form (CC-305). Fill it from `eeo.disability`,
-  or ask. The name and date fields there take the full name and today's date.
+- Self Identify is the disability form (CC-305). `autofill` fills it: Name gets the
+  full name, the Date's Month / Day / Year boxes get today's date, and the checkboxes
+  under "Please check one of the boxes below:" get `eeo.disability`. If the profile
+  has no `eeo.disability`, ask.
 
 ## LinkedIn (`linkedin.com`)
 

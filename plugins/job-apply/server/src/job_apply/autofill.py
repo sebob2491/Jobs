@@ -302,8 +302,20 @@ def _previously_employed(prof: Profile, job: dict) -> str | None:
     return "Yes" if hit else "No"
 
 
-def _today(prof: Profile, job: dict) -> str:
-    return date.today().strftime("%m/%d/%Y")
+# The date a form is signed on: "Date" alone is that on a signed form (Workday's disability
+# self-identification, CC-305); "Signature Date" is not a signature
+_SIGNED_DATE = re.compile(r"^date$|today s date|date signed|signature date|date of signature")
+
+
+def _today_for(field: dict) -> str:
+    """Today as the date box takes it: one part (Workday's Month / Day / Year boxes), or whole."""
+    today = date.today()
+    sub = norm(field.get("sublabel"))
+    if sub in ("month", "day", "year"):
+        return {"month": f"{today.month:02d}", "day": f"{today.day:02d}", "year": str(today.year)}[sub]
+    if field.get("input_type") == "date":
+        return today.isoformat()
+    return today.strftime("%m/%d/%Y")
 
 
 def _relocate(prof: Profile, job: dict) -> Any:
@@ -356,7 +368,6 @@ RULES: list[tuple[str, str, Getter, int | None, set[str] | None]] = [
     ("gpa", r"^gpa|grade point", _edu("gpa", "gpa"), 45, None),
     ("grad_year", r"graduation (year|date)|year of graduation", _edu("graduation_year", "end"), 60, None),
     ("signature", r"(electronic |e )?signature|sign your (full )?name", _full_name, 80, {"text"}),
-    ("signed_date", r"today s date|date signed|signature date", _today, 45, {"text"}),
     # questions (any length)
     # the same facts asked the other way round come first
     ("under_18", r"under (the age of )?(18|eighteen)|younger than (18|eighteen)", _yn("work_authorization.over_18", invert=True), None, None),
@@ -598,6 +609,8 @@ def resolve_field(field: dict, prof: Profile, job: dict | None = None, file_inpu
     ans = _answer_bank(prof, raw_label)
     if ans is None and _NEVER_GUESS.search(label):
         return None
+    if ans is None and kind == "text" and len(label) <= 45 and _SIGNED_DATE.search(label):
+        return Answer(_today_for(field), "signed_date")
     if ans is None:
         for name, pattern, getter, max_len, kinds in RULES:
             if max_len is not None and len(label) > max_len:
@@ -610,6 +623,9 @@ def resolve_field(field: dict, prof: Profile, job: dict | None = None, file_inpu
                     return None  # recognised but the profile has no answer
                 ans = Answer(value, name)
                 break
+    if ans is None and kind in _CHOICE_KINDS and field.get("options") and _INSTRUCTION_ONLY.match(label) \
+            and _POINTS_AT_CHOICES.search(label):
+        ans = _topic_from_options(field["options"], prof, job)
     if ans is None or ans.value is None or ans.value == "":
         return None
 
@@ -635,6 +651,27 @@ def resolve_field(field: dict, prof: Profile, job: dict | None = None, file_inpu
     if kind == "combobox" and ans.rule in _NEEDS_OPTIONS:
         return None  # an attestation we won't answer without seeing the exact choices
     return ans
+
+
+# Questions whose label may not say what they ask, though their choices do
+_OPTION_TOPICS = ("veteran", "disability")
+# A label that only says how to answer, pointing at the choices ("Please check one of the
+# boxes below:"): a question that names its subject ("Do you require an accommodation?") is
+# never read from its choices, even when they mention a disability, nor is a box with no
+# question of its own ("", "Select an option"), whose question the page may show elsewhere
+_INSTRUCTION_ONLY = re.compile(
+    r"^(?:please )?(?:check|select|choose|tick|mark|pick)(?: (?:one|any|all|only|of|the|a|an|following|box|"
+    r"boxes|option|options|answer|answers|response|below|that|which|apply|applies|appropriate))*$")
+_POINTS_AT_CHOICES = re.compile(r"\b(?:box|boxes|below|following)\b")
+
+
+def _topic_from_options(options: list[str], prof: Profile, job: dict) -> Answer | None:
+    """"Please check one of the boxes below:" on Workday's disability form: its choices ("Yes,
+    I have a disability…", "No, I do not have a disability…") say what it asks."""
+    for name, pattern, getter, _, _ in RULES:
+        if name in _OPTION_TOPICS and sum(bool(re.search(pattern, norm(o))) for o in options) >= 2:
+            return Answer(getter(prof, job), name)
+    return None
 
 
 _PLACE_RULES = {"address1", "postal", "city", "state", "county"}

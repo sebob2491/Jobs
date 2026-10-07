@@ -95,6 +95,7 @@ class Run:
     usual_resume: bool = False  # the person chose to go ahead without a tailored resume
     once: dict[str, Any] = field(default_factory=dict)  # answers for this application only, by question
     seen_form: bool = False  # got into the application itself (so a page with only Submit is its review page)
+    try_later: bool = False  # left on a "Try Again Later" page: only the person's Resume goes on from it
     page_info: dict[str, Any] = field(default_factory=dict)  # what the page looked like when it paused
     page: Any = None  # its browser tab
     updated: float = field(default_factory=time.time)
@@ -424,8 +425,10 @@ class Applier:
             job = srv.tracker().get(run.job_id, with_description=False) or {}
             if not tailored_ready(job):  # before its tab opens: nothing to keep waiting
                 return self._pause(run, "tailor", _TAILOR_SAYS)
-        # on its own tab still: the person pressed Resume on whatever page it was left on
-        resumed = run.page is not None and not run.page.is_closed()
+        # left on a "Try Again Later" page, on its own tab still: the person has waited and pressed
+        # Resume. Any other way back here (the queue carrying on after an emailed code, say) isn't that.
+        waited_out = run.try_later and run.page is not None and not run.page.is_closed()
+        run.try_later = False
         if not await self._open(run):
             return
         stalls, entries_done, waited, refilled, dismissed = 0, set(), False, set(), set()
@@ -445,13 +448,15 @@ class Applier:
                 run.page_info = _page_info(data)
             kind = classify(data, text)
             limited = _try_later(data)
-            if limited and not (resumed and not pressed and not sign_ins):
+            if limited and not (waited_out and not pressed and not sign_ins):
                 # "Too Many Attempts. Try Again Later." (Oracle after many sign-up emails in a day):
                 # its Continue goes back to the posting, and pressing on only goes round again.
                 # Where the person pressed Resume on it, they've waited: carry on from there.
                 await self._bring_forward(run)
-                return self._pause(run, "stuck", f"{_site(run, data)} says \u201c{limited}\u201d Leave this job for a "
-                                   "while, then press Resume.")
+                self._pause(run, "stuck", f"{_site(run, data)} says \u201c{limited}\u201d Leave this job for a "
+                            "while, then press Resume.")
+                run.try_later = run.status == "needs_you"
+                return
             actions = data.get("actions") or []
             entry_here = any(_ENTRY.match(a["text"].strip()) and not a.get("disabled") for a in actions)
             if kind == "form" and entry_here and not _application_like(data):
@@ -523,12 +528,15 @@ class Applier:
                 # a question the site has since answered itself (Oracle fills County from the ZIP
                 # picked); one whose answer was turned down (it has an error) is still asked
                 now = {f["id"]: f for f in data.get("fields") or []}
-                by_label: dict[str, Any] = {}
+                # a box drawn again has a new id: found by its label, when no other box has it
+                # (Workday's Month / Day / Year boxes are all "Date")
+                by_label: dict[str, list[dict[str, Any]]] = {}
                 for f in data.get("fields") or []:
-                    by_label.setdefault(f.get("label") or "", f)  # a box drawn again has a new id
+                    by_label.setdefault(f.get("label") or "", []).append(f)
 
                 def answered(q: dict[str, Any]) -> bool:
-                    f = now.get(q.get("id")) or by_label.get(q.get("label") or "")
+                    same = by_label.get(q.get("label") or "") or []
+                    f = now.get(q.get("id")) or (same[0] if len(same) == 1 and q.get("label") else None)
                     return f is not None and not is_empty_value(f.get("value"))
 
                 pending = [q for q in pending if q.get("error") or not answered(q)]

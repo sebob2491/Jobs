@@ -517,6 +517,31 @@ def test_a_site_that_says_try_again_later_is_left_until_the_person_resumes(srv, 
     assert "clicked “CONTINUE”" in r.log and r.log.count("clicked “Apply Now”") == 2, r.log
 
 
+def test_a_try_again_later_page_reached_while_the_person_has_the_tab_still_stops(srv, monkeypatch):
+    """The desk waits for an emailed code; the person's tries there end on "Too Many Attempts.
+    Try Again Later." The queue carries on by itself once the page has moved on, but nobody
+    pressed Resume on that page, so the desk stops there instead of pressing on round it."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    job = srv.add_job(url=fixture_url("site/verify-email.html") + "?code", title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status == "needs_you")
+            assert r.need == "email_code" and r.blocking, (r.reason, r.log)
+            await r.page.goto(fixture_url("site/try-later.html") + "?step=wait")
+            await until(lambda: r.status == "needs_you" and r.need != "email_code")
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert r.need == "stuck" and "Try Again Later" in r.reason, (r.reason, r.log)
+    assert "clicked “CONTINUE”" not in r.log, r.log
+
+
 @pytest.mark.parametrize("query", ["", "?code"])
 def test_an_emailed_link_or_code_is_waited_for(srv, monkeypatch, query):
     """After Create Account, a site emails a link to confirm the address, or a code. The link

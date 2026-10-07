@@ -1,0 +1,49 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Workday-style Self Identify</title>
+<style> input[role=spinbutton] { width: 4em; } </style>
+</head>
+<body>
+<!-- like Workday's "Self Identify" step: the disability self-identification form (CC-305),
+     signed with a Name and a Date typed into Month / Day / Year boxes, and a group of
+     checkboxes under "Please check one of the boxes below:" -->
+<div data-automation-id="progressBarActiveStep">Self Identify</div>
+<h2 data-automation-id="pageHeader">Self Identify</h2>
+<h3>Voluntary Self-Identification of Disability</h3>
+<p>Form CC-305. Page 1 of 1. OMB Control Number 1250-0005.</p>
+<div data-automation-id="formField-language">
+  <label for="lang">Language<abbr title="required">*</abbr></label>
+  <button type="button" id="lang" aria-haspopup="listbox" aria-label="Language English required" value="English">English</button>
+</div>
+<div data-automation-id="formField-name">
+  <label for="sid--name">Name<abbr title="required">*</abbr></label>
+  <input type="text" id="sid--name" aria-required="true">
+</div>
+<div data-automation-id="formField-employeeId">
+  <label for="sid--employeeId">Employee ID</label>
+  <input type="text" id="sid--employeeId">
+</div>
+<div data-automation-id="formField-dateSignedOn">
+  <label for="sid--dateSignedOn">Date<abbr title="required">*</abbr></label>
+  <div id="sid--dateSignedOn" data-automation-id="dateInputWrapper" role="group">
+    <input type="text" role="spinbutton" data-automation-id="dateSectionMonth-input" aria-label="Month" maxlength="2" aria-required="true">
+    <input type="text" role="spinbutton" data-automation-id="dateSectionDay-input" aria-label="Day" maxlength="2" aria-required="true">
+    <input type="text" role="spinbutton" data-automation-id="dateSectionYear-input" aria-label="Year" maxlength="4" aria-required="true">
+  </div>
+</div>
+<p>Why are you being asked to complete this form? How do you know if you have a disability?</p>
+<fieldset data-automation-id="formField-disabilityStatus">
+  <legend><label>Please check one of the boxes below:</label><abbr title="required">*</abbr></legend>
+  <div><input type="checkbox" id="d1"><label for="d1">Yes, I have a disability, or have had one in the past</label></div>
+  <div><input type="checkbox" id="d2"><label for="d2">No, I do not have a disability and have not had one in the past</label></div>
+  <div><input type="checkbox" id="d3"><label for="d3">I do not want to answer</label></div>
+</fieldset>
+<button type="button" data-automation-id="pageFooterBackButton">Back</button>
+<button type="button" data-automation-id="pageFooterNextButton">Save and Continue</button>
+<script>
+  document.addEventListener('input', (e) => {
+    if (e.target.getAttribute('role') === 'spinbutton') e.target.value = e.target.value.replace(/\D/g, '');
+  });
+</script>
+</body>
+</html>
