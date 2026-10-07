@@ -623,7 +623,8 @@ def resolve_field(field: dict, prof: Profile, job: dict | None = None, file_inpu
                     return None  # recognised but the profile has no answer
                 ans = Answer(value, name)
                 break
-    if ans is None and kind in _CHOICE_KINDS and field.get("options") and _INSTRUCTION_ONLY.match(label):
+    if ans is None and kind in _CHOICE_KINDS and field.get("options") and _INSTRUCTION_ONLY.match(label) \
+            and _POINTS_AT_CHOICES.search(label):
         ans = _topic_from_options(field["options"], prof, job)
     if ans is None or ans.value is None or ans.value == "":
         return None
@@ -654,12 +655,14 @@ def resolve_field(field: dict, prof: Profile, job: dict | None = None, file_inpu
 
 # Questions whose label may not say what they ask, though their choices do
 _OPTION_TOPICS = ("veteran", "disability")
-# A label that only says how to answer ("Please check one of the boxes below:"), or none: a
-# question that names its subject ("Do you require an accommodation?") is never read from
-# its choices, even when they mention a disability
+# A label that only says how to answer, pointing at the choices ("Please check one of the
+# boxes below:"): a question that names its subject ("Do you require an accommodation?") is
+# never read from its choices, even when they mention a disability, nor is a box with no
+# question of its own ("", "Select an option"), whose question the page may show elsewhere
 _INSTRUCTION_ONLY = re.compile(
-    r"^(?:(?:please )?(?:check|select|choose|tick|mark|pick)(?: (?:one|any|all|only|of|the|a|an|following|box|"
-    r"boxes|option|options|answer|answers|response|below|that|which|apply|applies|appropriate))*)?$")
+    r"^(?:please )?(?:check|select|choose|tick|mark|pick)(?: (?:one|any|all|only|of|the|a|an|following|box|"
+    r"boxes|option|options|answer|answers|response|below|that|which|apply|applies|appropriate))*$")
+_POINTS_AT_CHOICES = re.compile(r"\b(?:box|boxes|below|following)\b")
 
 
 def _topic_from_options(options: list[str], prof: Profile, job: dict) -> Answer | None:

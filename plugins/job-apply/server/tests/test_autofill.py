@@ -401,6 +401,9 @@ def test_a_question_whose_choices_say_what_it_asks(job_apply_home):
     military = ["Yes, I am a veteran", "No, I am not a veteran", "I am currently serving"]
     assert resolve_field(f("Are you a current or former member of the U.S. military?", "radio_group",
                            options=military), prof()) is None
+    # nor is a box with no question of its own: the page may show it elsewhere
+    for label in ("", "Select an option", "Please select"):
+        assert resolve_field(f(label, "radio_group", options=accommodation), prof()) is None, label
     # and with no answer in the profile, the person is asked
     del data["eeo"]["disability"]
     (job_apply_home / "profile.yaml").write_text(yaml.safe_dump(data))

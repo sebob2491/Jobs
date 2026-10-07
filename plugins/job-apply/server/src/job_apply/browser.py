@@ -669,8 +669,11 @@ class BrowserSession:
         State and County once a ZIP is picked) drops the id it was given: the box is found
         again by its label, when only one box has it."""
         # a group's id is on its choices ("<id>.0", "<id>.1", …), not on an element of its own
-        anchor = f"{field['id']}.0" if field.get("kind") in ("radio_group", "checkbox_group") else field["id"]
-        if await self._present(self._locator(page, anchor)):
+        if field.get("kind") in ("radio_group", "checkbox_group"):
+            here = self._frame_for(page, field["id"]).locator(f'[data-ja-gid-member="{field["id"]}"]').first
+        else:
+            here = self._locator(page, field["id"])
+        if await self._present(here):
             return field
         await self._extract(page)
         same = [f for f in self._fields.values()

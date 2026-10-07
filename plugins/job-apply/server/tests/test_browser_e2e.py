@@ -794,3 +794,8 @@ def test_groups_with_the_same_label_are_each_filled(srv):
     after = run(srv.inspect_form(include_dropdown_options=False))["fields"]
     assert [f["value"] for f in after if f["label"] == "Did you graduate?"] == ["Yes", "No"]
     assert by_label(after, "Which shifts")["value"] == ["Nights"]
+    # a group that lost a choice since it was read is still found by the others
+    first = [f for f in after if f["label"] == "Did you graduate?"][0]
+    run(page.evaluate("() => document.querySelector('input[name=g1]').parentElement.remove()"))
+    out = run(srv.fill_form([{"id": first["id"], "value": "No"}]))
+    assert out["ok"], out
