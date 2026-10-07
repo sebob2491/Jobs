@@ -1,0 +1,121 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Job application form</title>
+<style>
+  .cx-select__list { border: 1px solid #999; background: #fff; max-height: 220px; overflow: auto; }
+  .cx-select__list[hidden] { display: none; }
+  label { display: block; margin-top: 10px; }
+</style>
+</head>
+<body>
+<!-- like Texas Instruments' and onsemi's Oracle application (markup as captured live): the
+     address boxes are lookups whose entries are a grid's cells (role="grid" > row >
+     gridcell), and the first entries for a city or a street can be in another state.
+     Picking a ZIP fills City, State and County too (drawing those boxes afresh), and picking
+     a State empties the County, City and ZIP below it, as Oracle does. The ZIP box lists "00000, …" on opening, and its
+     search results come a moment after the typing. Words typed without a pick are no answer.
+     Next shows "Thank you" once every box holds a pick. -->
+<h2>Address</h2>
+<form id="f" novalidate>
+  <label for="addressLine1">Address Line 1 *</label>
+  <input id="addressLine1" type="text" role="combobox" aria-autocomplete="list" aria-haspopup="grid"
+         aria-controls="addressLine1-listbox" aria-expanded="false" aria-required="true">
+  <div role="grid" id="addressLine1-listbox" aria-label="Address Line 1" class="cx-select__list" hidden></div>
+  <label for="postalCode">ZIP Code *</label>
+  <input id="postalCode" type="text" role="combobox" aria-autocomplete="list" aria-haspopup="grid"
+         aria-controls="postalCode-listbox" aria-expanded="false" aria-required="true">
+  <div role="grid" id="postalCode-listbox" aria-label="ZIP Code" class="cx-select__list" hidden></div>
+  <label for="city">City *</label>
+  <input id="city" type="text" role="combobox" aria-autocomplete="list" aria-haspopup="grid"
+         aria-controls="city-listbox" aria-expanded="false" aria-required="true">
+  <div role="grid" id="city-listbox" aria-label="City" class="cx-select__list" hidden></div>
+  <label for="region2">State *</label>
+  <input id="region2" type="text" role="combobox" aria-autocomplete="list" aria-haspopup="grid"
+         aria-controls="region2-listbox" aria-expanded="false" aria-required="true">
+  <div role="grid" id="region2-listbox" aria-label="State" class="cx-select__list" hidden></div>
+  <label for="region1">County *</label>
+  <input id="region1" type="text" role="combobox" aria-autocomplete="list" aria-haspopup="grid"
+         aria-controls="region1-listbox" aria-expanded="false" aria-required="true">
+  <div role="grid" id="region1-listbox" aria-label="County" class="cx-select__list" hidden></div>
+  <button type="submit">Next</button>
+</form>
+<script>
+  const DATA = {
+    addressLine1: ['100 W MAIN ST, MESA, ARIZONA, 85201', '100 W MAIN ST, CHANDLER, ARIZONA, 85225',
+                   '100 W MAIN ST, CHANDLER, OKLAHOMA, 74834'],
+    postalCode: ['85225, Chandler Heights, Maricopa, AZ', '85225, Chandler, Maricopa, AZ'],
+    city: ['Chandler Heights, Maricopa, AZ', 'Chandler, Henderson, TX', 'Chandler, Lincoln, OK',
+           'Chandler, Maricopa, AZ', 'Chandlerville, Cass, IL'],
+    region2: ['Arizona', 'Arkansas'],
+    region1: ['Maricopa', 'Pima', 'Pinal'],
+  };
+  const ZIP_DEFAULT = ['00000, Baker Island, US Minor Outlying Islands, UM', '00000, Howland Island, US Minor Outlying Islands, UM'];
+  window.picked = {};
+  const box = (id) => document.getElementById(id);
+  const list = (id) => box(id + '-listbox');
+  function render(id, hits) {
+    list(id).innerHTML = hits.map((e, i) => '<div role="row"><div tabindex="-1" role="gridcell" id="' + id
+      + '-listitem-' + i + '" aria-selected="false" class="cx-select__list-item"><span>' + e + '</span></div></div>').join('');
+    list(id).hidden = !hits.length;
+    box(id).setAttribute('aria-expanded', hits.length ? 'true' : 'false');
+  }
+  let search = 0;
+  function show(id) {
+    const q = box(id).value.trim().toLowerCase();
+    if (id === 'postalCode') {  // the list from before the search stays until its results come
+      if (!q) return render(id, ZIP_DEFAULT);
+      const mine = ++search;
+      setTimeout(() => { if (mine === search) render(id, DATA[id].filter((e) => e.toLowerCase().includes(q))); }, 600);
+      return;
+    }
+    render(id, q ? DATA[id].filter((e) => e.toLowerCase().includes(q)) : []);
+  }
+  function clear(id) { box(id).value = ''; delete window.picked[id]; }
+  function redraw(id) {  // a new element, without the marks an earlier reading put on the old one
+    const old = box(id), fresh = old.cloneNode(true);
+    fresh.removeAttribute('data-ja-id');
+    fresh.value = old.value;
+    old.replaceWith(fresh);
+  }
+  function set(id, entry) {
+    box(id).value = entry.split(', ')[0];
+    window.picked[id] = entry;
+    box(id).removeAttribute('aria-invalid');
+    list(id).hidden = true;
+    box(id).setAttribute('aria-expanded', 'false');
+  }
+  function pick(id, entry) {
+    set(id, entry);
+    if (id === 'region2') ['region1', 'city', 'postalCode'].forEach(clear);  // a new State: the places in it go
+    if (id === 'postalCode') {  // Oracle fills the rest of the place from the ZIP
+      const [, city, county, st] = entry.split(', ');
+      set('city', city + ', ' + county + ', ' + st);
+      set('region2', st === 'AZ' ? 'Arizona' : st);
+      set('region1', county);
+      ['city', 'region2', 'region1'].forEach(redraw);
+    }
+  }
+  const form = box('f');
+  const field = (e) => (DATA[e.target.id] ? e.target.id : null);
+  form.addEventListener('input', (e) => { const id = field(e); if (id) { delete window.picked[id]; show(id); } });
+  form.addEventListener('focusin', (e) => { const id = field(e); if (id && !box(id).value) show(id); });
+  form.addEventListener('focusout', (e) => {
+    const id = field(e);
+    if (!id) return;
+    setTimeout(() => {
+      list(id).hidden = true;
+      box(id).setAttribute('aria-expanded', 'false');
+      if (box(id).value && !window.picked[id]) box(id).setAttribute('aria-invalid', 'true');
+    }, 300);
+  });
+  form.addEventListener('click', (e) => {
+    const cell = e.target.closest('[role="gridcell"]');
+    if (cell) pick(cell.closest('[role="grid"]').id.replace('-listbox', ''), cell.textContent.trim());
+  });
+  box('f').addEventListener('submit', (e) => {
+    e.preventDefault();
+    if (Object.keys(DATA).every((id) => window.picked[id])) document.body.innerHTML = '<h1>Thank you for applying</h1>';
+  });
+</script>
+</body>
+</html>

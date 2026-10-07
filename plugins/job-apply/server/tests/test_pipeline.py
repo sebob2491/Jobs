@@ -465,6 +465,29 @@ def test_a_sign_up_form_with_one_password_box_is_filled_in(srv, monkeypatch, pag
     assert "filled the Create Account form with your details and saved password" in r.log
 
 
+def test_a_question_the_site_answers_itself_is_not_asked(srv, monkeypatch):
+    """Oracle fills County from the ZIP picked. The profile has no county, so County was among
+    the questions the page left open before filling; once the site has filled it, it isn't
+    put to the person."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    job = srv.add_job(url=fixture_url("site/oracle-address.html"), title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status in ("needs_you", "ready"))
+            return r, await r.page.evaluate("() => window.picked")
+        finally:
+            await applier.stop()
+
+    r, picked = run(go())
+    assert not any("County" in (q.get("label") or "") for q in r.questions), (r.reason, r.questions)
+    assert "clicked “Next”" in r.log, r.log
+    assert picked["region1"] == "Maricopa" and picked["city"] == "Chandler, Maricopa, AZ"
+
+
 def test_a_site_that_says_try_again_later_is_left_until_the_person_resumes(srv, monkeypatch):
     """Texas Instruments' and onsemi's Oracle sites, after many sign-up emails in a day: NEXT
     answers "Too Many Attempts. Try Again Later.", whose CONTINUE goes back to the posting.

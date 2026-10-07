@@ -26,7 +26,7 @@ from playwright.async_api import (
 )
 
 from . import config
-from .autofill import choose_option, is_empty_value, norm, polarity
+from .autofill import choose_option, choose_place, is_empty_value, norm, polarity
 from .formjs import (CHALLENGE_JS, CLICK_CHOICE_JS, COVERED_JS, ELEMENT_INFO_JS, ENTRIES_JS, EXTRACT_JS, FIELD_OPTIONS_JS,
                      MARK_OPTIONS_JS, OPEN_MENU_JS, OUTSIDE_CLICK_JS, QUIET_JS, SHOWN_VALUE_JS, VISIBLE_TEXT_JS,
                      WORKDAY_CHOSEN_JS, WORKDAY_PROMPT_JS)
@@ -82,6 +82,17 @@ def launch_attempts(settings: config.Settings) -> list[dict[str, Any]]:
 
 class SubmitBlocked(Exception):
     pass
+
+
+def _choose(text: str, options: list[str], field: dict, exact_only: bool = False) -> str | None:
+    """The entry to pick for `text`. An address part looks first for the place that matches
+    the rest of the address (field["near"]): Oracle's City lists "Chandler, Henderson, TX"
+    before "Chandler, Maricopa, AZ"."""
+    if field.get("near"):
+        place = choose_place(text, options, field["near"])
+        if place is not None:
+            return place
+    return choose_option(text, options, exact_only=exact_only, names=bool(field.get("names")))
 
 
 class PickedAGroup(ValueError):
@@ -358,6 +369,17 @@ class BrowserSession:
                 return options
             await page.wait_for_timeout(150)
             waited += 150
+
+    async def _results_for(self, page: Page, field_id: str, loc: Locator, query: str, wait_ms: int) -> list[str]:
+        """The menu once it lists something with the words searched for, or [] after `wait_ms`."""
+        waited = 0
+        while waited < wait_ms:
+            await page.wait_for_timeout(200)
+            waited += 200
+            options = await self._field_options(page, field_id, loc, 0)
+            if any(norm(query) in norm(o) for o in options):
+                return options
+        return []
 
     async def _new_options(self, page: Page, field_id: str, loc: Locator, stale: list[str], wait_ms: int) -> list[str]:
         """The menu once it differs from `stale` (the list showing before a search), or
@@ -642,19 +664,38 @@ class BrowserSession:
             raise KeyError(f"No field {field_id!r} on the current page; call inspect_form to refresh ids")
         return self._fields[field_id]
 
+    async def _current(self, page: Page, field: dict) -> dict:
+        """The field as the page has it now. A site that draws a box afresh (Oracle redraws City,
+        State and County once a ZIP is picked) drops the id it was given: the box is found
+        again by its label, when only one box has it."""
+        if await self._present(self._locator(page, field["id"])):
+            return field
+        await self._extract(page)
+        same = [f for f in self._fields.values()
+                if f.get("label") == field.get("label") and f.get("kind") == field.get("kind")]
+        if len(same) != 1:
+            raise KeyError(f"{field.get('label')!r} was drawn again and can't be told apart; call inspect_form")
+        return same[0]
+
     async def fill(self, values: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Fill fields by id. Each item: {"id": ..., "value": ...}."""
         async with self._lock:
             page = await self.page()
             await self._close_menus(page)
             results = []
+            known = dict(self._fields)  # the boxes as read before filling, by the ids given out then
             try:
                 for item in values:
                     fid = str(item.get("id", ""))
                     try:
-                        field = await self._field(page, fid)
+                        field = await self._current(page, known.get(fid) or await self._field(page, fid))
                         if item.get("names"):  # a school or an employer: matched by name only
                             field = {**field, "names": True}
+                        if item.get("near"):  # an address part: the rest of the address, for a place lookup
+                            field = {**field, "near": item["near"]}
+                        if await self._holds(page, field, item.get("value")):
+                            results.append({"id": fid, "label": field.get("label", ""), "ok": True, "result": "already set"})
+                            continue
                         outcome = await self._fill_one(page, field, item.get("value"))
                         results.append({"id": fid, "label": field.get("label", ""), "ok": True, "result": outcome})
                     except Exception as e:  # report and keep going; one odd widget shouldn't stop the rest
@@ -670,6 +711,24 @@ class BrowserSession:
             page = await self.page()
             await self._field(page, field_id)
             await self._locator(page, field_id).fill(secret)
+
+    async def _holds(self, page: Page, field: dict, value: Any) -> bool:
+        """Does this box already show the answer? The site may have filled it from an earlier
+        one (Oracle fills City, State and County from the ZIP picked), and filling it again can
+        undo that: picking a State there empties the City and ZIP below it. A box the site marks
+        invalid, or a Workday prompt (whose box holds search words, not its choice), never counts."""
+        if field.get("kind") not in ("text", "combobox") or value is None or isinstance(value, (bool, list, dict)):
+            return False
+        loc = self._locator(page, field["id"])
+        try:
+            current = (await loc.input_value(timeout=2000)).strip()
+            if not current or await loc.evaluate(
+                    "el => el.getAttribute('aria-invalid') === 'true' || el.tagName !== 'INPUT'") \
+                    or await loc.evaluate(WORKDAY_PROMPT_JS):
+                return False
+        except (PlaywrightError, PlaywrightTimeout):
+            return False
+        return norm(current) == norm(str(value)) or choose_option(str(value), [current], exact_only=True) is not None
 
     async def _fill_one(self, page: Page, field: dict, value: Any) -> str:
         kind = field["kind"]
@@ -737,7 +796,7 @@ class BrowserSession:
         frame = self._frame_for(page, field_id)
         target = frame.locator(f'[data-ja-opt="{_css_string(text)}"]').first
         if not await target.count():  # the menu re-rendered after it was read
-            opt = frame.locator('[role="option"]:visible').filter(has_text=text)
+            opt = frame.locator('[role="option"]:visible, [role="grid"] [role="gridcell"]:visible').filter(has_text=text)
             exact = opt.filter(has_text=re.compile(rf"^\s*{re.escape(text)}\s*$"))
             target = exact.first if await exact.count() else opt.first
         try:
@@ -813,13 +872,17 @@ class BrowserSession:
         # and typed keys can land in another field (Micron's ended up with "ona", the end
         # of "Arizona", in the question below the State).
         options = await self._field_options(page, field["id"], loc, 900)
-        choice = choose_option(text, options, exact_only=len(options) > SHORT_MENU, names=names) if options else None
+        choice = _choose(text, options, field, exact_only=len(options) > SHORT_MENU) if options else None
         query = _search_words(text)
         if choice is None:
             opened = options
             await loc.fill("")
             await loc.press_sequentially(query, delay=30)
             options = await self._field_options(page, field["id"], loc, 2500)
+            if options and options == opened and not await loc.evaluate(WORKDAY_PROMPT_JS):
+                # still the list from before the search (Oracle's ZIP lists "00000, …" on opening):
+                # its results come a moment later
+                options = await self._results_for(page, field["id"], loc, query, 3000) or options
             # Search-style pickers (Workday) list results after Enter: nothing listed yet, or
             # (Workday's 2026 prompts) the categories it opened with, untouched by typing.
             # Inside a <form>, Enter could submit the whole form, so it's never pressed there.
@@ -827,7 +890,7 @@ class BrowserSession:
             if unsearched and not await loc.evaluate("el => !!el.form"):
                 await loc.press("Enter")
                 options = await self._new_options(page, field["id"], loc, options, 2500)
-            choice = choose_option(text, options, names=names)
+            choice = _choose(text, options, field)
         if choice is None:
             if options:
                 await self._clear_search(page, loc)

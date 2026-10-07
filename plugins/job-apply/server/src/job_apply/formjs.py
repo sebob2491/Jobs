@@ -225,6 +225,9 @@ EXTRACT_JS = r"""
     // a Workday search prompt: what it lists on opening is only its top level
     if (kind === 'combobox' && (el.getAttribute('data-uxi-widget-type') === 'selectinput'
         || el.closest('[data-automation-id="multiSelectContainer"], [data-automation-id="multiselectInputContainer"]'))) f.search = true;
+    // Oracle's lookups (ZIP, City): what they list on opening is a default page ("00000, …"),
+    // not the place searched for
+    if (kind === 'combobox' && el.getAttribute('aria-haspopup') === 'grid') f.search = true;
     // SuccessFactors' paginated select: lists 100 entries at a time, the rest by search
     if (kind === 'combobox' && el.classList.contains('rcmpaginatedselectinput')) f.paged = true;
     if (el.multiple) f.multiple = true;
@@ -446,6 +449,8 @@ FIELD_OPTIONS_JS = r"""
     const ref = n.getAttribute('aria-controls') || n.getAttribute('aria-owns');
     const box = ref ? document.getElementById(ref.split(/\s+/)[0]) : null;
     if (box) opts = Array.from(box.querySelectorAll('[role="option"]')).filter(visible);
+    // Oracle's lookups (ZIP, City, Address Line 1) list their entries as a grid's cells
+    if (box && !opts.length) opts = Array.from(box.querySelectorAll('[role="gridcell"]')).filter(visible);
   }
   if (!opts.length && all.length) {
     // No ARIA link: a field's menu is the one attached to it, opening just below (or above)
@@ -571,7 +576,10 @@ OUTSIDE_CLICK_JS = r"""
 
 # Is a dropdown menu open (one with options showing)?
 OPEN_MENU_JS = r"""
-() => [...document.querySelectorAll('[role="listbox"], [role="menu"]')].some((m) =>
+() => [...document.querySelectorAll('[role="listbox"], [role="menu"], [role="grid"]')].some((m) =>
   m.tagName !== 'SELECT' && m.getClientRects().length > 0 && getComputedStyle(m).visibility !== 'hidden'
-  && m.querySelector('[role="option"], [role="menuitem"]'))
+  && (m.getAttribute('role') === 'grid'
+    // a grid is a menu only as a field's list (Oracle's lookups), not as a table on the page
+    ? !!(m.id && document.querySelector(`[aria-controls~="${CSS.escape(m.id)}"]`)) && !!m.querySelector('[role="gridcell"]')
+    : !!m.querySelector('[role="option"], [role="menuitem"]')))
 """

@@ -520,6 +520,18 @@ class Applier:
                 before, page_key = data, (data.get("url"), tuple(data.get("headings") or []))
                 data, text = await self._look()  # filling can add or enable things (State after Country, Submit)
                 run.page_info = _page_info(data)  # what the person sees on the desk: the page as filled
+                # a question the site has since answered itself (Oracle fills County from the ZIP
+                # picked); one whose answer was turned down (it has an error) is still asked
+                now = {f["id"]: f for f in data.get("fields") or []}
+                by_label: dict[str, Any] = {}
+                for f in data.get("fields") or []:
+                    by_label.setdefault(f.get("label") or "", f)  # a box drawn again has a new id
+
+                def answered(q: dict[str, Any]) -> bool:
+                    f = now.get(q.get("id")) or by_label.get(q.get("label") or "")
+                    return f is not None and not is_empty_value(f.get("value"))
+
+                pending = [q for q in pending if q.get("error") or not answered(q)]
                 if _new_required(before, data) and page_key not in refilled:
                     refilled.add(page_key)  # answers drew new questions ("If yes, explain"): fill those too
                     continue
