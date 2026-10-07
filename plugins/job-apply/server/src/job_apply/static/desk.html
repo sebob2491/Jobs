@@ -75,6 +75,7 @@ ul.rows { list-style: none; margin: 0; padding: 0; }
 .title { font-weight: 600; color: var(--text); text-decoration: none; overflow-wrap: anywhere; }
 .title:hover { text-decoration: underline; }
 .meta { color: var(--muted); font-size: 13px; margin-top: 2px; }
+.nowrap { white-space: nowrap; }
 .chips { display: flex; flex-wrap: wrap; gap: 4px 6px; margin-top: 6px; }
 .chip { font-size: 12px; padding: 2px 8px; border-radius: 999px; background: var(--chip); color: var(--muted); }
 .chip.plus { background: var(--good-bg); color: var(--good); }
@@ -233,6 +234,19 @@ const places = (loc) => {
   const all = String(loc || "").split("; ");
   return all.length > 3 ? `${all.slice(0, 3).join("; ")} and ${all.length - 3} more` : String(loc || "");
 };
+// What the profile still needs, in words (profile.missing_required lists its keys)
+const PROFILE_FIELDS = {
+  "personal.first_name": "your first name", "personal.last_name": "your last name", "personal.email": "your email",
+  "personal.phone": "your phone number", "personal.address.city": "your city", "personal.address.state": "your state",
+  "personal.address.country": "your country", "documents.resume": "your resume file",
+  "work_authorization.authorized_to_work": "your US work authorization",
+  "work_authorization.requires_sponsorship": "whether you need visa sponsorship",
+};
+const profileField = (k) => {
+  const gone = /^documents\.resume \(file not found: (.*)\)$/.exec(k);
+  return gone ? `your resume file (nothing is at ${gone[1]})` : PROFILE_FIELDS[k] || k;
+};
+const inWords = (xs) => xs.length < 2 ? xs.join("") : `${xs.slice(0, -1).join(", ")} and ${xs[xs.length - 1]}`;
 // Job links come from employers' and job boards' data: only web addresses become links.
 const webUrl = (u) => /^https?:\/\//i.test(String(u || "")) ? String(u) : "";
 const link = (u, text, cls = "") => webUrl(u)
@@ -317,7 +331,7 @@ function renderRows() {
       <input type="checkbox" data-pick="${esc(r.url)}" ${checked} ${done ? "disabled" : ""} aria-label="Select ${esc(r.title)}">
       <span class="score ${scoreClass(fit.score)}" title="Fit score">${esc(fit.score)}</span>
       <div>${link(r.url, esc(r.title), "title")}
-        <div class="meta">${esc(r.company)} · <span title="${esc(r.location)}">${esc(places(r.location) || "location not given")}</span>${r.posted ? " · " + esc(r.posted) : ""}</div>
+        <div class="meta">${esc(r.company)} · <span title="${esc(r.location)}">${esc(places(r.location) || "location not given")}</span>${r.posted ? ` · <span class="nowrap">${esc(r.posted)}</span>` : ""}</div>
         <div class="chips">${chips}</div></div>
       <div>${statusPill(r)}</div></li>`};
   });
@@ -445,14 +459,15 @@ function renderHeader() {
     `<span class="pill ${saved ? "good" : ""}" data-site="${esc(site)}">${esc(systems[site] || site)}: ${saved ? "saved" : "not saved"}</span>`).join(" ");
   const notes = [];
   const waiting = allRuns().find((r) => r.blocking);
-  if (waiting) notes.push({cls: "waiting", html: `<strong>Waiting for you in the browser window.</strong>
-    <span>${esc(waiting.title)} (${esc(waiting.company)}): ${esc(waiting.reason)}</span>
+  // what to do is in its Needs you card; here, only which job the queue is waiting on
+  if (waiting) notes.push({cls: "waiting", html: `<strong>Waiting for you in the browser window:</strong>
+    <span>${esc(waiting.title)} (${esc(waiting.company)}). The other jobs wait until it's done; what to do is under Needs you.</span>
     <button data-job="${waiting.job_id}" data-job-act="show">Show me</button>`});
   const needing = allRuns().filter((r) => r.status === "needs_you").length;
   document.title = needing ? `(${needing}) Needs you · Job Desk` : "Job Desk";
   if (state.tailoring) notes.push({cls: "waiting", html: `<strong>${state.tailoring} job${state.tailoring === 1 ? "" : "s"} waiting for a tailored resume.</strong>
     <span>In Claude Code, say \u201ctailor my resumes\u201d. Each job carries on as soon as its resume is ready.</span>`});
-  if (p.missing && p.missing.length) notes.push({cls: "notice", html: `Your profile is missing ${p.missing.map(esc).join(", ")}. Run <code>/job-apply:setup</code> in Claude Code, or edit <code>${esc(p.path)}</code>.`});
+  if (p.missing && p.missing.length) notes.push({cls: "notice", html: `Your profile still needs: ${esc(inWords(p.missing.map(profileField)))}. Run <code>/job-apply:setup</code> in Claude Code, or edit <code>${esc(p.path)}</code>.`});
   if (state.answers_problem) notes.push({cls: "notice", html: `Your saved answers aren't being used: ${esc(state.answers_problem)}.`});
   if (!token) notes.push({cls: "notice", html: "This page needs the address the desk printed (it carries a key). Open it from Claude with “open the job desk”."});
   patch($("notices"), notes.map((n) => ({key: n.cls + n.html.length, html: `<p class="${n.cls}">${n.html}</p>`})));

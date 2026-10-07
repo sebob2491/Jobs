@@ -209,6 +209,44 @@ def test_desk_page_buttons_reach_the_api(srv, tmp_path):
     run(go())
 
 
+def test_the_banner_names_the_job_waited_on_and_the_profile_gaps_are_in_words(srv, monkeypatch):
+    """The banner names the job the queue is waiting on; what to do is in its Needs you card
+    (the banner used to repeat all of it). What the profile still needs is said in words,
+    not as profile.yaml's keys."""
+    from playwright.async_api import async_playwright
+
+    from job_apply.pipeline import Run
+
+    desk = Desk(srv)
+    desk.applier.start = lambda: None
+    desk.search.update(status="done", at=time.time())
+    job = srv.add_job(url=fixture_url("site/posting.html"), title="Field Service Engineer", company="Example Fab")["job"]
+    desk.applier.runs[job["id"]] = Run(job["id"], "Field Service Engineer", "Example Fab", status="needs_you",
+                                       need="sign_in", blocking=True, reason="Sign in on Workday in the browser window.")
+    monkeypatch.setattr(config.Profile, "missing_required",
+                        lambda self: ["documents.resume", "work_authorization.requires_sponsorship"])
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with async_playwright() as pw:
+                browser = await pw.chromium.launch(**launch_options())
+                page = await browser.new_page()
+                await page.goto(desk.url)
+                await page.wait_for_selector("#notices .waiting")
+                banner = await page.inner_text("#notices .waiting")
+                assert "Field Service Engineer (Example Fab)" in banner and "Sign in on Workday" not in banner, banner
+                assert "Sign in on Workday in the browser window." in await page.inner_text("#needs")
+                notice = await page.inner_text("#notices .notice")
+                assert "still needs: your resume file and whether you need visa sponsorship." in notice, notice
+                assert "documents.resume" not in notice
+                await browser.close()
+        finally:
+            await desk.stop()
+
+    run(go())
+
+
 def test_the_page_alerts_when_a_job_needs_you(srv):
     """With alerts on, a job that comes to need the person (or is ready to submit) brings up
     one desktop notification; what was already waiting when the page opened doesn't."""
