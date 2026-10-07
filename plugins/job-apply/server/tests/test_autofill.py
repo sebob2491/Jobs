@@ -342,3 +342,18 @@ def test_place_words_are_the_rest_of_the_address(job_apply_home):
     words = place_words("city", p)
     assert "AZ" in words and "Arizona" in words and str(p.get("personal.address.postal_code")) in words
     assert place_words("phone", p) == []  # not an address part
+
+
+def test_a_box_that_imports_the_resume_is_left_beside_the_one_that_attaches_it():
+    """TI's and onsemi's Oracle ask for the resume twice: "Import your profile from resume",
+    which reads it to fill the form in, and "Upload Resume". Only the attachment gets it: the
+    site's own reading would refill the form while the desk fills it."""
+    fields = [{"id": "1", "kind": "file", "label": "Import your profile from resume"},
+              {"id": "2", "kind": "file", "label": "Upload Resume", "required": True},
+              {"id": "3", "kind": "file", "label": "Upload Cover Letter"}]
+    plan = plan_autofill(fields, prof())
+    assert [f["id"] for f in plan["to_fill"]] == ["2"]
+    assert [f["id"] for f in plan["needs_input"]] == ["3"]  # the profile has no cover letter
+    # the only file box on a page gets the resume, whatever it's called
+    alone = plan_autofill([{"id": "1", "kind": "file", "label": "Import your profile from resume"}], prof())
+    assert [f["id"] for f in alone["to_fill"]] == ["1"]
