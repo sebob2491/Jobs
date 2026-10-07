@@ -1,0 +1,95 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Job application form</title>
+<style>
+  .cx-select__list { border: 1px solid #999; background: #fff; max-height: 220px; overflow: auto; }
+  .cx-select__list[hidden] { display: none; }
+  label { display: block; margin-top: 10px; }
+</style>
+</head>
+<body>
+<!-- like Texas Instruments' and onsemi's Oracle application (markup as captured live): the
+     address boxes are lookups whose entries are a grid's cells (role="grid" > row >
+     gridcell), and the first entries for a city or a street can be in another state.
+     Picking a ZIP fills City, State and County too, as Oracle does. Words typed without a
+     pick are no answer. Next shows "Thank you" once every box holds a pick. -->
+<h2>Address</h2>
+<form id="f" novalidate>
+  <label for="addressLine1">Address Line 1 *</label>
+  <input id="addressLine1" type="text" role="combobox" aria-autocomplete="list" aria-haspopup="grid"
+         aria-controls="addressLine1-listbox" aria-expanded="false" aria-required="true">
+  <div role="grid" id="addressLine1-listbox" aria-label="Address Line 1" class="cx-select__list" hidden></div>
+  <label for="postalCode">ZIP Code *</label>
+  <input id="postalCode" type="text" role="combobox" aria-autocomplete="list" aria-haspopup="grid"
+         aria-controls="postalCode-listbox" aria-expanded="false" aria-required="true">
+  <div role="grid" id="postalCode-listbox" aria-label="ZIP Code" class="cx-select__list" hidden></div>
+  <label for="city">City *</label>
+  <input id="city" type="text" role="combobox" aria-autocomplete="list" aria-haspopup="grid"
+         aria-controls="city-listbox" aria-expanded="false" aria-required="true">
+  <div role="grid" id="city-listbox" aria-label="City" class="cx-select__list" hidden></div>
+  <label for="region2">State *</label>
+  <input id="region2" type="text" role="combobox" aria-autocomplete="list" aria-haspopup="grid"
+         aria-controls="region2-listbox" aria-expanded="false" aria-required="true">
+  <div role="grid" id="region2-listbox" aria-label="State" class="cx-select__list" hidden></div>
+  <label for="region1">County *</label>
+  <input id="region1" type="text" role="combobox" aria-autocomplete="list" aria-haspopup="grid"
+         aria-controls="region1-listbox" aria-expanded="false" aria-required="true">
+  <div role="grid" id="region1-listbox" aria-label="County" class="cx-select__list" hidden></div>
+  <button type="submit">Next</button>
+</form>
+<script>
+  const DATA = {
+    addressLine1: ['100 W MAIN ST, MESA, ARIZONA, 85201', '100 W MAIN ST, CHANDLER, ARIZONA, 85225',
+                   '100 W MAIN ST, CHANDLER, OKLAHOMA, 74834'],
+    postalCode: ['85225, Chandler Heights, Maricopa, AZ', '85225, Chandler, Maricopa, AZ'],
+    city: ['Chandler Heights, Maricopa, AZ', 'Chandler, Henderson, TX', 'Chandler, Lincoln, OK',
+           'Chandler, Maricopa, AZ', 'Chandlerville, Cass, IL'],
+    region2: ['Arizona', 'Arkansas'],
+    region1: ['Maricopa', 'Pima', 'Pinal'],
+  };
+  window.picked = {};
+  const box = (id) => document.getElementById(id);
+  const list = (id) => box(id + '-listbox');
+  function show(id) {
+    const q = box(id).value.trim().toLowerCase();
+    const hits = q ? DATA[id].filter((e) => e.toLowerCase().includes(q)) : [];
+    list(id).innerHTML = hits.map((e, i) => '<div role="row"><div tabindex="-1" role="gridcell" id="' + id
+      + '-listitem-' + i + '" aria-selected="false" class="cx-select__list-item"><span>' + e + '</span></div></div>').join('');
+    list(id).hidden = !hits.length;
+    box(id).setAttribute('aria-expanded', hits.length ? 'true' : 'false');
+  }
+  function set(id, entry) {
+    box(id).value = entry.split(', ')[0];
+    window.picked[id] = entry;
+    box(id).removeAttribute('aria-invalid');
+    list(id).hidden = true;
+    box(id).setAttribute('aria-expanded', 'false');
+  }
+  function pick(id, entry) {
+    set(id, entry);
+    if (id === 'postalCode') {  // Oracle fills the rest of the place from the ZIP
+      const [, city, county, st] = entry.split(', ');
+      set('city', city + ', ' + county + ', ' + st);
+      set('region2', st === 'AZ' ? 'Arizona' : st);
+      set('region1', county);
+    }
+  }
+  for (const id of Object.keys(DATA)) {
+    box(id).addEventListener('input', () => { delete window.picked[id]; show(id); });
+    list(id).addEventListener('click', (e) => {
+      const cell = e.target.closest('[role="gridcell"]');
+      if (cell) pick(id, cell.textContent.trim());
+    });
+    box(id).addEventListener('blur', () => setTimeout(() => {
+      list(id).hidden = true;
+      box(id).setAttribute('aria-expanded', 'false');
+      if (box(id).value && !window.picked[id]) box(id).setAttribute('aria-invalid', 'true');
+    }, 300));
+  }
+  box('f').addEventListener('submit', (e) => {
+    e.preventDefault();
+    if (Object.keys(DATA).every((id) => window.picked[id])) document.body.innerHTML = '<h1>Thank you for applying</h1>';
+  });
+</script>
+</body>
+</html>

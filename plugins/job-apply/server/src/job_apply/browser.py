@@ -26,7 +26,7 @@ from playwright.async_api import (
 )
 
 from . import config
-from .autofill import choose_option, is_empty_value, norm, polarity
+from .autofill import choose_option, choose_place, is_empty_value, norm, polarity
 from .formjs import (CHALLENGE_JS, CLICK_CHOICE_JS, COVERED_JS, ELEMENT_INFO_JS, ENTRIES_JS, EXTRACT_JS, FIELD_OPTIONS_JS,
                      MARK_OPTIONS_JS, OPEN_MENU_JS, OUTSIDE_CLICK_JS, QUIET_JS, SHOWN_VALUE_JS, VISIBLE_TEXT_JS,
                      WORKDAY_CHOSEN_JS, WORKDAY_PROMPT_JS)
@@ -82,6 +82,17 @@ def launch_attempts(settings: config.Settings) -> list[dict[str, Any]]:
 
 class SubmitBlocked(Exception):
     pass
+
+
+def _choose(text: str, options: list[str], field: dict, exact_only: bool = False) -> str | None:
+    """The entry to pick for `text`. An address part looks first for the place that matches
+    the rest of the address (field["near"]): Oracle's City lists "Chandler, Henderson, TX"
+    before "Chandler, Maricopa, AZ"."""
+    if field.get("near"):
+        place = choose_place(text, options, field["near"])
+        if place is not None:
+            return place
+    return choose_option(text, options, exact_only=exact_only, names=bool(field.get("names")))
 
 
 class PickedAGroup(ValueError):
@@ -655,6 +666,8 @@ class BrowserSession:
                         field = await self._field(page, fid)
                         if item.get("names"):  # a school or an employer: matched by name only
                             field = {**field, "names": True}
+                        if item.get("near"):  # an address part: the rest of the address, for a place lookup
+                            field = {**field, "near": item["near"]}
                         outcome = await self._fill_one(page, field, item.get("value"))
                         results.append({"id": fid, "label": field.get("label", ""), "ok": True, "result": outcome})
                     except Exception as e:  # report and keep going; one odd widget shouldn't stop the rest
@@ -737,7 +750,7 @@ class BrowserSession:
         frame = self._frame_for(page, field_id)
         target = frame.locator(f'[data-ja-opt="{_css_string(text)}"]').first
         if not await target.count():  # the menu re-rendered after it was read
-            opt = frame.locator('[role="option"]:visible').filter(has_text=text)
+            opt = frame.locator('[role="option"]:visible, [role="grid"] [role="gridcell"]:visible').filter(has_text=text)
             exact = opt.filter(has_text=re.compile(rf"^\s*{re.escape(text)}\s*$"))
             target = exact.first if await exact.count() else opt.first
         try:
@@ -813,7 +826,7 @@ class BrowserSession:
         # and typed keys can land in another field (Micron's ended up with "ona", the end
         # of "Arizona", in the question below the State).
         options = await self._field_options(page, field["id"], loc, 900)
-        choice = choose_option(text, options, exact_only=len(options) > SHORT_MENU, names=names) if options else None
+        choice = _choose(text, options, field, exact_only=len(options) > SHORT_MENU) if options else None
         query = _search_words(text)
         if choice is None:
             opened = options
@@ -827,7 +840,7 @@ class BrowserSession:
             if unsearched and not await loc.evaluate("el => !!el.form"):
                 await loc.press("Enter")
                 options = await self._new_options(page, field["id"], loc, options, 2500)
-            choice = choose_option(text, options, names=names)
+            choice = _choose(text, options, field)
         if choice is None:
             if options:
                 await self._clear_search(page, loc)

@@ -632,6 +632,38 @@ def resolve_field(field: dict, prof: Profile, job: dict | None = None, file_inpu
     return ans
 
 
+_PLACE_RULES = {"address1", "postal", "city", "state", "county"}
+
+
+def place_words(rule: str, prof: Profile) -> list[str]:
+    """For an address field: the rest of the profile's address, which tells apart the entries
+    of a place lookup (Oracle's City lists "Chandler, Henderson, TX" before "Chandler,
+    Maricopa, AZ"). Empty for any other field."""
+    if rule not in _PLACE_RULES:
+        return []
+    words = [prof.get("personal.address.city"), prof.get("personal.address.postal_code"),
+             prof.get("personal.address.county")]
+    state = str(prof.get("personal.address.state") or "").strip()
+    if state.upper() in US_STATES:
+        words += [state.upper(), US_STATES[state.upper()]]
+    elif state:
+        words += [state, *(code for code, name in US_STATES.items() if norm(name) == norm(state))]
+    return [str(w) for w in words if w]
+
+
+def choose_place(value: Any, options: list[str], near: list[str]) -> str | None:
+    """A place lookup's entry ("Chandler, Maricopa, AZ"; "85225, Chandler, Maricopa, AZ"): of
+    those whose first part is the value (not "Chandler Heights, …"), the one naming most of
+    the rest of the address. None when no entry starts with the value."""
+    v = norm(value)
+    first = [o for o in options if v and norm(o.split(",")[0]) == v]
+    if not first:
+        return None
+    words = {norm(w) for w in near} - {"", v}
+    # whole parts only: "Chandler Heights" is not "Chandler"
+    return max(first, key=lambda o: len({norm(part) for part in o.split(",")} & words))  # the first, on a tie
+
+
 def is_name_rule(rule: str) -> bool:
     """Answers that are names (a school, an employer), matched by name only."""
     return bool(re.search(r"\.(school|company|employer)$", rule or ""))

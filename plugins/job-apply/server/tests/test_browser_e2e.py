@@ -396,6 +396,24 @@ def test_errors_are_read_without_icon_glyphs(srv):
     assert run(srv.browser.inspect(False))["errors"] == ["Invalid email address or password."]
 
 
+def test_oracle_address_lookups_are_picked_from_their_grid_in_the_right_state(srv):
+    """Texas Instruments' and onsemi's Oracle address boxes are lookups whose entries are a
+    grid's cells, and live, every one failed ("nothing in its list matched"). The first
+    entries for a city or a street can be in another state ("Chandler, Henderson, TX"), and a
+    ZIP can cover two places: the pick is the one that matches the rest of the address."""
+    run(srv.open_application(url=fixture_url("site/oracle-address.html")))
+    result = run(srv.autofill())
+    assert not result["failed"], result["failed"]
+    page = run(srv.browser.page())
+    assert run(page.evaluate("() => window.picked")) == {
+        "addressLine1": "100 W MAIN ST, CHANDLER, ARIZONA, 85225",
+        "postalCode": "85225, Chandler, Maricopa, AZ",  # not Chandler Heights
+        "city": "Chandler, Maricopa, AZ",  # not Chandler, Henderson, TX
+        "region2": "Arizona",
+        "region1": "Maricopa",  # filled in by the site from the ZIP: the profile has no county
+    }
+
+
 def test_sign_in_and_create_account_buttons_say_where_they_are(srv):
     """Workday's sign-in pop-up open over its Create Account form: the header's "Sign In" comes
     before the pop-up's password box, the pop-up's own buttons after it, and the form behind it

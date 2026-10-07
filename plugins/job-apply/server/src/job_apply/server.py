@@ -12,7 +12,7 @@ from mcp.server.mcpserver import Image, MCPServer
 
 from . import config
 from .ats import ATS_NAMES, detect_ats, greenhouse_form_url
-from .autofill import is_empty_value, is_name_rule, plan_autofill, profile_entries
+from .autofill import is_empty_value, is_name_rule, place_words, plan_autofill, profile_entries
 from .browser import BrowserSession, BrowserUnavailable, SubmitBlocked
 from .postings import FetchError, Posting, fetch_posting, finalize, parse_html
 from .render import KINDS, render_pdf, to_html
@@ -435,8 +435,10 @@ async def autofill(job_id: int | None = None, overwrite: bool = False) -> dict[s
     draft those from the profile/resume and confirm anything subjective with the user."""
     job = _job(job_id) if (job_id is not None or browser.current_job_id is not None) else {}
     data = await browser.inspect(include_dropdown_options=True)
-    plan = plan_autofill(data["fields"], config.Profile.load(), job, overwrite=overwrite)
-    results = await browser.fill([{"id": f["id"], "value": f["value"], "names": is_name_rule(f.get("rule") or "")}
+    prof = config.Profile.load()
+    plan = plan_autofill(data["fields"], prof, job, overwrite=overwrite)
+    results = await browser.fill([{"id": f["id"], "value": f["value"], "names": is_name_rule(f.get("rule") or ""),
+                                   "near": place_words(f.get("rule") or "", prof)}
                                   for f in plan["to_fill"]]) if plan["to_fill"] else []
     by_id = {f["id"]: f for f in plan["to_fill"]}
     fields = {f["id"]: f for f in data["fields"]}

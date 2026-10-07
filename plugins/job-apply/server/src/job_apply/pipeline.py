@@ -520,6 +520,11 @@ class Applier:
                 before, page_key = data, (data.get("url"), tuple(data.get("headings") or []))
                 data, text = await self._look()  # filling can add or enable things (State after Country, Submit)
                 run.page_info = _page_info(data)  # what the person sees on the desk: the page as filled
+                # a question the site has since answered itself (Oracle fills County from the ZIP
+                # picked); one whose answer was turned down (it has an error) is still asked
+                now = {f["id"]: f for f in data.get("fields") or []}
+                pending = [q for q in pending if q.get("error") or q.get("id") not in now
+                           or is_empty_value(now[q["id"]].get("value"))]
                 if _new_required(before, data) and page_key not in refilled:
                     refilled.add(page_key)  # answers drew new questions ("If yes, explain"): fill those too
                     continue
