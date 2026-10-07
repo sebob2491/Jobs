@@ -986,7 +986,10 @@ async def list_probe(questions: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 continue
             loc = page.locator(f'[data-ja-id="{q["id"]}"]')
             try:
-                await loc.click(timeout=5000)
+                # focus and type without a pointer click: a cookie banner may cover the page
+                # (TI's has no Reject, so it stays), and typing goes in under it
+                await loc.scroll_into_view_if_needed(timeout=5000)
+                await loc.evaluate("el => el.focus()")
                 await loc.fill("")
                 await loc.press_sequentially(m.group(1), delay=80)
                 await asyncio.sleep(3)
