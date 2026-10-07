@@ -51,6 +51,8 @@ _VERIFY_EMAIL = re.compile(r"verif(?:y|ication)\b.{0,40}\b(?:e-?mail|account|lin
 _CODE_FIELD = re.compile(r"verification code|one[- ]time (?:pass)?code|passcode|security code|\bcode\b.{0,40}"
                          r"(?:sent|email)|enter (?:the )?(?:\d-digit )?code|\botp\b", re.I)
 _SIGN_IN_ACTION = re.compile(r"^(sign in|log ?in|sign in with email)$", re.I)
+_TRY_LATER = re.compile(r"\btoo many\b.{0,30}\b(?:attempts|requests|tries)\b|\btry again (?:later|in \d+)|\brate[- ]limit",
+                        re.I)
 _CREATE_ACCOUNT = re.compile(r"^(create (?:an |your |a new )?account|sign up|register)[.!]?$", re.I)
 _ACCOUNT_KINDS = {"text", "email", "tel", "select", "combobox", "listbox"}  # not check boxes or files
 _SOCIAL = re.compile(r"\b(google|apple|linked ?in|facebook|microsoft|indeed|seek)\b", re.I)
@@ -422,6 +424,8 @@ class Applier:
             job = srv.tracker().get(run.job_id, with_description=False) or {}
             if not tailored_ready(job):  # before its tab opens: nothing to keep waiting
                 return self._pause(run, "tailor", _TAILOR_SAYS)
+        # on its own tab still: the person pressed Resume on whatever page it was left on
+        resumed = run.page is not None and not run.page.is_closed()
         if not await self._open(run):
             return
         stalls, entries_done, waited, refilled, dismissed = 0, set(), False, set(), set()
@@ -440,6 +444,14 @@ class Applier:
                 data, text = await self._look()
                 run.page_info = _page_info(data)
             kind = classify(data, text)
+            limited = _try_later(data)
+            if limited and not (resumed and not pressed and not sign_ins):
+                # "Too Many Attempts. Try Again Later." (Oracle after many sign-up emails in a day):
+                # its Continue goes back to the posting, and pressing on only goes round again.
+                # Where the person pressed Resume on it, they've waited: carry on from there.
+                await self._bring_forward(run)
+                return self._pause(run, "stuck", f"{_site(run, data)} says \u201c{limited}\u201d Leave this job for a "
+                                   "while, then press Resume.")
             actions = data.get("actions") or []
             entry_here = any(_ENTRY.match(a["text"].strip()) and not a.get("disabled") for a in actions)
             if kind == "form" and entry_here and not _application_like(data):
@@ -880,6 +892,16 @@ _APPLICATION_FIELD = re.compile(r"first name|last name|full name|legal name|resu
 
 _ACCOUNT_FIELD = re.compile(r"e-?mail|password|user ?name|log ?in|terms|privacy|captcha|language|locale|"
                             r"text in (?:the )?(?:image|picture)", re.I)  # Benchmark's "Enter the text in image above"
+
+
+def _try_later(data: dict[str, Any]) -> str | None:
+    """A heading or error saying the site won't go on for now ("Too Many Attempts. Try Again
+    Later."), in its own words, ending in a full stop."""
+    for t in [*(data.get("headings") or []), *(data.get("errors") or [])]:
+        if _TRY_LATER.search(t or ""):
+            t = " ".join(t.split())
+            return t if t[-1:] in ".!?" else t + "."
+    return None
 
 
 def _account_and_application(data: dict[str, Any]) -> bool:
