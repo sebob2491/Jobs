@@ -770,3 +770,27 @@ def test_workdays_disability_form_is_signed_and_answered(srv, job_apply_home):
         {"Month": f"{today.month:02d}", "Day": f"{today.day:02d}", "Year": str(today.year)}
     assert by_label(after, "Name")["value"] == "Sam Rivera"
     assert by_label(after, "check one of the boxes")["value"] == ["I do not want to answer"]
+
+
+def test_groups_with_the_same_label_are_each_filled(srv):
+    """Two education blocks each ask "Did you graduate?": a group's id is on its choices,
+    so it's found by that, not by its label (which two groups share)."""
+    run(srv.open_application(url=fixture_url("jsonld_posting.html")))
+    page = run(srv.browser.page())
+    run(page.set_content("""<form>
+      <h3>Education 1</h3><fieldset><legend>Did you graduate?</legend>
+        <label><input type="radio" name="g1">Yes</label><label><input type="radio" name="g1">No</label></fieldset>
+      <h3>Education 2</h3><fieldset><legend>Did you graduate?</legend>
+        <label><input type="radio" name="g2">Yes</label><label><input type="radio" name="g2">No</label></fieldset>
+      <fieldset><legend>Which shifts?</legend>
+        <label><input type="checkbox" name="s">Days</label><label><input type="checkbox" name="s">Nights</label></fieldset>
+      </form>"""))
+    fields = run(srv.inspect_form(include_dropdown_options=False))["fields"]
+    first, second = [f for f in fields if f["label"] == "Did you graduate?"]
+    shifts = by_label(fields, "Which shifts")
+    out = run(srv.fill_form([{"id": first["id"], "value": "Yes"}, {"id": second["id"], "value": "No"},
+                             {"id": shifts["id"], "value": ["Nights"]}]))
+    assert out["ok"], out
+    after = run(srv.inspect_form(include_dropdown_options=False))["fields"]
+    assert [f["value"] for f in after if f["label"] == "Did you graduate?"] == ["Yes", "No"]
+    assert by_label(after, "Which shifts")["value"] == ["Nights"]

@@ -391,6 +391,16 @@ def test_a_question_whose_choices_say_what_it_asks(job_apply_home):
     assert (ans.rule, ans.value) == ("disability", "I do not want to answer")
     # one choice that mentions it is not enough to tell
     assert resolve_field(f("Please choose one", "radio_group", options=["Yes", "No, no disability"]), prof()) is None
+    # a question that says what it asks is never answered from its choices: an accommodation
+    # isn't the EEO disability answer, nor is "military member" the protected-veteran one
+    data["eeo"]["veteran"] = "I am not a protected veteran"
+    (job_apply_home / "profile.yaml").write_text(yaml.safe_dump(data))
+    accommodation = ["Yes, I need an accommodation due to a disability", "No, I do not need an accommodation for a disability"]
+    assert resolve_field(f("Do you require an accommodation to interview?", "radio_group", options=accommodation),
+                         prof()) is None
+    military = ["Yes, I am a veteran", "No, I am not a veteran", "I am currently serving"]
+    assert resolve_field(f("Are you a current or former member of the U.S. military?", "radio_group",
+                           options=military), prof()) is None
     # and with no answer in the profile, the person is asked
     del data["eeo"]["disability"]
     (job_apply_home / "profile.yaml").write_text(yaml.safe_dump(data))

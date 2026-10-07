@@ -668,7 +668,9 @@ class BrowserSession:
         """The field as the page has it now. A site that draws a box afresh (Oracle redraws City,
         State and County once a ZIP is picked) drops the id it was given: the box is found
         again by its label, when only one box has it."""
-        if await self._present(self._locator(page, field["id"])):
+        # a group's id is on its choices ("<id>.0", "<id>.1", …), not on an element of its own
+        anchor = f"{field['id']}.0" if field.get("kind") in ("radio_group", "checkbox_group") else field["id"]
+        if await self._present(self._locator(page, anchor)):
             return field
         await self._extract(page)
         same = [f for f in self._fields.values()
