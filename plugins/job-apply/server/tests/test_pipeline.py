@@ -141,6 +141,63 @@ def test_bot_check_holds_the_queue_until_the_person_passes_it(srv, monkeypatch):
     run(go())
 
 
+def test_with_no_one_at_the_browser_the_other_jobs_go_ahead(srv, monkeypatch):
+    """Apply pressed on a batch, then the person walks away. A job that needs them (a bot
+    check) holds the queue only while something happens in its tab; then the other jobs go
+    ahead. When the person gets past the check later, the desk carries on with it by itself."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "HANDS_ON_IDLE", 2)
+    checked = srv.add_job(url=fixture_url("site/botcheck.html"), title="FSE", company="Example Fab")["job"]
+    other = srv.add_job(url=fixture_url("generic_form.html"), title="Technician", company="Example Litho")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            first = applier.enqueue(checked["id"])
+            second = applier.enqueue(other["id"])
+            await until(lambda: first.status == "needs_you")
+            assert first.need == "bot_check" and first.blocking
+            await until(lambda: second.status not in ("queued", "running"))  # went ahead
+            assert first.status == "needs_you" and first.need == "bot_check" and not first.blocking
+            assert "nothing happened in its tab for" in first.reason and "carries on with it" in first.reason
+            await first.page.click("#human")  # the person, back, passes the check
+            await until(lambda: first.need == "sign_in")  # carried on by itself, up to the sign-in
+            return first
+        finally:
+            await applier.stop()
+
+    run(go())
+
+
+def test_someone_at_work_in_the_paused_tab_holds_the_queue(srv, monkeypatch):
+    """Typing in the paused tab (signing in) is someone there: the queue keeps waiting."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "HANDS_ON_IDLE", 2)
+    job = srv.add_job(url=fixture_url("site/posting.html"), title="FSE", company="Example Fab")["job"]
+    other = srv.add_job(url=fixture_url("generic_form.html"), title="Technician", company="Example Litho")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            first = applier.enqueue(job["id"])
+            second = applier.enqueue(other["id"])
+            await until(lambda: first.status == "needs_you")
+            assert first.need == "sign_in" and first.blocking, first.reason
+            for ch in "sam.rivera@example.com"[:10]:  # about 4 seconds of typing
+                await first.page.type("#em", ch)
+                await asyncio.sleep(0.4)
+            held = (first.blocking, second.status)
+            await until(lambda: second.status not in ("queued", "running"))  # stopped: it goes ahead
+            return held
+        finally:
+            await applier.stop()
+
+    blocking, second_status = run(go())
+    assert blocking and second_status == "queued"
+
+
 def test_a_captcha_challenge_after_a_click_waits_for_the_person(srv, monkeypatch):
     """Daifuku's iCIMS answers Next on its email step with hCaptcha's pictures and "Please try
     again.": the person solves it, then the desk carries on. A challenge frame kept hidden

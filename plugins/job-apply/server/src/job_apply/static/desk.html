@@ -461,7 +461,7 @@ function renderHeader() {
   const waiting = allRuns().find((r) => r.blocking);
   // what to do is in its Needs you card; here, only which job the queue is waiting on
   if (waiting) notes.push({cls: "waiting", html: `<strong>Waiting for you in the browser window:</strong>
-    <span>${esc(waiting.title)} (${esc(waiting.company)}). The other jobs wait until it's done; what to do is under Needs you.</span>
+    <span>${esc(waiting.title)} (${esc(waiting.company)}). The other jobs wait until it's done, or until nothing happens in it for 5 minutes; what to do is under Needs you.</span>
     <button data-job="${waiting.job_id}" data-job-act="show">Show me</button>`});
   const needing = allRuns().filter((r) => r.status === "needs_you").length;
   document.title = needing ? `(${needing}) Needs you · Job Desk` : "Job Desk";

@@ -118,7 +118,10 @@ opens a page on your computer (served by the plugin on `127.0.0.1`):
    - Sign-ins, bot checks, CAPTCHAs and emailed codes. You deal with those in the
      browser window, and the desk carries on by itself. A link a site emails you to
      confirm your address opens in your usual browser, so reload that job's tab in the
-     desk's window once you've opened it.
+     desk's window once you've opened it. The other jobs wait while you work in that
+     tab. If nothing happens in it for 5 minutes, they go ahead without it, so you can
+     leave a batch running and come back. Finish each waiting job in its tab later, and
+     the desk picks it up again by itself.
    - Press **Alert me** in the desk's header to get a desktop notification whenever a
      job needs you or is ready to submit, so you can leave the desk working in the
      background.
