@@ -278,6 +278,10 @@ uv run pytest -n auto
 temporary `JOB_APPLY_HOME` and browser, so they don't get in each other's way. Plain
 `uv run pytest` runs them one at a time.
 
+`uv run ruff check .` (lint for bugs: unused or undefined names, bugbear's patterns; it never
+reformats) and `uv run mypy src/job_apply` (type check) run in CI ahead of the tests; run them
+before opening a PR.
+
 The tests cover ATS detection, posting parsing, the profile-to-field matching
 rules, the tracker and email log, PDF rendering, fixture redaction, and
 end-to-end browser runs (headless Chromium) against mock forms: a generic form,

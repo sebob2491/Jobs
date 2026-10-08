@@ -674,7 +674,7 @@ class Applier:
             pressed = press is not None and (await srv.click(press["id"])).get("clicked")
         except Exception:  # the button went (the page moved on by itself) or won't take a click
             pressed = False
-        if pressed:
+        if press is not None and pressed:
             self._log(run, f"pressed \u201c{press['text'].strip()}\u201d")
         else:  # (a "Confirm" that sends a form is left to the person, as any final button is)
             run.reason = ("I entered the code from your email. Press the page's button to carry on; "
@@ -866,9 +866,9 @@ class Applier:
                 for f in data.get("fields") or []:
                     by_label.setdefault(f.get("label") or "", []).append(f)
 
-                def answered(q: dict[str, Any]) -> bool:
-                    same = by_label.get(q.get("label") or "") or []
-                    f = now.get(q.get("id")) or (same[0] if len(same) == 1 and q.get("label") else None)
+                def answered(q: dict[str, Any]) -> bool:  # (called only in this pass of the loop)
+                    same = by_label.get(q.get("label") or "") or []  # noqa: B023
+                    f = now.get(q.get("id")) or (same[0] if len(same) == 1 and q.get("label") else None)  # noqa: B023
                     return f is not None and not is_empty_value(f.get("value"))
 
                 def refused(q: dict[str, Any]) -> bool:  # a box lost while being drawn again wasn't turned down
@@ -920,9 +920,9 @@ class Applier:
                 greyed = [a for a in data.get("actions") or [] if a.get("is_submit") and a.get("disabled")
                           and not a.get("aside")]
                 if greyed:
-                    problems = "; ".join(e for e in data.get("errors") or [] if _ERRORISH.search(e))[:300]
+                    said = "; ".join(e for e in data.get("errors") or [] if _ERRORISH.search(e))[:300]
                     return self._pause(run, "stuck", f"\u201c{greyed[0]['text']}\u201d is greyed out, so the site still "
-                                       "wants something" + (f": {problems}" if problems else ".") +
+                                       "wants something" + (f": {said}" if said else ".") +
                                        " Fix it in the browser, then press Resume.")
                 if blank:  # still, after the wait? (it was read before it)
                     now, now_text = await self._look()
@@ -949,7 +949,7 @@ class Applier:
                                    "Resume.")
             pressed.append(key)
             pressed_on.append(f"\u201c{action['text'].strip()}\u201d on {_page_said(data)}")
-            before = _fingerprint(data)
+            looked = _fingerprint(data)
             try:
                 clicked = await srv.click(action["id"])
             except KeyError:  # the page changed between looking and clicking (a tab opened): look again
@@ -969,9 +969,9 @@ class Applier:
                 return await self._finish(run, data, text)
             self._log(run, f"clicked “{action['text']}”")
             run.page = srv.browser.current_tab or run.page
-            if _fingerprint(clicked) == before and await self._new_tab_soon(run, NEW_TAB_WAIT):
+            if _fingerprint(clicked) == looked and await self._new_tab_soon(run, NEW_TAB_WAIT):
                 continue  # asml.com's Apply Now opens Workday in a new tab a moment after the click
-            if _fingerprint(clicked) == before:
+            if _fingerprint(clicked) == looked:
                 if await srv.browser.challenge_showing():  # the click brought up a CAPTCHA
                     await self._bring_forward(run)
                     return self._pause(run, "bot_check", _BOT_CHECK_SAYS)

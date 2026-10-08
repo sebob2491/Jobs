@@ -831,6 +831,20 @@ def test_successfactors_search_pages_through_results():
     assert found[0].url == "https://jobs.example.com/job/x/00-en_US" and found[0].location == "AZ"
 
 
+def test_successfactors_search_without_a_full_address_says_so():
+    """A person's own employer list with the search page's address missing its https://:
+    a plain message, not "'NoneType' object has no attribute 'group'"."""
+    from job_apply.search import Listing, rmk_search
+
+    async def capture(url, url_part, timeout=25000, want=None, rewrite=None):
+        raise AssertionError(f"opened {url}")
+
+    found: list[Listing] = []
+    with pytest.raises(ValueError, match="full address, starting https://"):
+        asyncio.run(rmk_search(capture, {"url": "jobs.example.com/search/?q="}, "service", found))
+    assert found == []
+
+
 def test_edwards_postings_without_a_state_are_read_for_their_place():
     """Most Edwards titles carry no state (live, Oct 2026: Field Service Engineer in Phoenix
     and in San Jose); each posting's header names its city and state."""

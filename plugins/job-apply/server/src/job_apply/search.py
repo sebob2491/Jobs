@@ -502,7 +502,7 @@ def parse_eightfold(data: Any, host: str) -> list[Listing]:
         out.append(Listing(
             company="", title=p.get("name") or p.get("title") or "",
             url=link or f"https://{host}/careers/job/{p.get('id')}",
-            location="; ".join(l for l in locs if l),
+            location="; ".join(loc for loc in locs if loc),
             external_id=str(p.get("display_job_id") or p.get("displayJobId") or p.get("id") or ""),
             posted=_epoch_date(p.get("t_create") or p.get("postedTs") or p.get("creationTs")), ats="eightfold",
         ))
@@ -634,9 +634,9 @@ async def icims_search(frames_html: Callable[[str], Awaitable[list[str]]], cfg: 
     for page in range(ICIMS_PAGES):
         if page > last:
             break
-        for html in await frames_html(icims_page_url(cfg, query, page)):
-            found.extend(parse_icims(html, base))
-            last = max(last, _icims_last_page(html))
+        for doc in await frames_html(icims_page_url(cfg, query, page)):
+            found.extend(parse_icims(doc, base))
+            last = max(last, _icims_last_page(doc))
 
 
 def parse_icims(html: str, base: str) -> list[Listing]:
@@ -833,7 +833,10 @@ async def rmk_search(capture: Callable[..., Awaitable[Any]], cfg: Any, query: st
     own location search finds nothing (Oct 2026): some titles end with the state ("Onsite
     Service Engineer - AZ"); the rest are read off each posting."""
     url = str(cfg["url"] if isinstance(cfg, dict) else cfg)
-    origin = re.match(r"https?://[^/]+", url).group(0)
+    site = re.match(r"https?://[^/]+", url)
+    if site is None:  # a person's own list may leave off the https://: said, not an AttributeError
+        raise ValueError(f"rmk: {url!r} should be the search page's full address, starting https://")
+    origin = site.group(0)
     mine: list[Listing] = []
     for page in range(RMK_PAGES):
         data = await capture(url, "/services/recruiting/v1/jobs", want=rmk_wants,
@@ -1009,7 +1012,7 @@ def parse_sfclassic(page: str, cfg: Any) -> list[Listing]:
     for row in BeautifulSoup(page, "html.parser").select(SFCLASSIC_ROWS):
         link = row.select_one("a.jobTitle[href]")
         req = re.search(r"career_job_req_id=(\d+)", str(link["href"])) if link is not None else None
-        if req is None:
+        if link is None or req is None:
             continue
         note = row.select_one(".noteSection")
         posted = re.search(r"Posted on (\d{1,2}/\d{1,2}/\d{4})", note.get_text(" ", strip=True)) if note else None
@@ -1084,8 +1087,8 @@ def parse_infor(data: Any) -> list[Listing]:
         if not isinstance(fields, dict):
             continue
 
-        def value(key: str) -> str:
-            v = fields.get(key)
+        def value(key: str) -> str:  # (called only in this pass of the loop)
+            v = fields.get(key)  # noqa: B023
             return str(v.get("value") or "") if isinstance(v, dict) else ""
 
         title = value("Description").strip()

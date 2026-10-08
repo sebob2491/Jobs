@@ -56,7 +56,7 @@ def _desk_driving() -> str | None:
 
     d = desk._desk
     job_id = d.applier.current if d is not None else None
-    if job_id is None:
+    if d is None or job_id is None:
         return None
     run = d.applier.runs.get(job_id)
     return f"{run.title} at {run.company}" if run and run.title else "an application"
@@ -561,7 +561,7 @@ async def open_application(job_id: int | None = None, url: str | None = None) ->
     if job_id is None:
         # the job saved at this address, if any: never the one opened before, whose documents
         # would go into this form and whose status a submit here would change
-        known = tracker().find_by_url(url)  # type: ignore[arg-type]
+        known = tracker().find_by_url(url)
         job_id = known["id"] if known else None
         browser.current_job_id = job_id
     else:

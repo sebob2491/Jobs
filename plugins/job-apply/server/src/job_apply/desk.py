@@ -26,7 +26,6 @@ from urllib.parse import urlparse
 from urllib.request import url2pathname
 
 import uvicorn
-import yaml
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, Response
@@ -54,7 +53,7 @@ class _QuietServer(uvicorn.Server):
     """uvicorn inside the MCP server: no signal handlers of its own (Claude Code owns them)."""
 
     @contextlib.contextmanager
-    def capture_signals(self):  # type: ignore[override]
+    def capture_signals(self):
         yield
 
 

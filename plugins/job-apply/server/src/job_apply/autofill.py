@@ -903,7 +903,7 @@ def resolve_field(field: dict, prof: Profile, job: dict | None = None, file_inpu
             if re.search(pattern, label):
                 if name in _WORK_RULES and (_OTHER_COUNTRIES.search(label) or _OTHER_THAN.search(label)):
                     return None  # another country's question: the profile's facts are the United States'
-                value = getter(prof, job, raw_label) if getter in _READS_QUESTION else getter(prof, job)
+                value = getter(prof, job, raw_label) if getter in _READS_QUESTION else getter(prof, job)  # type: ignore[call-arg]  # these take the question too
                 if value is None or value == "":
                     return None  # recognised but the profile has no answer
                 ans = Answer(value, name)
