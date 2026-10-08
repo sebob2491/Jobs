@@ -307,6 +307,20 @@ one-button pipeline instead. It checks the default semiconductor list; add
 each in a browser of its own; every site is still visited once. A full run then
 takes about 6 minutes instead of 22.
 
+**Nightly live check.** The `live-nightly` workflow runs every night at 3:17 AM
+Arizona time (or from the Actions tab): the pipeline check on the semiconductor list
+and the search check on the phoenix-metro list, four employers at a time.
+`scripts/live_compare.py` boils each employer down to one result that holds steady
+from night to night: where the pipeline ended (`ready`, `needs_you sign_in`,
+`needs_you stuck`, ...), or whether the search works (`works`, `error`, or `no search`).
+How many openings a search finds changes daily and is never compared. The issue titled
+"Nightly live check" (label `live-check`) keeps the last results in its body, and gets
+a comment, which notifies you, only when an employer's result changes or an employer
+joins or leaves a list. It's reopened if it was closed. A check that doesn't finish
+fails the run, and the employers it didn't reach keep their last result. Each run's
+reports and logs are kept as an artifact for 7 days. GitHub pauses scheduled workflows
+in a repository with no activity for 60 days.
+
 ### Reporting a problem
 
 When the Job Desk gets a job wrong, press **Report a problem** on that job. It writes a

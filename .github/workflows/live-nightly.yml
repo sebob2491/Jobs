@@ -1,0 +1,126 @@
+name: live-nightly
+
+# Every night, the read-only live check of plugins/job-apply/server/scripts/live_smoke.py
+# (a fake profile, submitting disabled), compared with the night before by
+# scripts/live_compare.py:
+#   - the Job Desk pipeline on one posting per employer of the default semiconductor list:
+#     where it ended ("ready", "needs_you sign_in", "needs_you stuck", ...);
+#   - the search check on the phoenix-metro list: whether each employer's search works
+#     (how many openings it finds changes daily, and is never compared).
+# The issue titled "Nightly live check" (label live-check) holds the last results in its body.
+# It gets a comment only when an employer's result changes; on a quiet night only its body's
+# "Last checked" line and tables are rewritten, which notifies no one. A run whose check
+# didn't finish fails (employers it didn't reach keep their last result).
+# Only runs of the default branch write to the issue: a manual run from another branch shows
+# its comparison in the job summary only.
+
+on:
+  schedule:
+    - cron: "17 10 * * *"  # 3:17 AM in Arizona (UTC-7 all year)
+  workflow_dispatch:
+
+concurrency:
+  group: live-nightly
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: plugins/job-apply/server
+    env:
+      JOB_APPLY_NEVER_SUBMIT: "1"
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      ISSUE_TITLE: Nightly live check
+      ISSUE_LABEL: live-check
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.13"
+          enable-cache: true
+          cache-dependency-glob: plugins/job-apply/server/uv.lock
+      - run: uv sync --frozen
+      - run: uv run --frozen playwright install --with-deps chromium
+      - name: Pipeline check (semiconductor list)
+        id: pipeline
+        continue-on-error: true
+        timeout-minutes: 20
+        run: |
+          set -o pipefail
+          mkdir -p live-pipeline
+          uv run --frozen python scripts/live_smoke.py --pipeline --fake-passwords --parallel 4 \
+            --out live-pipeline 2>&1 | tee live-pipeline/run.log
+      - name: Search check (phoenix-metro list)
+        id: search
+        continue-on-error: true
+        timeout-minutes: 30
+        run: |
+          set -o pipefail
+          mkdir -p live-search
+          uv run --frozen python scripts/live_smoke.py --lists phoenix-metro --parallel 4 \
+            --out live-search 2>&1 | tee live-search/run.log
+      - name: Compare with the last run
+        id: compare
+        env:
+          PIPELINE_OUTCOME: ${{ steps.pipeline.outcome }}
+          SEARCH_OUTCOME: ${{ steps.search.outcome }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          mkdir -p live-compare
+          gh issue list --label "$ISSUE_LABEL" --state all --limit 100 \
+            --json number,title,state,body > live-compare/issues.json
+          args=(--issues live-compare/issues.json --title "$ISSUE_TITLE" --run-url "$RUN_URL"
+                --log pipeline=live-pipeline/run.log --log search=live-search/run.log
+                --body-out live-compare/body.md --comment-out live-compare/comment.md
+                --github-output "$GITHUB_OUTPUT")
+          if [ "$PIPELINE_OUTCOME" != success ]; then args+=(--partial pipeline); fi
+          if [ "$SEARCH_OUTCOME" != success ]; then args+=(--partial search); fi
+          uv run --frozen python scripts/live_compare.py "${args[@]}"
+          {
+            if [ -f live-compare/comment.md ]; then cat live-compare/comment.md; echo; fi
+            cat live-compare/body.md
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Update the issue
+        if: github.event_name == 'schedule' || github.ref_name == github.event.repository.default_branch
+        env:
+          ISSUE: ${{ steps.compare.outputs.issue }}
+          ISSUE_STATE: ${{ steps.compare.outputs.issue_state }}
+          CHANGES: ${{ steps.compare.outputs.changes }}
+        run: |
+          if [ -z "$ISSUE" ]; then  # the first run: the issue, with nothing to compare yet
+            gh label create "$ISSUE_LABEL" --color 5319E7 \
+              --description "Nightly live check of employers' career sites" 2>/dev/null || true
+            gh issue create --title "$ISSUE_TITLE" --label "$ISSUE_LABEL" --body-file live-compare/body.md
+            exit 0
+          fi
+          if [ "$CHANGES" != 0 ]; then
+            if [ "$ISSUE_STATE" = CLOSED ]; then gh issue reopen "$ISSUE"; fi
+            gh issue comment "$ISSUE" --body-file live-compare/comment.md
+          fi
+          # after the comment: if this fails, the next run reports the change again, not never
+          gh issue edit "$ISSUE" --body-file live-compare/body.md
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: live-nightly
+          path: |
+            plugins/job-apply/server/live-pipeline
+            plugins/job-apply/server/live-search
+            plugins/job-apply/server/live-compare
+          retention-days: 7
+      - name: Fail if a check didn't finish
+        if: steps.pipeline.outcome != 'success' || steps.search.outcome != 'success'
+        env:
+          PIPELINE_OUTCOME: ${{ steps.pipeline.outcome }}
+          SEARCH_OUTCOME: ${{ steps.search.outcome }}
+        run: |
+          echo "::error::A check didn't finish (pipeline: $PIPELINE_OUTCOME, search: $SEARCH_OUTCOME); see its log"
+          exit 1
