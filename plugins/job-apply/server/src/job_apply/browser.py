@@ -173,7 +173,7 @@ class BrowserSession:
         self._pw: Playwright | None = None
         self._ctx: BrowserContext | None = None
         self._page: Page | None = None
-        self._lock = asyncio.Lock()
+        self._locks: dict[asyncio.AbstractEventLoop, asyncio.Lock] = {}
         self._openers: dict[Page, Page] = {}  # tab -> the tab that opened it
         self._follow_until = 0.0  # a new tab opened before then, by the current tab, is followed
         # While the Job Desk works on a job, the tools stay on that job's tab (and the tabs
@@ -183,6 +183,18 @@ class BrowserSession:
         self._fields: dict[str, dict] = {}
         self._actions: dict[str, dict] = {}
         self.current_job_id: int | None = None
+
+    @property
+    def _lock(self) -> asyncio.Lock:
+        """One step at a time in the browser. A lock belongs to the event loop it first waited
+        in, and the session outlives a loop (each test has its own; the MCP server one): a
+        loop that's gone takes its lock with it."""
+        loop = asyncio.get_running_loop()
+        lock = self._locks.get(loop)
+        if lock is None:
+            self._locks = {lp: lk for lp, lk in self._locks.items() if not lp.is_closed()}
+            lock = self._locks[loop] = asyncio.Lock()
+        return lock
 
     # ---------------------------------------------------------------- lifecycle
     @property
