@@ -527,6 +527,32 @@ def test_a_submit_beside_a_next_button_isnt_the_review_page(srv, monkeypatch):
     assert "clicked \u201cNext\u201d" in r.log
 
 
+@pytest.mark.parametrize("query", ["?ms=8000", "?never"])
+def test_a_page_that_stays_blank_a_while_is_waited_for(srv, monkeypatch, query):
+    """Infineon's application page (2 MB, a reCAPTCHA) is now and then blank for longer than
+    a page's buttons take to be drawn."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 1)
+    monkeypatch.setattr(pipeline, "BLANK_PAGE_WAIT", 15)
+    job = srv.add_job(url=fixture_url("site/blank-then-form.html") + query, title="Tech", company="Example Semi")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status in ("ready", "needs_you"), timeout=30)
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    if query == "?never":
+        assert r.need == "stuck" and "stayed blank" in r.reason, (r.reason, r.log)
+    else:
+        assert r.status == "ready", (r.reason, r.log)
+
+
 def test_a_list_of_jobs_isnt_paged_through(srv, monkeypatch):
     """A link to a search page (Analog Devices' board) has "next" for its next page of jobs:
     pressing it again and again never opens an application."""
