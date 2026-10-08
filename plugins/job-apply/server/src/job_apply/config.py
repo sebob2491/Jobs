@@ -93,6 +93,27 @@ def _submit_mode(raw: Any) -> tuple[str, list[str]]:
     return "review", [f"Unknown settings.submit_mode {raw!r}; using 'review'. Use review, auto or dry_run."]
 
 
+_CHANNELS = {"chrome": "chrome", "google chrome": "chrome", "msedge": "msedge", "edge": "msedge",
+             "microsoft edge": "msedge", "chromium": "chromium", "bundled": "chromium"}
+
+
+def _channel(raw: Any) -> tuple[str, str]:
+    """browser_channel as written ("edge", "Chrome", nothing) -> one the browser starts with."""
+    if raw is None or str(raw).strip() == "":
+        return "chrome", ""
+    channel = _CHANNELS.get(" ".join(str(raw).strip().lower().split()))
+    if channel:
+        return channel, ""
+    return "chrome", f"Unknown settings.browser_channel {raw!r}; using Chrome. Use chrome, msedge or chromium."
+
+
+def _flag(raw: Any) -> bool:
+    """A yes/no setting, also when it's written in quotes ("false")."""
+    if isinstance(raw, str):
+        return raw.strip().lower() in ("true", "yes", "on", "1")
+    return bool(raw)
+
+
 def never_submit() -> bool:
     """Hard switch for tests and practice runs: nothing is ever submitted."""
     return os.environ.get("JOB_APPLY_NEVER_SUBMIT") == "1"
@@ -110,14 +131,18 @@ class Settings:
 
     @classmethod
     def from_dict(cls, d: dict[str, Any] | None) -> "Settings":
-        d = d or {}
+        d = d if isinstance(d, dict) else {}
         mode, warnings = _submit_mode(d.get("submit_mode"))
+        ats = d.get("auto_submit_ats") or []
+        if isinstance(ats, str):  # "workday" or "workday, greenhouse", not a list
+            ats = re.split(r"[,\s]+", ats)
+        channel, warning = _channel(d.get("browser_channel"))
         s = cls(
             submit_mode=mode,
-            warnings=warnings,
-            auto_submit_ats=[str(a).lower() for a in d.get("auto_submit_ats") or []],
-            headless=bool(d.get("headless", False)),
-            browser_channel=str(d.get("browser_channel", "chrome")).lower(),
+            warnings=warnings + ([warning] if warning else []),
+            auto_submit_ats=[str(a).strip().lower() for a in ats if str(a).strip()] if isinstance(ats, list) else [],
+            headless=_flag(d.get("headless")),
+            browser_channel=channel,
             email_codes=d.get("email_codes") is True,
             email_tracking=d.get("email_tracking") is True,
         )
@@ -150,8 +175,17 @@ class Profile:
         path = path or profile_path()
         data: dict[str, Any] = {}
         if path.exists():
-            with path.open(encoding="utf-8") as f:
-                data = yaml.safe_load(f) or {}
+            try:
+                with path.open(encoding="utf-8") as f:
+                    data = yaml.safe_load(f) or {}
+            except yaml.YAMLError as e:
+                mark = getattr(e, "problem_mark", None)
+                where = f" near line {mark.line + 1}" if mark is not None else ""
+                tip = (" A Windows path in double quotes needs its backslashes doubled, or single quotes: "
+                       "'C:\\Users\\you\\resume.pdf'.") if "\\" in path.read_text(encoding="utf-8", errors="replace") else ""
+                raise ValueError(f"{path} has a typo{where}, so it can't be read.{tip}") from None
+            if not isinstance(data, dict):
+                raise ValueError(f"{path} should hold sections like 'personal:' and 'settings:'; it can't be read as it is")
         if own:
             saved = saved_answers()
             if saved:  # exact questions answered in the Job Desk come before the general patterns
@@ -205,12 +239,32 @@ def get_secret(name: str) -> str | None:
         return os.environ[env_key]
     path = secrets_path()
     if path.exists():
-        with path.open(encoding="utf-8") as f:
-            data = yaml.safe_load(f) or {}
-        value = data.get(name) if isinstance(data, dict) else None  # a hand-edited file that isn't a list of names
-        if value is not None:
-            return str(value)
+        value = read_secrets(path).get(name)
+        if value:
+            return value
     return None
+
+
+def read_secrets(path: Path) -> dict[str, str]:
+    """secrets.yaml, every value as written: a password is text, never a number or a date
+    ("0123456", "12:30:45", "yes"). A hand-written line YAML can't read ("!Summer2024x",
+    "*pw") is read as written too, and no error repeats a password."""
+    out: dict[str, str] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        m = re.match(r"([A-Za-z0-9_]+)\s*:\s*(.*?)\s*$", line)  # name: value, one to a line
+        if not m:
+            continue
+        value = m.group(2)
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":
+            try:  # quoted as YAML quotes it ('it''s', "q\"x")
+                value = str(yaml.load(value, Loader=yaml.BaseLoader))
+            except yaml.YAMLError:
+                value = value[1:-1]
+        else:
+            value = re.sub(r"\s+#.*$", "", value)  # a comment after it, as YAML reads one
+        if value:
+            out[m.group(1)] = value
+    return out
 
 
 SITE_PASSWORD = re.compile(r"^[a-z][a-z0-9]{1,30}_password$")  # e.g. workday_password

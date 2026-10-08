@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import functools
+import inspect
 import json
 import os
 import re
@@ -9,9 +11,10 @@ import shutil
 import threading
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from mcp.server.mcpserver import Image, MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
 
 from . import config
 from .ats import ATS_NAMES, detect_ats, greenhouse_form_url
@@ -38,6 +41,36 @@ user. LinkedIn and Indeed applications are always submitted by the user clicking
 button themselves. Passwords go through fill_secret, never fill_form."""
 
 mcp = MCPServer("job-apply", instructions=INSTRUCTIONS, version="0.3.0")
+
+# Failures Claude should read, not just "Error executing tool": a job id that isn't there,
+# a typo in profile.yaml, a browser that won't start.
+_ANTICIPATED = (ValueError, KeyError, FileNotFoundError, PermissionError, BrowserUnavailable, SubmitBlocked, FetchError)
+
+
+def tool(**options: Any) -> Callable[[Any], Any]:
+    """mcp.tool, with anticipated failures handed to Claude in their own words. The function
+    itself is returned as written, so the desk calling it gets the same exceptions as before."""
+    def message(e: Exception) -> str:
+        return str(e.args[0]) if isinstance(e, KeyError) and e.args else str(e)
+
+    def register(fn: Any) -> Any:
+        if inspect.iscoroutinefunction(fn):
+            @functools.wraps(fn)
+            async def wrapper(*args: Any, **kwargs: Any) -> Any:
+                try:
+                    return await fn(*args, **kwargs)
+                except _ANTICIPATED as e:
+                    raise ToolError(message(e)) from e
+        else:
+            @functools.wraps(fn)
+            def wrapper(*args: Any, **kwargs: Any) -> Any:
+                try:
+                    return fn(*args, **kwargs)
+                except _ANTICIPATED as e:
+                    raise ToolError(message(e)) from e
+        mcp.tool(**options)(wrapper)
+        return fn
+    return register
 browser = BrowserSession()
 _tracker: Tracker | None = None
 _tracker_lock = threading.Lock()
@@ -101,7 +134,7 @@ def chrome_installed() -> bool:
     return any(p.exists() for p in places)
 
 
-@mcp.tool()
+@tool()
 def setup_status() -> dict[str, Any]:
     """Check what the plugin needs before it can apply: profile fields, resume file,
     browser. Creates ~/.job-apply and a profile template on first run."""
@@ -130,7 +163,7 @@ def setup_status() -> dict[str, Any]:
     }
 
 
-@mcp.tool()
+@tool()
 def get_profile() -> dict[str, Any]:
     """Return the applicant profile (~/.job-apply/profile.yaml) used to answer forms.
     Edit that file directly to change answers."""
@@ -141,7 +174,7 @@ def get_profile() -> dict[str, Any]:
 # --------------------------------------------------------------------- jobs
 
 
-@mcp.tool()
+@tool()
 async def ingest_job(url: str, use_browser: bool = False) -> dict[str, Any]:
     """Fetch a job posting (LinkedIn, Indeed, Workday, Greenhouse, Lever, any careers page),
     parse title/company/location/description/ATS, and save it to the tracker.
@@ -175,7 +208,7 @@ async def ingest_job(url: str, use_browser: bool = False) -> dict[str, Any]:
     return {"saved": True, "created": created, "job": job, "warnings": posting.warnings}
 
 
-@mcp.tool()
+@tool()
 async def search_company_jobs(
     query: str,
     companies: list[str] | None = None,
@@ -247,7 +280,7 @@ async def search_company_jobs(
     return out
 
 
-@mcp.tool()
+@tool()
 def add_job(
     url: str,
     title: str,
@@ -266,7 +299,7 @@ def add_job(
     return {"created": created, "job": _brief(job)}
 
 
-@mcp.tool()
+@tool()
 def list_jobs(status: str | None = None, company: str | None = None, limit: int = 50) -> dict[str, Any]:
     """List tracked jobs, newest activity first. status is one of:
     saved, in_progress, ready_to_submit, applied, interviewing, offer, rejected, withdrawn, skipped."""
@@ -274,14 +307,14 @@ def list_jobs(status: str | None = None, company: str | None = None, limit: int 
     return {"count": len(jobs), "jobs": [_brief(j) for j in jobs], "by_status": tracker().counts()}
 
 
-@mcp.tool()
+@tool()
 def get_job(job_id: int) -> dict[str, Any]:
     """Full record for one job, including description and status history."""
     job = _job(job_id)
     return {"job": job, "history": tracker().events(job_id)}
 
 
-@mcp.tool()
+@tool()
 def update_job(job_id: int, status: str | None = None, notes: str | None = None,
                apply_url: str | None = None, event_note: str = "") -> dict[str, Any]:
     """Change a job's status / notes / apply URL. Use status="applied" after the user
@@ -291,7 +324,7 @@ def update_job(job_id: int, status: str | None = None, notes: str | None = None,
     return {"job": _brief(job)}
 
 
-@mcp.tool()
+@tool()
 def log_email(job_id: int, thread_id: str, category: str, summary: str = "", received_at: str = "") -> dict[str, Any]:
     """Record an employer's email about an application and update its status.
 
@@ -304,7 +337,7 @@ def log_email(job_id: int, thread_id: str, category: str, summary: str = "", rec
     return tracker().log_email(job_id, thread_id, category, summary, received_at)
 
 
-@mcp.tool()
+@tool()
 def logged_emails(since_days: int | None = 90) -> dict[str, Any]:
     """Gmail threads already recorded with log_email, with the date of the message logged
     (received_at), so a status check can skip them unless a newer message has arrived."""
@@ -312,7 +345,7 @@ def logged_emails(since_days: int | None = 90) -> dict[str, Any]:
     return {"count": len(rows), "threads": rows}
 
 
-@mcp.tool()
+@tool()
 async def render_document(kind: str, markdown: str, job_id: int | None = None, default: bool = False) -> dict[str, Any]:
     """Turn a tailored resume or cover letter written in Markdown into a PDF in the job's
     folder. autofill uploads it there ahead of the profile's default documents.
@@ -365,7 +398,7 @@ TAILOR_RULES = [
 ]
 
 
-@mcp.tool()
+@tool()
 def tailoring_queue() -> dict[str, Any]:
     """Jobs the Job Desk is holding until Claude writes a resume tailored to each one (its
     "Tailor my resume for each job" switch is on). For each job, write the resume in
@@ -400,7 +433,7 @@ def tailoring_queue() -> dict[str, Any]:
     }
 
 
-@mcp.tool()
+@tool()
 def export_jobs_csv(path: str | None = None) -> dict[str, Any]:
     """Write every tracked job to a CSV (default ~/.job-apply/applications.csv) for a spreadsheet."""
     out = config.expand(path) if path else config.home() / "applications.csv"
@@ -412,7 +445,7 @@ def export_jobs_csv(path: str | None = None) -> dict[str, Any]:
 # --------------------------------------------------------------------- browser
 
 
-@mcp.tool()
+@tool()
 async def open_application(job_id: int | None = None, url: str | None = None) -> dict[str, Any]:
     """Open a job's application (or its posting page, when there is no separate apply URL)
     in the visible browser and make it the current job. Returns a summary of the page:
@@ -422,7 +455,13 @@ async def open_application(job_id: int | None = None, url: str | None = None) ->
     if job_id is None and not url:
         raise ValueError("Pass job_id or url")
     target = url
-    if job_id is not None:
+    if job_id is None:
+        # the job saved at this address, if any: never the one opened before, whose documents
+        # would go into this form and whose status a submit here would change
+        known = tracker().find_by_url(url)  # type: ignore[arg-type]
+        job_id = known["id"] if known else None
+        browser.current_job_id = job_id
+    else:
         job = _job(job_id)
         target = url or job.get("apply_url") or job["url"]
         target = greenhouse_form_url(target) or target
@@ -434,11 +473,11 @@ async def open_application(job_id: int | None = None, url: str | None = None) ->
     except BrowserUnavailable as e:
         return {"error": str(e)}
     summary["ats"] = detect_ats(summary["url"])
-    summary["submit_policy"] = _submit_policy(summary["ats"])
+    summary["submit_policy"] = _submit_policy(await browser.human_submit_ats() or summary["ats"])
     return summary
 
 
-@mcp.tool()
+@tool()
 async def inspect_form(include_dropdown_options: bool = True) -> dict[str, Any]:
     """List the fields and buttons on the current page (all frames). Each field has an id,
     kind (text, textarea, select, listbox, combobox, radio_group, checkbox_group, checkbox,
@@ -450,7 +489,7 @@ async def inspect_form(include_dropdown_options: bool = True) -> dict[str, Any]:
     return data
 
 
-@mcp.tool()
+@tool()
 async def autofill(job_id: int | None = None, overwrite: bool = False) -> dict[str, Any]:
     """Fill every field on the current page that the profile answers with confidence
     (contact details, address, work authorization, sponsorship, EEO choices, resume upload,
@@ -492,7 +531,7 @@ async def autofill(job_id: int | None = None, overwrite: bool = False) -> dict[s
     }
 
 
-@mcp.tool()
+@tool()
 async def add_entries(section: str, count: int | None = None) -> dict[str, Any]:
     """Create the repeated blocks for work history or education before filling them.
 
@@ -514,7 +553,7 @@ async def add_entries(section: str, count: int | None = None) -> dict[str, Any]:
     return result
 
 
-@mcp.tool()
+@tool()
 async def fill_form(values: list[dict[str, Any]]) -> dict[str, Any]:
     """Fill specific fields: values = [{"id": "12", "value": "..."}]. Ids come from
     inspect_form/autofill. Options are matched loosely ("Yes", "AZ" -> "Arizona"). For
@@ -529,7 +568,7 @@ async def fill_form(values: list[dict[str, Any]]) -> dict[str, Any]:
     return out
 
 
-@mcp.tool()
+@tool()
 async def debug_snapshot(note: str = "") -> dict[str, Any]:
     """Save the current page (HTML of every frame, full screenshot, extracted fields) to the
     job's debug folder. Use it when a page behaves unexpectedly — a field that won't fill,
@@ -539,7 +578,7 @@ async def debug_snapshot(note: str = "") -> dict[str, Any]:
     return {"saved_to": str(path), "files": sorted(p.name for p in path.iterdir())}
 
 
-@mcp.tool()
+@tool()
 async def fill_secret(field_id: str, secret_name: str) -> dict[str, Any]:
     """Type a stored secret (e.g. a career-site password) into a field without the value
     passing through the conversation. Secrets come from env JOB_APPLY_SECRET_<NAME> or
@@ -552,11 +591,19 @@ async def fill_secret(field_id: str, secret_name: str) -> dict[str, Any]:
     if secret is None:
         return {"ok": False, "error": f"No secret named {secret_name!r}. Ask the user to add it to "
                 f"{config.secrets_path()} or set JOB_APPLY_SECRET_{secret_name.upper()}, or to type it in the browser."}
-    await browser.fill_secret(field_id, secret)
+    from .pipeline import PASSWORD_SITES, password_for
+
+    name = re.sub(r"[^a-z0-9]", "_", secret_name.strip().lower())
+    # a password saved for one system (workday_password) goes only onto that system's sites
+    site_ok = (lambda url: password_for(url) == name) if name.removesuffix("_password") in PASSWORD_SITES else None
+    try:
+        await browser.fill_secret(field_id, secret, site_ok)
+    except PermissionError as e:
+        return {"ok": False, "error": str(e)}
     return {"ok": True}
 
 
-@mcp.tool()
+@tool()
 async def click(target: str) -> dict[str, Any]:
     """Click a button/link by its id from inspect_form, or by visible text ("Next",
     "Save and Continue", "Apply", "Easy Apply", "Add"). Refuses final submit buttons —
@@ -569,7 +616,7 @@ async def click(target: str) -> dict[str, Any]:
     return {"clicked": True, **summary}
 
 
-@mcp.tool(structured_output=False)
+@tool(structured_output=False)
 async def screenshot(full_page: bool = False, job_id: int | None = None) -> list[Any]:
     """Screenshot of the current browser tab (JPEG). Use it to check tricky widgets and to
     show the user the review page before submitting. Saved into the job's folder too."""
@@ -581,26 +628,26 @@ async def screenshot(full_page: bool = False, job_id: int | None = None) -> list
     return [Image(data=data, format="jpeg"), f"saved: {save}" if save else "not saved (no current job)"]
 
 
-@mcp.tool()
+@tool()
 async def page_text(max_chars: int = 8000) -> str:
     """Visible text of the current tab, for reading instructions, errors or a confirmation page."""
     return await browser.visible_text(max_chars)
 
 
-@mcp.tool()
+@tool()
 async def tabs(switch_to: int | None = None) -> dict[str, Any]:
     """List open browser tabs, or switch to tab number `switch_to`."""
     return await browser.tabs(switch_to)
 
 
-@mcp.tool()
+@tool()
 async def close_browser() -> dict[str, Any]:
     """Close the automation browser (sign-ins are kept in the profile for next time)."""
     await browser.close()
     return {"closed": True}
 
 
-@mcp.tool()
+@tool()
 async def open_job_desk(open_browser: bool = True) -> dict[str, Any]:
     """Open the Job Desk: a page on this computer that lists recommended openings from
     every employer, ranked against the profile, and applies to the ones the user picks
@@ -636,7 +683,7 @@ def _submit_policy(ats: str) -> str:
     return "auto" if s.may_auto_submit(ats) else "after_user_confirms"
 
 
-@mcp.tool()
+@tool()
 async def submit_application(job_id: int | None = None, user_confirmed: bool = False) -> dict[str, Any]:
     """Click the final Submit button on the current page and record the result.
 
@@ -646,7 +693,7 @@ async def submit_application(job_id: int | None = None, user_confirmed: bool = F
     the user clicks Submit in the browser; then call update_job(status="applied")."""
     job = _job(job_id)
     page = await browser.inspect(include_dropdown_options=False)
-    ats = detect_ats(page["url"])
+    ats = await browser.human_submit_ats() or detect_ats(page["url"])  # Indeed's form inside an employer's page
     policy = _submit_policy(ats)
     if policy == "dry_run":
         _mark_ready(job, "dry run: filled, not submitted")
@@ -672,7 +719,10 @@ async def submit_application(job_id: int | None = None, user_confirmed: bool = F
                 "empty_required": empty_required, "actions": [a["text"] for a in page["actions"]]}
     folder = Path(job["folder"])
     await browser.screenshot(full_page=True, save_to=folder / "before-submit.jpg")
-    result = await browser.press_submit(buttons[-1]["id"])
+    try:
+        result = await browser.press_submit(buttons[-1]["id"])
+    except SubmitBlocked as e:
+        return {"submitted": False, "reason": str(e)}
     await browser.screenshot(full_page=False, save_to=folder / "after-submit.jpg")
     if result["confirmed"]:
         tracker().update(job["id"], status="applied", note=f"submitted via {ATS_NAMES.get(ats, ats)}")

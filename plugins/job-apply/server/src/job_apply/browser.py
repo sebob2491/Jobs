@@ -27,6 +27,7 @@ from playwright.async_api import (
 )
 
 from . import config
+from .ats import detect_ats
 from .autofill import choose_option, choose_place, is_empty_value, norm, polarity
 from .formjs import (CHALLENGE_JS, CLICK_CHOICE_JS, COVERED_JS, ELEMENT_INFO_JS, ENTRIES_JS, EXTRACT_JS, FIELD_OPTIONS_JS,
                      MARK_OPTIONS_JS, OPEN_MENU_JS, OUTSIDE_CLICK_JS, QUIET_JS, SHOWN_VALUE_JS, VISIBLE_TEXT_JS,
@@ -94,6 +95,19 @@ def launch_attempts(settings: config.Settings) -> list[dict[str, Any]]:
 
 class SubmitBlocked(Exception):
     pass
+
+
+_DOCUMENT_SUFFIXES = {".pdf", ".doc", ".docx", ".txt", ".rtf", ".odt", ".png", ".jpg", ".jpeg"}
+
+
+def _desk_file(path: Path) -> bool:
+    """A file in ~/.job-apply that isn't a document (secrets.yaml, answers.yaml, the tracker)."""
+    try:
+        home = config.home().resolve()
+        real = path.resolve()
+    except OSError:
+        return True
+    return (real == home or home in real.parents) and real.suffix.lower() not in _DOCUMENT_SUFFIXES
 
 
 def _choose(text: str, options: list[str], field: dict, exact_only: bool = False) -> str | None:
@@ -790,11 +804,32 @@ class BrowserSession:
                 await self._close_menus(page)  # none left open over the buttons, or over its own field
             return results
 
-    async def fill_secret(self, field_id: str, secret: str) -> None:
+    async def fill_secret(self, field_id: str, secret: str, site_ok: Callable[[str], bool] | None = None) -> None:
+        """Type a secret into a password box, on a page `site_ok` accepts (by its frame's
+        address): never into a text box, where the next inspect_form would read it back."""
         async with self._lock:
             page = await self.page()
             await self._field(page, field_id)
-            await self._locator(page, field_id).fill(secret)
+            frame = self._frame_for(page, field_id)
+            loc = frame.locator(f'[data-ja-id="{field_id}"]').first
+            if not await loc.evaluate("el => el.tagName === 'INPUT' && el.type === 'password'"):
+                raise PermissionError("A saved password only goes into a password box")
+            if site_ok is not None and not site_ok(frame.url):
+                raise PermissionError("That saved password belongs to another site")
+            await loc.fill(secret)
+
+    async def human_submit_ats(self, page: Page | None = None) -> str | None:
+        """LinkedIn or Indeed, when the page or any frame in it is theirs: an employer's page
+        can embed Indeed's form, whose Submit is the person's to press."""
+        page = page or await self.page()
+        for frame in page.frames:
+            try:
+                ats = detect_ats(frame.url)
+            except Exception:
+                continue
+            if ats in config.HUMAN_SUBMIT_ONLY:
+                return ats
+        return None
 
     async def _holds(self, page: Page, field: dict, value: Any) -> bool:
         """Does this box already show the answer? The site may have filled it from an earlier
@@ -823,6 +858,9 @@ class BrowserSession:
             path = config.expand(str(value))
             if not path or not path.exists():
                 raise FileNotFoundError(f"No file at {value}")
+            if _desk_file(path):
+                raise PermissionError(f"{path.name} is one of the desk's own files (settings, passwords, answers), "
+                                      "not a document to upload")
             await loc.set_input_files(str(path))
             return f"uploaded {path.name}"
         if kind == "checkbox":
@@ -1135,6 +1173,8 @@ class BrowserSession:
             raise SubmitBlocked("Dry run: submitting is disabled")
         async with self._lock:
             page = await self.page()
+            if await self.human_submit_ats(page):  # and a third: LinkedIn's and Indeed's are the person's
+                raise SubmitBlocked("LinkedIn and Indeed applications are submitted by you, in the browser")
             await self._locator(page, action_id).click(timeout=8000)
             try:
                 await page.wait_for_load_state("networkidle", timeout=15000)

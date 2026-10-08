@@ -417,11 +417,13 @@ def test_saving_a_password_leaves_the_rest_of_the_file_alone(job_apply_home):
             config.save_site_password(name, value)
 
 
-def test_a_broken_secrets_file_doesnt_break_the_page(srv, job_apply_home):
-    config.secrets_path().write_text("workday_password: [unclosed\n")
-    assert Desk(srv).state()["passwords"] == {"workday": False, "successfactors": False, "icims": False,
+def test_a_hand_typed_secrets_file_doesnt_break_the_page(srv, job_apply_home):
+    """A password typed by hand is read as typed, even where YAML would choke on it."""
+    config.secrets_path().write_text("workday_password: [unclosed\nnot a line of names\n")
+    assert Desk(srv).state()["passwords"] == {"workday": True, "successfactors": False, "icims": False,
                                               "applicantstack": False, "ukg": False, "infor": False,
                                               "email": False}
+    assert config.get_secret("workday_password") == "[unclosed"
 
 
 def test_pasted_links_are_read_saved_and_listed(srv):

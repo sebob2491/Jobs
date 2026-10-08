@@ -453,8 +453,7 @@ def _saved(names: list[str]) -> dict[str, bool]:
     every 1.5 s): never their values."""
     try:
         path = config.secrets_path()
-        data = yaml.safe_load(path.read_text(encoding="utf-8")) if path.exists() else {}
-        data = data if isinstance(data, dict) else {}
+        data = config.read_secrets(path) if path.exists() else {}
     except Exception:  # a hand-edited secrets.yaml with a typo mustn't break the page
         data = {}
     env = {k for k, v in os.environ.items() if k.startswith("JOB_APPLY_SECRET_") and v}

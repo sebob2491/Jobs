@@ -47,6 +47,11 @@ def test_render_document_into_job_folder(srv):
     f = {"id": "1", "kind": "file", "label": "Resume", "value": ""}
     assert resolve_field(f, Profile.load(), folder_job).value == str(pdf)
     f = {"id": "2", "kind": "file", "label": "Cover Letter", "value": ""}
+    # the long letter isn't sent, and doesn't hold the job either: only the resume's length does
+    assert resolve_field(f, Profile.load(), folder_job, 2) is None
+    from job_apply.pipeline import tailored_ready
+    assert tailored_ready(folder_job)
+    run(srv.render_document("cover_letter", "# Sam Rivera\n\nDear team,\n\nA short letter.", job_id=job["id"]))
     assert resolve_field(f, Profile.load(), folder_job, 2).value.endswith("Sam_Rivera_Cover_Letter.pdf")
 
 

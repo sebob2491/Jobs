@@ -512,10 +512,32 @@ RULES: list[tuple[str, str, Getter, int | None, set[str] | None]] = [
 ]
 
 
-def _answer_bank(prof: Profile, label: str) -> Answer | None:
+# Questions about the employer asking them: an answer given to one company's isn't another's
+_EMPLOYER_SPECIFIC = re.compile(
+    r"\b(this|our|the) (company|organi[sz]ation|employer|firm)\b|\bwork(ing)? (here|for us|with us)\b|"
+    r"\bjoin(ing)? (us|our)\b|\b(employed|worked|work) (by|for|at|with)\b|\bpreviously (been )?(employed|worked)|"
+    r"\bcurrently employed\b|\bwhy (do|would|are) you\b|\binterest(ed)? in (this|our|the)\b|\brelatives?\b|"
+    r"\bfamily members?\b|\bsubsidiar|\baffiliate", re.I)
+
+
+def _bare_question(text: str) -> str:
+    return " ".join(re.sub(r"\(required\)|\*", " ", text or "", flags=re.I).strip(" :?.").split()).lower()
+
+
+def _answer_bank(prof: Profile, label: str, job: dict | None = None) -> Answer | None:
+    company = norm((job or {}).get("company"))
     for item in prof.get("answers", []) or []:
         if not isinstance(item, dict) or not item.get("match") or item.get("answer") in (None, ""):
             continue
+        if item.get("question"):
+            # answered in the Job Desk: that question, worded the same. "I agree" isn't "I agree
+            # to binding arbitration", and "Are you currently employed?" isn't "... by ASML?"
+            if _bare_question(str(item["question"])) != _bare_question(label):
+                continue
+            source = norm(str(item.get("from") or ""))
+            if source and source != company and (_EMPLOYER_SPECIFIC.search(label) or source in norm(label)):
+                continue  # about the company it was given for
+            return Answer(item.get("answer"), f"answers[{item['match']}]")
         try:
             if re.search(str(item["match"]), label, re.I):
                 return Answer(item.get("answer"), f"answers[{item['match']}]")
@@ -532,7 +554,9 @@ def tailored_document(job: dict, kind: str) -> str | None:
     if folder and folder.exists():
         for ext in (".pdf", ".docx", ".doc"):
             # resume.pdf, Sam_Rivera_Resume.pdf, Sam_Rivera_Cover_Letter.pdf ...
-            hits = sorted(p for p in folder.glob(f"*{ext}") if p.stem.lower().endswith(stem))
+            # one render_document found too long (its .too-long marker) isn't sent: the default is
+            hits = sorted(p for p in folder.glob(f"*{ext}") if p.stem.lower().endswith(stem)
+                          and not p.with_suffix(".too-long").exists())
             if hits:
                 return str(hits[0])
     return None
@@ -711,13 +735,13 @@ def resolve_field(field: dict, prof: Profile, job: dict | None = None, file_inpu
     if kind == "checkbox":
         # Single checkboxes are usually consents/attestations: leave for a person,
         # except ones the user pre-approved in the answer bank.
-        ans = _answer_bank(prof, raw_label)
+        ans = _answer_bank(prof, raw_label, job)
         if ans is not None:
             pol = polarity(ans.value)
             return Answer(pol if pol is not None else bool(ans.value), ans.rule)
         return None
 
-    ans = _answer_bank(prof, raw_label)
+    ans = _answer_bank(prof, raw_label, job)
     if ans is None and _NEVER_GUESS.search(label):
         return None
     if ans is None and kind == "text" and len(label) <= 45 and _SIGNED_DATE.search(label):
