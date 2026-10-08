@@ -326,6 +326,20 @@ EXTRACT_JS = r"""
   const FINALISH = /^(apply( now| online)?( for (this|the) (job|position|role|opening))?|apply to (this |the )?(job|position|role|opening)|send( now| (my )?application)?|finish|complete( (my )?application)?|confirm( and send)?)$/i;
   const finalText = (t) => t.replace(/\s+(arrow_forward|arrow_right_alt|chevron_right|navigate_next|east)$/i, '').replace(/[\s\u203a\u00bb\u2192>!.]+$/, '').trim();
   const POSTING_PAGE = /career(?:_|%5f)ns=job(?:_|%5f)listing(?:&|#|$)/i;  // browser.POSTING_PAGE_RE
+  // A box of the site's own beside the application with a Submit of its own: the footer's
+  // job alerts or newsletter sign-up. Its Submit is never the application's.
+  const SIDE_BOX = /job alerts?|alerts? by e-?mail|e-?mail alerts?|newsletter|\bsubscribe\b|talent (?:community|network|pool)|notify me|similar (?:jobs|openings|roles)|stay (?:connected|in touch)/i;
+  const boxesIn = (form) => [...form.elements].filter((e) => /^(INPUT|SELECT|TEXTAREA)$/.test(e.tagName)
+    && !/^(hidden|submit|button|image|reset)$/i.test(e.type || '') && e.getClientRects().length > 0);
+  const sideBox = (el) => {
+    const boxes = el.form ? boxesIn(el.form) : null;
+    // one or two boxes, one of them for typing (an email address), and words about alerts
+    const small = boxes && boxes.length >= 1 && boxes.length <= 2
+      && boxes.some((e) => e.tagName === 'INPUT' && /^(text|email|search|)$/i.test(e.getAttribute('type') || ''));
+    if (small && SIDE_BOX.test(el.form.innerText || '')) return true;
+    const foot = el.closest('footer, [role="contentinfo"]');
+    return !!foot && !(boxes && boxes.length > 2) && SIDE_BOX.test(foot.innerText || '');
+  };
   const ACTION = /apply|next|continue|review|submit|save|add|upload|sign ?in|log ?in|create (an |your |a new )?account|sign ?up|register|start|back|previous|edit|done|ok\b|accept|agree|use my last|autofill|manually|verify|confirm|remove|delete/i;
   // Up to 60 of the page's buttons. A dropdown's entries are choices in a field, not
   // things to do on the page: Eightfold draws them as buttons, and an open list of
@@ -367,6 +381,7 @@ EXTRACT_JS = r"""
     if (box && box !== document.body && box !== document.documentElement) a.cookie = true;
     if (formSubmit) a.form_submit = true;
     if (isSubmit) a.is_submit = true;
+    if (isSubmit && sideBox(el)) a.aside = true;
     // A button after a password box: a sign-in form's own "Sign In", not the one in the
     // site's header (Workday's opens a sign-in pop-up, and sends nothing)
     if (passwordBoxes.some((p) => p.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING)) a.after_password = true;

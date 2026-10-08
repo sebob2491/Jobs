@@ -169,7 +169,10 @@ have it typed into any page.
 The desk works in each job's own browser tab and follows only the tabs an application
 opens itself, so a tab you open (to check your email, say) is left alone. Jobs already
 marked applied are never queued again. If Submit doesn't bring up a confirmation, the job
-waits in **Needs you** with **I submitted it** rather than being counted as sent.
+waits in **Needs you** with **I submitted it** rather than being counted as sent, and
+**Submit for me** never presses that job's Submit again (even after a restart): picked
+again, it stops at the review page for you. A job-alerts or newsletter box with its own
+Submit (in a site's footer, say) is never taken for the application's.
 
 To add jobs from anywhere else, paste their links (LinkedIn, Indeed or any company
 site) into the box above the list. The desk reads each posting, scores it and ticks it

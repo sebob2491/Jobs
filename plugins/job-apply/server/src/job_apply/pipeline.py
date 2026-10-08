@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import re
 import time
 from collections import deque
@@ -69,7 +70,8 @@ _ACCOUNT_KINDS = {"text", "email", "tel", "select", "combobox", "listbox"}  # no
 _SOCIAL = re.compile(r"\b(google|apple|linked ?in|facebook|microsoft|indeed|seek)\b", re.I)
 _STEP = re.compile(r"^(save (?:and|&) continue|continue|next|next step|review|review (?:and|&) submit|"
                    r"review application|proceed|go to next step|start)$", re.I)
-_FORWARD = re.compile(r"^(save (?:and|&) continue|continue|next|next step|proceed|go to next step)$", re.I)
+_FORWARD = re.compile(r"^(save (?:and|&) continue|continue|next|next step|review|review application|proceed|"
+                      r"go to next step)$", re.I)
 _SIGN_IN_STEP = re.compile(r"create account\s*/\s*sign in|sign in\s*/\s*create account", re.I)  # Workday's step name
 _ENTRY = re.compile(r"^(apply manually|apply now|apply|easy apply|quick apply|"
                     r"apply for (?:this|the) (?:job|position|role)(?: online)?|"
@@ -117,6 +119,9 @@ class Run:
     once_page: dict[str, tuple] = field(default_factory=dict)  # where each this-application answer went in
     mail_checked: float = 0.0  # when the inbox was last looked at for its emailed code or link
     mail_done: bool = False  # the code or link from the inbox went in: no more looking
+    # Submit was pressed for this job before and no confirmation showed (its folder keeps the
+    # record): it may have gone, so it's never pressed again without the person
+    pressed_before: bool = False
     page_info: dict[str, Any] = field(default_factory=dict)  # what the page looked like when it paused
     page: Any = None  # its browser tab
     updated: float = field(default_factory=time.time)
@@ -239,7 +244,10 @@ class Applier:
             return run
         run.status, run.need, run.reason, run.blocking, run.questions = "queued", "", "", False, []
         run.left = False
-        run.submit = submit
+        # a Submit pressed earlier with no confirmation (in this run of the desk or before it was
+        # restarted) may have sent the application: Submit for me doesn't press it again
+        run.pressed_before = run.pressed_before or _pressed_before(job)
+        run.submit = submit and not run.pressed_before
         run.updated = time.time()
         self._cancel(job_id)
         (self.tasks.appendleft if front else self.tasks.append)(("apply", job_id))
@@ -333,7 +341,7 @@ class Applier:
             if run.page is None or run.page.is_closed():
                 continue
             if run.need == "email_code":
-                await self._check_mail(run)  # the code or link came after the queue went on
+                await self._check_mail_safely(run)  # the code or link came after the queue went on
             try:
                 moved = await self._past_pause(run)
             except Exception:  # a tab mid-way through loading: looked at again next time, not holding the rest
@@ -369,7 +377,7 @@ class Applier:
         blocker = next((r for r in self.runs.values() if r.blocking), None)
         if blocker is not None and submit is None:
             if blocker.need == "email_code":
-                await self._check_mail(blocker)
+                await self._check_mail_safely(blocker)
             try:
                 moved = await self._strict(self._moved_on(blocker))
             except Exception:  # a tab that can't be read just now (mid-load, crashed): not past it, and the
@@ -403,7 +411,7 @@ class Applier:
         self.tasks.remove(task)
         kind, job_id = task
         run = self.runs[job_id]
-        self.current = job_id
+        held = self._hold_tools(job_id)
         try:
             await self._strict(self._submit(run) if kind == "submit" else self._drive(run))
         except TabClosed:
@@ -417,10 +425,26 @@ class Applier:
                 run.reason = f"Something went wrong: {type(e).__name__}: {str(e).splitlines()[0][:200] if str(e) else ''}"
                 self._log(run, run.reason)
         finally:
-            self.current = None
+            self._give_back_tools(held)
             if run.status == "running":  # the desk was stopped part-way
                 run.status, run.reason = "failed", "Stopped before it finished. Press Resume to carry on."
             run.updated = time.time()
+
+    def _hold_tools(self, job_id: int) -> tuple[Any, Any, Any]:
+        """Take the browser tools for one of this job's steps: Claude's calls that act in the
+        browser wait meanwhile (server._desk_driving). Returns what to give back."""
+        browser = self.srv.browser
+        held = (self.current, browser.current_tab, browser.current_job_id)
+        self.current = job_id
+        return held
+
+    def _give_back_tools(self, held: tuple[Any, Any, Any]) -> None:
+        """Hand the tools back on the tab, and with the job, they had before: Claude may be at
+        work in a tab of its own, and its next fill or click mustn't land in this job's tab."""
+        self.current, tab, job_id = held
+        browser = self.srv.browser
+        if tab is not None and browser.use_tab(tab):
+            browser.current_job_id = job_id
 
     async def _strict(self, step: Any) -> Any:
         """Run a job's step with the browser held to that job's tab (and tabs it opens)."""
@@ -496,7 +520,11 @@ class Applier:
         """The profile's email address and the app password saved for it, unless that
         password was turned down (a new one is tried)."""
         password = _secret("email_password")
-        address = str(config.Profile.load().get("personal.email") or "").strip()
+        try:
+            address = str(config.Profile.load().get("personal.email") or "").strip()
+        except Exception as e:  # a typo in profile.yaml: said, and the queue carries on without the inbox
+            self.mail_problem = f"The desk can't watch your inbox until profile.yaml reads again: {e}"
+            return None
         if not password or "@" not in address or password == self._mail_refused:
             return None
         if mailbox.imap_host(address) is None:  # watching an inbox it can't read would only mislead
@@ -514,6 +542,14 @@ class Applier:
         for u in urls:
             allowed |= mailbox.ATS_MAIL_DOMAINS.get(detect_ats(u), set())
         return {d for d in allowed if d}
+
+    async def _check_mail_safely(self, run: Run) -> None:
+        """_check_mail, with any surprise in it (a profile.yaml typo, say) kept from stalling the
+        queue: the hold's long-wait release and the other jobs still go on."""
+        try:
+            await self._check_mail(run)
+        except Exception as e:
+            self.mail_problem = f"The desk couldn't look in your inbox ({type(e).__name__}). It tries again shortly."
 
     async def _check_mail(self, run: Run) -> None:
         """Look in the inbox for the code or link a waiting job's site emailed, and put it in."""
@@ -561,8 +597,13 @@ class Applier:
         try:
             if found.kind == "code":
                 # not put in (the page was being drawn again, a box turned it down): looked for again.
-                # Held to the job's own tab: a closed one mustn't let the code into another job's page
-                run.mail_done = await self._strict(self._enter_code(run, found))
+                # Held to the job's own tab: a closed one mustn't let the code into another job's page.
+                # Between jobs Claude may be using the tools: they're held, then given back as they were
+                held = self._hold_tools(run.job_id)
+                try:
+                    run.mail_done = await self._strict(self._enter_code(run, found))
+                finally:
+                    self._give_back_tools(held)
             else:
                 await self.srv.browser.visit(found.value)
                 run.mail_done = True
@@ -637,6 +678,13 @@ class Applier:
 
     async def _open(self, run: Run) -> bool:
         srv = self.srv
+        # its own tab, while that still shows this job's application. One taken on to another
+        # posting meanwhile (by the person, or by Claude's tools) is no longer this job's: filling
+        # it would put this job's details into another employer's form, and Submit for me send it
+        if (run.page is not None and not run.page.is_closed()
+                and not self._own_place(run, run.page.url)):
+            self._log(run, "its tab had gone on to another page, so I opened the job again in a new tab")
+            run.page = None
         if srv.browser.use_tab(run.page):
             srv.browser.current_job_id = run.job_id
             return True
@@ -822,7 +870,8 @@ class Applier:
                 return self._pause(run, "sign_in", f"Sign in (or create your account) on {_site(run, data)} in "
                                    "the browser window; the desk carries on by itself after that.", seen=data)
             if action is None:
-                greyed = [a for a in data.get("actions") or [] if a.get("is_submit") and a.get("disabled")]
+                greyed = [a for a in data.get("actions") or [] if a.get("is_submit") and a.get("disabled")
+                          and not a.get("aside")]
                 if greyed:
                     problems = "; ".join(e for e in data.get("errors") or [] if _ERRORISH.search(e))[:300]
                     return self._pause(run, "stuck", f"\u201c{greyed[0]['text']}\u201d is greyed out, so the site still "
@@ -860,6 +909,11 @@ class Applier:
                 self._log(run, f"“{action['text']}” was gone by the time I clicked; looking again")
                 run.page = srv.browser.current_tab or run.page
                 continue
+            if clicked.get("clicked") is False and str(clicked.get("blocked") or "").startswith("Dry run"):
+                # practice mode: a button that sends a form and isn't a step button ("Quick Apply" on
+                # a posting) isn't pressed. That's no review page: nothing has been filled
+                return self._pause(run, "stuck", f"Practice mode: “{action['text'].strip()}” sends a form "
+                                   "and isn't a step button I know, so I didn't press it. Nothing was sent.")
             if clicked.get("clicked") is False:  # the guard says it's the final submit
                 return await self._finish(run, data, text)
             self._log(run, f"clicked “{action['text']}”")
@@ -1131,6 +1185,10 @@ class Applier:
         srv._mark_ready(job, "filled by the Job Desk")
         run.status, run.need = "ready", ""
         run.reason = "Filled and waiting on the review page. Check it in the browser, then press Submit."
+        if run.pressed_before:
+            run.reason = ("Filled and waiting on the review page. Submit was pressed for this job before and no "
+                          "confirmation showed, so it may have gone through: check your email or the site before you "
+                          "press Submit.")
         self._log(run, "reached the review page")
 
     async def _submit(self, run: Run, by_person: bool = True) -> None:
@@ -1140,7 +1198,10 @@ class Applier:
         if run.status == "skipped":
             return
         if not srv.browser.use_tab(run.page):
-            run.status, run.reason = "needs_you", "Its tab was closed. Press Resume to fill it again first."
+            # waiting on Resume now, whatever it waited on before (a CAPTCHA's pause has no Resume button)
+            run.status, run.need, run.blocking = "needs_you", "stuck", False
+            run.reason = "Its tab was closed. Press Resume to fill it again first."
+            self._log(run, run.reason)
             return
         srv.browser.current_job_id = run.job_id
         if not by_person:
@@ -1152,6 +1213,8 @@ class Applier:
         if run.status == "skipped":  # skipped while the page was being checked
             return
         result = await srv.submit_application(job_id=run.job_id, user_confirmed=True)
+        if result.get("submitted") and not result.get("confirmed"):
+            run.pressed_before = True  # it may have gone: Submit for me never presses it again
         if result.get("submitted") and result.get("confirmed"):
             run.status, run.need, run.reason = "submitted", "", "Submitted."
         elif result.get("submitted"):
@@ -1222,6 +1285,18 @@ def _pending(result: dict[str, Any], once_failed: dict[str, dict[str, Any]]) -> 
     pending += [f for key, f in once_failed.items() if key not in asked and f.get("kind") != "file"]
     missing_files = [f for f in result["needs_input"] if f.get("required") and f.get("kind") == "file"]
     return pending, missing_files
+
+
+def _pressed_before(job: dict[str, Any]) -> bool:
+    """Was Submit pressed for this job with no confirmation showing? submit_application keeps
+    a record of each press in the job's folder, so this outlasts a restart of the desk."""
+    if not job.get("folder"):
+        return False
+    try:
+        record = json.loads((Path(job["folder"]) / "submission.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    return isinstance(record, dict) and not record.get("confirmed")
 
 
 def tailored_ready(job: dict[str, Any]) -> bool:

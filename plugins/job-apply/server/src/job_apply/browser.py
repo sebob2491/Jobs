@@ -1219,7 +1219,8 @@ class BrowserSession:
         async with self._lock:
             page = await self.page()
             data = await self._extract(page)
-            return [a for a in data["actions"] if a.get("is_submit") and not a.get("disabled")]
+            # not a footer's job-alerts "Submit" (marked aside): pressing it sends no application
+            return [a for a in data["actions"] if a.get("is_submit") and not a.get("disabled") and not a.get("aside")]
 
     async def press_submit(self, action_id: str) -> dict[str, Any]:
         if config.Profile.load().settings.dry_run:  # second lock on the door, after submit_application's
