@@ -52,9 +52,17 @@ def _as_written(markdown_text: str) -> str:
     """The text as the person wrote it, not as markup: "<PLC>" stays on the page (an unknown
     tag would vanish), no HTML or script gets in (from a posting copied in, say), "#1 in
     the region" isn't a heading and "24*7" isn't italics. Links in angle brackets stay links."""
-    text = re.sub(r"<(?!(?:https?://|mailto:)[^\s<>]+>|[\w.+-]+@[\w-]+(?:\.[\w-]+)+>)", "&lt;", markdown_text)
-    text = re.sub(r"(?m)^(\s{0,3})#(?=[^#\s])", r"\1\\#", text)
-    return re.sub(r"(?<=\w)\*(?=\w)", r"\\*", text)
+    text = re.sub(r"(?s)<!--.*?-->", "", markdown_text)  # a note left in the text isn't part of it
+    out = []
+    # code spans as they are: Markdown shows their "<" itself
+    for i, part in enumerate(re.split(r"(`+[^`]*`+)", text)):
+        if i % 2:
+            out.append(part)
+            continue
+        part = re.sub(r"<(?!(?:https?://|mailto:)[^\s<>]+>|[\w.+-]+@[\w-]+(?:\.[\w-]+)+>|br\s*/?>)", "&lt;", part, flags=re.I)
+        part = re.sub(r"(?m)^(\s{0,3})#(?=[^#\s])", r"\1\\#", part)
+        out.append(re.sub(r"(?<=\w)\*(?=\w)", r"\\*", part))
+    return "".join(out)
 
 
 def to_html(markdown_text: str, kind: str, title: str = "") -> str:

@@ -43,6 +43,9 @@ ATS_MAIL_DOMAINS = {
     "paycom": {"paycom.com", "paycomonline.net", "paycomonline.com"},
     "taleo": {"taleo.net", "oracle.com"},
 }
+# A refusal says so, whatever else it says ("Too many login failures, try again later" is still one)
+_REFUSED = re.compile(r"authenticationfailed|authentication failed|invalid credentials|login failed|"
+                      r"incorrect (?:username|password)|bad credentials", re.I)
 _BUSY = re.compile(r"unavailable|temporar|try again|later|throttl|too many|limit|overquota|server ?bug", re.I)
 LOOK_BACK = 120  # seconds before the wait began: a code sent just as the page asked for it
 NEWEST = 30  # messages looked at per check, newest first
@@ -51,14 +54,18 @@ _CODE_WORDS = re.compile(r"verification|one[- ]time|passcode|security code|\bcod
 _DIGITS = re.compile(r"(?<![\d\-/.:+$])\b(\d{4,8})\b(?![\-/.:]?\d)")
 _MIXED = re.compile(r"\b(?=[A-Z0-9]*\d)(?=[A-Z0-9]*[A-Z])[A-Z0-9]{6,10}\b")
 # Between the words and a year-like code ("Your code is 2047"): nothing but joining words
-_JOINING = re.compile(r"^[\s:\-\u2013]*(?:is|was|below)?[\s:\-\u2013]*$", re.I)
+_JOINING = re.compile(r"^[\s:\-\u2013\u2026.]*(?:is|was|below)?[\s:\-\u2013\u2026.]*$", re.I)
 _LINK_WORDS = re.compile(r"verif|confirm|activat|validat", re.I)
 # A link in the same email that undoes or refuses ("Not you? Deactivate", "unsubscribe")
+_UNDOES = re.compile(r"deactivat|unsubscrib|opt-?out", re.I)  # in a link's query: career_ns=account_deactivation
 _NOT_THIS_LINK = re.compile(r"deactivat|invalidat|unsubscrib|opt-?out|not-?you|report|declin|reject|cancel", re.I)
 # A number named as something else just before it: "(Job 2617841)", "Requisition #2505303"
-_NAMED_NUMBER = re.compile(r"(?:\bjob|\breq(?:uisition)?|\bposition|\bposting|\bref(?:erence)?|#)\s*[:#.]?\s*$", re.I)
-# Markup that styles words without parting them: a code drawn as <b>48</b><b>2913</b> is one code
-_INLINE_TAGS = re.compile(r"</?(?:b|strong|span|i|em|u|font|small|big|mark|code|tt|sup|sub)\b[^>]*>", re.I)
+_NAMED_NUMBER = re.compile(r"(?:\bjob|\breq(?:uisition)?|\bref(?:erence)?)(?:\s+(?:id|code|number|no\.?))?\s*[:#.]?\s*$|#\s*$",
+                           re.I)
+# Markup that styles a code's characters apart without parting them: <b>48</b><b>2913</b> is one
+# code. Only between two characters a code is made of; anywhere else a tag parts the words.
+_SPLIT_CODE = re.compile(r"(?<=[0-9A-Z])(?:</?(?:b|strong|span|i|em|u|font|small|big|mark|code|tt|sup|sub)\b[^>]*>)+"
+                         r"(?=[0-9A-Z])")
 _URL = re.compile(r"https?://[^\s\"'<>)\]]+", re.I)
 
 
@@ -104,7 +111,7 @@ def _parts(msg: email.message.Message) -> tuple[list[str], list[str]]:
             continue
         (markup if part.get_content_subtype() == "html" else plain).append(str(body))
     links = [html.unescape(h) for page in markup for h in re.findall(r"""href\s*=\s*["']([^"']+)""", page, re.I)]
-    words = "\n".join(re.sub(r"<[^>]+>", " ", _INLINE_TAGS.sub("", re.sub(r"(?is)<(script|style).*?</\1>", " ", page)))
+    words = "\n".join(re.sub(r"<[^>]+>", " ", _SPLIT_CODE.sub("", re.sub(r"(?is)<(script|style).*?</\1>", " ", page)))
                       for page in markup)
     texts = ["\n".join(plain)] if plain else []
     return texts + ([html.unescape(words)] if markup else []), links
@@ -121,6 +128,11 @@ def find_code(text: str) -> str | None:
     "verification" or "one-time", not a year, a phone number, a price or a job's number.
     One straight after the words ("code: 218335", "code is K7Q2ZP") comes first, wherever
     it is; otherwise the nearest after the first of the words."""
+    return _find_code(text)[0]
+
+
+def _find_code(text: str) -> tuple[str | None, bool]:
+    """find_code's answer, and whether it came straight after the words (a sure one)."""
     text = re.sub(r"\s+", " ", text)  # an HTML mail's indentation is no distance
     nearest = None
     for m in _CODE_WORDS.finditer(text):
@@ -139,19 +151,26 @@ def find_code(text: str) -> str | None:
         found.sort()  # nearest first, digits or not: "K7Q2ZP. It expires in 1440 minutes"
         for start, value in found:
             if _JOINING.match(window[:start]):
-                return value
+                return value, True
         if found and nearest is None:
             nearest = found[0][1]
-    return nearest
+    return nearest, False
 
 
 def find_link(text: str, links: list[str], allowed_link: Callable[[str], bool]) -> str | None:
     """A confirmation link in a sign-up email that points back to the job site: one whose
     address itself says verify or confirm before one that only says so in its query (a logo
     link tagged "utm_campaign=email_verification"), and never "Not you? Deactivate"."""
+    def path(url: str) -> str | None:
+        try:
+            return urlparse(url).path
+        except ValueError:  # a template's placeholder ("https://[UNSUBSCRIBE_URL]/"): not a link to open
+            return None
+
     urls = [u.strip().rstrip(".,;") for u in [*links, *_URL.findall(text)]]
-    urls = [u for u in urls if not _NOT_THIS_LINK.search(urlparse(u).path) and allowed_link(u)]
-    for where in (lambda u: urlparse(u).path, lambda u: u):
+    urls = [u for u in urls if path(u) is not None and not _NOT_THIS_LINK.search(path(u))
+            and not _UNDOES.search(urlparse(u).query) and allowed_link(u)]
+    for where in (path, lambda u: u):
         for url in urls:
             if _LINK_WORDS.search(where(url)):
                 return url
@@ -177,7 +196,7 @@ def search(address: str, password: str, since: float, allowed: set[str], want: s
         except imaplib.IMAP4.abort as e:  # the connection went: a Wi-Fi blip, not the password
             raise MailboxError(f"lost the connection to {host}") from e
         except imaplib.IMAP4.error as e:
-            if _BUSY.search(str(e)):  # Gmail's "[UNAVAILABLE] Temporary System Problem"
+            if _BUSY.search(str(e)) and not _REFUSED.search(str(e)):  # Gmail's "[UNAVAILABLE] Temporary System Problem"
                 raise MailboxError(f"{host} is busy just now") from e
             raise MailboxError(f"{host} didn't accept the email app password") from e
         except UnicodeError as e:  # app passwords are plain letters and digits
@@ -218,7 +237,15 @@ def search(address: str, password: str, since: float, allowed: set[str], want: s
                 if want == "code":
                     # its words before its subject: "Your verification code" in a subject would
                     # otherwise read on into the body's first number (the job's)
-                    value = next((v for t in [*texts, str(msg.get("Subject") or "")] if (v := find_code(t))), None)
+                    subject = str(msg.get("Subject") or "")
+                    # the subject on its own last, then running into the words (a subject "Your
+                    # verification code" over a body "Use 482913 to verify your email")
+                    tries = [*texts, subject, subject + "\n" + (texts[0] if texts else "")]
+                    # a code straight after the words, in any of them, before a nearest guess: the
+                    # plain text may only name the job's number while the HTML shows the code
+                    answers = [_find_code(t) for t in tries]
+                    value = next((v for v, sure in answers if v and sure), None) or \
+                        next((v for v, _ in answers if v), None)
                 else:
                     value = next((v for t in texts or [""] if (v := find_link(t, links, allowed_link))), None)
             except Exception:  # a malformed message: the next one

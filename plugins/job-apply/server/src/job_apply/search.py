@@ -115,15 +115,23 @@ _AREA_WORDS = {"greater", "metro", "metropolitan", "area", "region", "valley"}  
 IN_STATE = "in:"  # a term "in:az": the area is in that state (never matched as words: norm drops ":")
 
 
-def _trailing_state(words: list[str]) -> tuple[str | None, list[str]]:
-    """A state before or after the place: 'phoenix az' -> ('AZ', ['phoenix']); 'arizona phoenix
-    area' -> ('AZ', ['phoenix', 'area']); else (None, words)."""
+# State names, longest first: "west virginia" before "virginia"
+_STATE_WORDS = sorted(((code, norm(name).split()) for code, name in US_STATES.items()), key=lambda c: -len(c[1]))
+
+
+def _trailing_state(words: list[str], leading_ok: bool = False) -> tuple[str | None, list[str]]:
+    """A state after the place: 'phoenix az' -> ('AZ', ['phoenix']); 'tempe arizona' -> ('AZ',
+    ['tempe']); with leading_ok, before it too: 'arizona phoenix area' -> ('AZ', ['phoenix',
+    'area']). Else (None, words): "Kansas City" and "Arizona City" are places of their own,
+    and a state named whole ("West Virginia") is read as itself, not as Virginia after "West"."""
+    if any(words == n for _, n in _STATE_WORDS):
+        return None, words
     if len(words) > 1 and words[-1].upper() in US_STATES:
         return words[-1].upper(), words[:-1]
-    for code, name in US_STATES.items():
-        n = norm(name).split()
+    for code, n in _STATE_WORDS:
         if len(words) > len(n) and words[-len(n):] == n:
             return code, words[:-len(n)]
+    for code, n in _STATE_WORDS if leading_ok else ():
         if len(words) > len(n) and words[:len(n)] == n:
             return code, words[len(n):]
     return None, words
@@ -139,7 +147,8 @@ def location_terms(location: str | None) -> list[str]:
     states: set[str] = set()
     for part in re.split(r"\s*[|,;]\s*", location):
         words = [w for w in norm(part).split() if not w.isdigit()]  # "AZ 85001": a ZIP code is no place
-        state, words = _trailing_state(words)
+        # a state first only when set apart: "Arizona (Phoenix area)", "Arizona - Phoenix"
+        state, words = _trailing_state(words, leading_ok=bool(re.match(r"^\s*[A-Za-z ]+\s*[(\-\u2013:]", part)))
         words = [w for w in words if w not in _AREA_WORDS] or words
         n = " ".join(words)
         if n:
@@ -1086,15 +1095,17 @@ def _oracle_listings(data: dict[str, Any], host: str, site: str) -> list[Listing
 def _merge_places(places: list[str]) -> str:
     """"Scottsdale, AZ, United States" and "Scottsdale, AZ, US" are one place; "Peoria, IL"
     and "Peoria, AZ" are two."""
-    kept: list[str] = []
-    seen: set[str] = set()
+    kept: dict[str, str] = {}
+    cities: set[str] = set()  # cities named with their state
     for place in places:
         parts = [norm(x) for x in place.split(",")]
         key = " ".join(parts[:2]) if len(parts) > 1 else parts[0]  # its city and its state
-        if key and key not in seen:
-            seen.add(key)
-            kept.append(place)
-    return "; ".join(kept)
+        if len(parts) > 1:
+            cities.add(parts[0])
+        if key and key not in kept:
+            kept[key] = place
+    # "Phoenix" beside "Phoenix, AZ, US" is the same place, said with less
+    return "; ".join(p for k, p in kept.items() if "," in p or k not in cities)
 
 
 def _oracle_places(req: dict[str, Any]) -> list[str]:
@@ -1163,7 +1174,11 @@ def _pick(companies: list[dict[str, Any]], names: list[str] | None) -> list[dict
     def words_in(part: str, whole: str) -> bool:  # whole words: "TEL" isn't in "Intel", nor "ASM" in "ASML"
         return bool(part) and f" {part} " in f" {whole} "
 
-    return [c for c in companies if any(words_in(w, norm(c["name"])) or words_in(norm(c["name"]), w) for w in wanted)]
+    def named(w: str, name: str) -> bool:
+        # or the start of the name, when that's more than a short code: "Applied Material", "Micro"
+        return words_in(w, name) or words_in(name, w) or len(w) >= 5 and name.startswith(w)
+
+    return [c for c in companies if any(named(w, norm(c["name"])) for w in wanted)]
 
 
 def keep_listings(company: str, listings: list[Listing], terms: list[str], limit: int,

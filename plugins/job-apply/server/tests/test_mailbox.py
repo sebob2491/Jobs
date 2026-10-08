@@ -257,3 +257,53 @@ def test_codes_from_greenhouses_mail_domain_and_an_employers_own_eightfold_site(
 
     assert sender_allowed("no-reply@us.greenhouse-mail.io", mailbox.ATS_MAIL_DOMAINS["greenhouse"])
     assert detect_ats("https://careers.lamresearch.com/careers/job/1") == "eightfold"  # so eightfold.ai's mail is its
+
+
+def test_a_number_named_as_the_jobs_however_its_named_and_a_code_for_the_position():
+    """"Requisition code: 2505303" and "Job ID 2617841" are the job's numbers, whatever the
+    words; "the code for this position: 482913" is the code."""
+    assert find_code("Requisition code: 2505303\nYour verification code is 218335") == "218335"
+    assert find_code("Verification code\nJob ID 2617841\n\n482913") == "482913"
+    assert find_code("Your verification code for this position: 482913") == "482913"
+    assert find_code("Your verification code is... 2047") == "2047"  # a year-like code, straight after
+
+
+def _alternative(subject: str, plain: str, markup: str) -> bytes:
+    from email.message import EmailMessage
+
+    msg = EmailMessage()
+    msg["From"], msg["Subject"] = "no-reply@careers.ti.com", subject
+    msg.set_content(plain)
+    msg.add_alternative(markup, subtype="html")
+    return bytes(msg)
+
+
+def test_the_code_wherever_the_email_puts_it(imap):
+    """In one span beside its words' span; in the HTML while the plain text only names another
+    number; under a subject that has the words while the body has only the code."""
+    since = time.time()
+    imap.messages = [(since + 10, _alternative("Verify", "Hi Sam, see the HTML version.",
+                                               "<span>Your verification code</span><span>482913</span>"))]
+    assert mailbox.search("sam@gmail.com", "pw", since, {"ti.com"}, "code").value == "482913"
+    imap.messages = [(since + 10, _alternative(
+        "Verify", "Your verification code is in this email.\nApplication 2617841 received.",
+        "<p>Your verification code is <b>551234</b></p><p>Application 2617841 received.</p>"))]
+    assert mailbox.search("sam@gmail.com", "pw", since, {"ti.com"}, "code").value == "551234"
+    imap.messages = [(since + 10, _message("no-reply@careers.ti.com", "Your verification code",
+                                           "Use 482913 to verify your email address."))]
+    assert mailbox.search("sam@gmail.com", "pw", since, {"ti.com"}, "code").value == "482913"
+
+
+def test_a_placeholder_link_or_a_deactivation_in_a_links_query_isnt_opened():
+    own = lambda u: u.startswith("https://careers.acme.com/")  # noqa: E731
+    verify = "https://careers.acme.com/account/verify?token=abc"
+    assert find_link("", ["https://[UNSUBSCRIBE_URL]/", verify], own) == verify
+    confirm = "https://careers.acme.com/careers?career_ns=email_verification&t=1"
+    assert find_link("", ["https://careers.acme.com/careers?career_ns=account_deactivation&t=1", confirm], own) == confirm
+
+
+def test_a_refusal_that_also_says_try_later_is_a_refusal(imap):
+    imap.login_error = imaplib.IMAP4.error("[AUTHENTICATIONFAILED] Invalid credentials. Too many failed attempts, "
+                                           "try again later.")
+    with pytest.raises(MailboxError, match="app password"):
+        mailbox.search("sam@gmail.com", "abcd efgh ijkl mnop", time.time(), {"ti.com"}, "code")

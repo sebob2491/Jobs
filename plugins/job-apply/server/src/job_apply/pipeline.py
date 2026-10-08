@@ -49,6 +49,7 @@ POLL_SECONDS = 3.0
 # looked at this often, for this long after it began waiting
 MAIL_POLL_SECONDS = 20
 MAIL_WINDOW = 15 * 60
+SHARED_LOOK_BACK = 30  # seconds looked back for a job's code while an earlier job waits on the same sender
 FINISHED = {"applied", "interviewing", "offer", "rejected", "withdrawn"}  # tracker statuses never applied to again
 
 _BOT_TITLE = re.compile(r"just a moment|attention required|access denied|pardon our interruption|security check|"
@@ -246,7 +247,8 @@ class Applier:
         run.left = False
         # a Submit pressed earlier with no confirmation (in this run of the desk or before it was
         # restarted) may have sent the application: Submit for me doesn't press it again
-        run.pressed_before = run.pressed_before or _pressed_before(job)
+        run.pressed_before = run.pressed_before or _pressed_before(job) or any(
+            str(e.get("note") or "").startswith("pressed Submit;") for e in self.srv.tracker().events(job_id))
         run.submit = submit and not run.pressed_before
         run.updated = time.time()
         self._cancel(job_id)
@@ -507,8 +509,12 @@ class Applier:
         own = self._own_hosts(run) if own is None else own
         if host == run.paused_host or host and host in own:  # (a page saved on this computer has no host)
             return True
-        paused_on_own_site = shared_system(f"https://{run.paused_host}/") is None  # the employer's own address
-        return paused_on_own_site and detect_ats(url) not in ("company_site", "linkedin", "indeed")
+        if not run.paused_host:
+            return False  # never paused, so nowhere it went on from: only its own addresses
+        # paused on the employer's own address, and on from there into a job system many employers
+        # share: not another employer's own careers site, which isn't one
+        paused_on_own_site = shared_system(f"https://{run.paused_host}/") is None
+        return paused_on_own_site and shared_system(url) not in (None, "linkedin", "indeed")
 
     def _own_hosts(self, run: Run) -> set[str]:
         job = self.srv.tracker().get(run.job_id, with_description=False) or {}
@@ -599,7 +605,9 @@ class Applier:
         others = [r.paused_at for r in self.runs.values() if r is not run and r.status == "needs_you"
                   and r.need == "email_code" and self._mail_senders(r) & senders]
         later = [t for t in others if t > run.paused_at]
-        look_back = 0 if any(t <= run.paused_at for t in others) else mailbox.LOOK_BACK
+        # (a few seconds back still: the site sends the code as the button is pressed, a moment before
+        # the desk notices and pauses)
+        look_back = SHARED_LOOK_BACK if any(t <= run.paused_at for t in others) else mailbox.LOOK_BACK
         try:
             found = await asyncio.to_thread(mailbox.search, *login, run.paused_at, senders,
                                             "code" if boxes else "link", own_link, min(later) if later else None,
@@ -683,7 +691,7 @@ class Applier:
                seen: dict[str, Any] | None = None) -> None:
         """Wait on the person. `seen`: the page as it was paused on, which never counts as past
         the pause (Workday's sign-in step with no buttons drawn reads as an ordinary page)."""
-        if run.status == "skipped":
+        if run.status in ("skipped", "submitted"):  # skipped, or marked applied, while it ran
             return
         run.pause_sig = _page_sig(seen) if seen else None
         run.status, run.need, run.reason = "needs_you", need, reason
@@ -757,7 +765,7 @@ class Applier:
         pressed: list[tuple[Any, ...]] = []  # (page, button) for each button pressed on this pass
         pressed_on: list[str] = []  # and where, in words
         for _ in range(MAX_STEPS):
-            if run.status == "skipped":  # pressed while this job was running
+            if run.status in ("skipped", "submitted"):  # Skip, or "I submitted it", pressed while it ran
                 return
             data, text = await self._look()
             run.page_info = _page_info(data)
@@ -1208,7 +1216,7 @@ class Applier:
     async def _finish(self, run: Run, data: dict[str, Any], text: str) -> None:
         """The review page (or a one-page form with its submit button) is reached."""
         srv = self.srv
-        if run.status == "skipped":
+        if run.status in ("skipped", "submitted"):
             return
         try:  # Indeed's form inside an employer's page is Indeed's
             ats = await srv.browser.human_submit_ats(run.page) or detect_ats(data["url"])

@@ -57,7 +57,9 @@ NAVIGATION_RE = re.compile(
 _ACCEPT_WORDS = re.compile(r"^(accept|allow|agree|ok|okay|got it|i agree|i accept|i understand|yes,? i agree|"
                            r"agree (and|&) (proceed|continue|close)|accept (and|&) (proceed|continue|close))"
                            r"( all)?( cookies)?[.!]?$", re.I)
-_COOKIE_ACCEPT = re.compile(r"\b(accept|allow|agree)\b.*\bcookies?\b|\bcookies?\b.*\b(accept|allow|agree)", re.I)
+# "Accept (all) cookies", "Allow cookies": not "I agree to the Terms of Use and Cookie Policy",
+# an application's consent line
+_COOKIE_ACCEPT = re.compile(r"\b(accept|allow)\b[^.]*\bcookies\b|\bcookies\b[^.]*\b(accept|allow)", re.I)
 _DECLINES = re.compile(r"reject|decline|necessary|essential|required only|only required|deny|refuse|manage|settings|"
                        r"preferences|customi[sz]e|without", re.I)
 

@@ -1202,3 +1202,28 @@ def test_companies_are_picked_by_whole_words():
     assert [c["name"] for c in pick(companies, ["TEL"])] == ["Tokyo Electron (TEL)"]
     assert [c["name"] for c in pick(companies, ["ASM"])] == ["ASM (ASM America)"]
     assert [c["name"] for c in pick(companies, ["Lam Research", "intel"])] == ["Intel", "Lam Research"]
+
+
+def test_a_state_named_whole_or_a_city_named_for_one():
+    """"West Virginia" is West Virginia, not Virginia after "West"; "Kansas City, MO" and
+    "Arizona City" are places, not a state with "City" after it."""
+    wv = location_terms("West Virginia")
+    assert location_matches("Charleston, WV", wv) is True and location_matches("Richmond, VA", wv) is False
+    assert location_matches("Morgantown, West Virginia", wv) is True
+    assert "ks" not in location_terms("Kansas City, MO") and "mo" in location_terms("Kansas City, MO")
+    assert location_terms("Arizona City") == ["arizona city"]
+    assert "az" in location_terms("Arizona - Phoenix")  # set apart: a state first
+
+
+def test_a_city_named_alone_beside_its_fuller_self_is_one_place():
+    merged = search_module._merge_places(["Phoenix", "Phoenix, AZ, United States", "Casa Grande",
+                                          "Casa Grande, AZ, US", "Tucson"])
+    assert merged == "Phoenix, AZ, United States; Casa Grande, AZ, US; Tucson"
+
+
+def test_a_company_is_picked_by_the_start_of_its_name():
+    companies = [{"name": n} for n in ["Applied Materials", "ASM (ASM America)", "ASML", "Microchip Technology", "Micron"]]
+    pick = search_module._pick
+    assert [c["name"] for c in pick(companies, ["Applied Material"])] == ["Applied Materials"]
+    assert [c["name"] for c in pick(companies, ["Micro"])] == ["Microchip Technology", "Micron"]
+    assert [c["name"] for c in pick(companies, ["ASM"])] == ["ASM (ASM America)"]  # a short code: whole words only

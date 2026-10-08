@@ -2213,7 +2213,7 @@ def test_an_emailed_code_is_read_only_from_its_own_mail_and_its_own_site(srv, mo
         return runs
 
     earlier, later = run(go())
-    assert asked[later.paused_at][:2] == (None, 0)
+    assert asked[later.paused_at][:2] == (None, pipeline.SHARED_LOOK_BACK)  # a few seconds, not two minutes
     assert asked[earlier.paused_at][:2] == (later.paused_at, pipeline.mailbox.LOOK_BACK)
     own_link = asked[later.paused_at][2]
     assert own_link("https://careers.acme-fab.example/activate?t=1")
@@ -2221,3 +2221,39 @@ def test_an_emailed_code_is_read_only_from_its_own_mail_and_its_own_site(srv, mo
     for url in ("https://evil.example/myworkdayjobs.com/verify", "https://evil.example/greenhouse.io/confirm?t=1",
                 "https://other.wd5.myworkdayjobs.com/activate/x", "javascript:alert(1)"):
         assert not own_link(url), url
+
+
+def test_a_job_that_never_paused_goes_on_only_at_its_own_addresses(srv):
+    """Only from where a job paused on its employer's own site does it go on into a job system
+    many employers share; not a job that never paused (any Workday page would count as its
+    own), and never into another employer's careers site that runs a job system itself."""
+    applier = Applier(srv)
+    own = {"careers.acme-fab.example"}
+    other_workday = "https://other.wd5.myworkdayjobs.com/en-US/External/job/Phoenix/FSE_R1/apply"
+    never = Run(1, "FSE", "Acme Fab")
+    assert not applier._own_place(never, other_workday, own=own)
+    assert applier._own_place(never, "https://careers.acme-fab.example/apply/1", own=own)
+    paused = Run(2, "FSE", "Acme Fab", paused_host="careers.acme-fab.example")
+    assert applier._own_place(paused, "https://acme.wd1.myworkdayjobs.com/en-US/External/apply", own=own)
+    assert not applier._own_place(paused, "https://careers.micron.com/careers/job/1", own=own)
+
+
+def test_a_job_marked_applied_while_it_runs_isnt_paused_after(srv):
+    job = srv.add_job(url="https://careers.acme-fab.example/apply/1", title="FSE", company="Acme Fab")["job"]
+    applier = Applier(srv)
+    r = Run(job["id"], "FSE", "Acme Fab", status="running")
+    applier.runs[job["id"]] = r
+    applier.mark_applied(job["id"])
+    applier._pause(r, "questions", "Answer these")
+    assert (r.status, r.need) == ("submitted", "")
+
+
+def test_a_press_the_tracker_remembers_isnt_made_again_without_its_record(srv):
+    """The record in the job's folder couldn't be written (a full disk): the tracker's note of
+    the press still keeps Submit for me from pressing again."""
+    job = srv.add_job(url="https://careers.acme-fab.example/apply/1", title="FSE", company="Acme Fab")["job"]
+    srv.tracker().update(job["id"], note="pressed Submit; no confirmation showed")
+    applier = Applier(srv)
+    applier.auto_submit = True
+    r = applier.enqueue(job["id"], submit=True)
+    assert r.pressed_before and not r.submit

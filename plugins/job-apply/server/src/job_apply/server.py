@@ -69,7 +69,8 @@ def _desk_tab_job(tab: Any) -> int | None:
     if d is None or tab is None:
         return None
     for run in list(d.applier.runs.values()):
-        if run.status in ("needs_you", "ready", "queued", "running") and tab in browser.lineage(run.page):
+        # a failed one too: Resume takes it up again in its tab
+        if run.status in ("needs_you", "ready", "queued", "running", "failed") and tab in browser.lineage(run.page):
             return run.job_id
     return None
 
@@ -718,6 +719,11 @@ def _mark_ready(job: dict[str, Any], note: str) -> None:
         tracker().update(job["id"], note=note)
 
 
+def _write_record(path: Path, record: dict[str, Any]) -> None:
+    with contextlib.suppress(OSError):  # the tracker keeps the note either way
+        path.write_text(json.dumps(record, indent=2), encoding="utf-8")
+
+
 def _submit_policy(ats: str) -> str:
     s = config.Profile.load().settings
     if s.dry_run:
@@ -763,17 +769,30 @@ async def submit_application(job_id: int | None = None, user_confirmed: bool = F
                 "empty_required": empty_required, "actions": [a["text"] for a in page["actions"]]}
     folder = Path(job["folder"])
     await browser.screenshot(full_page=True, save_to=folder / "before-submit.jpg")
+    # A record of the press, written before it: with no confirmation (or a page that closes itself
+    # as it sends) the application may still have gone, and the Job Desk reads this, after a
+    # restart too, so as never to press Submit again by itself
+    record = folder / "submission.json"
+    try:
+        earlier: str | None = record.read_text(encoding="utf-8")
+    except OSError:
+        earlier = None
+    _write_record(record, {"confirmed": False, "state": "pressing", "at": datetime.now().isoformat()})
     try:
         result = await browser.press_submit(buttons[-1]["id"])
-    except SubmitBlocked as e:
+    except SubmitBlocked as e:  # nothing was pressed: the record is as it was
+        with contextlib.suppress(OSError):
+            record.write_text(earlier, encoding="utf-8") if earlier is not None else record.unlink(missing_ok=True)
         return {"submitted": False, "reason": str(e)}
-    # the record of the press first: with no confirmation the application may still have gone,
-    # and the Job Desk reads this (after a restart too) so as never to press Submit again by itself
-    (folder / "submission.json").write_text(json.dumps({**result, "at": datetime.now().isoformat()}, indent=2))
+    except Exception:
+        tracker().update(job["id"], note="pressed Submit; it didn't finish, so it may or may not have gone")
+        raise
+    # the tracker first: a full disk mustn't lose a confirmed submit
     if result["confirmed"]:
         tracker().update(job["id"], status="applied", note=f"submitted via {ATS_NAMES.get(ats, ats)}")
     else:
         tracker().update(job["id"], note="pressed Submit; no confirmation showed")
+    _write_record(record, {**result, "at": datetime.now().isoformat()})
     with contextlib.suppress(Exception):  # a tab the confirmation closed
         await browser.screenshot(full_page=False, save_to=folder / "after-submit.jpg")
     return {

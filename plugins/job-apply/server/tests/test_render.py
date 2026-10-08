@@ -143,3 +143,12 @@ def test_a_pdf_that_fails_to_write_leaves_the_last_good_one(tmp_path, monkeypatc
         asyncio.run(render.render_pdf("<p>x</p>", dest))
     assert dest.read_bytes() == b"%PDF-1.4 the last good one %%EOF"
     assert not (tmp_path / "Sam_Rivera_Resume.pdf.part").exists()
+
+
+def test_a_resume_keeps_its_line_breaks_code_spans_and_drops_notes():
+    page = to_html("Sam Rivera<br>Chandler, AZ\n\n<!-- tailor this for ASML -->\n"
+                   "- Wrote `a < b` checks for tool interlocks\n", "resume")
+    body = page.split("<body>", 1)[1]
+    assert "<br" in body and "&lt;br" not in body
+    assert "tailor this" not in body
+    assert "<code>a &lt; b</code>" in body and "&amp;lt;" not in body
