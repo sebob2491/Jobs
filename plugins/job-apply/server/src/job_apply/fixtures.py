@@ -39,6 +39,12 @@ def _spellings(value: str) -> set[str]:
     return {v for v in out if v}
 
 
+def _identifying(word: str) -> bool:
+    """A user name or handle, not an everyday word that a page would also use: one with a
+    digit or a separator in it, or a long one."""
+    return len(word) >= 3 and (bool(re.search(r"[\d._-]", word)) or len(word) >= 10)
+
+
 def personal_strings(prof: Profile) -> list[str]:
     keys = [*NAME_KEYS, "personal.email", "personal.phone", "personal.address.line1", "personal.address.line2",
             "personal.address.postal_code", "personal.linkedin_url", "personal.github_url", "personal.website"]
@@ -46,14 +52,16 @@ def personal_strings(prof: Profile) -> list[str]:
     if prof.full_name:
         values.append(prof.full_name)
     email = str(prof.get("personal.email") or "")
-    if "@" in email and len(email.split("@")[0]) >= 3:
-        values.append(email.split("@")[0])  # "Signed in as sunflower77"
+    local = email.split("@")[0] if "@" in email else ""
+    if _identifying(local):
+        values.append(local)  # "Signed in as sunflower77" (not an everyday word: "resume@...")
     for key in ("personal.linkedin_url", "personal.github_url", "personal.website"):
         url = str(prof.get(key) or "").strip().rstrip("/")
         if url:
             values.append(re.sub(r"^https?://(www\.)?", "", url, flags=re.I))  # "linkedin.com/in/someone"
             handle = url.rsplit("/", 1)[-1]
-            if len(handle) >= 4 and "." not in handle:
+            # a profile's handle; a website's last segment only when it isn't a word ("/portfolio")
+            if len(handle) >= 4 and "." not in handle and (key != "personal.website" or _identifying(handle)):
                 values.append(handle)
     phone = re.sub(r"\D", "", str(prof.get("personal.phone") or ""))
     if len(phone) >= 7:
@@ -79,8 +87,26 @@ def _pattern(secret: str) -> str:
 
 def redact(text: str, secrets: list[str]) -> str:
     for s in secrets:
-        text = re.sub(_pattern(s), REDACTED, text, flags=re.I)
+        # a two-letter name only as written ("Al", "Do"): not "all", nor "do" in a question
+        text = re.sub(_pattern(s), REDACTED, text, flags=0 if len(s) < 3 else re.I)
     return text
+
+
+def _redact_page(soup: BeautifulSoup, secrets: list[str]) -> None:
+    """Redact the page's words and attribute values, never its tag names or style sheets: a
+    last name "Li" mustn't turn <li> into <REDACTED>."""
+    for node in soup.find_all(string=True):
+        if node.parent is not None and node.parent.name == "style":
+            continue
+        new = redact(str(node), secrets)
+        if new != str(node):
+            node.replace_with(new)
+    for tag in soup.find_all(True):
+        for attr, value in list(tag.attrs.items()):
+            if isinstance(value, list):
+                tag[attr] = [redact(v, secrets) for v in value]
+            elif isinstance(value, str):
+                tag[attr] = redact(value, secrets)
 
 
 _KEEP_META = re.compile(r"^(charset|viewport|content-type)$", re.I)
@@ -89,6 +115,8 @@ _OPAQUE = re.compile(r"^eyJ[\w+/=-]+$|^[\w+/=-]{80,}$")  # base64 state, tokens
 
 def _without_query(url: str) -> str:
     """A link without its query and fragment: session ids, tokens and the person's email."""
+    if url.startswith("#"):
+        return "#"  # a link to the page itself stays one ("" would reload it)
     try:
         parts = urlsplit(url)
     except ValueError:
@@ -317,7 +345,8 @@ def clean_html(raw: str, secrets: list[str], frame_map: dict[str, str] | None = 
             tag.string = css
         else:
             tag.decompose()
-    return redact(str(soup), secrets)
+    _redact_page(soup, secrets)
+    return str(soup)
 
 
 def convert(snapshot: Path, name: str, out_dir: Path = DEFAULT_DIR, prof: Profile | None = None) -> list[Path]:

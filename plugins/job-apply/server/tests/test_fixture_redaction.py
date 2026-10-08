@@ -110,3 +110,16 @@ def test_expectations_keep_accented_names_findable_and_drop_query_strings(tmp_pa
     text = (tmp_path / "out" / "probe.expect.json").read_text(encoding="utf-8")
     assert "Jos" not in text and "SESSIONID" not in text and "sunflower77" not in text
     assert json.loads(text)["source_url"] == "https://careers-x.icims.com/jobs/1/submit"
+
+
+def test_a_short_surname_or_an_everyday_email_name_leaves_the_page_whole():
+    """A last name "Li" doesn't turn <li> into <REDACTED>; an email "resume@..." or a website
+    ".../portfolio" doesn't take every "resume" or "portfolio" off the page; "#" links stay."""
+    prof = Profile({"personal": {"first_name": "Mei", "last_name": "Li", "email": "resume@example.org",
+                                 "website": "https://mei-example.org/portfolio"}})
+    raw = """<html><body><ul><li>Upload your resume</li><li>Add a portfolio</li></ul>
+      <p>Thanks, Mei Li</p><a href="#">Back to top</a><a href="#section-2">More</a></body></html>"""
+    out = clean_html(raw, personal_strings(prof))
+    assert out.count("<li>") == 2 and "Upload your resume" in out and "Add a portfolio" in out, out
+    assert "Mei" not in out and "Li<" not in out and " Li" not in out
+    assert 'href="#"' in out

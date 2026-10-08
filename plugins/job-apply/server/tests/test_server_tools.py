@@ -416,7 +416,8 @@ def test_cookie_and_privacy_banners_are_never_accepted():
         assert _accepts_cookies(label, label, in_banner), label
     for label, in_banner in (("Reject All", True), ("Accept only necessary cookies", True), ("Use necessary cookies only", True),
                              ("Cookie settings", True), ("Continue without accepting", True), ("Accept", False),
-                             ("I agree to the terms", False), ("Next", True)):
+                             ("I agree to the terms", False), ("Next", True),
+                             ("I agree to the Terms of Use and Cookie Policy", False)):  # an application's consent
         assert not _accepts_cookies(label, label, in_banner), label
 
 
@@ -434,3 +435,66 @@ def test_the_click_tool_refuses_a_cookie_banners_accept(srv):
     accept, accepted, reject = run(go())
     assert accept["clicked"] is False and "never accepted" in accept["blocked"] and accepted == 0
     assert reject["clicked"] is True
+
+
+@needs_browser
+def test_a_failed_desk_jobs_tab_is_still_the_desks(srv):
+    """Resume takes a failed job up again in its tab: Claude's open_application doesn't load
+    another posting there."""
+    from job_apply import desk as desk_module
+    from job_apply.pipeline import Run
+
+    job = srv.add_job(url="https://careers.example.com/a", title="Tech", company="Example")["job"]
+    d = desk_module.get_desk(srv)
+
+    async def go():
+        tab = await srv.browser.new_tab()
+        d.applier.runs[job["id"]] = Run(job["id"], "Tech", "Example", status="failed", page=tab)
+        return srv._desk_tab_job(tab)
+    try:
+        assert run(go()) == job["id"]
+    finally:
+        desk_module._desk = None
+
+
+@needs_browser
+def test_a_submit_whose_record_cant_be_written_is_still_in_the_tracker(srv):
+    """A full disk (here: a folder where the record goes) mustn't lose a confirmed submit."""
+    sent = routed(srv)
+    job = srv.add_job(url="https://careers.example.com/a", title="Tech", company="Example")["job"]
+    (Path(job["folder"]) / "submission.json").mkdir()
+    run(srv.open_application(job_id=job["id"]))
+    out = run(srv.submit_application(job_id=job["id"], user_confirmed=True))
+    assert out["submitted"] and out["confirmed"] and len(sent) == 1, out
+    assert srv.get_job(job["id"])["job"]["status"] == "applied"
+
+
+@needs_browser
+@pytest.mark.parametrize("how", ["broke", "blocked"])
+def test_a_press_that_doesnt_finish_is_remembered_and_one_never_made_isnt(srv, monkeypatch, how):
+    """The press is recorded before it's made: a tab that dies mid-press may still have sent
+    the application, so the Job Desk never presses that job's Submit again by itself. A press
+    the browser refused leaves no record."""
+    from job_apply.pipeline import _pressed_before
+
+    routed(srv)
+    job = srv.add_job(url="https://careers.example.com/a", title="Tech", company="Example")["job"]
+    run(srv.open_application(job_id=job["id"]))
+
+    async def press(button_id):
+        if how == "blocked":
+            raise srv.SubmitBlocked("Not this one")
+        raise RuntimeError("Target page, context or browser has been closed")
+
+    monkeypatch.setattr(srv.browser, "press_submit", press)
+    if how == "broke":
+        with pytest.raises(RuntimeError):
+            run(srv.submit_application(job_id=job["id"], user_confirmed=True))
+    else:
+        assert run(srv.submit_application(job_id=job["id"], user_confirmed=True))["submitted"] is False
+    job = srv.tracker().get(job["id"])
+    notes = [e["note"] for e in srv.tracker().events(job["id"])]
+    if how == "broke":
+        assert _pressed_before(job) and any(str(n).startswith("pressed Submit;") for n in notes), notes
+    else:
+        assert not _pressed_before(job) and not (Path(job["folder"]) / "submission.json").exists()

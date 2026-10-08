@@ -205,3 +205,9 @@ def test_url_helpers_take_any_case_and_a_link_from_part_way_through():
     assert greenhouse_form_url("https://BOARDS.GREENHOUSE.IO/asm/jobs/123") == \
         "https://job-boards.greenhouse.io/embed/job_app?for=asm&token=123"
     assert linkedin_job_id("https://WWW.LINKEDIN.COM/JOBS/VIEW/field-service-4012345678") == "4012345678"
+
+
+def test_an_oracle_site_on_a_companys_own_address_under_its_hcmui_path():
+    assert detect_ats("https://careers.ti.com/hcmUI/CandidateExperience/en/sites/CX/job/25018065") == "oracle_hcm"
+    assert detect_ats("https://careers.ti.com/hcmUI/CandidateExperience/en/sites/CX/job/25018065/apply/email") \
+        == "oracle_hcm"

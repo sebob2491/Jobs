@@ -32,7 +32,7 @@ _DOMAINS: list[tuple[str, tuple[str, ...]]] = [
 # Oracle's recruiting sites: a pod's own host, or a company's own address for its Oracle
 # site (careers.ti.com), known by its path
 _ORACLE_HOST = re.compile(r"(^|\.)fa\.[a-z0-9-]+\.oraclecloud\.com$")
-_ORACLE_PATH = re.compile(r"^/[a-z]{2}(?:-[a-z]{2})?/sites/[\w-]+/(?:job|requisitions/preview)/\d+")
+_ORACLE_PATH = re.compile(r"^(?:/hcmui/candidateexperience)?/[a-z]{2}(?:-[a-z]{2})?/sites/[\w-]+/(?:job|requisitions/preview)/\d+")
 # Employers whose career site runs a job system on their own address (companies.yaml)
 COMPANY_HOSTS = {
     "careers.lamresearch.com": "eightfold", "jobs.infineon.com": "eightfold", "careers.micron.com": "eightfold",
