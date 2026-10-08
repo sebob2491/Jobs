@@ -712,6 +712,7 @@ def test_an_emailed_code_or_link_is_read_from_the_inbox(srv, monkeypatch, query)
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
     monkeypatch.setattr(pipeline, "MAIL_POLL_SECONDS", 0)
     monkeypatch.setenv("JOB_APPLY_SECRET_EMAIL_PASSWORD", "an-app-password")
+    monkeypatch.setattr(pipeline.mailbox, "imap_host", lambda address: "imap.example.com")
     # served over http, so the link opened in another tab confirms the address for this one
     # (a file:// page has no storage shared between tabs)
     handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=str(Path(__file__).parent / "fixtures"))
@@ -762,6 +763,7 @@ def test_a_code_that_comes_after_the_queue_went_on_is_still_used(srv, monkeypatc
     monkeypatch.setattr(pipeline, "HANDS_ON_IDLE", 1)
     monkeypatch.setattr(pipeline, "MAIL_POLL_SECONDS", 0)
     monkeypatch.setenv("JOB_APPLY_SECRET_EMAIL_PASSWORD", "an-app-password")
+    monkeypatch.setattr(pipeline.mailbox, "imap_host", lambda address: "imap.example.com")
     waiting = srv.add_job(url=fixture_url("site/verify-email.html") + "?code", title="FSE", company="Example Fab")["job"]
     other = srv.add_job(url=fixture_url("generic_form.html"), title="Technician", company="Example Litho")["job"]
     applier = Applier(srv)
@@ -793,6 +795,7 @@ def test_a_refused_email_app_password_is_said_once_and_not_tried_again(srv, monk
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
     monkeypatch.setattr(pipeline, "MAIL_POLL_SECONDS", 0)
     monkeypatch.setenv("JOB_APPLY_SECRET_EMAIL_PASSWORD", "a-wrong-one")
+    monkeypatch.setattr(pipeline.mailbox, "imap_host", lambda address: "imap.example.com")
     job = srv.add_job(url=fixture_url("site/verify-email.html") + "?code", title="FSE", company="Example Fab")["job"]
     applier = Applier(srv)
     tries = []
@@ -818,8 +821,77 @@ def test_a_refused_email_app_password_is_said_once_and_not_tried_again(srv, monk
     assert applier.mail_problem and "didn't accept the email app password" in applier.mail_problem
     assert applier.mail_login() is None  # until a new one is saved
     monkeypatch.setenv("JOB_APPLY_SECRET_EMAIL_PASSWORD", "a-new-one")
+    monkeypatch.setattr(pipeline.mailbox, "imap_host", lambda address: "imap.example.com")
     assert applier.mail_login() == ("sam.rivera@example.com", "a-new-one")
     assert r.need == "email_code"  # still waiting for the person
+
+
+def test_an_inbox_the_desk_cant_read_is_said_and_not_watched(srv, monkeypatch):
+    """An address whose mail service takes no app passwords (a work domain, Outlook.com): the
+    pause doesn't claim the inbox is watched, and the page says why."""
+    monkeypatch.setenv("JOB_APPLY_SECRET_EMAIL_PASSWORD", "an-app-password")
+    applier = Applier(srv)
+    assert applier.mail_login() is None  # the profile's sam.rivera@example.com
+    assert "can't read mail for example.com addresses" in applier.mail_problem
+
+
+def test_a_code_that_didnt_go_in_is_tried_again(srv, monkeypatch):
+    """The code box was being drawn again when the code came: it's looked for again on the next
+    check, not given up on."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "MAIL_POLL_SECONDS", 0)
+    monkeypatch.setenv("JOB_APPLY_SECRET_EMAIL_PASSWORD", "an-app-password")
+    monkeypatch.setattr(pipeline.mailbox, "imap_host", lambda address: "imap.example.com")
+    job = srv.add_job(url=fixture_url("site/verify-email.html") + "?code", title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+    monkeypatch.setattr(pipeline.mailbox, "search",
+                        lambda *a: pipeline.mailbox.Found("code", "123456", "careers.example.com", time.time()))
+    real, tries = applier._enter_code, []
+
+    async def enter(run, found):
+        tries.append(1)
+        return False if len(tries) == 1 else await real(run, found)
+
+    applier._enter_code = enter
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.need == "questions" or r.status == "ready", about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert len(tries) >= 2 and "entered the code from your email (sent from careers.example.com)" in r.log
+
+
+def test_an_odd_answer_from_the_mail_service_doesnt_stop_the_queue(srv, monkeypatch):
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "MAIL_POLL_SECONDS", 0)
+    monkeypatch.setenv("JOB_APPLY_SECRET_EMAIL_PASSWORD", "an-app-password")
+    monkeypatch.setattr(pipeline.mailbox, "imap_host", lambda address: "imap.example.com")
+    job = srv.add_job(url=fixture_url("site/verify-email.html") + "?code", title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    def odd(*a):
+        raise IndexError("an unexpected answer")
+
+    monkeypatch.setattr(pipeline.mailbox, "search", odd)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.need == "email_code")
+            await until(lambda: applier.mail_problem is not None)
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert "couldn't read your email (IndexError)" in applier.mail_problem and r.need == "email_code"
 
 
 def test_without_an_email_app_password_the_inbox_is_never_read(srv, monkeypatch):

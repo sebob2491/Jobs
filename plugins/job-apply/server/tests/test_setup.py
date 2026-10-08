@@ -1,5 +1,7 @@
 """First run on the person's own computer: finding a browser to drive."""
 
+from conftest import run
+
 from job_apply import config, server
 from job_apply.browser import launch_attempts
 
@@ -31,3 +33,23 @@ def test_chrome_installed_for_one_user_is_found(monkeypatch, tmp_path):
     exe.write_bytes(b"")
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "AppData" / "Local"))
     assert server.chrome_installed()
+
+
+def test_the_email_app_password_is_never_typed_into_a_page(srv, monkeypatch):
+    """The key to the person's inbox: Claude can't have it typed anywhere, even by name."""
+    monkeypatch.setenv("JOB_APPLY_SECRET_EMAIL_PASSWORD", "an-app-password")
+    for name in ("email_password", "EMAIL_PASSWORD", "email-password "):
+        out = run(srv.fill_secret("1", name))
+        assert out["ok"] is False and "never typed into a page" in out["error"]
+
+
+def test_edge_standing_in_for_chrome_keeps_its_own_profile(tmp_path):
+    from job_apply.browser import profile_dir
+
+    chrome = config.Profile({"settings": {"browser_channel": "chrome"}}).settings
+    edge = config.Profile({"settings": {"browser_channel": "msedge"}}).settings
+    home = tmp_path / "browser"
+    assert profile_dir(home, {"channel": "chrome"}, chrome) == home
+    assert profile_dir(home, {"channel": "msedge"}, chrome) == tmp_path / "browser-msedge"
+    assert profile_dir(home, {"channel": "msedge"}, edge) == home  # chosen: its profile is the usual one
+    assert profile_dir(home, {}, chrome) == home

@@ -444,7 +444,11 @@ def test_a_job_board_that_is_down_says_so(srv):
     class Down(BaseHTTPRequestHandler):
         def do_GET(self):
             body = b"<html><head><title>Error : careers-example.icims.com</title></head><body>Web server is down</body></html>"
-            self.send_response(521)
+            if self.path.startswith("/challenge"):  # Cloudflare's check: a 503 that clears by itself
+                body = b"<html><head><title>Just a moment...</title></head><body>Checking your browser</body></html>"
+                self.send_response(503)
+            else:
+                self.send_response(521)
             self.send_header("Content-Type", "text/html")
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
@@ -461,6 +465,9 @@ def test_a_job_board_that_is_down_says_so(srv):
             run(srv.browser.frames_html(url))
         with pytest.raises(SiteDown):
             run(srv.browser.listing_pages(url, "tr.jobResultItem"))
+        # a bot check isn't the site being down: the page is read (and the check waited out)
+        pages = run(srv.browser.frames_html(f"http://127.0.0.1:{site.server_address[1]}/challenge"))
+        assert "Checking your browser" in pages[0]
     finally:
         site.shutdown()
 

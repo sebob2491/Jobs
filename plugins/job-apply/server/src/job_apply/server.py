@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 from datetime import datetime
 from pathlib import Path
@@ -536,6 +537,10 @@ async def fill_secret(field_id: str, secret_name: str) -> dict[str, Any]:
     """Type a stored secret (e.g. a career-site password) into a field without the value
     passing through the conversation. Secrets come from env JOB_APPLY_SECRET_<NAME> or
     ~/.job-apply/secrets.yaml."""
+    if re.sub(r"[^a-z0-9]", "_", secret_name.strip().lower()) == "email_password":
+        # the key to the person's inbox: the desk reads sign-up codes with it, nothing types it anywhere
+        return {"ok": False, "error": "The email app password is only for reading sign-up codes from the inbox; "
+                                      "it is never typed into a page."}
     secret = config.get_secret(secret_name)
     if secret is None:
         return {"ok": False, "error": f"No secret named {secret_name!r}. Ask the user to add it to "
