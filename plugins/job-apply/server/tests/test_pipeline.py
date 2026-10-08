@@ -32,8 +32,14 @@ async def until(condition, timeout=60, about=None):
 
 
 def state(r):
-    """A run's state and the end of its log, for a test that times out waiting on it."""
-    return lambda: (r.status, r.need, r.reason, r.url, r.log[-8:])
+    """A run's state and the end of its log, for a test that times out waiting on it, with
+    where its tab is now (the job's own address doesn't say whether the tab moved)."""
+    def tab() -> str | None:
+        try:
+            return r.page.url if r.page is not None and not r.page.is_closed() else None
+        except Exception:
+            return None
+    return lambda: (r.status, r.need, r.reason, r.url, tab(), r.log[-8:])
 
 
 def test_pick_next_and_classify():
