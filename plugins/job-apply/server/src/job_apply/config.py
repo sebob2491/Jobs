@@ -207,7 +207,7 @@ def get_secret(name: str) -> str | None:
     if path.exists():
         with path.open(encoding="utf-8") as f:
             data = yaml.safe_load(f) or {}
-        value = data.get(name)
+        value = data.get(name) if isinstance(data, dict) else None  # a hand-edited file that isn't a list of names
         if value is not None:
             return str(value)
     return None

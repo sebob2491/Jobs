@@ -19,11 +19,10 @@ import time
 from dataclasses import dataclass
 from typing import Callable
 
-# Where each mail service takes IMAP sign-ins, by the domain of the address
+# Where each mail service takes IMAP sign-ins with an app password, by the domain of the address.
+# Microsoft's (outlook.com, hotmail.com) no longer takes app passwords over IMAP, only its own sign-in.
 IMAP_HOSTS = {
     "gmail.com": "imap.gmail.com", "googlemail.com": "imap.gmail.com",
-    "outlook.com": "outlook.office365.com", "hotmail.com": "outlook.office365.com",
-    "live.com": "outlook.office365.com", "msn.com": "outlook.office365.com",
     "yahoo.com": "imap.mail.yahoo.com", "icloud.com": "imap.mail.me.com", "me.com": "imap.mail.me.com",
     "aol.com": "imap.aol.com",
 }
@@ -49,6 +48,8 @@ NEWEST = 30  # messages looked at per check, newest first
 _CODE_WORDS = re.compile(r"verification|one[- ]time|passcode|security code|\bcode\b|\bpin\b|\botp\b", re.I)
 _DIGITS = re.compile(r"(?<![\d\-/.:+$])\b(\d{4,8})\b(?![\-/.:]?\d)")
 _MIXED = re.compile(r"\b(?=[A-Z0-9]*\d)(?=[A-Z0-9]*[A-Z])[A-Z0-9]{6,10}\b")
+# Between the words and a year-like code ("Your code is 2047"): nothing but joining words
+_JOINING = re.compile(r"^[\s:\-\u2013]*(?:is|was|below)?[\s:\-\u2013]*$", re.I)
 _LINK_WORDS = re.compile(r"verif|confirm|activat|validat", re.I)
 _URL = re.compile(r"https?://[^\s\"'<>)\]]+", re.I)
 
@@ -103,13 +104,15 @@ def _text(msg: email.message.Message) -> tuple[str, list[str]]:
 def find_code(text: str) -> str | None:
     """The code in a sign-up email: digits (or capitals with digits) soon after "code",
     "verification" or "one-time", not a year, a phone number or a price."""
+    text = re.sub(r"\s+", " ", text)  # an HTML mail's indentation is no distance
     for m in _CODE_WORDS.finditer(text):
-        window = text[m.start(): m.end() + 160]
+        window = text[m.end(): m.end() + 160]
         for pattern in (_DIGITS, _MIXED):
             for c in pattern.finditer(window):
                 value = c.group(1) if pattern is _DIGITS else c.group(0)
-                if pattern is _DIGITS and len(value) == 4 and value.startswith(("19", "20")):
-                    continue  # a year
+                if pattern is _DIGITS and len(value) == 4 and value.startswith(("19", "20")) \
+                        and not _JOINING.match(window[:c.start()]):
+                    continue  # a year, unless it follows the words straight away
                 return value
     return None
 
@@ -143,25 +146,40 @@ def search(address: str, password: str, since: float, allowed: set[str], want: s
         day = time.strftime("%d-%b-%Y", time.gmtime(since - LOOK_BACK - 86400))
         _, data = box.search(None, "SINCE", day)
         ids = (data[0] or b"").split()[-NEWEST:]
-        for mid in reversed(ids):
-            _, parts = box.fetch(mid, "(INTERNALDATE BODY.PEEK[])")
+        if not ids:
+            return None
+        # When each arrived and who sent it, in one round trip; the whole message only for the
+        # job site's own mail since the wait began
+        _, heads = box.fetch(b",".join(ids), "(INTERNALDATE BODY.PEEK[HEADER.FIELDS (FROM)])")
+        wanted = []
+        for i, part in enumerate(heads):
+            if not isinstance(part, tuple):
+                continue
+            # the date comes before the header, or (as some servers order them) after it
+            after = heads[i + 1] if i + 1 < len(heads) and isinstance(heads[i + 1], bytes) else b""
+            try:
+                stamp = imaplib.Internaldate2tuple(part[0]) or imaplib.Internaldate2tuple(after)
+                received = time.mktime(stamp) if stamp else 0.0
+                sender = str(email.message_from_bytes(part[1], policy=email.policy.default).get("From") or "")
+                mid = part[0].split()[0]
+            except Exception:  # an odd message: not one to read
+                continue
+            if received >= since - LOOK_BACK and sender_allowed(sender, allowed):
+                wanted.append((received, mid, sender))
+        for received, mid, sender in sorted(wanted, key=lambda w: w[0], reverse=True):  # newest first
+            _, parts = box.fetch(mid, "(BODY.PEEK[])")
             raw = next((p for p in parts if isinstance(p, tuple)), None)
             if raw is None:
                 continue
-            stamp = imaplib.Internaldate2tuple(raw[0])
-            received = time.mktime(stamp) if stamp else 0.0
-            if received < since - LOOK_BACK:
+            try:
+                msg = email.message_from_bytes(raw[1], policy=email.policy.default)
+                text, links = _text(msg)
+                if want == "code":
+                    value = find_code(str(msg.get("Subject") or "") + "\n" + text)
+                else:
+                    value = find_link(text, links, allowed_link)
+            except Exception:  # a malformed message: the next one
                 continue
-            msg = email.message_from_bytes(raw[1], policy=email.policy.default)
-            sender = str(msg.get("From") or "")
-            if not sender_allowed(sender, allowed):
-                continue
-            text, links = _text(msg)
-            subject = str(msg.get("Subject") or "")
-            if want == "code":
-                value = find_code(subject + "\n" + text)
-            else:
-                value = find_link(text, links, allowed_link)
             if value:
                 return Found(want, value, email.utils.parseaddr(sender)[1].rsplit("@", 1)[-1], received)
         return None

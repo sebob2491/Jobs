@@ -266,7 +266,7 @@ async function api(path, body) {
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || res.statusText);
+  if (!res.ok) throw Object.assign(new Error(data.error || res.statusText), {status: res.status});
   return data;
 }
 
@@ -282,8 +282,11 @@ function ago(t) {
 // Replace only the children whose markup changed, so typing and focus survive the refresh.
 function patch(container, entries) {
   const existing = new Map([...container.children].map((el) => [el.dataset.key, el]));
+  const drawn = new Set();
   let prev = null;
   for (const {key, html} of entries) {
+    if (drawn.has(key)) continue;  // drawn once: a second copy would never be removed
+    drawn.add(key);
     let el = existing.get(key);
     if (el && el.dataset.html !== html) { el.remove(); el = null; }
     if (!el) {
@@ -299,6 +302,7 @@ function patch(container, entries) {
     prev = el;
   }
   for (const el of existing.values()) el.remove();
+  for (const el of [...container.children]) if (!drawn.has(el.dataset.key)) el.remove();  // strays from before
 }
 
 const STATUS = {
@@ -326,7 +330,7 @@ function renderRows() {
   const rows = (state.listings || []).filter((r) => filter === "all" || r.added || (r.fit && r.fit.recommended) || r.run);
   const entries = rows.map((r) => {
     const fit = r.fit || {score: 0, reasons: [], concerns: []};
-    const done = DONE.has(r.status) || (r.run && ["submitted", "running", "queued"].includes(r.run.status));
+    const done = DONE.has(r.status) || (r.run && UNDER_WAY.has(r.run.status));
     const chips = [
       ...(isNew(r) ? [`<span class="chip new">New</span>`] : []),
       ...fit.reasons.map((x) => `<span class="chip plus">${esc(x)}</span>`),
@@ -392,7 +396,9 @@ function jobButtons(r, which) {
 
 function allRuns() {
   const rows = [...(state.listings || []), ...(state.others || [])].filter((r) => r.run);
-  return rows.map((r) => ({...r.run, job_id: r.job_id, title: r.title || r.run.title, company: r.company || r.run.company}));
+  const once = new Map();  // two listings can lead to one job (the same posting, linked two ways)
+  for (const r of rows) if (!once.has(r.job_id)) once.set(r.job_id, r);
+  return [...once.values()].map((r) => ({...r.run, job_id: r.job_id, title: r.title || r.run.title, company: r.company || r.run.company}));
 }
 
 function renderSide() {
@@ -478,11 +484,15 @@ function renderHeader() {
   if (state.mail_problem) notes.push({cls: "notice", html: esc(state.mail_problem)});
   if (state.answers_problem) notes.push({cls: "notice", html: `Your saved answers aren't being used: ${esc(state.answers_problem)}.`});
   if (!token) notes.push({cls: "notice", html: "This page needs the address the desk printed (it carries a key). Open it from Claude with “open the job desk”."});
-  patch($("notices"), notes.map((n) => ({key: n.cls + n.html.length, html: `<p class="${n.cls}">${n.html}</p>`})));
+  patch($("notices"), notes.map((n) => ({key: n.cls + ":" + n.html, html: `<p class="${n.cls}">${n.html}</p>`})));
   const skipped = sr.browser_only || [], errs = Object.entries(sr.errors || {});
-  $("skipped-sites").innerHTML = skipped.length || errs.length ? `<details><summary>Not searched automatically (${skipped.length + errs.length})</summary>
+  const sites = skipped.length || errs.length ? `<details><summary>Not searched automatically (${skipped.length + errs.length})</summary>
     ${skipped.map((b) => `<div>${esc(b.company)}: ${link(b.careers_url, "search their site")}</div>`).join("")}
     ${errs.map(([c, e]) => `<div>${esc(c)}: ${esc(e)}</div>`).join("")}</details>` : "";
+  if ($("skipped-sites").dataset.html !== sites) {  // redrawn only when it changes: an opened list stays open
+    $("skipped-sites").innerHTML = sites;
+    $("skipped-sites").dataset.html = sites;
+  }
 }
 
 // Desktop alerts, so the desk can work in the background: one when a job needs you (a
@@ -535,8 +545,14 @@ function render() {
   announce();
 }
 
-async function refresh() {
-  if (busy) return;
+let loading = null;  // the refresh under way: one at a time, so an older state never lands after a newer one
+function refresh() {
+  if (busy) return Promise.resolve();
+  if (!loading) loading = load().finally(() => { loading = null; });
+  return loading;
+}
+
+async function load() {
   try {
     state = await api("/api/state");
     loadSeen();
@@ -549,7 +565,9 @@ async function refresh() {
       await api("/api/search", {});
     }
   } catch (e) {
-    $("notices").innerHTML = `<p class="notice">Can't reach the desk (${esc(e.message)}). Is Claude Code (or job-apply-desk) still running?</p>`;
+    $("notices").innerHTML = e.status === 403
+      ? `<p class="notice">This page's key is missing or out of date (the desk was restarted). Open the address the desk printed, or ask Claude to \u201copen the job desk\u201d.</p>`
+      : `<p class="notice">Can't reach the desk (${esc(e.message)}). Is Claude Code (or job-apply-desk) still running?</p>`;
   }
 }
 
@@ -558,10 +576,13 @@ async function act(fn, hold = true) {
   try { await fn(); } catch (e) { alert(e.message); } finally { if (hold) busy = false; await refresh(); }
 }
 
-// Jobs that can still be applied to: in the list, not finished, not already under way.
+// Jobs that can still be applied to: in the list, not finished, not already under way. One
+// filled and waiting on its review page, or on the person, has its own buttons: Apply would
+// start it over. A failed one can be tried again.
+const UNDER_WAY = new Set(["submitted", "running", "queued", "ready", "needs_you"]);
 function selectable(url) {
   const r = (state.listings || []).find((x) => x.url === url);
-  return !!r && !DONE.has(r.status) && !(r.run && ["submitted", "running", "queued"].includes(r.run.status));
+  return !!r && !DONE.has(r.status) && !(r.run && UNDER_WAY.has(r.run.status));
 }
 
 document.addEventListener("click", (e) => {
@@ -631,9 +652,11 @@ $("add-form").addEventListener("submit", (e) => {
     try {
       const out = await api("/api/add", {text});
       out.added.filter((a) => a.job_id && !DONE.has(a.status)).forEach((a) => selected.add(a.url));  // ready for Apply
-      const failed = out.added.filter((a) => a.error);
-      box.value = failed.map((a) => a.url).join(" ");
-      if (failed.length) alert(failed.map((a) => `${a.url}: ${a.error}`).join("\n"));
+      const failed = out.added.filter((a) => a.error), left = out.left || [];
+      box.value = [...failed.map((a) => a.url), ...left].join(" ");
+      const said = failed.map((a) => `${a.url}: ${a.error}`);
+      if (left.length) said.push(`${left.length} more link(s) are still in the box: ${out.added.length} are read at a time, so press Add again.`);
+      if (said.length) alert(said.join("\n"));
     } finally {
       btn.disabled = false;
       btn.textContent = "Add";
@@ -659,8 +682,10 @@ document.addEventListener("change", (e) => {
   if (t.id === "tailor") act(() => api("/api/settings", {tailor_resumes: t.checked}));
 });
 
-refresh();
-setInterval(refresh, 1500);
+(async function poll() {
+  await refresh();
+  setTimeout(poll, 1500);
+})();
 </script>
 </body>
 </html>

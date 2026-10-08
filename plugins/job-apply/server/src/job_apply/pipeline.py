@@ -469,6 +469,10 @@ class Applier:
         address = str(config.Profile.load().get("personal.email") or "").strip()
         if not password or "@" not in address or password == self._mail_refused:
             return None
+        if mailbox.imap_host(address) is None:  # watching an inbox it can't read would only mislead
+            self.mail_problem = (f"The desk can't read mail for {address.rsplit('@', 1)[1]} addresses, so it can't "
+                                 "watch your inbox for sign-up codes.")
+            return None
         return address, password
 
     def _mail_senders(self, run: Run) -> set[str]:
@@ -514,38 +518,45 @@ class Applier:
             else:
                 self.mail_problem = f"The desk couldn't read your email: {e}. It tries again shortly."
             return
+        except Exception as e:  # a mail service's odd answer: tried again next time, not sinking the queue
+            self.mail_problem = f"The desk couldn't read your email ({type(e).__name__}). It tries again shortly."
+            return
         self.mail_problem = None
         if found is None or run.status != "needs_you" or run.need != "email_code":
             return
-        run.mail_done = True
         try:
             if found.kind == "code":
-                await self._enter_code(run, found)
+                # not put in (the page was being drawn again, a box turned it down): looked for again
+                run.mail_done = await self._enter_code(run, found)
             else:
                 await self.srv.browser.visit(found.value)
+                run.mail_done = True
                 self._log(run, f"opened the confirmation link from your email (sent from {found.sender})")
                 if run.page is not None and not run.page.is_closed():
                     await run.page.reload()
         except Exception as e:  # a slow site or a closed tab: the person finishes it, as without the inbox
+            run.mail_done = True
             self._log(run, f"couldn't use the {found.kind} from your email ({type(e).__name__}); "
                       "it's in your inbox for you")
 
-    async def _enter_code(self, run: Run, found: mailbox.Found) -> None:
+    async def _enter_code(self, run: Run, found: mailbox.Found) -> bool:
+        """Type the emailed code into its box (a digit per box where there's one for each) and
+        press the button that sends it. False when it didn't go in."""
         srv = self.srv
         if not srv.browser.use_tab(run.page):
-            return
+            return False
         data = await srv.inspect_form(include_dropdown_options=False)
         boxes = [f for f in data.get("fields") or [] if f.get("kind") in ("text", "number")
                  and _CODE_FIELD.search(f.get("label") or "")]
         if not boxes:  # the page moved on meanwhile
-            return
+            return False
         if 1 < len(boxes) == len(found.value):  # a box per digit (Oracle's "Confirm Your Identity")
             fills = [{"id": box["id"], "value": digit} for box, digit in zip(boxes, found.value)]
         else:
             fills = [{"id": boxes[0]["id"], "value": found.value}]
         out = await srv.fill_form(fills)
         if not out.get("ok"):
-            return
+            return False
         self._log(run, f"entered the code from your email (sent from {found.sender})")
         press = next((a for a in data.get("actions") or [] if not a.get("disabled")
                       and _AFTER_CODE.match(a.get("text", "").strip())), None)
@@ -555,6 +566,7 @@ class Applier:
         else:
             run.reason = ("I entered the code from your email. Press the page's button to carry on; "
                           "the desk continues after that.")
+        return True
 
     # ------------------------------------------------------------- one job
     def _log(self, run: Run, text: str) -> None:

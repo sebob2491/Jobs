@@ -53,8 +53,9 @@ You need:
 - [Claude Code](https://claude.com/claude-code)
 - [`uv`](https://docs.astral.sh/uv/getting-started/installation/). It runs the
   plugin's Python server and installs its dependencies on first launch.
-- Google Chrome. If you don't have it, run the `playwright install chromium`
-  command that `setup_status` shows.
+- Google Chrome, or Microsoft Edge without it (every Windows computer has Edge). If
+  neither starts, run the `playwright install chromium` command that `setup_status`
+  shows.
 
 Then, in Claude Code:
 
@@ -145,8 +146,9 @@ it, and the desk only reports whether one is saved.
 
 The same card takes an **email app password** for the address in your profile (for
 Gmail, make one at [myaccount.google.com/apppasswords](https://myaccount.google.com/apppasswords);
-it needs 2-Step Verification). With it saved, a job waiting on an emailed code or
-confirmation link gets it from your inbox:
+it needs 2-Step Verification; Yahoo, iCloud and AOL addresses work the same way, but
+Outlook.com and Hotmail no longer accept app passwords). With it saved, a job waiting on
+an emailed code or confirmation link gets it from your inbox:
 - the desk types the code in and presses Verify, Confirm, Continue or Next (never
   Submit), or opens the link in its own browser and reloads the job's tab;
 - it reads only mail from that job's site or its job system, sent after the job began
@@ -154,7 +156,8 @@ confirmation link gets it from your inbox:
 - it opens the inbox read-only, so nothing is marked read, moved or deleted.
 
 If the app password is turned down, the desk page says so and stops trying until you
-save a new one.
+save a new one. The app password is only ever used to read those emails: Claude can't
+have it typed into any page.
 
 The desk works in each job's own browser tab and follows only the tabs an application
 opens itself, so a tab you open (to check your email, say) is left alone. Jobs already

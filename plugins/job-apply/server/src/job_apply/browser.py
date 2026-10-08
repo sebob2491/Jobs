@@ -68,6 +68,14 @@ UNAVAILABLE_HELP = (
 )
 
 
+def profile_dir(usual: Path, attempt: dict[str, Any], settings: config.Settings) -> Path:
+    """The browser profile for a launch attempt. Edge standing in for Chrome keeps one of its
+    own: each keeps its sign-ins in a form the other can't read."""
+    if attempt.get("channel") == "msedge" and settings.browser_channel != "msedge":
+        return usual.with_name(usual.name + "-msedge")
+    return usual
+
+
 def launch_attempts(settings: config.Settings) -> list[dict[str, Any]]:
     """Browser choices to try in order: an explicit executable, the installed Chrome (or the
     channel chosen), Microsoft Edge (every Windows computer has it, so no download is needed
@@ -110,6 +118,10 @@ class PickedAGroup(ValueError):
 
 class TabClosed(Exception):
     """The tab a job was working in is gone (closed, or skipped in the Job Desk)."""
+
+
+_CHALLENGE_TITLE = re.compile(r"just a moment|attention required|checking your browser|are you a robot|"
+                              r"verify(ing)? you are human", re.I)
 
 
 class SiteDown(Exception):
@@ -162,6 +174,7 @@ class BrowserSession:
             kwargs["viewport"] = {"width": 1280, "height": 900}
         errors = []
         for extra in launch_attempts(settings):
+            kwargs["user_data_dir"] = str(profile_dir(user_dir, extra, settings))
             try:
                 self._ctx = await self._pw.chromium.launch_persistent_context(**kwargs, **extra)
                 break
@@ -598,7 +611,8 @@ class BrowserSession:
         """Open a job board's page in a background tab. A server error page is the board being
         down, not a board with no openings."""
         response = await tab.goto(url, wait_until="domcontentloaded", timeout=45000)
-        if response is not None and response.status >= 500:
+        if response is not None and response.status >= 500 and not _CHALLENGE_TITLE.search(await tab.title()):
+            # (Cloudflare's "Just a moment…" check comes as a 503 too, and clears by itself)
             raise SiteDown(f"{urlparse(url).hostname} is down right now (HTTP {response.status}); try again later")
 
     async def frames_html(self, url: str) -> list[str]:

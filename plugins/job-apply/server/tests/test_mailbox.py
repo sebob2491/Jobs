@@ -12,7 +12,7 @@ from job_apply.mailbox import MailboxError, find_code, find_link, imap_host, sen
 
 def test_where_mail_is_read_and_whose_it_is():
     assert imap_host("someone@gmail.com") == "imap.gmail.com"
-    assert imap_host("someone@outlook.com") == "outlook.office365.com"
+    assert imap_host("someone@outlook.com") is None  # Microsoft takes no app passwords over IMAP now
     assert imap_host("someone@example.com") is None
     assert site_domain("careers.ti.com") == "ti.com"
     assert site_domain("amat.wd1.myworkdayjobs.com") == "myworkdayjobs.com"
@@ -32,6 +32,12 @@ def test_the_code_in_a_sign_up_email():
     assert find_code("Your code\n\n  913 204\n") is None  # split digits aren't one code
     assert find_code("Enter code AB12CD to verify your email") == "AB12CD"
     assert find_code("Thanks for applying to the Field Service Engineer role (R2617841).") is None
+    # a four-digit code that looks like a year, right after the words
+    assert find_code("Your verification code is 2047") == "2047"
+    assert find_code("Your code: 1998. It expires soon.") == "1998"
+    # an HTML mail's table layout: the code in the next cell, after lots of indentation
+    cell = "Your verification code is" + " " * 40 + "\n" * 6 + " " * 120 + "\n" + " " * 80 + "837201"
+    assert find_code(cell) == "837201"
 
 
 def test_the_job_systems_own_mail_as_sent_live():
@@ -89,11 +95,25 @@ class FakeImap:
         self.calls.append(("search",) + criteria)
         return "OK", [b" ".join(str(i + 1).encode() for i in range(len(FakeImap.messages)))]
 
-    def fetch(self, mid, parts):
-        self.calls.append(("fetch", mid, parts))
-        when, raw = FakeImap.messages[int(mid) - 1]
-        stamp = imaplib.Time2Internaldate(when).encode()
-        return "OK", [(b"%s (INTERNALDATE %s BODY[] {%d}" % (mid, stamp, len(raw)), raw), b")"]
+    date_last = False  # the server sends a message's date after its header, not before
+
+    def fetch(self, mids, parts):
+        self.calls.append(("fetch", mids, parts))
+        out = []
+        for mid in mids.decode().split(","):
+            when, raw = FakeImap.messages[int(mid) - 1]
+            stamp = imaplib.Time2Internaldate(when).encode()
+            if "HEADER.FIELDS" in parts:
+                head = b"".join(line + b"\r\n" for line in raw.split(b"\r\n") if line.lower().startswith(b"from:")) + b"\r\n"
+                if FakeImap.date_last:
+                    out += [(b"%s (BODY[HEADER.FIELDS (FROM)] {%d}" % (mid.encode(), len(head)), head),
+                            b" INTERNALDATE %s)" % stamp]
+                else:
+                    out += [(b"%s (INTERNALDATE %s BODY[HEADER.FIELDS (FROM)] {%d}" % (mid.encode(), stamp, len(head)),
+                             head), b")"]
+            else:
+                out += [(b"%s (BODY[] {%d}" % (mid.encode(), len(raw)), raw), b")"]
+        return "OK", out
 
     def logout(self):
         self.calls.append(("logout",))
@@ -101,7 +121,7 @@ class FakeImap:
 
 @pytest.fixture
 def imap(monkeypatch):
-    FakeImap.instances, FakeImap.messages, FakeImap.accept = [], [], True
+    FakeImap.instances, FakeImap.messages, FakeImap.accept, FakeImap.date_last = [], [], True, False
     monkeypatch.setattr(mailbox.imaplib, "IMAP4_SSL", FakeImap)
     return FakeImap
 
@@ -118,10 +138,34 @@ def test_the_newest_code_from_the_job_site_since_the_wait_began(imap):
     assert (found.kind, found.value, found.sender) == ("code", "333333", "careers.ti.com")
     calls = imap.instances[0].calls
     assert ("select", "INBOX", True) in calls  # read-only: nothing is marked read
-    assert all(c[2] == "(INTERNALDATE BODY.PEEK[])" for c in calls if c[0] == "fetch")
+    fetches = [c for c in calls if c[0] == "fetch"]
+    assert all("BODY.PEEK[" in c[2] for c in fetches)
+    # who sent each, in one round trip; the whole message only for the site's mail since the wait
+    assert [(c[1], c[2]) for c in fetches] == [(b"1,2,3", "(INTERNALDATE BODY.PEEK[HEADER.FIELDS (FROM)])"),
+                                              (b"3", "(BODY.PEEK[])")]
     assert calls[-1] == ("logout",)
     imap.messages = imap.messages[:2]
     assert mailbox.search("sam@gmail.com", "app-password", since, {"ti.com"}, "code") is None
+    imap.messages, imap.date_last = imap.messages + [(since + 50, _message(
+        "no-reply@careers.ti.com", "Verify", "Your verification code is 444444"))], True
+    assert mailbox.search("sam@gmail.com", "app-password", since, {"ti.com"}, "code").value == "444444"
+
+
+def test_a_malformed_message_is_passed_over(imap, monkeypatch):
+    since = time.time()
+    imap.messages = [
+        (since + 10, _message("no-reply@careers.ti.com", "Verify", "Your verification code is 555555")),
+        (since + 20, _message("no-reply@careers.ti.com", "Verify", "Your verification code is 666666")),
+    ]
+    real = mailbox._text
+
+    def text(msg):  # the newest one can't be read
+        if "666666" in str(msg.get_payload()):
+            raise IndexError("a broken header")
+        return real(msg)
+
+    monkeypatch.setattr(mailbox, "_text", text)
+    assert mailbox.search("sam@gmail.com", "app-password", since, {"ti.com"}, "code").value == "555555"
 
 
 def test_a_refused_app_password_says_so(imap):
