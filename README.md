@@ -288,6 +288,11 @@ creates accounts, and it never contacts LinkedIn or Indeed. The job summary show
 a table, and the log has one `LIVE_RESULT` line of JSON per company. Tick
 "Commit captured pages" to save the pages as regression fixtures.
 
+To run it yourself, add `--pipeline --fake-passwords` to drive the Job Desk's
+one-button pipeline instead. Add `--parallel 4` to check four employers at a time,
+each in a browser of its own; every site is still visited once. A full run then
+takes about 6 minutes instead of 22.
+
 ### Turning a failure into a test
 
 When a field won't fill on a real site, the plugin saves a snapshot to

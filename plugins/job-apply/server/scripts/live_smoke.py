@@ -1,6 +1,6 @@
 """Live smoke test against real employer career sites. Read-only by design.
 
-    uv run python scripts/live_smoke.py --out live-report [--companies "KLA,ASM"] [--fixtures]
+    uv run python scripts/live_smoke.py --out live-report [--companies "KLA,ASM"] [--fixtures] [--parallel 4]
 
 For each company with a `search` config in data/companies.yaml:
   1. search_company_jobs for a broad query, and keep the first result;
@@ -16,6 +16,9 @@ page. Questions the fake profile can't answer get throwaway answers for that run
 With --fixtures too, a page it stopped on with questions or a problem becomes a test
 fixture (tests/fixtures/live/pipeline-<company>).
 
+--parallel N runs N groups of employers at once, each in a process (and browser) of its
+own; every site is still visited once. --shard I/N runs only the I-th of N groups.
+
 Safety: JOB_APPLY_NEVER_SUBMIT=1 is forced, so nothing can be submitted. The fake
 profile has no resume, so nothing is uploaded. It never clicks sign-in, account
 creation, "Autofill with Resume", "Next", or third-party apply buttons (LinkedIn,
@@ -26,6 +29,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import json
 import os
 import re
@@ -698,10 +702,17 @@ async def main() -> int:
     ap.add_argument("--fake-passwords", action="store_true",
                     help="with --pipeline: a throwaway saved password for each job system the desk takes one for, "
                          "so a run tries the sign-in once and fills in Create Account (it never creates one)")
+    ap.add_argument("--parallel", type=int, default=1, help="run this many groups of employers at once")
+    ap.add_argument("--shard", default="", help="I/N: only the I-th of N groups (what --parallel runs)")
     args = ap.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
+    if args.parallel > 1 and not args.shard:
+        return await parallel_main(args)
     wanted = [n.strip().lower() for n in args.companies.split(",") if n.strip()]
     companies = [c for c in load_companies() if not wanted or any(w in c["name"].lower() for w in wanted)]
+    if args.shard:
+        i, n = (int(x) for x in args.shard.split("/"))
+        companies = companies[i::n]
     if args.pipeline:
         if args.fake_passwords:
             from job_apply.pipeline import DESK_PASSWORDS
@@ -732,8 +743,8 @@ async def main() -> int:
             check = await asyncio.wait_for(check_sitecore(company), 120)
             print("LIVE_SITECORE " + json.dumps(check, default=str), flush=True)
     for name, url in PROBES.items():
-        if wanted and not any(w in name.lower() for w in wanted):
-            continue
+        if wanted and not any(w in name.lower() for w in wanted) or args.shard and not args.shard.startswith("0/"):
+            continue  # (one group checks these, not every one)
         try:
             probe = await asyncio.wait_for(probe_page(name, url), 90)
         except Exception as e:  # noqa: BLE001
@@ -1087,6 +1098,11 @@ async def pipeline_main(companies: list[dict[str, Any]], out: Path, fixtures: bo
         records.append(rec)
         print("LIVE_PIPELINE " + json.dumps(rec, default=str), flush=True)
     (out / "pipeline.json").write_text(json.dumps(records, indent=2, default=str))
+    _pipeline_report(records, out)
+    return 0
+
+
+def _pipeline_report(records: list[dict[str, Any]], out: Path) -> None:
     lines = ["| Company | Posting | Ended | Waiting on | Steps | Questions answered |", "|---|---|---|---|---|---|"]
     for r in records:
         rounds = r.get("rounds") or []
@@ -1098,7 +1114,28 @@ async def pipeline_main(companies: list[dict[str, Any]], out: Path, fixtures: bo
         ))))
     (out / "report.md").write_text("\n".join(lines) + "\n")
     print("\n".join(lines))
-    return 0
+
+
+async def parallel_main(args: argparse.Namespace) -> int:
+    """Run the employers in args.parallel groups at once, each in its own process (a home, a
+    browser and a fake email of its own), then print their results in order as one run."""
+    n = args.parallel
+    passed = [*(["--companies", args.companies] if args.companies else []), *(["--fixtures"] if args.fixtures else []),
+              *(["--pipeline"] if args.pipeline else []), *(["--fake-passwords"] if args.fake_passwords else [])]
+    children = [await asyncio.create_subprocess_exec(
+        sys.executable, __file__, *passed, "--shard", f"{i}/{n}", "--out", str(args.out / f"shard-{i}"),
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT) for i in range(n)]
+    outputs = await asyncio.gather(*(c.communicate() for c in children))
+    for stdout, _ in outputs:
+        sys.stdout.write(stdout.decode(errors="replace"))
+    if args.pipeline:
+        records = []
+        for i in range(n):
+            with contextlib.suppress(OSError, ValueError):
+                records += json.loads((args.out / f"shard-{i}" / "pipeline.json").read_text())
+        (args.out / "pipeline.json").write_text(json.dumps(records, indent=2, default=str))
+        _pipeline_report(records, args.out)
+    return max((c.returncode or 0) for c in children)
 
 
 if __name__ == "__main__":
