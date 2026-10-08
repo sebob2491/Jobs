@@ -30,7 +30,7 @@
     {
       "label": "Upload a File * Select here to upload.",
       "kind": "file",
-      "required": false
+      "required": true
     },
     {
       "label": "Opt in for texts to this number",

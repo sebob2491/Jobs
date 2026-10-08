@@ -6,6 +6,7 @@ import json
 import os
 import re
 import shutil
+import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -39,14 +40,17 @@ button themselves. Passwords go through fill_secret, never fill_form."""
 mcp = MCPServer("job-apply", instructions=INSTRUCTIONS, version="0.3.0")
 browser = BrowserSession()
 _tracker: Tracker | None = None
+_tracker_lock = threading.Lock()
 
 
 def tracker() -> Tracker:
+    """The one tracker, for the tools' worker threads and the desk alike."""
     global _tracker
-    if _tracker is None:
-        config.ensure_home()
-        _tracker = Tracker()
-    return _tracker
+    with _tracker_lock:
+        if _tracker is None:
+            config.ensure_home()
+            _tracker = Tracker()
+        return _tracker
 
 
 def _job(job_id: int | None) -> dict[str, Any]:
@@ -292,15 +296,18 @@ def log_email(job_id: int, thread_id: str, category: str, summary: str = "", rec
     """Record an employer's email about an application and update its status.
 
     category: confirmation, assessment, interview, offer, rejection or other.
-    thread_id is the Gmail thread id, so the same email is never counted twice
-    (already_logged=true). Status only moves forward (applied -> interviewing -> offer);
-    a rejection sets rejected unless there's already an offer."""
+    thread_id is the Gmail thread id, and received_at the date of the message: the same
+    message is never counted twice (already_logged=true), while a later one in the same
+    thread (a rejection under the confirmation) is. Status only moves forward
+    (applied -> interviewing -> offer); a rejection sets rejected unless there's already
+    an offer."""
     return tracker().log_email(job_id, thread_id, category, summary, received_at)
 
 
 @mcp.tool()
 def logged_emails(since_days: int | None = 90) -> dict[str, Any]:
-    """Gmail thread ids already recorded with log_email, so a status check can skip them."""
+    """Gmail threads already recorded with log_email, with the date of the message logged
+    (received_at), so a status check can skip them unless a newer message has arrived."""
     rows = tracker().logged_threads(since_days)
     return {"count": len(rows), "threads": rows}
 
