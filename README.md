@@ -113,7 +113,7 @@ opens a page on your computer (served by the plugin on `127.0.0.1`):
    selected**. **Select recommended** leaves out openings whose posting asks for a
    degree you don't have (unless it says "or equivalent experience"), and ones the
    desk couldn't open to check, or whose posting puts the job in another state.
-   They're still listed, with the reason, so you can tick them yourself.
+   They're under **All**, with the reason, so you can still tick them yourself.
    The desk works through them one at a time in the browser window. It
    clicks into each application, fills every page, adds Workday's work and
    education blocks, and stops at each review page.

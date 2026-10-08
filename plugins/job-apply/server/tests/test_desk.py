@@ -12,6 +12,7 @@ from conftest import browser_available, fixture_url, launch_options, run
 import job_apply.pipeline as pipeline
 from job_apply import config
 from job_apply.desk import Desk
+from job_apply.postings import Posting
 
 pytestmark = pytest.mark.skipif(not browser_available(), reason="no Playwright Chromium installed")
 
@@ -30,12 +31,14 @@ def test_desk_finds_applies_and_submits(srv, monkeypatch):
         ], "errors": {"Broken Co": "SearchError: HTTP 500"},
             "browser_only": [{"company": "TSMC Arizona", "careers_url": "https://careers.tsmc.com"}]}
 
-    async def offline(url):
-        raise RuntimeError("no network in tests")
+    async def fetch(url):  # only postings that were read are recommended
+        if url != posting:
+            raise RuntimeError("no network in tests")
+        return Posting(url=url, description="Requirements\n- High school diploma or GED.", location="Phoenix, AZ")
 
     monkeypatch.setattr(srv, "search_company_jobs", fake_search)
     desk = Desk(srv)
-    desk.fetch = offline
+    desk.fetch = fetch
 
     async def go():
         await desk.start(port=0, open_browser=False)
