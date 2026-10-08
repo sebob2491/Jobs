@@ -14,7 +14,8 @@
      Picking a ZIP fills City, State and County too (drawing those boxes afresh), and picking
      a State empties the County, City and ZIP below it, as Oracle does. The ZIP box lists "00000, …" on opening, and its
      search results come a moment after the typing. Words typed without a pick are no answer.
-     Next shows "Thank you" once every box holds a pick. -->
+     Next shows "Thank you" once every box holds a pick. Zip Code+4 is the ZIP's 4-digit
+     extension, optional. ?slow[=ms]: the boxes drawn afresh are gone for a moment first (onsemi, live). -->
 <h2>Address</h2>
 <form id="f" novalidate>
   <label for="addressLine1">Address Line 1 *</label>
@@ -25,6 +26,8 @@
   <input id="postalCode" type="text" role="combobox" aria-autocomplete="list" aria-haspopup="grid"
          aria-controls="postalCode-listbox" aria-expanded="false" aria-required="true">
   <div role="grid" id="postalCode-listbox" aria-label="ZIP Code" class="cx-select__list" hidden></div>
+  <label for="postalCode4">Zip Code+4</label>
+  <input id="postalCode4" type="text" maxlength="4">
   <label for="city">City *</label>
   <input id="city" type="text" role="combobox" aria-autocomplete="list" aria-haspopup="grid"
          aria-controls="city-listbox" aria-expanded="false" aria-required="true">
@@ -71,11 +74,16 @@
     render(id, q ? DATA[id].filter((e) => e.toLowerCase().includes(q)) : []);
   }
   function clear(id) { box(id).value = ''; delete window.picked[id]; }
+  const params = new URLSearchParams(location.search);
+  const slow = params.has('slow') ? Number(params.get('slow')) || 1200 : 0;  // ms gone
   function redraw(id) {  // a new element, without the marks an earlier reading put on the old one
     const old = box(id), fresh = old.cloneNode(true);
     fresh.removeAttribute('data-ja-id');
     fresh.value = old.value;
-    old.replaceWith(fresh);
+    if (!slow) return old.replaceWith(fresh);
+    const before = old.previousElementSibling;  // its label
+    old.remove();
+    setTimeout(() => before.after(fresh), slow);
   }
   function set(id, entry) {
     box(id).value = entry.split(', ')[0];

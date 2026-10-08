@@ -583,12 +583,17 @@ def test_a_sign_up_form_with_one_password_box_is_filled_in(srv, monkeypatch, pag
     assert "filled the Create Account form with your details and saved password" in r.log
 
 
-def test_a_question_the_site_answers_itself_is_not_asked(srv, monkeypatch):
+@pytest.mark.parametrize("mode", ["", "?slow=3500"])
+def test_a_question_the_site_answers_itself_is_not_asked(srv, monkeypatch, mode):
     """Oracle fills County from the ZIP picked. The profile has no county, so County was among
     the questions the page left open before filling; once the site has filled it, it isn't
-    put to the person."""
+    put to the person.
+
+    ?slow: onsemi, live, drew City, State and County afresh a while after the ZIP was picked.
+    A box that wasn't back in time to be filled, but was by the time the page was looked at
+    again, filled by the site, isn't asked about either."""
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
-    job = srv.add_job(url=fixture_url("site/oracle-address.html"), title="FSE", company="Example Fab")["job"]
+    job = srv.add_job(url=fixture_url("site/oracle-address.html") + mode, title="FSE", company="Example Fab")["job"]
     applier = Applier(srv)
 
     async def go():

@@ -715,7 +715,10 @@ class Applier:
                     f = now.get(q.get("id")) or (same[0] if len(same) == 1 and q.get("label") else None)
                     return f is not None and not is_empty_value(f.get("value"))
 
-                pending = [q for q in pending if q.get("error") or not answered(q)]
+                def refused(q: dict[str, Any]) -> bool:  # a box lost while being drawn again wasn't turned down
+                    return bool(q.get("error")) and not str(q["error"]).startswith("KeyError")
+
+                pending = [q for q in pending if refused(q) or not answered(q)]
                 if _new_required(before, data) and page_key not in refilled:
                     refilled.add(page_key)  # answers drew new questions ("If yes, explain"): fill those too
                     continue

@@ -396,15 +396,20 @@ def test_errors_are_read_without_icon_glyphs(srv):
     assert run(srv.browser.inspect(False))["errors"] == ["Invalid email address or password."]
 
 
-def test_oracle_address_lookups_are_picked_from_their_grid_in_the_right_state(srv):
+@pytest.mark.parametrize("mode", ["", "?slow"])
+def test_oracle_address_lookups_are_picked_from_their_grid_in_the_right_state(srv, mode):
     """Texas Instruments' and onsemi's Oracle address boxes are lookups whose entries are a
     grid's cells, and live, every one failed ("nothing in its list matched"). The first
     entries for a city or a street can be in another state ("Chandler, Henderson, TX"), and a
-    ZIP can cover two places: the pick is the one that matches the rest of the address."""
-    run(srv.open_application(url=fixture_url("site/oracle-address.html")))
+    ZIP can cover two places: the pick is the one that matches the rest of the address.
+
+    ?slow: onsemi's City, State and County, drawn afresh from the ZIP picked, are gone for a
+    moment first; live, State was then asked as a question though the site had filled it."""
+    run(srv.open_application(url=fixture_url("site/oracle-address.html") + mode))
     result = run(srv.autofill())
     assert not result["failed"], result["failed"]
     page = run(srv.browser.page())
+    assert run(page.input_value("#postalCode4")) == ""  # the ZIP's extension, not the ZIP (onsemi, live)
     assert run(page.evaluate("() => window.picked")) == {
         "addressLine1": "100 W MAIN ST, CHANDLER, ARIZONA, 85225",
         "postalCode": "85225, Chandler, Maricopa, AZ",  # not Chandler Heights
