@@ -213,9 +213,9 @@ def days_since(posted: str, today: date | None = None) -> int | None:
         return 0
     if "yesterday" in t:
         return 1
-    m = re.search(r"(\d+)\+?\s*(day|week|month)s?\s+ago", t)
-    if m:
-        return int(m.group(1)) * {"day": 1, "week": 7, "month": 30}[m.group(2)]
+    m = re.search(r"(\d+)(\+?)\s*(day|week|month)s?\s+ago", t)
+    if m:  # "30+ Days Ago" is more than 30: none of the "this month" credit
+        return int(m.group(1)) * {"day": 1, "week": 7, "month": 30}[m.group(3)] + (1 if m.group(2) else 0)
     m = re.match(r"(\d{4})-(\d{2})-(\d{2})", t) or None
     try:
         if m:

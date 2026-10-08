@@ -1,3 +1,4 @@
+import asyncio
 from pathlib import Path
 
 import pytest
@@ -84,3 +85,61 @@ def test_a_too_long_tailored_resume_holds_its_job(srv, monkeypatch):
     out = run(srv.render_document("resume", RESUME, job_id=job["id"]))
     assert "warning" not in out and tailored_ready(srv.tracker().get(job["id"]))
 
+
+
+def test_a_resume_is_rendered_as_written_not_as_markup():
+    """Words in angle brackets stay on the page, no HTML or script from pasted text gets in,
+    "#1" isn't a heading and "24*7" isn't italics; links stay links."""
+    page = to_html("# Sam Rivera\n<sam@example.com> \u00b7 <https://linkedin.com/in/sam>\n\n"
+                   "- #1 technician in the region\n- Supported 24*7 coverage on 3*NXE tools\n"
+                   "- Know <PLC> and <HMI> well <script>alert(1)</script> <img src=https://x.example/a.png>\n"
+                   "#1 in the region\n", "resume")
+    body = page.split("<body>", 1)[1]
+    assert "&lt;PLC&gt;" in body and "&lt;HMI&gt;" in body
+    assert "<script" not in body and "<img" not in body
+    assert "24*7 coverage on 3*NXE" in body and "<h1>1 in the region" not in body
+    assert "<h1>Sam Rivera</h1>" in body and 'href="https://linkedin.com/in/sam"' in body and "mailto" in html_unescape(body)
+
+
+def html_unescape(text):
+    import html
+    return html.unescape(text)
+
+
+def test_a_pdf_that_fails_to_write_leaves_the_last_good_one(tmp_path, monkeypatch):
+    """A full disk while writing mustn't leave a cut-off PDF under the real name."""
+    import job_apply.render as render
+
+    dest = tmp_path / "Sam_Rivera_Resume.pdf"
+    dest.write_bytes(b"%PDF-1.4 the last good one %%EOF")
+    real = Path.write_bytes
+
+    def disk_full(self, data):
+        if self.name.endswith(".part"):
+            real(self, data[:10])
+            raise OSError(28, "No space left on device")
+        return real(self, data)
+
+    class FakePage:
+        async def route(self, *a, **k): pass
+        async def set_content(self, *a, **k): pass
+        async def pdf(self, **k): return b"%PDF-1.4 " + b"x" * 1000 + b" %%EOF"
+
+    class FakeBrowser:
+        async def new_page(self, **k): return FakePage()
+        async def close(self): pass
+
+    class FakeChromium:
+        async def launch(self, **k): return FakeBrowser()
+
+    class FakePw:
+        chromium = FakeChromium()
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): pass
+
+    monkeypatch.setattr(render, "async_playwright", lambda: FakePw())
+    monkeypatch.setattr(Path, "write_bytes", disk_full)
+    with pytest.raises(OSError):
+        asyncio.run(render.render_pdf("<p>x</p>", dest))
+    assert dest.read_bytes() == b"%PDF-1.4 the last good one %%EOF"
+    assert not (tmp_path / "Sam_Rivera_Resume.pdf.part").exists()

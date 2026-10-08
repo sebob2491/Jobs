@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import html
+import os
 import re
 from pathlib import Path
 
@@ -47,8 +48,17 @@ p { margin: 0 0 10pt; }
 }
 
 
+def _as_written(markdown_text: str) -> str:
+    """The text as the person wrote it, not as markup: "<PLC>" stays on the page (an unknown
+    tag would vanish), no HTML or script gets in (from a posting copied in, say), "#1 in
+    the region" isn't a heading and "24*7" isn't italics. Links in angle brackets stay links."""
+    text = re.sub(r"<(?!(?:https?://|mailto:)[^\s<>]+>|[\w.+-]+@[\w-]+(?:\.[\w-]+)+>)", "&lt;", markdown_text)
+    text = re.sub(r"(?m)^(\s{0,3})#(?=[^#\s])", r"\1\\#", text)
+    return re.sub(r"(?<=\w)\*(?=\w)", r"\\*", text)
+
+
 def to_html(markdown_text: str, kind: str, title: str = "") -> str:
-    body = markdown.markdown(markdown_text, extensions=["sane_lists", "attr_list"])
+    body = markdown.markdown(_as_written(markdown_text), extensions=["sane_lists"])
     return (
         f"<!doctype html><html><head><meta charset='utf-8'><title>{html.escape(title)}</title>"
         f"<style>{_CSS[kind]}</style></head><body>{body}</body></html>"
@@ -73,11 +83,20 @@ async def render_pdf(page_html: str, dest: Path) -> int:
         else:
             raise BrowserUnavailable(UNAVAILABLE_HELP + " | ".join(errors))
         try:
-            page = await browser.new_page()
+            # the page is the resume and nothing else: no script runs and nothing is fetched
+            page = await browser.new_page(java_script_enabled=False)
+            await page.route("**/*", lambda route: route.abort())
             await page.set_content(page_html, wait_until="load")
             pdf = await page.pdf(format="Letter", print_background=True, prefer_css_page_size=True)
         finally:
             await browser.close()
     dest.parent.mkdir(parents=True, exist_ok=True)
-    dest.write_bytes(pdf)
+    # written whole or not at all: a full disk mustn't leave a cut-off PDF under the real name,
+    # where it would be taken for the finished resume and uploaded
+    part = dest.with_name(dest.name + ".part")
+    try:
+        part.write_bytes(pdf)
+        os.replace(part, dest)
+    finally:
+        part.unlink(missing_ok=True)
     return count_pages(pdf)
