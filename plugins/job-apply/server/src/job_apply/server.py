@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 from datetime import datetime
 from pathlib import Path
@@ -83,6 +84,18 @@ def _brief(job: dict[str, Any]) -> dict[str, Any]:
 # --------------------------------------------------------------------- setup
 
 
+def chrome_installed() -> bool:
+    """Google Chrome on this computer, wherever its installer put it: on the PATH, in
+    Applications (for everyone or this user), or in Program Files or this user's AppData."""
+    if shutil.which("google-chrome") or shutil.which("chrome"):
+        return True
+    places = [Path("/Applications/Google Chrome.app"), Path.home() / "Applications" / "Google Chrome.app"]
+    for var in ("PROGRAMFILES", "PROGRAMFILES(X86)", "LOCALAPPDATA"):
+        if os.environ.get(var):
+            places.append(Path(os.environ[var]) / "Google" / "Chrome" / "Application" / "chrome.exe")
+    return any(p.exists() for p in places)
+
+
 @mcp.tool()
 def setup_status() -> dict[str, Any]:
     """Check what the plugin needs before it can apply: profile fields, resume file,
@@ -90,8 +103,7 @@ def setup_status() -> dict[str, Any]:
     home = config.ensure_home()
     prof = config.Profile.load()
     missing = prof.missing_required()
-    has_chrome = bool(shutil.which("google-chrome") or shutil.which("chrome") or Path(
-        "/Applications/Google Chrome.app").exists() or Path(r"C:\Program Files\Google\Chrome\Application\chrome.exe").exists())
+    has_chrome = chrome_installed()
     s = prof.settings
     return {
         "home": str(home),

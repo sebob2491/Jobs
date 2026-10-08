@@ -69,14 +69,17 @@ UNAVAILABLE_HELP = (
 
 
 def launch_attempts(settings: config.Settings) -> list[dict[str, Any]]:
-    """Browser choices to try in order: an explicit executable, the installed
-    Chrome/Edge, then Playwright's bundled Chromium."""
+    """Browser choices to try in order: an explicit executable, the installed Chrome (or the
+    channel chosen), Microsoft Edge (every Windows computer has it, so no download is needed
+    there without Chrome), then Playwright's bundled Chromium."""
     exe = os.environ.get("JOB_APPLY_CHROMIUM_PATH")
     if exe:
         return [{"executable_path": exe}]
     attempts: list[dict[str, Any]] = []
     if settings.browser_channel in ("chrome", "msedge", "chrome-beta"):
         attempts.append({"channel": settings.browser_channel})
+        if settings.browser_channel != "msedge":
+            attempts.append({"channel": "msedge"})
     attempts.append({})
     return attempts
 

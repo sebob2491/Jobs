@@ -73,10 +73,10 @@ All of the user's data lives in `~/.job-apply/`, outside the plugin:
 5. **Browser.** Run `open_application(url="https://www.linkedin.com/login")`. A
    Chrome window opens with its own profile. Ask the user to sign in to LinkedIn,
    and to Indeed (`https://secure.indeed.com/auth`), in that window. The sign-ins are
-   kept for future sessions. If the browser doesn't start, have them install
-   Google Chrome, or run the `playwright install chromium` command shown in
-   `setup_status`'s `browser_note` and set `settings.browser_channel: chromium` in
-   the profile.
+   kept for future sessions. Without Chrome it uses Microsoft Edge (on every Windows
+   computer). If no browser starts, have them install Google Chrome, or run the
+   `playwright install chromium` command shown in `setup_status`'s `browser_note` and
+   set `settings.browser_channel: chromium` in the profile.
 
 6. **Passwords (optional).** Company sites on Workday and SuccessFactors need an
    account per company, as do SCREEN's, Nikon Precision's, Benchmark's and Daifuku's.
