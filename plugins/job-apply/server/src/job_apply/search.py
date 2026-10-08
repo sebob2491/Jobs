@@ -111,36 +111,85 @@ STATE_CITIES = {
 }
 
 
+_AREA_WORDS = {"greater", "metro", "metropolitan", "area", "region", "valley"}  # "Greater Phoenix", "Phoenix area"
+IN_STATE = "in:"  # a term "in:az": the area is in that state (never matched as words: norm drops ":")
+
+
+def _trailing_state(words: list[str]) -> tuple[str | None, list[str]]:
+    """A state before or after the place: 'phoenix az' -> ('AZ', ['phoenix']); 'arizona phoenix
+    area' -> ('AZ', ['phoenix', 'area']); else (None, words)."""
+    if len(words) > 1 and words[-1].upper() in US_STATES:
+        return words[-1].upper(), words[:-1]
+    for code, name in US_STATES.items():
+        n = norm(name).split()
+        if len(words) > len(n) and words[-len(n):] == n:
+            return code, words[:-len(n)]
+        if len(words) > len(n) and words[:len(n)] == n:
+            return code, words[len(n):]
+    return None, words
+
+
 def location_terms(location: str | None) -> list[str]:
-    """'AZ' -> ['az', 'arizona', 'phoenix', 'chandler', ...]; 'Phoenix|Chandler' -> ['phoenix', 'chandler']."""
+    """'AZ' -> ['az', 'arizona', 'phoenix', 'chandler', ...]; 'Phoenix|Chandler' -> ['phoenix',
+    'chandler', 'in:az'] (cities of one state: another state's Phoenix isn't the area).
+    'Phoenix AZ', 'Phoenix, AZ 85001' and 'Greater Phoenix' are read as a person means them."""
     if not location:
         return []
     terms: list[str] = []
+    states: set[str] = set()
     for part in re.split(r"\s*[|,;]\s*", location):
-        n = norm(part)
-        if not n:
-            continue
-        terms.append(n)
-        up = part.strip().upper()
-        if up in US_STATES:
-            terms.append(norm(US_STATES[up]))
-            terms.extend(STATE_CITIES.get(up, []))
-        for code, name in US_STATES.items():
-            if n == norm(name):
-                terms.append(code.lower())
-                terms.extend(STATE_CITIES.get(code, []))
+        words = [w for w in norm(part).split() if not w.isdigit()]  # "AZ 85001": a ZIP code is no place
+        state, words = _trailing_state(words)
+        words = [w for w in words if w not in _AREA_WORDS] or words
+        n = " ".join(words)
+        if n:
+            terms.append(n)
+            if n.upper() in US_STATES:
+                state = state or n.upper()
+            for code, name in US_STATES.items():
+                if n == norm(name):
+                    state = state or code
+        if state:
+            states.add(state)
+            terms += [state.lower(), norm(US_STATES[state]), *STATE_CITIES.get(state, [])]
+    if not states:
+        # only cities: the state they're all in, when the plugin knows it
+        cities = {t for t in terms}
+        home = {code for code, names in STATE_CITIES.items() if cities and cities <= set(names)}
+        terms += [IN_STATE + code.lower() for code in home]
     return list(dict.fromkeys(terms))
 
 
-_BROAD = re.compile(
-    r"((\d+|multiple|various|several) locations?|anywhere|nationwide|united states( of america)?|usa?|u s a?)"
-)
+# Words that say where a job is only as "the US", "anywhere" or "several places": a listing
+# with nothing else ("US - Multiple Locations", "Remote - US (Field Based)") could be done
+# from the area, and is flagged rather than dropped
+_BROAD_WORDS = {"us", "usa", "u", "s", "a", "united", "states", "of", "america", "north", "nationwide", "anywhere",
+                "in", "the", "multiple", "various", "several", "locations", "location", "field", "based", "home",
+                "remote", "travel", "traveling", "travelling", "virtual", "telecommute", "work", "from", "and", "or",
+                "any", "all", "hybrid", "mobile", "more"}
+
+
+_WORDLIKE_CODES = {"IN", "OR", "ME", "OK", "HI", "OH", "DE", "PA", "MA", "AL", "CO", "LA", "ID", "MI", "MO", "MS",
+                   "GA", "NE", "AR", "MT"}
 
 
 def _states_named(text: str) -> set[str]:
     """US states a place names: a capitalised code ("Peoria, IL", "US-AZ-Chandler") or the
     state's name ("Peoria, Illinois")."""
-    found = {c for c in re.findall(r"(?<![^\s,;/|(\-])([A-Z]{2})(?![^\s,;/|).\-])", text or "") if c in US_STATES}
+    text = text or ""
+    found = set()
+    for m in re.finditer(r"(?<![^\s,;/|(\-])([A-Z]{2})(?![^\s,;/|).\-])", text):
+        code = m.group(1)
+        if code not in US_STATES:
+            continue
+        if code in _WORDLIKE_CODES:
+            # in capitals, "IN" and "OR" are words too ("CHANDLER - WORK IN OFFICE"): a state only
+            # after a comma or dash ("Indianapolis, IN", "US-IN-"), or ending the place ("Portland OR 97201")
+            before, after = text[:m.start()].rstrip(), text[m.end():].lstrip()
+            if not (before.endswith((",", "-", "(", "/", "|", ";")) or not after
+                    or after[:1] in ",;)|/" or after[:1].isdigit()):
+                continue
+        found.add(code)
     padded = f" {norm(text)} "
     found |= {code for code, name in US_STATES.items() if f" {norm(name)} " in padded}
     return found
@@ -151,21 +200,21 @@ def location_matches(text: str, terms: list[str]) -> bool | None:
     if not terms:
         return True
     wanted = {t.upper() for t in terms if t.upper() in US_STATES}
-    named = _states_named(text)
-    if wanted and named and not named & wanted:
-        return False  # another state's Peoria or Glendale: the city name alone isn't the area
+    wanted |= {t[len(IN_STATE):].upper() for t in terms if t.startswith(IN_STATE)}
+    # Each place of a listing that names several on its own: "Austin, TX; Chandler" is in the
+    # area by its Chandler, though Texas is named and Arizona isn't
+    for place in re.split(r"\s*(?:[;|/]|\bor\b|\band\b)\s*", text or ""):
+        named = _states_named(place)
+        if wanted and named and not named & wanted:
+            continue  # another state's Peoria or Glendale: the city name alone isn't the area
+        padded = f" {norm(place)} "
+        if any(f" {t} " in padded for t in terms):
+            return True
     n = norm(text)
-    padded = f" {n} "
-    if any(f" {t} " in padded for t in terms):
-        return True
-    if not n or _BROAD.fullmatch(n) or re.search(r"\+\d+ more\b", n):  # "Greensboro, NC (+3 more)"
+    if not n or re.search(r"\+\d+ more\b", n):  # "Greensboro, NC (+3 more)"
         return None
-    if re.search(r"\bremote\b", n):
-        # "Remote - US" could be done from anywhere; "Remote, Japan" can't
-        rest = set(re.sub(r"\bremote\b", " ", n).split()) - {"us", "usa", "u", "s", "a", "united", "states", "of",
-                                                                "america", "north", "nationwide", "anywhere", "in"}
-        return None if not rest else False
-    return False
+    # "Remote - US" could be done from anywhere; "Remote, Japan" can't
+    return None if all(w in _BROAD_WORDS or w.isdigit() for w in n.split()) else False
 
 
 # --------------------------------------------------------------------- per-ATS
@@ -186,7 +235,8 @@ def _workday_location_facets(facets: Any, terms: list[str]) -> dict[str, list[st
                 continue
             p = item.get("facetParameter") or param
             if p and "id" in item and "descriptor" in item and re.search(r"location|country|state|city|region", p, re.I):
-                any_location = True
+                # countries alone say nothing of which city a "2 Locations" job is in
+                any_location = any_location or not re.search(r"country", p, re.I)
                 if location_matches(str(item["descriptor"]), terms) is True:
                     found.setdefault(p, []).append((str(item["id"]), int(item.get("count") or 0)))
             if item.get("values"):
@@ -236,11 +286,12 @@ async def _workday(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, 
         for p in postings:
             if not p.get("externalPath") or not p.get("title"):
                 continue  # not a posting (Analog Devices' answer had one with neither)
-            if nowhere_near and location_matches(p.get("locationsText", ""), terms) is None:
-                continue
+            where = str(p.get("locationsText") or "")
+            if nowhere_near and _SITE_COUNT.fullmatch(where.strip()):
+                continue  # "3 Locations", none of them in the area (a "Remote - US" job could be done from it)
             out.append(Listing(
                 company="", title=p.get("title", ""), url=f"{base}{p.get('externalPath') or ''}",
-                location=p.get("locationsText", ""), posted=p.get("postedOn", ""),
+                location=where, posted=str(p.get("postedOn") or ""),
                 external_id=(p.get("bulletFields") or [""])[0], ats="workday",
             ))
         offset += WORKDAY_PAGE
@@ -937,6 +988,8 @@ async def _eightfold(client: httpx.AsyncClient, cfg: Any, query: str, limit: int
     headers = {"Accept": "application/json", "Referer": f"https://{host}/careers"}
     out: list[Listing] = []
     start = 0
+    if terms:  # the search takes no place ("Arizona" finds nothing): Arizona's can be far down the list
+        limit = max(limit, AREA_SCAN)
     while len(out) < limit:
         params = {"domain": domain, "query": query, "location": "", "start": start}
         r = await _send(client, "GET", api, params=params, headers=headers)
@@ -951,12 +1004,24 @@ async def _eightfold(client: httpx.AsyncClient, cfg: Any, query: str, limit: int
     return out[:limit]
 
 
+SMARTRECRUITERS_PAGE = 100  # the most its API answers at once
+
+
 async def _smartrecruiters(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, terms: list[str]) -> list[Listing]:
     api = f"https://api.smartrecruiters.com/v1/companies/{cfg}/postings"
-    r = await _send(client, "GET", api, params={"q": query, "limit": min(limit, 100)})
-    _raise_for(r, api)
+    found: list[dict[str, Any]] = []
+    if terms:  # the area is filtered here, after the search: its openings can be far down the list
+        limit = max(limit, AREA_SCAN)
+    while len(found) < limit:  # a page at a time: the area's openings can be past the first
+        r = await _send(client, "GET", api, params={"q": query, "limit": SMARTRECRUITERS_PAGE, "offset": len(found)})
+        _raise_for(r, api)
+        data = r.json()
+        page = data.get("content") or []
+        found += page
+        if not page or len(found) >= int(data.get("totalFound") or 0):
+            break
     out = []
-    for p in r.json().get("content") or []:
+    for p in found:
         loc = p.get("location") or {}
         where = ", ".join(x for x in [loc.get("city"), loc.get("region"), (loc.get("country") or "").upper()] if x)
         out.append(Listing(
@@ -977,7 +1042,7 @@ async def _oracle(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, t
                          "POSTING_DATES", "FLEX_FIELDS", "LOCATIONS"])
     out: list[Listing] = []
     if terms:
-        limit = max(limit, ORACLE_SCAN)
+        limit = max(limit, AREA_SCAN)
     for offset in range(0, max(limit, 1), ORACLE_PAGE):  # a page at a time: Arizona's openings can be past the first
         at = f"offset={offset}," if offset else ""  # the first page as the career site asks for it
         finder = (f"findReqs;siteNumber={site},facetsList={facets},limit={ORACLE_PAGE},{at}"
@@ -996,7 +1061,9 @@ async def _oracle(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, t
 
 
 ORACLE_PAGE = 25  # the most Oracle's search answers at once
-ORACLE_SCAN = 200  # openings read per search when only some are in the area (onsemi has 200+ technicians)
+# Openings read per search when the site's own search can't take the area, so only some of
+# what it finds are in it (onsemi lists 200+ technicians, Micron 250+)
+AREA_SCAN = 200
 
 
 def _oracle_listings(data: dict[str, Any], host: str, site: str) -> list[Listing]:
@@ -1014,13 +1081,15 @@ def _oracle_listings(data: dict[str, Any], host: str, site: str) -> list[Listing
 
 
 def _merge_places(places: list[str]) -> str:
-    """"Scottsdale, AZ, United States" and "Scottsdale, AZ, US" are one place."""
+    """"Scottsdale, AZ, United States" and "Scottsdale, AZ, US" are one place; "Peoria, IL"
+    and "Peoria, AZ" are two."""
     kept: list[str] = []
-    cities: set[str] = set()
+    seen: set[str] = set()
     for place in places:
-        city = norm(place.split(",")[0])
-        if city and city not in cities:
-            cities.add(city)
+        parts = [norm(x) for x in place.split(",")]
+        key = " ".join(parts[:2]) if len(parts) > 1 else parts[0]  # its city and its state
+        if key and key not in seen:
+            seen.add(key)
             kept.append(place)
     return "; ".join(kept)
 
@@ -1087,7 +1156,11 @@ def _pick(companies: list[dict[str, Any]], names: list[str] | None) -> list[dict
     if not names:
         return companies
     wanted = [norm(n) for n in names]
-    return [c for c in companies if any(w and (w in norm(c["name"]) or norm(c["name"]) in w) for w in wanted)]
+
+    def words_in(part: str, whole: str) -> bool:  # whole words: "TEL" isn't in "Intel", nor "ASM" in "ASML"
+        return bool(part) and f" {part} " in f" {whole} "
+
+    return [c for c in companies if any(words_in(w, norm(c["name"])) or words_in(norm(c["name"]), w) for w in wanted)]
 
 
 def keep_listings(company: str, listings: list[Listing], terms: list[str], limit: int,

@@ -161,7 +161,7 @@ def test_helpers():
     assert not title_matches("Accountant", "field service | equipment engineer")
     az = location_terms("AZ")
     assert az[:2] == ["az", "arizona"] and {"phoenix", "chandler", "tempe"} <= set(az)  # metro cities count too
-    assert location_terms("Phoenix|Chandler") == ["phoenix", "chandler"]
+    assert location_terms("Phoenix|Chandler") == ["phoenix", "chandler", "in:az"]  # another state's Phoenix isn't it
     assert location_terms("arizona")[:2] == ["arizona", "az"]
     assert location_matches("Chandler (Office)", az) is True  # NXP lists only the city
     assert location_matches("AZ - Chandler", az) is True
@@ -1083,3 +1083,121 @@ def test_oracle_search_pages_past_the_first_25():
     assert found["errors"] == {}
     assert [r["title"] for r in found["results"]] == ["Equipment Technician 140", "Equipment Technician 30"]
     assert len(asked) == 6 and "offset" not in asked[0] and "limit=25,offset=25," in asked[1]  # stops at the last
+
+
+def test_broad_us_listings_are_flagged_not_dropped():
+    """Field-service and travel jobs are often posted with only the country and a word or two:
+    the person could take them from Arizona, so they're kept and marked "check the posting"."""
+    az = location_terms("AZ")
+    for broad in ("US - Multiple Locations", "Multiple Locations, US", "Field Based - US", "Remote - US (Field Based)",
+                  "Remote - United States (Travel)", "Home Based - USA", "Anywhere in the US", "US Nationwide",
+                  "North America", "Work From Home, US"):
+        assert location_matches(broad, az) is None, broad
+    for elsewhere in ("Remote - Canada", "Remote, Japan", "US - Texas", "Remote - TX"):
+        assert location_matches(elsewhere, az) is False, elsewhere
+
+
+def test_an_area_city_listed_beside_another_state_is_in_the_area():
+    az = location_terms("AZ")
+    for here in ("Austin, TX; Chandler", "Chandler (Office); Austin, TX", "Hillsboro, OR or Chandler", "Phoenix / LA",
+                 "Chandler - WORK IN OFFICE"):
+        assert location_matches(here, az) is True, here
+    for elsewhere in ("Indianapolis, IN", "Portland OR 97201", "US-IN-Indianapolis", "Peoria, IL; Austin, TX"):
+        assert location_matches(elsewhere, az) is False, elsewhere
+
+
+def test_a_location_as_a_person_types_it():
+    for typed in ("Phoenix AZ", "Phoenix Arizona", "Phoenix, AZ 85001", "Arizona (Phoenix area)"):
+        terms = location_terms(typed)
+        assert {"phoenix", "az", "arizona", "chandler"} <= set(terms), (typed, terms)
+        assert location_matches("Tempe, Arizona", terms) and location_matches("Phoenix, OR", terms) is False
+    for metro in ("Greater Phoenix", "Phoenix metro", "Phoenix area"):
+        assert location_matches("Phoenix, AZ", location_terms(metro)) is True, metro
+    # cities alone: the state they're in, not another state's city of the same name
+    cities = location_terms("Phoenix|Chandler")
+    assert location_matches("Chandler, AZ", cities) is True
+    assert location_matches("Phoenix, OR", cities) is False and location_matches("Chandler, TX", cities) is False
+
+
+def test_a_workday_remote_us_job_is_kept_when_the_site_lists_no_area_place():
+    """The site's place filter has no Arizona value: its "3 Locations" jobs aren't in the area,
+    but a "Remote - United States" one could be done from it. A posting whose place is null
+    doesn't fail the company's search."""
+    facets = [{"facetParameter": "locations", "values": [
+        {"id": "tx", "descriptor": "Austin, TX", "count": 2}, {"id": "us", "descriptor": "Remote - United States", "count": 1}]}]
+    postings = [
+        {"title": "Field Service Engineer", "externalPath": "/job/x/FSE_R1", "locationsText": "Remote - United States",
+         "postedOn": "Posted Today", "bulletFields": ["R1"]},
+        {"title": "Field Service Engineer II", "externalPath": "/job/x/FSE_R2", "locationsText": "3 Locations",
+         "postedOn": "Posted Today", "bulletFields": ["R2"]},
+        {"title": "Field Service Technician", "externalPath": "/job/x/FST_R3", "locationsText": None,
+         "postedOn": None, "bulletFields": ["R3"]},
+    ]
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":  # a posting's own page: nowhere to say
+            return httpx.Response(200, json={"jobPostingInfo": {}})
+        return httpx.Response(200, json={"total": 3, "facets": facets, "jobPostings": postings})
+
+    async def go():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(answer)) as client:
+            return await search_module._workday(client, "https://adco.wd1.myworkdayjobs.com/External", "field service",
+                                                20, location_terms("AZ"))
+    found = asyncio.run(go())
+    assert [x.title for x in found] == ["Field Service Engineer", "Field Service Technician"]
+
+
+def _paged(total: int, area_at: set[int]):
+    def place(n: int) -> str:
+        return "Chandler, AZ" if n in area_at else "Boise, ID"
+    return place
+
+
+def test_eightfold_and_smartrecruiters_read_on_for_the_area():
+    """Neither search takes the area (Micron's "Arizona" finds nothing), so with the area
+    filtered here they read past the first 60: Arizona's openings can be far down."""
+    place = _paged(150, {120, 130})
+    asked = {"eightfold": [], "smartrecruiters": []}
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        q = dict(request.url.params)
+        if "eightfold" in request.url.host or "efco" in request.url.host:
+            start = int(q.get("start") or 0)
+            asked["eightfold"].append(start)
+            positions = [{"id": n, "name": f"Field Service Engineer {n}", "locations": [place(n)],
+                          "canonicalPositionUrl": f"https://careers.efco.com/careers/job/{n}"} for n in range(start, min(start + 10, 150))]
+            return httpx.Response(200, json={"data": {"positions": positions, "count": 150}})
+        offset = int(q.get("offset") or 0)
+        asked["smartrecruiters"].append(offset)
+        content = [{"id": str(n), "name": f"Field Service Engineer {n}", "location": {"city": "Chandler" if n in (120, 130) else "Boise",
+                    "region": "AZ" if n in (120, 130) else "ID", "country": "us"}, "releasedDate": "2026-10-01T00:00:00Z"}
+                   for n in range(offset, min(offset + 100, 150))]
+        return httpx.Response(200, json={"content": content, "totalFound": 150})
+
+    async def go():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(answer)) as client:
+            return await search_companies("field service", location="AZ", client=client, companies=[
+                {"name": "Eightfold Co", "search": {"eightfold": {"host": "careers.efco.com", "domain": "efco.com"}}},
+                {"name": "SR Co", "search": {"smartrecruiters": "srco"}}])
+    found = asyncio.run(go())
+    assert found["errors"] == {}
+    by = {}
+    for r in found["results"]:
+        by.setdefault(r["company"], []).append(r["title"])
+    assert sorted(by.get("Eightfold Co", [])) == ["Field Service Engineer 120", "Field Service Engineer 130"], found
+    assert sorted(by.get("SR Co", [])) == ["Field Service Engineer 120", "Field Service Engineer 130"], found
+    assert asked["smartrecruiters"] == [0, 100]
+
+
+def test_oracle_keeps_two_places_of_one_city_name():
+    merged = search_module._merge_places(["Peoria, IL, United States", "Peoria, AZ, US", "Scottsdale, AZ, United States",
+                                          "Scottsdale, AZ, US"])
+    assert merged == "Peoria, IL, United States; Peoria, AZ, US; Scottsdale, AZ, United States"
+
+
+def test_companies_are_picked_by_whole_words():
+    companies = [{"name": n} for n in ["ASML", "ASM (ASM America)", "Intel", "Tokyo Electron (TEL)", "Lam Research"]]
+    pick = search_module._pick
+    assert [c["name"] for c in pick(companies, ["TEL"])] == ["Tokyo Electron (TEL)"]
+    assert [c["name"] for c in pick(companies, ["ASM"])] == ["ASM (ASM America)"]
+    assert [c["name"] for c in pick(companies, ["Lam Research", "intel"])] == ["Intel", "Lam Research"]

@@ -106,9 +106,11 @@ opens a page on your computer (served by the plugin on `127.0.0.1`):
 
 1. **Find jobs** searches every employer's career site for your target titles in
    your area. Each opening gets a fit score, with the reasons and concerns under it:
-   "title matches", "posted this week", "requires a Bachelor's (you have an
-   Associate's)", "senior-level role", "requires an active clearance". Openings that
-   weren't there on your last visit are tagged **New**.
+   "title matches", "posted this week", "requires a Bachelor's (you have a high
+   school diploma)", "senior-level role", "requires an active clearance". Openings that
+   weren't there on your last visit are tagged **New**. Ones listed only as "US -
+   Multiple Locations", "Remote - US (Field Based)" and the like are kept and marked
+   "check the posting": you may be able to do them from your area.
 2. Tick the ones you want, or press **Select recommended**, then **Apply to
    selected**. **Select recommended** leaves out openings whose posting asks for a
    degree you don't have (unless it says "or equivalent experience"), and ones the

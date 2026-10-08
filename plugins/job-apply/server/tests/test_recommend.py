@@ -41,7 +41,7 @@ def test_profile_targets():
 def test_dates_and_levels():
     assert days_since("Posted Today", TODAY) == 0
     assert days_since("Posted 3 Days Ago", TODAY) == 3
-    assert days_since("Posted 30+ Days Ago", TODAY) == 30
+    assert days_since("Posted 30+ Days Ago", TODAY) == 31  # more than 30: none of the "this month" credit
     assert days_since("2026-09-29", TODAY) == 7
     assert days_since("2026-08-27T13:47:52-04:00", TODAY) == 40
     assert days_since("10/02/2026", TODAY) == 4
