@@ -137,10 +137,23 @@ _BROAD = re.compile(
 )
 
 
+def _states_named(text: str) -> set[str]:
+    """US states a place names: a capitalised code ("Peoria, IL", "US-AZ-Chandler") or the
+    state's name ("Peoria, Illinois")."""
+    found = {c for c in re.findall(r"(?<![^\s,;/|(\-])([A-Z]{2})(?![^\s,;/|).\-])", text or "") if c in US_STATES}
+    padded = f" {norm(text)} "
+    found |= {code for code, name in US_STATES.items() if f" {norm(name)} " in padded}
+    return found
+
+
 def location_matches(text: str, terms: list[str]) -> bool | None:
     """True/False, or None when the listing is too broad to tell ("3 Locations", "Remote - US")."""
     if not terms:
         return True
+    wanted = {t.upper() for t in terms if t.upper() in US_STATES}
+    named = _states_named(text)
+    if wanted and named and not named & wanted:
+        return False  # another state's Peoria or Glendale: the city name alone isn't the area
     n = norm(text)
     padded = f" {n} "
     if any(f" {t} " in padded for t in terms):
@@ -955,21 +968,40 @@ async def _smartrecruiters(client: httpx.AsyncClient, cfg: Any, query: str, limi
 
 
 async def _oracle(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, terms: list[str]) -> list[Listing]:
-    # The same request the career site's own search makes (copied from a live probe):
-    # one relevance-ranked page; the keyword is ignored if the finder differs.
+    # The same request the career site's own search makes (copied from a live probe),
+    # relevance-ranked; the keyword is ignored if the finder differs. It has no place
+    # filter here, so when the area is filtered afterwards more pages are read.
     host, site = cfg["host"], cfg["site"]
     keyword = query.replace('"', "").strip()
     facets = "%3B".join(["WORK_LOCATIONS", "WORKPLACE_TYPES", "TITLES", "CATEGORIES", "ORGANIZATIONS",
                          "POSTING_DATES", "FLEX_FIELDS", "LOCATIONS"])
-    finder = (f"findReqs;siteNumber={site},facetsList={facets},limit={min(limit, 25)},"
-              f"keyword={quote(chr(34) + keyword + chr(34), safe='')},sortBy={'RELEVANCY' if keyword else 'POSTING_DATES_DESC'}")
-    api = (f"https://{host}/hcmRestApi/resources/latest/recruitingCEJobRequisitions?onlyData=true"
-           "&expand=requisitionList.workLocation,requisitionList.otherWorkLocations,requisitionList.secondaryLocations,"
-           f"flexFieldsFacet.values,requisitionList.requisitionFlexFields&finder={finder}")
-    r = await _send(client, "GET", api, headers={"Accept": "application/json"})
-    _raise_for(r, api)
+    out: list[Listing] = []
+    if terms:
+        limit = max(limit, ORACLE_SCAN)
+    for offset in range(0, max(limit, 1), ORACLE_PAGE):  # a page at a time: Arizona's openings can be past the first
+        at = f"offset={offset}," if offset else ""  # the first page as the career site asks for it
+        finder = (f"findReqs;siteNumber={site},facetsList={facets},limit={ORACLE_PAGE},{at}"
+                  f"keyword={quote(chr(34) + keyword + chr(34), safe='')},sortBy={'RELEVANCY' if keyword else 'POSTING_DATES_DESC'}")
+        api = (f"https://{host}/hcmRestApi/resources/latest/recruitingCEJobRequisitions?onlyData=true"
+               "&expand=requisitionList.workLocation,requisitionList.otherWorkLocations,requisitionList.secondaryLocations,"
+               f"flexFieldsFacet.values,requisitionList.requisitionFlexFields&finder={finder}")
+        r = await _send(client, "GET", api, headers={"Accept": "application/json"})
+        _raise_for(r, api)
+        page = _oracle_listings(r.json(), host, site)
+        out.extend(page)
+        total = next((i.get("TotalJobsCount") for i in r.json().get("items") or [] if i.get("TotalJobsCount")), None)
+        if len(page) < ORACLE_PAGE or total is not None and offset + ORACLE_PAGE >= int(total):
+            break
+    return out[:limit]
+
+
+ORACLE_PAGE = 25  # the most Oracle's search answers at once
+ORACLE_SCAN = 200  # openings read per search when only some are in the area (onsemi has 200+ technicians)
+
+
+def _oracle_listings(data: dict[str, Any], host: str, site: str) -> list[Listing]:
     out = []
-    for item in r.json().get("items") or []:
+    for item in data.get("items") or []:
         for req in item.get("requisitionList") or []:
             places = [req.get("PrimaryLocation") or ""] + _oracle_places(req)
             out.append(Listing(
@@ -978,7 +1010,7 @@ async def _oracle(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, t
                 location=_merge_places(places), posted=req.get("PostedDate") or "",
                 external_id=str(req.get("Id") or ""), ats="oracle_hcm",
             ))
-    return out[:limit]
+    return out
 
 
 def _merge_places(places: list[str]) -> str:
