@@ -47,13 +47,18 @@ _DEGREES = [  # lowest first, so "Associate's or Bachelor's" counts as an Associ
     ("doctorate", r"\bph\.?\s?d\b|doctorate"),
 ]
 _EQUIVALENT = re.compile(r"or equivalent|equivalent (?:combination|experience|work|military)|in lieu of|"
+                         r"substitut\w* for (?:a |an |the )?(?:\w+ )?degree|(?:may|can) be substituted|"
                          r"or (?:relevant|related|equivalent) (?:work )?experience|"
                          r"or (?:at least |a minimum of )?(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten)\+? years|"
                          r"(?:ged|high school)[^.\n]{0,40}(?:plus|and|with) \d|"
-                         # "an associate degree, military technical training, field service experience, or trade
-                         # certification"; "associate degree or technical certification with 5+ years"
-                         r",\s+(?:[a-z-]+\s+){0,2}(?:training|certification|experience)\b[^.]*\bor\b|"
-                         r"\bor\s+(?:[a-z-]+\s+){0,2}(?:training|certification)\b")
+                         # a list of ways in: "an associate degree, military technical training, field service
+                         # experience, or trade certification" (an item of the list, so a comma after it); not
+                         # "a bachelor's degree, with hands-on experience troubleshooting ... or ..."
+                         r",\s+(?!with\b|and\b|including\b)(?:[a-z-]+\s+){0,2}(?:training|certification|experience)\s*,"
+                         r"[^.]*\bor\b|"
+                         # "associate degree or technical certification"; not "and Six Sigma or Lean certification"
+                         r"\bor\s+(?:an?\s+)?(?:equivalent|technical|trade|vocational|military|relevant|industry|professional)"
+                         r"\s+(?:\w+\s+)?(?:training|certification|certificate)\b")
 _PREFERRED = re.compile(r"\b(preferred|a plus|desired|desirable|nice to have|ideally|bonus)\b")
 # Headings start with these words or end with a colon ("Preferred Qualifications",
 # "Nice to have:"); "Bachelor's degree preferred" is a requirement line, not a heading.
@@ -61,10 +66,10 @@ _PREF_WORDS = r"(preferred|desired|nice to have|bonus|a plus)"
 _REQ_WORDS = r"(minimum|required|basic|must have|requirements|qualifications|what you need|what you'll need|" \
              r"who you are|you have|you bring|key skills)"
 _PREF_HEADING = re.compile(rf"^{_PREF_WORDS}\b|\b{_PREF_WORDS}\b.*:$")
-# "Education" or "Experience" alone ends a preferred list too; a line that starts with the
-# word ("Experience with vacuum pumps") doesn't.
-_REQ_HEADING = re.compile(rf"^{_REQ_WORDS}\b|\b({_REQ_WORDS[1:-1]}|education|experience)\b.*:$|"
-                          r"^(education|experience)(\s*(and|&|/)\s*(education|experience|skills|training|qualifications))*$")
+# Not "Education" or "Experience" on their own: under "Preferred Qualifications" they're the
+# preferred list's own sub-headings, and reading them as the required list back again put a
+# preferred Bachelor's among the requirements
+_REQ_HEADING = re.compile(rf"^{_REQ_WORDS}\b|\b{_REQ_WORDS}\b.*:$")
 _CLEARANCE = re.compile(r"(?:active|current|secret|top secret|ts/sci|security|dod)\s+clearance|clearance (?:is )?required")
 _NO_CLEARANCE = re.compile(r"\bno (?:\w+ )?clearance|clearance (?:is )?not required|"
                            r"(?:not require|without) (?:a |an |any )?(?:\w+ )?clearance")
@@ -266,7 +271,10 @@ def _without_preferred(sentence: str) -> str:
         if closed or _DEGREE_WORD.search(clause):
             groups.append([])
         groups[-1].append(clause)
-        closed = bool(_MARKED.search(clause))
+        # a clause that says so (required, preferred) or gives a way around the degree ends its group:
+        # "relevant experience in lieu of a degree is acceptable" isn't dropped with a later
+        # "field service experience preferred"
+        closed = bool(_MARKED.search(clause) or _EQUIVALENT.search(clause))
     return " ".join(" ".join(g) for g in groups if not _PREFERRED.search(" ".join(g))).strip()
 
 
@@ -290,7 +298,10 @@ def requirements(text: str) -> dict[str, Any]:
         if levels and re.search(r"degree|diploma|\bged\b|\bbs\b|\bb\.s|\ba\.a?\.?s\.|bachelor|master|associate|ph\.?d", sentence):
             degree_levels.append(min(levels))
             following = sentences[i + 1] if i + 1 < len(sentences) else ""
-            if _EQUIVALENT.search(sentence) or re.match(r"[-\s]*or\b", following) and _EQUIVALENT.search("or " + following):
+            # the way around it may be the next sentence: "Equivalent combination of education and
+            # experience will be considered.", "In lieu of a degree, 4 additional years..."
+            if _EQUIVALENT.search(sentence) or _EQUIVALENT.search(following) \
+                    or re.match(r"[-\s]*or\b", following) and _EQUIVALENT.search("or " + following):
                 out["degree_or_equivalent"] = True
         years += [int(y) for y in _YEARS.findall(sentence) if 0 < int(y) <= 15]
         if _CLEARANCE.search(sentence) and not _NO_CLEARANCE.search(sentence):

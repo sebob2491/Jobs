@@ -137,13 +137,23 @@ def test_passwords_are_read_as_written(job_apply_home):
     path = config.secrets_path()
     for written, meant in (("0123456", "0123456"), ("yes", "yes"), ("12:30:45", "12:30:45"),
                            ("!Summer2024x", "!Summer2024x"), ("*pw", "*pw"), ("'it''s'", "it's"), ('"q\\"x"', 'q"x'),
-                           ("plain # my work one", "plain")):
+                           ("plain # my work one", "plain"), ('"abc"  # my note', "abc")):
         path.write_text(f"workday_password: {written}\n")
         assert config.get_secret("workday_password") == meant, written
+    path.write_bytes("\ufeffworkday_password: from-notepad\n".encode())  # Notepad's byte-order mark
+    assert config.get_secret("workday_password") == "from-notepad"
+    # what the desk saves comes back exactly, whatever is in it
+    for typed in ("a\u2028b", "x\x85y", "\u00a0lead", 'q"x', "it's", "emoji\U0001F600", "back\\slash", " sp ", "#hash",
+                  "0123456", "yes", "*pw", "!Summer2024x", "a: b"):
+        config.save_site_password("workday_password", typed)
+        assert config.get_secret("workday_password") == typed, repr(typed)
+    config.save_site_password("successfactors_password", "kept")
+    assert config.get_secret("workday_password") == "a: b" and config.get_secret("successfactors_password") == "kept"
 
 
 def test_settings_written_by_hand(monkeypatch):
     monkeypatch.delenv("JOB_APPLY_HEADLESS")
+    assert config.Settings.from_dict({"browser_channel": "chrome-beta"}).browser_channel == "chrome-beta"
     s = config.Settings.from_dict({"browser_channel": "edge", "headless": "false", "auto_submit_ats": "workday, greenhouse"})
     assert s.browser_channel == "msedge" and s.headless is False and s.auto_submit_ats == ["workday", "greenhouse"]
     s = config.Settings.from_dict({"browser_channel": None, "headless": "yes"})
@@ -167,6 +177,12 @@ def test_saved_answers_fill_only_that_question_and_not_another_employers(job_app
     assert answer("Are you currently employed by ASML or any of its subsidiaries?", "ASML") is None
     assert answer("I agree to resolve any dispute by binding individual arbitration", "ASML", "checkbox") is None
     assert answer("Do you have a valid driver's license? *", "ASML") == "Yes"  # the same question anywhere
+    for question in ("Are you a current or former employee?", "Have you previously applied?",
+                     "Were you referred by a current employee?", "Does a relative of yours work here?"):
+        config.save_answer(question, "Yes", "Intel")
+        prof = config.Profile.load()
+        assert answer(question, "KLA") != "Yes", question  # Intel's answer isn't KLA's (the profile may answer it)
+        assert answer(question, "Intel") == "Yes", question
 
 
 BROWSER_PAGES = {
@@ -184,6 +200,15 @@ BROWSER_PAGES = {
 <p>Read our <a href="https://jobs.example.com/policy" target="_blank">privacy policy</a>.</p>
 <form><label for="fn">First Name</label><input id="fn"></form></body></html>""",
     "https://jobs.example.com/policy": "<!doctype html><html><body><h1>Privacy Policy</h1></body></html>",
+    "https://jobs.example.com/icon-apply": """<!doctype html><html><body><h1>Technician</h1>
+<form onsubmit="event.preventDefault()"><label for="n">Full Name</label><input id="n">
+<button type="submit" aria-label="Apply"><svg width="16" height="16"><circle cx="8" cy="8" r="6"/></svg></button>
+</form></body></html>""",
+    "https://jobs.example.com/with-follow": """<!doctype html><html><body><h1>Apply</h1>
+<iframe src="https://www.linkedin.com/company/example/follow" style="width:200px;height:40px"></iframe>
+<form><label for="fn">First Name</label><input id="fn"><button type="submit">Submit application</button></form>
+</body></html>""",
+    "https://www.linkedin.com/company/example/follow": "<!doctype html><html><body><button>Follow</button></body></html>",
     "https://jobs.example.com/widgets": """<!doctype html><html><body><form>
 <label for="terms">I accept the terms</label><input type="checkbox" id="terms" disabled>
 <label for="country">Country</label><select id="country" onchange="
@@ -336,3 +361,20 @@ def test_claudes_browser_tools_wait_while_the_desk_fills_an_application(srv):
         assert "Job Desk" not in str(e.value)
     finally:
         desk_module._desk = None
+
+
+@needs_browser
+def test_an_icon_only_final_button_is_a_final_button(srv):
+    """Its words are only its aria-label: click() won't press it; the submit path will."""
+    browser_routed(srv)
+    run(srv.browser.goto("https://jobs.example.com/icon-apply"))
+    assert [a["text"] for a in run(srv.browser.find_submit())] == ["Apply"]
+    out = run(srv.click("Apply"))
+    assert out["clicked"] is False and "final submit" in out["blocked"]
+
+
+@needs_browser
+def test_a_linkedin_follow_widget_doesnt_make_an_employers_form_linkedins(srv):
+    browser_routed(srv)
+    run(srv.browser.goto("https://jobs.example.com/with-follow"))
+    assert run(srv.browser.human_submit_ats()) is None
