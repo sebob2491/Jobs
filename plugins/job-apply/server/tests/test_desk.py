@@ -580,3 +580,11 @@ def test_tailoring_queue_hands_claude_the_jobs_and_the_real_resume(srv, job_appl
     assert out["base_resume"].startswith("# Sam Rivera") and out["resume_file"].endswith("resume.pdf")
     assert any("Coursework is not a degree" in rule for rule in out["rules"])
 
+
+
+def test_the_page_shows_the_plugin_version(srv):
+    """So the person can tell an update arrived (the desk's footer)."""
+    import json
+
+    manifest = json.loads((config.PLUGIN_ROOT / ".claude-plugin" / "plugin.json").read_text())
+    assert Desk(srv).state()["version"] == manifest["version"] != ""

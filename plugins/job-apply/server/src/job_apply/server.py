@@ -119,6 +119,7 @@ def setup_status() -> dict[str, Any]:
                         f"`uv run --project \"{config.PLUGIN_ROOT / 'server'}\" playwright install chromium` "
                         "and set settings.browser_channel: chromium.",
         "plugin_root": str(config.PLUGIN_ROOT),
+        "plugin_version": config.plugin_version(),
         "companies_file": str(config.PLUGIN_ROOT / "data" / "companies.yaml"),
         "jobs_by_status": tracker().counts(),
     }

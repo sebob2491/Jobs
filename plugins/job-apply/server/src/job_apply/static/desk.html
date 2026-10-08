@@ -196,6 +196,7 @@ footer { max-width: 1240px; margin: 0 auto; padding: 0 16px 24px; color: var(--m
   The desk fills applications in the automation browser window and stops at each review page.
   It only submits when you press Submit, or when "Submit for me" is on. LinkedIn and Indeed are always submitted by you.
   Answers you give here are saved in <code>~/.job-apply/answers.yaml</code> unless you untick "remember".
+  <span id="plugin-version"></span>
 </footer>
 <script>
 "use strict";
@@ -457,6 +458,7 @@ function renderHeader() {
   $("auto-hint").textContent = s.dry_run ? "Off in practice mode (settings.submit_mode: dry_run)." : s.auto_submit ? "On: complete applications are submitted without asking." : "Off: you press Submit for each one.";
   const tailor = $("tailor");
   if (document.activeElement !== tailor) tailor.checked = !!s.tailor_resumes;
+  $("plugin-version").textContent = state.version ? `job-apply ${state.version}` : "";
   $("tailor-hint").textContent = s.tailor_resumes ? "On: each job waits for Claude to write a resume for it." : "Off: your usual resume goes with every application.";
   const systems = {workday: "Workday", successfactors: "SuccessFactors", icims: "iCIMS", applicantstack: "ApplicantStack",
                    ukg: "UKG Pro", infor: "Infor", email: "Email"};

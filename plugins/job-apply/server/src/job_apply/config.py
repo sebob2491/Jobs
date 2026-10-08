@@ -6,6 +6,7 @@ the plugin directory, so updating or reinstalling the plugin can't lose it.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
@@ -23,6 +24,14 @@ TEMPLATE_PROFILE = PLUGIN_ROOT / "templates" / "profile.example.yaml"
 # Platforms whose user agreements prohibit automated use. The plugin fills the
 # form, but the person clicks the final button themselves.
 HUMAN_SUBMIT_ONLY = {"linkedin", "indeed"}
+
+
+def plugin_version() -> str:
+    """The plugin's version from its manifest, for the person to tell an update arrived."""
+    try:
+        return str(json.loads((PLUGIN_ROOT / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))["version"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return ""
 
 
 def home() -> Path:
