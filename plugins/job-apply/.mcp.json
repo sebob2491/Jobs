@@ -2,10 +2,7 @@
   "mcpServers": {
     "job-apply": {
       "command": "uv",
-      "args": ["run", "--quiet", "--frozen", "--project", "${CLAUDE_PLUGIN_ROOT}/server", "job-apply-mcp"],
-      "env": {
-        "CLAUDE_PLUGIN_ROOT": "${CLAUDE_PLUGIN_ROOT}"
-      }
+      "args": ["run", "--quiet", "--frozen", "--project", "${CLAUDE_PLUGIN_ROOT}/server", "job-apply-mcp"]
     }
   }
 }

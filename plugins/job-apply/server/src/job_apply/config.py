@@ -17,8 +17,19 @@ from typing import Any
 import yaml
 
 PACKAGE_DIR = Path(__file__).resolve().parent
-# server/src/job_apply -> plugin root (an installed copy can be pointed back via env)
-PLUGIN_ROOT = Path(os.environ.get("CLAUDE_PLUGIN_ROOT") or PACKAGE_DIR.parents[2])
+
+
+def _plugin_root(env: str | None) -> Path:
+    """The plugin's folder: CLAUDE_PLUGIN_ROOT when set (an installed copy can be pointed back
+    that way), else the folder that holds server/src/job_apply. A value still reading
+    "${CLAUDE_PLUGIN_ROOT}" is a host that didn't expand it (Claude Desktop's Code tab), and
+    taking it made the profile template and the employer list unfindable."""
+    if env and "${" not in env:
+        return Path(env)
+    return PACKAGE_DIR.parents[2]
+
+
+PLUGIN_ROOT = _plugin_root(os.environ.get("CLAUDE_PLUGIN_ROOT"))
 TEMPLATE_PROFILE = PLUGIN_ROOT / "templates" / "profile.example.yaml"
 
 # Platforms whose user agreements prohibit automated use. The plugin fills the

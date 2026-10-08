@@ -20,6 +20,17 @@ def test_without_chrome_edge_comes_before_a_download(monkeypatch):
     assert launch_attempts(chrome) == [{"executable_path": "/opt/chromium"}]
 
 
+def test_an_unexpanded_plugin_root_is_ignored():
+    """Claude Desktop passed .mcp.json's env through as the literal "${CLAUDE_PLUGIN_ROOT}":
+    setup found no profile template to copy and the desk no employer list."""
+    own = config.PACKAGE_DIR.parents[2]
+    assert (own / "templates" / "profile.example.yaml").exists()
+    assert (own / "data" / "companies.yaml").exists()
+    for unusable in ("${CLAUDE_PLUGIN_ROOT}", "", None):
+        assert config._plugin_root(unusable) == own
+    assert config._plugin_root("/opt/job-apply") == config.Path("/opt/job-apply")
+
+
 def test_chrome_installed_for_one_user_is_found(monkeypatch, tmp_path):
     """Chrome's Windows installer puts it in the user's AppData when they can't install for
     everyone; setup_status said "no Chrome" there."""
