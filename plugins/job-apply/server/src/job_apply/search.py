@@ -31,6 +31,7 @@ import html
 import re
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Awaitable, Callable
 from urllib.parse import quote, urlencode, urljoin, urlsplit, urlunsplit
 
@@ -81,9 +82,44 @@ class SearchError(Exception):
     pass
 
 
+BUILTIN_COMPANIES = "companies.yaml"  # in the plugin's data folder: semiconductor employers in Arizona
+
+
+def own_companies_path() -> Path:
+    """A person's own employer list, in their own folder (~/.job-apply/companies.yaml)."""
+    return config.home() / "companies.yaml"
+
+
+def companies_path() -> Path:
+    """The employer list Find jobs searches: the person's own when they have one."""
+    own = own_companies_path()
+    return own if own.exists() else config.PLUGIN_ROOT / "data" / BUILTIN_COMPANIES
+
+
+def _companies_in(path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except (OSError, yaml.YAMLError) as e:
+        raise ValueError(f"{path} can't be read: {str(e).splitlines()[0] if str(e) else type(e).__name__}") from e
+    if not isinstance(data, dict):
+        raise ValueError(f"{path} should start with `companies:`, a list of employers")
+    return [c for c in data.get("companies") or [] if isinstance(c, dict) and c.get("name")], data
+
+
 def load_companies() -> list[dict[str, Any]]:
-    path = config.PLUGIN_ROOT / "data" / "companies.yaml"
-    return yaml.safe_load(path.read_text(encoding="utf-8")).get("companies", [])
+    """The employers to search: the plugin's list, or the person's own (~/.job-apply/
+    companies.yaml, the same shape) in its place. With `include_builtin: true` in their own,
+    both, their entry winning where the two name the same employer. Someone looking for HR
+    work in Phoenix keeps their own list; nothing of theirs goes into the plugin."""
+    builtin, _ = _companies_in(config.PLUGIN_ROOT / "data" / BUILTIN_COMPANIES)
+    own_path = own_companies_path()
+    if not own_path.exists():
+        return builtin
+    own, data = _companies_in(own_path)
+    if data.get("include_builtin") is not True:
+        return own
+    named = {norm(c["name"]) for c in own}
+    return own + [c for c in builtin if norm(c["name"]) not in named]
 
 
 def alternatives(query: str) -> list[str]:

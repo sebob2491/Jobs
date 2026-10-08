@@ -34,6 +34,12 @@ CloudSuite (Benchmark) and Lever.
 Arizona sites, including equipment makers whose field service engineers work at
 Arizona fabs.
 
+Looking for other work, or somewhere else? Put your own list in
+`~/.job-apply/companies.yaml`, in the same shape. Find jobs and the Job Desk then search
+those employers instead. Add `include_builtin: true` to search both lists. Set your
+target titles (`preferences.titles`) and places (`preferences.locations`) in
+`profile.yaml` to match.
+
 ## How submitting works
 
 | Where the application is | What Claude does |
@@ -201,6 +207,7 @@ Everything personal stays on your machine in `~/.job-apply/`. Set
 | `secrets.yaml` | Optional career-site passwords, such as `workday_password`. Save one from the Job Desk, or write the file yourself and run `chmod 600` on it. A password named for a job system goes only onto that system's sites; any other only onto the site it's named for (`acme_password` on an address containing `acme`). |
 | `tracker.db` | Application tracker (SQLite). `export_jobs_csv` writes a spreadsheet. |
 | `answers.yaml` | Answers you gave in the Job Desk, reused on later applications. Edit or delete entries freely. |
+| `companies.yaml` | Optional: your own employer list, searched in place of the plugin's (add `include_builtin: true` for both). |
 | `recommendations.json`, `desk.json` | The Job Desk's last search, and whether "Submit for me" is on |
 | `browser/` | The automation browser's profile, which keeps your sign-ins |
 | `applications/<id>-<company>-<title>/` | Tailored resume and cover letter, screenshots, submission record, `debug/` snapshots |
@@ -287,6 +294,11 @@ It is read-only. Submitting is disabled, nothing is uploaded, it never signs in 
 creates accounts, and it never contacts LinkedIn or Indeed. The job summary shows
 a table, and the log has one `LIVE_RESULT` line of JSON per company. Tick
 "Commit captured pages" to save the pages as regression fixtures.
+
+To run it yourself, add `--pipeline --fake-passwords` to drive the Job Desk's
+one-button pipeline instead. Add `--parallel 4` to check four employers at a time,
+each in a browser of its own; every site is still visited once. A full run then
+takes about 6 minutes instead of 22.
 
 ### Turning a failure into a test
 
