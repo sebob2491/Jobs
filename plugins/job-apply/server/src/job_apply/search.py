@@ -1107,7 +1107,8 @@ def keep_listings(company: str, listings: list[Listing], terms: list[str], limit
         if where is False:
             continue
         if where is None:
-            listing.notes.append(f"location given as {listing.location or 'nothing'!r}; check the posting")
+            listing.notes.append(f"location given as {listing.location!r}; check the posting" if listing.location
+                                 else "no location given; check the posting")
         row = listing.to_dict()
         if query:
             row["title_match"] = title_matches(listing.title, query)
