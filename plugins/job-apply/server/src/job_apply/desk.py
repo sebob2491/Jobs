@@ -97,10 +97,13 @@ class Desk:
     def _load(self) -> None:
         try:
             saved = json.loads(_recommendations_path().read_text(encoding="utf-8"))
-            self.listings = saved.get("results") or []
+            results = saved.get("results")
+            # a hand-edited file: only listings with an address (the page and state() need one)
+            self.listings = [r for r in results if isinstance(r, dict) and isinstance(r.get("url"), str)] \
+                if isinstance(results, list) else []
             self.search.update({k: saved.get(k) for k in ("query", "location", "errors", "browser_only")
                                 if k in saved}, status="done", at=saved.get("at"))
-        except (OSError, ValueError):
+        except (OSError, ValueError, AttributeError):
             pass
         try:
             saved = json.loads(_settings_path().read_text(encoding="utf-8"))
@@ -176,6 +179,21 @@ class Desk:
     def _forbidden(self) -> Response:
         return JSONResponse({"error": "forbidden"}, status_code=403)
 
+    @staticmethod
+    async def _body(request: Request) -> dict[str, Any]:
+        """The request's JSON object; a ValueError for anything else (the page only sends objects)."""
+        try:
+            body = await request.json()
+        except ValueError:
+            raise ValueError("The request isn't JSON.") from None
+        if not isinstance(body, dict):
+            raise ValueError("The request should be a JSON object.")
+        return body
+
+    @staticmethod
+    def _bad(e: Exception) -> Response:
+        return JSONResponse({"error": str(e.args[0]) if isinstance(e, KeyError) and e.args else str(e)}, status_code=400)
+
     async def page_view(self, request: Request) -> Response:
         if not self._allowed(request, api=False):
             return self._forbidden()
@@ -196,19 +214,33 @@ class Desk:
     async def apply_view(self, request: Request) -> Response:
         if not self._allowed(request, api=True):
             return self._forbidden()
-        body = await request.json()
-        queued, refused = self.apply(urls=body.get("urls") or [], job_ids=body.get("job_ids") or [],
-                                     submit=body.get("submit") is True)
+        try:
+            body = await self._body(request)
+            urls, job_ids = body.get("urls") or [], body.get("job_ids") or []
+            # lists of addresses and of whole numbers: "13" is no list of jobs (read letter by
+            # letter it was jobs 1 and 3), nor is true a job's number
+            if not isinstance(urls, list) or not all(isinstance(u, str) for u in urls):
+                raise ValueError("urls should be a list of web addresses")
+            if not isinstance(job_ids, list) or not all(isinstance(j, int) and not isinstance(j, bool) for j in job_ids):
+                raise ValueError("job_ids should be a list of job numbers")
+        except ValueError as e:
+            return self._bad(e)
+        queued, refused = self.apply(urls=urls, job_ids=job_ids, submit=body.get("submit") is True)
         return JSONResponse({"queued": queued, "already_applied": refused})
 
     async def answer_view(self, request: Request) -> Response:
         if not self._allowed(request, api=True):
             return self._forbidden()
-        body = await request.json()
         try:
-            note = self.answer(int(body["job_id"]), body.get("answers") or [])
+            body = await self._body(request)
+            job_id, answers = body.get("job_id"), body.get("answers") or []
+            if not isinstance(job_id, int) or isinstance(job_id, bool):
+                raise ValueError("job_id should be a job number")
+            if not isinstance(answers, list) or not all(isinstance(a, dict) for a in answers):
+                raise ValueError("answers should be a list of questions and answers")
+            note = self.answer(job_id, answers)
         except (KeyError, ValueError) as e:
-            return JSONResponse({"error": str(e)}, status_code=400)
+            return self._bad(e)
         return JSONResponse({"ok": True, "note": note})
 
     async def job_view(self, request: Request) -> Response:
@@ -216,6 +248,8 @@ class Desk:
             return self._forbidden()
         job_id, action = request.path_params["job_id"], request.path_params["action"]
         a = self.applier
+        if job_id >= 2 ** 63:  # past what the tracker can hold: no such job
+            return JSONResponse({"error": f"No job with id {job_id}"}, status_code=404)
         try:
             if action == "resume":
                 run = a.runs.get(job_id)
@@ -233,18 +267,20 @@ class Desk:
                 a.use_usual_resume(job_id)
             elif action == "applied":
                 self.srv.tracker().update(job_id, status="applied", note="marked applied in the Job Desk")
-                if job_id in a.runs:
-                    a.runs[job_id].status, a.runs[job_id].reason = "submitted", "Marked as applied."
+                a.mark_applied(job_id)
             else:
                 return JSONResponse({"error": f"unknown action {action!r}"}, status_code=404)
         except (KeyError, ValueError) as e:
-            return JSONResponse({"error": str(e)}, status_code=400)
+            return self._bad(e)
         return JSONResponse({"ok": True})
 
     async def settings_view(self, request: Request) -> Response:
         if not self._allowed(request, api=True):
             return self._forbidden()
-        body = await request.json()
+        try:
+            body = await self._body(request)
+        except ValueError as e:
+            return self._bad(e)
         if "auto_submit" in body:
             self.applier.auto_submit = body["auto_submit"] is True  # not "false", which bool() calls true
         if "tailor_resumes" in body:
@@ -258,19 +294,30 @@ class Desk:
         never sent back, logged, or shown to Claude."""
         if not self._allowed(request, api=True):
             return self._forbidden()
-        body = await request.json()
         try:
-            config.save_site_password(str(body.get("name") or ""), str(body.get("value") or ""))
+            body = await self._body(request)
+            name = str(body.get("name") or "")
+            env = "JOB_APPLY_SECRET_" + re.sub(r"[^A-Z0-9]", "_", name.upper())
+            if name and os.environ.get(env):
+                # the environment's wins (config.get_secret): saved here, it would never be used
+                raise ValueError(f"This password is set in your environment ({env}), which comes before one saved "
+                                 "here. Change it there, or remove it there and save it here.")
+            config.save_site_password(name, str(body.get("value") or ""))
         except ValueError as e:
-            return JSONResponse({"error": str(e)}, status_code=400)
-        if body.get("name") == "email_password":
-            self.applier.mail_problem = None  # the new one is tried at the next emailed code
+            return self._bad(e)
+        if name == "email_password":
+            # the new one is tried at the next emailed code, even if it's the one turned down before
+            # (a mail service's hiccup could be taken for a refusal)
+            self.applier.mail_problem = self.applier._mail_refused = None
         return JSONResponse({"saved": True})
 
     async def add_view(self, request: Request) -> Response:
         if not self._allowed(request, api=True):
             return self._forbidden()
-        body = await request.json()
+        try:
+            body = await self._body(request)
+        except ValueError as e:
+            return self._bad(e)
         links = [u for u in re.split(r"\s+", str(body.get("text") or "")) if u]
         if not links:
             return JSONResponse({"error": "Paste a job link first."}, status_code=400)
@@ -304,8 +351,8 @@ class Desk:
         t = self.srv.tracker()
         ids = [int(j) for j in job_ids]
         for url in urls:
-            if not re.match(r"(?i)^(https?|file)://", str(url)):
-                continue  # a listing whose link isn't a web address ("javascript:…") is never opened
+            if not re.match(r"(?i)^(https?|file)://", str(url)) or _own_file(str(url)):
+                continue  # a listing whose link isn't a web address ("javascript:…"), or is one of the desk's own files
             tracked = t.find_by_url(url)
             if tracked is not None and self._listing(url) is None:
                 ids.append(tracked["id"])  # added by Claude or by hand
@@ -370,7 +417,10 @@ class Desk:
     def answer(self, job_id: int, answers: list[dict[str, Any]]) -> str | None:
         """Fill the person's answers in. Returns a note if some couldn't be remembered (they
         still go into this application)."""
-        run = self.applier.runs[job_id]
+        run = self.applier.runs.get(job_id)
+        if run is None or run.status != "needs_you":
+            # nothing is remembered for a job that isn't asking (a stale page)
+            raise ValueError("That job isn't waiting for answers any more.")
         problem = None
         for a in answers:
             label, value = str(a.get("label") or ""), a.get("value")
@@ -389,7 +439,10 @@ class Desk:
 
     # ------------------------------------------------------------- state
     def state(self) -> dict[str, Any]:
-        prof = config.Profile.load()
+        try:
+            prof, profile_problem = config.Profile.load(), None
+        except Exception as e:  # a typo in profile.yaml: said on the page, which keeps working
+            prof, profile_problem = config.Profile({}), _first_line(e)
         settings = prof.settings
         t = self.srv.tracker()
         runs = {jid: r.public() for jid, r in self.applier.runs.items()}
@@ -433,6 +486,7 @@ class Desk:
             "passwords": {name.removesuffix("_password"): saved for name, saved in
                           _saved([f"{ats}_password" for ats in SITE_PASSWORDS] + ["email_password"]).items()},
             "mail_problem": self.applier.mail_problem,
+            "profile_problem": profile_problem,
             "version": config.plugin_version(),
             "answers_problem": config.answers_problem(),
             "search": self.search,

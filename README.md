@@ -163,8 +163,9 @@ an emailed code or confirmation link gets it from your inbox:
 - it opens the inbox read-only, so nothing is marked read, moved or deleted.
 
 If the app password is turned down, the desk page says so and stops trying until you
-save a new one. The app password is only ever used to read those emails: Claude can't
-have it typed into any page.
+save it again (a new one, or the same one if the mail service was only having trouble).
+A link is only opened when its address is the job's own site. The app password is only
+ever used to read those emails: Claude can't have it typed into any page.
 
 The desk works in each job's own browser tab and follows only the tabs an application
 opens itself, so a tab you open (to check your email, say) is left alone. Jobs already

@@ -501,6 +501,10 @@ def test_a_job_skipped_while_submit_for_me_checks_it_isnt_submitted(srv):
             calls.append(kw)
             return {"submitted": True, "confirmed": True}
 
+        @staticmethod
+        def tracker():
+            return srv.tracker()
+
     applier.srv = Stub()
     run(applier._submit(r, by_person=False))
     assert calls == [] and r.status == "skipped"
@@ -910,7 +914,7 @@ def test_an_emailed_code_or_link_is_read_from_the_inbox(srv, monkeypatch, query)
     applier = Applier(srv)
     asked = []
 
-    def inbox(address, password, since, senders, want, allowed_link, before=None):
+    def inbox(address, password, since, senders, want, allowed_link, before=None, look_back=None):
         asked.append((address, password, want))
         assert since > time.time() - 120  # since the wait began
         if want == "code":
@@ -956,7 +960,7 @@ def test_a_code_that_comes_after_the_queue_went_on_is_still_used(srv, monkeypatc
     applier = Applier(srv)
     sent = {"yet": False}
 
-    def inbox(address, password, since, senders, want, allowed_link, before=None):
+    def inbox(address, password, since, senders, want, allowed_link, before=None, look_back=None):
         return pipeline.mailbox.Found("code", "123456", "careers.example.com", time.time()) if sent["yet"] else None
 
     monkeypatch.setattr(pipeline.mailbox, "search", inbox)
@@ -2108,7 +2112,7 @@ def test_an_emailed_code_put_in_between_jobs_gives_the_tools_back(srv, monkeypat
     held_by = []
     real_fill = srv.fill_form
 
-    def inbox(address, password, since, senders, want, allowed_link, before=None):
+    def inbox(address, password, since, senders, want, allowed_link, before=None, look_back=None):
         return pipeline.mailbox.Found("code", "123456", "careers.example.com", time.time()) if sent["yet"] else None
 
     async def fill_form(fills, *args, **kwargs):
@@ -2146,3 +2150,74 @@ def test_a_profile_typo_doesnt_stop_the_inbox_watch_from_saying_so(srv, monkeypa
     applier = Applier(srv)
     assert applier.mail_login() is None
     assert "profile.yaml" in (applier.mail_problem or "")
+
+
+def test_submit_on_the_desk_isnt_pressed_in_a_tab_taken_to_another_posting(srv, monkeypatch):
+    """Job A waits on its review page; its tab has since gone to job B's application. The
+    desk's Submit for A doesn't press B's button (it would send B, recorded as A)."""
+    a_url, b_url = "https://careers.acme-fab.example/apply/1", "https://careers.other-litho.example/apply/2"
+    pages = {a_url: _form("Acme Fab"), b_url: _form("Other Litho")}
+    posts: list[str] = []
+    a = srv.add_job(url=a_url, title="FSE", company="Acme Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        await _serve(srv, pages, posts)
+        tab = await srv.browser.new_tab()
+        await tab.goto(b_url)
+        r = Run(a["id"], "FSE", "Acme Fab", status="ready", seen_form=True, page=tab, url=a_url)
+        applier.runs[a["id"]] = r
+        applier.submit_now(a["id"])
+        await applier._strict(applier._submit(r))
+        return r
+
+    r = run(go())
+    assert posts == [] and (r.status, r.need) == ("needs_you", "stuck") and "Resume" in r.reason, (r.status, r.reason)
+    assert srv.tracker().get(a["id"])["status"] != "applied"
+
+
+def test_an_emailed_code_is_read_only_from_its_own_mail_and_its_own_site(srv, monkeypatch):
+    """Two jobs on one site wait on emailed codes. The later one doesn't look back past its own
+    wait (mail from before it is the earlier job's), the earlier one stops at the later one's
+    wait, and a link only counts when its address is the job's own site: not another address
+    that merely names a job system in its path, nor another employer's Workday."""
+    monkeypatch.setattr(pipeline, "MAIL_POLL_SECONDS", 0)
+    monkeypatch.setenv("JOB_APPLY_SECRET_EMAIL_PASSWORD", "an-app-password")
+    monkeypatch.setattr(pipeline.mailbox, "imap_host", lambda address: "imap.example.com")
+    verify = "https://careers.acme-fab.example/verify"
+    pages = {verify: '<html><body><h1>Confirm your email</h1><label for="code">Enter the verification code we sent to '
+                     'your email</label><input id="code" type="text"><button type="button">Verify</button></body></html>'}
+    asked = {}
+
+    def search(address, password, since, senders, want, allowed_link, before=None, look_back=pipeline.mailbox.LOOK_BACK):
+        asked[since] = (before, look_back, allowed_link)
+        return None
+
+    monkeypatch.setattr(pipeline.mailbox, "search", search)
+    applier = Applier(srv)
+    now = time.time()
+
+    async def go():
+        await _serve(srv, pages, [])
+        runs = []
+        for i, paused in enumerate((now - 300, now)):
+            job = srv.add_job(url=f"{verify}?job={i}", title=f"FSE {i}", company="Acme Fab")["job"]
+            tab = await srv.browser.new_tab()
+            await tab.goto(verify)
+            r = Run(job["id"], f"FSE {i}", "Acme Fab", status="needs_you", need="email_code", page=tab, url=verify,
+                    paused_at=paused, paused_host="careers.acme-fab.example")
+            applier.runs[job["id"]] = r
+            runs.append(r)
+        for r in runs:
+            await applier._check_mail(r)
+        return runs
+
+    earlier, later = run(go())
+    assert asked[later.paused_at][:2] == (None, 0)
+    assert asked[earlier.paused_at][:2] == (later.paused_at, pipeline.mailbox.LOOK_BACK)
+    own_link = asked[later.paused_at][2]
+    assert own_link("https://careers.acme-fab.example/activate?t=1")
+    assert own_link("https://jobs.acme-fab.example/confirm?t=1")  # the employer's own site
+    for url in ("https://evil.example/myworkdayjobs.com/verify", "https://evil.example/greenhouse.io/confirm?t=1",
+                "https://other.wd5.myworkdayjobs.com/activate/x", "javascript:alert(1)"):
+        assert not own_link(url), url

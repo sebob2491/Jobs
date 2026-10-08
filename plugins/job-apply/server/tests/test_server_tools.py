@@ -378,3 +378,29 @@ def test_a_linkedin_follow_widget_doesnt_make_an_employers_form_linkedins(srv):
     browser_routed(srv)
     run(srv.browser.goto("https://jobs.example.com/with-follow"))
     assert run(srv.browser.human_submit_ats()) is None
+
+
+def test_the_browser_works_one_step_at_a_time_on_each_event_loop():
+    """The browser session outlives an event loop (each test has its own). A lock a caller
+    waited on in one loop used to fail the next loop's first wait: "bound to a different
+    event loop" (CI, Python 3.10)."""
+    from job_apply.browser import BrowserSession
+
+    session = BrowserSession()
+    order = []
+
+    async def step(name):
+        async with session._lock:
+            order.append(name)
+            await asyncio.sleep(0)
+
+    async def two_at_once():
+        await asyncio.gather(step("a"), step("b"))  # the second waits on the first
+
+    for _ in range(2):
+        loop = asyncio.new_event_loop()
+        try:
+            loop.run_until_complete(two_at_once())
+        finally:
+            loop.close()
+    assert order == ["a", "b", "a", "b"]

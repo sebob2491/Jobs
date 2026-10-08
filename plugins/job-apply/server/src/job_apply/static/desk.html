@@ -487,6 +487,7 @@ function renderHeader() {
   if (state.tailoring) notes.push({cls: "waiting", html: `<strong>${state.tailoring} job${state.tailoring === 1 ? "" : "s"} waiting for a tailored resume.</strong>
     <span>In Claude Code, say \u201ctailor my resumes\u201d. Each job carries on as soon as its resume is ready.</span>`});
   if (p.missing && p.missing.length) notes.push({cls: "notice", html: `Your profile still needs: ${esc(inWords(p.missing.map(profileField)))}. Run <code>/job-apply:setup</code> in Claude Code, or edit <code>${esc(p.path)}</code>.`});
+  if (state.profile_problem) notes.push({cls: "notice", html: `Your profile can't be read: ${esc(state.profile_problem)} Fix it and the desk picks it up again by itself.`});
   if (state.mail_problem) notes.push({cls: "notice", html: esc(state.mail_problem)});
   if (state.answers_problem) notes.push({cls: "notice", html: `Your saved answers aren't being used: ${esc(state.answers_problem)}.`});
   if (!token) notes.push({cls: "notice", html: "This page needs the address the desk printed (it carries a key). Open it from Claude with “open the job desk”."});
