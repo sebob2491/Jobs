@@ -178,8 +178,13 @@ footer { max-width: 1240px; margin: 0 auto; padding: 0 16px 24px; color: var(--m
             <option value="applicantstack">ApplicantStack: SCREEN</option>
             <option value="ukg">UKG Pro: Nikon Precision</option>
             <option value="infor">Infor: Benchmark</option>
+            <option value="email">Your email: an app password, to read sign-up codes</option>
           </select>
         </div>
+        <p class="small">Your email: with an app password for the address in your profile (for Gmail, make one at
+          <a href="https://myaccount.google.com/apppasswords" target="_blank" rel="noopener">myaccount.google.com/apppasswords</a>;
+          it needs 2-Step Verification), a job waiting on an emailed code or link gets it from your inbox: only mail from
+          that job's site that arrived after it began waiting, read without marking anything read.</p>
         <div class="pw-row"><input type="password" id="pw" autocomplete="new-password" aria-label="Password">
           <button class="primary" type="submit">Save</button></div>
         <p class="pills" id="pw-state"></p>
@@ -454,7 +459,7 @@ function renderHeader() {
   if (document.activeElement !== tailor) tailor.checked = !!s.tailor_resumes;
   $("tailor-hint").textContent = s.tailor_resumes ? "On: each job waits for Claude to write a resume for it." : "Off: your usual resume goes with every application.";
   const systems = {workday: "Workday", successfactors: "SuccessFactors", icims: "iCIMS", applicantstack: "ApplicantStack",
-                   ukg: "UKG Pro", infor: "Infor"};
+                   ukg: "UKG Pro", infor: "Infor", email: "Email"};
   $("pw-state").innerHTML = Object.entries(state.passwords || {}).map(([site, saved]) =>
     `<span class="pill ${saved ? "good" : ""}" data-site="${esc(site)}">${esc(systems[site] || site)}: ${saved ? "saved" : "not saved"}</span>`).join(" ");
   const notes = [];
@@ -468,6 +473,7 @@ function renderHeader() {
   if (state.tailoring) notes.push({cls: "waiting", html: `<strong>${state.tailoring} job${state.tailoring === 1 ? "" : "s"} waiting for a tailored resume.</strong>
     <span>In Claude Code, say \u201ctailor my resumes\u201d. Each job carries on as soon as its resume is ready.</span>`});
   if (p.missing && p.missing.length) notes.push({cls: "notice", html: `Your profile still needs: ${esc(inWords(p.missing.map(profileField)))}. Run <code>/job-apply:setup</code> in Claude Code, or edit <code>${esc(p.path)}</code>.`});
+  if (state.mail_problem) notes.push({cls: "notice", html: esc(state.mail_problem)});
   if (state.answers_problem) notes.push({cls: "notice", html: `Your saved answers aren't being used: ${esc(state.answers_problem)}.`});
   if (!token) notes.push({cls: "notice", html: "This page needs the address the desk printed (it carries a key). Open it from Claude with “open the job desk”."});
   patch($("notices"), notes.map((n) => ({key: n.cls + n.html.length, html: `<p class="${n.cls}">${n.html}</p>`})));

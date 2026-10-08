@@ -25,7 +25,11 @@ The desk is a local web page served by this plugin. It does what the `find-jobs`
     leaves the desk's tab where it was: the user reloads that tab after opening the link.
     The queue waits while the user works in that tab. After 5 minutes with nothing
     happening there, the other jobs go ahead, and the desk picks the job up again once
-    its tab is past the pause.
+    its tab is past the pause. With an email app password saved in **Site passwords**
+    (`email_password`, for the profile's email address), the desk reads the code or link
+    from the inbox itself. It reads only mail from that job's site sent after the wait
+    began, read-only, and never presses a button labelled Submit. Never ask for that
+    password in the chat either: it goes into the desk page.
   - **Alert me** (in the header) turns on desktop notifications for jobs that come to
     need the user or are ready to submit, so the desk can be left in the background.
 - **Site passwords** stores one password per job system: Workday (most of the

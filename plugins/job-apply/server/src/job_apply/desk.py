@@ -251,6 +251,8 @@ class Desk:
             config.save_site_password(str(body.get("name") or ""), str(body.get("value") or ""))
         except ValueError as e:
             return JSONResponse({"error": str(e)}, status_code=400)
+        if body.get("name") == "email_password":
+            self.applier.mail_problem = None  # the new one is tried at the next emailed code
         return JSONResponse({"saved": True})
 
     async def add_view(self, request: Request) -> Response:
@@ -409,7 +411,9 @@ class Desk:
                          "auto_submit": self.applier.auto_submit, "tailor_resumes": self.applier.tailor},
             "tailoring": len(self.applier.tailoring()),
             # saved or not, never the value
-            "passwords": {ats: _has_secret(f"{ats}_password") for ats in SITE_PASSWORDS},
+            "passwords": {**{ats: _has_secret(f"{ats}_password") for ats in SITE_PASSWORDS},
+                          "email": _has_secret("email_password")},
+            "mail_problem": self.applier.mail_problem,
             "answers_problem": config.answers_problem(),
             "search": self.search,
             "listings": rows,

@@ -5,13 +5,23 @@
 <!-- A job site's page after Create Account: it has emailed a link to confirm the address. The
      link opens in the person's own browser, so this tab only moves on once it's reloaded (the
      tab's sessionStorage stands in for the site knowing the address is confirmed).
-     ?code: it asks for an emailed code instead (123456). -->
+     ?code: it asks for an emailed code instead (123456).
+     ?confirm: the emailed link itself, opened in this browser (another tab): it confirms the
+     address for every tab, as a site's own records would. -->
 <h2>Verify your account</h2>
 <div id="body"></div>
 <script>
   const body = document.getElementById('body');
-  if (sessionStorage.getItem('verified') === 'yes') location.replace('step1.html');
-  else if (new URLSearchParams(location.search).has('code')) {
+  const params = new URLSearchParams(location.search);
+  // localStorage is shared by the browser's tabs, but a file:// page can't use it: then only
+  // this tab's sessionStorage counts
+  const confirmed = () => { try { return localStorage.getItem('verified') === 'yes'; } catch (e) { return false; } };
+  if (params.has('confirm')) {
+    try { localStorage.setItem('verified', 'yes'); } catch (e) { /* a file:// page */ }
+    body.innerHTML = '<p>Your email address is confirmed.</p>';
+  } else if (sessionStorage.getItem('verified') === 'yes' || confirmed()) {
+    location.replace('step1.html');
+  } else if (params.has('code')) {
     body.innerHTML = '<form id="f" novalidate><label for="code">Enter the verification code we sent to your email</label>'
       + '<input id="code"><button type="submit">Verify</button></form>';
     document.getElementById('f').addEventListener('submit', (e) => {

@@ -143,6 +143,19 @@ it puts the password in both boxes. The password goes from the page straight int
 own addresses (for Workday, `*.myworkdayjobs.com` and `*.myworkday.com`). Claude never sees
 it, and the desk only reports whether one is saved.
 
+The same card takes an **email app password** for the address in your profile (for
+Gmail, make one at [myaccount.google.com/apppasswords](https://myaccount.google.com/apppasswords);
+it needs 2-Step Verification). With it saved, a job waiting on an emailed code or
+confirmation link gets it from your inbox:
+- the desk types the code in and presses Verify, Confirm, Continue or Next (never
+  Submit), or opens the link in its own browser and reloads the job's tab;
+- it reads only mail from that job's site or its job system, sent after the job began
+  waiting, for up to 15 minutes;
+- it opens the inbox read-only, so nothing is marked read, moved or deleted.
+
+If the app password is turned down, the desk page says so and stops trying until you
+save a new one.
+
 The desk works in each job's own browser tab and follows only the tabs an application
 opens itself, so a tab you open (to check your email, say) is left alone. Jobs already
 marked applied are never queued again. If Submit doesn't bring up a confirmation, the job
@@ -280,7 +293,7 @@ automatically.
   work field by field. The debug snapshots exist to turn those cases into fixes
   quickly.
 - Many company ATSs (Workday, SuccessFactors) need an account per company. Creating
-  the account is up to you, and so is the emailed verification code unless you
-  turn on `email_codes`.
+  the account is up to you. So is the emailed verification code, unless you save an
+  email app password on the Job Desk (or turn on `email_codes` when working with Claude).
 - The first launch of the MCP server installs its Python dependencies, which takes
   a minute. If `/mcp` shows `job-apply` as failed right after install, reconnect it.
