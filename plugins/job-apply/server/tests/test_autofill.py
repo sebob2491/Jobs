@@ -463,7 +463,7 @@ def test_questions_that_only_look_like_profile_questions():
     assert answer("Will you now or in the future require sponsorship?") == "No"
     # about this employer only, from every employer in the profile, by whole names
     assert answer("Have you ever worked in a cleanroom environment?") is None
-    assert answer("Have you previously worked for Intel?", {"company": "Intel"}) == "Yes"  # in work_history
+    assert answer("Have you previously worked for Intel?", {"company": "Intel"}) == "Yes, previously"  # in work_history
     assert answer("Have you ever worked for us before?", {"company": "Intelligent Systems"}) == "No"
     # a school not finished has no graduation year or date (it would say the person graduated)
     assert answer("Graduation Year") is None
@@ -483,3 +483,164 @@ def test_questions_that_only_look_like_profile_questions():
     assert answer("Phone", section="Emergency Contact") is None
     assert answer("Name", section="References") is None
     assert answer("Employer Phone", section="Work Experience 1") is None
+
+
+def _person(**extra) -> Profile:
+    """Made up: authorized to work in the US, no sponsorship, US citizen, over 18, some
+    college classes and no degree, a former ASM technician now at Example Fab."""
+    data = {
+        "personal": {"first_name": "Sam", "last_name": "Rivera", "phone": "480-555-0100", "phone_country_code": "+1",
+                     "address": {"city": "Mesa", "state": "AZ", "postal_code": "85201", "country": "United States"}},
+        "work_authorization": {"authorized_to_work": True, "requires_sponsorship": False, "us_citizen": True,
+                               "us_person": True, "over_18": True},
+        "education": {"highest_degree": "High School Diploma"},
+        "education_history": [{"school": "Mesa Community College", "degree": "", "major": "Electronics coursework",
+                               "start": 2017, "end": 2019}],
+        "work_history": [{"company": "Example Fab", "title": "Technician", "start": "2022-06", "end": "present"},
+                         {"company": "ASM", "title": "Field Service Technician", "start": "2019-01", "end": "2022-05"}],
+        "preferences": {"willing_to_travel": "Yes, up to 25%"},
+    }
+    data.update(extra)
+    return Profile(data)
+
+
+def _answer(label, p=None, kind="text", job=None, **kw):
+    a = resolve_field({"id": "1", "label": label, "kind": kind, "value": "", **kw}, p or _person(), job or {"company": "Acme"})
+    return a and a.value
+
+
+def test_work_authorization_and_sponsorship_the_right_way_round():
+    """Not needing sponsorship, however it's worded, is Yes to the question; an employer's
+    note that it won't sponsor isn't the question; a question about another country, or
+    with two halves a Yes can't answer both of, is left for the person."""
+    for q in ("Do you have unrestricted authorization to work in the U.S. (no sponsorship required)?",
+              "Are you authorized to work in the US and not in need of visa sponsorship?",
+              "Can you work in the US for any employer? Sponsorship is not required for you?",
+              "Are you able to work in the U.S. with no sponsorship needed?",
+              "Is your U.S. work authorization free of any sponsorship requirement?",
+              "Are you legally authorized to work in the United States? Note: this position is not eligible for visa sponsorship.",
+              "Are you authorized to work in the U.S.? (We are unable to sponsor visas for this role.)"):
+        assert str(_answer(q)).startswith("Yes"), q  # ("Yes, for any employer" in a text box)
+    assert _answer("Please answer yes or no: will you require sponsorship?") == "No"
+    assert _answer("Visa sponsorship required") == "No"
+    for q in ("We are unable to sponsor employment visas for this position. Do you understand and acknowledge this?",
+              "Are you legally authorized to work in Canada?", "Are you eligible to work in the Netherlands?",
+              "Will you require sponsorship to work in the United Kingdom?",
+              "Are you authorized to work in the US and will you require sponsorship?",
+              "Are you a citizen or permanent resident of any country other than the United States?"):
+        assert _answer(q) is None, q
+
+
+def test_age_asked_either_way_and_never_for_another_question():
+    assert _answer("Are you less than 18 years of age?") == "No"
+    assert _answer("Are you below 18 years of age?") == "No"
+    assert _answer("Are you at least 18 years of age?") == "Yes"
+    not_allowed = _person(work_authorization={"authorized_to_work": False, "requires_sponsorship": True, "over_18": True})
+    assert _answer("Are you at least 18 years of age and legally authorized to work in the United States?", not_allowed) is None
+    assert _answer("Are you 18 years of age or older and able to work in the U.S. without sponsorship?", not_allowed) is None
+
+
+def test_schooling_is_never_understated_nor_overstated():
+    """A high school diploma isn't "Some High School"; schooling not finished is never a
+    degree, nor gets a graduation date; a school is picked by its name."""
+    for ladder in (["Some High School", "High School Graduate", "Some College", "Associate's Degree", "Bachelor's Degree"],
+                   ["Less than High School", "Some High School", "High School/GED", "Some College", "Associates", "Bachelors"]):
+        assert _answer("Highest level of education", kind="select", options=ladder) in ("High School Graduate", "High School/GED")
+    assert choose_option("Associate's degree (in progress)", ["Some College", "Associate's Degree", "Bachelor's Degree"]) \
+        in (None, "Some College")
+    assert choose_option("Electrical Engineering coursework toward BSEE", ["High School", "Bachelor's Degree"]) is None
+    for written in ("Not completed", "None", "No degree", "Some college (no degree)"):
+        p = _person(education={}, education_history=[{"school": "Mesa Community College", "degree": written, "end": 2019}])
+        assert _answer("Graduation Year", p) is None, written
+        assert _answer("Graduation Date", p, section="Education 1") is None, written
+    asu = _person(education={"school": "Arizona State University"})
+    assert _answer("School", asu, kind="combobox", options=["University of Arizona", "Northern Arizona University"]) is None
+
+
+def test_a_schools_block_without_numbers_is_one_school():
+    """Greenhouse's School / Degree / Discipline / dates with no section: all from the same
+    school. A school not finished leaves Degree for the person (it used to get the highest
+    degree from elsewhere: "High School", or a Bachelor's at the community college)."""
+    fields = [{"id": "s", "label": "School*", "kind": "text", "value": ""},
+              {"id": "d", "label": "Degree*", "kind": "select", "value": "",
+               "options": ["High School", "Associate's Degree", "Bachelor's Degree"]},
+              {"id": "m", "label": "Discipline", "kind": "text", "value": ""},
+              {"id": "y", "label": "Start date year", "kind": "text", "value": ""}]
+    plan = plan_autofill(fields, _person(education={"highest_degree": "Bachelor's Degree"}), {"company": "Acme"})
+    filled = {f["id"]: f["value"] for f in plan["to_fill"]}
+    assert filled == {"s": "Mesa Community College", "m": "Electronics coursework", "y": "2017"}, filled
+    assert [f["id"] for f in plan["needs_input"]] == ["d"]
+
+
+def test_worked_here_before_says_when_and_only_about_working_there():
+    asm = ["I am CURRENTLY employed by ASM", "I was PREVIOUSLY employed by ASM", "I have NEVER been employed by ASM"]
+    assert _answer("Have you ever been employed with ASM before?", kind="radio_group", options=asm, job={"company": "ASM"}) \
+        == "I was PREVIOUSLY employed by ASM"
+    assert _answer("Have you ever been employed with Example Fab before?", kind="radio_group", job={"company": "Example Fab"},
+                   options=[o.replace("ASM", "Example Fab") for o in asm]) == "I am CURRENTLY employed by Example Fab"
+    assert _answer("Have you ever worked on Lam Research etch tools?", job={"company": "Lam Research"}) is None
+    assert _answer("Have you previously worked with KLA metrology systems?", job={"company": "KLA"}) is None
+    one = _person(history={"previous_employers": "Northwind Semi"})
+    assert _answer("Have you previously worked for Northwind Semi?", one, kind="radio_group", options=["Yes", "No"],
+                   job={"company": "Northwind Semi"}) == "Yes"
+
+
+def test_an_answer_given_for_one_employer_isnt_given_to_another(job_apply_home):
+    from job_apply import config
+
+    for label, value in (("Cover Letter", "Dear Northwind Semi team, I have wanted to work at Northwind since ..."),
+                         ("What excites you about this opportunity?", "The new 300mm fab ..."),
+                         ("What do you know about our products?", "Deposition tools ..."),
+                         ("Have you interviewed with us before?", "Yes")):
+        config.save_answer(label, value, "Northwind Semi")
+    p = config.Profile.load()
+    for label in ("Cover Letter", "What excites you about this opportunity?", "What do you know about our products?",
+                  "Have you interviewed with us before?"):
+        assert _answer(label, p, kind="textarea", job={"company": "Contoso Devices"}) is None, label
+    assert _answer("What do you know about our products?", p, kind="textarea", job={"company": "Northwind Semi"}) \
+        == "Deposition tools ..."
+
+
+def test_travel_willingness_answers_only_how_much_travel():
+    assert _answer("Are you willing to travel up to 50 percent of the time?") is None
+    assert _answer("This role travels 75 percent. Are you willing to travel?") is None
+    assert _answer("Are you willing to travel up to 20% of the time?") == "Yes, up to 25%"
+    for q in ("Do you have any travel restrictions?", "Do you have a valid U.S. passport for international travel?",
+              "Is there anything that would prevent you from traveling?"):
+        assert _answer(q) is None, q
+
+
+def test_placeholder_text_is_no_answer():
+    for shown in ("Please Select...", "Select One...", "Choose...", "Select a State", "Select Country", "Make a Selection"):
+        assert is_empty_value(shown), shown
+    assert not is_empty_value("Selection Committee") and not is_empty_value("Arizona")
+    field = {"id": "q", "label": "Will you now or in the future require sponsorship?", "kind": "select",
+             "value": "Please Select...", "required": True, "options": ["Please Select...", "Yes", "No"]}
+    assert plan_autofill([field], _person())["to_fill"][0]["value"] == "No"
+
+
+def test_boxes_for_someone_elses_details_or_another_date_or_document():
+    p = _person()
+    for label, section in (("Employer Phone Number", None), ("Company Phone", None), ("School Zip Code", None),
+                           ("First Name", "Relative Information"), ("Name", "High School"),
+                           ("Phone", "Most Recent Employer"), ("City", "Most Recent Employer")):
+        assert _answer(label, p, section=section) is None, (label, section)
+    for label in ("State ID Number", "State license number", "Statement of accuracy"):
+        assert _answer(label, p) is None, label
+    for section in ("Criminal Conviction Details", "Military Service", "Availability"):
+        assert _answer("Date", p, section=section) is None, section
+    assert _answer("Phone Number (including country code)", p) == "+1 480-555-0100"
+    assert _answer("Phone (incl. country code)", p) == "+1 480-555-0100"
+    assert _answer("Phone", p) == "480-555-0100"
+    for label in ("Upload a copy of your degree or diploma", "Unofficial transcript"):
+        assert resolve_field({"id": "1", "label": label, "kind": "file"}, p, {"company": "Acme"}) is None, label
+    plan = plan_autofill([{"id": "p", "label": "Position Applied For", "kind": "text", "value": ""},
+                          {"id": "d", "label": "Start Date", "kind": "text", "value": ""}], p, {"company": "Acme"})
+    assert plan["to_fill"] == [], plan["to_fill"]
+
+
+def test_a_profile_list_written_another_way_doesnt_stop_the_fill():
+    for key in ("answers", "education_history", "work_history"):
+        p = _person(**{key: 1})
+        plan_autofill([{"id": "1", "label": "Have you previously worked for Acme?", "kind": "text", "value": ""},
+                       {"id": "2", "label": "Graduation Year", "kind": "text", "value": ""}], p, {"company": "Acme"})
