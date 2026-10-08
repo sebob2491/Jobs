@@ -178,8 +178,14 @@ class Tracker:
         return d
 
     def job_dir(self, job_id: int, company: str = "", title: str = "") -> Path:
+        """The job's folder: the one it already has, whatever its name (a company filled in
+        later mustn't leave its tailored resume and submit record behind), else a new name."""
+        base = config.applications_dir()
+        existing = sorted(p for p in base.glob(f"{job_id:04d}-*") if p.is_dir()) if base.is_dir() else []
+        if existing:
+            return existing[0]
         slug = re.sub(r"[^a-z0-9]+", "-", f"{company} {title}".lower()).strip("-")[:60]
-        return config.applications_dir() / f"{job_id:04d}-{slug or 'job'}"
+        return base / f"{job_id:04d}-{slug or 'job'}"
 
     @_locked
     def upsert(self, posting: dict[str, Any], status: str | None = None) -> tuple[dict[str, Any], bool]:

@@ -46,6 +46,9 @@ def final_text(text: str) -> str:
     arrow_forward" (an icon font's ligature), "Apply!" -> "Apply Now", "Apply", "Apply"."""
     text = re.sub(r"\s+(arrow_forward|arrow_right_alt|chevron_right|navigate_next|east)$", "", text.strip(), flags=re.I)
     return re.sub(r"[\s\u203a\u00bb\u2192>!.]+$", "", text).strip()
+# Words that send an application from any button, a form's or not: refused in a dry run
+_SENDS = re.compile(r"^(send( now| (my )?application)?|finish( (my )?application)?|complete (my )?application|"
+                    r"confirm and send)$", re.I)
 # Form buttons that only move between steps; in a dry run every other form submit is refused.
 NAVIGATION_RE = re.compile(
     r"^(next|continue|save( and| &)? continue|save( for later| draft)?|review|back|previous|add( another)?|search|"
@@ -201,6 +204,7 @@ class BrowserSession:
         self._fields: dict[str, dict] = {}
         self._actions: dict[str, dict] = {}
         self.current_job_id: int | None = None
+        self.tab_jobs: dict[Page, int] = {}  # the job each tab was opened for
 
     @property
     def _lock(self) -> asyncio.Lock:
@@ -267,7 +271,7 @@ class BrowserSession:
         if not getattr(tab, "_ja_watched", False):
             tab._ja_watched = True  # type: ignore[attr-defined]
             tab.on("popup", lambda popup: self._on_popup(tab, popup))
-            tab.on("close", lambda _: self._openers.pop(tab, None))
+            tab.on("close", lambda _: (self._openers.pop(tab, None), self.tab_jobs.pop(tab, None)))
 
     def _on_popup(self, opener: Page, popup: Page) -> None:
         # "Apply" buttons often open the application in a new tab: follow it, but only from
@@ -326,6 +330,10 @@ class BrowserSession:
             out.append(tab)
             tab = self._openers.get(tab)
         return out
+
+    def job_in(self, tab: Page | None) -> int | None:
+        """The job this tab (or the tab that opened it) was opened for, if any."""
+        return next((self.tab_jobs[t] for t in self.lineage(tab) if t in self.tab_jobs), None)
 
     @property
     def current_tab(self) -> Page | None:
@@ -1195,8 +1203,9 @@ class BrowserSession:
                 "(after the user confirms), or let the user click it in the browser."
             )
         if (info.get("formSubmit") and not NAVIGATION_RE.match(text) and not opens
-                and config.Profile.load().settings.dry_run):
-            raise SubmitBlocked(f"Dry run: {label!r} submits a form, and it isn't a recognised step button.")
+                or _SENDS.match(final_text(text))) and config.Profile.load().settings.dry_run:
+            # (a page's script can send the application from a plain button: "Finish", "Send")
+            raise SubmitBlocked(f"Dry run: {label!r} may send the application, and it isn't a recognised step button.")
 
     async def _find_by_text(self, page: Page, text: str) -> Locator | None:
         """First visible button/link named `text`, then any visible text match, across frames."""

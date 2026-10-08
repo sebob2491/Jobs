@@ -152,3 +152,19 @@ def test_a_resume_keeps_its_line_breaks_code_spans_and_drops_notes():
     assert "<br" in body and "&lt;br" not in body
     assert "tailor this" not in body
     assert "<code>a &lt; b</code>" in body and "&amp;lt;" not in body
+
+
+def test_a_too_long_resume_for_the_current_job_holds_it_too(srv, monkeypatch):
+    """With no job_id, render_document writes to the current job's folder: the too-long
+    marker goes there too, or autofill would upload the 3-page resume."""
+    from job_apply.pipeline import tailored_ready
+
+    async def fake_render(page_html, dest):
+        dest.write_bytes(b"%PDF-1.4\n")
+        return 3
+
+    monkeypatch.setattr(srv, "render_pdf", fake_render)
+    job = srv.add_job(url="https://example.com/jobs/3", title="FSE", company="Example Litho")["job"]
+    srv.browser.current_job_id = job["id"]
+    out = run(srv.render_document("resume", RESUME))
+    assert "warning" in out and not tailored_ready(srv.tracker().get(job["id"]))

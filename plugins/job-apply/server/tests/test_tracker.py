@@ -126,3 +126,18 @@ def test_a_later_email_in_a_thread_already_logged_counts(job_apply_home):
     assert out == {"already_logged": False, "status": "rejected", "changed": True}
     assert t.logged_threads() == [{"thread_id": "thr-1", "job_id": job["id"], "category": "rejection",
                                    "received_at": "2026-10-06"}]
+
+
+def test_a_jobs_folder_stays_put_when_its_company_is_filled_in_later(job_apply_home):
+    """A job saved without its company, then again with it: the folder keeps its name, so
+    its tailored resume and its record of a Submit press aren't left behind."""
+    t = Tracker()
+    job, _ = t.upsert({"url": "https://example.com/jobs/7", "title": "Field Service Technician"})
+    folder = Path(job["folder"])
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / "submission.json").write_text('{"confirmed": false}')
+    again, created = t.upsert({"url": "https://example.com/jobs/7", "title": "Field Service Technician",
+                               "company": "Northwind Semi"})
+    assert not created and again["company"] == "Northwind Semi"
+    assert Path(again["folder"]) == folder and (Path(again["folder"]) / "submission.json").exists()
+    t.close()

@@ -44,8 +44,9 @@ _COUNTRY_ALIASES = [
     {"taiwan", "taiwan province of china", "chinese taipei"},
 ]
 _PLACEHOLDER_VALUES = re.compile(  # "-- Please Select --" may have a value of its own ("0")
-    r"^(-+\s*)?(|select|select one|select an option|select\.\.\.|choose|choose one|choose an option|please select|"
-    r"please select one|please choose|none selected|no selection)(\s*-+)?$|"
+    r"^(-+\s*)?((please )?(select|choose|pick)( one| an? (option|item|value|answer|response|state|country|year|month))?"
+    r"( (state|country|year|month|from (the )?list|below))?( \.\.\.|\.\.\.|…)?|"
+    r"|make a selection|none selected|no selection)(\s*-+)?$|"
     r"^(-+|mm/dd/yyyy|mm/yyyy)$",  # "No Selection": SuccessFactors' empty dropdowns
     re.I,
 )
@@ -65,7 +66,8 @@ def norm(s: Any) -> str:
 
 
 def clean_label(label: str) -> str:
-    label = re.sub(r"\(required\)|\brequired\b", " ", label or "", flags=re.I)
+    # the form's marker, not the word in a question ("Sponsorship is not required for you?")
+    label = re.sub(r"\(required\)|^\s*required\b[:\s]*|[\s:-]*\brequired\s*[*:]?\s*$", " ", label or "", flags=re.I)
     label = label.replace("*", " ")
     label = re.sub(r"\s+", " ", label).strip(" :?")
     return label
@@ -128,6 +130,17 @@ def degree_key(s: str) -> str | None:
         if re.search(pattern, n):
             return key
     return None
+
+
+# Schooling begun but not finished: "Some High School", "Some College", "Associate's (in
+# progress)", "coursework toward a BSEE"
+_PARTIAL_STUDY = re.compile(r"\b(some|less than|incomplete|partial(ly)?|attended|attending|coursework|toward|towards|"
+                            r"in progress|enrolled|pursuing|unfinished|did not|not completed|no degree)\b")
+_STUDY_WORDS = re.compile(r"\b(high school|college|university|degree|diploma|ged|graduate|coursework)\b")
+
+
+def _partial_study(n: str) -> bool:
+    return bool(_PARTIAL_STUDY.search(n) and (_STUDY_WORDS.search(n) or degree_key(n)))
 
 
 _NUMBER = re.compile(r"\d+(?:\.\d+)?")
@@ -197,6 +210,11 @@ def choose_option(desired: Any, options: list[str], exact_only: bool = False, na
         return None
     if names:
         return _containing(want, normed)
+    if degree_key(want) or _partial_study(want):
+        # schooling as it is, never more nor less: "High School Diploma" isn't "Some High
+        # School", and "Associate's (in progress)" isn't "Associate's Degree"
+        partial = _partial_study(want)
+        normed = [(o, n) for o, n in normed if not (degree_key(n) or _partial_study(n)) or _partial_study(n) == partial]
 
     # a number among ranges: "10" years -> "More than 3 years", a 3.8 GPA -> "3.50 - 4.00 or higher"
     ranged = _in_range(str(desired), opts)
@@ -211,6 +229,13 @@ def choose_option(desired: Any, options: list[str], exact_only: bool = False, na
     # 3. yes / no questions
     pol = polarity(desired)
     if pol is not None:
+        # the words after the yes or no first, among the answers that don't say the opposite:
+        # "Yes, previously" is "I was PREVIOUSLY employed by ASM", not "I am CURRENTLY employed"
+        detail = set(want.split()) - _FILLER
+        near = sorted(((len(detail & set(n.split())), o) for o, n in normed if polarity(o) is not (not pol)),
+                      key=lambda x: -x[0])
+        if near and near[0][0] > 0 and (len(near) == 1 or near[0][0] > near[1][0]):
+            return near[0][1]
         hits = [o for o, _ in normed if polarity(o) is pol]
         if len(hits) == 1:
             return hits[0]  # e.g. "No" -> "I have NEVER been employed by ASM"
@@ -307,7 +332,7 @@ def _edu(summary_key: str, entry_key: str) -> Getter:
     def g(prof: Profile, job: dict) -> Any:
         value = prof.get(f"education.{summary_key}")
         if value is None:
-            entries = [e for e in prof.get("education_history", []) or [] if isinstance(e, dict)]
+            entries = [e for e in _listed(prof.get("education_history")) if isinstance(e, dict)]
             value = entries[0].get(entry_key) if entries else None
         return value
     return g
@@ -345,20 +370,51 @@ def _same_employer(a: str, b: str) -> bool:
     return bool(a and b and (re.search(rf"(^| ){re.escape(a)}( |$)", b) or re.search(rf"(^| ){re.escape(b)}( |$)", a)))
 
 
+def _listed(value: Any) -> list[Any]:
+    """A profile list as written: one name written on its own is a list of one, and anything
+    else that isn't a list (a number typed by mistake) is none."""
+    if isinstance(value, list):
+        return value
+    return [value] if isinstance(value, str) and value.strip() else []
+
+
 def _previously_employed(prof: Profile, job: dict, label: str = "") -> str | None:
-    """Has the person worked for this employer before? Only for a question about this
-    employer: "Have you ever worked in a cleanroom?" isn't one. The answer comes from the
-    employers in the profile, past and present (history.previous_employers, work_history)."""
+    """Has the person worked for this employer before? Only for a question about working
+    for this employer: "Have you ever worked in a cleanroom?" and "Have you worked on Lam
+    etch tools?" aren't. The answer comes from the employers in the profile, past and present
+    (history.previous_employers, work_history), and says which: "Yes, previously" picks ASM's
+    "I was PREVIOUSLY employed by ASM", not "I am CURRENTLY employed"."""
     company = norm(job.get("company"))
     if not company:
         return None
     asked = norm(label)
-    names_it = company.split()[0] in asked.split()
+    first = re.escape(company.split()[0])
+    names_it = re.search(rf"\b(employ\w*|work\w*|intern\w*|contract\w*)( \w+){{0,3}}? (by|for|at|with|of) (the )?{first}\b"
+                         rf"|\b{first}( \w+)? (employee|employment|intern|contractor)s?\b", asked)
     if not (names_it or re.search(r"(employed|worked) (by|for|at|with) (us|this|our|the company)\b|former employee", asked)):
         return None
-    past = [norm(c) for c in prof.get("history.previous_employers", []) or []]
-    past += [norm(e.get("company")) for e in prof.get("work_history", []) or [] if isinstance(e, dict)]
-    return "Yes" if any(_same_employer(c, company) for c in past) else "No"
+    if re.search(rf"\b{first}( \w+){{0,2}} (tools?|systems?|equipment|products?|software|technolog\w*|machines?|platforms?|"
+                 r"scanners?|metrology|etch|deposition|parts)\b", asked):
+        return None  # "worked with KLA metrology systems": the employer's products, not working for it
+    past = [norm(c) for c in _listed(prof.get("history.previous_employers"))]
+    entries = [e for e in _listed(prof.get("work_history")) if isinstance(e, dict)]
+    past += [norm(e.get("company")) for e in entries]
+    if not any(_same_employer(c, company) for c in past if c):
+        return "No"
+    now = [norm(e.get("company")) for e in entries if is_present(e.get("end")) or e.get("current") is True]
+    now.append(norm(prof.get("experience.current_company")))
+    return "Yes, currently" if any(_same_employer(c, company) for c in now if c) else "Yes, previously"
+
+
+_UNFINISHED = re.compile(r"^(none|n ?a|no|not applicable)$|\b(no degree|not (completed|finished)|incomplete|"
+                         r"unfinished|did not (complete|finish|graduate)|in progress|some|coursework|attended)\b")
+
+
+def finished_degree(value: Any) -> bool:
+    """A degree the entry says was earned: not empty, nor "Not completed", "None", "No degree"
+    or "Some college (no degree)", which an unfinished school is written as."""
+    n = norm(value)
+    return bool(n) and not _UNFINISHED.search(n)
 
 
 def _graduated(prof: Profile, job: dict) -> Any:
@@ -367,8 +423,12 @@ def _graduated(prof: Profile, job: dict) -> Any:
     year = prof.get("education.graduation_year")
     if year:
         return year
-    finished = [e for e in prof.get("education_history", []) or [] if isinstance(e, dict) and e.get("degree")]
+    finished = [e for e in _listed(prof.get("education_history")) if isinstance(e, dict) and finished_degree(e.get("degree"))]
     return finished[0].get("end") if finished else None
+
+
+_AUTHORIZED = r"authori[sz]ed to work|eligible to work|legally (able|permitted|allowed) to work|right to work|" \
+              r"work authori[sz]ation|employment eligibility|unrestricted authori[sz]ation"
 
 
 def _no_sponsorship(prof: Profile, job: dict, label: str = "") -> Any:
@@ -377,12 +437,34 @@ def _no_sponsorship(prof: Profile, job: dict, label: str = "") -> Any:
     needs = prof.get("work_authorization.requires_sponsorship")
     if not isinstance(needs, bool):
         return None
-    if re.search(r"authori[sz]ed|eligible|legally", norm(label)):
+    if re.search(r"authori[sz](ed|ation)|eligible|legally|able to work|for any employer", norm(label)):
         allowed = prof.get("work_authorization.authorized_to_work")
         if allowed is False or needs:
             return "No"
         return "Yes" if allowed is True else None
     return "No" if needs else "Yes"
+
+
+def _sponsorship(prof: Profile, job: dict, label: str = "") -> Any:
+    """Will the person need sponsorship? Not answered when the same question also asks whether
+    they're authorized ("Are you authorized … and will you require sponsorship?"), which a
+    single Yes or No can't answer both halves of."""
+    if re.search(_AUTHORIZED, norm(label)):
+        return None
+    return _yn("work_authorization.requires_sponsorship")(prof, job)
+
+
+def _age(invert: bool) -> Getter:
+    """Over 18 (or, inverted, under). Not answered from age alone when the question also asks
+    about working or sponsorship ("at least 18 and legally authorized to work…?")."""
+    def g(prof: Profile, job: dict, label: str = "") -> Any:
+        if re.search(r"authori[sz]|sponsor|eligib|legally|permitted to work|able to work|right to work", norm(label)):
+            return None
+        return _yn("work_authorization.over_18", invert=invert)(prof, job)
+    return g
+
+
+_UNDER_18, _OVER_18 = _age(True), _age(False)
 
 
 # The date a form is signed on: "Date" alone is that on a signed form (Workday's disability
@@ -406,22 +488,40 @@ def _relocate(prof: Profile, job: dict) -> Any:
 
 
 def _travel(prof: Profile, job: dict, label: str = "") -> Any:
+    """Willing to travel: not whether anything stops the person travelling, nor a passport."""
+    if re.search(r"restrict|passport|prevent|limitation|visa|unable to|not able to|anything that", norm(label)):
+        return None
     v = prof.get("preferences.willing_to_travel")
+    percent = r"(\d+) ?(?:%|percent|per cent)"
+    asked, mine = re.findall(percent, label, re.I), re.findall(percent, str(v or ""), re.I)
+    if asked and max(map(int, asked)) > (max(map(int, mine)) if mine else 100):
+        return None  # more travel than the profile agrees to: the user decides
     if isinstance(v, bool):
         return "Yes" if v else "No"
-    asked, mine = re.findall(r"(\d+) ?%", label), re.findall(r"(\d+) ?%", str(v or ""))
-    if asked and mine and max(map(int, asked)) > max(map(int, mine)):
-        return None  # more travel than the profile agrees to: the user decides
     return v
 
 
-_SOMEONE_ELSE = re.compile(r"\b(referen\w*|referee\w*|emergency|next of kin|supervisor\w*|manager\w*|referr\w*|contact person)\b")
+def _phone(prof: Profile, job: dict, label: str = "") -> Any:
+    """The phone number; with its dial code where the box asks for it ("including country code")."""
+    phone = prof.get("personal.phone")
+    if phone and re.search(r"(including|incl|with) (the |your )?country code", norm(label)) \
+            and not str(phone).strip().startswith("+"):
+        return f"{prof.get('personal.phone_country_code', '+1')} {phone}"
+    return phone
+
+
+_SOMEONE_ELSE = re.compile(r"\b(referen\w*|referee\w*|emergency|next of kin|supervisor\w*|manager\w*|referr\w*|contact person|"
+                           r"relatives?|family|spouse)\b")
+# A box for another party's details, by its own words ("Employer Phone", "School Zip Code") or
+# its section's ("Most Recent Employer", "High School")
+_OTHER_PARTY_LABEL = re.compile(r"\b(employer\w*|company|business|school)\b")
+_OTHER_PARTY_SECTION = re.compile(r"\b(employer\w*|school)\b")
 _CONTACT_RULES = {"email", "first_name", "middle_name", "last_name", "preferred_name", "full_name", "phone_type",
                   "phone_code", "phone_ext", "phone", "address1", "address2", "city", "postal_ext", "postal",
                   "county", "state", "country"}
 
 # Getters that read the question itself, not only the profile
-_READS_QUESTION = {_travel, _previously_employed, _no_sponsorship}
+_READS_QUESTION = {_travel, _previously_employed, _no_sponsorship, _sponsorship, _UNDER_18, _OVER_18, _phone}
 
 # (rule name, label regex, getter, max label length or None, allowed kinds or None)
 _TEXTY = {"text", "textarea", "select", "listbox", "combobox", "radio_group"}
@@ -437,9 +537,10 @@ RULES: list[tuple[str, str, Getter, int | None, set[str] | None]] = [
     ("preferred_name", r"^preferred (first )?name|^nick ?name", lambda p, j: p.get("personal.preferred_name") or p.get("personal.first_name"), 45, None),
     ("full_name", r"^(full |legal |your |candidate )?(full )?name$|^full (legal )?name|^legal name", _full_name, 45, None),
     ("phone_type", r"phone (device )?type|type of phone", lambda p, j: p.get("personal.phone_type", "Mobile"), 45, None),
-    ("phone_code", r"(country|phone) (phone )?code|^country code", _phone_code, 45, None),
+    # (not "Phone Number (including country code)": that's the number, written with its code)
+    ("phone_code", r"^(?!.*\b(number|no|incl|including|with)\b).*\b(country|phone|dial(ing)?) (phone )?code\b", _phone_code, 45, None),
     ("phone_ext", r"extension", lambda p, j: None, 45, None),
-    ("phone", r"phone|mobile|cell|telephone", _p("personal.phone"), 45, {"text", "combobox"}),
+    ("phone", r"phone|mobile|cell|telephone", _phone, 45, {"text", "combobox"}),
     ("address2", r"address line 2|^address 2|apartment|suite|^apt|^unit", _p("personal.address.line2"), 45, None),
     ("address1", r"address line 1|^address 1|^street|^(home |mailing |street )?address$", _p("personal.address.line1"), 45, None),
     ("city", r"^city|town|location city|current city|city of residence", _p("personal.address.city"), 45, None),
@@ -447,7 +548,9 @@ RULES: list[tuple[str, str, Getter, int | None, set[str] | None]] = [
     ("postal_ext", r"zip( code)? ?(\+|plus) ?4|^zip ?4$|zip (code )?extension", lambda p, j: None, 45, None),
     ("postal", r"zip|postal|post code|postcode", _p("personal.address.postal_code"), 45, None),
     ("county", r"^county", lambda p, j: p.get("personal.address.county"), 45, None),
-    ("state", r"^state|province|^region|state province", _state, 45, None),
+    # (not "State your desired salary", "State ID Number" or "Statement of accuracy")
+    ("state", r"^state\b(?! (your|id|identification|licen[cs]e|the|any|why|how|what|whether|if|briefly)\b)|province|^region",
+     _state, 45, None),
     # the address's country: not "Country of citizenship / birth" (those are other questions)
     ("country", r"^country\b(?!.*\b(citizen|birth|born|nationalit|passport|origin)\w*)", _p("personal.address.country"), 45, None),
     ("linkedin", r"linked ?in", _p("personal.linkedin_url"), 60, {"text", "textarea"}),
@@ -457,7 +560,8 @@ RULES: list[tuple[str, str, Getter, int | None, set[str] | None]] = [
     ("current_title", r"(current|most recent|present) (job )?(title|position|role)", _p("experience.current_title"), 60, None),
     ("total_years", r"^(total )?years of (professional |work )?experience$", _p("experience.total_years"), 60, None),
     ("degree", r"highest (level of )?(education|degree)|^degree$|education level", _edu("highest_degree", "degree"), 80, None),
-    ("school", r"^(school|university|college|institution)\b(?!.*\b(major|degree|gpa|city|state|location|country|year|date|address)\b)",
+    ("school", r"^(school|university|college|institution)\b(?!.*\b(major|degree|gpa|city|state|location|country|year|date|address|"
+     r"zip|postal|phone|e ?mail|fax|code)\b)",
      _edu("school", "school"), 45, None),
     ("major", r"^(major|field of study|discipline|area of study)", _edu("major", "major"), 45, None),
     ("gpa", r"^gpa|grade point", _edu("gpa", "gpa"), 45, None),
@@ -465,16 +569,22 @@ RULES: list[tuple[str, str, Getter, int | None, set[str] | None]] = [
     ("signature", r"(electronic |e )?signature|sign your (full )?name", _full_name, 80, {"text"}),
     # questions (any length)
     # the same facts asked the other way round come first
-    ("under_18", r"under (the age of )?(18|eighteen)|younger than (18|eighteen)", _yn("work_authorization.over_18", invert=True), None, None),
-    ("over_18", r"(18|eighteen) years|at least 18|over the age of (18|eighteen)\b|age of 18|legal age", _yn("work_authorization.over_18"), None, None),
+    ("under_18", r"(under|less than|below|younger than) (the age of )?(18|eighteen)", _UNDER_18, None, None),
+    ("over_18", r"(18|eighteen) years|at least 18|over the age of (18|eighteen)\b|age of 18|legal age", _OVER_18, None, None),
     # Yes means no sponsorship: "…without sponsorship?", "…and do not require sponsorship?"
-    ("no_sponsorship", r"without .{0,40}sponsor|(do not|don t|dont|will not|won t|not|never) (now or in the future |currently |ever )?"
-     r"(require|need)\w* .{0,40}sponsor|no (need|requirement) for .{0,30}sponsor", _no_sponsorship, None, None),
-    ("sponsorship", r"sponsor", _yn("work_authorization.requires_sponsorship"), None, None),
-    ("authorized", r"authori[sz]ed to work|eligible to work|legally (able|permitted|allowed) to work|right to work|work authori[sz]ation|employment eligibility", _authorized, None, None),
+    # (only filler words between the "no" and the sponsorship: "Please answer yes or no: will
+    # you require sponsorship?" asks the other way)
+    ("no_sponsorship", r"\b(no|not|never|without|free of)( (any|visa|employment|immigration|employer|the|a|in|need|needs|of|"
+     r"for|requiring|requirement|h ?1 ?b|work))* sponsor|(do not|don t|dont|will not|won t|not|never) (now or in the future |"
+     r"currently |ever )?(require|need)\w* .{0,40}sponsor|sponsor\w* (is |are |would be |will be )?(not|never) (be )?"
+     r"(required|needed|necessary)", _no_sponsorship, None, None),
+    ("sponsorship", r"(require|need|seek)\w* .{0,40}sponsor|sponsor\w* .{0,40}(require|need)|"
+     r"^(visa |employment |immigration )?sponsorship( status| required| needed)?$", _sponsorship, None, None),
+    ("authorized", _AUTHORIZED, _authorized, None, None),
     # Only questions that ask whether you are a U.S. person: export-control wording
     # also comes with other questions, e.g. Micron's "are you a citizen of Cuba, Iran ...?"
-    ("us_person", r"\bu ?s person\b|citizen.{0,80}(permanent resident|green card|refugee|asyl|protected individual)",
+    ("us_person", r"^(?!.*\b(other than|another country|any (other )?country|foreign)\b).*"
+     r"(\bu ?s person\b|citizen.{0,80}(permanent resident|green card|refugee|asyl|protected individual))",
      _yn("work_authorization.us_person"), None, None),
     ("us_citizen", r"are you a (u s|united states) citizen\b|are you a citizen of the (u s|united states)( of america)?$",
      _yn("work_authorization.us_citizen"), None, None),
@@ -518,7 +628,8 @@ _EMPLOYER_SPECIFIC = re.compile(
     r"\bjoin(ing)? (us|our)\b|\b(employed|worked|work) (by|for|at|with)\b|\bpreviously (been )?(employed|worked)|"
     r"\bcurrently employed\b|\bwhy (do|would|are) you\b|\binterest(ed)? in (this|our|the)\b|\brelatives?\b|"
     r"\bfamily members?\b|\bsubsidiar|\baffiliate|\bemployees?\b|\b(previously|ever|already) applied\b|"
-    r"\bworks? here\b|\breferr(ed|al)\b|\bformer(ly)?\b|\balumni\b|\bcontractor (for|with|at)\b", re.I)
+    r"\bworks? here\b|\breferr(ed|al)\b|\bformer(ly)?\b|\balumni\b|\bcontractor (for|with|at)\b|"
+    r"\bthis (opportunity|role|position|job)\b|\bcover letter\b|(?-i:\b(us|our|Our)\b)", re.I)
 
 
 def _bare_question(text: str) -> str:
@@ -527,7 +638,7 @@ def _bare_question(text: str) -> str:
 
 def _answer_bank(prof: Profile, label: str, job: dict | None = None) -> Answer | None:
     company = norm((job or {}).get("company"))
-    for item in prof.get("answers", []) or []:
+    for item in _listed(prof.get("answers")):
         if not isinstance(item, dict) or not item.get("match") or item.get("answer") in (None, ""):
             continue
         if item.get("question"):
@@ -536,8 +647,9 @@ def _answer_bank(prof: Profile, label: str, job: dict | None = None) -> Answer |
             if _bare_question(str(item["question"])) != _bare_question(label):
                 continue
             source = norm(str(item.get("from") or ""))
-            if source and source != company and (_EMPLOYER_SPECIFIC.search(label) or source in norm(label)):
-                continue  # about the company it was given for
+            if source and source != company and (_EMPLOYER_SPECIFIC.search(label) or source in norm(label)
+                                                 or source.split()[0] in norm(item.get("answer")).split()):
+                continue  # about the company it was given for, or naming it
             return Answer(item.get("answer"), f"answers[{item['match']}]")
         try:
             if re.search(str(item["match"]), label, re.I):
@@ -648,7 +760,7 @@ def _date_value(field: dict, value: Any) -> str | None:
 
 
 def profile_entries(prof: Profile, key: str) -> list[dict]:
-    entries = [e for e in prof.get(key, []) or [] if isinstance(e, dict)]
+    entries = [e for e in _listed(prof.get(key)) if isinstance(e, dict)]
     if not entries and key == "education_history" and prof.get("education.school"):
         entries = [{
             "school": prof.get("education.school"), "degree": prof.get("education.highest_degree"),
@@ -686,7 +798,7 @@ def _resolve_entry(field: dict, prof: Profile) -> tuple[bool, Answer | None]:
         return True, None  # e.g. "Employer Phone": not something the profile holds
     if attr == "current":
         return True, Answer(current, rule)
-    if attr == "end" and key == "education_history" and "graduat" in label and not entry.get("degree"):
+    if attr == "end" and key == "education_history" and "graduat" in label and not finished_degree(entry.get("degree")):
         return True, None  # a school not finished: no graduation date to give
     if attr == "end" and current:
         return True, Answer(SKIP, rule)
@@ -697,10 +809,38 @@ def _resolve_entry(field: dict, prof: Profile) -> tuple[bool, Answer | None]:
     return True, (Answer(str(value).strip(), rule) if value not in (None, "") else None)
 
 
+# A note from the employer inside a question ("Note: this position is not eligible for visa
+# sponsorship.", "(We are unable to sponsor visas for this role.)"): not part of what's asked
+_EMPLOYER_NOTE = re.compile(
+    r"\b(we|this (position|role|job|opportunity)|the (company|employer|position|role))\b.{0,60}"
+    r"\b(not|unable|cannot|can t|can't|won t|won't|no)\b.{0,40}sponsor|not eligible for .{0,30}sponsor|unable to sponsor|"
+    r"\bno (visa |employment )?sponsorship (is )?(available|offered|provided)", re.I)
+# Work questions about other countries: the profile's work facts are about the United States
+_OTHER_COUNTRIES = re.compile(
+    r"\b(canada|mexico|united kingdom|uk|england|britain|ireland|germany|netherlands|france|belgium|italy|spain|"
+    r"switzerland|austria|sweden|denmark|norway|finland|poland|czech|israel|india|china|japan|korea|taiwan|singapore|"
+    r"malaysia|philippines|vietnam|thailand|australia|new zealand|brazil|costa rica|european union|eu)\b")
+_WORK_RULES = {"no_sponsorship", "sponsorship", "authorized", "us_person", "us_citizen", "citizenship", "visa_holder"}
+_OTHER_THAN = re.compile(r"\b(other than|another country|any (other )?country|foreign)\b")
+# Documents other than a resume that a lone file box may ask for
+_OTHER_DOCUMENT = re.compile(r"\b(degree|diploma|transcripts?|certificat\w*|licen[cs]e|passport|portfolio|writing sample|"
+                             r"work sample|recommendation|references?|identification|photo\w*|dd ?214)\b")
+# A date box asking when something else happened, not the date a form is signed
+_OTHER_EVENT = re.compile(r"\b(conviction|criminal|offen[cs]e|incident|violation|accident|military|service|discharge|"
+                          r"availability|available|employment|education|experience|history|birth|licen[cs]e|certif\w*)\b")
+
+
+def _without_notes(label: str) -> str:
+    """The question without the employer's notes in it, which say what the employer offers."""
+    parts = re.split(r"(?<=[.?!])\s+|[()]", label or "")
+    kept = [p for p in parts if p.strip() and not _EMPLOYER_NOTE.search(p)]
+    return " ".join(kept) if len(kept) < len([p for p in parts if p.strip()]) else label
+
+
 def resolve_field(field: dict, prof: Profile, job: dict | None = None, file_inputs_on_page: int = 1) -> Answer | None:
     job = job or {}
     kind = field.get("kind", "text")
-    raw_label = field.get("label") or field.get("name") or ""
+    raw_label = _without_notes(field.get("label") or field.get("name") or "")
     label = norm(clean_label(raw_label))
     if kind == "password":
         return None
@@ -728,7 +868,8 @@ def resolve_field(field: dict, prof: Profile, job: dict | None = None, file_inpu
         if re.search(r"cover", where):
             path = _document(prof, job, "cover_letter")
             return Answer(path, "documents.cover_letter") if path else None
-        if re.search(r"resume|cv|curriculum", where) or file_inputs_on_page == 1:
+        named = re.search(r"resume|cv|curriculum", where)
+        if named or file_inputs_on_page == 1 and not _OTHER_DOCUMENT.search(where):
             path = _document(prof, job, "resume")
             return Answer(path, "documents.resume") if path else None
         return None
@@ -745,9 +886,12 @@ def resolve_field(field: dict, prof: Profile, job: dict | None = None, file_inpu
     ans = _answer_bank(prof, raw_label, job)
     if ans is None and _NEVER_GUESS.search(label):
         return None
-    if ans is None and kind == "text" and len(label) <= 45 and _SIGNED_DATE.search(label):
+    section = norm(field.get("section"))
+    if ans is None and kind == "text" and len(label) <= 45 and _SIGNED_DATE.search(label) \
+            and not (label == "date" and _OTHER_EVENT.search(section)):
         return Answer(_today_for(field), "signed_date")
-    someone_else = _SOMEONE_ELSE.search(f"{label} {norm(field.get('section'))}")
+    someone_else = _SOMEONE_ELSE.search(f"{label} {section}") or _OTHER_PARTY_LABEL.search(label) \
+        or _OTHER_PARTY_SECTION.search(section)
     if ans is None:
         for name, pattern, getter, max_len, kinds in RULES:
             if someone_else and name in _CONTACT_RULES:
@@ -757,6 +901,8 @@ def resolve_field(field: dict, prof: Profile, job: dict | None = None, file_inpu
             if kinds is not None and kind not in kinds:
                 continue
             if re.search(pattern, label):
+                if name in _WORK_RULES and (_OTHER_COUNTRIES.search(label) or _OTHER_THAN.search(label)):
+                    return None  # another country's question: the profile's facts are the United States'
                 value = getter(prof, job, raw_label) if getter in _READS_QUESTION else getter(prof, job)
                 if value is None or value == "":
                     return None  # recognised but the profile has no answer
@@ -775,7 +921,7 @@ def resolve_field(field: dict, prof: Profile, job: dict | None = None, file_inpu
 
     options = field.get("options")
     if kind in {"select", "radio_group", "listbox", "checkbox_group", "combobox"} and options:
-        chosen = choose_option(ans.value, options)
+        chosen = choose_option(ans.value, options, names=is_name_rule(ans.rule))
         if chosen is None and ans.rule == "how_heard":
             chosen = _own_website(ans.value, options, job)
         # a search prompt lists only its top level, and a full page of a paged list (Qorvo's
@@ -859,7 +1005,7 @@ def choose_place(value: Any, options: list[str], near: list[str]) -> str | None:
 
 def is_name_rule(rule: str) -> bool:
     """Answers that are names (a school, an employer), matched by name only."""
-    return bool(re.search(r"\.(school|company|employer)$", rule or ""))
+    return bool(re.search(r"\.(school|company|employer)$|^(school|current_company)$", rule or ""))
 
 
 _WEBSITE = re.compile(r"\b(web ?site|careers? (site|page|portal)|company site)\b", re.I)
@@ -877,21 +1023,32 @@ def _own_website(value: Any, options: list[str], job: dict) -> str | None:
     return sites[0] if len(sites) == 1 else None
 
 
+_EDU_START = re.compile(r"^(school|university|college|institution)\b")
 _EDU_FIELD = re.compile(r"^(school|university|college|institution|degree|discipline|major|field of study)\b")
-_JOB_FIELD = re.compile(r"^(company|employer|job title|title|position)\b")
+# (not "Position Applied For", the job being applied to)
+_JOB_FIELD = re.compile(r"^(company|employer|job title|title|position)\b(?! (applied|you are applying|of interest|desired|sought))")
 _DATE_PART = re.compile(r"^(start|end|from|to)( date)?( (year|month))?$")
 
 
 def _with_context(fields: list[dict]) -> list[dict]:
-    """Greenhouse-style forms put "Start date year" right after School/Degree with no
-    section heading; treat such unsectioned date fields as belonging to that block."""
-    out, block = [], None
+    """Greenhouse-style forms put School, Degree, Discipline and "Start date year" together
+    with no section heading: they're one school's, the first in the profile's education
+    history, so its school is never given another school's degree. Unsectioned dates after
+    a job's boxes are that job's."""
+    out, block, school = [], None, False
     for f in fields:
         label = norm(clean_label(f.get("label") or ""))
         if not f.get("section"):
-            if _EDU_FIELD.match(label):
-                block = "Education 1"
+            if _EDU_START.match(label):
+                block, school = "Education 1", True
+                f = {**f, "section": block}
+            elif _EDU_FIELD.match(label):
+                if block == "Education 1" and school:
+                    f = {**f, "section": block}
+                else:  # a Degree with no School before it is the person's highest; its dates a school's
+                    block, school = "Education 1", False
             elif _JOB_FIELD.match(label):
+                school = False
                 block = "Work Experience 1"
             elif block and _DATE_PART.match(label):
                 f = {**f, "section": block}

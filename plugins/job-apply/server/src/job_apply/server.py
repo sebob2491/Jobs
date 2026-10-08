@@ -13,6 +13,7 @@ import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
+from urllib.parse import urlparse
 
 from mcp.server.mcpserver import Image, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
@@ -136,6 +137,36 @@ def _job(job_id: int | None) -> dict[str, Any]:
     return job
 
 
+def _same_site(job: dict[str, Any], url: str) -> bool:
+    """Is this address on the job's own site: its posting's or application's host, or another
+    address of the same employer (not another tenant of a job system many employers share)?"""
+    from .ats import shared_system
+    from .mailbox import site_domain
+
+    host = (urlparse(url or "").hostname or "").lower()
+    own = {(urlparse(u).hostname or "").lower() for u in (job.get("url"), job.get("apply_url")) if u}
+    if not host or host in own:
+        return bool(host)
+    return shared_system(url) is None and any(h and site_domain(h) == site_domain(host) for h in own)
+
+
+def _job_here(job_id: int | None) -> dict[str, Any]:
+    """The job whose application is in the current tab. A job_id that isn't it is refused:
+    filling or submitting another job's page as this one would send that page as this job's
+    application (and mark this job applied)."""
+    here = browser.current_job_id
+    if job_id is None or job_id == here:
+        return _job(here if job_id is None else job_id)
+    job = _job(job_id)
+    tab = browser.current_tab
+    if here is None and tab is not None and _desk_tab_job(tab) is None and _same_site(job, tab.url):
+        browser.current_job_id = job_id  # a page opened by its address, on this job's own site
+        return job
+    shown = f"job {here}" if here is not None else "a page that isn't this job's"
+    raise ValueError(f"Job {job_id} isn't the one open in the browser's current tab ({shown}). "
+                     f"Open it with open_application(job_id={job_id}) first.")
+
+
 def _snapshot_dir() -> Path:
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")[:-3]
     jid = browser.current_job_id
@@ -238,6 +269,8 @@ async def ingest_job(url: str, use_browser: bool = False) -> dict[str, Any]:
                         "(for Indeed, the Indeed connector's get_job_details also works).",
             }
         try:
+            if _desk_tab_job(browser.current_tab) is not None:
+                await browser.new_tab()  # the Job Desk comes back to that tab: the posting gets its own
             opened = await browser.goto(url)
             if opened.get("navigation_error"):
                 return {"saved": False, "error": f"The browser couldn't open the page: {opened['navigation_error']}"}
@@ -399,7 +432,9 @@ async def render_document(kind: str, markdown: str, job_id: int | None = None, d
     Only reorder, trim and rephrase what the user's real resume says."""
     if kind not in KINDS:
         raise ValueError(f"kind must be one of {KINDS}")
-    folder = config.ensure_home() if default else Path(_job(job_id)["folder"])
+    job = None if default else _job(job_id)  # (the current job, when none is named)
+    job_id = job["id"] if job else None
+    folder = config.ensure_home() if job is None else Path(job["folder"])
     prof = config.Profile.load()
     stem = "_".join(p for p in [prof.get("personal.first_name"), prof.get("personal.last_name")] if p)
     name = f"{stem}_{'Resume' if kind == 'resume' else 'Cover_Letter'}" if stem else kind
@@ -517,6 +552,11 @@ async def open_application(job_id: int | None = None, url: str | None = None) ->
         summary = await browser.goto(target)  # type: ignore[arg-type]
     except BrowserUnavailable as e:
         return {"error": str(e)}
+    if browser.current_tab is not None:  # which job this tab is for, when Claude switches back to it
+        if job_id is not None:
+            browser.tab_jobs[browser.current_tab] = job_id
+        else:
+            browser.tab_jobs.pop(browser.current_tab, None)
     summary["ats"] = detect_ats(summary["url"])
     summary["submit_policy"] = _submit_policy(await browser.human_submit_ats() or summary["ats"])
     return summary
@@ -540,7 +580,7 @@ async def autofill(job_id: int | None = None, overwrite: bool = False) -> dict[s
     (contact details, address, work authorization, sponsorship, EEO choices, resume upload,
     saved answers). Returns what was filled and the fields still needing a decision —
     draft those from the profile/resume and confirm anything subjective with the user."""
-    job = _job(job_id) if (job_id is not None or browser.current_job_id is not None) else {}
+    job = _job_here(job_id) if (job_id is not None or browser.current_job_id is not None) else {}
     data = await browser.inspect(include_dropdown_options=True)
     prof = config.Profile.load()
     plan = plan_autofill(data["fields"], prof, job, overwrite=overwrite)
@@ -628,7 +668,7 @@ async def fill_secret(field_id: str, secret_name: str) -> dict[str, Any]:
     """Type a stored secret (e.g. a career-site password) into a field without the value
     passing through the conversation. Secrets come from env JOB_APPLY_SECRET_<NAME> or
     ~/.job-apply/secrets.yaml."""
-    if re.sub(r"[^a-z0-9]", "_", secret_name.strip().lower()) == "email_password":
+    if re.sub(r"[^A-Z0-9]", "_", secret_name.strip().upper()) == "EMAIL_PASSWORD":  # (read as get_secret reads it)
         # the key to the person's inbox: the desk reads sign-up codes with it, nothing types it anywhere
         return {"ok": False, "error": "The email app password is only for reading sign-up codes from the inbox; "
                                       "it is never typed into a page."}
@@ -639,8 +679,19 @@ async def fill_secret(field_id: str, secret_name: str) -> dict[str, Any]:
     from .pipeline import PASSWORD_SITES, password_for
 
     name = re.sub(r"[^a-z0-9]", "_", secret_name.strip().lower())
-    # a password saved for one system (workday_password) goes only onto that system's sites
-    site_ok = (lambda url: password_for(url) == name) if name.removesuffix("_password") in PASSWORD_SITES else None
+    site = name.removesuffix("_password")
+
+    def site_ok(url: str) -> bool:
+        # a password saved for one system (workday_password) goes only onto that system's sites;
+        # any other only onto the site it's named for (linkedin_password: linkedin.com)
+        if password_for(url) == name:
+            return True
+        if site in PASSWORD_SITES:
+            return False
+        parsed = urlparse(url or "")
+        host = re.sub(r"[^a-z0-9.]", "", (parsed.hostname or "").lower())
+        return parsed.scheme == "https" and len(site) >= 3 and site.replace("_", "") in host
+
     try:
         await browser.fill_secret(field_id, secret, site_ok)
     except PermissionError as e:
@@ -682,7 +733,12 @@ async def page_text(max_chars: int = 8000) -> str:
 @tool(drives=lambda a: a.get("switch_to") is not None)
 async def tabs(switch_to: int | None = None) -> dict[str, Any]:
     """List open browser tabs, or switch to tab number `switch_to`."""
-    return await browser.tabs(switch_to)
+    out = await browser.tabs(switch_to)
+    if switch_to is not None:  # the job is the tab's now: the Job Desk's, or the one it was opened for
+        tab = browser.current_tab
+        owner = _desk_tab_job(tab)
+        browser.current_job_id = owner if owner is not None else browser.job_in(tab)
+    return out
 
 
 @tool(drives=True)
@@ -741,7 +797,7 @@ async def submit_application(job_id: int | None = None, user_confirmed: bool = F
     (user_confirmed=true), or when settings.submit_mode is "auto" for this ATS.
     On LinkedIn and Indeed this never clicks: it marks the job ready_to_submit and
     the user clicks Submit in the browser; then call update_job(status="applied")."""
-    job = _job(job_id)
+    job = _job_here(job_id)
     page = await browser.inspect(include_dropdown_options=False)
     ats = await browser.human_submit_ats() or detect_ats(page["url"])  # Indeed's form inside an employer's page
     policy = _submit_policy(ats)
