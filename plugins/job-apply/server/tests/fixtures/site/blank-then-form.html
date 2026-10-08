@@ -1,0 +1,23 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Submit application</title></head>
+<body>
+<!-- A heavy application page (Infineon's) that stays blank for a while before it draws.
+     ?ms=N: how long it stays blank (default 4000); ?never: it never draws. -->
+<div id="app"></div>
+<script>
+  const q = new URLSearchParams(location.search);
+  if (!q.has("never")) {
+    setTimeout(() => {
+      document.getElementById("app").innerHTML =
+        '<h2>Apply</h2>' +
+        '<form onsubmit="event.preventDefault(); document.body.innerHTML = \'<h1>Thank you for applying!</h1>\';">' +
+        '<label for="fn">First Name</label><input id="fn" required>' +
+        '<label for="ln">Last Name</label><input id="ln" required>' +
+        '<label for="em">Email</label><input id="em" type="email" required>' +
+        '<button type="submit">Submit application</button></form>';
+    }, Number(q.get("ms") || 4000));
+  }
+</script>
+</body>
+</html>

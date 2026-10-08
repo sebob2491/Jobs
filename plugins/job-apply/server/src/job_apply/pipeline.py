@@ -34,6 +34,7 @@ NEW_TAB_WAIT = 4  # seconds to wait for a tab opened late by a click before call
 ONCE_SETTLE = 1.0  # seconds after filling the person's answers before checking they stayed in
 MAX_STEPS = 15
 LATE_BUTTONS_WAIT = 10  # seconds for a page's buttons to be drawn
+BLANK_PAGE_WAIT = 30  # for a page with nothing on it yet to draw (Infineon's application, now and then)
 SIGN_IN_STEP_WAIT = 25  # Workday's sign-in step can take longer to draw its buttons (Applied's)
 ACCOUNT_DRAW_WAIT = 4  # for the application below a Create Account form to be drawn (Qorvo's)
 HANDS_ON = {"bot_check", "sign_in", "email_code"}
@@ -808,9 +809,11 @@ class Applier:
                 self._log(run, f"dismissed a note (\u201c{note['text'].strip()}\u201d)")
                 continue
             sign_in_step = bool(_SIGN_IN_STEP.search(" ".join(data.get("headings") or [])))
+            blank = not (data.get("fields") or data.get("actions") or data.get("headings")) and len(text.strip()) < 40
             if action is None and kind == "page" and not waited:
                 waited = True  # slow pages (Intel's Workday, Eightfold forms) draw their buttons late
-                if await self._wait_for_progress(SIGN_IN_STEP_WAIT if sign_in_step else LATE_BUTTONS_WAIT):
+                wait = SIGN_IN_STEP_WAIT if sign_in_step else BLANK_PAGE_WAIT if blank else LATE_BUTTONS_WAIT
+                if await self._wait_for_progress(wait):
                     continue
             if action is None and sign_in_step:
                 # Workday's sign-in step whose sign-in buttons never drew (Applied's, now and then):
@@ -825,6 +828,13 @@ class Applier:
                     return self._pause(run, "stuck", f"\u201c{greyed[0]['text']}\u201d is greyed out, so the site still "
                                        "wants something" + (f": {problems}" if problems else ".") +
                                        " Fix it in the browser, then press Resume.")
+                if blank:  # still, after the wait? (it was read before it)
+                    now, now_text = await self._look()
+                    blank = not (now.get("fields") or now.get("actions") or now.get("headings")) \
+                        and len(now_text.strip()) < 40
+                if blank:
+                    return self._pause(run, "stuck", "The page stayed blank: the site may be slow or down. Reload it "
+                                       "in the browser, then press Resume.")
                 return self._pause(run, "stuck", "I couldn't find the button that moves this application on. "
                                    "Take it a step further in the browser, then press Resume.")
             key = (data.get("url"), tuple(data.get("headings") or []), action["text"].strip().lower())
