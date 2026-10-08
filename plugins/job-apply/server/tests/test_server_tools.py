@@ -167,3 +167,142 @@ def test_saved_answers_fill_only_that_question_and_not_another_employers(job_app
     assert answer("Are you currently employed by ASML or any of its subsidiaries?", "ASML") is None
     assert answer("I agree to resolve any dispute by binding individual arbitration", "ASML", "checkbox") is None
     assert answer("Do you have a valid driver's license? *", "ASML") == "Yes"  # the same question anywhere
+
+
+BROWSER_PAGES = {
+    "https://jobs.example.com/one-page": """<!doctype html><html><body><h1>Field Service Engineer</h1>
+<p>Thank you for your interest in Example Semi.</p>
+<form onsubmit="event.preventDefault()"><label for="n">Full Name</label><input id="n" name="n">
+<button type="submit">Apply for this job</button></form></body></html>""",
+    "https://jobs.example.com/step1": """<!doctype html><html><body><h1>Step 1</h1><form>
+<label for="fn">First Name</label><input id="fn"><label for="ln">Last Name</label><input id="ln">
+<button type="submit">Submit application</button></form></body></html>""",
+    "https://jobs.example.com/step2": """<!doctype html><html><body><h1>Step 2</h1><form>
+<label for="ref">Referred by</label><input id="ref"><label for="notes">Notes</label><textarea id="notes"></textarea>
+<button type="button">Next</button></form></body></html>""",
+    "https://jobs.example.com/with-policy": """<!doctype html><html><body><h1>Apply</h1>
+<p>Read our <a href="https://jobs.example.com/policy" target="_blank">privacy policy</a>.</p>
+<form><label for="fn">First Name</label><input id="fn"></form></body></html>""",
+    "https://jobs.example.com/policy": "<!doctype html><html><body><h1>Privacy Policy</h1></body></html>",
+    "https://jobs.example.com/widgets": """<!doctype html><html><body><form>
+<label for="terms">I accept the terms</label><input type="checkbox" id="terms" disabled>
+<label for="country">Country</label><select id="country" onchange="
+  document.getElementById('state').innerHTML = this.value ? '<option></option><option>Arizona</option><option>Texas</option>' : '<option>Select a country first</option>'">
+  <option value=""></option><option>United States</option></select>
+<label for="state">State</label><select id="state"><option>Select a country first</option></select>
+</form></body></html>""",
+}
+
+
+def browser_routed(srv) -> None:
+    async def route(r):
+        url = r.request.url.split("?")[0]
+        if url in BROWSER_PAGES:
+            return await r.fulfill(status=200, content_type="text/html", body=BROWSER_PAGES[url])
+        return await r.abort()
+
+    async def go():
+        await srv.browser._launch()
+        await srv.browser._ctx.route("**/*", route)
+    run(go())
+
+
+@needs_browser
+def test_a_forms_own_apply_for_this_job_is_its_final_button(srv):
+    """Not pressed by click() (nor by the desk, which skips final buttons), in review mode too."""
+    browser_routed(srv)
+    run(srv.browser.goto("https://jobs.example.com/one-page"))
+    actions = run(srv.inspect_form(False))["actions"]
+    assert [a.get("is_submit") for a in actions if a["text"] == "Apply for this job"] == [True]
+    out = run(srv.click("Apply for this job"))
+    assert out["clicked"] is False and "final submit" in out["blocked"]
+    from job_apply.browser import final_text
+    assert final_text("Apply Now ›") == "Apply Now" and final_text("Apply arrow_forward") == "Apply"
+
+
+@needs_browser
+def test_ids_from_another_page_name_nothing_on_this_one(srv, monkeypatch):
+    """Claude read step 1; the person pressed on to step 2 in the window."""
+    monkeypatch.delenv("JOB_APPLY_NEVER_SUBMIT", raising=False)
+    browser_routed(srv)
+    run(srv.browser.goto("https://jobs.example.com/step1"))
+    step1 = {f["label"]: f["id"] for f in run(srv.inspect_form(False))["fields"]}
+    submit = run(srv.browser.find_submit())[0]["id"]
+    run(srv.browser.goto("https://jobs.example.com/step2"))
+    run(srv.inspect_form(False))
+    out = run(srv.fill_form([{"id": step1["Last Name"], "value": "Rivera"}]))["results"]
+    assert out[0]["ok"] is False
+    with pytest.raises(srv.SubmitBlocked):
+        run(srv.browser.press_submit(submit))
+    values = {f["label"]: f["value"] for f in run(srv.inspect_form(False))["fields"]}
+    assert values == {"Referred by": "", "Notes": ""}
+
+
+@needs_browser
+def test_a_thank_you_already_on_the_form_isnt_a_confirmation(srv, monkeypatch):
+    monkeypatch.delenv("JOB_APPLY_NEVER_SUBMIT", raising=False)
+    browser_routed(srv)
+    run(srv.browser.goto("https://jobs.example.com/one-page"))
+    submit = run(srv.browser.find_submit())[0]["id"]
+    assert run(srv.browser.press_submit(submit))["confirmed"] is False
+
+
+@needs_browser
+def test_a_tick_or_a_choice_the_page_doesnt_take_isnt_reported_done(srv):
+    browser_routed(srv)
+    run(srv.browser.goto("https://jobs.example.com/widgets"))
+    ids = {f["label"]: f["id"] for f in run(srv.inspect_form(False))["fields"]}
+    out = run(srv.fill_form([{"id": ids["I accept the terms"], "value": True},
+                             {"id": ids["Country"], "value": "United States"},
+                             {"id": ids["State"], "value": "Arizona"}]))["results"]
+    assert [r["ok"] for r in out] == [False, True, True], out
+    values = {f["label"]: f["value"] for f in run(srv.inspect_form(False))["fields"]}
+    assert values["State"] == "Arizona" and values["I accept the terms"] is False
+
+
+def test_a_browser_that_is_there_but_wont_start_isnt_swapped_for_another(monkeypatch, job_apply_home):
+    """Chrome's profile held by another window: Edge, without the sign-ins, isn't the answer."""
+    from playwright.async_api import Error as PlaywrightError
+
+    from job_apply import browser as browser_module
+
+    tried: list[str] = []
+
+    class Chromium:
+        async def launch_persistent_context(self, **kw):
+            tried.append(kw.get("channel") or "bundled")
+            raise PlaywrightError("BrowserType.launch_persistent_context: Target page, context or browser has been "
+                                  "closed\nThe profile appears to be in use by another Chromium process")
+
+    class Playwright:
+        chromium = Chromium()
+
+        async def stop(self):
+            pass
+
+    class Start:
+        async def start(self):
+            return Playwright()
+
+    monkeypatch.delenv("JOB_APPLY_CHROMIUM_PATH", raising=False)
+    monkeypatch.setattr(browser_module, "async_playwright", lambda: Start())
+    config.profile_path().write_text("settings:\n  browser_channel: chrome\n")
+    session = browser_module.BrowserSession()
+    with pytest.raises(browser_module.BrowserUnavailable, match="in use"):
+        asyncio.new_event_loop().run_until_complete(session._launch())
+    assert tried == ["chrome"]
+
+
+@needs_browser
+def test_a_tab_the_person_opens_doesnt_take_over(srv):
+    """They opened the privacy policy from the application: the desk stays on the application."""
+    browser_routed(srv)
+    run(srv.browser.goto("https://jobs.example.com/with-policy"))
+    page = run(srv.browser.page())
+
+    async def person_clicks():
+        async with page.context.expect_page() as opened:
+            await page.click("text=privacy policy")
+        await (await opened.value).wait_for_load_state()
+    run(person_clicks())
+    assert run(srv.inspect_form(False))["headings"] == ["Apply"]

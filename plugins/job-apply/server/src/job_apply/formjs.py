@@ -9,7 +9,10 @@ EXTRACT_JS = r"""
 (prefix) => {
   const W = window;
   W.__jaCounter = W.__jaCounter || 0;
-  const newId = () => prefix + (++W.__jaCounter);
+  // Letters of this page load's own: an id read on one page (or tab) never names a box on
+  // the next, where the count starts again. Letters only, so it can't read as a frame's "f2-".
+  W.__jaDoc = W.__jaDoc || Array.from({ length: 3 }, () => String.fromCharCode(97 + Math.floor(Math.random() * 26))).join('');
+  const newId = () => prefix + W.__jaDoc + (++W.__jaCounter);
   const clean = (s) => (s || '').replace(/\s+/g, ' ').trim();
   const txt = (el) => clean(el ? (el.innerText || el.textContent || '') : '');
   const byId = (id) => (id ? document.getElementById(id) : null);
@@ -319,7 +322,9 @@ EXTRACT_JS = r"""
   }
 
   const SUBMIT = /\bsubmit\b|send (my )?application|finish (my )?application|complete (my )?application/i;
-  const FINALISH = /^(apply( now)?|send( now)?|finish|complete( application)?|confirm( and send)?)$/i;
+  // browser.FINALISH_RE and final_text: a form's own "Apply for this job", "Apply Now ›" sends it
+  const FINALISH = /^(apply( now| online)?( for (this|the) (job|position|role|opening))?|apply to (this |the )?(job|position|role|opening)|send( now| (my )?application)?|finish|complete( (my )?application)?|confirm( and send)?)$/i;
+  const finalText = (t) => t.replace(/\s+(arrow_forward|arrow_right_alt|chevron_right|navigate_next|east)$/i, '').replace(/[\s\u203a\u00bb\u2192>!.]+$/, '').trim();
   const POSTING_PAGE = /career(?:_|%5f)ns=job(?:_|%5f)listing(?:&|#|$)/i;  // browser.POSTING_PAGE_RE
   const ACTION = /apply|next|continue|review|submit|save|add|upload|sign ?in|log ?in|create (an |your |a new )?account|sign ?up|register|start|back|previous|edit|done|ok\b|accept|agree|use my last|autofill|manually|verify|confirm|remove|delete/i;
   // Up to 60 of the page's buttons. A dropdown's entries are choices in a field, not
@@ -352,7 +357,7 @@ EXTRACT_JS = r"""
     const opensApplication = formSubmit && POSTING_PAGE.test(location.href) && /^apply( now)?$/i.test(t)
       && ![...el.form.elements].some((e) => /^(INPUT|SELECT|TEXTAREA)$/.test(e.tagName)
         && !/^(hidden|submit|button|image|reset)$/i.test(e.type || '') && e.getClientRects().length > 0);
-    const isSubmit = SUBMIT.test(full) || (formSubmit && FINALISH.test(t) && !opensApplication);
+    const isSubmit = SUBMIT.test(full) || (formSubmit && FINALISH.test(finalText(t)) && !opensApplication);
     if (actions.length >= 60 && !isSubmit && !formSubmit && !STEP.test(t)) continue;
     const a = { id: idOf(el), text: t };
     if (applyItem) a.menu = true;
