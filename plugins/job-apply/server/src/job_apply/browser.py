@@ -11,6 +11,7 @@ import asyncio
 import json
 import os
 import re
+import time
 from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import urlparse
@@ -35,7 +36,16 @@ from .formjs import (CHALLENGE_JS, CLICK_CHOICE_JS, COVERED_JS, ELEMENT_INFO_JS,
 
 SUBMIT_RE = re.compile(r"\bsubmit\b|send (my )?application|finish (my )?application|complete (my )?application", re.I)
 # A form's own submit button with one of these labels is the final step too ("Apply", "Send").
-FINALISH_RE = re.compile(r"^(apply( now)?|send( now)?|finish|complete( application)?|confirm( and send)?)$", re.I)
+FINALISH_RE = re.compile(r"^(apply( now| online)?( for (this|the) (job|position|role|opening))?|"
+                         r"apply to (this |the )?(job|position|role|opening)|send( now| (my )?application)?|finish|"
+                         r"complete( (my )?application)?|confirm( and send)?)$", re.I)
+
+
+def final_text(text: str) -> str:
+    """A button's words without the arrow or icon after them: "Apply Now ›", "Apply
+    arrow_forward" (an icon font's ligature), "Apply!" -> "Apply Now", "Apply", "Apply"."""
+    text = re.sub(r"\s+(arrow_forward|arrow_right_alt|chevron_right|navigate_next|east)$", "", text.strip(), flags=re.I)
+    return re.sub(r"[\s\u203a\u00bb\u2192>!.]+$", "", text).strip()
 # Form buttons that only move between steps; in a dry run every other form submit is refused.
 NAVIGATION_RE = re.compile(
     r"^(next|continue|save( and| &)? continue|save( for later| draft)?|review|back|previous|add( another)?|search|"
@@ -46,6 +56,7 @@ NAVIGATION_RE = re.compile(
 # "Apply". With nothing in the form to fill, it opens the application; it sends nothing.
 POSTING_PAGE_RE = re.compile(r"career(?:_|%5f)ns=job(?:_|%5f)listing(?:&|#|$)", re.I)
 SHORT_MENU = 12  # a menu this short shows every choice; a longer one may show only some
+POPUP_FOLLOW = 15  # seconds after a click of ours in which a tab it opens is followed
 # How long a click may wait for its button to become clickable, in ms.
 CLICK_TIMEOUT = 8000
 CONFIRMATION_RE = re.compile(
@@ -95,6 +106,11 @@ def launch_attempts(settings: config.Settings) -> list[dict[str, Any]]:
 
 class SubmitBlocked(Exception):
     pass
+
+
+# A launch error that means the browser isn't on this computer (so the next one is tried)
+_NOT_INSTALLED = re.compile(r"is not found|not installed|executable doesn'?t exist|no such file|cannot find|"
+                            r"ENOENT|distribution .* not found|failed to launch.*not found", re.I)
 
 
 _DOCUMENT_SUFFIXES = {".pdf", ".doc", ".docx", ".txt", ".rtf", ".odt", ".png", ".jpg", ".jpeg"}
@@ -159,6 +175,7 @@ class BrowserSession:
         self._page: Page | None = None
         self._lock = asyncio.Lock()
         self._openers: dict[Page, Page] = {}  # tab -> the tab that opened it
+        self._follow_until = 0.0  # a new tab opened before then, by the current tab, is followed
         # While the Job Desk works on a job, the tools stay on that job's tab (and the tabs
         # it opens): a closed one raises TabClosed instead of moving on to another tab.
         self.strict_tabs = False
@@ -194,6 +211,16 @@ class BrowserSession:
                 break
             except PlaywrightError as e:
                 errors.append(f"{extra or 'bundled chromium'}: {str(e).splitlines()[0]}")
+                if not _NOT_INSTALLED.search(str(e)):
+                    # it's there but wouldn't start (its profile in use by another window, an
+                    # update half done): the next browser, without its sign-ins, isn't the answer
+                    await self._pw.stop()
+                    self._pw = None
+                    name = {"chrome": "Chrome", "msedge": "Edge"}.get(extra.get("channel", ""), "The browser")
+                    detail = " ".join(line.strip() for line in str(e).splitlines()[:4] if line.strip())[:500]
+                    raise BrowserUnavailable(
+                        f"{name} is installed but wouldn't start. If another window of it is open on the desk's "
+                        f"profile ({kwargs['user_data_dir']}), close that window and try again. Details: {detail}")
         if self._ctx is None:
             await self._pw.stop()
             self._pw = None
@@ -217,7 +244,9 @@ class BrowserSession:
         # the tab being worked on. Tabs the person opens, and background reads, stay put.
         self._watch(popup)
         self._openers[popup] = opener
-        if opener is self._page:
+        # only while a click of ours may still be opening it (asml.com's Apply Now opens its tab
+        # a few seconds on): a link the person opens (a privacy policy) doesn't take the tab over
+        if opener is self._page and time.monotonic() <= self._follow_until:
             self._page = popup
 
     def _forget(self, ctx: BrowserContext) -> None:
@@ -284,6 +313,7 @@ class BrowserSession:
         self._fields.clear()
         self._actions.clear()
         self._frame_ids.clear()
+        self._follow_until = 0.0  # a click in the window just closed isn't one in the next
 
     # ---------------------------------------------------------------- navigation
     async def goto(self, url: str) -> dict[str, Any]:
@@ -879,9 +909,14 @@ class BrowserSession:
                 picked.append(choice)
             return "selected " + ", ".join(picked)
         if kind == "select":
-            choice = choose_option(value, field.get("options") or [])
+            try:  # as the page has them now: a State list fills in once a Country is picked
+                options = [o for o in await loc.evaluate(
+                    "el => Array.from(el.options).map((o) => (o.text || '').replace(/\\s+/g, ' ').trim())") if o]
+            except PlaywrightError:
+                options = field.get("options") or []
+            choice = choose_option(value, options)
             if choice is None:
-                raise ValueError(f"{value!r} doesn't match any option: {field.get('options')}")
+                raise ValueError(f"{value!r} doesn't match any option: {options[:40]}")
             await loc.select_option(label=choice)
             return f"selected {choice}"
         if kind == "listbox":
@@ -910,9 +945,12 @@ class BrowserSession:
             return
         except (PlaywrightError, PlaywrightTimeout):
             pass
-        checked = await loc.evaluate("el => el.checked === true || el.getAttribute('aria-checked') === 'true'")
-        if checked != want:
+        state = "el => el.checked === true || el.getAttribute('aria-checked') === 'true'"
+        if await loc.evaluate(state) != want:
             await loc.evaluate(CLICK_CHOICE_JS)
+            await loc.page.wait_for_timeout(200)
+            if await loc.evaluate(state) != want:  # disabled until the terms are opened, or the page put it back
+                raise ValueError("the page didn't take it: " + ("still unticked" if want else "still ticked"))
 
     async def _click_option(self, page: Page, field_id: str, text: str) -> None:
         frame = self._frame_for(page, field_id)
@@ -1045,9 +1083,10 @@ class BrowserSession:
 
     async def click(self, target: str, allow_submit: bool = False) -> dict[str, Any]:
         """Click an action/field by id, or the first visible button/link with that text."""
+        self._follow_until = time.monotonic() + POPUP_FOLLOW
         async with self._lock:
             page = await self.page()
-            by_id = target in self._actions or target in self._fields or re.fullmatch(r"(f\d+-)?\d+(\.\d+)?", target)
+            by_id = target in self._actions or target in self._fields or re.fullmatch(r"(f\d+-)?[a-z]*\d+(\.\d+)?", target)
             loc = self._locator(page, target) if by_id else None
             text = self._actions[target]["text"] if target in self._actions else "" if by_id else target
             loc, info = await self._clickable(page, loc, text, allow_submit, target)
@@ -1111,7 +1150,7 @@ class BrowserSession:
         # a posting's own Apply on SuccessFactors' older sites: an empty form, so nothing is sent
         opens = bool(info.get("formSubmit") and POSTING_PAGE_RE.search(url) and re.match(r"^apply( now)?$", text, re.I)
                      and not info.get("formFields"))
-        if SUBMIT_RE.search(label) or (info.get("formSubmit") and FINALISH_RE.match(text) and not opens):
+        if SUBMIT_RE.search(label) or (info.get("formSubmit") and FINALISH_RE.match(final_text(text)) and not opens):
             raise SubmitBlocked(
                 f"{label!r} looks like the final submit button. Use submit_application "
                 "(after the user confirms), or let the user click it in the browser."
@@ -1162,6 +1201,15 @@ class BrowserSession:
             return {"before": before, "after": state["entries"], "clicks": clicks,
                     "add_button_found": bool(state["buttons"]) or clicks > 0}
 
+    async def _page_text(self, page: Page) -> str:
+        text = ""
+        for frame in page.frames:
+            try:
+                text += "\n" + await frame.evaluate(VISIBLE_TEXT_JS)
+            except PlaywrightError:
+                continue
+        return text
+
     async def find_submit(self) -> list[dict[str, Any]]:
         async with self._lock:
             page = await self.page()
@@ -1175,23 +1223,33 @@ class BrowserSession:
             page = await self.page()
             if await self.human_submit_ats(page):  # and a third: LinkedIn's and Indeed's are the person's
                 raise SubmitBlocked("LinkedIn and Indeed applications are submitted by you, in the browser")
-            await self._locator(page, action_id).click(timeout=8000)
+            button = self._locator(page, action_id)
+            try:
+                info = await button.evaluate(ELEMENT_INFO_JS, timeout=3000)
+            except (PlaywrightError, PlaywrightTimeout):
+                raise SubmitBlocked("The submit button isn't on the page any more; look at the page again") from None
+            if not (SUBMIT_RE.search(info.get("label") or "")
+                    or info.get("formSubmit") and FINALISH_RE.match(final_text(info.get("text") or ""))):
+                # an id from before the page (or the tab) changed now names something else
+                raise SubmitBlocked(f"{info.get('label')!r} isn't a submit button; look at the page again")
+            before = await self._page_text(page)
+            self._follow_until = time.monotonic() + POPUP_FOLLOW  # a confirmation in a new tab
+            await button.click(timeout=8000)
             try:
                 await page.wait_for_load_state("networkidle", timeout=15000)
             except PlaywrightTimeout:
                 pass
             await page.wait_for_timeout(1500)
             page = await self.page()
-            text = ""
-            for frame in page.frames:
-                try:
-                    text += "\n" + await frame.evaluate(VISIBLE_TEXT_JS)
-                except PlaywrightError:
-                    continue
+            text = await self._page_text(page)
             data = await self._extract(page)
+            # a thank-you that wasn't there before: "Thank you for your interest in X" on the form
+            # itself says nothing about whether it went
+            said = {m.group(0).lower() for m in CONFIRMATION_RE.finditer(text)}
+            said_before = {m.group(0).lower() for m in CONFIRMATION_RE.finditer(before)}
             return {
                 "url": page.url,
-                "confirmed": bool(CONFIRMATION_RE.search(text)),
+                "confirmed": bool(said - said_before),
                 "errors": data["errors"],
                 "text_excerpt": text.strip()[:1500],
             }
