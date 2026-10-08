@@ -44,9 +44,12 @@ The goal is a short, deduplicated list of real openings saved to the tracker
      those: open the careers URL with `open_application(url=...)`, use the site's search
      box with `fill_form` and `click`, and read the results with `page_text`. WebSearch
      with `site:` on the careers domain also works.
-   - `browser_only` lists TSMC Arizona: its careers site refuses automated browsers (a
-     Cloudflare check), and nothing tries to get around that. Give the user its careers
-     link to search in their own browser, or look for TSMC's postings on Indeed.
+   - `browser_only` lists employers with no search the plugin can use: TSMC Arizona in the
+     default list, and with the `phoenix-metro` list about twenty more (a system it can't
+     search, such as PeopleSoft or Taleo, or a site that refuses automated browsers, such as
+     TSMC's and Carvana's Cloudflare checks). Nothing tries to get around those. Don't open
+     them in the automation browser: give the user their careers links, a short list, to
+     search in their own browser, or look for their postings on Indeed.
    - `ingest_job(url)` each posting worth saving. It stores the full description.
    Look at the first page or two of results only, at a normal pace. This is one
    person's job search, not a crawl.

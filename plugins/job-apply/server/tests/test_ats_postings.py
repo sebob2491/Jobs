@@ -211,3 +211,12 @@ def test_an_oracle_site_on_a_companys_own_address_under_its_hcmui_path():
     assert detect_ats("https://careers.ti.com/hcmUI/CandidateExperience/en/sites/CX/job/25018065") == "oracle_hcm"
     assert detect_ats("https://careers.ti.com/hcmUI/CandidateExperience/en/sites/CX/job/25018065/apply/email") \
         == "oracle_hcm"
+
+
+def test_job_systems_on_the_phoenix_employers_own_addresses():
+    """So their emailed codes count: the system's mail, while the page is on the employer's host."""
+    for url, ats in (("https://careers.aps.com/job/Phoenix-HR-Generalist/1/", "successfactors"),
+                     ("https://careers.srpnet.com/job/Tempe-Recruiter/2/", "successfactors"),
+                     ("https://jobs.northropgrumman.com/careers/job/3", "eightfold"),
+                     ("https://careers.insight.com/careers/job/4", "eightfold")):
+        assert detect_ats(url) == ats, url

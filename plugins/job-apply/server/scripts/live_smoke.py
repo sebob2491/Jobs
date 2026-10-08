@@ -704,8 +704,13 @@ async def main() -> int:
                          "so a run tries the sign-in once and fills in Create Account (it never creates one)")
     ap.add_argument("--parallel", type=int, default=1, help="run this many groups of employers at once")
     ap.add_argument("--shard", default="", help="I/N: only the I-th of N groups (what --parallel runs)")
+    ap.add_argument("--lists", default="", help="the plugin's employer lists to check, comma-separated "
+                                                "(default: semiconductor-az; e.g. phoenix-metro,semiconductor-az)")
     args = ap.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
+    if args.lists:  # as a person's own companies.yaml names them, in this run's own home
+        (_HOME / "companies.yaml").write_text(yaml.safe_dump({"lists": [n.strip() for n in args.lists.split(",")
+                                                                        if n.strip()]}))
     if args.parallel > 1 and not args.shard:
         return await parallel_main(args)
     wanted = [n.strip().lower() for n in args.companies.split(",") if n.strip()]
@@ -1121,7 +1126,8 @@ async def parallel_main(args: argparse.Namespace) -> int:
     browser and a fake email of its own), then print their results in order as one run."""
     n = args.parallel
     passed = [*(["--companies", args.companies] if args.companies else []), *(["--fixtures"] if args.fixtures else []),
-              *(["--pipeline"] if args.pipeline else []), *(["--fake-passwords"] if args.fake_passwords else [])]
+              *(["--pipeline"] if args.pipeline else []), *(["--fake-passwords"] if args.fake_passwords else []),
+              *(["--lists", args.lists] if args.lists else [])]
     children = [await asyncio.create_subprocess_exec(
         sys.executable, __file__, *passed, "--shard", f"{i}/{n}", "--out", str(args.out / f"shard-{i}"),
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT) for i in range(n)]

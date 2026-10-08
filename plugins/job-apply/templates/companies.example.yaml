@@ -9,10 +9,13 @@
 lists: [phoenix-metro, semiconductor-az]
 
 # companies: employers of your own, in the same shape as the plugin's
-# data/companies.yaml. An employer also in one of the lists uses your entry.
+# data/companies.yaml. A list's employer with the same name, or searching the same site,
+# is left out for yours.
 companies: []
-#  - name: Example Employer
-#    careers_url: https://example.wd1.myworkdayjobs.com/Careers
-#    ats: workday
-#    confidence: medium
-#    search: {workday: "https://example.wd1.myworkdayjobs.com/Careers"}
+# To add some, replace the line above with entries like this one:
+# companies:
+#   - name: Example Employer
+#     careers_url: https://example.wd1.myworkdayjobs.com/Careers
+#     ats: workday
+#     confidence: medium
+#     search: {workday: "https://example.wd1.myworkdayjobs.com/Careers"}

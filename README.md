@@ -302,7 +302,8 @@ a table, and the log has one `LIVE_RESULT` line of JSON per company. Tick
 "Commit captured pages" to save the pages as regression fixtures.
 
 To run it yourself, add `--pipeline --fake-passwords` to drive the Job Desk's
-one-button pipeline instead. Add `--parallel 4` to check four employers at a time,
+one-button pipeline instead. It checks the default semiconductor list; add
+`--lists phoenix-metro` (or `--lists phoenix-metro,semiconductor-az`) to check other lists. Add `--parallel 4` to check four employers at a time,
 each in a browser of its own; every site is still visited once. A full run then
 takes about 6 minutes instead of 22.
 

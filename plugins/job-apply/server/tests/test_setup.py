@@ -72,3 +72,14 @@ def test_a_zip_code_with_a_leading_zero_is_kept_as_written(job_apply_home):
 
     (job_apply_home / "profile.yaml").write_text("personal:\n  first_name: Kim\n  address:\n    postal_code: 02134\n")
     assert config.Profile.load().get("personal.address.postal_code") == "02134"
+
+
+def test_setup_status_says_whats_wrong_with_a_persons_employer_list(srv, job_apply_home):
+    """A list name the plugin doesn't have, written during setup, shows at setup, not at the
+    first search."""
+    (job_apply_home / "companies.yaml").write_text("lists: [phoenix]\n")
+    status = srv.setup_status()
+    assert "no employer list named 'phoenix'" in status["employer_list_problem"]
+    assert "phoenix-metro" in status["employer_lists"]
+    (job_apply_home / "companies.yaml").write_text("lists: [phoenix-metro]\n")
+    assert "employer_list_problem" not in srv.setup_status()

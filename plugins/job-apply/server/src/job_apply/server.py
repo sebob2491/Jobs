@@ -231,8 +231,18 @@ def setup_status() -> dict[str, Any]:
         "plugin_version": config.plugin_version(),
         "companies_file": str(companies_path()),  # the person's own list, when they have one
         "employer_lists": list(employer_lists()),  # what a person's own file can name under `lists:`
+        **({"employer_list_problem": problem} if (problem := _employer_list_problem()) else {}),
         "jobs_by_status": tracker().counts(),
     }
+
+
+def _employer_list_problem() -> str | None:
+    """What's wrong with the person's own companies.yaml, if anything, before a search finds it."""
+    try:
+        load_companies()
+    except ValueError as e:
+        return str(e)
+    return None
 
 
 @tool()
@@ -299,10 +309,12 @@ async def search_company_jobs(
     companies: names from the plugin's companies list (default: all of them).
     location: state code/name or city alternatives ("AZ", "Phoenix|Chandler"); null for anywhere.
     Results already in the tracker carry `tracked`. Companies in `browser_only` have no
-    search API; open their careers_url and use the site's search."""
-    out = await search_companies(query, companies, location, limit_per_company)
+    search the plugin can use, and some turn automated browsers away: give the user their
+    careers_url to search in their own browser."""
+    listed = load_companies()  # once: the person's own file may name several lists
+    out = await search_companies(query, companies, location, limit_per_company, companies=listed)
     # Eightfold career sites refuse scripted API calls; let a real page make the call instead.
-    by_name = {c["name"]: c for c in load_companies()}
+    by_name = {c["name"]: c for c in listed}
     for name, err in list(out["errors"].items()):
         cfg = (by_name.get(name, {}).get("search") or {}).get("eightfold")
         if not cfg or "403" not in err:

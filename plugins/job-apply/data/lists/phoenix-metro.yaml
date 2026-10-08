@@ -21,7 +21,7 @@ companies:
     az_sites: Scottsdale, Phoenix, Tempe, Mesa, Peoria, Surprise
     confidence: high
     search: {workday: https://honorhealth.wd12.myworkdayjobs.com/HonorHealth_careers}
-  - name: Dignity Health (CommonSpirit Health)
+  - name: Dignity Health          # CommonSpirit Health's Arizona hospitals
     careers_url: https://www.commonspirit.careers/
     ats: icims              # TalentBrew (Radancy) front end; Apply goes to the iCIMS portal careers-commonspirit
     az_sites: Phoenix (St. Joseph's), Chandler (Chandler Regional), Gilbert (Mercy Gilbert), Glendale (St. Joseph's Westgate)
@@ -34,7 +34,7 @@ companies:
     ats: company_site       # Phoenix Children's own ASP.NET job site with its own accounts; no ATS behind it seen
     az_sites: Phoenix (main campus), Glendale (Arrowhead), Mesa (East Valley), Avondale, Chandler, Gilbert, Peoria, Scottsdale, Tempe
     confidence: medium      # live check, Oct 2026: postings at /Positions/Posting/<id>, filters by Phoenix-area city
-  - name: Mayo Clinic (Arizona)
+  - name: Mayo Clinic            # the Arizona campus (Phoenix, Scottsdale)
     careers_url: https://jobs.mayoclinic.org/
     ats: oracle_hcm         # jobs.mayoclinic.org (TalentBrew) and careers.mayoclinic.org (Eightfold) front ends; Apply opens Oracle Recruiting site CX_1
     az_sites: Phoenix, Scottsdale
@@ -65,7 +65,7 @@ companies:
     az_sites: Phoenix
     confidence: high
     search: {workday: https://gcu.wd1.myworkdayjobs.com/GCU}
-  - name: Maricopa Community Colleges (MCCCD)   # not "Maricopa County Community College District": the plugin's name match would pull in Maricopa County's entry too
+  - name: Maricopa Community Colleges   # the Maricopa County Community College District (MCCCD)
     careers_url: https://www.maricopa.edu/about/careers
     ats: unknown            # maricopa.edu answers with a Cloudflare challenge from here; reposted openings carry six-digit "Job ID"s (PeopleSoft-style), not confirmed
     az_sites: Tempe (district office), Phoenix, Mesa, Chandler, Gilbert, Glendale, Scottsdale, Avondale
@@ -125,10 +125,10 @@ companies:
     az_sites: Tempe, Phoenix, Glendale, Chandler
     confidence: high          # live check, Oct 2026: Tempe and Phoenix openings come back from the Oracle search
     search: {oracle: {host: jpmc.fa.oraclecloud.com, site: CX_1001}}
-  - name: Discover Financial (Capital One)
+  - name: Capital One
     careers_url: https://www.capitalonecareers.com/discover
-    ats: workday              # Discover is part of Capital One; its careers page says all Discover roles are on
-                              # Capital One's site (jobs.discover.com failed TLS verification from here)
+    ats: workday              # Discover is part of Capital One: its careers page says all Discover roles (Phoenix
+                              # included) are on Capital One's site (jobs.discover.com failed TLS verification from here)
     az_sites: Phoenix, Scottsdale
     confidence: high          # live check, Oct 2026
     search: {workday: https://capitalone.wd12.myworkdayjobs.com/Capital_One}
@@ -155,12 +155,8 @@ companies:
     az_sites: Phoenix, Chandler
     confidence: high          # live check, Oct 2026: Talent Manager (recruiter) openings in Phoenix and Chandler
     search: {workday: https://roberthalf.wd1.myworkdayjobs.com/RobertHalfStaffingCareers}
-  - name: Robert Half (corporate roles)
-    careers_url: https://careers.roberthalf.com/global/en
-    ats: workday              # corporate-team roles (HR, finance, legal) apply on a second Workday site
-    az_sites: none listed (Oct 2026)
-    confidence: high          # live check, Oct 2026: 29 openings, none in Arizona
-    search: {workday: https://roberthalf.wd1.myworkdayjobs.com/RobertHalfCareers}
+    # Corporate-team roles (HR, finance, legal) apply on a second Workday site, RobertHalfCareers: 29 openings, none
+    # in Arizona (Oct 2026). One entry per employer keeps its listings under its own name.
   - name: Allegis Group
     careers_url: https://careers-allegisgroup.icims.com/jobs/search?ss=1
     ats: icims                # allegisgroup.com/en/careers "Search Jobs" links here (corporate roles)
@@ -199,13 +195,13 @@ companies:
     confidence: medium        # page seen, Oct 2026: two Arizona internal openings, neither in HR or recruiting
   # Phoenix-metro utilities, aerospace and defense, tech, logistics and retail employers
   # (checked Oct 2026).
-  - name: Arizona Public Service (Pinnacle West)
+  - name: Arizona Public Service   # APS (Pinnacle West)
     careers_url: https://careers.aps.com/
     ats: successfactors       # aps.com's Careers page links to careers.aps.com, a SuccessFactors career site (company APS)
     az_sites: Phoenix (HQ), Tempe, Palo Verde (Tonopah)
     confidence: high          # live check, Oct 2026: Phoenix and Tempe openings come back from this search
     search: {successfactors: https://careers.aps.com}
-  - name: Salt River Project (SRP)
+  - name: Salt River Project       # SRP
     careers_url: https://careers.srpnet.com/
     ats: successfactors       # SuccessFactors career site; www.srpnet.com/careers answered 403 (Access Denied) from here
     az_sites: Tempe (HQ), Phoenix

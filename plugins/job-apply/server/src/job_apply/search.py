@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import asyncio
 import html
+import json
 import re
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
@@ -97,7 +98,7 @@ def own_companies_path() -> Path:
 def companies_path() -> Path:
     """The employer list Find jobs searches: the person's own when they have one."""
     own = own_companies_path()
-    return own if own.exists() else config.PLUGIN_ROOT / "data" / BUILTIN_COMPANIES
+    return own if own.exists() else employer_lists()[BUILTIN_LIST]
 
 
 def employer_lists() -> dict[str, Path]:
@@ -115,34 +116,60 @@ def _companies_in(path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     except (OSError, yaml.YAMLError) as e:
         raise ValueError(f"{path} can't be read: {str(e).splitlines()[0] if str(e) else type(e).__name__}") from e
     if not isinstance(data, dict):
-        raise ValueError(f"{path} should start with `companies:`, a list of employers")
+        raise ValueError(f"{path} should be written as `lists:` (the plugin's lists to search) and/or `companies:` "
+                         "(employers of your own); see the plugin's templates/companies.example.yaml")
     return [c for c in data.get("companies") or [] if isinstance(c, dict) and c.get("name")], data
+
+
+def _list_names(data: dict[str, Any], path: Path) -> list[str]:
+    """The plugin lists a person's file names: one name, or a list of them."""
+    names = data.get("lists")
+    if names is None:
+        names = []
+    elif isinstance(names, str):
+        names = [names]
+    elif not isinstance(names, list) or not all(isinstance(n, str) for n in names):
+        raise ValueError(f"{path}: `lists:` should be a list of the plugin's list names, such as "
+                         "[phoenix-metro, semiconductor-az]")
+    if data.get("include_builtin") is True and BUILTIN_LIST not in names:
+        names = [*names, BUILTIN_LIST]
+    return names
+
+
+def _search_key(company: dict[str, Any]) -> str:
+    """What an entry searches: two entries searching the same site are one employer, whatever
+    each calls it ("Mayo Clinic", "Mayo Clinic (Arizona)")."""
+    return json.dumps(company["search"], sort_keys=True, default=str) if company.get("search") else ""
 
 
 def load_companies() -> list[dict[str, Any]]:
     """The employers to search: the plugin's semiconductor list, or a person's own file
     (~/.job-apply/companies.yaml) in its place. Their file names the plugin's lists it wants
     (`lists: [phoenix-metro, semiconductor-az]`) and adds employers of its own (`companies:`,
-    the same shape); `include_builtin: true` is the semiconductor list too. An employer named
-    twice is searched once: their own entry first, then the first list's. Someone looking for
-    HR work in Phoenix keeps their own file; nothing of theirs goes into the plugin."""
+    the same shape, kept as written); `include_builtin: true` is the semiconductor list too.
+    A list's employer that one of theirs already covers (the same name, or the same site
+    searched) is left out, as is one an earlier list has. Someone looking for HR work in
+    Phoenix keeps their own file; nothing of theirs goes into the plugin."""
     lists = employer_lists()
     own_path = own_companies_path()
     if not own_path.exists():
         return _companies_in(lists[BUILTIN_LIST])[0]
     own, data = _companies_in(own_path)
-    names = data.get("lists") or []
-    names = [names] if isinstance(names, str) else [str(n) for n in names if n] if isinstance(names, list) else []
-    if data.get("include_builtin") is True and BUILTIN_LIST not in names:
-        names.append(BUILTIN_LIST)
-    out, seen = [], set()
+    names = _list_names(data, own_path)
     for name in names:
         if name not in lists:
             raise ValueError(f"{own_path}: the plugin has no employer list named {name!r}; "
                              f"its lists are {', '.join(lists)}")
-    for company in own + [c for name in names for c in _companies_in(lists[name])[0]]:
-        if norm(company["name"]) not in seen:
-            seen.add(norm(company["name"]))
+    out = list(own)
+    seen_names = {norm(c["name"]) for c in own}
+    seen_sites = {_search_key(c) for c in own} - {""}
+    for name in names:
+        for company in _companies_in(lists[name])[0]:
+            key = _search_key(company)
+            if norm(company["name"]) in seen_names or key and key in seen_sites:
+                continue
+            seen_names.add(norm(company["name"]))
+            seen_sites.add(key)
             out.append(company)
     return out
 
@@ -1227,6 +1254,11 @@ def _raise_for(r: httpx.Response, url: str) -> None:
 # --------------------------------------------------------------------- entry point
 
 
+_COMPANY_WORDS = {"inc", "incorporated", "corp", "corporation", "co", "company", "ltd", "llc", "plc", "the", "group",
+                  "holdings", "technologies", "technology", "international", "usa", "us", "america", "americas",
+                  "north", "arizona", "az", "careers", "jobs"}
+
+
 def _pick(companies: list[dict[str, Any]], names: list[str] | None) -> list[dict[str, Any]]:
     if not names:
         return companies
@@ -1236,8 +1268,13 @@ def _pick(companies: list[dict[str, Any]], names: list[str] | None) -> list[dict
         return bool(part) and f" {part} " in f" {whole} "
 
     def named(w: str, name: str) -> bool:
-        # or the start of the name, when that's more than a short code: "Applied Material", "Micro"
-        return words_in(w, name) or words_in(name, w) or len(w) >= 5 and name.startswith(w)
+        # or the start of the name, when that's more than a short code: "Applied Material", "Micro";
+        # or the name inside what was asked for when the rest only says what kind of company it
+        # is ("Intel Corporation"), not when it names another ("Maricopa County Community
+        # College District" isn't Maricopa County)
+        if words_in(w, name) or len(w) >= 5 and name.startswith(w):
+            return True
+        return words_in(name, w) and set(w.split()) - set(name.split()) <= _COMPANY_WORDS
 
     return [c for c in companies if any(named(w, norm(c["name"])) for w in wanted)]
 

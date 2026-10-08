@@ -314,7 +314,7 @@ def test_posting_apis():
 def test_tool_marks_tracked_jobs(srv, monkeypatch):
     import job_apply.server as server
 
-    async def fake(query, names, location, limit):
+    async def fake(query, names, location, limit, **kw):
         return {"results": [{"company": "Lever Co", "title": "FSE", "url": "https://jobs.lever.co/leverco/abc"}],
                 "errors": {}, "browser_only": []}
 
@@ -327,7 +327,7 @@ def test_tool_marks_tracked_jobs(srv, monkeypatch):
 def test_tool_falls_back_to_browser_for_eightfold(srv, monkeypatch):
     import job_apply.server as server
 
-    async def fake(query, names, location, limit):
+    async def fake(query, names, location, limit, **kw):
         return {"results": [], "errors": {"Lam Research": "SearchError: HTTP 403 from https://careers.lamresearch.com/api"},
                 "browser_only": []}
 
@@ -1275,3 +1275,41 @@ def test_a_persons_own_file_can_name_the_plugins_lists(job_apply_home, monkeypat
     own.write_text("lists: ../../etc/passwd\n")
     with pytest.raises(ValueError, match="no employer list named"):
         search_module.load_companies()
+
+
+def test_a_persons_own_entries_stay_as_written_and_cover_the_lists_same_sites(job_apply_home, monkeypatch, tmp_path):
+    """Two entries of their own under one name (two sites of one employer) are both searched;
+    a list's entry for a site one of theirs already searches, under another name ("Mayo
+    Clinic (Arizona)"), is left out; `lists:` written as anything but names is said to be wrong."""
+    from job_apply import config
+
+    root = tmp_path / "plugin"
+    (root / "data" / "lists").mkdir(parents=True)
+    (root / "data" / "companies.yaml").write_text("companies: []\n")
+    (root / "data" / "lists" / "phoenix-metro.yaml").write_text(
+        "companies:\n  - name: Mayo Clinic (Arizona)\n    careers_url: https://a.example\n"
+        "    search: {oracle: {site: CX_1, host: fa.example.oraclecloud.com}}\n"
+        "  - {name: Example Bank, careers_url: https://b.example}\n")
+    monkeypatch.setattr(config, "PLUGIN_ROOT", root)
+    own = job_apply_home / "companies.yaml"
+    own.write_text("lists: [phoenix-metro]\ncompanies:\n"
+                   "  - {name: Robert Half, careers_url: https://c.example, search: {workday: 'https://rh.wd1.myworkdayjobs.com/A'}}\n"
+                   "  - {name: Robert Half, careers_url: https://d.example, search: {workday: 'https://rh.wd1.myworkdayjobs.com/B'}}\n"
+                   "  - name: Mayo Clinic\n    careers_url: https://e.example\n"
+                   "    search: {oracle: {host: fa.example.oraclecloud.com, site: CX_1}}\n")
+    assert [c["careers_url"] for c in search_module.load_companies()] == \
+        ["https://c.example", "https://d.example", "https://e.example", "https://b.example"]
+    own.write_text("lists:\n  phoenix-metro: true\n")
+    with pytest.raises(ValueError, match="should be a list of the plugin's list names"):
+        search_module.load_companies()
+    own.write_text("- phoenix-metro\n")
+    with pytest.raises(ValueError, match="`lists:`"):
+        search_module.load_companies()
+
+
+def test_a_company_is_picked_by_the_name_asked_for_not_one_inside_it():
+    companies = [{"name": n} for n in ["Maricopa County", "Maricopa Community Colleges", "Intel"]]
+    pick = search_module._pick
+    assert [c["name"] for c in pick(companies, ["Maricopa County Community College District"])] == []
+    assert [c["name"] for c in pick(companies, ["Intel Corporation"])] == ["Intel"]
+    assert [c["name"] for c in pick(companies, ["Maricopa County"])] == ["Maricopa County"]
