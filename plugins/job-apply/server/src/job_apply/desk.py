@@ -268,6 +268,13 @@ class Desk:
             elif action == "applied":
                 self.srv.tracker().update(job_id, status="applied", note="marked applied in the Job Desk")
                 a.mark_applied(job_id)
+            elif action == "report":  # a scrubbed report to file on GitHub: shown first, filed by the person
+                job = self.srv.tracker().get(job_id)
+                if job is None:
+                    raise KeyError(f"No job with id {job_id}")
+                from . import report
+
+                return JSONResponse(await asyncio.to_thread(report.build, job, a.runs.get(job_id)))
             else:
                 return JSONResponse({"error": f"unknown action {action!r}"}, status_code=404)
         except (KeyError, ValueError) as e:

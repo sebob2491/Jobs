@@ -307,6 +307,20 @@ one-button pipeline instead. It checks the default semiconductor list; add
 each in a browser of its own; every site is still visited once. A full run then
 takes about 6 minutes instead of 22.
 
+### Reporting a problem
+
+When the Job Desk gets a job wrong, press **Report a problem** on that job. It writes a
+report to `~/.job-apply/reports/<job>-<time>/`:
+- what the desk did, step by step;
+- each page it saved, with every field's label and whether it was filled (never what was in it);
+- `report.zip` with the saved pages.
+
+Your profile's details are replaced by `REDACTED` throughout, and screenshots are never
+included. The page then shows you the whole report. Only if you say OK does it open a new
+issue on this repository with the report's text filled in. You can drag `report.zip`
+into the issue to add the pages. Nothing is sent without you. The repository is
+public, so read the report over first. Claude can do the same with `report_problem`.
+
 ### Turning a failure into a test
 
 When a field won't fill on a real site, the plugin saves a snapshot to

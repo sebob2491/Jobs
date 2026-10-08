@@ -397,6 +397,7 @@ function jobButtons(r, which) {
   if (which.includes("usual_resume")) out.push(b("usual_resume", "Use my usual resume"));
   if (which.includes("later")) out.push(b("later", "Later"));
   if (which.includes("skip")) out.push(b("skip", "Skip job"));
+  out.push(b("report", "Report a problem", "link"));
   return `<div class="actions">${out.join("")}</div>`;
 }
 
@@ -641,6 +642,14 @@ document.addEventListener("click", (e) => {
     })).filter((x) => x.value);
     if (!answers.length) { alert("Answer at least one question first."); return; }
     act(async () => { const out = await api("/api/answer", {job_id: Number(job), answers}); if (out.note) alert(out.note); });
+  } else if (jobAct === "report") {
+    act(async () => {
+      const out = await api(`/api/job/${job}/report`, {});
+      const ok = confirm("This is everything the report holds, with your details taken out:\n\n" + out.preview
+        + `\n\nIt's saved in ${out.folder}. OK opens a new GitHub issue with this text. The repository is public,`
+        + " so read it over first. To add the saved pages too, drag report.zip from that folder into the issue.");
+      if (ok) window.open(out.issue_url, "_blank", "noopener");
+    });
   } else if (jobAct === "submit") {
     if (confirm("Submit this application now?")) act(() => api(`/api/job/${job}/submit`, {}));
   } else if (jobAct) {

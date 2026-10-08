@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import functools
 import inspect
@@ -519,6 +520,20 @@ async def tailoring_queue() -> dict[str, Any]:  # async: it reads the desk's run
         "education": prof.get("education") or {},
         "rules": TAILOR_RULES,
     }
+
+
+@tool()
+async def report_problem(job_id: int) -> dict[str, Any]:
+    """Write a problem report for a job that went wrong: what the Job Desk did and the pages
+    it saved, with the person's details taken out (no screenshots). Show the user `preview`,
+    all of it, before anything else; only with their OK, open `issue_url` for them (a new
+    issue on the plugin's public GitHub repository with that text) and tell them they can
+    drag `zip` (the scrubbed pages) into it. Never file it without their OK."""
+    from . import desk, report
+
+    job = _job(job_id)
+    run = desk._desk.applier.runs.get(job["id"]) if desk._desk is not None else None
+    return await asyncio.to_thread(report.build, job, run)
 
 
 @tool()
