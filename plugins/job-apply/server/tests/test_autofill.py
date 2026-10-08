@@ -425,3 +425,61 @@ def test_a_question_whose_choices_say_what_it_asks(job_apply_home):
     del data["eeo"]["disability"]
     (job_apply_home / "profile.yaml").write_text(yaml.safe_dump(data))
     assert resolve_field(f("Please check one of the boxes below:*", "checkbox_group", options=boxes), prof()) is None
+
+
+def test_choices_by_whole_words_and_by_number():
+    """"male" is in "female": a self-identification answer took the wrong one. A number
+    among ranges ("10" years, a 3.8 GPA) took a range that doesn't hold it."""
+    assert choose_option("Female", ["Male", "Woman", "Non-binary", "Decline to self-identify"]) == "Woman"
+    assert choose_option("Woman", ["Man", "Female", "Decline"]) == "Female"
+    assert choose_option("No", ["Not applicable", "No", "Yes"]) == "No"
+    assert choose_option("10", ["Less than 1 year", "1-3", "More than 3 years"]) == "More than 3 years"
+    assert choose_option("2", ["Less than 1 year", "1-3", "More than 3 years"]) == "1-3"
+    assert choose_option("3.8", ["1.99 or less", "2.00 - 2.99", "3.00 - 3.49", "3.50 - 4.00 or higher"]) == \
+        "3.50 - 4.00 or higher"  # Texas Instruments' GPA question
+    assert choose_option("3.8", ["Below 3.0", "3.0 - 3.49", "3.5 and above"]) == "3.5 and above"
+    # a bare "Yes" among several kinds of yes: the person says which
+    assert choose_option("Yes", ["Yes, for any employer", "Yes, for my current employer only", "No"]) is None
+
+
+def test_questions_that_only_look_like_profile_questions():
+    """Each of these took a profile answer that said something untrue."""
+    p = Profile({"work_authorization": {"authorized_to_work": True, "requires_sponsorship": False, "citizenship": "Mexico"},
+                 "personal": {"address": {"country": "United States"}, "first_name": "Sam", "last_name": "Rivera",
+                              "phone": "480-555-0100"},
+                 "preferences": {"willing_to_relocate": True},
+                 "eeo": {"disability": "No, I do not have a disability"},
+                 "history": {"previous_employers": []},
+                 "work_history": [{"company": "Intel", "title": "Technician", "start": "2020-01", "end": "2022-01"}],
+                 "education": {"highest_degree": "High School Diploma"},
+                 "education_history": [{"school": "Mesa Community College", "degree": "", "end": 2019}]})
+
+    def answer(label, job=None, **kw):
+        a = resolve_field({"id": "1", "label": label, "kind": "text", "value": "", **kw}, p, job or {"company": "Acme"})
+        return a and a.value
+
+    # Yes means no sponsorship is needed (it read "sponsor" and answered "requires: no")
+    assert answer("Are you legally authorized to work in the US and do not require sponsorship?") == "Yes"
+    assert answer("Will you now or in the future require sponsorship?") == "No"
+    # about this employer only, from every employer in the profile, by whole names
+    assert answer("Have you ever worked in a cleanroom environment?") is None
+    assert answer("Have you previously worked for Intel?", {"company": "Intel"}) == "Yes"  # in work_history
+    assert answer("Have you ever worked for us before?", {"company": "Intelligent Systems"}) == "No"
+    # a school not finished has no graduation year or date (it would say the person graduated)
+    assert answer("Graduation Year") is None
+    assert answer("Graduation Date", section="Education 1") is None
+    # self-identification, not whether the person can do the job
+    assert answer("Can you perform the essential functions of this job with or without accommodation for a disability?") is None
+    assert answer("Please indicate whether you have a disability") == "No, I do not have a disability"
+    # relocation money isn't moving
+    assert answer("Will you require relocation assistance?") is None
+    assert answer("Are you willing to relocate?") == "Yes"
+    # the address's country isn't the citizenship
+    assert answer("Country of citizenship") == "Mexico"
+    assert answer("Country of Birth") is None
+    assert answer("Country/Region") == "United States"
+    assert answer("Are you over the age of 21?") is None
+    # someone else's details
+    assert answer("Phone", section="Emergency Contact") is None
+    assert answer("Name", section="References") is None
+    assert answer("Employer Phone", section="Work Experience 1") is None
