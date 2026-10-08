@@ -78,6 +78,9 @@ def pipeline_outcome(rec: dict[str, Any]) -> Result:
     return Result(outcome, _join(title, last.get("reason")))
 
 
+_PARTLY = re.compile(r"\(\d+ of \d+ searches failed\)")  # server.search_company_jobs: others answered
+
+
 def search_outcome(rec: dict[str, Any]) -> Result:
     """One LIVE_RESULT record: whether the employer's search works."""
     if "search_config" not in rec:  # no search block: the run only opened its careers page
@@ -86,7 +89,9 @@ def search_outcome(rec: dict[str, Any]) -> Result:
         return Result("no search", f"careers page: {problem}" if problem else "careers page opened")
     searches = [s for s in (rec.get("search_az"), rec.get("search_any")) if isinstance(s, dict)]
     errors = [s["error"] for s in searches if s.get("error")]
-    if errors:
+    # one wording (or one later page) failing while the others answer is a bad night for the
+    # site, not a broken search: it would flip the result back and forth from night to night
+    if errors and not (any(s.get("count") for s in searches) or all(_PARTLY.search(e) for e in errors)):
         return Result("error", errors[0])
     if not searches:  # crashed or timed out before the search answered
         return Result("error", rec.get("crash") or "no search result")
@@ -94,7 +99,7 @@ def search_outcome(rec: dict[str, Any]) -> Result:
     found = f"{in_az} in AZ" if in_az else (
         f"none in AZ, {rec['search_any'].get('count', 0)} anywhere" if rec.get("search_any") else "none in AZ")
     # a crash after the search (opening or filling the form) doesn't make the search fail
-    return Result("works", _join(found, rec.get("crash") and f"then {rec['crash']}"))
+    return Result("works", _join(found, errors and _short(errors[0], 80), rec.get("crash") and f"then {rec['crash']}"))
 
 
 @dataclass(frozen=True)
@@ -164,7 +169,7 @@ def compare(previous: dict[str, dict[str, str]] | None, current: dict[str, dict[
     return state, changes
 
 
-_STATE = re.compile(re.escape(STATE_MARK) + r"\s*```json[ \t]*\n(.*?)\n[ \t]*```", re.S)
+_STATE = re.compile(re.escape(STATE_MARK) + r"\s*```json[ \t]*\r?\n(.*?)\r?\n[ \t]*```", re.S)  # \r\n once edited on GitHub
 
 
 def read_state(body: str | None) -> dict[str, dict[str, str]] | None:

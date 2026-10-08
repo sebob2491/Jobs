@@ -634,9 +634,29 @@ async def icims_search(frames_html: Callable[[str], Awaitable[list[str]]], cfg: 
     for page in range(ICIMS_PAGES):
         if page > last:
             break
-        for doc in await frames_html(icims_page_url(cfg, query, page)):
+        try:
+            docs = await frames_html(icims_page_url(cfg, query, page))
+        except Exception:
+            if not page:
+                raise
+            break  # a later page that won't load ends the reading; what's found stands
+        for doc in docs:
             found.extend(parse_icims(doc, base))
             last = max(last, _icims_last_page(doc))
+
+
+_ICIMS_PLACE = re.compile(r"^(job )?locations?$", re.I)  # not "Location Type", "Remote Location Eligible"
+
+
+def _icims_detail_place(row: Any) -> str:
+    """The place among a row's details: the one named "Location" (read out to screen readers
+    as "Location : Location")."""
+    for tag in row.select(".iCIMS_JobHeaderTag"):
+        name, value = tag.select_one("dt"), tag.select_one("dd")
+        words = [w.strip() for w in name.get_text(" ", strip=True).split(":")] if name is not None else []
+        if value is not None and words and all(_ICIMS_PLACE.match(w) for w in words if w):
+            return value.get_text(" ", strip=True)
+    return ""
 
 
 def parse_icims(html: str, base: str) -> list[Listing]:
@@ -663,11 +683,7 @@ def parse_icims(html: str, base: str) -> list[Listing]:
                 location = " ".join(s.get_text(" ", strip=True) for s in left.find_all("span", recursive=False)
                                     if "sr-only" not in (s.get("class") or []))
             if not location.strip():  # or among the row's details (Aerotek's): Location: US-WI-Stoughton
-                for tag in row.select(".iCIMS_JobHeaderTag"):
-                    name, value = tag.select_one("dt"), tag.select_one("dd")
-                    if name is not None and value is not None and "location" in name.get_text(" ", strip=True).lower():
-                        location = value.get_text(" ", strip=True)
-                        break
+                location = _icims_detail_place(row)
             when = row.select_one(".header.right span[title]")  # Posted Date: 9/24/2026 6:18 PM
             if when is not None:
                 d = re.match(r"(\d{1,2})/(\d{1,2})/(\d{4})", str(when["title"]))
@@ -832,10 +848,12 @@ async def rmk_search(capture: Callable[..., Awaitable[Any]], cfg: Any, query: st
     call given the wording and a page number. The answer carries no locations, and the site's
     own location search finds nothing (Oct 2026): some titles end with the state ("Onsite
     Service Engineer - AZ"); the rest are read off each posting."""
-    url = str(cfg["url"] if isinstance(cfg, dict) else cfg)
-    site = re.match(r"https?://[^/]+", url)
-    if site is None:  # a person's own list may leave off the https://: said, not an AttributeError
-        raise ValueError(f"rmk: {url!r} should be the search page's full address, starting https://")
+    url = str(cfg["url"] if isinstance(cfg, dict) else cfg).strip()
+    if not re.match(r"https?://", url, re.I):  # a person's own list may leave it off, as SuccessFactors' may
+        url = "https://" + url.lstrip("/")
+    site = re.match(r"https?://[^/]+", url, re.I)
+    if site is None:
+        raise ValueError(f"rmk: {url!r} isn't a search page's address")
     origin = site.group(0)
     mine: list[Listing] = []
     for page in range(RMK_PAGES):

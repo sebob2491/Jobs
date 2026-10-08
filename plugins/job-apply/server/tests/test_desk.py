@@ -811,3 +811,41 @@ def test_the_desks_own_files_arent_queued_either(srv, job_apply_home):
     config.secrets_path().write_text("workday_password: hunter2\n")
     queued, _ = Desk(srv).apply(urls=[config.secrets_path().resolve().as_uri()], job_ids=[], submit=False)
     assert queued == [] and srv.list_jobs()["jobs"] == []
+
+
+def test_report_a_problem_shows_the_report_with_a_link_to_file_it(srv, job_apply_home):
+    """The report was shown in a confirm() and GitHub opened with window.open after the wait,
+    which browsers block as a pop-up; a submitted job had no Report button at all, and a
+    double click wrote two reports."""
+    from playwright.async_api import async_playwright
+
+    from job_apply.pipeline import Run
+
+    desk = Desk(srv)
+    job = srv.add_job(url="https://example.com/a", title="Technician", company="Example Litho")["job"]
+    desk.applier.runs[job["id"]] = Run(job["id"], "Technician", "Example Litho", status="submitted",
+                                       reason="submitted", log=["opened the posting", "pressed “Submit”"])
+    desk.applier.start = lambda: None
+    desk.search.update(status="done", at=time.time())
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with async_playwright() as pw:
+                browser = await pw.chromium.launch(**launch_options())
+                page = await browser.new_page()
+                await page.goto(desk.url)
+                button = page.locator(f"button[data-job='{job['id']}'][data-job-act='report']")
+                await button.dblclick()
+                await page.wait_for_selector("#report[open]")
+                assert "Technician at Example Litho" in await page.locator("#report-text").inner_text()
+                href = await page.locator("#report-open").get_attribute("href")
+                assert href.startswith("https://github.com/sebob2491/Jobs/issues/new?")
+                await page.click("[data-act=report-close]")
+                assert await page.locator("#report[open]").count() == 0
+                await browser.close()
+        finally:
+            await desk.stop()
+
+    run(go())
+    assert len(list((job_apply_home / "reports").iterdir())) == 1

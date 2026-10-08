@@ -331,13 +331,16 @@ When the Job Desk gets a job wrong, press **Report a problem** on that job. It w
 report to `~/.job-apply/reports/<job>-<time>/`:
 - what the desk did, step by step;
 - each page it saved, with every field's label and whether it was filled (never what was in it);
-- `report.zip` with the saved pages.
+- `report.zip`, which also holds the saved pages.
 
-Your profile's details are replaced by `REDACTED` throughout, and screenshots are never
-included. The page then shows you the whole report. Only if you say OK does it open a new
-issue on this repository with the report's text filled in. You can drag `report.zip`
-into the issue to add the pages. Nothing is sent without you. The repository is
-public, so read the report over first. Claude can do the same with `report_problem`.
+The profile's personal details, plus your city, schools and employers, are replaced by
+`REDACTED`. Web addresses lose their session codes, and screenshots are never included.
+The desk then shows you the whole report, with a link that opens a new issue on this
+repository with the report's text filled in. Nothing is sent unless you follow the link and
+file the issue. GitHub issues are public: anyone can read one, and see which job you
+reported, so read it over first. The saved pages in `report.zip` aren't in the issue,
+because a filled-in form can still show your answers; they stay on your computer. Claude
+can make the same report with `report_problem`.
 
 ### Turning a failure into a test
 

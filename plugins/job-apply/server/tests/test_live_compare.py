@@ -130,6 +130,16 @@ def test_search_outcome_errors():
     assert lc.search_outcome(rec) == Result("error", "TimeoutError: ")
 
 
+def test_a_search_that_failed_for_one_wording_still_works():
+    """One of four wordings (or a later page) timing out while the others answer flipped the
+    employer to "error" and back from night to night, a comment each time."""
+    partly = "browser search: TimeoutError: page didn't load (1 of 4 searches failed)"
+    assert lc.search_outcome(search_rec("Aerotek", az=2, error=partly)).outcome == "works"
+    assert lc.search_outcome(search_rec("Aerotek", az=0, any_=0, error=partly)).outcome == "works"
+    assert lc.search_outcome(search_rec("Aerotek", az=2, error="HTTP 503")).outcome == "works"  # it found some
+    assert lc.search_outcome(search_rec("Aerotek", az=0, error="HTTP 503")).outcome == "error"
+
+
 def test_search_outcome_without_a_search_block():
     opened = {"company": "City of Phoenix", "careers_url": "https://example.gov/careers", "ats": "custom",
               "page": {"title": "Careers", "navigation_error": None}}
@@ -160,6 +170,14 @@ def test_the_body_saves_the_outcomes_for_the_next_run():
     assert "| ASM | `ready` | `Title / with 'ticks' @someone` |" in body
     assert "Not checked in this run" in body  # the search check: last run's results
     assert "[run](https://example.com/run/1)" in body
+
+
+def test_a_body_saved_from_githubs_editor_still_reads():
+    """Saving the issue body in GitHub's web editor stores it with \\r\\n line ends: the
+    saved results read as none, so that night's changes were never reported."""
+    state = {"pipeline": {"ASM": "ready"}, "search": {}}
+    body = lc.render_body(state, {}, checked_at="2026-10-08 10:17 UTC", run_url="https://example.com/run/1")
+    assert lc.read_state(body.replace("\n", "\r\n")) == state
 
 
 def test_a_body_without_saved_outcomes_reads_as_none():

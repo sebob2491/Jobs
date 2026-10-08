@@ -524,11 +524,13 @@ async def tailoring_queue() -> dict[str, Any]:  # async: it reads the desk's run
 
 @tool()
 async def report_problem(job_id: int) -> dict[str, Any]:
-    """Write a problem report for a job that went wrong: what the Job Desk did and the pages
-    it saved, with the person's details taken out (no screenshots). Show the user `preview`,
-    all of it, before anything else; only with their OK, open `issue_url` for them (a new
-    issue on the plugin's public GitHub repository with that text) and tell them they can
-    drag `zip` (the scrubbed pages) into it. Never file it without their OK."""
+    """Write a problem report for a job that went wrong: what the Job Desk did and the fields
+    of the pages it saved, with the person's details taken out (no screenshots). Show the user
+    `preview`, all of it, before anything else, and say the issue will be public and shows
+    which job they applied for. Only with their OK, give them `issue_url` to open (a new issue
+    on the plugin's public GitHub repository with that text). Never file it without their OK.
+    `zip` also holds the saved pages, scrubbed but possibly still showing their answers: it
+    stays on their computer, and never goes on the public issue."""
     from . import desk, report
 
     job = _job(job_id)

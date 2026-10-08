@@ -123,3 +123,13 @@ def test_a_short_surname_or_an_everyday_email_name_leaves_the_page_whole():
     assert out.count("<li>") == 2 and "Upload your resume" in out and "Add a portfolio" in out, out
     assert "Mei" not in out and "Li<" not in out and " Li" not in out
     assert 'href="#"' in out
+
+
+def test_a_link_loses_its_session_path_parameter_too():
+    """Taleo and other Java sites put the session in the path (";jsessionid=..."), which
+    stayed in scrubbed links and in problem reports."""
+    from job_apply.fixtures import _without_query
+
+    assert _without_query("https://x.taleo.net/careersection/jobapply.ftl;jsessionid=AB12?job=1#top") == \
+        "https://x.taleo.net/careersection/jobapply.ftl"
+    assert _without_query("https://example.com/jobs/12/apply") == "https://example.com/jobs/12/apply"

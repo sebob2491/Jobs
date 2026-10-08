@@ -114,14 +114,16 @@ _OPAQUE = re.compile(r"^eyJ[\w+/=-]+$|^[\w+/=-]{80,}$")  # base64 state, tokens
 
 
 def _without_query(url: str) -> str:
-    """A link without its query and fragment: session ids, tokens and the person's email."""
+    """A link without its query, fragment and path parameters: session ids, tokens and the
+    person's email."""
     if url.startswith("#"):
         return "#"  # a link to the page itself stays one ("" would reload it)
     try:
         parts = urlsplit(url)
     except ValueError:
         return ""
-    return urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))
+    path = re.sub(r";[^/]*", "", parts.path)  # ";jsessionid=..." path parameters too
+    return urlunsplit((parts.scheme, parts.netloc, path, "", ""))
 
 
 REMOTE = ("http:", "https:", "//")
@@ -349,9 +351,12 @@ def clean_html(raw: str, secrets: list[str], frame_map: dict[str, str] | None = 
     return str(soup)
 
 
-def convert(snapshot: Path, name: str, out_dir: Path = DEFAULT_DIR, prof: Profile | None = None) -> list[Path]:
+def convert(snapshot: Path, name: str, out_dir: Path = DEFAULT_DIR, prof: Profile | None = None,
+            secrets: list[str] | None = None) -> list[Path]:
+    """Scrub a saved snapshot into `out_dir`: `{name}.html`, its frames, and `{name}.expect.json`.
+    `secrets` (default: the profile's personal strings) are what's taken out."""
     meta = json.loads((snapshot / "snapshot.json").read_text(encoding="utf-8"))
-    secrets = personal_strings(prof or Profile.load())
+    secrets = secrets if secrets is not None else personal_strings(prof or Profile.load())
     out_dir.mkdir(parents=True, exist_ok=True)
     written: list[Path] = []
 
