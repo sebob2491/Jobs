@@ -4,6 +4,7 @@ The shapes follow what the live smoke test (scripts/live_smoke.py) saw on real s
 import asyncio
 import json
 import re
+from urllib.parse import parse_qs, urlsplit
 
 import httpx
 import pytest
@@ -1313,3 +1314,54 @@ def test_a_company_is_picked_by_the_name_asked_for_not_one_inside_it():
     assert [c["name"] for c in pick(companies, ["Maricopa County Community College District"])] == []
     assert [c["name"] for c in pick(companies, ["Intel Corporation"])] == ["Intel"]
     assert [c["name"] for c in pick(companies, ["Maricopa County"])] == ["Maricopa County"]
+
+
+def _icims_results(rows: list[tuple[str, str]], page: int, last: int) -> str:
+    """An iCIMS results page as Aerotek's draws it: the place among each row's details, and
+    links to the other pages (pr=0 is the first)."""
+    out = []
+    for n, (title, place) in enumerate(rows):
+        out.append(f'<div class="row"><div class="col-xs-6 header left"></div>'
+                   f'<div class="col-xs-12 title"><a class="iCIMS_Anchor" href="https://careers-x.icims.com/jobs/{page}{n}/'
+                   f'job-{page}-{n}/job?in_iframe=1"><h3>{title}</h3></a></div>'
+                   '<div class="col-xs-12 additionalFields"><dl class="iCIMS_JobHeaderGroup">'
+                   '<div class="iCIMS_JobHeaderTag"><dt class="iCIMS_JobHeaderField">Category</dt>'
+                   '<dd class="iCIMS_JobHeaderData"><span>Recruiting</span></dd></div>'
+                   '<div class="iCIMS_JobHeaderTag"><dt class="iCIMS_JobHeaderField"><span class="sr-only field-label">'
+                   f'Location : Location</span></dt><dd class="iCIMS_JobHeaderData"><span>{place}</span></dd></div>'
+                   '</dl></div></div>')
+    links = "".join(f'<a href="https://careers-x.icims.com/jobs/search?pr={p}&amp;in_iframe=1">{p + 1}</a>'
+                    for p in range(last + 1))
+    return f'<html><body>{"".join(out)}<div class="iCIMS_Paging">{links}</div></body></html>'
+
+
+def test_an_icims_rows_place_is_read_from_its_details_and_later_pages_are_read():
+    """Aerotek's portal: each row's place sits under "Location" in its details (results used to
+    come back unplaced, so nothing was left out as elsewhere), and Arizona openings are on
+    page 3 of a national search (only page 1 was read)."""
+    from job_apply.search import ICIMS_PAGES, icims_search, parse_icims
+
+    rows = parse_icims(_icims_results([("On Premise Recruiter", "US-WI-Stoughton")], 0, 0), "https://careers-x.icims.com")
+    assert [(r.title, r.location) for r in rows] == [("On Premise Recruiter", "US-WI-Stoughton")]
+
+    asked = []
+    pages = {0: [("Recruiter", "US-WI-Stoughton")], 1: [("Recruiter", "US-TX-Dallas")],
+             2: [("Recruiter", "US-AZ-Tempe")], 3: [("Recruiter", "US-AZ-Phoenix")], 4: [("Recruiter", "US-AZ-Mesa")]}
+
+    async def frames_html(url):
+        page = int(parse_qs(urlsplit(url).query).get("pr", ["0"])[0])
+        asked.append(page)
+        return [_icims_results(pages[page], page, 4)]
+
+    found = []
+    asyncio.run(icims_search(frames_html, "careers-x", "recruiter", found))
+    assert asked == list(range(ICIMS_PAGES)) == [0, 1, 2, 3]  # a few pages, not every one
+    assert [r.location for r in found if r.location.startswith("US-AZ")] == ["US-AZ-Tempe", "US-AZ-Phoenix"]
+    asked.clear()
+
+    async def one_page(url):
+        asked.append(url)
+        return [_icims_results(pages[0], 0, 0)]
+
+    asyncio.run(icims_search(one_page, "careers-x", "recruiter", []))
+    assert len(asked) == 1  # a search with one page of results is read once

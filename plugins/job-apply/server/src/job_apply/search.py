@@ -611,18 +611,32 @@ def parse_applicantstack(html: str, base: str) -> list[Listing]:
     return out
 
 
-def icims_page_url(cfg: Any, query: str) -> str:
-    return f"https://{cfg}.icims.com/jobs/search?" + urlencode({"ss": "1", "searchKeyword": query, "in_iframe": "1"})
+ICIMS_PAGES = 4  # result pages read per search (20 openings each): a national portal's Arizona ones are often past the first
+
+
+def icims_page_url(cfg: Any, query: str, page: int = 0) -> str:
+    return f"https://{cfg}.icims.com/jobs/search?" + urlencode(
+        {"ss": "1", "searchKeyword": query, "in_iframe": "1", **({"pr": str(page)} if page else {})})
+
+
+def _icims_last_page(html: str) -> int:
+    """The last result page a search's page links go to (pr=0 is the first)."""
+    return max((int(n) for n in re.findall(r"[?&](?:amp;)?pr=(\d+)", html)), default=0)
 
 
 async def icims_search(frames_html: Callable[[str], Awaitable[list[str]]], cfg: Any, query: str,
                        found: list[Listing]) -> None:
     """iCIMS portals (Daifuku America) answer plain requests with HTTP 405, so the search
     page is read in the browser. The openings are drawn inside the portal's frame, each
-    with its location and posting date."""
+    with its location and posting date, 20 to a page: the first ICIMS_PAGES pages are read."""
     base = f"https://{cfg}.icims.com"
-    for html in await frames_html(icims_page_url(cfg, query)):
-        found.extend(parse_icims(html, base))
+    last = 0
+    for page in range(ICIMS_PAGES):
+        if page > last:
+            break
+        for html in await frames_html(icims_page_url(cfg, query, page)):
+            found.extend(parse_icims(html, base))
+            last = max(last, _icims_last_page(html))
 
 
 def parse_icims(html: str, base: str) -> list[Listing]:
@@ -648,6 +662,12 @@ def parse_icims(html: str, base: str) -> list[Listing]:
             if left is not None:
                 location = " ".join(s.get_text(" ", strip=True) for s in left.find_all("span", recursive=False)
                                     if "sr-only" not in (s.get("class") or []))
+            if not location.strip():  # or among the row's details (Aerotek's): Location: US-WI-Stoughton
+                for tag in row.select(".iCIMS_JobHeaderTag"):
+                    name, value = tag.select_one("dt"), tag.select_one("dd")
+                    if name is not None and value is not None and "location" in name.get_text(" ", strip=True).lower():
+                        location = value.get_text(" ", strip=True)
+                        break
             when = row.select_one(".header.right span[title]")  # Posted Date: 9/24/2026 6:18 PM
             if when is not None:
                 d = re.match(r"(\d{1,2})/(\d{1,2})/(\d{4})", str(when["title"]))
