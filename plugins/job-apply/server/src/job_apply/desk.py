@@ -14,6 +14,7 @@ import argparse
 import asyncio
 import contextlib
 import json
+import os
 import re
 import secrets
 import socket
@@ -21,6 +22,8 @@ import time
 import webbrowser
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
+from urllib.request import url2pathname
 
 import uvicorn
 import yaml
@@ -53,6 +56,15 @@ class _QuietServer(uvicorn.Server):
     @contextlib.contextmanager
     def capture_signals(self):  # type: ignore[override]
         yield
+
+
+async def _serve(server: uvicorn.Server) -> None:
+    """uvicorn ends a start that fails (the port taken meanwhile) with sys.exit(1); inside the
+    MCP server that would end it too. Here it only ends the desk's own task."""
+    try:
+        await server.serve()
+    except SystemExit as e:
+        raise RuntimeError(f"the Job Desk's server stopped (exit {e.code})") from None
 
 
 def _free_port(preferred: int) -> int:
@@ -128,7 +140,7 @@ class Desk:
             cfg = uvicorn.Config(self.app(), host="127.0.0.1", port=self.port, log_config=None, access_log=False,
                                  log_level="warning", lifespan="off")
             self._server = _QuietServer(cfg)
-            self._serve_task = asyncio.get_running_loop().create_task(self._server.serve())
+            self._serve_task = asyncio.get_running_loop().create_task(_serve(self._server))
             for _ in range(200):
                 if self._server.started or self._serve_task.done():
                     break
@@ -262,7 +274,8 @@ class Desk:
         links = [u for u in re.split(r"\s+", str(body.get("text") or "")) if u]
         if not links:
             return JSONResponse({"error": "Paste a job link first."}, status_code=400)
-        return JSONResponse({"added": await self.add_links(links[:MAX_LINKS])})
+        # the rest stay in the page's box, for another Add, rather than vanishing unread
+        return JSONResponse({"added": await self.add_links(links[:MAX_LINKS]), "left": links[MAX_LINKS:]})
 
     # ------------------------------------------------------------- actions
     async def find_jobs(self) -> None:
@@ -329,6 +342,9 @@ class Desk:
         for url in links:
             if not re.match(r"(?i)^(https?|file)://", url):
                 out.append({"url": url, "error": "not a web address"})
+                continue
+            if _own_file(url):  # its text would be saved as a posting, where Claude could read it
+                out.append({"url": url, "error": "that's one of the desk's own files, not a job posting"})
                 continue
             posting = None
             try:
@@ -411,8 +427,8 @@ class Desk:
                          "auto_submit": self.applier.auto_submit, "tailor_resumes": self.applier.tailor},
             "tailoring": len(self.applier.tailoring()),
             # saved or not, never the value
-            "passwords": {**{ats: _has_secret(f"{ats}_password") for ats in SITE_PASSWORDS},
-                          "email": _has_secret("email_password")},
+            "passwords": {name.removesuffix("_password"): saved for name, saved in
+                          _saved([f"{ats}_password" for ats in SITE_PASSWORDS] + ["email_password"]).items()},
             "mail_problem": self.applier.mail_problem,
             "version": config.plugin_version(),
             "answers_problem": config.answers_problem(),
@@ -429,11 +445,29 @@ def _first_line(e: BaseException) -> str:
     return ((str(e).strip().splitlines() or [type(e).__name__])[0])[:150]
 
 
-def _has_secret(name: str) -> bool:
+def _saved(names: list[str]) -> dict[str, bool]:
+    """Which of these secrets are saved, from one reading of secrets.yaml (the page asks
+    every 1.5 s): never their values."""
     try:
-        return config.get_secret(name) is not None
-    except (OSError, yaml.YAMLError):  # a hand-edited secrets.yaml with a typo mustn't break the page
+        path = config.secrets_path()
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) if path.exists() else {}
+        data = data if isinstance(data, dict) else {}
+    except Exception:  # a hand-edited secrets.yaml with a typo mustn't break the page
+        data = {}
+    env = {k for k, v in os.environ.items() if k.startswith("JOB_APPLY_SECRET_") and v}
+    return {n: f"JOB_APPLY_SECRET_{re.sub(r'[^A-Z0-9]', '_', n.upper())}" in env or data.get(n) is not None
+            for n in names}
+
+
+def _own_file(url: str) -> bool:
+    """A file:// link into the desk's own folder (~/.job-apply: secrets, answers, the tracker)."""
+    if not url.lower().startswith("file://"):
         return False
+    try:
+        path = Path(url2pathname(urlparse(url).path)).resolve()
+        return path == config.home().resolve() or config.home().resolve() in path.parents
+    except (OSError, ValueError):
+        return True
 
 
 MAX_LINKS = 20  # pasted at once; a person's own picks, not a crawl

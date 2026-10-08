@@ -588,3 +588,94 @@ def test_the_page_shows_the_plugin_version(srv):
 
     manifest = json.loads((config.PLUGIN_ROOT / ".claude-plugin" / "plugin.json").read_text())
     assert Desk(srv).state()["version"] == manifest["version"] != ""
+
+
+def test_a_secrets_file_that_isnt_a_list_of_names_doesnt_break_the_page(srv, job_apply_home):
+    """A hand edit that leaves secrets.yaml a bare line (no "name: value") made every refresh fail."""
+    config.secrets_path().write_text("just a line I typed\n")
+    assert Desk(srv).state()["passwords"]["workday"] is False
+    assert config.get_secret("workday_password") is None
+
+
+def test_links_past_the_first_twenty_are_handed_back(srv):
+    desk = Desk(srv)
+    desk.applier.start = lambda: None
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{desk.port}", timeout=20, trust_env=False) as c:
+                text = " ".join(f"not-a-link-{i}" for i in range(23))
+                out = (await c.post("/api/add", headers={"x-desk-token": desk.token}, json={"text": text})).json()
+                assert len(out["added"]) == 20 and out["left"] == ["not-a-link-20", "not-a-link-21", "not-a-link-22"]
+        finally:
+            await desk.stop()
+
+    run(go())
+
+
+def test_the_desks_own_files_arent_read_as_postings(srv, job_apply_home):
+    """A file:// link into ~/.job-apply (secrets, answers) would be saved as a posting's text,
+    where Claude could read it."""
+    config.secrets_path().write_text("workday_password: hunter2\n")
+    desk = Desk(srv)
+    out = run(desk.add_links([config.secrets_path().resolve().as_uri()]))
+    assert out[0]["error"] == "that's one of the desk's own files, not a job posting"
+    assert "hunter2" not in json.dumps(srv.list_jobs())
+
+
+def test_a_desk_that_cant_bind_its_port_doesnt_end_the_mcp_server():
+    """uvicorn ends a failed start with sys.exit(1): only the desk's task may end."""
+    from job_apply.desk import _serve
+
+    class Fails:
+        async def serve(self):
+            raise SystemExit(1)
+
+    with pytest.raises(RuntimeError, match="stopped"):
+        asyncio.run(_serve(Fails()))
+
+
+@pytest.mark.skipif(not browser_available(), reason="no Playwright Chromium installed")
+def test_the_page_keeps_its_lists_steady(srv):
+    """Two listings leading to one job drew its card twice, and the copy grew by one each
+    poll; the "Not searched automatically" list closed itself every refresh; a job already
+    filled on its review page could be ticked and started over; and a page without the key
+    said Claude Code might not be running."""
+    from playwright.async_api import async_playwright
+
+    from job_apply.pipeline import Run
+
+    desk = Desk(srv)
+    desk.applier.start = lambda: None
+    job = srv.add_job(url=fixture_url("site/posting.html"), title="Field Service Engineer", company="Example Fab")["job"]
+    desk.listings = [{"url": job["url"], "title": "Field Service Engineer", "company": "Example Fab"},
+                     {"url": job["url"] + "?utm_source=x", "title": "Field Service Engineer", "company": "Example Fab"}]
+    desk.applier.runs[job["id"]] = Run(job["id"], "Field Service Engineer", "Example Fab", status="ready",
+                                       reason="Filled and waiting on the review page.")
+    desk.search.update(status="done", at=time.time(), browser_only=[{"company": "Example Litho",
+                                                                      "careers_url": "https://example.com/jobs"}])
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with async_playwright() as pw:
+                browser = await pw.chromium.launch(**launch_options())
+                page = await browser.new_page()
+                await page.goto(desk.url)
+                await page.wait_for_selector("#skipped-sites summary")
+                await page.click("#skipped-sites summary")
+                await page.wait_for_timeout(4000)  # two refreshes or more
+                assert await page.evaluate("document.querySelector('#skipped-sites details').open")
+                assert await page.locator("#done .task").count() == 1  # one card, not one more each poll
+                boxes = page.locator("input[data-pick]")
+                assert all([await boxes.nth(i).is_disabled() for i in range(await boxes.count())])
+                keyless = await browser.new_page()
+                await keyless.goto(f"http://127.0.0.1:{desk.port}/")
+                await keyless.wait_for_selector("#notices .notice")
+                assert "key is missing or out of date" in await keyless.inner_text("#notices")
+                await browser.close()
+        finally:
+            await desk.stop()
+
+    run(go())
