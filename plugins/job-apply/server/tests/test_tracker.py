@@ -83,8 +83,13 @@ def test_addresses_saved_before_are_brought_up_to_date(job_apply_home):
     t.close()
     t = Tracker()
     assert t.find_by_url(other)["url"] == normalize_url(other)  # brought up to date
-    # two rows for one posting from before: the one applied to is the one found
+    # two rows for one posting from before become one, the one applied to: nothing can reach
+    # a copy not yet applied to (the desk's queue upserts a search's listing by its address)
     assert t.find_by_url(pasted)["status"] == "applied" and t.find_by_url(found)["status"] == "applied"
+    job, created = t.upsert({"url": found, "title": "Customer Support Engineer"})
+    assert not created and job["status"] == "applied"
+    assert sorted(j["url"] for j in t.list()) == sorted([found, normalize_url(other)])
+    assert any("merged with job" in e["note"] for e in t.events(job["id"]))
 
 
 def test_the_tracker_is_used_from_several_threads(job_apply_home):

@@ -853,11 +853,16 @@ class BrowserSession:
         can embed Indeed's form, whose Submit is the person's to press."""
         page = page or await self.page()
         for frame in page.frames:
-            try:
-                ats = detect_ats(frame.url)
-            except Exception:
+            ats = detect_ats(frame.url)
+            if ats not in config.HUMAN_SUBMIT_ONLY:
                 continue
-            if ats in config.HUMAN_SUBMIT_ONLY:
+            if frame is page.main_frame:
+                return ats
+            try:  # a frame holding a form, not a "Follow us on LinkedIn" widget
+                if await frame.evaluate("() => [...document.querySelectorAll('input, textarea, select')].some((e) => "
+                                        "e.type !== 'hidden' && e.getClientRects().length > 0)"):
+                    return ats
+            except Exception:  # couldn't look: theirs to submit, to be safe
                 return ats
         return None
 

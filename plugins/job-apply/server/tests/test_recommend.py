@@ -160,9 +160,9 @@ def test_requirements_read_the_way_postings_write_them():
     assert requirements("Bachelor's degree in engineering, physics, or a related field preferred.")["degree"] is None
     years = requirements("5+ years of experience required, Bachelor's preferred.")
     assert years["years"] == 5 and years["degree"] is None
-    # "Education" ends a preferred list; a line that starts with "Experience" doesn't
+    # a line that starts with "Experience" isn't a heading back to the required list
     sections = requirements("Preferred Qualifications\nExperience with vacuum pumps, Bachelor's degree.\n"
-                            "Education\nHigh school diploma or GED.")
+                            "Requirements:\nHigh school diploma or GED.")
     assert sections["degree"] == "high_school"
     # saying there's no clearance, or naming staff, isn't a clearance or export rule
     assert not requirements("No security clearance required.")["clearance"]
@@ -184,6 +184,27 @@ def test_requirements_in_markdown_and_beside_application_questions():
     assert not asm["us_person"] and not asm["clearance"] and asm["years"] == 3
     # Intel: one of several degrees
     assert requirements("Minimum qualifications:\n- Associate's or Bachelor's degree in a STEM field.")["degree"] == "associate"
+
+
+def test_the_way_around_a_degree_said_another_way_and_lists_that_arent_one():
+    """The person this is for has no degree: a false "requires" hides a job they could have;
+    a false "or equivalent" preselects one they can't."""
+    def read(text):
+        r = requirements("Qualifications\n" + text)
+        return r["degree"], r["degree_or_equivalent"]
+    assert read("- Bachelor's degree in Electronics.\nEquivalent combination of education and experience "
+                "will be considered.") == ("bachelor", True)
+    assert read("- Bachelor's degree required. In lieu of a degree, 4 additional years of experience.") == ("bachelor", True)
+    assert read("- Bachelor's degree; military experience may be substituted for the degree.") == ("bachelor", True)
+    assert read("- Associate degree in electronics; relevant experience in lieu of a degree is acceptable, "
+                "field service experience preferred.") == ("associate", True)
+    assert read("- Bachelor's degree in EE, with hands-on experience troubleshooting electrical or "
+                "mechanical systems.") == ("bachelor", False)
+    assert read("- Bachelor's degree in engineering and Six Sigma or Lean certification.") == ("bachelor", False)
+    # the preferred list's own sub-headings don't make it the required list again
+    pref = requirements("Preferred Qualifications\nEducation\nBachelor's degree in engineering.\nExperience\n"
+                        "5 years field service.")
+    assert pref["degree"] is None
 
 
 def test_degrees_with_other_ways_in():

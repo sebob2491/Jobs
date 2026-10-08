@@ -76,6 +76,11 @@ EMAIL_CATEGORIES = {
 _PIPELINE = ["saved", "in_progress", "ready_to_submit", "applied", "interviewing", "offer"]
 _DONE = {"applied", "interviewing", "offer", "rejected", "withdrawn"}
 
+
+def _progress(status: str) -> int:
+    """How far along an application is: applied (and after) beyond ready, beyond started."""
+    return 3 if status in _DONE else {"ready_to_submit": 2, "in_progress": 1}.get(status, 0)
+
 _JOB_FIELDS = [
     "url", "apply_url", "title", "company", "location", "ats", "source", "external_id",
     "salary", "employment_type", "posted_at", "description",
@@ -135,18 +140,28 @@ class Tracker:
         self._renormalize()
 
     def _renormalize(self) -> None:
-        """Bring addresses saved before normalize_url knew a variant up to date. Where two
-        rows turn out to be one posting, both stay; find_by_url then prefers the one
-        already applied to."""
-        self._also: dict[str, list[int]] = {}
+        """Bring addresses saved before normalize_url knew a variant up to date. Two rows
+        that turn out to be one posting become one, so nothing (the desk's queue, a search's
+        listing, ingest_job) can reach the copy not yet applied to and apply again: the row
+        furthest along is kept, with the other's history and emails moved onto it."""
         for row in self.conn.execute("SELECT id, url FROM jobs").fetchall():
             url = normalize_url(row["url"])
             if url == row["url"]:
                 continue
-            if self.conn.execute("SELECT 1 FROM jobs WHERE url = ?", (url,)).fetchone():
-                self._also.setdefault(url, []).append(row["id"])
-            else:
+            other = self.conn.execute("SELECT * FROM jobs WHERE url = ?", (url,)).fetchone()
+            if other is None:
                 self.conn.execute("UPDATE jobs SET url = ? WHERE id = ?", (url, row["id"]))
+                continue
+            this = self.conn.execute("SELECT * FROM jobs WHERE id = ?", (row["id"],)).fetchone()
+            keep, drop = sorted((this, other), key=lambda r: (_progress(r["status"]), -r["id"]), reverse=True)
+            for table in ("events", "emails"):
+                self.conn.execute(f"UPDATE {table} SET job_id = ? WHERE job_id = ?", (keep["id"], drop["id"]))
+            fill = {k: drop[k] for k in _JOB_FIELDS if k != "url" and drop[k] and not keep[k]}
+            self.conn.execute("DELETE FROM jobs WHERE id = ?", (drop["id"],))
+            sets = ", ".join(f"{k} = ?" for k in ["url", *fill])
+            self.conn.execute(f"UPDATE jobs SET {sets} WHERE id = ?", (url, *fill.values(), keep["id"]))
+            self.conn.execute("INSERT INTO events (job_id, at, status, note) VALUES (?, ?, '', ?)",
+                              (keep["id"], _now(), f"merged with job {drop['id']}: the same posting"))
         self.conn.commit()
 
     @_locked
@@ -207,12 +222,8 @@ class Tracker:
 
     @_locked
     def find_by_url(self, url: str) -> dict[str, Any] | None:
-        url = normalize_url(url)
-        rows = self.conn.execute("SELECT * FROM jobs WHERE url = ?", (url,)).fetchall()
-        for job_id in self._also.get(url, []):  # an older copy of the same posting
-            rows += self.conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchall()
-        rows.sort(key=lambda r: r["status"] not in _DONE)  # the one already applied to, if any
-        return self._row(rows[0] if rows else None)
+        row = self.conn.execute("SELECT * FROM jobs WHERE url = ?", (normalize_url(url),)).fetchone()
+        return self._row(row)
 
     @_locked
     def list(self, status: str | None = None, company: str | None = None, limit: int = 100) -> list[dict[str, Any]]:

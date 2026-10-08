@@ -93,7 +93,8 @@ def _submit_mode(raw: Any) -> tuple[str, list[str]]:
     return "review", [f"Unknown settings.submit_mode {raw!r}; using 'review'. Use review, auto or dry_run."]
 
 
-_CHANNELS = {"chrome": "chrome", "google chrome": "chrome", "msedge": "msedge", "edge": "msedge",
+_CHANNELS = {"chrome": "chrome", "google chrome": "chrome", "chrome-beta": "chrome-beta", "chrome beta": "chrome-beta",
+             "msedge": "msedge", "edge": "msedge",
              "microsoft edge": "msedge", "chromium": "chromium", "bundled": "chromium"}
 
 
@@ -250,18 +251,21 @@ def read_secrets(path: Path) -> dict[str, str]:
     ("0123456", "12:30:45", "yes"). A hand-written line YAML can't read ("!Summer2024x",
     "*pw") is read as written too, and no error repeats a password."""
     out: dict[str, str] = {}
-    for line in path.read_text(encoding="utf-8").splitlines():
-        m = re.match(r"([A-Za-z0-9_]+)\s*:\s*(.*?)\s*$", line)  # name: value, one to a line
+    # utf-8-sig: Notepad's older files start with a byte-order mark; lines end only at "\n", as
+    # YAML's do (a password can hold U+2028, which str.splitlines would break at)
+    for line in path.read_text(encoding="utf-8-sig").split("\n"):
+        m = re.match(r"([A-Za-z0-9_]+)[ \t]*:[ \t]*(.*?)[ \t\r]*$", line)  # name: value, one to a line
         if not m:
             continue
         value = m.group(2)
-        if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":
-            try:  # quoted as YAML quotes it ('it''s', "q\"x")
-                value = str(yaml.load(value, Loader=yaml.BaseLoader))
+        quoted = re.match(r"""(["'])(.*)\1[ \t]*(?:#.*)?$""", value)  # "abc"  # a note after it
+        if quoted:
+            try:  # quoted as YAML quotes it ('it''s', "q\"x", "a\Lb")
+                value = str(yaml.load(quoted.group(1) + quoted.group(2) + quoted.group(1), Loader=yaml.BaseLoader))
             except yaml.YAMLError:
-                value = value[1:-1]
+                value = quoted.group(2)
         else:
-            value = re.sub(r"\s+#.*$", "", value)  # a comment after it, as YAML reads one
+            value = re.sub(r"[ \t]+#.*$", "", value)  # a comment after it, as YAML reads one
         if value:
             out[m.group(1)] = value
     return out
@@ -280,7 +284,8 @@ def save_site_password(name: str, value: str) -> None:
         raise ValueError("the password is empty or has a line break")
     ensure_home()
     path = secrets_path()
-    old = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
+    old = path.read_text(encoding="utf-8-sig").split("\n") if path.exists() else []
+    old = [line.rstrip("\r") for line in old if line.strip() or line != ""]
     kept, skipping = [], False
     for line in old:
         if re.match(rf"{re.escape(name)}\s*:", line):
@@ -290,7 +295,9 @@ def save_site_password(name: str, value: str) -> None:
             continue
         skipping = False
         kept.append(line)
-    entry = yaml.safe_dump({name: value}, default_flow_style=False, allow_unicode=True, width=10**6).strip()
+    # always in double quotes, which YAML escapes everything awkward in (U+2028, a leading
+    # no-break space, quotes, backslashes), and which read_secrets reads back exactly
+    entry = f"{name}: " + yaml.safe_dump(value, default_style='"', allow_unicode=True, width=10**6).strip()
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w", encoding="utf-8") as f:
         f.write("\n".join([*kept, entry]) + "\n")

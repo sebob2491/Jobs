@@ -457,7 +457,8 @@ ENTRIES_JS = r"""
 ELEMENT_INFO_JS = r"""
 (el) => ({
   label: [el.innerText || el.textContent || el.value || '', el.getAttribute('aria-label') || ''].join(' ').replace(/\s+/g, ' ').trim(),
-  text: (el.innerText || el.textContent || el.value || '').replace(/\s+/g, ' ').trim(),
+  // its words as the page script reads them: an icon-only button's are its aria-label
+  text: (el.innerText || el.textContent || el.value || el.getAttribute('aria-label') || '').replace(/\s+/g, ' ').trim(),
   formSubmit: el.type === 'submit' && !!el.form,
   // what its form has to fill in, where it can be seen
   formFields: el.form ? [...el.form.elements].filter((e) => /^(INPUT|SELECT|TEXTAREA)$/.test(e.tagName)

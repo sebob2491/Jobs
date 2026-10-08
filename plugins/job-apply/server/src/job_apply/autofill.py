@@ -517,7 +517,8 @@ _EMPLOYER_SPECIFIC = re.compile(
     r"\b(this|our|the) (company|organi[sz]ation|employer|firm)\b|\bwork(ing)? (here|for us|with us)\b|"
     r"\bjoin(ing)? (us|our)\b|\b(employed|worked|work) (by|for|at|with)\b|\bpreviously (been )?(employed|worked)|"
     r"\bcurrently employed\b|\bwhy (do|would|are) you\b|\binterest(ed)? in (this|our|the)\b|\brelatives?\b|"
-    r"\bfamily members?\b|\bsubsidiar|\baffiliate", re.I)
+    r"\bfamily members?\b|\bsubsidiar|\baffiliate|\bemployees?\b|\b(previously|ever|already) applied\b|"
+    r"\bworks? here\b|\breferr(ed|al)\b|\bformer(ly)?\b|\balumni\b|\bcontractor (for|with|at)\b", re.I)
 
 
 def _bare_question(text: str) -> str:
