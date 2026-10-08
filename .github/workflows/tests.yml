@@ -24,7 +24,7 @@ jobs:
           cache-dependency-glob: plugins/job-apply/server/uv.lock
       - run: uv sync --frozen --extra dev
       - run: uv run --frozen playwright install --with-deps chromium
-      - run: uv run --frozen pytest -q
+      - run: uv run --frozen pytest -q -n auto
 
   plugin:
     name: plugin manifests

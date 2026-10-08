@@ -258,8 +258,12 @@ plugins/job-apply/
 cd plugins/job-apply/server
 uv sync --extra dev
 uv run playwright install chromium
-uv run pytest
+uv run pytest -n auto
 ```
+
+`-n auto` runs the tests across every CPU core (pytest-xdist); each test has its own
+temporary `JOB_APPLY_HOME` and browser, so they don't get in each other's way. Plain
+`uv run pytest` runs them one at a time.
 
 The tests cover ATS detection, posting parsing, the profile-to-field matching
 rules, the tracker and email log, PDF rendering, fixture redaction, and
