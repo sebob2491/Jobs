@@ -65,6 +65,15 @@ All of the user's data lives in `~/.job-apply/`, outside the plugin:
      Both default to off. Explain that Claude only searches for those specific
      messages and never sends or deletes mail.
 
+   - The kind of work and where: the plugin's employer list is semiconductor employers in
+     Arizona. For other work (HR, finance, health care…) or somewhere else, write
+     `~/.job-apply/companies.yaml` from the plugin's `templates/companies.example.yaml`:
+     `lists:` names the plugin's lists to search (`setup_status` shows them under
+     `employer_lists`; `phoenix-metro` is large Phoenix-area employers in many fields, and
+     `semiconductor-az` the semiconductor ones, which hire HR, finance and IT people too),
+     and `companies:` adds employers of their own. Set `preferences.titles` to their
+     target titles ("HR Generalist", "Recruiter"), since ranking follows them.
+
 4. Write `~/.job-apply/profile.yaml` and keep its comments. Run `setup_status` again
    until `profile_complete` is true. Then show the user a short summary of their
    answers to confirm, with sensitive values (EEO choices) summarized rather than

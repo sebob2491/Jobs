@@ -34,11 +34,17 @@ CloudSuite (Benchmark) and Lever.
 Arizona sites, including equipment makers whose field service engineers work at
 Arizona fabs.
 
-Looking for other work, or somewhere else? Put your own list in
-`~/.job-apply/companies.yaml`, in the same shape. Find jobs and the Job Desk then search
-those employers instead. Add `include_builtin: true` to search both lists. Set your
-target titles (`preferences.titles`) and places (`preferences.locations`) in
-`profile.yaml` to match.
+Looking for other work, or somewhere else? Copy
+[`templates/companies.example.yaml`](plugins/job-apply/templates/companies.example.yaml)
+to `~/.job-apply/companies.yaml`. Under `lists:`, name the plugin's lists to search:
+- `semiconductor-az`, the list above;
+- `phoenix-metro`, large Phoenix-area employers in health care, education, finance,
+  utilities, aerospace, retail and staffing.
+
+Add employers of your own under `companies:`, in the same shape. Find jobs and the Job
+Desk then search those instead of the default list. Set your target titles
+(`preferences.titles`, such as "HR Generalist" or "Recruiter") and places
+(`preferences.locations`) in `profile.yaml` to match.
 
 ## How submitting works
 
@@ -207,7 +213,7 @@ Everything personal stays on your machine in `~/.job-apply/`. Set
 | `secrets.yaml` | Optional career-site passwords, such as `workday_password`. Save one from the Job Desk, or write the file yourself and run `chmod 600` on it. A password named for a job system goes only onto that system's sites; any other only onto the site it's named for (`acme_password` on an address containing `acme`). |
 | `tracker.db` | Application tracker (SQLite). `export_jobs_csv` writes a spreadsheet. |
 | `answers.yaml` | Answers you gave in the Job Desk, reused on later applications. Edit or delete entries freely. |
-| `companies.yaml` | Optional: your own employer list, searched in place of the plugin's (add `include_builtin: true` for both). |
+| `companies.yaml` | Optional: which of the plugin's employer lists to search (`lists:`) and employers of your own, in place of the default list. |
 | `recommendations.json`, `desk.json` | The Job Desk's last search, and whether "Submit for me" is on |
 | `browser/` | The automation browser's profile, which keeps your sign-ins |
 | `applications/<id>-<company>-<title>/` | Tailored resume and cover letter, screenshots, submission record, `debug/` snapshots |

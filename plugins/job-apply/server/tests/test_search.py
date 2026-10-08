@@ -1248,3 +1248,30 @@ def test_a_persons_own_employer_list_is_searched_instead(job_apply_home):
     own.write_text("companies:\n  - name: [oops\n")
     with pytest.raises(ValueError, match="companies.yaml can't be read"):
         search_module.load_companies()
+
+
+def test_a_persons_own_file_can_name_the_plugins_lists(job_apply_home, monkeypatch, tmp_path):
+    """`lists: [phoenix-metro, semiconductor-az]` searches both (an employer in two lists
+    once), with the person's own entries first; a list the plugin doesn't have says which it has."""
+    from job_apply import config
+
+    root = tmp_path / "plugin"
+    (root / "data" / "lists").mkdir(parents=True)
+    (root / "data" / "companies.yaml").write_text("companies:\n  - {name: Intel, careers_url: https://a.example}\n"
+                                                  "  - {name: Microchip, careers_url: https://b.example}\n")
+    (root / "data" / "lists" / "phoenix-metro.yaml").write_text(
+        "companies:\n  - {name: Example Health, careers_url: https://c.example}\n  - {name: Intel, careers_url: https://d.example}\n")
+    monkeypatch.setattr(config, "PLUGIN_ROOT", root)
+    assert list(search_module.employer_lists()) == ["semiconductor-az", "phoenix-metro"]
+    own = job_apply_home / "companies.yaml"
+    own.write_text("lists: [phoenix-metro, semiconductor-az]\ncompanies:\n  - {name: Example Bank, careers_url: https://e.example}\n")
+    got = search_module.load_companies()
+    assert [(c["name"], c["careers_url"]) for c in got] == [
+        ("Example Bank", "https://e.example"), ("Example Health", "https://c.example"), ("Intel", "https://d.example"),
+        ("Microchip", "https://b.example")]
+    own.write_text("lists: [phoenix]\n")
+    with pytest.raises(ValueError, match="no employer list named 'phoenix'.*phoenix-metro"):
+        search_module.load_companies()
+    own.write_text("lists: ../../etc/passwd\n")
+    with pytest.raises(ValueError, match="no employer list named"):
+        search_module.load_companies()

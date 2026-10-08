@@ -83,6 +83,10 @@ class SearchError(Exception):
 
 
 BUILTIN_COMPANIES = "companies.yaml"  # in the plugin's data folder: semiconductor employers in Arizona
+BUILTIN_LIST = "semiconductor-az"  # that list's name, for a person's own file to name it
+# Other employer lists the plugin carries, by name: data/lists/<name>.yaml (phoenix-metro: large
+# Phoenix-area employers in health care, education, finance, utilities and more)
+LISTS_DIR = "lists"
 
 
 def own_companies_path() -> Path:
@@ -96,6 +100,15 @@ def companies_path() -> Path:
     return own if own.exists() else config.PLUGIN_ROOT / "data" / BUILTIN_COMPANIES
 
 
+def employer_lists() -> dict[str, Path]:
+    """The plugin's employer lists, by name."""
+    lists = {BUILTIN_LIST: config.PLUGIN_ROOT / "data" / BUILTIN_COMPANIES}
+    folder = config.PLUGIN_ROOT / "data" / LISTS_DIR
+    if folder.is_dir():
+        lists.update({p.stem: p for p in sorted(folder.glob("*.yaml"))})
+    return lists
+
+
 def _companies_in(path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     try:
         data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
@@ -107,19 +120,31 @@ def _companies_in(path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
 
 
 def load_companies() -> list[dict[str, Any]]:
-    """The employers to search: the plugin's list, or the person's own (~/.job-apply/
-    companies.yaml, the same shape) in its place. With `include_builtin: true` in their own,
-    both, their entry winning where the two name the same employer. Someone looking for HR
-    work in Phoenix keeps their own list; nothing of theirs goes into the plugin."""
-    builtin, _ = _companies_in(config.PLUGIN_ROOT / "data" / BUILTIN_COMPANIES)
+    """The employers to search: the plugin's semiconductor list, or a person's own file
+    (~/.job-apply/companies.yaml) in its place. Their file names the plugin's lists it wants
+    (`lists: [phoenix-metro, semiconductor-az]`) and adds employers of its own (`companies:`,
+    the same shape); `include_builtin: true` is the semiconductor list too. An employer named
+    twice is searched once: their own entry first, then the first list's. Someone looking for
+    HR work in Phoenix keeps their own file; nothing of theirs goes into the plugin."""
+    lists = employer_lists()
     own_path = own_companies_path()
     if not own_path.exists():
-        return builtin
+        return _companies_in(lists[BUILTIN_LIST])[0]
     own, data = _companies_in(own_path)
-    if data.get("include_builtin") is not True:
-        return own
-    named = {norm(c["name"]) for c in own}
-    return own + [c for c in builtin if norm(c["name"]) not in named]
+    names = data.get("lists") or []
+    names = [names] if isinstance(names, str) else [str(n) for n in names if n] if isinstance(names, list) else []
+    if data.get("include_builtin") is True and BUILTIN_LIST not in names:
+        names.append(BUILTIN_LIST)
+    out, seen = [], set()
+    for name in names:
+        if name not in lists:
+            raise ValueError(f"{own_path}: the plugin has no employer list named {name!r}; "
+                             f"its lists are {', '.join(lists)}")
+    for company in own + [c for name in names for c in _companies_in(lists[name])[0]]:
+        if norm(company["name"]) not in seen:
+            seen.add(norm(company["name"]))
+            out.append(company)
+    return out
 
 
 def alternatives(query: str) -> list[str]:
