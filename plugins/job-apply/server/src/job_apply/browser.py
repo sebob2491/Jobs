@@ -565,6 +565,25 @@ class BrowserSession:
             return ({"url": tab.url, "title": await tab.title(), **data, "challenge": challenge, "loading": loading},
                     "\n\n".join(parts)[:max_chars])
 
+    async def visit(self, url: str) -> str:
+        """Open a link in a tab of its own and close it again, without changing the tab the
+        tools act on: a confirmation link from the person's email, opened in this browser so
+        the site knows the address is confirmed. Returns the address it ended on."""
+        async with self._lock:
+            if self._ctx is None:
+                await self._launch()
+            assert self._ctx is not None
+            tab = await self._ctx.new_page()
+            try:
+                await tab.goto(url, wait_until="domcontentloaded", timeout=45000)
+                try:
+                    await tab.wait_for_load_state("networkidle", timeout=8000)
+                except PlaywrightTimeout:
+                    pass
+                return tab.url
+            finally:
+                await tab.close()
+
     async def frames_html(self, url: str) -> list[str]:
         """The HTML of `url` and of each frame on it, read in a background tab. Some job
         boards (iCIMS) turn away plain requests and list their openings inside a frame."""

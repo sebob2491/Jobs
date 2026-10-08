@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-from . import config
+from . import config, mailbox
 from .ats import ATS_NAMES, detect_ats
 from .autofill import clean_label, is_empty_value, norm, plan_autofill, tailored_document
 from .browser import TabClosed
@@ -43,6 +43,10 @@ HANDS_ON = {"bot_check", "sign_in", "email_code"}
 HANDS_ON_IDLE = 5 * 60
 HANDS_ON_TIMEOUT = 45 * 60  # the longest it holds the queue, even for someone at work in the tab
 POLL_SECONDS = 3.0
+# With an email app password saved, a job waiting on an emailed code or link has the inbox
+# looked at this often, for this long after it began waiting
+MAIL_POLL_SECONDS = 20
+MAIL_WINDOW = 15 * 60
 FINISHED = {"applied", "interviewing", "offer", "rejected", "withdrawn"}  # tracker statuses never applied to again
 
 _BOT_TITLE = re.compile(r"just a moment|attention required|access denied|pardon our interruption|security check|"
@@ -55,6 +59,8 @@ _VERIFY_EMAIL = re.compile(r"verif(?:y|ication)\b.{0,40}\b(?:e-?mail|account|lin
 _CODE_FIELD = re.compile(r"verification code|one[- ]time (?:pass)?code|passcode|security code|\bcode\b.{0,40}"
                          r"(?:sent|email)|enter (?:the )?(?:\d-digit )?code|\botp\b", re.I)
 _SIGN_IN_ACTION = re.compile(r"^(sign in|log ?in|sign in with email)$", re.I)
+# The button pressed once the emailed code is in; one labelled Submit is left to the person
+_AFTER_CODE = re.compile(r"^(verify|confirm|continue|next)( (code|e-?mail|account|my e-?mail))?$", re.I)
 _TRY_LATER = re.compile(r"\btoo many\b.{0,30}\b(?:attempts|requests|tries)\b|\btry again (?:later|in \d+)|\brate[- ]limit",
                         re.I)
 _CREATE_ACCOUNT = re.compile(r"^(create (?:an |your |a new )?account|sign up|register)[.!]?$", re.I)
@@ -105,6 +111,8 @@ class Run:
     tab_mark: int = 0  # what its paused tab looked like then (address and box values)
     left: bool = False  # paused for the person, and the queue went on without it
     moved_since: float = 0.0  # since when every look has found its paused tab past the pause
+    mail_checked: float = 0.0  # when the inbox was last looked at for its emailed code or link
+    mail_done: bool = False  # the code or link from the inbox went in: no more looking
     page_info: dict[str, Any] = field(default_factory=dict)  # what the page looked like when it paused
     page: Any = None  # its browser tab
     updated: float = field(default_factory=time.time)
@@ -196,6 +204,8 @@ class Applier:
         self.current: int | None = None
         self._wake = asyncio.Event()
         self._worker_task: asyncio.Task | None = None
+        self.mail_problem: str | None = None  # why the inbox couldn't be read, for the desk page
+        self._mail_refused: str | None = None  # the app password the mail service turned down
 
     # ------------------------------------------------------------- control
     def start(self) -> None:
@@ -353,6 +363,8 @@ class Applier:
         submit = next((t for t in self.tasks if t[0] == "submit"), None)
         blocker = next((r for r in self.runs.values() if r.blocking), None)
         if blocker is not None and submit is None:
+            if blocker.need == "email_code":
+                await self._check_mail(blocker)
             if time.time() - blocker.paused_at > HANDS_ON_TIMEOUT:
                 self._go_on_without(blocker, "the other jobs went ahead after a long wait")
             elif await self._strict(self._moved_on(blocker)):
@@ -447,6 +459,97 @@ class Applier:
             return False
         return time.time() - run.moved_since >= POLL_SECONDS
 
+    # ------------------------------------------------------------- the inbox
+    def mail_login(self) -> tuple[str, str] | None:
+        """The profile's email address and the app password saved for it, unless that
+        password was turned down (a new one is tried)."""
+        password = _secret("email_password")
+        address = str(config.Profile.load().get("personal.email") or "").strip()
+        if not password or "@" not in address or password == self._mail_refused:
+            return None
+        return address, password
+
+    def _mail_senders(self, run: Run) -> set[str]:
+        """Who may have sent this job's code or link: the job site it's waiting on, the
+        employer's own site, and the job system they run on."""
+        job = self.srv.tracker().get(run.job_id, with_description=False) or {}
+        urls = [u for u in (run.url, job.get("url"), job.get("apply_url")) if u]
+        allowed = {mailbox.site_domain(urlparse(u).hostname or "") for u in urls}
+        for u in urls:
+            allowed |= mailbox.ATS_MAIL_DOMAINS.get(detect_ats(u), set())
+        return {d for d in allowed if d}
+
+    async def _check_mail(self, run: Run) -> None:
+        """Look in the inbox for the code or link a waiting job's site emailed, and put it in."""
+        now = time.time()
+        if run.mail_done or now - run.mail_checked < MAIL_POLL_SECONDS or now - run.paused_at > MAIL_WINDOW:
+            return
+        login = self.mail_login()
+        if login is None or run.page is None or run.page.is_closed():
+            return
+        run.mail_checked = now
+        try:
+            data, _ = await self.srv.browser.peek(run.page)
+        except Exception:  # a tab mid-way through loading: looked at again next time
+            return
+        boxes = [f for f in data.get("fields") or [] if f.get("kind") in ("text", "number")
+                 and _CODE_FIELD.search(f.get("label") or "")]
+        senders = self._mail_senders(run)
+
+        def own_link(url: str) -> bool:  # a link back to the site it's waiting on, nowhere else
+            if urlparse(url).scheme not in ("https", "http", "file"):
+                return False
+            return _site_key(url) == run.paused_site or mailbox.site_domain(urlparse(url).hostname or "") in senders
+
+        try:
+            found = await asyncio.to_thread(mailbox.search, *login, run.paused_at, senders,
+                                            "code" if boxes else "link", own_link)
+        except mailbox.MailboxError as e:
+            if "app password" in str(e):
+                self._mail_refused = login[1]  # not tried again until a new one is saved
+                self.mail_problem = (f"The desk couldn't read your email: {e}. Save a new email app password "
+                                     "in the Site passwords card to try again.")
+            else:
+                self.mail_problem = f"The desk couldn't read your email: {e}. It tries again shortly."
+            return
+        self.mail_problem = None
+        if found is None or run.status != "needs_you" or run.need != "email_code":
+            return
+        run.mail_done = True
+        try:
+            if found.kind == "code":
+                await self._enter_code(run, found)
+            else:
+                await self.srv.browser.visit(found.value)
+                self._log(run, f"opened the confirmation link from your email (sent from {found.sender})")
+                if run.page is not None and not run.page.is_closed():
+                    await run.page.reload()
+        except Exception as e:  # a slow site or a closed tab: the person finishes it, as without the inbox
+            self._log(run, f"couldn't use the {found.kind} from your email ({type(e).__name__}); "
+                      "it's in your inbox for you")
+
+    async def _enter_code(self, run: Run, found: mailbox.Found) -> None:
+        srv = self.srv
+        if not srv.browser.use_tab(run.page):
+            return
+        data = await srv.inspect_form(include_dropdown_options=False)
+        box = next((f for f in data.get("fields") or [] if f.get("kind") in ("text", "number")
+                    and _CODE_FIELD.search(f.get("label") or "")), None)
+        if box is None:  # the page moved on meanwhile
+            return
+        out = await srv.fill_form([{"id": box["id"], "value": found.value}])
+        if not out.get("ok"):
+            return
+        self._log(run, f"entered the code from your email (sent from {found.sender})")
+        press = next((a for a in data.get("actions") or [] if not a.get("disabled")
+                      and _AFTER_CODE.match(a.get("text", "").strip())), None)
+        if press is not None:
+            await srv.click(press["id"])
+            self._log(run, f"pressed “{press['text'].strip()}”")
+        else:
+            run.reason = ("I entered the code from your email. Press the page's button to carry on; "
+                          "the desk continues after that.")
+
     # ------------------------------------------------------------- one job
     def _log(self, run: Run, text: str) -> None:
         run.log.append(text)
@@ -461,6 +564,7 @@ class Applier:
         run.blocking = need in HANDS_ON
         run.paused_at = run.active_at = time.time()
         run.tab_mark, run.left, run.moved_since = 0, False, 0.0
+        run.mail_checked, run.mail_done = 0.0, False
         run.paused_site = _site_key(run.url)
         run.paused_host = urlparse(run.url).hostname or ""
         self._log(run, reason)
@@ -569,13 +673,16 @@ class Applier:
                                    "the browser window; the desk carries on by itself after that." + failed + tip)
             if kind == "email_code":
                 await self._bring_forward(run)
+                watching = (" Your email app password is saved, so the desk is also watching your inbox for it."
+                            if self.mail_login() else "")
                 if any(_CODE_FIELD.search(f.get("label") or "") for f in data.get("fields") or []):
                     return self._pause(run, "email_code", "The site emailed you a code. Enter it in the browser "
-                                       "window; the desk carries on by itself after that.")
+                                       "window; the desk carries on by itself after that." + watching)
                 # The link opens in the person's own browser, which leaves this tab where it is
                 return self._pause(run, "email_code", "The site emailed you a link to confirm your email. Open it, then "
                                    "reload this job's tab in the desk's browser window: the link opens in your usual "
-                                   "browser, so the tab doesn't change by itself. The desk carries on after that.")
+                                   "browser, so the tab doesn't change by itself. The desk carries on after that."
+                                   + watching)
             if kind == "form":
                 run.seen_form = True
                 once_failed = await self._fill_once(run, data)

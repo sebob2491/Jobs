@@ -694,6 +694,114 @@ def test_an_emailed_link_or_code_is_waited_for(srv, monkeypatch, query):
     assert any(line.startswith("filled") for line in r.log), r.log
 
 
+@pytest.mark.parametrize("query", ["?code", ""])
+def test_an_emailed_code_or_link_is_read_from_the_inbox(srv, monkeypatch, query):
+    """With an email app password saved, a job waiting on an emailed code gets it from the
+    inbox, typed in and Verify pressed; one waiting on a link has it opened in this browser
+    and its tab reloaded. Only mail from that job's site, since the wait began, is asked for."""
+    import functools
+    import http.server
+    import threading
+
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "MAIL_POLL_SECONDS", 0)
+    monkeypatch.setenv("JOB_APPLY_SECRET_EMAIL_PASSWORD", "an-app-password")
+    # served over http, so the link opened in another tab confirms the address for this one
+    # (a file:// page has no storage shared between tabs)
+    handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=str(Path(__file__).parent / "fixtures"))
+    site = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    threading.Thread(target=site.serve_forever, daemon=True).start()
+    page = f"http://127.0.0.1:{site.server_address[1]}/site/verify-email.html"
+    job = srv.add_job(url=page + query, title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+    asked = []
+
+    def inbox(address, password, since, senders, want, allowed_link):
+        asked.append((address, password, want))
+        assert since > time.time() - 120  # since the wait began
+        if want == "code":
+            return pipeline.mailbox.Found("code", "123456", "careers.example.com", time.time())
+        assert allowed_link(page + "?confirm") and not allowed_link("https://elsewhere.example.net/verify?t=1")
+        return pipeline.mailbox.Found("link", page + "?confirm", "careers.example.com", time.time())
+
+    monkeypatch.setattr(pipeline.mailbox, "search", inbox)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.need == "questions" or r.status == "ready", about=state(r))  # nobody touched it
+            return r
+        finally:
+            await applier.stop()
+
+    try:
+        r = run(go())
+    finally:
+        site.shutdown()
+    assert asked and asked[0] == ("sam.rivera@example.com", "an-app-password", "code" if query else "link")
+    if query:
+        assert "entered the code from your email (sent from careers.example.com)" in r.log, r.log
+        assert "pressed “Verify”" in r.log, r.log
+    else:
+        assert "opened the confirmation link from your email (sent from careers.example.com)" in r.log, r.log
+    assert any("watching your inbox" in line for line in r.log), r.log
+
+
+def test_a_refused_email_app_password_is_said_once_and_not_tried_again(srv, monkeypatch):
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "MAIL_POLL_SECONDS", 0)
+    monkeypatch.setenv("JOB_APPLY_SECRET_EMAIL_PASSWORD", "a-wrong-one")
+    job = srv.add_job(url=fixture_url("site/verify-email.html") + "?code", title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+    tries = []
+
+    def refused(*args):
+        tries.append(args)
+        raise pipeline.mailbox.MailboxError("imap.gmail.com didn't accept the email app password")
+
+    monkeypatch.setattr(pipeline.mailbox, "search", refused)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.need == "email_code")
+            await asyncio.sleep(2)  # several polls
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert len(tries) == 1
+    assert applier.mail_problem and "didn't accept the email app password" in applier.mail_problem
+    assert applier.mail_login() is None  # until a new one is saved
+    monkeypatch.setenv("JOB_APPLY_SECRET_EMAIL_PASSWORD", "a-new-one")
+    assert applier.mail_login() == ("sam.rivera@example.com", "a-new-one")
+    assert r.need == "email_code"  # still waiting for the person
+
+
+def test_without_an_email_app_password_the_inbox_is_never_read(srv, monkeypatch):
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "MAIL_POLL_SECONDS", 0)
+    job = srv.add_job(url=fixture_url("site/verify-email.html") + "?code", title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+    monkeypatch.setattr(pipeline.mailbox, "search", lambda *a: pytest.fail("the inbox was read"))
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.need == "email_code")
+            await asyncio.sleep(1)
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert "watching your inbox" not in r.reason
+
+
 def test_the_sign_in_forms_own_button_is_pressed_not_the_headers(srv, monkeypatch):
     """KLA's, NXP's, ASML's and Hitachi's Workday: the page's header has a "Sign In" of its own,
     ahead of the sign-in form, which opens a sign-in pop-up and sends nothing. The form's own
