@@ -68,6 +68,7 @@ _ACCOUNT_KINDS = {"text", "email", "tel", "select", "combobox", "listbox"}  # no
 _SOCIAL = re.compile(r"\b(google|apple|linked ?in|facebook|microsoft|indeed|seek)\b", re.I)
 _STEP = re.compile(r"^(save (?:and|&) continue|continue|next|next step|review|review (?:and|&) submit|"
                    r"review application|proceed|go to next step|start)$", re.I)
+_FORWARD = re.compile(r"^(save (?:and|&) continue|continue|next|next step|proceed|go to next step)$", re.I)
 _SIGN_IN_STEP = re.compile(r"create account\s*/\s*sign in|sign in\s*/\s*create account", re.I)  # Workday's step name
 _ENTRY = re.compile(r"^(apply manually|apply now|apply|easy apply|quick apply|"
                     r"apply for (?:this|the) (?:job|position|role)(?: online)?|"
@@ -111,6 +112,8 @@ class Run:
     tab_mark: int = 0  # what its paused tab looked like then (address and box values)
     left: bool = False  # paused for the person, and the queue went on without it
     moved_since: float = 0.0  # since when every look has found its paused tab past the pause
+    pause_sig: tuple | None = None  # how the paused page looked: the same page is never past itself
+    once_page: dict[str, tuple] = field(default_factory=dict)  # where each this-application answer went in
     mail_checked: float = 0.0  # when the inbox was last looked at for its emailed code or link
     mail_done: bool = False  # the code or link from the inbox went in: no more looking
     page_info: dict[str, Any] = field(default_factory=dict)  # what the page looked like when it paused
@@ -346,8 +349,7 @@ class Applier:
         address it paused on: a tab the person has taken to another posting, even one on the
         same job system, is no application of this job's."""
         data, text = await self.srv.browser.peek(run.page)
-        here = (urlparse(data.get("url") or "").hostname or "") == run.paused_host
-        return self._twice(run, here and not data.get("loading") and classify(data, text) != run.need)
+        return self._twice(run, self._looks_past(run, data, text))
 
     # ------------------------------------------------------------- worker
     async def _worker(self) -> None:
@@ -367,9 +369,13 @@ class Applier:
         if blocker is not None and submit is None:
             if blocker.need == "email_code":
                 await self._check_mail(blocker)
+            try:
+                moved = await self._strict(self._moved_on(blocker))
+            except Exception:  # a tab that can't be read just now (mid-load, crashed): not past it, and the
+                moved = False  # idle and long-wait releases below still apply
             if time.time() - blocker.paused_at > HANDS_ON_TIMEOUT:
                 self._go_on_without(blocker, "the other jobs went ahead after a long wait")
-            elif await self._strict(self._moved_on(blocker)):
+            elif moved:
                 blocker.blocking = False
                 if blocker.status != "needs_you":
                     # skipped (or resumed) while its tab was being looked at: a tab closed by
@@ -438,15 +444,38 @@ class Applier:
             return True  # they closed it: start the job again
         # read without taking over the tools' tab: Claude may be using them meanwhile
         data, text = await self.srv.browser.peek(run.page)
-        # the address and what's in the boxes: a change is the person at work in the tab
-        mark = hash((data.get("url"), tuple((f.get("id"), str(f.get("value"))) for f in data.get("fields") or [])))
+        # the address and what's in the boxes: a change is the person at work in the tab (a bot
+        # check that reloads itself with a new token in its address isn't)
+        mark = hash((_bare(data.get("url") or ""), tuple((f.get("id"), str(f.get("value"))) for f in data.get("fields") or [])))
         if run.tab_mark and mark != run.tab_mark:
             run.active_at = time.time()
         run.tab_mark = mark
-        url = data.get("url") or ""
-        moved = (not data.get("loading") and classify(data, text) != run.need
-                 and (_site_key(url) == run.paused_site or detect_ats(url) not in ("company_site", "linkedin", "indeed")))
-        return self._twice(run, moved)
+        return self._twice(run, self._looks_past(run, data, text))
+
+    def _looks_past(self, run: Run, data: dict[str, Any], text: str) -> bool:
+        """Does this look at a job's paused tab show it past the pause? Settled, not the page it
+        paused on, not that kind of page any more, and still this job's (see _own_place)."""
+        if data.get("loading") or (run.pause_sig is not None and _page_sig(data) == run.pause_sig):
+            return False
+        return classify(data, text) != run.need and self._own_place(run, data.get("url") or "")
+
+    def _own_place(self, run: Run, url: str, own: set[str] | None = None) -> bool:
+        """Is this address still this job's? The host it paused on or one of the job's own (its
+        posting's, its application's), or on from the employer's own site into a job system.
+        Not another tenant of a job system many employers share (acme.wd1.myworkdayjobs.com vs
+        other.wd5.myworkdayjobs.com), nor another posting elsewhere: driving another
+        application as this job could submit it under this job's name. `own`: the job's hosts,
+        looked up beforehand (off the event loop's thread the tracker can't be read)."""
+        host = (urlparse(url).hostname or "").lower()
+        own = self._own_hosts(run) if own is None else own
+        if host == run.paused_host or host and host in own:  # (a page saved on this computer has no host)
+            return True
+        paused_on_own_site = detect_ats(f"https://{run.paused_host}/") == "company_site"
+        return paused_on_own_site and detect_ats(url) not in ("company_site", "linkedin", "indeed")
+
+    def _own_hosts(self, run: Run) -> set[str]:
+        job = self.srv.tracker().get(run.job_id, with_description=False) or {}
+        return {(urlparse(u).hostname or "").lower() for u in (run.url, job.get("url"), job.get("apply_url")) if u}
 
     @staticmethod
     def _twice(run: Run, moved: bool) -> bool:
@@ -502,14 +531,18 @@ class Applier:
                  and _CODE_FIELD.search(f.get("label") or "")]
         senders = self._mail_senders(run)
 
-        def own_link(url: str) -> bool:  # a link back to the site it's waiting on, nowhere else
-            if urlparse(url).scheme not in ("https", "http", "file"):
-                return False
-            return _site_key(url) == run.paused_site or mailbox.site_domain(urlparse(url).hostname or "") in senders
+        own = self._own_hosts(run)
 
+        def own_link(url: str) -> bool:  # a link back to this job's own site, not another employer's on its system
+            return urlparse(url).scheme in ("https", "http", "file") and self._own_place(run, url, own)
+
+        # Another job, waiting since later on mail from the same job system, owns what came after it
+        # paused: Workday's codes come from one address for every employer
+        later = [r.paused_at for r in self.runs.values() if r is not run and r.status == "needs_you"
+                 and r.need == "email_code" and r.paused_at > run.paused_at and self._mail_senders(r) & senders]
         try:
             found = await asyncio.to_thread(mailbox.search, *login, run.paused_at, senders,
-                                            "code" if boxes else "link", own_link)
+                                            "code" if boxes else "link", own_link, min(later) if later else None)
         except mailbox.MailboxError as e:
             if "app password" in str(e):
                 self._mail_refused = login[1]  # not tried again until a new one is saved
@@ -526,8 +559,9 @@ class Applier:
             return
         try:
             if found.kind == "code":
-                # not put in (the page was being drawn again, a box turned it down): looked for again
-                run.mail_done = await self._enter_code(run, found)
+                # not put in (the page was being drawn again, a box turned it down): looked for again.
+                # Held to the job's own tab: a closed one mustn't let the code into another job's page
+                run.mail_done = await self._strict(self._enter_code(run, found))
             else:
                 await self.srv.browser.visit(found.value)
                 run.mail_done = True
@@ -560,10 +594,13 @@ class Applier:
         self._log(run, f"entered the code from your email (sent from {found.sender})")
         press = next((a for a in data.get("actions") or [] if not a.get("disabled")
                       and _AFTER_CODE.match(a.get("text", "").strip())), None)
-        if press is not None:
-            await srv.click(press["id"])
-            self._log(run, f"pressed “{press['text'].strip()}”")
-        else:
+        try:
+            pressed = press is not None and (await srv.click(press["id"])).get("clicked")
+        except Exception:  # the button went (the page moved on by itself) or won't take a click
+            pressed = False
+        if pressed:
+            self._log(run, f"pressed \u201c{press['text'].strip()}\u201d")
+        else:  # (a "Confirm" that sends a form is left to the person, as any final button is)
             run.reason = ("I entered the code from your email. Press the page's button to carry on; "
                           "the desk continues after that.")
         return True
@@ -574,9 +611,13 @@ class Applier:
         del run.log[:-40]
         run.updated = time.time()
 
-    def _pause(self, run: Run, need: str, reason: str, questions: list[dict[str, Any]] | None = None) -> None:
+    def _pause(self, run: Run, need: str, reason: str, questions: list[dict[str, Any]] | None = None,
+               seen: dict[str, Any] | None = None) -> None:
+        """Wait on the person. `seen`: the page as it was paused on, which never counts as past
+        the pause (Workday's sign-in step with no buttons drawn reads as an ordinary page)."""
         if run.status == "skipped":
             return
+        run.pause_sig = _page_sig(seen) if seen else None
         run.status, run.need, run.reason = "needs_you", need, reason
         run.questions = questions or []
         run.blocking = need in HANDS_ON
@@ -654,7 +695,7 @@ class Applier:
                 kind = "page"  # a posting with a "send me similar jobs" box: go in through Apply
             if kind == "bot_check":
                 await self._bring_forward(run)
-                return self._pause(run, "bot_check", _BOT_CHECK_SAYS)
+                return self._pause(run, "bot_check", _BOT_CHECK_SAYS, seen=data)
             if (kind == "sign_in" and not account_waited and not _account_and_application(data)
                     and sum(f.get("kind") == "password" for f in data.get("fields") or []) >= 2):
                 # A Create Account form: Qorvo's draws its application below it a moment later
@@ -680,27 +721,28 @@ class Applier:
                     return self._pause(run, "sign_in", f"I filled in {_site(run, data)}'s Create Account form with your "
                                        "details and saved password. Fill in anything it still asks for (a picture code, "
                                        "say), tick their terms box if there is one and create the account (then verify "
-                                       "your email if they ask); the desk carries on after that." + first)
+                                       "your email if they ask); the desk carries on after that." + first, seen=data)
                 if done == "filled":
                     return self._pause(run, "sign_in", f"I filled in your email and saved password on {_site(run, data)}'s "
                                        "sign-in form. Press its sign-in button in the browser window; the desk carries on "
-                                       "after that.")
+                                       "after that.", seen=data)
                 tip = _password_tip(data["url"])
                 failed = " Your saved password didn't sign in there." if sign_ins.get("submitted") else ""
                 return self._pause(run, "sign_in", f"Sign in (or create your account) on {_site(run, data)} in "
-                                   "the browser window; the desk carries on by itself after that." + failed + tip)
+                                   "the browser window; the desk carries on by itself after that." + failed + tip,
+                                   seen=data)
             if kind == "email_code":
                 await self._bring_forward(run)
                 watching = (" Your email app password is saved, so the desk is also watching your inbox for it."
                             if self.mail_login() else "")
                 if any(_CODE_FIELD.search(f.get("label") or "") for f in data.get("fields") or []):
                     return self._pause(run, "email_code", "The site emailed you a code. Enter it in the browser "
-                                       "window; the desk carries on by itself after that." + watching)
+                                       "window; the desk carries on by itself after that." + watching, seen=data)
                 # The link opens in the person's own browser, which leaves this tab where it is
                 return self._pause(run, "email_code", "The site emailed you a link to confirm your email. Open it, then "
                                    "reload this job's tab in the desk's browser window: the link opens in your usual "
                                    "browser, so the tab doesn't change by itself. The desk carries on after that."
-                                   + watching)
+                                   + watching, seen=data)
             if kind == "form":
                 run.seen_form = True
                 once_failed = await self._fill_once(run, data)
@@ -750,7 +792,12 @@ class Applier:
                                        "Answer them here and the desk fills them in (and remembers them).", pending)
                 actions = data.get("actions") or []
                 entry_here = any(_ENTRY.match(a["text"].strip()) and not a.get("disabled") for a in actions)
-            if (kind == "form" or run.seen_form and not entry_here) and await srv.browser.find_submit():
+            # a step button beside a Submit (a footer "Submit" on step 1 of 4) means there's more to
+            # fill: the review page is only where Submit is the way on
+            forward_here = any(_FORWARD.match(a["text"].strip()) and not a.get("disabled") and not a.get("is_submit")
+                               for a in data.get("actions") or [])
+            if ((kind == "form" or run.seen_form and not entry_here) and not forward_here
+                    and await srv.browser.find_submit()):
                 return await self._finish(run, data, text)
             action = pick_next(data.get("actions") or [], in_form=kind == "form")
             note = next((a for a in data.get("actions") or [] if _DISMISS_NOTE.match(a.get("text", "").strip())
@@ -766,10 +813,11 @@ class Applier:
                 if await self._wait_for_progress(SIGN_IN_STEP_WAIT if sign_in_step else LATE_BUTTONS_WAIT):
                     continue
             if action is None and sign_in_step:
-                # Workday's sign-in step whose sign-in buttons never drew (Applied's, now and then)
+                # Workday's sign-in step whose sign-in buttons never drew (Applied's, now and then):
+                # read as an ordinary page, so only a change from this one is the person past it
                 await self._bring_forward(run)
                 return self._pause(run, "sign_in", f"Sign in (or create your account) on {_site(run, data)} in "
-                                   "the browser window; the desk carries on by itself after that.")
+                                   "the browser window; the desk carries on by itself after that.", seen=data)
             if action is None:
                 greyed = [a for a in data.get("actions") or [] if a.get("is_submit") and a.get("disabled")]
                 if greyed:
@@ -871,8 +919,12 @@ class Applier:
         for attempt in range(2):
             fields = {f["id"]: f for f in data.get("fields") or []}
             by_id = {fid: question_key(f.get("label") or "") for fid, f in fields.items()}
+            # an answer stays with the page it first went in on: "If yes, please explain" about
+            # relatives isn't the answer to a later page's "If yes, please explain"
+            here = _page_key(data)
             fills = [{"id": fid, "value": run.once[key]} for fid, key in by_id.items()
-                     if key in run.once and is_empty_value(fields[fid].get("value"))]
+                     if key in run.once and run.once_page.get(key, here) == here
+                     and is_empty_value(fields[fid].get("value"))]
             if not fills:
                 break
             out = await self.srv.fill_form(fills)
@@ -883,6 +935,8 @@ class Applier:
                                        **({"options": r["options"]} if r.get("options") else {})}
                       for r in out.get("results", []) if not r.get("ok") and r.get("id") in fields}
             filled |= {by_id[f["id"]] for f in fills} - set(failed)
+            for key in {by_id[f["id"]] for f in fills} - set(failed):
+                run.once_page.setdefault(key, here)
             if attempt == 0:
                 await asyncio.sleep(ONCE_SETTLE)  # long enough for an answer that won't stick to be gone
                 data, _ = await self._look()
@@ -1082,6 +1136,8 @@ class Applier:
             if empty:
                 return self._pause(run, "stuck", "Not submitted: required fields are still empty (" + ", ".join(empty[:5])
                                    + "). Fill them in the browser, then press Resume.")
+        if run.status == "skipped":  # skipped while the page was being checked
+            return
         result = await srv.submit_application(job_id=run.job_id, user_confirmed=True)
         if result.get("submitted") and result.get("confirmed"):
             run.status, run.need, run.reason = "submitted", "", "Submitted."
@@ -1219,6 +1275,22 @@ def _new_required(before: dict[str, Any], after: dict[str, Any]) -> bool:
     """Did filling the page bring up required fields that weren't there before?"""
     seen = {f.get("id") for f in before.get("fields") or []}
     return any(f.get("id") not in seen for f in _empty_required(after))
+
+
+def _bare(url: str) -> str:
+    """An address without its query and fragment."""
+    return urlparse(url)._replace(query="", fragment="").geturl()
+
+
+def _page_key(data: dict[str, Any]) -> tuple:
+    """Which page of an application this is: its address and headings."""
+    return _bare(data.get("url") or ""), tuple(data.get("headings") or [])
+
+
+def _page_sig(data: dict[str, Any]) -> tuple:
+    """What a page is, near enough: its address, headings and the questions on it."""
+    return (_bare(data.get("url") or ""), tuple(data.get("headings") or []),
+            tuple(sorted(f.get("label") or "" for f in data.get("fields") or [] if isinstance(f, dict))))
 
 
 def _site_key(url: str) -> str:
