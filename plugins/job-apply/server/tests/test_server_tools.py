@@ -498,3 +498,85 @@ def test_a_press_that_doesnt_finish_is_remembered_and_one_never_made_isnt(srv, m
         assert _pressed_before(job) and any(str(n).startswith("pressed Submit;") for n in notes), notes
     else:
         assert not _pressed_before(job) and not (Path(job["folder"]) / "submission.json").exists()
+
+
+@needs_browser
+def test_a_job_id_that_isnt_the_open_tabs_is_refused(srv):
+    """Job A opened, then job B in the same tab: autofill(job_id=A) used to put A's answers
+    and resume into B's form, and submit_application(job_id=A) pressed B's Submit and marked
+    A applied. Switching tabs makes the tab's own job the current one."""
+    sent = routed(srv)
+    a = srv.add_job(url="https://careers.example.com/a", title="Tech", company="Example")["job"]
+    b = srv.add_job(url="https://jobs.other.com/b", title="FSE", company="Other")["job"]
+    run(srv.open_application(job_id=a["id"]))
+    run(srv.browser.new_tab())
+    run(srv.open_application(job_id=b["id"]))
+    for call in (srv.autofill(job_id=a["id"]), srv.submit_application(job_id=a["id"], user_confirmed=True)):
+        with pytest.raises(ValueError, match="isn't the one open"):
+            run(call)
+    assert sent == [] and srv.get_job(a["id"])["job"]["status"] != "applied"
+    run(srv.tabs(switch_to=0))
+    assert srv.browser.current_job_id == a["id"]
+    run(srv.autofill(job_id=a["id"]))  # its own tab: fine
+
+
+@needs_browser
+def test_a_saved_password_goes_only_onto_the_site_its_named_for(srv):
+    routed(srv)
+    import os
+    os.environ["JOB_APPLY_SECRET_LINKEDIN_PASSWORD"] = "not-a-real-password"
+    os.environ["JOB_APPLY_SECRET_OTHER_PASSWORD"] = "not-a-real-password-either"
+    try:
+        run(srv.browser.goto("https://jobs.other.com/b"))
+        box = next(f["id"] for f in run(srv.inspect_form(False))["fields"] if f["kind"] == "password")
+        assert run(srv.fill_secret(box, "linkedin_password"))["ok"] is False
+        assert run(srv.fill_secret(box, "other_password"))["ok"] is True  # named for this site
+        out = run(srv.fill_secret(box, "emaıl_password"))  # a dotless i is still the inbox's password
+        assert out["ok"] is False and "inbox" in out["error"]
+    finally:
+        del os.environ["JOB_APPLY_SECRET_LINKEDIN_PASSWORD"], os.environ["JOB_APPLY_SECRET_OTHER_PASSWORD"]
+
+
+SCRIPTED_SEND = """<!doctype html><html><body><h1>Review your application</h1>
+<button type="button" onclick="fetch('/api/send-application', {method: 'POST'})">Finish</button>
+<button type="button" onclick="fetch('/api/send-application', {method: 'POST'})">Send</button></body></html>"""
+
+
+@needs_browser
+def test_practice_mode_doesnt_press_a_plain_button_that_sends(srv, monkeypatch):
+    monkeypatch.setenv("JOB_APPLY_NEVER_SUBMIT", "1")
+    sent: list[str] = []
+
+    async def route(r):
+        if r.request.method == "POST":
+            sent.append(r.request.url)
+        return await r.fulfill(status=200, content_type="text/html", body=SCRIPTED_SEND)
+
+    async def go():
+        await srv.browser._launch()
+        await srv.browser._ctx.route("**/*", route)
+        await srv.browser.goto("https://jobs.contoso.example/apply")
+        return [await srv.click(name) for name in ("Finish", "Send")]
+
+    for out in run(go()):
+        assert out["clicked"] is False and "Dry run" in out["blocked"], out
+    assert sent == []
+
+
+@needs_browser
+def test_reading_a_posting_leaves_the_desks_paused_tab_alone(srv):
+    from job_apply import desk as desk_module
+    from job_apply.pipeline import Run
+
+    routed(srv)
+    paused = srv.add_job(url="https://careers.example.com/a", title="Tech", company="Example")["job"]
+    run(srv.open_application(job_id=paused["id"]))
+    d = desk_module.get_desk(srv)
+    try:
+        d.applier.runs[paused["id"]] = Run(paused["id"], "Tech", "Example", status="needs_you",
+                                          page=srv.browser.current_tab)
+        tab = srv.browser.current_tab
+        run(srv.ingest_job("https://jobs.other.com/b", use_browser=True))
+        assert tab.url == "https://careers.example.com/a"
+    finally:
+        desk_module._desk = None

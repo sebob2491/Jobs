@@ -198,7 +198,7 @@ Everything personal stays on your machine in `~/.job-apply/`. Set
 |---|---|
 | `profile.yaml` | Your answers. Edit it any time ([template](plugins/job-apply/templates/profile.example.yaml)). |
 | `resume.pdf` | Default resume |
-| `secrets.yaml` | Optional career-site passwords, such as `workday_password`. Save one from the Job Desk, or write the file yourself and run `chmod 600` on it. |
+| `secrets.yaml` | Optional career-site passwords, such as `workday_password`. Save one from the Job Desk, or write the file yourself and run `chmod 600` on it. A password named for a job system goes only onto that system's sites; any other only onto the site it's named for (`acme_password` on an address containing `acme`). |
 | `tracker.db` | Application tracker (SQLite). `export_jobs_csv` writes a spreadsheet. |
 | `answers.yaml` | Answers you gave in the Job Desk, reused on later applications. Edit or delete entries freely. |
 | `recommendations.json`, `desk.json` | The Job Desk's last search, and whether "Submit for me" is on |
