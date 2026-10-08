@@ -501,6 +501,10 @@ def test_a_job_skipped_while_submit_for_me_checks_it_isnt_submitted(srv):
             calls.append(kw)
             return {"submitted": True, "confirmed": True}
 
+        @staticmethod
+        def tracker():
+            return srv.tracker()
+
     applier.srv = Stub()
     run(applier._submit(r, by_person=False))
     assert calls == [] and r.status == "skipped"
@@ -910,7 +914,7 @@ def test_an_emailed_code_or_link_is_read_from_the_inbox(srv, monkeypatch, query)
     applier = Applier(srv)
     asked = []
 
-    def inbox(address, password, since, senders, want, allowed_link, before=None):
+    def inbox(address, password, since, senders, want, allowed_link, before=None, look_back=None):
         asked.append((address, password, want))
         assert since > time.time() - 120  # since the wait began
         if want == "code":
@@ -956,7 +960,7 @@ def test_a_code_that_comes_after_the_queue_went_on_is_still_used(srv, monkeypatc
     applier = Applier(srv)
     sent = {"yet": False}
 
-    def inbox(address, password, since, senders, want, allowed_link, before=None):
+    def inbox(address, password, since, senders, want, allowed_link, before=None, look_back=None):
         return pipeline.mailbox.Found("code", "123456", "careers.example.com", time.time()) if sent["yet"] else None
 
     monkeypatch.setattr(pipeline.mailbox, "search", inbox)
@@ -2108,7 +2112,7 @@ def test_an_emailed_code_put_in_between_jobs_gives_the_tools_back(srv, monkeypat
     held_by = []
     real_fill = srv.fill_form
 
-    def inbox(address, password, since, senders, want, allowed_link, before=None):
+    def inbox(address, password, since, senders, want, allowed_link, before=None, look_back=None):
         return pipeline.mailbox.Found("code", "123456", "careers.example.com", time.time()) if sent["yet"] else None
 
     async def fill_form(fills, *args, **kwargs):
