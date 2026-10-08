@@ -1,0 +1,17 @@
+{
+  "description": "dev-kit: a one-line reminder at the start of a session to check the project's setup",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo \"dev-kit is on. Before starting code work in a project, look for .claude/dev-kit.json in it: if it's missing or its checked date is over 30 days old, offer the user /dev-kit:check (it audits tests, CI, required checks, auto-merge and CLAUDE.md). Follow the dev-kit practices skill while working.\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

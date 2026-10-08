@@ -339,6 +339,21 @@ trim the expectations to fields you've checked, look the HTML over for any other
 personal data, and commit. `tests/test_live_fixtures.py` picks it up
 automatically.
 
+## dev-kit: development practices for any project
+
+This marketplace also carries **dev-kit**, a small plugin for working on code with
+Claude Code in any project. It isn't specific to job applications. It holds:
+- a practices skill Claude follows while it works: tests that run in parallel, CI with
+  required checks and auto-merge, a review pass on every PR, a test for every fix that
+  fails on the old code, fewer themed PRs, version bumps, parallel agents, handoff notes;
+- `/dev-kit:check`, which audits a repo against those practices and sets up what's
+  missing with your OK, including a `CLAUDE.md`, so cloud sessions on that repo follow them too;
+- a one-line reminder at the start of each session to run the check on projects that
+  haven't had one in 30 days.
+
+Install it like job-apply: `/plugin install dev-kit@sebob-jobs` in Claude Code, or
+`claude plugin install dev-kit@sebob-jobs` in a terminal.
+
 ## Limitations
 
 - So far the tests run only against local mock forms. Real ATS pages change often,
