@@ -754,6 +754,41 @@ def test_an_emailed_code_or_link_is_read_from_the_inbox(srv, monkeypatch, query)
     assert any("watching your inbox" in line for line in r.log), r.log
 
 
+def test_a_code_that_comes_after_the_queue_went_on_is_still_used(srv, monkeypatch):
+    """No one at the browser: after a while the other jobs go ahead without the one waiting on
+    its emailed code. A code that arrives after that is still read from the inbox, between
+    jobs, and the job carries on by itself."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "HANDS_ON_IDLE", 1)
+    monkeypatch.setattr(pipeline, "MAIL_POLL_SECONDS", 0)
+    monkeypatch.setenv("JOB_APPLY_SECRET_EMAIL_PASSWORD", "an-app-password")
+    waiting = srv.add_job(url=fixture_url("site/verify-email.html") + "?code", title="FSE", company="Example Fab")["job"]
+    other = srv.add_job(url=fixture_url("generic_form.html"), title="Technician", company="Example Litho")["job"]
+    applier = Applier(srv)
+    sent = {"yet": False}
+
+    def inbox(address, password, since, senders, want, allowed_link):
+        return pipeline.mailbox.Found("code", "123456", "careers.example.com", time.time()) if sent["yet"] else None
+
+    monkeypatch.setattr(pipeline.mailbox, "search", inbox)
+
+    async def go():
+        applier.start()
+        try:
+            first = applier.enqueue(waiting["id"])
+            second = applier.enqueue(other["id"])
+            await until(lambda: first.left, about=state(first))  # the queue went on without it
+            await until(lambda: second.status not in ("queued", "running"), about=state(second))
+            sent["yet"] = True  # the email arrives now
+            await until(lambda: first.need == "questions" or first.status == "ready", about=state(first))
+            return first
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert "entered the code from your email (sent from careers.example.com)" in r.log, r.log
+
+
 def test_a_refused_email_app_password_is_said_once_and_not_tried_again(srv, monkeypatch):
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
     monkeypatch.setattr(pipeline, "MAIL_POLL_SECONDS", 0)
