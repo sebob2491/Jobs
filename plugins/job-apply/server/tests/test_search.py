@@ -1227,3 +1227,24 @@ def test_a_company_is_picked_by_the_start_of_its_name():
     assert [c["name"] for c in pick(companies, ["Applied Material"])] == ["Applied Materials"]
     assert [c["name"] for c in pick(companies, ["Micro"])] == ["Microchip Technology", "Micron"]
     assert [c["name"] for c in pick(companies, ["ASM"])] == ["ASM (ASM America)"]  # a short code: whole words only
+
+
+def test_a_persons_own_employer_list_is_searched_instead(job_apply_home):
+    """Someone looking for other work (HR in Phoenix) keeps their own list in their own
+    folder: it's searched in place of the plugin's, or beside it with include_builtin, their
+    entry winning for an employer both name. A broken file says which file."""
+    builtin = search_module.load_companies()
+    assert any(c["name"] == "Intel" for c in builtin)
+    own = job_apply_home / "companies.yaml"
+    own.write_text("companies:\n  - name: Example Health\n    careers_url: https://example.wd1.myworkdayjobs.com/Careers\n"
+                   "    search: {workday: https://example.wd1.myworkdayjobs.com/Careers}\n"
+                   "  - name: Intel\n    careers_url: https://jobs.example.com/intel\n")
+    assert [c["name"] for c in search_module.load_companies()] == ["Example Health", "Intel"]
+    assert search_module.companies_path() == own
+    own.write_text(own.read_text() + "include_builtin: true\n")
+    both = search_module.load_companies()
+    assert len(both) == len(builtin) + 1 and [c["careers_url"] for c in both if c["name"] == "Intel"] == \
+        ["https://jobs.example.com/intel"]
+    own.write_text("companies:\n  - name: [oops\n")
+    with pytest.raises(ValueError, match="companies.yaml can't be read"):
+        search_module.load_companies()
