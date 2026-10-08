@@ -115,7 +115,7 @@ def setup_status() -> dict[str, Any]:
                      "browser_channel": s.browser_channel, "headless": s.headless,
                      "email_codes": s.email_codes, "email_tracking": s.email_tracking},
         "chrome_detected": has_chrome,
-        "browser_note": "If the browser fails to start, install Chrome or run "
+        "browser_note": "The desk uses Google Chrome, or Microsoft Edge without it. If neither starts, install Chrome or run "
                         f"`uv run --project \"{config.PLUGIN_ROOT / 'server'}\" playwright install chromium` "
                         "and set settings.browser_channel: chromium.",
         "plugin_root": str(config.PLUGIN_ROOT),
