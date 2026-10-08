@@ -18,6 +18,8 @@ The desk is a local web page served by this plugin. It does what the `find-jobs`
 - **Needs you** collects whatever it can't do alone:
   - questions the profile doesn't answer, answered right on the page. Answers are
     remembered in `~/.job-apply/answers.yaml` unless the user unticks "remember".
+    A remembered answer fills only the same question, worded the same, and one about
+    an employer ("Why do you want to work here?") isn't reused for another company.
     Consent questions default to not remembered;
   - sign-ins, bot checks, CAPTCHAs and emailed codes. The user deals with these in the
     browser window, and the desk carries on by itself once the page moves past them. A
