@@ -1103,7 +1103,10 @@ class Applier:
         srv = self.srv
         if run.status == "skipped":
             return
-        ats = detect_ats(data["url"])
+        try:  # Indeed's form inside an employer's page is Indeed's
+            ats = await srv.browser.human_submit_ats(run.page) or detect_ats(data["url"])
+        except Exception:
+            ats = detect_ats(data["url"])
         job = srv.tracker().get(run.job_id)
         if ats in config.HUMAN_SUBMIT_ONLY:
             srv._mark_ready(job, f"filled on {ATS_NAMES.get(ats, ats)} by the Job Desk")
@@ -1214,7 +1217,9 @@ def _pending(result: dict[str, Any], once_failed: dict[str, dict[str, Any]]) -> 
 def tailored_ready(job: dict[str, Any]) -> bool:
     """A resume written for this job is in its folder, and not a draft that came out too long."""
     folder = Path(job["folder"]) if job.get("folder") else None
-    return bool(tailored_document(job, "resume")) and not (folder and any(folder.glob("*.too-long")))
+    # only the resume's marker holds the job: a cover letter that came out long doesn't
+    too_long = folder and any(p.stem.lower().endswith("resume") for p in folder.glob("*.too-long"))
+    return bool(tailored_document(job, "resume")) and not too_long
 
 
 def _application_like(data: dict[str, Any]) -> bool:
