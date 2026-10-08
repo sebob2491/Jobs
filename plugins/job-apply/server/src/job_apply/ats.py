@@ -37,6 +37,9 @@ _ORACLE_PATH = re.compile(r"^(?:/hcmui/candidateexperience)?/[a-z]{2}(?:-[a-z]{2
 COMPANY_HOSTS = {
     "careers.lamresearch.com": "eightfold", "jobs.infineon.com": "eightfold", "careers.micron.com": "eightfold",
     "careers.qorvo.com": "successfactors", "jobs.atlascopcogroup.com": "successfactors",
+    # data/lists/phoenix-metro.yaml
+    "careers.aps.com": "successfactors", "careers.srpnet.com": "successfactors",
+    "jobs.northropgrumman.com": "eightfold", "careers.insight.com": "eightfold",
 }
 
 
