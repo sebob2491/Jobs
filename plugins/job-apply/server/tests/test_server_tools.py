@@ -404,3 +404,33 @@ def test_the_browser_works_one_step_at_a_time_on_each_event_loop():
         finally:
             loop.close()
     assert order == ["a", "b", "a", "b"]
+
+
+def test_cookie_and_privacy_banners_are_never_accepted():
+    """Declined where the banner lets them be, otherwise left to the person: never accepted
+    for them, whatever the words ("Accept", "AGREE AND PROCEED", "Accept All Cookies")."""
+    from job_apply.browser import _accepts_cookies
+
+    for label, in_banner in (("Accept All Cookies", False), ("Accept Cookies", False), ("Accept", True),
+                             ("AGREE AND PROCEED", True), ("Allow all", True), ("I agree", True), ("Got it", True)):
+        assert _accepts_cookies(label, label, in_banner), label
+    for label, in_banner in (("Reject All", True), ("Accept only necessary cookies", True), ("Use necessary cookies only", True),
+                             ("Cookie settings", True), ("Continue without accepting", True), ("Accept", False),
+                             ("I agree to the terms", False), ("Next", True)):
+        assert not _accepts_cookies(label, label, in_banner), label
+
+
+@pytest.mark.skipif(not browser_available(), reason="no Playwright Chromium installed")
+def test_the_click_tool_refuses_a_cookie_banners_accept(srv):
+    from conftest import fixture_url
+
+    async def go():
+        await srv.browser.goto(fixture_url("site/cookie-form.html"))
+        accept = await srv.click("Accept")
+        accepted = await srv.browser._page.evaluate("() => window.accepted || 0")
+        reject = await srv.click("Reject")
+        return accept, accepted, reject
+
+    accept, accepted, reject = run(go())
+    assert accept["clicked"] is False and "never accepted" in accept["blocked"] and accepted == 0
+    assert reject["clicked"] is True

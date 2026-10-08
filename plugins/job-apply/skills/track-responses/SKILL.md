@@ -29,7 +29,7 @@ stop.
    `"<Company>" (application OR candidate OR interview OR position OR assessment OR offer) newer_than:60d`
    Also search for mail from the ATS platforms, then match the results to a company by
    the body text:
-   `from:(myworkday.com OR greenhouse-mail.io OR hire.lever.co OR eightfold.ai OR successfactors.com OR icims.com OR taleo.net OR oraclecloud.com) newer_than:60d`
+   `from:(myworkday.com OR greenhouse-mail.io OR greenhouse.io OR hire.lever.co OR eightfold.ai OR successfactors.com OR icims.com OR taleo.net OR oraclecloud.com OR paycomonline.net OR paycom.com OR ultipro.com OR ukg.com OR applicantstack.com OR inforcloudsuite.com) newer_than:60d`
    Skip a thread that `logged_emails` already lists, unless it has a message newer
    than the `received_at` listed for it: a rejection or interview invite can arrive
    as a reply in the same thread as the confirmation.

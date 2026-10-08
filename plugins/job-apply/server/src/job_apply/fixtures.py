@@ -14,9 +14,10 @@ import argparse
 import json
 import re
 import sys
+import unicodedata
 from pathlib import Path
 from typing import Any
-from urllib.parse import urljoin
+from urllib.parse import quote, urljoin, urlsplit, urlunsplit
 
 from bs4 import BeautifulSoup
 
@@ -26,26 +27,73 @@ DEFAULT_DIR = Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "live
 REDACTED = "REDACTED"
 
 
+NAME_KEYS = ("personal.first_name", "personal.middle_name", "personal.last_name", "personal.preferred_name")
+
+
+def _spellings(value: str) -> set[str]:
+    """How a page may write a value: as is, without its accents, with them as separate marks,
+    JSON-escaped (in a data-* attribute) and URL-encoded (in a link or a file name)."""
+    plain = "".join(c for c in unicodedata.normalize("NFKD", value) if not unicodedata.combining(c))
+    out = {value, plain, unicodedata.normalize("NFD", value), json.dumps(value)[1:-1],
+           json.dumps(value)[1:-1].replace("@", "\\u0040"), quote(value, safe=""), quote(value, safe="").replace("%20", "+")}
+    return {v for v in out if v}
+
+
 def personal_strings(prof: Profile) -> list[str]:
-    keys = [
-        "personal.first_name", "personal.middle_name", "personal.last_name", "personal.preferred_name",
-        "personal.email", "personal.phone", "personal.address.line1", "personal.address.line2",
-        "personal.address.postal_code", "personal.linkedin_url", "personal.github_url", "personal.website",
-    ]
+    keys = [*NAME_KEYS, "personal.email", "personal.phone", "personal.address.line1", "personal.address.line2",
+            "personal.address.postal_code", "personal.linkedin_url", "personal.github_url", "personal.website"]
     values = [str(prof.get(k)) for k in keys if prof.get(k)]
     if prof.full_name:
         values.append(prof.full_name)
+    email = str(prof.get("personal.email") or "")
+    if "@" in email and len(email.split("@")[0]) >= 3:
+        values.append(email.split("@")[0])  # "Signed in as sunflower77"
+    for key in ("personal.linkedin_url", "personal.github_url", "personal.website"):
+        url = str(prof.get(key) or "").strip().rstrip("/")
+        if url:
+            values.append(re.sub(r"^https?://(www\.)?", "", url, flags=re.I))  # "linkedin.com/in/someone"
+            handle = url.rsplit("/", 1)[-1]
+            if len(handle) >= 4 and "." not in handle:
+                values.append(handle)
     phone = re.sub(r"\D", "", str(prof.get("personal.phone") or ""))
     if len(phone) >= 7:
         values.append(phone)
+    spelled = {w for v in values for w in _spellings(v)}
+    # names of two letters ("Al Wu") are kept too: they're matched as whole words only
+    names = {str(prof.get(k)) for k in NAME_KEYS if prof.get(k)}
     # longest first so "Sam Rivera" is replaced before "Sam"
-    return sorted({v for v in values if len(v) >= 3}, key=len, reverse=True)
+    return sorted({v for v in spelled if len(v) >= 3 or v in names and len(v) >= 2}, key=len, reverse=True)
+
+
+def _pattern(secret: str) -> str:
+    """A value as a pattern that also finds it written another way: a phone number with any
+    separators ("(480) 555-0142", "+1 480.555.0142"); words with any spacing or dots
+    between them ("742 W. Evergreen Ter."); a short name as a whole word only."""
+    if secret.isdigit() and len(secret) >= 7:
+        digits = secret[-10:]
+        return r"(?:\+?1[\s.\-]*)?" + r"[\s.\-()]*".join(digits)
+    words = secret.split()
+    body = r"[\s.,\u00a0]+".join(re.escape(w.rstrip(".,")) for w in words) if len(words) > 1 else re.escape(secret)
+    return rf"(?<!\w){body}(?!\w)" if len(secret) < 3 else body
 
 
 def redact(text: str, secrets: list[str]) -> str:
     for s in secrets:
-        text = re.sub(re.escape(s), REDACTED, text, flags=re.I)
+        text = re.sub(_pattern(s), REDACTED, text, flags=re.I)
     return text
+
+
+_KEEP_META = re.compile(r"^(charset|viewport|content-type)$", re.I)
+_OPAQUE = re.compile(r"^eyJ[\w+/=-]+$|^[\w+/=-]{80,}$")  # base64 state, tokens
+
+
+def _without_query(url: str) -> str:
+    """A link without its query and fragment: session ids, tokens and the person's email."""
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return ""
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))
 
 
 REMOTE = ("http:", "https:", "//")
@@ -219,6 +267,15 @@ def clean_html(raw: str, secrets: list[str], frame_map: dict[str, str] | None = 
         tag.decompose()
     for tag in soup.find_all("meta", attrs={"http-equiv": re.compile("^refresh$", re.I)}):
         tag.decompose()
+    # meta tags carry CSRF tokens and session ids; only the page's charset and viewport are kept
+    for tag in soup.find_all("meta"):
+        if not (tag.get("charset") or _KEEP_META.match(str(tag.get("name") or tag.get("http-equiv") or ""))):
+            tag.decompose()
+    # what the person typed or chose: free-text answers, picked options, ticked boxes
+    for tag in soup.find_all("textarea"):
+        tag.string = ""
+    for tag in soup.find_all(attrs={"contenteditable": re.compile("^(true|)$", re.I)}):
+        tag.string = ""
     # Keep fixtures hermetic: nothing may load from the network when a test opens them.
     for tag in soup.find_all("link"):
         if str(tag.get("href", "")).startswith(REMOTE):
@@ -231,6 +288,14 @@ def clean_html(raw: str, secrets: list[str], frame_map: dict[str, str] | None = 
             del tag[attr]
         if tag.name == "input" and tag.get("type") not in ("radio", "checkbox", "submit", "button"):
             tag.attrs.pop("value", None)
+        for attr in ("checked", "selected", "aria-checked", "aria-selected"):
+            tag.attrs.pop(attr, None)
+        for attr in [a for a in tag.attrs if a.startswith("data-") and _OPAQUE.match(str(tag.get(a) or ""))]:
+            del tag[attr]
+        if tag.name in ("a", "area", "form", "link"):
+            for attr in ("href", "action"):
+                if tag.get(attr):
+                    tag[attr] = _without_query(str(tag[attr]))
         if tag.name == "iframe" and frame_map and tag.get("src"):
             absolute = urljoin(base_url, tag["src"])
             if absolute in frame_map:
@@ -275,7 +340,7 @@ def convert(snapshot: Path, name: str, out_dir: Path = DEFAULT_DIR, prof: Profil
         written.append(target)
 
     expect: dict[str, Any] = {
-        "source_url": redact(meta.get("url", ""), secrets),
+        "source_url": redact(_without_query(meta.get("url", "")), secrets),
         "note": meta.get("note", ""),
         "fields": [
             {k: f[k] for k in ("label", "kind", "required") if k in f}
@@ -284,7 +349,8 @@ def convert(snapshot: Path, name: str, out_dir: Path = DEFAULT_DIR, prof: Profil
         ],
     }
     expect_path = out_dir / f"{name}.expect.json"
-    expect_path.write_text(redact(json.dumps(expect, indent=2), secrets), encoding="utf-8")
+    # written with its letters as they are ("José", not "Jos\\u00e9"), so the redaction finds them
+    expect_path.write_text(redact(json.dumps(expect, indent=2, ensure_ascii=False), secrets), encoding="utf-8")
     written.append(expect_path)
     return written
 

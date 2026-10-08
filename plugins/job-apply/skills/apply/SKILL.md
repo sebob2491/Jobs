@@ -43,8 +43,11 @@ below.
 - **Email verification codes and links.** If `settings.email_codes` is true and the
   Gmail connector is available, you may fetch the code yourself. Search with
   `search_threads` for `newer_than:1h (code OR verify OR verification OR "one-time")`
-  plus the company or ATS name, and read only the newest matching message. Type the
-  code with `fill_form`, or open a verification link with `open_application(url=...)`.
+  plus the company or ATS name, and read only the newest matching message. Use it only
+  when it's from that job's site or its job system, and a link only when it goes back to
+  that site. Type the code with `fill_form`, or open a verification link with
+  `open_application(job_id=<this job>, url=<the link>)`: without the job_id the tools
+  lose track of the job, and its tailored resume isn't the one uploaded next.
   If no email arrives within a minute or two, or the setting is off, ask the user for
   the code. Never read other mail, and never send or delete anything.
 - Check `list_jobs` before starting so you never apply to the same posting twice.
@@ -119,7 +122,11 @@ below.
 - At the end, list the snapshot folders for the user. If they're working on the
   plugin, offer to turn each one into a regression test with
   `uv run --project <plugin_root>/server python -m job_apply.fixtures <snapshot> <name>`
-  (`plugin_root` comes from `setup_status`).
+  (`plugin_root` comes from `setup_status`). The repository is public: the tool takes
+  out what the profile names, but a page of the user's own application also holds
+  their answers. Read the HTML and the .expect.json for anything personal (answers,
+  places, names the profile doesn't hold) with the user before anything is committed,
+  and leave out any page they'd rather not share.
 
 ## Several jobs at once
 

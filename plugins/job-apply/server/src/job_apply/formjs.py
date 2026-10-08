@@ -475,6 +475,15 @@ ELEMENT_INFO_JS = r"""
   // its words as the page script reads them: an icon-only button's are its aria-label
   text: (el.innerText || el.textContent || el.value || el.getAttribute('aria-label') || '').replace(/\s+/g, ' ').trim(),
   formSubmit: el.type === 'submit' && !!el.form,
+  // in a cookie banner (OneTrust, Cookiebot, TrustArc and the like): a "consent" box only when it
+  // speaks of cookies, not an application's own consent step
+  cookie: (() => {
+    const box = el.closest('[id*="cookie" i], [class*="cookie" i], [aria-label*="cookie" i], [id*="consent" i], '
+      + '[class*="consent" i], [id*="onetrust" i], [class*="onetrust" i], [id*="cybot" i], [id*="gdpr" i], [id*="truste" i]');
+    if (!box) return false;
+    const names = `${box.id || ''} ${typeof box.className === 'string' ? box.className : ''} ${box.getAttribute('aria-label') || ''}`;
+    return /cookie|onetrust|cybot|truste|gdpr/i.test(names) || /cookie/i.test(box.innerText || '');
+  })(),
   // what its form has to fill in, where it can be seen
   formFields: el.form ? [...el.form.elements].filter((e) => /^(INPUT|SELECT|TEXTAREA)$/.test(e.tagName)
     && !/^(hidden|submit|button|image|reset)$/i.test(e.type || '') && e.getClientRects().length > 0).length : 0,

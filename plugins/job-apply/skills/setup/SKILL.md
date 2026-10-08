@@ -13,7 +13,7 @@ All of the user's data lives in `~/.job-apply/`, outside the plugin:
 | `resume.pdf` | Default resume to upload |
 | `secrets.yaml` | Optional career-site passwords, which the user writes. Never read it or print it |
 | `tracker.db` | Application tracker (SQLite) |
-| `browser/` | Persistent browser profile that keeps sign-ins |
+| `browser/` | Persistent browser profile that keeps sign-ins (`browser-msedge/` when Edge stands in for Chrome) |
 | `applications/<id>-<company>-<title>/` | Per-job tailored documents, screenshots and the submission record |
 
 ## Steps

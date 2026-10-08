@@ -52,6 +52,22 @@ NAVIGATION_RE = re.compile(
     r"sign ?in|log ?in|create account|verify|send (me a )?code|ok|accept( all)?( cookies)?|i agree|apply manually|start)\b",
     re.I,
 )
+# What accepts a cookie or privacy banner (never pressed for the person): "Accept All
+# Cookies", or inside a banner "Accept", "Allow all", "I agree", "AGREE AND PROCEED" (TI's)
+_ACCEPT_WORDS = re.compile(r"^(accept|allow|agree|ok|okay|got it|i agree|i accept|i understand|yes,? i agree|"
+                           r"agree (and|&) (proceed|continue|close)|accept (and|&) (proceed|continue|close))"
+                           r"( all)?( cookies)?[.!]?$", re.I)
+_COOKIE_ACCEPT = re.compile(r"\b(accept|allow|agree)\b.*\bcookies?\b|\bcookies?\b.*\b(accept|allow|agree)", re.I)
+_DECLINES = re.compile(r"reject|decline|necessary|essential|required only|only required|deny|refuse|manage|settings|"
+                       r"preferences|customi[sz]e|without", re.I)
+
+
+def _accepts_cookies(label: str, text: str, in_banner: bool) -> bool:
+    if _DECLINES.search(label):
+        return False  # "Accept necessary cookies only", "Reject all": the private choice
+    return bool(_COOKIE_ACCEPT.search(label) or in_banner and _ACCEPT_WORDS.match(text))
+
+
 # SuccessFactors' older career sites show a posting inside a form whose submit button is
 # "Apply". With nothing in the form to fill, it opens the application; it sends nothing.
 POSTING_PAGE_RE = re.compile(r"career(?:_|%5f)ns=job(?:_|%5f)listing(?:&|#|$)", re.I)
@@ -1164,6 +1180,10 @@ class BrowserSession:
     def _check_clickable(info: dict[str, Any], url: str = "") -> None:
         label = " ".join((info.get("label") or "").split())
         text = (info.get("text") or "").strip()
+        if _accepts_cookies(label, text, bool(info.get("cookie"))):
+            raise SubmitBlocked(
+                f"Cookie and privacy banners are never accepted for the user: {label!r} would accept one. Decline it "
+                "if the banner offers that, or leave the choice to the user in the browser window.")
         # a posting's own Apply on SuccessFactors' older sites: an empty form, so nothing is sent
         opens = bool(info.get("formSubmit") and POSTING_PAGE_RE.search(url) and re.match(r"^apply( now)?$", text, re.I)
                      and not info.get("formFields"))

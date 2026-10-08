@@ -53,3 +53,11 @@ def test_edge_standing_in_for_chrome_keeps_its_own_profile(tmp_path):
     assert profile_dir(home, {"channel": "msedge"}, chrome) == tmp_path / "browser-msedge"
     assert profile_dir(home, {"channel": "msedge"}, edge) == home  # chosen: its profile is the usual one
     assert profile_dir(home, {}, chrome) == home
+
+
+def test_a_zip_code_with_a_leading_zero_is_kept_as_written(job_apply_home):
+    """Unquoted, 02134 reads as an octal number (1116) in YAML: the profile keeps 02134."""
+    from job_apply import config
+
+    (job_apply_home / "profile.yaml").write_text("personal:\n  first_name: Kim\n  address:\n    postal_code: 02134\n")
+    assert config.Profile.load().get("personal.address.postal_code") == "02134"

@@ -128,9 +128,11 @@ the page URL. Use this file for the parts of each flow that `autofill` can't do.
   Qorvo's site Apply now is a menu: **Apply Now** in it asks for an email and **Start**
   before the sign-in page; the desk goes through both.
 - Qorvo's application page is also its Create Account form, and its **Apply** button
-  creates the account and sends the application together. The desk fills in everything
-  but the password, then leaves the password and Apply to the user ("submit it
-  yourself"). Do the same by hand: fill it in, and let the user choose the password.
+  creates the account and sends the application together. The desk fills in everything,
+  puts a SuccessFactors password saved on the desk into both password boxes (or leaves
+  them for the user to choose one), then leaves **Apply** to the user ("submit it
+  yourself"). Do the same by hand: fill it in, use `fill_secret` with a password the user
+  saved, or let them choose one; never type a password with `fill_form`.
 - Its dropdowns are text boxes that list their first 100 entries and find the rest as you
   type (Qorvo's Country list stops at Iran): type the answer, then pick it from the list.
   A shorter list is all there is. When the answer isn't in it, ask the user about a
@@ -152,7 +154,8 @@ the page URL. Use this file for the parts of each flow that `autofill` can't do.
   probably a limit on codes per address. The Job Desk stops after one lap.
 - Texas Instruments shows a privacy banner whose only button is **AGREE AND PROCEED**.
   It covers **Apply Now** and the email step, so no fields appear until it's gone.
-  Agreeing is the user's call, like any cookie choice: ask once per session.
+  Never press it: cookie and privacy banners are never accepted for the user (`click`
+  refuses). Ask the user to choose in the browser window, then carry on.
 
 ## Greenhouse (`greenhouse.io`) and Lever (`lever.co`): ASM
 
@@ -193,8 +196,8 @@ the page URL. Use this file for the parts of each flow that `autofill` can't do.
   number, as in "Field Service Technician II (33195)"; the search drops it from the title.
 - The career page has **Sign In** and **Create Account** links: Paycom keeps an applicant
   account per employer. A posting's button is **Quick Apply**.
-- Its cookie banner offers only **Accept Cookies**, so leave it be unless the user says
-  otherwise.
+- Its cookie banner offers only **Accept Cookies**. Never press it (`click` refuses): leave
+  it, and if it gets in the way, ask the user to choose in the browser window.
 
 ## UKG Pro / UltiPro (`recruiting*.ultipro.com`): Nikon Precision
 
