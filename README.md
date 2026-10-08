@@ -119,7 +119,10 @@ opens a page on your computer (served by the plugin on `127.0.0.1`):
    education blocks, and stops at each review page.
 3. **Needs you** lists what it can't do alone:
    - Questions your profile doesn't answer. You answer them on the page, and they're
-     remembered for later applications unless you untick that.
+     remembered for later applications unless you untick that. A remembered answer
+     fills the same question, worded the same way. An answer about one employer
+     ("Why do you want to work here?", "Have you worked for us before?") isn't reused
+     for another.
    - Sign-ins, bot checks, CAPTCHAs and emailed codes. You deal with those in the
      browser window, and the desk carries on by itself. A link a site emails you to
      confirm your address opens in your usual browser, so reload that job's tab in the
