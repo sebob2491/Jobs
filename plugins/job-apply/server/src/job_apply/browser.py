@@ -313,6 +313,7 @@ class BrowserSession:
         self._fields.clear()
         self._actions.clear()
         self._frame_ids.clear()
+        self._follow_until = 0.0  # a click in the window just closed isn't one in the next
 
     # ---------------------------------------------------------------- navigation
     async def goto(self, url: str) -> dict[str, Any]:
