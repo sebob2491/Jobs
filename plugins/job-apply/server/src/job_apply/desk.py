@@ -414,6 +414,7 @@ class Desk:
             "passwords": {**{ats: _has_secret(f"{ats}_password") for ats in SITE_PASSWORDS},
                           "email": _has_secret("email_password")},
             "mail_problem": self.applier.mail_problem,
+            "version": config.plugin_version(),
             "answers_problem": config.answers_problem(),
             "search": self.search,
             "listings": rows,

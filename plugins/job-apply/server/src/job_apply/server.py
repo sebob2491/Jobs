@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 from datetime import datetime
 from pathlib import Path
@@ -13,7 +14,7 @@ from mcp.server.mcpserver import Image, MCPServer
 from . import config
 from .ats import ATS_NAMES, detect_ats, greenhouse_form_url
 from .autofill import is_empty_value, is_name_rule, place_words, plan_autofill, profile_entries
-from .browser import BrowserSession, BrowserUnavailable, SubmitBlocked
+from .browser import BrowserSession, BrowserUnavailable, SiteDown, SubmitBlocked
 from .postings import FetchError, Posting, fetch_posting, finalize, parse_html
 from .render import KINDS, render_pdf, to_html
 from .search import (CLIENT_SIDE, alternatives, eightfold_page_url, icims_search, infor_search, keep_listings,
@@ -83,6 +84,18 @@ def _brief(job: dict[str, Any]) -> dict[str, Any]:
 # --------------------------------------------------------------------- setup
 
 
+def chrome_installed() -> bool:
+    """Google Chrome on this computer, wherever its installer put it: on the PATH, in
+    Applications (for everyone or this user), or in Program Files or this user's AppData."""
+    if shutil.which("google-chrome") or shutil.which("chrome"):
+        return True
+    places = [Path("/Applications/Google Chrome.app"), Path.home() / "Applications" / "Google Chrome.app"]
+    for var in ("PROGRAMFILES", "PROGRAMFILES(X86)", "LOCALAPPDATA"):
+        if os.environ.get(var):
+            places.append(Path(os.environ[var]) / "Google" / "Chrome" / "Application" / "chrome.exe")
+    return any(p.exists() for p in places)
+
+
 @mcp.tool()
 def setup_status() -> dict[str, Any]:
     """Check what the plugin needs before it can apply: profile fields, resume file,
@@ -90,8 +103,7 @@ def setup_status() -> dict[str, Any]:
     home = config.ensure_home()
     prof = config.Profile.load()
     missing = prof.missing_required()
-    has_chrome = bool(shutil.which("google-chrome") or shutil.which("chrome") or Path(
-        "/Applications/Google Chrome.app").exists() or Path(r"C:\Program Files\Google\Chrome\Application\chrome.exe").exists())
+    has_chrome = chrome_installed()
     s = prof.settings
     return {
         "home": str(home),
@@ -103,10 +115,11 @@ def setup_status() -> dict[str, Any]:
                      "browser_channel": s.browser_channel, "headless": s.headless,
                      "email_codes": s.email_codes, "email_tracking": s.email_tracking},
         "chrome_detected": has_chrome,
-        "browser_note": "If the browser fails to start, install Chrome or run "
+        "browser_note": "The desk uses Google Chrome, or Microsoft Edge without it. If neither starts, install Chrome or run "
                         f"`uv run --project \"{config.PLUGIN_ROOT / 'server'}\" playwright install chromium` "
                         "and set settings.browser_channel: chromium.",
         "plugin_root": str(config.PLUGIN_ROOT),
+        "plugin_version": config.plugin_version(),
         "companies_file": str(config.PLUGIN_ROOT / "data" / "companies.yaml"),
         "jobs_by_status": tracker().counts(),
     }
@@ -212,10 +225,12 @@ async def search_company_jobs(
                     await infor_search(browser.capture_json, cfg, wording, found)
                 else:
                     await sitecore_search(browser.capture_json, cfg, wording, found)
+            except SiteDown as e:  # the board itself is down: said plainly
+                failures.append(str(e))
             except Exception as e:  # one wording failing keeps the others' results
-                failures.append(f"{type(e).__name__}: {str(e).splitlines()[0][:150] if str(e) else ''}")
+                failures.append(f"browser search: {type(e).__name__}: {str(e).splitlines()[0][:150] if str(e) else ''}")
         if failures:
-            out["errors"][name] = f"browser search: {failures[0]}" + (
+            out["errors"][name] = failures[0] + (
                 f" ({len(failures)} of {len(wordings)} searches failed)" if found else "")
         out["results"].extend(keep_listings(name, found, location_terms(location), limit_per_company, query))
     t = tracker()

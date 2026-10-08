@@ -328,6 +328,8 @@ class Applier:
         for run in [r for r in self.runs.values() if r.left and r.status == "needs_you" and not r.blocking]:
             if run.page is None or run.page.is_closed():
                 continue
+            if run.need == "email_code":
+                await self._check_mail(run)  # the code or link came after the queue went on
             try:
                 moved = await self._past_pause(run)
             except Exception:  # a tab mid-way through loading: looked at again next time, not holding the rest

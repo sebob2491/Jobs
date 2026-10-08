@@ -383,6 +383,9 @@ RULES: list[tuple[str, str, Getter, int | None, set[str] | None]] = [
      _yn("work_authorization.us_person"), None, None),
     ("us_citizen", r"are you a (u s|united states) citizen\b|are you a citizen of the (u s|united states)( of america)?$",
      _yn("work_authorization.us_citizen"), None, None),
+    # TI: "Do you currently hold an H, L, E, J, or F nonimmigrant visa?" A citizen holds none
+    ("visa_holder", r"\b(hold|have) an? .{0,40}non ?immigrant visa",
+     lambda p, j: "No" if p.get("work_authorization.us_citizen") is True else None, None, None),
     ("citizenship", r"citizenship|country of citizen|are you a (u ?s )?citizen", _p("work_authorization.citizenship"), None, None),
     ("clearance", r"security clearance|active clearance", _p("work_authorization.security_clearance"), None, None),
     # "do you live nearby or are you willing to relocate?": a local applicant isn't relocating

@@ -433,6 +433,38 @@ def test_sign_in_and_create_account_buttons_say_where_they_are(srv):
                           ("Forgot your password?", True, False), ("Close", True, False)]  # the pop-up's
 
 
+def test_a_job_board_that_is_down_says_so(srv):
+    """Daifuku's iCIMS board, live (Oct 2026), answered HTTP 521 (Cloudflare: the site's own
+    server down). Read as a page, that was a board with no openings."""
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    from job_apply.browser import SiteDown
+
+    class Down(BaseHTTPRequestHandler):
+        def do_GET(self):
+            body = b"<html><head><title>Error : careers-example.icims.com</title></head><body>Web server is down</body></html>"
+            self.send_response(521)
+            self.send_header("Content-Type", "text/html")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args):
+            pass
+
+    site = ThreadingHTTPServer(("127.0.0.1", 0), Down)
+    threading.Thread(target=site.serve_forever, daemon=True).start()
+    try:
+        url = f"http://127.0.0.1:{site.server_address[1]}/jobs/search?ss=1"
+        with pytest.raises(SiteDown, match=r"127\.0\.0\.1 is down right now \(HTTP 521\)"):
+            run(srv.browser.frames_html(url))
+        with pytest.raises(SiteDown):
+            run(srv.browser.listing_pages(url, "tr.jobResultItem"))
+    finally:
+        site.shutdown()
+
+
 def test_search_text_left_in_a_picker_is_no_evidence(srv):
     run(srv.open_application(url=fixture_url("jsonld_posting.html")))
     page = run(srv.browser.page())

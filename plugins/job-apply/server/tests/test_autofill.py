@@ -189,6 +189,15 @@ def test_unsectioned_education_dates_follow_school_fields():
     assert "5" not in plan  # a start date in another section is not an education date
 
 
+def test_a_citizen_holds_no_nonimmigrant_visa():
+    """Texas Instruments (live, Oct 2026) asks whether you hold an H, L, E, J or F visa."""
+    q = f("U.S. Immigration Form: Do you currently hold an H, L, E, J, or F nonimmigrant visa (examples: H-1B, "
+          "H-2B, H-4, L-1, L-2, E-1, E-2, J-1, J-2, F-1, etc.)?", "radio_group", options=["Yes", "No", "Pending with USCIS"])
+    citizen = Profile({"work_authorization": {"us_citizen": True, "requires_sponsorship": False}})
+    assert resolve_field(q, citizen).value == "No"
+    assert resolve_field(q, Profile({"work_authorization": {"requires_sponsorship": False}})) is None  # not known
+
+
 def test_attestations_need_known_choices():
     p = prof()
     q = "Are you a U.S. person as defined by U.S. export control regulations (EAR)?"
