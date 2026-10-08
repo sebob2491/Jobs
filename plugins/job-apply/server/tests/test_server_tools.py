@@ -306,3 +306,33 @@ def test_a_tab_the_person_opens_doesnt_take_over(srv):
         await (await opened.value).wait_for_load_state()
     run(person_clicks())
     assert run(srv.inspect_form(False))["headings"] == ["Apply"]
+
+
+def test_claudes_browser_tools_wait_while_the_desk_fills_an_application(srv):
+    """The desk and Claude share the browser's tab: Claude's typing or clicking mid-step would
+    land in the desk's application. Reading, and the desk's own calls, go ahead."""
+    from mcp.server.mcpserver.exceptions import ToolError
+
+    from job_apply import desk as desk_module
+    from job_apply.pipeline import Run
+
+    job = srv.add_job(url="https://example.com/jobs/fse", title="Field Service Engineer", company="Example Fab")["job"]
+    d = desk_module.get_desk(srv)
+    d.applier.runs[job["id"]] = Run(job["id"], "Field Service Engineer", "Example Fab", status="running")
+    d.applier.current = job["id"]
+
+    async def call(name, args):
+        return await srv.mcp.call_tool(name, args)
+    try:
+        for name, args in (("click", {"target": "Next"}), ("fill_form", {"values": []}),
+                           ("submit_application", {"user_confirmed": True}), ("tabs", {"switch_to": 0}),
+                           ("ingest_job", {"url": "https://example.com/jobs/2", "use_browser": True})):
+            with pytest.raises(ToolError, match="Job Desk is filling Field Service Engineer at Example Fab"):
+                run(call(name, args))
+        run(call("list_jobs", {}))  # not the browser: fine
+        d.applier.current = None
+        with pytest.raises(ToolError) as e:  # the desk is between jobs: the tool runs (and fails on its own terms)
+            run(call("submit_application", {"user_confirmed": True}))
+        assert "Job Desk" not in str(e.value)
+    finally:
+        desk_module._desk = None

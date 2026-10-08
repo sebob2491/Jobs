@@ -47,16 +47,39 @@ mcp = MCPServer("job-apply", instructions=INSTRUCTIONS, version="0.3.0")
 _ANTICIPATED = (ValueError, KeyError, FileNotFoundError, PermissionError, BrowserUnavailable, SubmitBlocked, FetchError)
 
 
-def tool(**options: Any) -> Callable[[Any], Any]:
+def _desk_driving() -> str | None:
+    """The job the Job Desk is filling in the browser at this moment, if any."""
+    from . import desk
+
+    d = desk._desk
+    job_id = d.applier.current if d is not None else None
+    if job_id is None:
+        return None
+    run = d.applier.runs.get(job_id)
+    return f"{run.title} at {run.company}" if run and run.title else "an application"
+
+
+def tool(drives: Callable[[dict[str, Any]], bool] | bool = False, **options: Any) -> Callable[[Any], Any]:
     """mcp.tool, with anticipated failures handed to Claude in their own words. The function
-    itself is returned as written, so the desk calling it gets the same exceptions as before."""
+    itself is returned as written, so the desk calling it gets the same exceptions as before.
+    `drives`: the tool acts in the browser's current tab (for these arguments), which the Job
+    Desk uses while it fills an application; Claude's call waits its turn rather than
+    typing or clicking in the desk's tab mid-step."""
     def message(e: Exception) -> str:
         return str(e.args[0]) if isinstance(e, KeyError) and e.args else str(e)
+
+    def check(kwargs: dict[str, Any]) -> None:
+        if drives is True or (callable(drives) and drives(kwargs)):
+            busy = _desk_driving()
+            if busy:
+                raise ToolError(f"The Job Desk is filling {busy} in the browser right now. Wait for it to "
+                                "pause or finish that job (its page shows when), then try again.")
 
     def register(fn: Any) -> Any:
         if inspect.iscoroutinefunction(fn):
             @functools.wraps(fn)
             async def wrapper(*args: Any, **kwargs: Any) -> Any:
+                check(kwargs)
                 try:
                     return await fn(*args, **kwargs)
                 except _ANTICIPATED as e:
@@ -64,6 +87,7 @@ def tool(**options: Any) -> Callable[[Any], Any]:
         else:
             @functools.wraps(fn)
             def wrapper(*args: Any, **kwargs: Any) -> Any:
+                check(kwargs)
                 try:
                     return fn(*args, **kwargs)
                 except _ANTICIPATED as e:
@@ -174,7 +198,7 @@ def get_profile() -> dict[str, Any]:
 # --------------------------------------------------------------------- jobs
 
 
-@tool()
+@tool(drives=lambda a: bool(a.get("use_browser")))
 async def ingest_job(url: str, use_browser: bool = False) -> dict[str, Any]:
     """Fetch a job posting (LinkedIn, Indeed, Workday, Greenhouse, Lever, any careers page),
     parse title/company/location/description/ATS, and save it to the tracker.
@@ -445,7 +469,7 @@ def export_jobs_csv(path: str | None = None) -> dict[str, Any]:
 # --------------------------------------------------------------------- browser
 
 
-@tool()
+@tool(drives=True)
 async def open_application(job_id: int | None = None, url: str | None = None) -> dict[str, Any]:
     """Open a job's application (or its posting page, when there is no separate apply URL)
     in the visible browser and make it the current job. Returns a summary of the page:
@@ -489,7 +513,7 @@ async def inspect_form(include_dropdown_options: bool = True) -> dict[str, Any]:
     return data
 
 
-@tool()
+@tool(drives=True)
 async def autofill(job_id: int | None = None, overwrite: bool = False) -> dict[str, Any]:
     """Fill every field on the current page that the profile answers with confidence
     (contact details, address, work authorization, sponsorship, EEO choices, resume upload,
@@ -531,7 +555,7 @@ async def autofill(job_id: int | None = None, overwrite: bool = False) -> dict[s
     }
 
 
-@tool()
+@tool(drives=True)
 async def add_entries(section: str, count: int | None = None) -> dict[str, Any]:
     """Create the repeated blocks for work history or education before filling them.
 
@@ -553,7 +577,7 @@ async def add_entries(section: str, count: int | None = None) -> dict[str, Any]:
     return result
 
 
-@tool()
+@tool(drives=True)
 async def fill_form(values: list[dict[str, Any]]) -> dict[str, Any]:
     """Fill specific fields: values = [{"id": "12", "value": "..."}]. Ids come from
     inspect_form/autofill. Options are matched loosely ("Yes", "AZ" -> "Arizona"). For
@@ -578,7 +602,7 @@ async def debug_snapshot(note: str = "") -> dict[str, Any]:
     return {"saved_to": str(path), "files": sorted(p.name for p in path.iterdir())}
 
 
-@tool()
+@tool(drives=True)
 async def fill_secret(field_id: str, secret_name: str) -> dict[str, Any]:
     """Type a stored secret (e.g. a career-site password) into a field without the value
     passing through the conversation. Secrets come from env JOB_APPLY_SECRET_<NAME> or
@@ -603,7 +627,7 @@ async def fill_secret(field_id: str, secret_name: str) -> dict[str, Any]:
     return {"ok": True}
 
 
-@tool()
+@tool(drives=True)
 async def click(target: str) -> dict[str, Any]:
     """Click a button/link by its id from inspect_form, or by visible text ("Next",
     "Save and Continue", "Apply", "Easy Apply", "Add"). Refuses final submit buttons —
@@ -634,13 +658,13 @@ async def page_text(max_chars: int = 8000) -> str:
     return await browser.visible_text(max_chars)
 
 
-@tool()
+@tool(drives=lambda a: a.get("switch_to") is not None)
 async def tabs(switch_to: int | None = None) -> dict[str, Any]:
     """List open browser tabs, or switch to tab number `switch_to`."""
     return await browser.tabs(switch_to)
 
 
-@tool()
+@tool(drives=True)
 async def close_browser() -> dict[str, Any]:
     """Close the automation browser (sign-ins are kept in the profile for next time)."""
     await browser.close()
@@ -683,7 +707,7 @@ def _submit_policy(ats: str) -> str:
     return "auto" if s.may_auto_submit(ats) else "after_user_confirms"
 
 
-@tool()
+@tool(drives=True)
 async def submit_application(job_id: int | None = None, user_confirmed: bool = False) -> dict[str, Any]:
     """Click the final Submit button on the current page and record the result.
 
