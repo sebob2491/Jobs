@@ -236,6 +236,12 @@ const isNew = (r) => !firstVisit && seenBefore && !seenBefore.has(r.url) && !r.r
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
 // A posting in many places ("Phoenix, AZ; Austin, TX; ..."): the first three (the ones in the
 // area come first), then how many more; the full list is in the tooltip
+// A posting date as the site gave it, without the time of day an API adds
+// ("2026-08-25T13:11:48-04:00" -> "2026-08-25"); "Posted 3 Days Ago" as it is
+const shownDate = (posted) => {
+  const m = /^(\d{4}-\d{2}-\d{2})T\d/.exec(String(posted || ""));
+  return m ? m[1] : String(posted || "");
+};
 const places = (loc) => {
   const all = String(loc || "").split("; ");
   return all.length > 3 ? `${all.slice(0, 3).join("; ")} and ${all.length - 3} more` : String(loc || "");
@@ -341,7 +347,7 @@ function renderRows() {
       <input type="checkbox" data-pick="${esc(r.url)}" ${checked} ${done ? "disabled" : ""} aria-label="Select ${esc(r.title)}">
       <span class="score ${scoreClass(fit.score)}" title="Fit score">${esc(fit.score)}</span>
       <div>${link(r.url, esc(r.title), "title")}
-        <div class="meta">${esc(r.company)} · <span title="${esc(r.location)}">${esc(places(r.location) || "location not given")}</span>${r.posted ? ` · <span class="nowrap">${esc(r.posted)}</span>` : ""}</div>
+        <div class="meta">${esc(r.company)} · <span title="${esc(r.location)}">${esc(places(r.location) || "location not given")}</span>${r.posted ? ` · <span class="nowrap">${esc(shownDate(r.posted))}</span>` : ""}</div>
         <div class="chips">${chips}</div></div>
       <div>${statusPill(r)}</div></li>`};
   });

@@ -993,7 +993,7 @@ def test_amkor_list_is_read_in_the_browser_and_its_postings_say_where(srv, monke
     assert got == {  # Austin is left out, the analyst wasn't asked for, an unreadable posting is flagged
         "Equipment Technician (ATA)": ("Peoria, AZ", "2026-10-01", []),
         "Equipment Technician": ("Tempe, AZ", "2026-09-28", []),
-        "Field Service Engineer II": ("", "2026-09-27", ["location given as 'nothing'; check the posting"])}
+        "Field Service Engineer II": ("", "2026-09-27", ["no location given; check the posting"])}
     assert len(reads) == 4  # the matches only
     page = "https://career8.successfactors.com/career?company=amkor&career_ns=job_listing_summary&navBarLevel=JOB_SEARCH"
     assert asked == [(page, "tr.jobResultItem", ("li.per_page select", "50"), "li.paginationArrowContainer.next > a")]

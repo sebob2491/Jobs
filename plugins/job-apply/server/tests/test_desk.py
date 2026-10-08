@@ -130,6 +130,7 @@ def test_desk_page_buttons_reach_the_api(srv, tmp_path):
     many = "Phoenix, AZ; Chandler, AZ; Austin, TX; Hillsboro, OR; Boise, ID"  # a multi-site Workday posting
     desk.listings = [
         {"company": "Example Fab", "title": "Field Service Engineer", "url": posting, "location": many,
+         "posted": "2026-08-25T13:11:48-04:00",  # as Greenhouse's API gives it
          "fit": {"score": 80, "reasons": ["title matches"], "concerns": [], "blocked": False, "recommended": True}},
         {"company": "Example Bank", "title": "Accountant", "url": "https://example.com/acct", "location": "Phoenix, AZ",
          "fit": {"score": 20, "reasons": [], "concerns": ["not one of your target titles"], "blocked": False,
@@ -158,6 +159,8 @@ def test_desk_page_buttons_reach_the_api(srv, tmp_path):
                 assert await page.locator("text=Accountant").count() == 0  # not recommended: hidden by default
                 where = page.locator(f"span[title='{many}']")
                 assert await where.inner_text() == "Phoenix, AZ; Chandler, AZ; Austin, TX and 2 more"
+                meta = await page.locator(".meta").first.inner_text()
+                assert "2026-08-25" in meta and "T13:11" not in meta  # the date, not the time of day
                 await page.click("text=Select recommended")
                 await page.click("#apply")
                 for _ in range(50):
