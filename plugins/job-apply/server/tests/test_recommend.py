@@ -171,6 +171,21 @@ def test_requirements_read_the_way_postings_write_them():
     assert requirements("Applicants must be U.S. persons.")["us_person"]
 
 
+def test_requirements_in_markdown_and_beside_application_questions():
+    lam = requirements("## Minimum qualifications\n* High school diploma or GED.\n"
+                       "## Preferred qualifications\n* Bachelor's degree in engineering.\n* Active Secret clearance.")
+    assert lam["degree"] == "high_school" and not lam["clearance"]
+    bold = requirements("**Nice to have:**\nBachelor's degree.\n**Requirements:**\nAssociate's degree.")
+    assert bold["degree"] == "associate"
+    # Greenhouse's application questions are the form's, not the job's (ASM asks every applicant)
+    asm = requirements("Requirements\n- 3+ years of field service experience.\n\nApplication questions:\n"
+                       "- Are you a U.S. person under the U.S. Export Administration Regulation (EAR)?\n"
+                       "- Do you hold an active security clearance?")
+    assert not asm["us_person"] and not asm["clearance"] and asm["years"] == 3
+    # Intel: one of several degrees
+    assert requirements("Minimum qualifications:\n- Associate's or Bachelor's degree in a STEM field.")["degree"] == "associate"
+
+
 def test_degrees_with_other_ways_in():
     """Postings that take training, a certification or years of work instead of the degree
     (the wording of Applied Materials', ASM's and Onto's postings)."""
@@ -223,13 +238,15 @@ def test_recommend_holds_postings_it_could_not_check():
             {"company": "Lam Research", "title": "Field Service Engineer 2", "url": "https://x/fse2", "location": "Chandler, AZ"},
             {"company": "Acme", "title": "Field Service Engineer", "url": "https://x/unread", "location": "Phoenix, AZ"},
             {"company": "Moved Co", "title": "Field Service Engineer", "url": "https://x/elsewhere", "location": "3 Locations"},
+            # a page that builds itself with script: read, but no posting in it
+            {"company": "Script Co", "title": "Field Service Engineer", "url": "https://x/blank", "location": "Tempe, AZ"},
         ]}
 
     async def fetch(url):
         if url == "https://x/unread":
             raise RuntimeError("unreadable")
         where = "Peoria, IL" if url == "https://x/elsewhere" else "Chandler, AZ"
-        return Posting(url=url, description=LAM_FSE2, location=where)
+        return Posting(url=url, description="" if url == "https://x/blank" else LAM_FSE2, location=where)
 
     # only one posting is read by rank, but every one that would be preselected is read too
     out = asyncio.run(recommend(p, search, read_postings=1, fetch=fetch, today=TODAY))
@@ -237,5 +254,7 @@ def test_recommend_holds_postings_it_could_not_check():
     assert fits["https://x/fse2"]["recommended"]
     assert not fits["https://x/unread"]["recommended"] and fits["https://x/unread"]["held"]
     assert "posting not read yet: its requirements are unchecked" in fits["https://x/unread"]["concerns"]
+    assert not fits["https://x/blank"]["recommended"] and fits["https://x/blank"]["held"]
+    assert "the posting's text couldn't be read: its requirements are unchecked" in fits["https://x/blank"]["concerns"]
     assert not fits["https://x/elsewhere"]["recommended"]
     assert "the posting says it's in Peoria, IL" in fits["https://x/elsewhere"]["concerns"]

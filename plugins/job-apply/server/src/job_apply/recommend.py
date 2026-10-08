@@ -17,7 +17,7 @@ from typing import Any, Awaitable, Callable
 
 from .autofill import degree_key, norm
 from .config import Profile
-from .postings import Posting, fetch_posting
+from .postings import QUESTIONS_HEADING, Posting, fetch_posting
 from .search import MAX_ALTERNATIVES, US_STATES, location_matches, location_terms, title_matches
 
 # Semiconductor equipment roles, used when the profile names no target titles.
@@ -38,7 +38,7 @@ _MONTHS = {m: i for i, m in enumerate(
 # Posting text
 _DEGREES = [  # lowest first, so "Associate's or Bachelor's" counts as an Associate's
     ("high_school", r"high school|\bged\b"),
-    ("associate", r"associate'?s?\s+(?:degree|of)|\ba\.?a\.?s\.?\b|\ba\.s\.|(?:2|two)[- ]year (?:technical )?(?:degree|program)|"
+    ("associate", r"associate'?s?\s+(?:degree|of)|associate's|associates? or (?:a )?bachelor|\ba\.?a\.?s\.?\b|\ba\.s\.|(?:2|two)[- ]year (?:technical )?(?:degree|program)|"
                   r"technical degree|(?:technical|trade|vocational) school"),
     ("bachelor", r"bachelor|\bb\.?s\.?(?:e\.?e\.?|m\.?e\.?|c\.?)?\b|\bb\.?a\.?\b|(?:4|four)[- ]year degree|undergraduate degree|"
                  r"(?:^|\b(?:a|an|or)\s+)degree in (?:electrical|electronic|mechanical|engineering|computer|physics|chemi|"
@@ -236,8 +236,9 @@ def _split_sections(text: str) -> tuple[str, str]:
     until the next heading."""
     req, pref, mode = [], [], "req"
     for line in text.splitlines():
-        low = line.strip().lower()
-        if low and len(low) <= 70 and not low.startswith("-"):
+        # Markdown, as Eightfold's postings come: "## Preferred qualifications", "**Requirements:**"
+        low = re.sub(r"^#+\s*|^\*\*(.*?)\*\*(:?)$", r"\1\2", line.strip().lower()).strip()
+        if low and len(low) <= 70 and not re.match(r"[-*\u2022\u00b7]", low):
             if _PREF_HEADING.search(low):
                 mode = "pref"
             elif _REQ_HEADING.search(low):
@@ -273,6 +274,7 @@ def requirements(text: str) -> dict[str, Any]:
     """What a posting's minimum requirements ask for, read from its text."""
     # Workday's and Oracle's curly apostrophes and non-breaking hyphens ("2\u2011year program")
     text = re.sub(r"[\u2010-\u2015]", "-", (text or "").replace("\u2019", "'").replace("\u2018", "'"))
+    text = text.split(f"\n{QUESTIONS_HEADING}\n")[0]  # the application form's questions, not the job's
     required, _ = _split_sections(text)
     out: dict[str, Any] = {"degree": None, "degree_or_equivalent": False, "years": None, "clearance": False,
                            "clearance_later": False, "us_person": False, "travel": None, "shifts": False}
@@ -419,6 +421,7 @@ Fetch = Callable[[str], Awaitable[Posting]]
 
 
 READ_AT_MOST = 150  # postings read per search: every one that would be preselected, up to this
+MIN_POSTING_TEXT = 200  # less than this, and the page held no posting (it builds itself with script)
 
 
 async def recommend(prof: Profile, search: Search, limit_per_company: int = 10, read_postings: int = 30,
@@ -451,10 +454,11 @@ async def recommend(prof: Profile, search: Search, limit_per_company: int = 10, 
     terms = location_terms(location)
     for item in items:
         fit = item["fit"]
-        if "posting" not in item:
+        if "posting" not in item or len(item["posting"]["description"].strip()) < MIN_POSTING_TEXT:
             if fit.score >= RECOMMEND_AT and not fit.blocked:
                 fit.held = True
-                fit.concerns.append("posting not read yet: its requirements are unchecked")
+                fit.concerns.append("posting not read yet: its requirements are unchecked" if "posting" not in item
+                                    else "the posting's text couldn't be read: its requirements are unchecked")
             continue
         where = item["posting"].get("location") or ""
         if where and location_matches(where, terms) is False and location_matches(item.get("location") or "", terms) is not True:
