@@ -533,11 +533,15 @@ class Applier:
         if not srv.browser.use_tab(run.page):
             return
         data = await srv.inspect_form(include_dropdown_options=False)
-        box = next((f for f in data.get("fields") or [] if f.get("kind") in ("text", "number")
-                    and _CODE_FIELD.search(f.get("label") or "")), None)
-        if box is None:  # the page moved on meanwhile
+        boxes = [f for f in data.get("fields") or [] if f.get("kind") in ("text", "number")
+                 and _CODE_FIELD.search(f.get("label") or "")]
+        if not boxes:  # the page moved on meanwhile
             return
-        out = await srv.fill_form([{"id": box["id"], "value": found.value}])
+        if 1 < len(boxes) == len(found.value):  # a box per digit (Oracle's "Confirm Your Identity")
+            fills = [{"id": box["id"], "value": digit} for box, digit in zip(boxes, found.value)]
+        else:
+            fills = [{"id": boxes[0]["id"], "value": found.value}]
+        out = await srv.fill_form(fills)
         if not out.get("ok"):
             return
         self._log(run, f"entered the code from your email (sent from {found.sender})")

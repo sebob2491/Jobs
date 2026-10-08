@@ -34,6 +34,22 @@ def test_the_code_in_a_sign_up_email():
     assert find_code("Thanks for applying to the Field Service Engineer role (R2617841).") is None
 
 
+def test_the_job_systems_own_mail_as_sent_live():
+    """The shapes of real sign-up mail (Oct 2026): Oracle sends from a long workflow address
+    and names the requisition before the code; Workday's links come from otp.workday.com."""
+    oracle = mailbox.ATS_MAIL_DOMAINS["oracle_hcm"]
+    assert sender_allowed("x.fa.sender@workflow.email.us-phoenix-1.ocs.oraclecloud.com", oracle)
+    assert sender_allowed("Send-Only.example@otp.workday.com", mailbox.ATS_MAIL_DOMAINS["workday"])
+    assert sender_allowed("confirm@eightfold.ai", mailbox.ATS_MAIL_DOMAINS["eightfold"])
+    assert find_code("We need you to confirm your identity so your application can be considered for the "
+                     "position of Equipment Technician - Pump/Abatement - 2505303.\n\nConfirm your identity "
+                     "using this code: 218335.\n\nThe code will expire in 10 minutes.") == "218335"
+    assert find_code("Verify your email We just need to verify your email address. Enter the following code "
+                     "below to complete the verification process: 109409 The code will expire after 15 minutes.") == "109409"
+    link = "https://example.wd1.myworkdayjobs.com/External/activate/abc123/?redirect=%2FExternal%2Fjob%2F1"
+    assert find_link(f"Click this link to confirm your email address {link}", [], lambda u: "myworkdayjobs" in u) == link
+
+
 def test_a_confirmation_link_back_to_the_job_site():
     links = ["https://www.example.com/unsubscribe", "https://amat.wd1.myworkdayjobs.com/External/verifyEmail?token=abc",
              "https://evil.example.net/verify?token=abc"]

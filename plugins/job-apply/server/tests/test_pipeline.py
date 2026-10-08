@@ -699,11 +699,12 @@ def test_an_emailed_link_or_code_is_waited_for(srv, monkeypatch, query):
     assert any(line.startswith("filled") for line in r.log), r.log
 
 
-@pytest.mark.parametrize("query", ["?code", ""])
+@pytest.mark.parametrize("query", ["?code", "?code&split", ""])
 def test_an_emailed_code_or_link_is_read_from_the_inbox(srv, monkeypatch, query):
     """With an email app password saved, a job waiting on an emailed code gets it from the
     inbox, typed in and Verify pressed; one waiting on a link has it opened in this browser
-    and its tab reloaded. Only mail from that job's site, since the wait began, is asked for."""
+    and its tab reloaded. Only mail from that job's site, since the wait began, is asked for.
+    &split: Oracle's "Confirm Your Identity" (onsemi, TI, live) has a box per digit."""
     import functools
     import http.server
     import threading
