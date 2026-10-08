@@ -13,7 +13,7 @@ from mcp.server.mcpserver import Image, MCPServer
 from . import config
 from .ats import ATS_NAMES, detect_ats, greenhouse_form_url
 from .autofill import is_empty_value, is_name_rule, place_words, plan_autofill, profile_entries
-from .browser import BrowserSession, BrowserUnavailable, SubmitBlocked
+from .browser import BrowserSession, BrowserUnavailable, SiteDown, SubmitBlocked
 from .postings import FetchError, Posting, fetch_posting, finalize, parse_html
 from .render import KINDS, render_pdf, to_html
 from .search import (CLIENT_SIDE, alternatives, eightfold_page_url, icims_search, infor_search, keep_listings,
@@ -212,10 +212,12 @@ async def search_company_jobs(
                     await infor_search(browser.capture_json, cfg, wording, found)
                 else:
                     await sitecore_search(browser.capture_json, cfg, wording, found)
+            except SiteDown as e:  # the board itself is down: said plainly
+                failures.append(str(e))
             except Exception as e:  # one wording failing keeps the others' results
-                failures.append(f"{type(e).__name__}: {str(e).splitlines()[0][:150] if str(e) else ''}")
+                failures.append(f"browser search: {type(e).__name__}: {str(e).splitlines()[0][:150] if str(e) else ''}")
         if failures:
-            out["errors"][name] = f"browser search: {failures[0]}" + (
+            out["errors"][name] = failures[0] + (
                 f" ({len(failures)} of {len(wordings)} searches failed)" if found else "")
         out["results"].extend(keep_listings(name, found, location_terms(location), limit_per_company, query))
     t = tracker()

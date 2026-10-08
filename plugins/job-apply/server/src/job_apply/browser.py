@@ -13,6 +13,7 @@ import os
 import re
 from pathlib import Path
 from typing import Any, Callable
+from urllib.parse import urlparse
 
 from playwright.async_api import (
     BrowserContext,
@@ -106,6 +107,11 @@ class PickedAGroup(ValueError):
 
 class TabClosed(Exception):
     """The tab a job was working in is gone (closed, or skipped in the Job Desk)."""
+
+
+class SiteDown(Exception):
+    """A job board answered with a server error page (Daifuku's iCIMS, live: HTTP 521), which
+    would otherwise read as a board with no openings."""
 
 
 def _search_words(text: str) -> str:
@@ -584,6 +590,14 @@ class BrowserSession:
             finally:
                 await tab.close()
 
+    @staticmethod
+    async def _open_board(tab: Page, url: str) -> None:
+        """Open a job board's page in a background tab. A server error page is the board being
+        down, not a board with no openings."""
+        response = await tab.goto(url, wait_until="domcontentloaded", timeout=45000)
+        if response is not None and response.status >= 500:
+            raise SiteDown(f"{urlparse(url).hostname} is down right now (HTTP {response.status}); try again later")
+
     async def frames_html(self, url: str) -> list[str]:
         """The HTML of `url` and of each frame on it, read in a background tab. Some job
         boards (iCIMS) turn away plain requests and list their openings inside a frame."""
@@ -593,7 +607,7 @@ class BrowserSession:
             assert self._ctx is not None
             tab = await self._ctx.new_page()
             try:
-                await tab.goto(url, wait_until="domcontentloaded", timeout=45000)
+                await self._open_board(tab, url)
                 try:
                     await tab.wait_for_load_state("networkidle", timeout=8000)
                 except PlaywrightTimeout:
@@ -620,7 +634,7 @@ class BrowserSession:
             assert self._ctx is not None
             tab = await self._ctx.new_page()
             try:
-                await tab.goto(url, wait_until="domcontentloaded", timeout=45000)
+                await self._open_board(tab, url)
                 await tab.wait_for_selector(rows, timeout=20000)
                 if per_page is not None and await tab.locator(per_page[0]).count():
                     shown = await self._rows_shown(tab, rows)

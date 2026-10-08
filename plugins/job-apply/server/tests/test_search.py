@@ -497,6 +497,20 @@ def test_icims_board_is_read_in_the_browser(srv, monkeypatch):
     assert not out["errors"]
 
 
+def test_a_board_that_is_down_is_said_to_be_down(srv, monkeypatch):
+    """Daifuku's iCIMS board answered HTTP 521 (live, Oct 2026): no openings would be wrong."""
+    from job_apply.browser import SiteDown
+
+    async def down(url):
+        raise SiteDown("careers-daifuku-america.icims.com is down right now (HTTP 521); try again later")
+
+    monkeypatch.setattr(srv.browser, "frames_html", down)
+    out = asyncio.run(srv.search_company_jobs("field service", companies=["Daifuku"], location="AZ"))
+    assert out["results"] == []
+    assert out["errors"] == {"Daifuku America": "careers-daifuku-america.icims.com is down right now (HTTP 521); "
+                                                "try again later"}
+
+
 # Ebara's Paycom board: the page's own search call (10 at a time) and its answer
 PAYCOM_PAGE_BODY = {"skip": 0, "take": 10, "filtersForQuery": {
     "distanceFrom": 0, "workEnvironments": [], "positionTypes": [], "educationLevels": [], "categories": [],
