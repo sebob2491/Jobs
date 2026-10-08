@@ -1866,3 +1866,283 @@ def test_past_a_pause_takes_looks_a_poll_apart(monkeypatch):
     assert not Applier._twice(r, False)  # a look that says otherwise starts it over
     clock[0] += pipeline.POLL_SECONDS
     assert not Applier._twice(r, True)
+
+
+# Fake employer sites at https://<name>.example, served through the browser (no network). A
+# form's POST is recorded, and answered with PAGES[("POST", address)] or a thank-you page.
+def _form(company: str, *questions: str, action: str = "/posted", button: str = "Submit Application",
+          footer: bool = False) -> str:
+    asked = "".join(f'<label for="q{i}">{q} *</label><select id="q{i}" name="q{i}" required><option value="">'
+                    'Select One</option><option>Yes</option><option>No</option></select>' for i, q in enumerate(questions))
+    alerts = ('<footer><form id="alerts" method="post" action="/job-alerts"><label for="ae">Get job alerts by email'
+              '</label><input id="ae" name="ae"><button type="submit">Submit</button></form></footer>') if footer else ""
+    return (f'<html><head><title>{company} application</title></head><body><h1>Apply: Field Service Engineer</h1>'
+            f'<form method="post" action="{action}"><label for="fn">First Name *</label><input id="fn" name="fn" required>'
+            f'<label for="ln">Last Name *</label><input id="ln" name="ln" required>{asked}'
+            f'<button type="submit">{button}</button></form>{alerts}</body></html>')
+
+
+async def _serve(srv, pages: dict, posts: list) -> None:
+    async def handler(route):
+        req = route.request
+        url = req.url.split("?")[0]
+        if req.method == "POST":
+            posts.append(url)
+            body = pages.get(("POST", url), "<html><body><h1>Thank you for applying</h1></body></html>")
+        else:
+            body = pages.get(url, "<html><body>not found</body></html>")
+        await route.fulfill(status=200, content_type="text/html", body=body)
+
+    await srv.browser.page()
+    await srv.browser._ctx.route("https://**.example/**", handler)
+
+
+@pytest.mark.parametrize("how", ["claude", "elsewhere"])
+def test_a_paused_jobs_tab_taken_to_another_posting_isnt_filled_as_that_job(srv, monkeypatch, how):
+    """Job A waits on a question. Meanwhile its tab goes to job B: Claude opens B with
+    open_application (the tools were left on A's tab), or the person takes the tab there.
+    Answered, A carries on in a tab of its own: B's form is never filled with A's details,
+    nor, with Submit for me on, sent as A's application."""
+    from types import SimpleNamespace
+
+    from job_apply import desk as desk_module
+
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    a_url, b_url = "https://careers.acme-fab.example/apply/1", "https://careers.other-litho.example/apply/2"
+    pages = {a_url: _form("Acme Fab", "Do you hold an active TS/SCI clearance?"), b_url: _form("Other Litho")}
+    posts: list[str] = []
+    a = srv.add_job(url=a_url, title="Field Service Engineer", company="Acme Fab")["job"]
+    b = srv.add_job(url=b_url, title="Litho Technician", company="Other Litho")["job"]
+    applier = Applier(srv)
+    applier.auto_submit = True
+    monkeypatch.setattr(desk_module, "_desk", SimpleNamespace(applier=applier))
+
+    async def go():
+        await _serve(srv, pages, posts)
+        applier.start()
+        try:
+            r = applier.enqueue(a["id"], submit=True)
+            await until(lambda: r.status == "needs_you", about=state(r))
+            assert r.need == "questions", r.reason
+            if how == "claude":
+                await srv.open_application(job_id=b["id"])
+                assert r.page.url == a_url  # opened in a tab of its own
+            else:
+                await r.page.goto(b_url)
+            r.once[question_key(r.questions[0]["label"])] = "No"
+            applier.enqueue(a["id"], submit=True, front=True)
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert not any("other-litho" in p for p in posts), posts
+    assert r.status == "submitted" and posts == ["https://careers.acme-fab.example/posted"], (r.status, r.reason, posts)
+    assert srv.tracker().get(b["id"])["status"] != "applied"
+
+
+def test_submit_presses_the_applications_button_not_a_footer_alerts_one(srv, monkeypatch):
+    """A one-page application, and the site's footer job-alerts box with a "Submit" of its own
+    (whose "Thank you for your interest!" reads like a confirmation). The person's Submit
+    sends the application."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    url = "https://careers.acme-fab.example/apply/1"
+    pages = {url: _form("Acme Fab", action="/application", footer=True),
+             ("POST", "https://careers.acme-fab.example/job-alerts"): "<p>Thank you for your interest! New jobs by email.</p>"}
+    posts: list[str] = []
+    job = srv.add_job(url=url, title="FSE", company="Acme Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        await _serve(srv, pages, posts)
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            assert r.status == "ready", r.reason
+            applier.submit_now(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert posts == ["https://careers.acme-fab.example/application"], posts
+    assert r.status == "submitted" and srv.tracker().get(job["id"])["status"] == "applied"
+
+
+def test_a_footer_alerts_submit_is_marked_aside(srv):
+    run(srv.browser.goto(fixture_url("site/next-and-submit.html")))
+    actions = {a["text"]: a for a in run(srv.inspect_form(include_dropdown_options=False))["actions"]}
+    assert actions["Submit"].get("aside") and actions["Submit"].get("is_submit")
+    assert not actions["Next"].get("aside")
+    assert run(srv.browser.find_submit()) == []
+
+
+def test_a_submit_with_no_confirmation_isnt_pressed_again_by_submit_for_me(srv, monkeypatch):
+    """Submit for me pressed Submit and the site's thank-you used words the desk doesn't know.
+    After a restart (a new desk), the job picked again is filled up to its review page and
+    left for the person: it may already have gone."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    url = "https://careers.acme-fab.example/apply/1"
+    pages = {url: _form("Acme Fab"),
+             ("POST", "https://careers.acme-fab.example/posted"): "<h1>All set!</h1><p>Our team will be in touch.</p>"}
+    posts: list[str] = []
+    job = srv.add_job(url=url, title="FSE", company="Acme Fab")["job"]
+
+    async def session():
+        applier = Applier(srv)
+        applier.auto_submit = True
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"], submit=True)
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    async def go():
+        await _serve(srv, pages, posts)
+        return await session(), await session()
+
+    first, second = run(go())
+    assert (first.status, first.need) == ("needs_you", "check_submit"), first.reason
+    assert second.status == "ready" and "pressed for this job before" in second.reason, (second.status, second.reason)
+    assert len(posts) == 1, posts
+    assert any("no confirmation" in e["note"] for e in srv.tracker().events(job["id"]))
+
+
+def test_the_step_before_the_review_page_isnt_taken_for_it(srv, monkeypatch):
+    """Step 3 of 4 goes on with "Review"; its footer has a job-alerts box with a "Submit".
+    Submit for me presses Review, then the review page's own Submit."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    assert pipeline._FORWARD.match("Review") and pipeline._FORWARD.match("Review Application")
+    url = "https://careers.acme-fab.example/apply/step3"
+    review = ('<html><body><div>current step 4 of 4</div><h2>Review</h2><p>First Name: Sam</p>'
+              '<form method="post" action="/posted"><button type="submit">Submit Application</button></form></body></html>')
+    pages = {url: _form("Acme Fab", action="/review-page", button="Review", footer=True),
+             ("POST", "https://careers.acme-fab.example/review-page"): review,
+             ("POST", "https://careers.acme-fab.example/job-alerts"): "<p>You are now subscribed to job alerts.</p>"}
+    posts: list[str] = []
+    job = srv.add_job(url=url, title="FSE", company="Acme Fab")["job"]
+    applier = Applier(srv)
+    applier.auto_submit = True
+
+    async def go():
+        await _serve(srv, pages, posts)
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"], submit=True)
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert posts == ["https://careers.acme-fab.example/review-page", "https://careers.acme-fab.example/posted"], \
+        (posts, r.status, r.reason, r.log)
+    assert r.status == "submitted", r.reason
+
+
+def test_practice_mode_doesnt_call_a_posting_the_review_page(srv, monkeypatch):
+    """In practice mode a posting whose "Quick Apply" sends a form isn't pressed. That stops
+    the job, said as such: nothing was filled, so it's no review page."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setenv("JOB_APPLY_NEVER_SUBMIT", "1")
+    url = "https://careers.acme-fab.example/jobs/9"
+    pages = {url: '<html><body><h1>Field Service Engineer</h1><p>Service and repair of equipment in the field.</p>'
+                  '<form method="post" action="/quick-apply"><button type="submit">Quick Apply</button></form></body></html>'}
+    posts: list[str] = []
+    job = srv.add_job(url=url, title="FSE", company="Acme Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        await _serve(srv, pages, posts)
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert (r.status, r.need) == ("needs_you", "stuck") and "Practice mode" in r.reason, (r.status, r.reason)
+    assert srv.tracker().get(job["id"])["status"] != "ready_to_submit" and posts == []
+
+
+@pytest.mark.parametrize("need", ["captcha", "submit_failed"])
+def test_a_closed_tab_at_submit_waits_on_resume(srv, need):
+    """Submit pressed on the desk for a job whose tab was closed: it says to press Resume, and
+    waits as a job the desk page offers Resume for (not on a CAPTCHA, which has no Resume)."""
+    job = srv.add_job(url=fixture_url("site/review.html"), title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        tab = await srv.browser.new_tab()
+        await tab.close()
+        r = Run(job["id"], "FSE", "Example Fab", status="needs_you", need=need, page=tab)
+        applier.runs[job["id"]] = r
+        applier.submit_now(job["id"])
+        await applier._strict(applier._submit(r))
+        return r
+
+    r = run(go())
+    assert (r.status, r.need) == ("needs_you", "stuck") and "Press Resume" in r.reason, (r.status, r.need, r.reason)
+
+
+def test_an_emailed_code_put_in_between_jobs_gives_the_tools_back(srv, monkeypatch):
+    """A job left waiting on its emailed code; Claude at work on another job in a tab of its
+    own. The code goes in with the tools held (Claude's calls wait), and they're given back on
+    Claude's tab and job: its next fill doesn't land in the waiting job's page."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "HANDS_ON_IDLE", 1)
+    monkeypatch.setattr(pipeline, "MAIL_POLL_SECONDS", 0)
+    monkeypatch.setenv("JOB_APPLY_SECRET_EMAIL_PASSWORD", "an-app-password")
+    monkeypatch.setattr(pipeline.mailbox, "imap_host", lambda address: "imap.example.com")
+    waiting = srv.add_job(url=fixture_url("site/verify-email.html") + "?code", title="FSE", company="Example Fab")["job"]
+    other = srv.add_job(url=fixture_url("generic_form.html"), title="Technician", company="Example Litho")["job"]
+    applier = Applier(srv)
+    sent = {"yet": False}
+    held_by = []
+    real_fill = srv.fill_form
+
+    def inbox(address, password, since, senders, want, allowed_link, before=None):
+        return pipeline.mailbox.Found("code", "123456", "careers.example.com", time.time()) if sent["yet"] else None
+
+    async def fill_form(fills, *args, **kwargs):
+        if any(f.get("value") == "123456" for f in fills):
+            held_by.append(applier.current)
+        return await real_fill(fills, *args, **kwargs)
+
+    monkeypatch.setattr(pipeline.mailbox, "search", inbox)
+    monkeypatch.setattr(srv, "fill_form", fill_form)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(waiting["id"])
+            await until(lambda: r.left, about=state(r))  # no one at the browser: the queue went on
+            claude_tab = await srv.browser.new_tab()  # Claude's own
+            await srv.open_application(job_id=other["id"])
+            sent["yet"] = True
+            await until(lambda: r.need == "questions" or r.status == "ready", about=state(r))
+            return r, srv.browser.current_tab is claude_tab, srv.browser.current_job_id
+        finally:
+            await applier.stop()
+
+    r, on_claudes_tab, job_id = run(go())
+    assert "entered the code from your email (sent from careers.example.com)" in r.log, r.log
+    assert held_by == [waiting["id"]]
+    assert on_claudes_tab and job_id == other["id"]
+
+
+def test_a_profile_typo_doesnt_stop_the_inbox_watch_from_saying_so(srv, monkeypatch, job_apply_home):
+    """profile.yaml broken while a job waits on an emailed code: the inbox isn't read, the
+    desk says why, and the queue's loop carries on (it used to fail every tick)."""
+    monkeypatch.setenv("JOB_APPLY_SECRET_EMAIL_PASSWORD", "an-app-password")
+    (job_apply_home / "profile.yaml").write_text("personal:\n  email: sam@example.com\n   phone: [oops\n")
+    applier = Applier(srv)
+    assert applier.mail_login() is None
+    assert "profile.yaml" in (applier.mail_problem or "")

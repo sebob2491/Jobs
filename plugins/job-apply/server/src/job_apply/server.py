@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import functools
 import inspect
 import json
@@ -57,6 +58,20 @@ def _desk_driving() -> str | None:
         return None
     run = d.applier.runs.get(job_id)
     return f"{run.title} at {run.company}" if run and run.title else "an application"
+
+
+def _desk_tab_job(tab: Any) -> int | None:
+    """The Job Desk job whose application is in this tab and that the desk comes back to
+    (paused for the person, waiting on its review page, queued), if any."""
+    from . import desk
+
+    d = desk._desk
+    if d is None or tab is None:
+        return None
+    for run in list(d.applier.runs.values()):
+        if run.status in ("needs_you", "ready", "queued", "running") and tab in browser.lineage(run.page):
+            return run.job_id
+    return None
 
 
 def tool(drives: Callable[[dict[str, Any]], bool] | bool = False, **options: Any) -> Callable[[Any], Any]:
@@ -492,6 +507,11 @@ async def open_application(job_id: int | None = None, url: str | None = None) ->
         browser.current_job_id = job_id
         if job["status"] == "saved":
             tracker().update(job_id, status="in_progress", note="opened application")
+    owner = _desk_tab_job(browser.current_tab)
+    if owner is not None and owner != job_id:
+        # the tab holds another job the Job Desk has paused or filled: it's left as it is, and
+        # this one opens in a tab of its own (the desk would otherwise fill this page as that job)
+        await browser.new_tab()
     try:
         summary = await browser.goto(target)  # type: ignore[arg-type]
     except BrowserUnavailable as e:
@@ -747,10 +767,15 @@ async def submit_application(job_id: int | None = None, user_confirmed: bool = F
         result = await browser.press_submit(buttons[-1]["id"])
     except SubmitBlocked as e:
         return {"submitted": False, "reason": str(e)}
-    await browser.screenshot(full_page=False, save_to=folder / "after-submit.jpg")
+    # the record of the press first: with no confirmation the application may still have gone,
+    # and the Job Desk reads this (after a restart too) so as never to press Submit again by itself
+    (folder / "submission.json").write_text(json.dumps({**result, "at": datetime.now().isoformat()}, indent=2))
     if result["confirmed"]:
         tracker().update(job["id"], status="applied", note=f"submitted via {ATS_NAMES.get(ats, ats)}")
-    (folder / "submission.json").write_text(json.dumps({**result, "at": datetime.now().isoformat()}, indent=2))
+    else:
+        tracker().update(job["id"], note="pressed Submit; no confirmation showed")
+    with contextlib.suppress(Exception):  # a tab the confirmation closed
+        await browser.screenshot(full_page=False, save_to=folder / "after-submit.jpg")
     return {
         "submitted": True,
         "confirmed": result["confirmed"],
