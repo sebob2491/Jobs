@@ -1093,7 +1093,8 @@ def test_broad_us_listings_are_flagged_not_dropped():
                   "Remote - United States (Travel)", "Home Based - USA", "Anywhere in the US", "US Nationwide",
                   "North America", "Work From Home, US"):
         assert location_matches(broad, az) is None, broad
-    for elsewhere in ("Remote - Canada", "Remote, Japan", "US - Texas", "Remote - TX"):
+    # another state alone, its code also an English word (Edwards lists Oregon jobs as "OR", live)
+    for elsewhere in ("Remote - Canada", "Remote, Japan", "US - Texas", "Remote - TX", "OR", "Onsite - OR"):
         assert location_matches(elsewhere, az) is False, elsewhere
 
 

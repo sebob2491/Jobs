@@ -211,8 +211,11 @@ def location_matches(text: str, terms: list[str]) -> bool | None:
         if any(f" {t} " in padded for t in terms):
             return True
     n = norm(text)
-    if not n or re.search(r"\+\d+ more\b", n):  # "Greensboro, NC (+3 more)"
+    if not n or re.search(r"\+\d+ more\b", n):  # "Greensboro, NC (+3 more)": the others could be here
         return None
+    named = _states_named(text)
+    if wanted and named and not named & wanted:
+        return False  # "OR", "Austin, TX": another state, and none of the area's places
     # "Remote - US" could be done from anywhere; "Remote, Japan" can't
     return None if all(w in _BROAD_WORDS or w.isdigit() for w in n.split()) else False
 
