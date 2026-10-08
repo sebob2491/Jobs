@@ -64,3 +64,23 @@ def test_click_guard_rules(monkeypatch):
     check({"label": "Next", "text": "Next", "formSubmit": True})
     with pytest.raises(SubmitBlocked):
         check({"label": "Send it", "text": "Send it", "formSubmit": True})
+
+
+def test_every_employer_list_loads_with_known_values():
+    """The plugin's other lists (data/lists/*.yaml), which a person's companies.yaml names,
+    and the template that names them."""
+    from job_apply.search import BROWSER_SEARCHES, SEARCHERS, employer_lists
+
+    lists = employer_lists()
+    for name, path in lists.items():
+        data = yaml.safe_load(path.read_text())
+        names = [c["name"] for c in data["companies"]]
+        assert names and len(names) == len(set(names)), name
+        for c in data["companies"]:
+            assert c["careers_url"].startswith("https://"), (name, c)
+            assert c["ats"] in set(ATS_NAMES) | {"custom", "unknown"}, (name, c)
+            assert c["confidence"] in {"high", "medium", "low"}, (name, c)
+            for kind in c.get("search") or {}:
+                assert kind in set(SEARCHERS) | BROWSER_SEARCHES, (name, c["name"], kind)
+    template = yaml.safe_load((config.PLUGIN_ROOT / "templates" / "companies.example.yaml").read_text())
+    assert set(template["lists"]) <= set(lists) and template["companies"] == []
