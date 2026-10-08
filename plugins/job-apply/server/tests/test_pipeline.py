@@ -372,6 +372,161 @@ def test_a_sign_in_step_that_never_draws_its_buttons_is_a_sign_in(srv, monkeypat
     assert r.need == "sign_in" and r.blocking, (r.reason, r.log)
 
 
+def test_a_sign_in_step_with_no_buttons_holds_still_until_the_person_moves_it(srv, monkeypatch):
+    """That page reads as an ordinary page, so it looked "past the sign-in" on every look: the
+    job was queued again, waited, paused again, and held the queue in a loop for good."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "SIGN_IN_STEP_WAIT", 1)
+    job = srv.add_job(url=fixture_url("site/signin-step-loading.html"), title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status == "needs_you")
+            seen = len(r.log)
+            await asyncio.sleep(4)  # many looks
+            assert r.status == "needs_you" and r.need == "sign_in" and len(r.log) == seen, r.log
+            await r.page.goto(fixture_url("site/step1.html"))  # the person signs in: the application
+            await until(lambda: r.need == "questions" or r.status == "ready", about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    run(go())
+
+
+def test_only_the_jobs_own_places_are_its_application(srv):
+    """A paused tab on another employer's tenant of the same job system isn't this job: the
+    desk would drive (and could submit) that application as this one."""
+    from job_apply.pipeline import Run
+
+    applier = Applier(srv)
+    run_ = Run(1, "FSE", "Acme", status="needs_you", need="sign_in")
+    run_.url = "https://acme.wd1.myworkdayjobs.com/External/job/Phoenix/FSE_R1/apply"
+    run_.paused_host = "acme.wd1.myworkdayjobs.com"
+    own = {"acme.wd1.myworkdayjobs.com"}
+    assert applier._own_place(run_, "https://acme.wd1.myworkdayjobs.com/External/job/Phoenix/FSE_R1/apply/step2", own)
+    assert not applier._own_place(run_, "https://other.wd5.myworkdayjobs.com/Careers/job/X_R9/apply", own)
+    assert not applier._own_place(run_, "https://mail.google.com/mail/u/0/", own)
+    # on from the employer's own site into its job system (TI's careers site into Oracle)
+    run_.paused_host = "careers.ti.com"
+    assert applier._own_place(run_, "https://edbz.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX/job/1",
+                              {"careers.ti.com"})
+
+
+def test_a_tab_that_cant_be_read_still_lets_the_queue_go_on(srv, monkeypatch):
+    """A paused tab that keeps failing to be read held the queue for the whole 45 minutes."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "HANDS_ON_IDLE", 1)
+    job = srv.add_job(url=fixture_url("site/botcheck.html"), title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def broken(run):
+        raise RuntimeError("the tab crashed")
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status == "needs_you" and r.blocking)
+            applier._moved_on = broken
+            await until(lambda: r.left, timeout=15, about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert not r.blocking and "nothing happened in its tab" in r.reason
+
+
+def test_a_this_application_answer_stays_on_its_page(srv):
+    """"If yes, please explain" answered about relatives on one page went into a later page's
+    "If yes, please explain" about something else."""
+    from job_apply.pipeline import Run
+
+    filled = []
+
+    class Stub:
+        async def fill_form(self, values):
+            filled.extend(values)
+            return {"ok": True, "results": [{"id": v["id"], "ok": True} for v in values]}
+
+    applier = Applier(srv)
+    applier.srv = Stub()
+
+    async def look():
+        return page_two, ""
+
+    applier._look = look
+    monkey = pipeline.ONCE_SETTLE
+    pipeline.ONCE_SETTLE = 0
+    try:
+        r = Run(1, "FSE", "Acme")
+        r.once[question_key("If yes, please explain")] = "My brother works in Fab 3"
+        page_one = {"url": "https://x.example/apply", "headings": ["Relatives"],
+                    "fields": [{"id": "5", "label": "If yes, please explain", "kind": "text", "value": ""}]}
+        page_two = {"url": "https://x.example/apply", "headings": ["Background"],
+                    "fields": [{"id": "9", "label": "If yes, please explain", "kind": "text", "value": ""}]}
+        run(applier._fill_once(r, page_one))
+        assert [v["id"] for v in filled] == ["5"]
+        filled.clear()
+        run(applier._fill_once(r, page_two))
+        assert filled == []  # a later page's box of the same name gets nothing
+    finally:
+        pipeline.ONCE_SETTLE = monkey
+
+
+def test_a_job_skipped_while_submit_for_me_checks_it_isnt_submitted(srv):
+    from job_apply.pipeline import Run
+
+    applier = Applier(srv)
+    r = Run(1, "FSE", "Acme", status="ready")
+    calls = []
+
+    class Stub:
+        class browser:
+            current_job_id = None
+
+            @staticmethod
+            def use_tab(page):
+                return True
+
+        async def inspect_form(self, include_dropdown_options=False):
+            r.status = "skipped"  # Skip pressed meanwhile
+            return {"fields": []}
+
+        async def submit_application(self, **kw):
+            calls.append(kw)
+            return {"submitted": True, "confirmed": True}
+
+    applier.srv = Stub()
+    run(applier._submit(r, by_person=False))
+    assert calls == [] and r.status == "skipped"
+
+
+def test_a_submit_beside_a_next_button_isnt_the_review_page(srv, monkeypatch):
+    """Step 1 of 2 with Next, and a job-alerts Submit in the footer: taken for the review page,
+    "Submit for me" would have pressed a Submit before the application was filled."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    job = srv.add_job(url=fixture_url("site/next-and-submit.html"), title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status in ("ready", "needs_you", "failed"), about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert r.status == "ready" and r.url.endswith("review.html"), state(r)()
+    assert "clicked \u201cNext\u201d" in r.log
+
+
 def test_a_list_of_jobs_isnt_paged_through(srv, monkeypatch):
     """A link to a search page (Analog Devices' board) has "next" for its next page of jobs:
     pressing it again and again never opens an application."""
@@ -729,7 +884,7 @@ def test_an_emailed_code_or_link_is_read_from_the_inbox(srv, monkeypatch, query)
     applier = Applier(srv)
     asked = []
 
-    def inbox(address, password, since, senders, want, allowed_link):
+    def inbox(address, password, since, senders, want, allowed_link, before=None):
         asked.append((address, password, want))
         assert since > time.time() - 120  # since the wait began
         if want == "code":
@@ -775,7 +930,7 @@ def test_a_code_that_comes_after_the_queue_went_on_is_still_used(srv, monkeypatc
     applier = Applier(srv)
     sent = {"yet": False}
 
-    def inbox(address, password, since, senders, want, allowed_link):
+    def inbox(address, password, since, senders, want, allowed_link, before=None):
         return pipeline.mailbox.Found("code", "123456", "careers.example.com", time.time()) if sent["yet"] else None
 
     monkeypatch.setattr(pipeline.mailbox, "search", inbox)

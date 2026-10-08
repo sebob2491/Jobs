@@ -1,0 +1,21 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Apply: My Information</title></head>
+<body>
+<!-- Step 1 of an application whose page also carries a job-alerts box with its own Submit
+     button in the footer: the step's Next is the way on, not that Submit. -->
+<div>current step 1 of 2</div>
+<h2>My Information</h2>
+<form id="step" novalidate onsubmit="event.preventDefault(); location.href = 'review.html';">
+  <label for="fn">First Name *</label> <input id="fn" required>
+  <label for="ln">Last Name *</label> <input id="ln" required>
+  <button type="submit">Next</button>
+</form>
+<footer>
+  <form id="alerts" onsubmit="event.preventDefault(); document.getElementById('alerts').innerHTML = 'Subscribed.';">
+    <label for="alert-email">Get job alerts by email</label> <input id="alert-email">
+    <button type="submit">Submit</button>
+  </form>
+</footer>
+</body>
+</html>

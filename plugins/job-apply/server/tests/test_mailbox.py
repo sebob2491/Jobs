@@ -174,3 +174,16 @@ def test_a_refused_app_password_says_so(imap):
         mailbox.search("sam@gmail.com", "wrong", time.time(), {"ti.com"}, "code")
     with pytest.raises(MailboxError, match="can't read mail for example.com"):
         mailbox.search("sam@example.com", "x", time.time(), {"ti.com"}, "code")
+
+
+def test_mail_after_another_jobs_wait_began_is_that_jobs(imap):
+    """Workday sends every employer's codes from one address: a code that came after a later
+    job began waiting on its own is that job's, not this one's."""
+    since = time.time()
+    imap.messages = [
+        (since + 10, _message("acme@otp.workday.com", "Verify", "Your verification code is 111111")),
+        (since + 60, _message("other@otp.workday.com", "Verify", "Your verification code is 222222")),
+    ]
+    workday = mailbox.ATS_MAIL_DOMAINS["workday"]
+    assert mailbox.search("sam@gmail.com", "pw", since, workday, "code").value == "222222"
+    assert mailbox.search("sam@gmail.com", "pw", since, workday, "code", before=since + 50).value == "111111"

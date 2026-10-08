@@ -127,9 +127,10 @@ def find_link(text: str, links: list[str], allowed_link: Callable[[str], bool]) 
 
 
 def search(address: str, password: str, since: float, allowed: set[str], want: str,
-           allowed_link: Callable[[str], bool] = lambda url: False) -> Found | None:
+           allowed_link: Callable[[str], bool] = lambda url: False, before: float | None = None) -> Found | None:
     """The newest code (want="code") or confirmation link (want="link") from an allowed
-    sender that arrived after `since` (a time.time()). Read-only: nothing is marked read."""
+    sender that arrived after `since` (a time.time()), and before `before` when given (mail
+    after then is another waiting job's). Read-only: nothing is marked read."""
     host = imap_host(address)
     if host is None:
         raise MailboxError(f"the desk can't read mail for {address.rsplit('@', 1)[-1]} addresses")
@@ -164,7 +165,7 @@ def search(address: str, password: str, since: float, allowed: set[str], want: s
                 mid = part[0].split()[0]
             except Exception:  # an odd message: not one to read
                 continue
-            if received >= since - LOOK_BACK and sender_allowed(sender, allowed):
+            if received >= since - LOOK_BACK and (before is None or received < before) and sender_allowed(sender, allowed):
                 wanted.append((received, mid, sender))
         for received, mid, sender in sorted(wanted, key=lambda w: w[0], reverse=True):  # newest first
             _, parts = box.fetch(mid, "(BODY.PEEK[])")
