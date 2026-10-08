@@ -79,6 +79,9 @@ EXTRACT_JS = r"""
   const isRequired = (el, label) => {
     if (el.required || el.getAttribute('aria-required') === 'true') return true;
     if (/\*\s*$|\(required\)/i.test(label || '')) return true;
+    // Oracle: a required row's label says so only by a class (its star is drawn by CSS)
+    const row = el.closest('.input-row');
+    if (row && row.querySelector('.input-row__label--required')) return true;
     const ff = el.closest('[data-automation-id^="formField"]');
     return !!(ff && ff.querySelector('abbr[title*="equired"], [class*="required" i]'));
   };

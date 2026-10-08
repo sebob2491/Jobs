@@ -583,12 +583,17 @@ def test_a_sign_up_form_with_one_password_box_is_filled_in(srv, monkeypatch, pag
     assert "filled the Create Account form with your details and saved password" in r.log
 
 
-def test_a_question_the_site_answers_itself_is_not_asked(srv, monkeypatch):
+@pytest.mark.parametrize("mode", ["", "?slow=3500"])
+def test_a_question_the_site_answers_itself_is_not_asked(srv, monkeypatch, mode):
     """Oracle fills County from the ZIP picked. The profile has no county, so County was among
     the questions the page left open before filling; once the site has filled it, it isn't
-    put to the person."""
+    put to the person.
+
+    ?slow: onsemi, live, drew City, State and County afresh a while after the ZIP was picked.
+    A box that wasn't back in time to be filled, but was by the time the page was looked at
+    again, filled by the site, isn't asked about either."""
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
-    job = srv.add_job(url=fixture_url("site/oracle-address.html"), title="FSE", company="Example Fab")["job"]
+    job = srv.add_job(url=fixture_url("site/oracle-address.html") + mode, title="FSE", company="Example Fab")["job"]
     applier = Applier(srv)
 
     async def go():
@@ -694,11 +699,12 @@ def test_an_emailed_link_or_code_is_waited_for(srv, monkeypatch, query):
     assert any(line.startswith("filled") for line in r.log), r.log
 
 
-@pytest.mark.parametrize("query", ["?code", ""])
+@pytest.mark.parametrize("query", ["?code", "?code&split", ""])
 def test_an_emailed_code_or_link_is_read_from_the_inbox(srv, monkeypatch, query):
     """With an email app password saved, a job waiting on an emailed code gets it from the
     inbox, typed in and Verify pressed; one waiting on a link has it opened in this browser
-    and its tab reloaded. Only mail from that job's site, since the wait began, is asked for."""
+    and its tab reloaded. Only mail from that job's site, since the wait began, is asked for.
+    &split: Oracle's "Confirm Your Identity" (onsemi, TI, live) has a box per digit."""
     import functools
     import http.server
     import threading

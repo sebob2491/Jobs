@@ -337,6 +337,14 @@ def test_a_place_lookup_picks_the_entry_in_the_rest_of_the_address():
     assert choose_place("Arizona", ["Arizona", "Arkansas"], near) == "Arizona"
 
 
+def test_a_zip_extension_box_is_not_given_the_zip():
+    """onsemi's Oracle form, live: "Zip Code+4" was given the 5-digit ZIP."""
+    p = prof()
+    assert resolve_field(f("Zip Code *", "combobox"), p).value == p.get("personal.address.postal_code")
+    for label in ("Zip Code+4", "ZIP + 4", "Zip plus 4", "Zip Code Extension"):
+        assert resolve_field(f(label), p) is None, label
+
+
 def test_place_words_are_the_rest_of_the_address(job_apply_home):
     p = prof()
     words = place_words("city", p)

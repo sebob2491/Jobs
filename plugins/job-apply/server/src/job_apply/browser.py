@@ -718,12 +718,17 @@ class BrowserSession:
             here = self._locator(page, field["id"])
         if await self._present(here):
             return field
-        await self._extract(page)
-        same = [f for f in self._fields.values()
-                if f.get("label") == field.get("label") and f.get("kind") == field.get("kind")]
-        if len(same) != 1:
-            raise KeyError(f"{field.get('label')!r} was drawn again and can't be told apart; call inspect_form")
-        return same[0]
+        for wait in (0, 500, 1000, 1500):  # a box part-way through being drawn again isn't there yet
+            if wait:
+                await page.wait_for_timeout(wait)
+            await self._extract(page)
+            same = [f for f in self._fields.values()
+                    if f.get("label") == field.get("label") and f.get("kind") == field.get("kind")]
+            if len(same) == 1:
+                return same[0]
+            if same:
+                break  # two boxes with its label: waiting won't tell them apart
+        raise KeyError(f"{field.get('label')!r} was drawn again and can't be told apart; call inspect_form")
 
     async def fill(self, values: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Fill fields by id. Each item: {"id": ..., "value": ...}."""

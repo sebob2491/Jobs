@@ -352,6 +352,8 @@ RULES: list[tuple[str, str, Getter, int | None, set[str] | None]] = [
     ("address2", r"address line 2|^address 2|apartment|suite|^apt|^unit", _p("personal.address.line2"), 45, None),
     ("address1", r"address line 1|^address 1|^street|^(home |mailing |street )?address$", _p("personal.address.line1"), 45, None),
     ("city", r"^city|town|location city|current city|city of residence", _p("personal.address.city"), 45, None),
+    # Oracle's "Zip Code+4" wants the 4-digit extension, not the ZIP: left for the site to fill
+    ("postal_ext", r"zip( code)? ?(\+|plus) ?4|^zip ?4$|zip (code )?extension", lambda p, j: None, 45, None),
     ("postal", r"zip|postal|post code|postcode", _p("personal.address.postal_code"), 45, None),
     ("county", r"^county", lambda p, j: p.get("personal.address.county"), 45, None),
     ("state", r"^state|province|^region|state province", _state, 45, None),

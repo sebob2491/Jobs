@@ -1,0 +1,201 @@
+{
+  "source_url": "https://hctz.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1001/job/2506217/apply/section/1",
+  "note": "live pipeline: onsemi (Oracle), reached from a fresh address. Oracle marks a required row only by its label's class: the Yes/No questions are required",
+  "fields": [
+    {
+      "label": "Import your profile from resume",
+      "kind": "file",
+      "required": false
+    },
+    {
+      "label": "Last Name",
+      "kind": "text",
+      "required": true
+    },
+    {
+      "label": "First Name",
+      "kind": "text",
+      "required": true
+    },
+    {
+      "label": "Middle Name",
+      "kind": "text",
+      "required": false
+    },
+    {
+      "label": "Preferred Name",
+      "kind": "text",
+      "required": false
+    },
+    {
+      "label": "Previous Last Name",
+      "kind": "text",
+      "required": false
+    },
+    {
+      "label": "Suffix",
+      "kind": "text",
+      "required": false
+    },
+    {
+      "label": "Email Address",
+      "kind": "text",
+      "required": false
+    },
+    {
+      "label": "Phone Number",
+      "kind": "combobox",
+      "required": false
+    },
+    {
+      "label": "Phone Number",
+      "kind": "text",
+      "required": false
+    },
+    {
+      "label": "Country *",
+      "kind": "combobox",
+      "required": true
+    },
+    {
+      "label": "Address Line 1 *",
+      "kind": "combobox",
+      "required": true
+    },
+    {
+      "label": "Address Line 2",
+      "kind": "text",
+      "required": false
+    },
+    {
+      "label": "Address Line 3",
+      "kind": "text",
+      "required": false
+    },
+    {
+      "label": "City *",
+      "kind": "combobox",
+      "required": true
+    },
+    {
+      "label": "State *",
+      "kind": "combobox",
+      "required": true
+    },
+    {
+      "label": "County *",
+      "kind": "combobox",
+      "required": true
+    },
+    {
+      "label": "Zip Code *",
+      "kind": "combobox",
+      "required": true
+    },
+    {
+      "label": "Zip Code+4",
+      "kind": "text",
+      "required": false
+    },
+    {
+      "label": "How did you hear about us?",
+      "kind": "combobox",
+      "required": true
+    },
+    {
+      "label": "Upload Resume",
+      "kind": "file",
+      "required": true
+    },
+    {
+      "label": "Upload Cover Letter",
+      "kind": "file",
+      "required": false
+    },
+    {
+      "label": "Link 1",
+      "kind": "text",
+      "required": false
+    },
+    {
+      "label": "Upload Attachment",
+      "kind": "file",
+      "required": false
+    },
+    {
+      "label": "Gender",
+      "kind": "combobox",
+      "required": false
+    },
+    {
+      "label": "Veteran Status",
+      "kind": "combobox",
+      "required": false
+    },
+    {
+      "label": "Full Name",
+      "kind": "text",
+      "required": true
+    },
+    {
+      "label": "Title",
+      "kind": "radio_group",
+      "required": false
+    },
+    {
+      "label": "Are you or is any Relative, currently employed by our current independent auditor, PricewaterhouseCoopers, LLP (“PwC”), or were you or any Relative employed by PwC at any time during the last three years? If yes, please explain.",
+      "kind": "radio_group",
+      "required": true
+    },
+    {
+      "label": "Do you, or does any Relative, have a direct or indirect relationship with any member of our Board of Directors or any senior officers of our company, whether personal or professional? If yes, please explain.",
+      "kind": "radio_group",
+      "required": true
+    },
+    {
+      "label": "Will you now or in the future require sponsorship to work in the country for which the position is located?",
+      "kind": "radio_group",
+      "required": true
+    },
+    {
+      "label": "Have you ever previously worked in any onsemi establishment, anywhere in the world, whether as a full-time or part-time employee, contractor, temporary staff or intern?",
+      "kind": "radio_group",
+      "required": true
+    },
+    {
+      "label": "Are you eligible to work in the country for which you have applied?",
+      "kind": "radio_group",
+      "required": true
+    },
+    {
+      "label": "Are you at least 18 years or older?",
+      "kind": "radio_group",
+      "required": true
+    },
+    {
+      "label": "Please specify the Company Website",
+      "kind": "radio_group",
+      "required": true
+    },
+    {
+      "label": "I am Hispanic or Latino.",
+      "kind": "checkbox",
+      "required": false
+    },
+    {
+      "label": "Select the races you identify with.",
+      "kind": "checkbox_group",
+      "required": false
+    },
+    {
+      "label": "I agree to receive updates about new job opportunities.",
+      "kind": "checkbox",
+      "required": false
+    },
+    {
+      "label": "I agree to receive marketing communications",
+      "kind": "checkbox",
+      "required": false
+    }
+  ]
+}

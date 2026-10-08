@@ -54,7 +54,8 @@ FAKE_PROFILE = {
     "personal": {
         "first_name": "Testy", "last_name": "McTestface", "email": FAKE_EMAIL,
         "phone": "480-555-0199", "phone_country_code": "+1",
-        "address": {"line1": "1 Test Way", "city": "Chandler", "state": "AZ", "postal_code": "85225",
+        # Chandler's city hall: a real street, so address lookups (Oracle's) can find it
+        "address": {"line1": "175 S Arizona Ave", "city": "Chandler", "state": "AZ", "postal_code": "85225",
                     "country": "United States"},
         "linkedin_url": "https://www.linkedin.com/in/example-test-profile",
     },
