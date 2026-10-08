@@ -173,6 +173,11 @@ def test_helpers():
     assert location_matches("Remote - Arizona", az) is True
     assert location_matches("Remote, Japan", az) is False
     assert location_matches("Remote - Staffordshire, United Kingdom", az) is False
+    # a metro city's name in another state isn't the area
+    for elsewhere in ("Peoria, IL", "Glendale, California", "Chandler, TX", "Mesa, CO", "Surprise, NE"):
+        assert location_matches(elsewhere, az) is False, elsewhere
+    for here in ("Peoria, AZ", "Glendale, Arizona", "Austin, TX; Chandler, AZ", "PHOENIX AZ", "Chandler (AZ)"):
+        assert location_matches(here, az) is True, here
     assert eightfold_page_url({"host": "careers.x.com", "domain": "x.com"}, "field service | equipment", "AZ") == \
         "https://careers.x.com/careers?query=field+service+equipment&domain=x.com&location=Arizona"
 
@@ -1040,3 +1045,28 @@ def test_infor_places():
     assert _infor_place("MX:BC:Tijuana") == "Tijuana, BC, MX"
     assert _infor_place("Jalisco: El Salto") == "El Salto, Jalisco"
     assert _infor_place("Remote") == "Remote"
+
+
+def test_oracle_search_pages_past_the_first_25():
+    """Oracle answers 25 at a time: onsemi's "technician" search has 200+, and Arizona's
+    can be on any page."""
+    asked: list[str] = []
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        url = str(request.url)
+        asked.append(url)
+        m = re.search(r"offset=(\d+),", url)
+        start = int(m.group(1)) if m else 0
+        reqs = [{"Id": str(1000 + n), "Title": f"Equipment Technician {n}",
+                 "PrimaryLocation": "Phoenix, AZ, United States" if n in (30, 140) else "Austin, TX, United States"}
+                for n in range(start, min(start + 25, 150))]
+        return httpx.Response(200, json={"items": [{"TotalJobsCount": 150, "requisitionList": reqs}]})
+
+    async def go():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(answer)) as client:
+            return await search_companies("equipment technician", location="AZ", client=client, companies=[
+                {"name": "Oracle Co", "search": {"oracle": {"host": "abcd.fa.us2.oraclecloud.com", "site": "CX_1"}}}])
+    found = asyncio.run(go())
+    assert found["errors"] == {}
+    assert [r["title"] for r in found["results"]] == ["Equipment Technician 140", "Equipment Technician 30"]
+    assert len(asked) == 6 and "offset" not in asked[0] and "limit=25,offset=25," in asked[1]  # stops at the last

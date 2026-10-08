@@ -12,7 +12,7 @@ TODAY = date(2026, 10, 6)
 
 
 def tech(**over) -> Profile:
-    """An equipment technician with an Associate's and about 3 years, like the person this is for."""
+    """An equipment technician with an Associate's and about 3 years."""
     data = {
         "personal": {"address": {"city": "Phoenix", "state": "AZ"}},
         "work_authorization": {"us_person": True},
@@ -147,3 +147,95 @@ def test_recommend_reads_the_top_postings():
     assert top["fit"]["recommended"] and top["posting"]["apply_url"] == "https://x/fse2/apply"
     assert out["results"][-1]["title"] == "Accountant" and not out["results"][-1]["fit"]["recommended"]
     assert out["errors"] == {"Broken Co": "SearchError: HTTP 500"} and out["browser_only"] == [{"company": "TSMC Arizona"}]
+
+
+def test_requirements_read_the_way_postings_write_them():
+    # curly apostrophes (Workday, Oracle) and "A.S." are degrees too
+    assert requirements("Minimum Qualifications\n- Bachelor’s degree in Mechanical Engineering.")["degree"] == "bachelor"
+    assert requirements("Requirements\n- A.S. in electronics or 2+ years of military training.")["degree"] == "associate"
+    assert requirements("Required: a degree in electrical engineering.")["degree"] == "bachelor"
+    # only the preferred part of a sentence is skipped
+    both = requirements("Qualifications\nBachelor's degree required, Master's preferred.")
+    assert both["degree"] == "bachelor" and not both["degree_or_equivalent"]
+    assert requirements("Bachelor's degree in engineering, physics, or a related field preferred.")["degree"] is None
+    years = requirements("5+ years of experience required, Bachelor's preferred.")
+    assert years["years"] == 5 and years["degree"] is None
+    # "Education" ends a preferred list; a line that starts with "Experience" doesn't
+    sections = requirements("Preferred Qualifications\nExperience with vacuum pumps, Bachelor's degree.\n"
+                            "Education\nHigh school diploma or GED.")
+    assert sections["degree"] == "high_school"
+    # saying there's no clearance, or naming staff, isn't a clearance or export rule
+    assert not requirements("No security clearance required.")["clearance"]
+    assert not requirements("This role does not require a security clearance.")["clearance"]
+    assert not requirements("Coordinate with various personnel across the fab.")["us_person"]
+    assert requirements("Applicants must be U.S. persons.")["us_person"]
+
+
+def test_degrees_with_other_ways_in():
+    """Postings that take training, a certification or years of work instead of the degree
+    (the wording of Applied Materials', ASM's and Onto's postings)."""
+    for text in ("- Completion of an Associate degree, military technical training, field service experience, "
+                 "or trade certification",
+                 "- Technical school diploma or associate degree from a two\u2011year program in Electronics, or at least "
+                 "three years of progressively responsible, hands\u2011on experience",
+                 "- Alternatively: Associate degree or technical certification with 5+ years of field service experience."):
+        req = requirements("Qualifications\n" + text)
+        assert req["degree"] == "associate" and req["degree_or_equivalent"], text
+    ladder = requirements("Qualifications\n- Technical school diploma (2\u2011year program), OR BS with 1\u20133 years of "
+                          "experience, OR 7+ years of relevant technical experience.")
+    assert ladder["degree"] == "associate" and ladder["degree_or_equivalent"]
+    hard = requirements("Qualifications\n- Completion of an Associate degree or Bachelors Degree")
+    assert hard["degree"] == "associate" and not hard["degree_or_equivalent"]
+    with_years = requirements("- Bachelor's degree and 3+ years of hands-on technical experience in electronic systems.")
+    assert with_years["degree"] == "bachelor" and not with_years["degree_or_equivalent"]
+
+
+def test_a_degree_you_dont_have_is_not_preselected():
+    """The person this is for has some college classes and no degree: a posting that
+    requires a degree without "or equivalent" is shown, not preselected."""
+    some_college = tech(education={"highest_degree": "Some college"})
+    assert applicant_degree(some_college) == "high_school"
+    unfinished = [{"school": "Example Community College", "major": "Electronics"}]
+    assert applicant_degree(tech(education={}, education_history=unfinished)) == "high_school"
+    assert applicant_degree(Profile({})) is None  # says nothing about schooling: nothing checked
+    assert applicant_degree(Profile({"education": {"highest_degree": None, "school": None}})) is None  # the template
+    as_req = "Requirements\n- Associate's degree in electronics.\n- 2+ years of experience."
+    fit = score_listing({"title": "Equipment Technician", "location": "Chandler, AZ"}, some_college, as_req, TODAY)
+    assert fit.blocked and not fit.recommended
+    assert "requires an Associate's (you have a high school diploma)" in fit.concerns
+    equivalent = "Requirements\n- Associate's degree or equivalent experience.\n- 2+ years of experience."
+    ok = score_listing({"title": "Equipment Technician", "location": "Chandler, AZ"}, some_college, equivalent, TODAY)
+    assert not ok.blocked and ok.recommended
+
+
+def test_the_area_by_state_names_and_codes():
+    assert target_location(Profile({"preferences": {"locations": ["Phoenix, Arizona", "Tempe, AZ 85281"]}})) == "AZ"
+    assert target_location(Profile({"preferences": {"locations": ["Charleston, West Virginia"]}})) == "WV"
+
+
+def test_recommend_holds_postings_it_could_not_check():
+    """Only postings whose requirements were read are preselected; one whose posting says
+    it's in another state isn't either."""
+    p = tech()
+
+    async def search(query, location, limit):
+        return {"results": [
+            {"company": "Lam Research", "title": "Field Service Engineer 2", "url": "https://x/fse2", "location": "Chandler, AZ"},
+            {"company": "Acme", "title": "Field Service Engineer", "url": "https://x/unread", "location": "Phoenix, AZ"},
+            {"company": "Moved Co", "title": "Field Service Engineer", "url": "https://x/elsewhere", "location": "3 Locations"},
+        ]}
+
+    async def fetch(url):
+        if url == "https://x/unread":
+            raise RuntimeError("unreadable")
+        where = "Peoria, IL" if url == "https://x/elsewhere" else "Chandler, AZ"
+        return Posting(url=url, description=LAM_FSE2, location=where)
+
+    # only one posting is read by rank, but every one that would be preselected is read too
+    out = asyncio.run(recommend(p, search, read_postings=1, fetch=fetch, today=TODAY))
+    fits = {r["url"]: r["fit"] for r in out["results"]}
+    assert fits["https://x/fse2"]["recommended"]
+    assert not fits["https://x/unread"]["recommended"] and fits["https://x/unread"]["held"]
+    assert "posting not read yet: its requirements are unchecked" in fits["https://x/unread"]["concerns"]
+    assert not fits["https://x/elsewhere"]["recommended"]
+    assert "the posting says it's in Peoria, IL" in fits["https://x/elsewhere"]["concerns"]

@@ -18,7 +18,7 @@ from typing import Any, Awaitable, Callable
 from .autofill import degree_key, norm
 from .config import Profile
 from .postings import Posting, fetch_posting
-from .search import MAX_ALTERNATIVES, title_matches
+from .search import MAX_ALTERNATIVES, US_STATES, location_matches, location_terms, title_matches
 
 # Semiconductor equipment roles, used when the profile names no target titles.
 DEFAULT_TITLES = ["field service", "customer service engineer", "customer engineer", "equipment technician"]
@@ -38,14 +38,22 @@ _MONTHS = {m: i for i, m in enumerate(
 # Posting text
 _DEGREES = [  # lowest first, so "Associate's or Bachelor's" counts as an Associate's
     ("high_school", r"high school|\bged\b"),
-    ("associate", r"associate'?s?\s+(?:degree|of)|\ba\.?a\.?s\.?\b|(?:2|two)[- ]year (?:technical )?degree|technical degree"),
-    ("bachelor", r"bachelor|\bb\.?s\.?(?:e\.?e\.?|m\.?e\.?|c\.?)?\b|\bb\.?a\.?\b|(?:4|four)[- ]year degree|undergraduate degree"),
+    ("associate", r"associate'?s?\s+(?:degree|of)|\ba\.?a\.?s\.?\b|\ba\.s\.|(?:2|two)[- ]year (?:technical )?(?:degree|program)|"
+                  r"technical degree|(?:technical|trade|vocational) school"),
+    ("bachelor", r"bachelor|\bb\.?s\.?(?:e\.?e\.?|m\.?e\.?|c\.?)?\b|\bb\.?a\.?\b|(?:4|four)[- ]year degree|undergraduate degree|"
+                 r"(?:^|\b(?:a|an|or)\s+)degree in (?:electrical|electronic|mechanical|engineering|computer|physics|chemi|"
+                 r"science|math|a related|related|a technical|technical)"),
     ("master", r"master'?s|\bm\.?s\.?(?:c\.?)?\b(?!\s*(?:office|word|excel|project))|\bmba\b"),
     ("doctorate", r"\bph\.?\s?d\b|doctorate"),
 ]
 _EQUIVALENT = re.compile(r"or equivalent|equivalent (?:combination|experience|work|military)|in lieu of|"
-                         r"or (?:relevant|related|equivalent) (?:work )?experience|or \d+\+? years|"
-                         r"(?:ged|high school)[^.\n]{0,40}(?:plus|and|with) \d")
+                         r"or (?:relevant|related|equivalent) (?:work )?experience|"
+                         r"or (?:at least |a minimum of )?(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten)\+? years|"
+                         r"(?:ged|high school)[^.\n]{0,40}(?:plus|and|with) \d|"
+                         # "an associate degree, military technical training, field service experience, or trade
+                         # certification"; "associate degree or technical certification with 5+ years"
+                         r",\s+(?:[a-z-]+\s+){0,2}(?:training|certification|experience)\b[^.]*\bor\b|"
+                         r"\bor\s+(?:[a-z-]+\s+){0,2}(?:training|certification)\b")
 _PREFERRED = re.compile(r"\b(preferred|a plus|desired|desirable|nice to have|ideally|bonus)\b")
 # Headings start with these words or end with a colon ("Preferred Qualifications",
 # "Nice to have:"); "Bachelor's degree preferred" is a requirement line, not a heading.
@@ -53,11 +61,16 @@ _PREF_WORDS = r"(preferred|desired|nice to have|bonus|a plus)"
 _REQ_WORDS = r"(minimum|required|basic|must have|requirements|qualifications|what you need|what you'll need|" \
              r"who you are|you have|you bring|key skills)"
 _PREF_HEADING = re.compile(rf"^{_PREF_WORDS}\b|\b{_PREF_WORDS}\b.*:$")
-_REQ_HEADING = re.compile(rf"^{_REQ_WORDS}\b|\b{_REQ_WORDS}\b.*:$")
+# "Education" or "Experience" alone ends a preferred list too; a line that starts with the
+# word ("Experience with vacuum pumps") doesn't.
+_REQ_HEADING = re.compile(rf"^{_REQ_WORDS}\b|\b({_REQ_WORDS[1:-1]}|education|experience)\b.*:$|"
+                          r"^(education|experience)(\s*(and|&|/)\s*(education|experience|skills|training|qualifications))*$")
 _CLEARANCE = re.compile(r"(?:active|current|secret|top secret|ts/sci|security|dod)\s+clearance|clearance (?:is )?required")
+_NO_CLEARANCE = re.compile(r"\bno (?:\w+ )?clearance|clearance (?:is )?not required|"
+                           r"(?:not require|without) (?:a |an |any )?(?:\w+ )?clearance")
 _CLEARANCE_LATER = re.compile(r"(?:ability|able|eligib\w*) to obtain|obtain and maintain|be able to get")
-_US_PERSON = re.compile(r"u\.?s\.? person|\bitar\b|export[- ]control|export administration regulations|"
-                        r"u\.?s\.? citizenship (?:is )?required")
+_US_PERSON = re.compile(r"\bu\.?s\.? persons?\b|\bitar\b|export[- ]control|export administration regulations|"
+                        r"\bu\.?s\.? citizenship (?:is )?required")
 _EAR = re.compile(r"\bEAR\b")  # in capitals only: "ear plugs" is safety gear
 _YEARS = re.compile(r"(\d{1,2})(?:\s*(?:-|\u2013|to)\s*\d{1,2})?\s*\+?\s*(?:\+|or more|plus)?\s*(?:years?|yrs?)\b"
                     r"[^.\n]{0,60}?\bexperience")
@@ -72,10 +85,11 @@ class Fit:
     reasons: list[str] = field(default_factory=list)
     concerns: list[str] = field(default_factory=list)
     blocked: bool = False  # a hard requirement the profile says isn't met
+    held: bool = False  # not preselected until checked: its posting unread, or it's outside the area
 
     @property
     def recommended(self) -> bool:
-        return not self.blocked and self.score >= RECOMMEND_AT
+        return not self.blocked and not self.held and self.score >= RECOMMEND_AT
 
     def to_dict(self) -> dict[str, Any]:
         return {**asdict(self), "recommended": self.recommended}
@@ -96,10 +110,14 @@ def target_query(prof: Profile) -> str:
 def target_location(prof: Profile) -> str | None:
     """States named in preferences.locations ("Phoenix, AZ"), else the home state."""
     states = []
+    names = sorted(US_STATES.items(), key=lambda x: -len(x[1]))  # "West Virginia" before "Virginia"
     for loc in prof.get("preferences.locations") or []:
         m = re.search(r",\s*([A-Za-z]{2})\b", str(loc))
         if m:
             states.append(m.group(1).upper())
+            continue
+        padded = f" {norm(str(loc))} "  # "Phoenix, Arizona"
+        states += [code for code, name in names if f" {norm(name)} " in padded][:1]
     if not states and prof.get("personal.address.state"):
         states.append(str(prof.get("personal.address.state")).strip())
     return "|".join(dict.fromkeys(states)) or None
@@ -147,11 +165,19 @@ def applicant_years(prof: Profile, today: date | None = None) -> float | None:
 
 
 def applicant_degree(prof: Profile) -> str | None:
-    for value in [prof.get("education.highest_degree")] + [
-            e.get("degree") for e in prof.get("education_history") or [] if isinstance(e, dict)]:
+    """The person's highest degree. "Some college", or a school not finished (no degree in
+    its entry), is no degree yet: counted as a high school diploma, so a posting that
+    requires one above it says so. None only when the profile says nothing about schooling."""
+    values = [prof.get("education.highest_degree")] + [
+        e.get("degree") for e in prof.get("education_history") or [] if isinstance(e, dict)]
+    for value in values:
         key = degree_key(str(value or ""))
         if key:
             return key
+    education = prof.get("education")
+    schooling = values + (list(education.values()) if isinstance(education, dict) else [])
+    if any(str(v or "").strip() for v in schooling) or prof.get("education_history"):
+        return "high_school"
     return None
 
 
@@ -224,9 +250,30 @@ def _sentences(text: str) -> list[str]:
     return [s.strip() for s in re.split(r"(?<=[.!?])\s+|\n+", text) if s.strip()]
 
 
+_DEGREE_WORD = re.compile(r"degree|diploma|\bged\b|bachelor|master|associate|ph\.?\s?d|doctorate")
+_MARKED = re.compile(rf"{_PREFERRED.pattern}|\b(required|requires?|minimum|must|mandatory)\b")
+
+
+def _without_preferred(sentence: str) -> str:
+    """The parts of a sentence that aren't marked preferred: "bachelor's degree required,
+    master's preferred" keeps the Bachelor's. A clause without a degree of its own belongs
+    to the one before, until that one says required or preferred: "bachelor's degree in
+    engineering, physics, or a related field preferred" is all preferred."""
+    groups: list[list[str]] = []
+    closed = True
+    for clause in re.split(r"\s*[;,]\s*|\s+(?:and|but|while|whereas)\s+", sentence):
+        if closed or _DEGREE_WORD.search(clause):
+            groups.append([])
+        groups[-1].append(clause)
+        closed = bool(_MARKED.search(clause))
+    return " ".join(" ".join(g) for g in groups if not _PREFERRED.search(" ".join(g))).strip()
+
+
 def requirements(text: str) -> dict[str, Any]:
     """What a posting's minimum requirements ask for, read from its text."""
-    required, _ = _split_sections(text or "")
+    # Workday's and Oracle's curly apostrophes and non-breaking hyphens ("2\u2011year program")
+    text = re.sub(r"[\u2010-\u2015]", "-", (text or "").replace("\u2019", "'").replace("\u2018", "'"))
+    required, _ = _split_sections(text)
     out: dict[str, Any] = {"degree": None, "degree_or_equivalent": False, "years": None, "clearance": False,
                            "clearance_later": False, "us_person": False, "travel": None, "shifts": False}
     degree_levels: list[int] = []
@@ -234,15 +281,17 @@ def requirements(text: str) -> dict[str, Any]:
     sentences = _sentences(required.lower())
     for i, sentence in enumerate(sentences):
         if _PREFERRED.search(sentence):
-            continue
+            sentence = _without_preferred(sentence)
+            if not sentence:
+                continue
         levels = [_LEVEL[key] for key, pattern in _DEGREES if re.search(pattern, sentence)]
-        if levels and re.search(r"degree|diploma|\bged\b|\bbs\b|\bb\.s|bachelor|master|associate|ph\.?d", sentence):
+        if levels and re.search(r"degree|diploma|\bged\b|\bbs\b|\bb\.s|\ba\.a?\.?s\.|bachelor|master|associate|ph\.?d", sentence):
             degree_levels.append(min(levels))
             following = sentences[i + 1] if i + 1 < len(sentences) else ""
             if _EQUIVALENT.search(sentence) or re.match(r"[-\s]*or\b", following) and _EQUIVALENT.search("or " + following):
                 out["degree_or_equivalent"] = True
         years += [int(y) for y in _YEARS.findall(sentence) if 0 < int(y) <= 15]
-        if _CLEARANCE.search(sentence):
+        if _CLEARANCE.search(sentence) and not _NO_CLEARANCE.search(sentence):
             if _CLEARANCE_LATER.search(sentence):
                 out["clearance_later"] = True
             else:
@@ -327,8 +376,9 @@ def _score_requirements(fit: Fit, req: dict[str, Any], prof: Profile, years: flo
             if req["degree_or_equivalent"]:
                 fit.score -= 6
                 fit.concerns.append(f"asks for {asked} or equivalent experience (you have {_DEGREE_NAME[mine]})")
-            else:
+            else:  # a requirement not met: shown, not preselected
                 fit.score -= 25
+                fit.blocked = True
                 fit.concerns.append(f"requires {asked} (you have {_DEGREE_NAME[mine]})")
         elif mine:
             fit.score += 5
@@ -368,10 +418,15 @@ Search = Callable[[str, str | None, int], Awaitable[dict[str, Any]]]
 Fetch = Callable[[str], Awaitable[Posting]]
 
 
+READ_AT_MOST = 150  # postings read per search: every one that would be preselected, up to this
+
+
 async def recommend(prof: Profile, search: Search, limit_per_company: int = 10, read_postings: int = 30,
                     fetch: Fetch = fetch_posting, today: date | None = None) -> dict[str, Any]:
     """Search every employer for the profile's target titles and area, score each listing,
-    then read the top `read_postings` postings to check their requirements."""
+    then read the postings (the top `read_postings`, and every one that would be preselected)
+    to check their requirements. One that wasn't read, or turns out to be elsewhere, isn't
+    preselected: its requirements (a degree, a clearance) are unchecked."""
     query, location = target_query(prof), target_location(prof)
     found = await search(query, location, limit_per_company)
     items: list[dict[str, Any]] = []
@@ -391,7 +446,20 @@ async def recommend(prof: Profile, search: Search, limit_per_company: int = 10, 
                             "posted_at", "external_id", "ats")}
         item["fit"] = score_listing(item, prof, posting.description, today)
 
-    await asyncio.gather(*(read(i) for i in items[:read_postings]))
+    to_read = list({id(i): i for i in items[:read_postings] + [i for i in items if i["fit"].recommended]}.values())
+    await asyncio.gather(*(read(i) for i in to_read[:READ_AT_MOST]))
+    terms = location_terms(location)
+    for item in items:
+        fit = item["fit"]
+        if "posting" not in item:
+            if fit.score >= RECOMMEND_AT and not fit.blocked:
+                fit.held = True
+                fit.concerns.append("posting not read yet: its requirements are unchecked")
+            continue
+        where = item["posting"].get("location") or ""
+        if where and location_matches(where, terms) is False and location_matches(item.get("location") or "", terms) is not True:
+            fit.held = True
+            fit.concerns.append(f"the posting says it's in {where}")
     items.sort(key=lambda x: (-x["fit"].score, x.get("company", ""), x.get("title", "")))
     for item in items:
         item["fit"] = item["fit"].to_dict()

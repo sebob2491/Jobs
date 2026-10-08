@@ -110,7 +110,11 @@ opens a page on your computer (served by the plugin on `127.0.0.1`):
    Associate's)", "senior-level role", "requires an active clearance". Openings that
    weren't there on your last visit are tagged **New**.
 2. Tick the ones you want, or press **Select recommended**, then **Apply to
-   selected**. The desk works through them one at a time in the browser window. It
+   selected**. **Select recommended** leaves out openings whose posting asks for a
+   degree you don't have (unless it says "or equivalent experience"), and ones the
+   desk couldn't open to check, or whose posting puts the job in another state.
+   They're still listed, with the reason, so you can tick them yourself.
+   The desk works through them one at a time in the browser window. It
    clicks into each application, fills every page, adds Workday's work and
    education blocks, and stops at each review page.
 3. **Needs you** lists what it can't do alone:
