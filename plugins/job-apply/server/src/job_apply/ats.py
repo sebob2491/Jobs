@@ -5,31 +5,58 @@ from __future__ import annotations
 import re
 from urllib.parse import urlparse
 
-# (ats id, regex on host+path). First match wins.
-_PATTERNS: list[tuple[str, str]] = [
-    ("linkedin", r"(^|\.)linkedin\.com"),
-    ("indeed", r"(^|\.)indeed\.com|smartapply\.indeed"),
-    ("workday", r"myworkdayjobs\.com|myworkdaysite\.com|\.myworkday\.com"),
-    ("greenhouse", r"greenhouse\.io"),
-    ("lever", r"(^|\.)lever\.co"),
-    ("icims", r"icims\.com"),
-    ("successfactors", r"successfactors\.(com|eu)|sapsf\.(com|eu)|jobs\.sap\.com"),
-    ("taleo", r"taleo\.net"),
-    ("smartrecruiters", r"smartrecruiters\.com"),
-    ("ashby", r"ashbyhq\.com"),
-    ("eightfold", r"eightfold\.ai"),
-    ("avature", r"avature\.net"),
-    # matched lower-cased; the last is a company's own address for its Oracle site (careers.ti.com)
-    ("oracle_hcm", r"oraclecloud\.com/hcmui|\.fa\.[a-z0-9]+\.oraclecloud\.com|"
-                   r"/[a-z]{2}(?:-[a-z]{2})?/sites/[\w-]+/(?:job|requisitions/preview)/\d+"),
-    ("brassring", r"brassring\.com"),
-    ("jobvite", r"jobvite\.com"),
-    ("phenom", r"phenompeople\.com"),
-    ("applicantstack", r"applicantstack\.com"),
-    ("paycom", r"paycomonline\.(net|com)"),
-    ("ukg", r"ultipro\.com|\.ukg\.net"),
-    ("infor", r"inforcloudsuite\.com"),
+# Each job system's own domains: an address is the system's when its host is one of them
+# or under one ("amat.wd1.myworkdayjobs.com"), never because one appears elsewhere in it
+# ("evil.example/myworkdayjobs.com/", "myworkdayjobs.com.evil.example"). First match wins.
+_DOMAINS: list[tuple[str, tuple[str, ...]]] = [
+    ("linkedin", ("linkedin.com", "lnkd.in")),
+    ("indeed", ("indeed.com", "indeed.co.uk", "indeed.ca")),
+    ("workday", ("myworkdayjobs.com", "myworkdaysite.com", "myworkday.com")),
+    ("greenhouse", ("greenhouse.io",)),
+    ("lever", ("lever.co",)),
+    ("icims", ("icims.com",)),
+    ("successfactors", ("successfactors.com", "successfactors.eu", "sapsf.com", "sapsf.eu", "jobs.sap.com")),
+    ("taleo", ("taleo.net",)),
+    ("smartrecruiters", ("smartrecruiters.com",)),
+    ("ashby", ("ashbyhq.com",)),
+    ("eightfold", ("eightfold.ai",)),
+    ("avature", ("avature.net",)),
+    ("brassring", ("brassring.com",)),
+    ("jobvite", ("jobvite.com",)),
+    ("phenom", ("phenompeople.com",)),
+    ("applicantstack", ("applicantstack.com",)),
+    ("paycom", ("paycomonline.net", "paycomonline.com")),
+    ("ukg", ("ultipro.com", "ukg.net")),
+    ("infor", ("inforcloudsuite.com",)),
 ]
+# Oracle's recruiting sites: a pod's own host, or a company's own address for its Oracle
+# site (careers.ti.com), known by its path
+_ORACLE_HOST = re.compile(r"(^|\.)fa\.[a-z0-9-]+\.oraclecloud\.com$")
+_ORACLE_PATH = re.compile(r"^/[a-z]{2}(?:-[a-z]{2})?/sites/[\w-]+/(?:job|requisitions/preview)/\d+")
+# Employers whose career site runs a job system on their own address (companies.yaml)
+COMPANY_HOSTS = {
+    "careers.lamresearch.com": "eightfold", "jobs.infineon.com": "eightfold", "careers.micron.com": "eightfold",
+    "careers.qorvo.com": "successfactors", "jobs.atlascopcogroup.com": "successfactors",
+}
+
+
+def _host_and_path(url: str) -> tuple[str, str]:
+    parsed = urlparse(url if "://" in url else "https://" + url)
+    return (parsed.hostname or "").lower().rstrip("."), parsed.path or ""
+
+
+def shared_system(url: str | None) -> str | None:
+    """The job system whose own domain the address is on: one many employers share (a
+    Workday tenant, Oracle's pods, LinkedIn). None for an employer's own address."""
+    host, path = _host_and_path(url or "")
+    for ats, domains in _DOMAINS:
+        if any(host == d or host.endswith("." + d) for d in domains):
+            return ats
+    if _ORACLE_HOST.search(host) or (host == "oraclecloud.com" or host.endswith(".oraclecloud.com")) \
+            and path.lower().startswith("/hcmui"):
+        return "oracle_hcm"
+    return None
+
 
 ATS_NAMES = {
     "linkedin": "LinkedIn",
@@ -59,11 +86,14 @@ ATS_NAMES = {
 def detect_ats(url: str | None) -> str:
     if not url:
         return "company_site"
-    parsed = urlparse(url if "://" in url else "https://" + url)
-    target = (parsed.netloc + parsed.path).lower()
-    for ats, pattern in _PATTERNS:
-        if re.search(pattern, target):
-            return ats
+    shared = shared_system(url)
+    if shared:
+        return shared
+    host, path = _host_and_path(url)
+    if host in COMPANY_HOSTS or host.removeprefix("www.") in COMPANY_HOSTS:
+        return COMPANY_HOSTS.get(host) or COMPANY_HOSTS[host.removeprefix("www.")]
+    if _ORACLE_PATH.match(path.lower()):
+        return "oracle_hcm"
     return "company_site"
 
 
@@ -75,8 +105,8 @@ def workday_parts(url: str) -> dict[str, str] | None:
           job_path: /job/Phoenix-AZ/Engineer_R123}
     """
     parsed = urlparse(url)
-    host = parsed.netloc
-    if "myworkdayjobs.com" not in host and "myworkdaysite.com" not in host:
+    host = (parsed.hostname or "").lower()
+    if shared_system(url) != "workday" or "myworkday.com" in host and "myworkdayjobs" not in host:
         return None
     tenant = host.split(".")[0]
     parts = [p for p in parsed.path.split("/") if p]
@@ -89,17 +119,17 @@ def workday_parts(url: str) -> dict[str, str] | None:
         return None
     site = parts[0]
     rest = parts[1:]
-    if rest and rest[-1] in ("apply", "applyManually", "autofillWithResume"):
-        rest = rest[:-1]
+    while rest and rest[-1] in ("apply", "applyManually", "autofillWithResume", "useMyLastApplication"):
+        rest = rest[:-1]  # a copied address from part-way through applying: ".../apply/applyManually"
     job_path = "/" + "/".join(rest) if rest else ""
     return {"host": host, "tenant": tenant, "site": site, "job_path": job_path}
 
 
 def greenhouse_parts(url: str) -> dict[str, str] | None:
-    m = re.search(r"greenhouse\.io/(?:embed/job_app\?for=)?([\w-]+)/jobs/(\d+)", url)
+    m = re.search(r"greenhouse\.io/(?:embed/job_app\?for=)?([\w-]+)/jobs/(\d+)", url, re.I)
     if m:
         return {"board": m.group(1), "job_id": m.group(2)}
-    m = re.search(r"greenhouse\.io/embed/job_app\?.*?for=([\w-]+).*?token=(\d+)", url)
+    m = re.search(r"greenhouse\.io/embed/job_app\?.*?for=([\w-]+).*?token=(\d+)", url, re.I)
     if m:
         return {"board": m.group(1), "job_id": m.group(2)}
     return None
@@ -110,7 +140,7 @@ def greenhouse_form_url(url: str) -> str | None:
     send visitors to the employer's careers page redirects the posting there, where the form
     sits in a frame that the site's cookie banner can hold back (asm.com); the form itself
     has no banner."""
-    if not (urlparse(url).hostname or "").endswith("greenhouse.io"):
+    if shared_system(url) != "greenhouse":
         return None
     gh = greenhouse_parts(url)
     return f"https://job-boards.greenhouse.io/embed/job_app?for={gh['board']}&token={gh['job_id']}" if gh else None
@@ -139,7 +169,7 @@ def oracle_parts(url: str) -> dict[str, str] | None:
 
 
 def linkedin_job_id(url: str) -> str | None:
-    m = re.search(r"linkedin\.com/jobs/view/(?:[\w-]*?-)?(\d{6,})", url) or re.search(
+    m = re.search(r"linkedin\.com/jobs/view/(?:[\w-]*?-)?(\d{6,})", url, re.I) or re.search(
         r"currentJobId=(\d{6,})", url
     )
     return m.group(1) if m else None

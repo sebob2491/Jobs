@@ -179,3 +179,29 @@ def test_a_place_is_a_city_and_a_us_state():
     assert place_in_text("Work from New York, NY or Salt Lake City, UT") == "New York, NY"
     assert place_in_text("Amkor Technology, Inc. (Nasdaq: AMKR) builds packages") == ""
     assert place_in_text("Openings in Arizona, USA") == ""
+
+
+def test_a_job_system_is_known_by_its_host_not_by_words_elsewhere_in_the_address():
+    """A lookalike address isn't a job system: its sign-up mail, auto-submit setting and
+    shared-site rules don't apply to it. An employer's own address for one is known."""
+    for lookalike in ("https://evil.example/myworkdayjobs.com/x", "https://myworkdayjobs.com.evil.example/x",
+                      "https://evilgreenhouse.io/a", "https://notsuccessfactors.com/x", "https://example.com/?ref=linkedin.com"):
+        assert detect_ats(lookalike) == "company_site", lookalike
+    assert detect_ats("https://AMAT.WD1.MYWORKDAYJOBS.COM:443/External") == "workday"
+    assert detect_ats("https://lnkd.in/abc") == "linkedin" and detect_ats("https://uk.indeed.com/viewjob?jk=1") == "indeed"
+    assert detect_ats("https://www.indeed.co.uk/viewjob?jk=1") == "indeed"
+    for own, ats in (("https://careers.lamresearch.com/careers/job/1", "eightfold"),
+                     ("https://jobs.infineon.com/careers/job/2", "eightfold"),
+                     ("https://careers.qorvo.com/job/Greensboro/x/3/", "successfactors"),
+                     ("https://www.jobs.atlascopcogroup.com/job/Chandler-FSE-AZ-85226/4/", "successfactors")):
+        assert detect_ats(own) == ats, own
+    assert detect_ats("https://careers.ti.com/en/sites/CX/job/123") == "oracle_hcm"  # its Oracle site, by its path
+
+
+def test_url_helpers_take_any_case_and_a_link_from_part_way_through():
+    assert workday_parts("https://AMAT.wd1.myworkdayjobs.com/en-US/External/job/Phoenix/FSE_R1/apply/applyManually") == {
+        "host": "amat.wd1.myworkdayjobs.com", "tenant": "amat", "site": "External", "job_path": "/job/Phoenix/FSE_R1"}
+    assert workday_parts("https://evil.example/myworkdayjobs.com/External/job/x") is None
+    assert greenhouse_form_url("https://BOARDS.GREENHOUSE.IO/asm/jobs/123") == \
+        "https://job-boards.greenhouse.io/embed/job_app?for=asm&token=123"
+    assert linkedin_job_id("https://WWW.LINKEDIN.COM/JOBS/VIEW/field-service-4012345678") == "4012345678"

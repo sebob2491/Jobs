@@ -250,3 +250,10 @@ def test_mail_from_before_the_wait_can_be_left_out(imap):
     imap.messages = [(since - 60, _message("acme@otp.workday.com", "Verify", "Your verification code is 111111"))]
     assert mailbox.search("sam@gmail.com", "pw", since, {"workday.com"}, "code").value == "111111"
     assert mailbox.search("sam@gmail.com", "pw", since, {"workday.com"}, "code", look_back=0) is None
+
+
+def test_codes_from_greenhouses_mail_domain_and_an_employers_own_eightfold_site():
+    from job_apply.ats import detect_ats
+
+    assert sender_allowed("no-reply@us.greenhouse-mail.io", mailbox.ATS_MAIL_DOMAINS["greenhouse"])
+    assert detect_ats("https://careers.lamresearch.com/careers/job/1") == "eightfold"  # so eightfold.ai's mail is its

@@ -27,7 +27,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from . import config, mailbox
-from .ats import ATS_NAMES, detect_ats
+from .ats import ATS_NAMES, detect_ats, shared_system
 from .autofill import clean_label, is_empty_value, norm, plan_autofill, tailored_document
 from .browser import TabClosed
 
@@ -507,7 +507,7 @@ class Applier:
         own = self._own_hosts(run) if own is None else own
         if host == run.paused_host or host and host in own:  # (a page saved on this computer has no host)
             return True
-        paused_on_own_site = detect_ats(f"https://{run.paused_host}/") == "company_site"
+        paused_on_own_site = shared_system(f"https://{run.paused_host}/") is None  # the employer's own address
         return paused_on_own_site and detect_ats(url) not in ("company_site", "linkedin", "indeed")
 
     def _own_hosts(self, run: Run) -> set[str]:
@@ -581,7 +581,7 @@ class Applier:
         senders = self._mail_senders(run)
 
         own = {h for h in self._own_hosts(run) | {run.paused_host} if h}
-        own_sites = {mailbox.site_domain(h) for h in own if detect_ats(f"https://{h}/") == "company_site"}
+        own_sites = {mailbox.site_domain(h) for h in own if shared_system(f"https://{h}/") is None}
 
         def own_link(url: str) -> bool:
             """A link back to this job's own site: its hosts, or another address on the employer's
@@ -953,6 +953,10 @@ class Applier:
                 # a posting) isn't pressed. That's no review page: nothing has been filled
                 return self._pause(run, "stuck", f"Practice mode: “{action['text'].strip()}” sends a form "
                                    "and isn't a step button I know, so I didn't press it. Nothing was sent.")
+            if clicked.get("clicked") is False and str(clicked.get("blocked") or "").startswith("Cookie"):
+                # never picked by the desk (it only declines banners), but never taken for the review page
+                return self._pause(run, "stuck", "A cookie or privacy banner is in the way, and the desk never accepts "
+                                   "one for you. Choose in the browser window, then press Resume.")
             if clicked.get("clicked") is False:  # the guard says it's the final submit
                 return await self._finish(run, data, text)
             self._log(run, f"clicked “{action['text']}”")

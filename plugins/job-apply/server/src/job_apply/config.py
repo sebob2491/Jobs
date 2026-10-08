@@ -163,6 +163,16 @@ class Settings:
         return self.submit_mode == "auto" and ats in self.auto_submit_ats
 
 
+def _zip_as_written(data: dict[str, Any], path: Path) -> None:
+    """A ZIP code written without quotes is read by YAML as a number: 85225 loses nothing,
+    but 02134 becomes 1116 (a leading 0 makes it octal). Keep it as the person wrote it."""
+    address = (data.get("personal") or {}).get("address") if isinstance(data.get("personal"), dict) else None
+    if not isinstance(address, dict) or not isinstance(address.get("postal_code"), int):
+        return
+    m = re.search(r"^\s*postal_code:\s*([0-9][0-9-]*)\s*(?:#.*)?$", path.read_text(encoding="utf-8"), re.M)
+    address["postal_code"] = m.group(1) if m else str(address["postal_code"])
+
+
 class Profile:
     """Thin wrapper over the profile YAML with dotted-path lookup."""
 
@@ -187,6 +197,7 @@ class Profile:
                 raise ValueError(f"{path} has a typo{where}, so it can't be read.{tip}") from None
             if not isinstance(data, dict):
                 raise ValueError(f"{path} should hold sections like 'personal:' and 'settings:'; it can't be read as it is")
+            _zip_as_written(data, path)
         if own:
             saved = saved_answers()
             if saved:  # exact questions answered in the Job Desk come before the general patterns

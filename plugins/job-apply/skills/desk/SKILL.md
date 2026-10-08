@@ -29,12 +29,13 @@ The desk is a local web page served by this plugin. It does what the `find-jobs`
     happening there, the other jobs go ahead, and the desk picks the job up again once
     its tab is past the pause. With an email app password saved in **Site passwords**
     (`email_password`, for the profile's email address), the desk reads the code or link
-    from the inbox itself. It reads only mail from that job's site sent after the wait
-    began, read-only, and never presses a button labelled Submit. Never ask for that
+    from the inbox itself. It reads only mail from that job's site or its job system,
+    sent after the wait began (or in the two minutes before), read-only, and never
+    presses a button labelled Submit. Never ask for that
     password in the chat either: it goes into the desk page.
   - **Alert me** (in the header) turns on desktop notifications for jobs that come to
     need the user or are ready to submit, so the desk can be left in the background.
-- **Site passwords** stores one password per job system: Workday (most of the
+- **Site passwords** stores one password per job system: Workday (13 of the 28
   employers), SuccessFactors (Edwards, Qorvo, Amkor), iCIMS (Daifuku), ApplicantStack
   (SCREEN), UKG Pro (Nikon Precision) or Infor (Benchmark). Each employer has its own
   account. With a password saved, the desk signs in by itself and fills in Create Account
@@ -93,6 +94,7 @@ When a site shows Cloudflare's "Just a moment…", a CAPTCHA or a "verify you ar
 page, the desk pauses that job, brings its tab to the front, and waits for the user to
 pass the check. It never tries to get around one: no disguising the browser, no
 CAPTCHA-solving services. The automation browser keeps its own profile in
-`~/.job-apply/browser`, so a site checked once usually lets it through for a while. If
+`~/.job-apply/browser` (`browser-msedge` when Edge stands in for Chrome), so a site
+checked once usually lets it through for a while. If
 a site refuses automated browsers altogether (TSMC's careers site has), the user
 applies there in their everyday browser, or finds the same posting on Indeed.

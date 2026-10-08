@@ -38,7 +38,7 @@ ATS_MAIL_DOMAINS = {
     "applicantstack": {"applicantstack.com"},
     "eightfold": {"eightfold.ai"},
     "smartrecruiters": {"smartrecruiters.com"},
-    "greenhouse": {"greenhouse.io"},
+    "greenhouse": {"greenhouse.io", "greenhouse-mail.io"},
     "lever": {"lever.co"},
     "paycom": {"paycom.com", "paycomonline.net", "paycomonline.com"},
     "taleo": {"taleo.net", "oracle.com"},

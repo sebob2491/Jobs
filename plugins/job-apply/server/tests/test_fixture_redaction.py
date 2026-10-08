@@ -62,3 +62,51 @@ def test_convert_writes_expectations(tmp_path):
     expect = json.loads((tmp_path / "out" / "acme-email.expect.json").read_text())
     assert expect["fields"] == [{"label": "Email", "kind": "text", "required": False}]  # no values
     assert "sam.rivera" not in expect["source_url"]
+
+
+def test_personal_data_written_another_way_is_redacted_too():
+    """Made-up applicant. Phones with any separators, the email encoded or by its name alone,
+    handles without the address, accented names however written, two-letter names, the
+    person's answers, and tokens in links and meta tags."""
+    prof = Profile({"personal": {
+        "first_name": "José", "last_name": "Núñez", "email": "sunflower77@example.org", "phone": "480-555-0142",
+        "address": {"line1": "742 W Evergreen Ter", "postal_code": "85226"},
+        "linkedin_url": "https://www.linkedin.com/in/qh-ex-12345", "github_url": "https://github.com/zz-octo-998"}})
+    raw = """<html><head><meta name="csrf-token" content="CSRFTOKEN-1"><meta charset="utf-8"></head><body>
+      <p>(480) 555-0142 · 480.555.0142 · +1 480 555 0142</p>
+      <a href="/confirm?email=sunflower77%40example.org&amp;sid=SESSIONID-2">confirm</a>
+      <form action="/submit?token=FORMTOKEN-3"></form>
+      <div data-props='{"name":"Jos\\u00e9 N\\u00fa\\u00f1ez"}' data-state="eyJlbWFpbCI6InN1bmZsb3dlcjc3In0="></div>
+      <p>Signed in as sunflower77 · linkedin.com/in/qh-ex-12345 · github.com/zz-octo-998</p>
+      <p>Jose_Nunez_Resume.pdf · Jos%C3%A9_N%C3%BA%C3%B1ez.pdf · 742 W. Evergreen Ter.</p>
+      <textarea name="why">Six years keeping etch tools running.</textarea>
+      <select name="race"><option>Decline</option><option selected>Hispanic or Latino</option></select>
+      <label><input type="radio" name="vet" value="Protected veteran" checked> Protected veteran</label>
+      <div role="checkbox" aria-checked="true" aria-label="Yes, I have a disability"></div>
+    </body></html>"""
+    out = clean_html(raw, personal_strings(prof))
+    for leaked in ("555-0142", "555 0142", "555.0142", "sunflower77", "SESSIONID-2", "FORMTOKEN-3", "CSRFTOKEN-1",
+                   "\\u00e9", "eyJlbWFpbCI6", "qh-ex-12345", "zz-octo-998", "Jose_Nunez", "Jos%C3%A9", "Evergreen",
+                   "Six years", "selected", "checked", 'aria-checked="true"'):
+        assert leaked.lower() not in out.lower(), leaked
+    assert 'value="Protected veteran"' in out and "<option>Hispanic or Latino</option>" in out  # the choices stay
+    assert 'charset="utf-8"' in out
+    short = clean_html("<p>You're all set, Al!</p><p>Wu, Al</p><p>Alabama Wuhan</p>",
+                       personal_strings(Profile({"personal": {"first_name": "Al", "last_name": "Wu"}})))
+    assert "Al!" not in short and "Wu," not in short and "Alabama Wuhan" in short
+
+
+def test_expectations_keep_accented_names_findable_and_drop_query_strings(tmp_path):
+    prof = Profile({"personal": {"first_name": "José", "last_name": "Núñez", "email": "sunflower77@example.org"}})
+    snap = tmp_path / "snap"
+    snap.mkdir()
+    (snap / "page.html").write_text("<html><body><label for=a>x</label><input id=a></body></html>")
+    (snap / "snapshot.json").write_text(json.dumps({
+        "url": "https://careers-x.icims.com/jobs/1/submit?jtsid=SESSIONID-abc&e=sunflower77%40example.org",
+        "frames": [{"file": "page.html", "url": "https://careers-x.icims.com/jobs/1/submit"}],
+        "fields": [{"id": "1", "kind": "checkbox", "label": "I, José Núñez, certify that this is true", "required": True}],
+    }))
+    convert(snap, "probe", tmp_path / "out", prof)
+    text = (tmp_path / "out" / "probe.expect.json").read_text(encoding="utf-8")
+    assert "Jos" not in text and "SESSIONID" not in text and "sunflower77" not in text
+    assert json.loads(text)["source_url"] == "https://careers-x.icims.com/jobs/1/submit"

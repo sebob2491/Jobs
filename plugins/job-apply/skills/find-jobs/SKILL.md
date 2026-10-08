@@ -39,10 +39,12 @@ The goal is a short, deduplicated list of real openings saved to the tracker
    - Workday lists a job in several places as "7 Locations". The search reads those postings
      for their places, the ones in the area first ("Phoenix, AZ; Austin, TX; ...").
    - `errors` lists companies whose search failed. Fall back to the browser for
-     those, and for everything in `browser_only` (TSMC Arizona's SuccessFactors site): open
-     the careers URL with `open_application(url=...)`, use the
-     site's search box with `fill_form` and `click`, and read the results with
-     `page_text`. WebSearch with `site:` on the careers domain also works.
+     those: open the careers URL with `open_application(url=...)`, use the site's search
+     box with `fill_form` and `click`, and read the results with `page_text`. WebSearch
+     with `site:` on the careers domain also works.
+   - `browser_only` lists TSMC Arizona: its careers site refuses automated browsers (a
+     Cloudflare check), and nothing tries to get around that. Give the user its careers
+     link to search in their own browser, or look for TSMC's postings on Indeed.
    - `ingest_job(url)` each posting worth saving. It stores the full description.
    Look at the first page or two of results only, at a normal pace. This is one
    person's job search, not a crawl.
@@ -55,8 +57,9 @@ The goal is a short, deduplicated list of real openings saved to the tracker
 
 5. **Deduplicate and rank.** `list_jobs` shows what's already tracked. The tracker
    also collapses repeated URLs. Rank by fit with the profile: title match,
-   location, hard requirements met. Drop roles that need a clearance, degree or
-   citizenship the user doesn't have, but mention that you dropped them.
+   location, hard requirements met. Roles that need a clearance, degree or citizenship
+   the user doesn't have (and don't accept equivalent experience) go below the ranked
+   list, each with its reason, as the Job Desk shows them under **All**: the user decides.
 
 6. **Report.** Give a table with id, company, title, location, ATS and a one-line fit
    note, then ask which ones to apply to. The `apply` skill takes it from there.
