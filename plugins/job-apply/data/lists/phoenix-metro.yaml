@@ -197,3 +197,124 @@ companies:
     ats: custom            # gr8people; internal jobs are listed on randstadusa.com and apply on randstadnorthamerica.workgr8.com
     az_sites: Phoenix, Tucson
     confidence: medium        # page seen, Oct 2026: two Arizona internal openings, neither in HR or recruiting
+  # Phoenix-metro utilities, aerospace and defense, tech, logistics and retail employers
+  # (checked Oct 2026).
+  - name: Arizona Public Service (Pinnacle West)
+    careers_url: https://careers.aps.com/
+    ats: successfactors       # aps.com's Careers page links to careers.aps.com, a SuccessFactors career site (company APS)
+    az_sites: Phoenix (HQ), Tempe, Palo Verde (Tonopah)
+    confidence: high          # live check, Oct 2026: Phoenix and Tempe openings come back from this search
+    search: {successfactors: https://careers.aps.com}
+  - name: Salt River Project (SRP)
+    careers_url: https://careers.srpnet.com/
+    ats: successfactors       # SuccessFactors career site; www.srpnet.com/careers answered 403 (Access Denied) from here
+    az_sites: Tempe (HQ), Phoenix
+    confidence: medium        # page seen; no search: its results are drawn as job tiles, not the table rows the
+                              # successfactors search reads (0 results even for "analyst", Oct 2026)
+  - name: Southwest Gas
+    careers_url: https://ebtw.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1
+    ats: oracle_hcm           # swgas.com/en/employment ("Jobs") links to this Oracle Recruiting site, incl. an Arizona filter
+    az_sites: Phoenix, Tucson
+    confidence: high          # live check, Oct 2026: the search answers; its 6 openings were all in Las Vegas, NV
+    search: {oracle: {host: ebtw.fa.us2.oraclecloud.com, site: CX_1}}
+  - name: Honeywell Aerospace
+    careers_url: https://careers.honeywell.com/en/sites/Honeywell
+    ats: oracle_hcm           # careers.honeywell.com is a Phenom-styled Oracle Recruiting site on the ibqbjb.fa.ocs pod (site CX_1)
+    az_sites: Phoenix (Aerospace HQ, Deer Valley), Tempe
+    confidence: high          # live check, Oct 2026: Phoenix and Tempe openings come back from this search
+    search: {oracle: {host: ibqbjb.fa.ocs.oraclecloud.com, site: CX_1}}
+  - name: Boeing
+    careers_url: https://jobs.boeing.com/
+    ats: workday              # jobs.boeing.com front end links to this Workday site (also boeing.avature.net for programs)
+    az_sites: Mesa
+    confidence: high          # live check, Oct 2026: Mesa openings come back from this search
+    search: {workday: https://boeing.wd1.myworkdayjobs.com/EXTERNAL_CAREERS}
+  - name: Northrop Grumman
+    careers_url: https://jobs.northropgrumman.com/careers
+    ats: eightfold            # Eightfold PCSX site; the page names domain ngc.com
+    az_sites: Chandler, Gilbert
+    confidence: high          # live check, Oct 2026: Chandler openings come back from this search
+    search: {eightfold: {host: jobs.northropgrumman.com, domain: ngc.com}}
+  - name: General Dynamics Mission Systems
+    careers_url: https://careers-gdms.icims.com/jobs/search?ss=1
+    ats: icims                # gdmissionsystems.com/careers links to the careers-gdms iCIMS portal
+    az_sites: Scottsdale
+    confidence: medium        # live check, Oct 2026: the portal's search answers, but its rows carry no place the
+                              # iCIMS reader picks up, so results aren't narrowed to Arizona: no search block until
+                              # the reader reads each row's place (search: {icims: careers-gdms})
+  - name: GoDaddy
+    careers_url: https://careers.godaddy/jobs/search
+    ats: greenhouse           # careers.godaddy is a Clinch front end; its postings carry Greenhouse job ids, and the
+                              # godaddy board's jobs link back to careers.godaddy/jobs?gh_jid=...
+    az_sites: Tempe (HQ), Phoenix
+    confidence: high          # live check, Oct 2026: the board answers (3 US "manager" openings, a Phoenix one seen)
+    search: {greenhouse: godaddy}
+  - name: Carvana
+    careers_url: https://www.carvana.com/careers
+    ats: unknown              # carvana.com answered with a Cloudflare challenge (403) from here; system not seen
+    az_sites: Tempe (HQ), Phoenix
+    confidence: low           # careers page not seen (Cloudflare, Oct 2026)
+  - name: Axon
+    careers_url: https://www.axon.com/careers/all
+    ats: greenhouse           # axon.com/careers lists jobs from a "greenhouse-jobs-index"; the axon board has 88 Scottsdale openings
+    az_sites: Scottsdale (HQ)
+    confidence: high          # live check, Oct 2026: Scottsdale recruiter openings come back from this search
+    search: {greenhouse: axon}
+  - name: Republic Services
+    careers_url: https://jobs.republicservices.com/us/en
+    ats: workday              # jobs.republicservices.com is a Phenom front end; its postings apply on this Workday site
+    az_sites: Phoenix (HQ)
+    confidence: high          # live check, Oct 2026: Phoenix openings come back from this search
+    search: {workday: https://republic.wd5.myworkdayjobs.com/Republic}
+  - name: PetSmart
+    careers_url: https://careers.petsmart.com/
+    ats: icims                # careers.petsmart.com is an iCIMS Jibe front end over the careers-petsmart iCIMS portal
+    az_sites: Phoenix (HQ)
+    confidence: medium        # page seen; no search: the portal's search page only redirects to careers.petsmart.com/jobs
+                              # (0 results even for "manager", Oct 2026), and Jibe's own search isn't a supported kind
+  - name: U-Haul
+    careers_url: https://jobs.uhaul.com/
+    ats: workday              # jobs.uhaul.com links to this Workday site
+    az_sites: Phoenix (HQ)
+    confidence: high          # live check, Oct 2026: Phoenix HR openings come back from this search
+    search: {workday: https://uhaul.wd1.myworkdayjobs.com/UhaulJobs}
+  - name: Insight Enterprises
+    careers_url: https://careers.insight.com/careers
+    ats: eightfold            # Eightfold site (domain insight.com); www.insight.com/.../careers answered 403 (Access Denied)
+    az_sites: Chandler (HQ), Tempe
+    confidence: medium        # page seen; no search: its /api/pcsx/search answers 403 "PCSX is not enabled for this user"
+                              # and the page in the browser never made that call (Oct 2026)
+  - name: Avnet
+    careers_url: https://www.avnet.com/wps/portal/us/about-avnet/careers/
+    ats: unknown              # avnet.com answered with a bot challenge ("Challenge Validation") from here; system not seen
+    az_sites: Phoenix (HQ)
+    confidence: low           # careers page not seen (bot challenge, Oct 2026)
+  - name: Circle K
+    careers_url: https://workwithus.circlek.com/global/en/
+    ats: workday              # circlek.com "Careers" links to workwithus.circlek.com (Phenom); its postings, store and
+                              # corporate (e.g. "Nonstore ... TEMPE-AZ"), apply on this Workday site
+    az_sites: Tempe (US HQ), Phoenix
+    confidence: high          # live check, Oct 2026: Phoenix-area openings come back from this search
+    search: {workday: https://circlek.wd3.myworkdayjobs.com/CircleKStoreJobs}
+  - name: Sprouts Farmers Market
+    careers_url: https://jobs.sprouts.com/store-support/jobs
+    ats: icims                # jobs.sprouts.com is an iCIMS Jibe front end over the storesupport-, storeops- and
+                              # distributioncenter-sprouts iCIMS portals
+    az_sites: Phoenix (HQ)
+    confidence: medium        # page seen; no search: the portals' search pages only redirect to jobs.sprouts.com/jobs
+                              # (0 results even for "manager", Oct 2026), and Jibe's own search isn't a supported kind
+  - name: Knight-Swift Transportation
+    careers_url: https://www.swifttrans.com/careers/office/opportunities
+    ats: jobvite              # knight-swift.com answered 403 from here; Swift's office-jobs page lists jobs.jobvite.com/swifttrans
+    az_sites: Phoenix (HQ)
+    confidence: medium        # page seen; no search: Jobvite isn't one of the plugin's search kinds
+  - name: American Airlines
+    careers_url: https://jobs.aa.com/
+    ats: unknown              # jobs.aa.com answered 403 (Access Denied) from here; system not seen
+    az_sites: Phoenix (Sky Harbor hub), Tempe
+    confidence: low           # careers page not seen (403, Oct 2026)
+  - name: Amazon
+    careers_url: https://www.amazon.jobs/en/
+    ats: custom               # amazon.jobs is Amazon's own job site
+    az_sites: Phoenix, Tempe, Goodyear, Glendale
+    confidence: high          # page seen, Oct 2026; no search: amazon.jobs isn't one of the plugin's search kinds
