@@ -580,7 +580,7 @@ def test_tailoring_queue_hands_claude_the_jobs_and_the_real_resume(srv, job_appl
     d = desk_module.get_desk(srv)
     d.applier.runs[job["id"]] = Run(job["id"], status="needs_you", need="tailor")
     try:
-        out = srv.tailoring_queue()
+        out = run(srv.tailoring_queue())
     finally:
         desk_module._desk = None
     assert [j["job_id"] for j in out["jobs"]] == [job["id"]]

@@ -399,7 +399,7 @@ TAILOR_RULES = [
 
 
 @tool()
-def tailoring_queue() -> dict[str, Any]:
+async def tailoring_queue() -> dict[str, Any]:  # async: it reads the desk's runs on the desk's own loop
     """Jobs the Job Desk is holding until Claude writes a resume tailored to each one (its
     "Tailor my resume for each job" switch is on). For each job, write the resume in
     Markdown from the user's real resume (base_resume, or resume_file and the profile's
