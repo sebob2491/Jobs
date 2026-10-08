@@ -302,7 +302,19 @@ class Applier:
         self._wake.set()
         return run
 
+    def mark_applied(self, job_id: int) -> None:
+        """The person (or Claude) says this job is applied to: it leaves the queue, and any
+        hold on the queue for it ends. The tracker already says so."""
+        self._cancel(job_id)
+        run = self.runs.get(job_id)
+        if run is not None:
+            run.status, run.need, run.blocking, run.reason = "submitted", "", False, "Marked as applied."
+            run.left = False
+            self._wake.set()
+
     async def skip(self, job_id: int) -> Run:
+        if self.srv.tracker().get(job_id, with_description=False) is None:
+            raise KeyError(f"No job with id {job_id}")  # a stale page: no entry is made for it
         run = self.runs.get(job_id) or Run(job_id)
         self.runs[job_id] = run
         self._cancel(job_id)
@@ -568,18 +580,30 @@ class Applier:
                  and _CODE_FIELD.search(f.get("label") or "")]
         senders = self._mail_senders(run)
 
-        own = self._own_hosts(run)
+        own = {h for h in self._own_hosts(run) | {run.paused_host} if h}
+        own_sites = {mailbox.site_domain(h) for h in own if detect_ats(f"https://{h}/") == "company_site"}
 
-        def own_link(url: str) -> bool:  # a link back to this job's own site, not another employer's on its system
-            return urlparse(url).scheme in ("https", "http", "file") and self._own_place(run, url, own)
+        def own_link(url: str) -> bool:
+            """A link back to this job's own site: its hosts, or another address on the employer's
+            own site (careers.acme.com from acme.com). Never another tenant of a job system, nor any
+            address that only names one in its path (evil.example/myworkdayjobs.com/confirm)."""
+            parsed = urlparse(url)
+            host = (parsed.hostname or "").lower()
+            if parsed.scheme not in ("https", "http", "file"):
+                return False
+            return host == run.paused_host or host in own or bool(host) and mailbox.site_domain(host) in own_sites
 
-        # Another job, waiting since later on mail from the same job system, owns what came after it
-        # paused: Workday's codes come from one address for every employer
-        later = [r.paused_at for r in self.runs.values() if r is not run and r.status == "needs_you"
-                 and r.need == "email_code" and r.paused_at > run.paused_at and self._mail_senders(r) & senders]
+        # Another job waiting on mail from the same job system owns what came after it paused (Workday's
+        # codes come from one address for every employer): a later one's wait ends this one's mail, and
+        # with an earlier one waiting, mail from before this job paused is that one's
+        others = [r.paused_at for r in self.runs.values() if r is not run and r.status == "needs_you"
+                  and r.need == "email_code" and self._mail_senders(r) & senders]
+        later = [t for t in others if t > run.paused_at]
+        look_back = 0 if any(t <= run.paused_at for t in others) else mailbox.LOOK_BACK
         try:
             found = await asyncio.to_thread(mailbox.search, *login, run.paused_at, senders,
-                                            "code" if boxes else "link", own_link, min(later) if later else None)
+                                            "code" if boxes else "link", own_link, min(later) if later else None,
+                                            look_back)
         except mailbox.MailboxError as e:
             if "app password" in str(e):
                 self._mail_refused = login[1]  # not tried again until a new one is saved
@@ -619,6 +643,8 @@ class Applier:
         """Type the emailed code into its box (a digit per box where there's one for each) and
         press the button that sends it. False when it didn't go in."""
         srv = self.srv
+        if run.page is None or run.page.is_closed() or not self._own_place(run, run.page.url):
+            return False  # its tab has gone on to another page: the code isn't typed there
         if not srv.browser.use_tab(run.page):
             return False
         data = await srv.inspect_form(include_dropdown_options=False)
@@ -699,8 +725,21 @@ class Applier:
         self._log(run, f"opened {opened['url']}")
         return True
 
+    def _already_done(self, run: Run) -> bool:
+        """Marked applied (or past that) since it was queued: by the person on the desk, by
+        Claude, or from a confirmation email. It's never filled or submitted again."""
+        job = self.srv.tracker().get(run.job_id, with_description=False) or {}
+        if job.get("status") not in FINISHED:
+            return False
+        run.status, run.need, run.blocking = "submitted", "", False
+        run.reason = f"Already marked {job['status']}, so it isn't applied to again."
+        self._log(run, run.reason)
+        return True
+
     async def _drive(self, run: Run) -> None:
         srv = self.srv
+        if self._already_done(run):
+            return
         run.status, run.need, run.reason = "running", "", "Working on it"
         if self.tailor and not run.usual_resume:
             job = srv.tracker().get(run.job_id, with_description=False) or {}
@@ -1195,8 +1234,12 @@ class Applier:
         """Press the final button: the person pressed Submit for this job, or (by_person
         False) "Submit for me" is on, which also needs every required field filled."""
         srv = self.srv
-        if run.status == "skipped":
+        if run.status == "skipped" or self._already_done(run):
             return
+        if run.page is not None and not run.page.is_closed() and not self._own_place(run, run.page.url):
+            # its tab was taken on to another posting: Submit there would send that one as this job
+            return self._pause(run, "stuck", "Its tab has gone on to another page, so I didn't press Submit there. "
+                               "Press Resume to fill this application again in a tab of its own.")
         if not srv.browser.use_tab(run.page):
             # waiting on Resume now, whatever it waited on before (a CAPTCHA's pause has no Resume button)
             run.status, run.need, run.blocking = "needs_you", "stuck", False

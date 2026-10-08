@@ -77,6 +77,7 @@ class FakeImap:
     instances: list["FakeImap"] = []
     messages: list[tuple[float, bytes]] = []
     accept = True
+    login_error: Exception | None = None  # what the server does to a sign-in, when not a refusal
 
     def __init__(self, host, timeout=None):
         self.host, self.calls = host, []
@@ -84,6 +85,9 @@ class FakeImap:
 
     def login(self, user, password):
         self.calls.append(("login", user))
+        password.encode("ascii")  # as imaplib sends it
+        if FakeImap.login_error is not None:
+            raise FakeImap.login_error
         if not FakeImap.accept:
             raise imaplib.IMAP4.error("[AUTHENTICATIONFAILED] Invalid credentials")
 
@@ -122,6 +126,7 @@ class FakeImap:
 @pytest.fixture
 def imap(monkeypatch):
     FakeImap.instances, FakeImap.messages, FakeImap.accept, FakeImap.date_last = [], [], True, False
+    FakeImap.login_error = None
     monkeypatch.setattr(mailbox.imaplib, "IMAP4_SSL", FakeImap)
     return FakeImap
 
@@ -157,14 +162,14 @@ def test_a_malformed_message_is_passed_over(imap, monkeypatch):
         (since + 10, _message("no-reply@careers.ti.com", "Verify", "Your verification code is 555555")),
         (since + 20, _message("no-reply@careers.ti.com", "Verify", "Your verification code is 666666")),
     ]
-    real = mailbox._text
+    real = mailbox._parts
 
-    def text(msg):  # the newest one can't be read
+    def parts(msg):  # the newest one can't be read
         if "666666" in str(msg.get_payload()):
             raise IndexError("a broken header")
         return real(msg)
 
-    monkeypatch.setattr(mailbox, "_text", text)
+    monkeypatch.setattr(mailbox, "_parts", parts)
     assert mailbox.search("sam@gmail.com", "app-password", since, {"ti.com"}, "code").value == "555555"
 
 
@@ -187,3 +192,61 @@ def test_mail_after_another_jobs_wait_began_is_that_jobs(imap):
     workday = mailbox.ATS_MAIL_DOMAINS["workday"]
     assert mailbox.search("sam@gmail.com", "pw", since, workday, "code").value == "222222"
     assert mailbox.search("sam@gmail.com", "pw", since, workday, "code", before=since + 50).value == "111111"
+
+
+def test_the_code_not_a_job_number_a_minute_count_or_a_phone_number():
+    """A code straight after the words comes first, wherever it is; a number named as the
+    job's isn't the code; a subject's code words don't read on into the body."""
+    oracle = ("We need you to confirm your identity so your application can be considered for the "
+              "position of Equipment Technician - Pump/Abatement - 2505303.\n\nConfirm your identity "
+              "using this code: 218335.\n\nThe code will expire in 10 minutes.")
+    assert find_code("Your verification code\n" + oracle) == "218335"
+    assert find_code("Your one-time passcode\nThanks for applying for Field Service Engineer (Job 2617841). "
+                     "Enter 482913 on the page to continue.") == "482913"
+    assert find_code("Your verification code is K7Q2ZP. It expires in 1440 minutes.") == "K7Q2ZP"
+    assert find_code("Your security code is AB12CD. Need help? Call us on 800 555 0199.") == "AB12CD"
+
+
+def test_a_code_split_by_its_markup_or_only_in_the_html_is_read(imap):
+    from email.message import EmailMessage
+
+    since = time.time()
+    both = EmailMessage()
+    both["From"], both["Subject"] = "no-reply@careers.ti.com", "Verify your email"
+    both.set_content("Hi Sam, your code is in the HTML version of this email.")
+    both.add_alternative("<p>Your verification code is <b>55</b><b>1234</b></p>", subtype="html")
+    imap.messages = [(since + 10, bytes(both))]
+    assert mailbox.search("sam@gmail.com", "app-password", since, {"ti.com"}, "code").value == "551234"
+
+
+def test_the_confirmation_link_not_a_tagged_logo_or_a_deactivate_link():
+    own = lambda u: u.startswith("https://careers.acme.com/")  # noqa: E731
+    verify = "https://careers.acme.com/account/verify?token=abc"
+    assert find_link("", ["https://careers.acme.com/?utm_campaign=email_verification", verify], own) == verify
+    activate = "https://careers.acme.com/account/activate?token=abc"
+    assert find_link("", ["https://careers.acme.com/account/deactivate?token=abc", activate], own) == activate
+
+
+@pytest.mark.parametrize("error", [imaplib.IMAP4.abort("socket error: EOF"),
+                                   imaplib.IMAP4.error("[UNAVAILABLE] Temporary System Problem. Try again later.")])
+def test_a_mail_service_hiccup_isnt_a_refused_password(imap, error):
+    """A dropped connection or a busy server says so: the desk tries the same password again
+    (a refusal would have it wait for a new one that isn't needed)."""
+    imap.login_error = error
+    with pytest.raises(MailboxError) as e:
+        mailbox.search("sam@gmail.com", "abcd efgh ijkl mnop", time.time(), {"ti.com"}, "code")
+    assert "app password" not in str(e.value)
+
+
+def test_an_app_password_with_odd_characters_is_said_to_be_wrong(imap):
+    with pytest.raises(MailboxError, match="app password"):
+        mailbox.search("sam@gmail.com", "p\u00e4sswort", time.time(), {"ti.com"}, "code")
+
+
+def test_mail_from_before_the_wait_can_be_left_out(imap):
+    """With another job already waiting on the same sender, mail from just before this one's
+    wait began is that job's: no looking back."""
+    since = time.time()
+    imap.messages = [(since - 60, _message("acme@otp.workday.com", "Verify", "Your verification code is 111111"))]
+    assert mailbox.search("sam@gmail.com", "pw", since, {"workday.com"}, "code").value == "111111"
+    assert mailbox.search("sam@gmail.com", "pw", since, {"workday.com"}, "code", look_back=0) is None

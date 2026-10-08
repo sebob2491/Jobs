@@ -705,3 +705,109 @@ def test_the_page_keeps_its_lists_steady(srv):
             await desk.stop()
 
     run(go())
+
+
+def _client(desk):
+    return httpx.AsyncClient(base_url=f"http://127.0.0.1:{desk.port}", timeout=20, trust_env=False)
+
+
+def test_a_job_marked_applied_while_queued_is_never_filled_or_sent(srv):
+    """Marked applied while it waits in the queue (on the desk, or by Claude): it leaves the
+    queue, and is never opened, filled or, with Submit for me on, sent a second time."""
+    desk = Desk(srv)
+    desk.applier.start = lambda: None
+    desk.applier.auto_submit = True
+    on_desk = srv.add_job(url=fixture_url("site/step1.html"), title="FSE", company="Example Fab")["job"]
+    by_claude = srv.add_job(url=fixture_url("generic_form.html"), title="Technician", company="Example Litho")["job"]
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with _client(desk) as c:
+                h = {"x-desk-token": desk.token}
+                ids = [on_desk["id"], by_claude["id"]]
+                assert (await c.post("/api/apply", headers=h, json={"job_ids": ids, "submit": True})).json()["queued"] == ids
+                assert (await c.post(f"/api/job/{on_desk['id']}/applied", headers=h)).json() == {"ok": True}
+            srv.update_job(by_claude["id"], status="applied")  # Claude logged it, say from a confirmation email
+            for _ in range(2):
+                if desk.applier.tasks:
+                    await desk.applier._tick()
+        finally:
+            await desk.stop()
+
+    run(go())
+    runs = desk.applier.runs
+    assert runs[on_desk["id"]].status == "submitted" and runs[by_claude["id"]].status == "submitted"
+    assert "isn't applied to again" in runs[by_claude["id"]].reason
+    assert srv.browser._ctx is None  # nothing was opened
+
+
+def test_ill_typed_requests_are_turned_away_and_change_nothing(srv, job_apply_home):
+    from job_apply.pipeline import Run
+
+    desk = Desk(srv)
+    desk.applier.start = lambda: None
+    job = srv.add_job(url="https://example.com/a", title="FSE", company="Example Fab")["job"]
+    desk.applier.runs[job["id"]] = Run(job["id"], "FSE", "Example Fab", status="ready")  # not asking anything
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with _client(desk) as c:
+                h = {"x-desk-token": desk.token}
+                for path, body in (("/api/apply", b"not json"), ("/api/apply", b"[1, 2]"),
+                                   ("/api/apply", b'{"job_ids": "13", "submit": true}'),
+                                   ("/api/apply", b'{"job_ids": ["abc"]}'), ("/api/answer", b'{"job_id": null}'),
+                                   ("/api/settings", b'"x"'), ("/api/password", b"null")):
+                    r = await c.post(path, headers={**h, "content-type": "application/json"}, content=body)
+                    assert r.status_code == 400, (path, body, r.status_code, r.text)
+                answer = {"job_id": job["id"], "answers": [{"label": "Willing to relocate?", "value": "No"}]}
+                assert (await c.post("/api/answer", headers=h, json=answer)).status_code == 400
+                assert (await c.post("/api/job/777/skip", headers=h)).status_code == 400
+                assert (await c.post("/api/job/99999999999999999999/resume", headers=h)).status_code == 404
+                return (await c.get("/api/state", headers=h)).json()
+        finally:
+            await desk.stop()
+
+    state = run(go())
+    assert not desk.applier.tasks  # "13" isn't jobs 1 and 3
+    assert 777 not in desk.applier.runs and all(o["job_id"] != 777 for o in state["others"])
+    assert config.saved_answers() == []  # nothing remembered for a job that wasn't asking
+
+
+def test_a_password_saved_on_the_desk_is_the_one_used(srv, monkeypatch):
+    """One set in the environment wins over the file, so saving there is refused, saying why;
+    the same email app password saved again after a refusal is tried again."""
+    monkeypatch.setenv("JOB_APPLY_SECRET_WORKDAY_PASSWORD", "an-old-one")
+    desk = Desk(srv)
+    desk.applier.start = lambda: None
+    desk.applier._mail_refused = "abcd efgh ijkl mnop"  # a mail-service hiccup was taken for a refusal
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with _client(desk) as c:
+                h = {"x-desk-token": desk.token}
+                env = await c.post("/api/password", headers=h, json={"name": "workday_password", "value": "new"})
+                mail = await c.post("/api/password", headers=h, json={"name": "email_password",
+                                                                      "value": "abcd efgh ijkl mnop"})
+                return env, mail
+        finally:
+            await desk.stop()
+
+    env, mail = run(go())
+    assert env.status_code == 400 and "JOB_APPLY_SECRET_WORKDAY_PASSWORD" in env.json()["error"]
+    assert mail.json() == {"saved": True} and desk.applier._mail_refused is None
+
+
+def test_a_broken_profile_or_saved_search_doesnt_take_the_page_down(srv, job_apply_home):
+    (job_apply_home / "profile.yaml").write_text("personal:\n  first_name: Sam\n   last_name: [oops\n")
+    (job_apply_home / "recommendations.json").write_text(json.dumps({"results": [{"title": "no address"}, "x"]}))
+    state = Desk(srv).state()
+    assert "typo" in state["profile_problem"] and state["listings"] == []
+
+
+def test_the_desks_own_files_arent_queued_either(srv, job_apply_home):
+    config.secrets_path().write_text("workday_password: hunter2\n")
+    queued, _ = Desk(srv).apply(urls=[config.secrets_path().resolve().as_uri()], job_ids=[], submit=False)
+    assert queued == [] and srv.list_jobs()["jobs"] == []
