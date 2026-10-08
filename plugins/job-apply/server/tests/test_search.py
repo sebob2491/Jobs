@@ -274,6 +274,14 @@ def test_posting_apis():
                 "Id": "2506217", "Title": "Equipment Technician", "PrimaryLocation": "Phoenix, AZ, United States",
                 "ExternalDescriptionStr": "<p>Maintain probers.</p>", "ExternalQualificationsStr": "<ul><li>AAS</li></ul>",
                 "ExternalPostedStartDate": "2026-09-30"}]})
+        if url == "https://careers.example-semi.com/en/sites/CX_1001/job/2506217":  # the company's own address
+            return httpx.Response(200, text='<html><head><link rel="preconnect" href="https://hctz.fa.us2.oraclecloud.com">'
+                                            '</head><body><div id="app"></div></body></html>')
+        if url.startswith("https://api.lever.co/v0/postings/leverco/0b1c2d3e-0000-1111-2222-333344445555"):
+            return httpx.Response(200, json={"text": "Field Service Engineer", "categories": {"location": "Phoenix, AZ"},
+                                              "descriptionPlain": "Service our tools in the field.",
+                                              "lists": [{"text": "Requirements", "content": "<li>3 years</li>"}],
+                                              "additionalPlain": "This role requires U.S. citizenship (ITAR)."})
         if url.startswith("https://boards-api.greenhouse.io/v1/boards/asm/jobs/4885531101"):
             return httpx.Response(200, json={"title": "Digital Solutions Engineer", "company_name": "ASM",
                                               "absolute_url": "https://www.asm.com/open-vacancies/?gh_jid=4885531101",
@@ -286,9 +294,14 @@ def test_posting_apis():
             gh = await fetch_posting("https://job-boards.greenhouse.io/asm/jobs/4885531101", client=client)
             orc = await fetch_posting(
                 "https://hctz.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1001/job/2506217", client=client)
-            return sr, gh, orc
+            # a company's own address for its Oracle site: the API call goes to where it points
+            own = await fetch_posting("https://careers.example-semi.com/en/sites/CX_1001/job/2506217", client=client)
+            lever = await fetch_posting("https://jobs.lever.co/leverco/0b1c2d3e-0000-1111-2222-333344445555", client=client)
+            return sr, gh, orc, own, lever
 
-    sr, gh, orc = asyncio.run(go())
+    sr, gh, orc, own, lever = asyncio.run(go())
+    assert own.parse_method == "oracle-api" and own.title == "Equipment Technician" and own.ats == "oracle_hcm"
+    assert "U.S. citizenship (ITAR)" in lever.description and "- 3 years" in lever.description
     assert orc.parse_method == "oracle-api" and orc.title == "Equipment Technician"
     assert "Maintain probers." in orc.description and "- AAS" in orc.description and orc.ats == "oracle_hcm"
     assert sr.parse_method == "smartrecruiters-api" and sr.company == "ASML" and sr.location == "Chandler, AZ, US"

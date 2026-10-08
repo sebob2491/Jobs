@@ -27,6 +27,9 @@ USER_AGENT = (
     "(KHTML, like Gecko) Chrome/129.0 Safari/537.36"
 )
 MAX_DESCRIPTION = 20000
+# Where a posting's own application questions start in its text (Greenhouse): they're the
+# form's, not the job's requirements, so the ranking stops reading there.
+QUESTIONS_HEADING = "Application questions:"
 
 
 @dataclass
@@ -68,12 +71,16 @@ def html_to_text(raw: str) -> str:
         br.replace_with("\n")
     for li in soup.find_all("li"):
         li.insert_before("\n- ")
-    for block in soup.find_all(["p", "div", "h1", "h2", "h3", "h4", "ul", "ol", "tr", "section"]):
+    # a line of its own, before and after: "<strong>Preferred</strong><p>..." keeps its heading
+    for block in soup.find_all(["p", "div", "h1", "h2", "h3", "h4", "h5", "h6", "ul", "ol", "tr", "td", "th", "dt", "dd",
+                                "section", "article", "header", "footer", "table", "blockquote"]):
+        block.insert_before("\n")
         block.insert_after("\n")
     text = soup.get_text()
     text = html.unescape(text)
     text = re.sub(r"[ \t\xa0]+", " ", text)
     text = re.sub(r" *\n *", "\n", text)
+    text = re.sub(r"(^|\n)- *\n+(?!- )", r"\1- ", text)  # "<li>\n  Bachelor's..." keeps its bullet
     text = re.sub(r"\n{3,}", "\n\n", text)
     return text.strip()[:MAX_DESCRIPTION]
 
@@ -139,6 +146,38 @@ def find_jsonld_jobposting(soup: BeautifulSoup) -> dict[str, Any] | None:
     return None
 
 
+def _unescaped(raw: str) -> str:
+    """HTML that was escaped once more ("&lt;p&gt;Requirements..."), as some sites' JSON-LD is."""
+    return html.unescape(raw) if "&lt;" in raw and "<" not in raw else raw
+
+
+# UKG Pro (Nikon) builds its posting page with script: the posting is in the page's
+# `new US.Opportunity.CandidateOpportunityDetail({...})` call.
+_UKG_DETAIL = "CandidateOpportunityDetail("
+
+
+def ukg_posting(raw_html: str, url: str) -> Posting | None:
+    at = raw_html.find(_UKG_DETAIL)
+    if at < 0:
+        return None
+    try:
+        d, _ = json.JSONDecoder().raw_decode(raw_html[at + len(_UKG_DETAIL):])
+    except ValueError:
+        return None
+    if not isinstance(d, dict) or not d.get("Description"):
+        return None
+    places = []
+    for loc in d.get("Locations") or []:
+        addr = (loc or {}).get("Address") or {}
+        city, state = addr.get("City"), (addr.get("State") or {}).get("Code")
+        place = f"{city}, {state}" if city and state else (loc or {}).get("LocalizedDescription") or city or state or ""
+        if place and place not in places:
+            places.append(place)
+    return Posting(url=url, title=str(d.get("Title") or "").strip(), location="; ".join(places),
+                   description=html_to_text(str(d["Description"])), external_id=str(d.get("RequisitionNumber") or ""),
+                   posted_at=str(d.get("PostedDate") or ""), parse_method="ukg-page")
+
+
 def posting_from_jsonld(ld: dict[str, Any], url: str) -> Posting:
     org = ld.get("hiringOrganization") or {}
     ident = ld.get("identifier") or {}
@@ -147,7 +186,7 @@ def posting_from_jsonld(ld: dict[str, Any], url: str) -> Posting:
         title=html.unescape(str(ld.get("title") or "")).strip(),
         company=(org.get("name") if isinstance(org, dict) else str(org)) or "",
         location=_location_from_ld(ld.get("jobLocation")),
-        description=html_to_text(str(ld.get("description") or "")),
+        description=html_to_text(_unescaped(str(ld.get("description") or ""))),
         external_id=str(ident.get("value", "")) if isinstance(ident, dict) else str(ident or ""),
         salary=_salary_from_ld(ld.get("baseSalary")),
         employment_type=", ".join(ld["employmentType"]) if isinstance(ld.get("employmentType"), list) else str(ld.get("employmentType") or ""),
@@ -211,8 +250,11 @@ def _find_apply_link(soup: BeautifulSoup, base_url: str) -> str:
 def parse_html(raw_html: str, url: str) -> Posting:
     soup = BeautifulSoup(raw_html, "html.parser")
     ld = find_jsonld_jobposting(soup)
+    ukg = None if ld else ukg_posting(raw_html, url)
     if ld:
         p = posting_from_jsonld(ld, url)
+    elif ukg:
+        p = ukg
     else:
         title = ""
         og = soup.find("meta", property="og:title")
@@ -293,7 +335,7 @@ async def _fetch_greenhouse(client: httpx.AsyncClient, url: str) -> Posting | No
     )
     questions = [q.get("label") for q in data.get("questions") or [] if q.get("label")]
     if questions:
-        p.description += "\n\nApplication questions:\n" + "\n".join(f"- {q}" for q in questions)
+        p.description += f"\n\n{QUESTIONS_HEADING}\n" + "\n".join(f"- {q}" for q in questions)
     return p
 
 
@@ -307,6 +349,8 @@ async def _fetch_lever(client: httpx.AsyncClient, url: str) -> Posting | None:
     body = data.get("descriptionPlain") or html_to_text(data.get("description", ""))
     for section in data.get("lists") or []:
         body += f"\n\n{section.get('text', '')}\n" + html_to_text(section.get("content", ""))
+    # the closing section, where citizenship, clearance and travel terms often are
+    body += "\n\n" + (data.get("additionalPlain") or html_to_text(data.get("additional") or ""))
     return Posting(
         url=url,
         title=data.get("text", ""),
@@ -347,13 +391,25 @@ async def _fetch_smartrecruiters(client: httpx.AsyncClient, url: str) -> Posting
     )
 
 
+_ORACLE_HOST = re.compile(r"\b[a-z0-9-]+\.fa(?:\.[a-z0-9-]+)?\.oraclecloud\.com\b")
+
+
 async def _fetch_oracle(client: httpx.AsyncClient, url: str) -> Posting | None:
     parts = oracle_parts(url)
     if not parts:
         return None
-    api = (f"https://{parts['host']}/hcmRestApi/resources/latest/recruitingCEJobRequisitionDetails"
-           f"?expand=all&onlyData=true&finder=ById;Id=%22{parts['job_id']}%22,siteNumber={parts['site']}")
-    items = (await _get(client, api, headers={"Accept": "application/json"})).json().get("items") or []
+    host = parts["host"]
+    path = ("/hcmRestApi/resources/latest/recruitingCEJobRequisitionDetails"
+            f"?expand=all&onlyData=true&finder=ById;Id=%22{parts['job_id']}%22,siteNumber={parts['site']}")
+    if not host.endswith(".oraclecloud.com"):
+        # a company's own address for its Oracle site (careers.ti.com) answers only the page,
+        # which names the Oracle host its API is on
+        page = (await _get(client, url, headers={"Accept": "text/html"})).text
+        m = _ORACLE_HOST.search(page)
+        if not m:
+            return None
+        host = m.group(0)
+    items = (await _get(client, f"https://{host}{path}", headers={"Accept": "application/json"})).json().get("items") or []
     if not items:
         return None
     d = items[0]

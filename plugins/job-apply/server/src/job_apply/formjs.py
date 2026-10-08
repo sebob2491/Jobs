@@ -26,11 +26,15 @@ EXTRACT_JS = r"""
     }
     return el.closest('label');
   };
+  // Text before a control with no label of its own. Text before another control is that
+  // control's label: an unlabelled phone extension box isn't "Phone Number *".
+  const CONTROL = 'input:not([type="hidden"]), select, textarea';
   const preceding = (el) => {
     let node = el;
     for (let depth = 0; depth < 4 && node; depth++) {
       let sib = node.previousElementSibling;
       while (sib) {
+        if (sib.matches(CONTROL) || sib.querySelector(CONTROL)) return '';
         const t = txt(sib);
         if (t && t.length < 300) return t;
         sib = sib.previousElementSibling;
@@ -78,7 +82,8 @@ EXTRACT_JS = r"""
   };
   const isRequired = (el, label) => {
     if (el.required || el.getAttribute('aria-required') === 'true') return true;
-    if (/\*\s*$|\(required\)/i.test(label || '')) return true;
+    // "First Name *", "* First Name", "Email * (work)"; not "* indicates a required field"
+    if ((/\*/.test(label || '') && !/indicates?|denotes?|required fields?/i.test(label)) || /\(required\)/i.test(label || '')) return true;
     // Oracle: a required row's label says so only by a class (its star is drawn by CSS)
     const row = el.closest('.input-row');
     if (row && row.querySelector('.input-row__label--required')) return true;
@@ -98,7 +103,11 @@ EXTRACT_JS = r"""
       const role = (node.getAttribute('role') || '').toLowerCase();
       const container = role === 'group' || role === 'region' || node.tagName === 'FIELDSET' || node.tagName === 'SECTION';
       let t = container ? labelledBy(node) : '';
-      if (!t) { const h = node.querySelector(HEADING); t = h ? txt(h) : ''; }
+      if (!t) {
+        // the last heading before the field: "Work Experience 2" sits beside block 2, after block 1
+        const hs = Array.from(node.querySelectorAll(HEADING)).filter((h) => h.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING);
+        t = hs.length ? txt(hs[hs.length - 1]) : '';
+      }
       if (!t || t.length > 80) continue;
       if (container || /\b\d+\s*$/.test(t)) return t;
     }
@@ -130,8 +139,28 @@ EXTRACT_JS = r"""
     return [];
   };
   const tag = (el, id) => { el.setAttribute('data-ja-id', id); return id; };
-  const idOf = (el) => el.getAttribute('data-ja-id') || tag(el, newId());
+  // A site that adds a block by copying one (jQuery's clone) copies our ids too: the copy
+  // gets new ones, or filling block 2 would write into block 1.
+  const assigned = new Map();
+  const usedIds = new Set();
+  const idOf = (el) => {
+    if (assigned.has(el)) return assigned.get(el);
+    let id = el.getAttribute('data-ja-id');
+    if (!id || usedIds.has(id)) id = tag(el, newId());
+    usedIds.add(id);
+    assigned.set(el, id);
+    return id;
+  };
+  const gidOwners = new Map();
+  const ownGid = (el, attr) => {
+    let gid = el.getAttribute(attr);
+    if (!gid || (gidOwners.has(gid) && gidOwners.get(gid) !== el)) { gid = newId(); el.setAttribute(attr, gid); }
+    gidOwners.set(gid, el);
+    return gid;
+  };
 
+  // "search", "job-search", "jobSearchForm"; not "research" ("toyotaresearchinstitute")
+  const isSearchName = (s) => !!s && (/(^|[^a-zA-Z])search/i.test(s) || /[a-z]Search/.test(s));
   const GENERIC_FILE = /^(attach|upload|choose (a )?file|browse|select files?|add (a )?file|drop (your )?files? here|or|enter manually)$/i;
   const HONEYPOT = /for robots|robots only|if you('| a)?re (a )?human|not (be )?(filled|entered) by humans|honey ?pot|leave this field (blank|empty)/i;
   const fields = [];
@@ -161,8 +190,14 @@ EXTRACT_JS = r"""
 
     if (isChoice) {
       const isRadio = type === 'radio' || role === 'radio';
-      const container = el.closest('fieldset, [role="radiogroup"], [role="group"]');
-      const key = (isRadio ? 'r:' : 'c:') + (el.name ? 'n:' + el.name : container ? 'g:' + (container.getAttribute('data-ja-gid') || (container.setAttribute('data-ja-gid', newId()), container.getAttribute('data-ja-gid'))) : 'e:' + idOf(el));
+      let container = el.closest('fieldset, [role="radiogroup"], [role="group"]');
+      if (!container && isRadio && !el.name) {
+        // ARIA radios with no name and no group: one question's options share a wrapper
+        for (let n = el.parentElement, d = 0; n && d < 3 && !container; n = n.parentElement, d++) {
+          if (n.querySelectorAll('[role="radio"], input[type="radio"]').length > 1) container = n;
+        }
+      }
+      const key = (isRadio ? 'r:' : 'c:') + (el.name ? 'n:' + el.name : container ? 'g:' + ownGid(container, 'data-ja-gid') : 'e:' + idOf(el));
       if (!groups.has(key)) groups.set(key, { isRadio, container, members: [] });
       groups.get(key).members.push(el);
       continue;
@@ -192,8 +227,9 @@ EXTRACT_JS = r"""
       else if (!el.value) value = shownNear(el);  // react-select shows the choice beside an empty input
     }
     // A site's own search box (header, nav, search form) is not part of the application.
-    if (el.closest('[role="search"], header, nav, form[action*="search" i], form[id*="search" i], form[class*="search" i]')
-        || type === 'search') continue;
+    if (el.closest('[role="search"], header, nav') || type === 'search') continue;
+    const form = el.closest('form');
+    if (form && [form.getAttribute('action'), form.id, form.getAttribute('class')].some(isSearchName)) continue;
     let label = labelFor(el);
     // Upload widgets often label the input with its button ("Attach"); use the field's heading.
     if (kind === 'file' && GENERIC_FILE.test(label)) {
@@ -246,14 +282,23 @@ EXTRACT_JS = r"""
     const first = g.members[0];
     const checkedOf = (m) => m.checked === true || m.getAttribute('aria-checked') === 'true';
     if (!g.isRadio && g.members.length === 1) {
-      const label = optionLabel(first);
+      let label = optionLabel(first);
+      // "I have a preferred name" [x] Yes: the question is beside the box, not its label
+      if (!label || /^(yes|no|y|true|i agree|agree|i accept|accept)$/i.test(label)) {
+        let q = '';
+        for (let n = first.parentElement, d = 0; n && d < 3 && !q; n = n.parentElement, d++) {
+          q = labelledBy(n) || clean(n.getAttribute('aria-label') || '');
+        }
+        const legend = !q && first.closest('fieldset') && first.closest('fieldset').querySelector(':scope > legend');
+        label = q || (legend && txt(legend)) || label;
+      }
       const single = { id: idOf(first), kind: 'checkbox', label, required: isRequired(first, label), value: checkedOf(first) };
       const section = sectionOf(first);
       if (section && section !== label) single.section = section;
       fields.push(single);
       continue;
     }
-    const gid = first.getAttribute('data-ja-gid-member') || newId();
+    const gid = ownGid(first, 'data-ja-gid-member');
     const options = [];
     let value = g.isRadio ? '' : [];
     g.members.forEach((m, i) => {

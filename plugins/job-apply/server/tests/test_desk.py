@@ -34,7 +34,10 @@ def test_desk_finds_applies_and_submits(srv, monkeypatch):
     async def fetch(url):  # only postings that were read are recommended
         if url != posting:
             raise RuntimeError("no network in tests")
-        return Posting(url=url, description="Requirements\n- High school diploma or GED.", location="Phoenix, AZ")
+        return Posting(url=url, location="Phoenix, AZ", description=(
+            "Maintain and repair semiconductor equipment at customer sites across the Phoenix area.\n"
+            "Requirements\n- High school diploma or GED.\n- 2+ years of hands-on equipment maintenance experience.\n"
+            "- Willingness to travel up to 25% of the time."))
 
     monkeypatch.setattr(srv, "search_company_jobs", fake_search)
     desk = Desk(srv)
@@ -591,6 +594,21 @@ def test_the_page_shows_the_plugin_version(srv):
 
     manifest = json.loads((config.PLUGIN_ROOT / ".claude-plugin" / "plugin.json").read_text())
     assert Desk(srv).state()["version"] == manifest["version"] != ""
+
+
+def test_a_pasted_posting_that_builds_itself_with_script_is_read_in_the_browser(srv):
+    """Plain HTTP got the page but no posting in it (Nikon's UKG pages, TI's): the browser reads it."""
+    posting = fixture_url("site/posting.html")
+    desk = Desk(srv)
+    desk.applier.start = lambda: None
+
+    async def thin(url):
+        return Posting(url=url, title="", description="Loading...")
+
+    desk.fetch = thin
+    out = run(desk.add_links([posting]))
+    assert out[0]["job_id"] and out[0]["title"].startswith("Field Service Engineer")
+    assert "Maintain and repair semiconductor equipment" in srv.tracker().get(out[0]["job_id"])["description"]
 
 
 def test_a_secrets_file_that_isnt_a_list_of_names_doesnt_break_the_page(srv, job_apply_home):

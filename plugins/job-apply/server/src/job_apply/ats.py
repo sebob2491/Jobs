@@ -19,7 +19,9 @@ _PATTERNS: list[tuple[str, str]] = [
     ("ashby", r"ashbyhq\.com"),
     ("eightfold", r"eightfold\.ai"),
     ("avature", r"avature\.net"),
-    ("oracle_hcm", r"oraclecloud\.com/hcmUI|\.fa\.[a-z0-9]+\.oraclecloud\.com"),
+    # matched lower-cased; the last is a company's own address for its Oracle site (careers.ti.com)
+    ("oracle_hcm", r"oraclecloud\.com/hcmui|\.fa\.[a-z0-9]+\.oraclecloud\.com|"
+                   r"/[a-z]{2}(?:-[a-z]{2})?/sites/[\w-]+/(?:job|requisitions/preview)/\d+"),
     ("brassring", r"brassring\.com"),
     ("jobvite", r"jobvite\.com"),
     ("phenom", r"phenompeople\.com"),
@@ -129,7 +131,8 @@ def smartrecruiters_parts(url: str) -> dict[str, str] | None:
 
 
 def oracle_parts(url: str) -> dict[str, str] | None:
-    m = re.search(r"https?://([^/]+)/hcmUI/CandidateExperience/[\w-]+/sites/([\w-]+)/(?:requisitions/preview|job)/(\d+)", url)
+    m = re.search(r"https?://([^/]+)(?:/hcmUI/CandidateExperience)?/[\w-]+/sites/([\w-]+)/(?:requisitions/preview|job)/(\d+)",
+                  url, re.I)
     if m:
         return {"host": m.group(1), "site": m.group(2), "job_id": m.group(3)}
     return None

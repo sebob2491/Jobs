@@ -1,3 +1,5 @@
+import json
+
 from conftest import FIXTURES
 
 from job_apply.ats import detect_ats, greenhouse_form_url, greenhouse_parts, lever_parts, linkedin_job_id, workday_parts
@@ -14,6 +16,8 @@ def test_detect_ats():
         "https://jobs.lever.co/acme/0b1c2d3e-0000-1111-2222-333344445555": "lever",
         "https://career8.successfactors.com/career?company=amkor": "successfactors",
         "https://hctz.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1001/jobs": "oracle_hcm",
+        "https://jpmc.fa.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1001/job/210000001": "oracle_hcm",
+        "https://careers.ti.com/en/sites/CX/job/25018065": "oracle_hcm",  # the company's own address for it
         "https://micron.eightfold.ai/careers": "eightfold",
         "https://www.paycomonline.net/v4/ats/web.php/portal/95CACB007211B4A999FBE2ED52E7762E/jobs/389228": "paycom",
         "https://seus.applicantstack.com/x/detail/a2ejxq3cpz4b": "applicantstack",
@@ -101,6 +105,40 @@ def test_html_to_text_lists_and_entities():
     text = html_to_text("<p>Hello&nbsp;there</p><ul><li>One</li><li>Two &amp; three</li></ul>")
     assert "Hello there" in text
     assert "- One" in text and "- Two & three" in text
+
+
+def test_html_to_text_keeps_headings_and_bullets_on_their_own_lines():
+    """The ranking reads requirements line by line, and what's under a "Preferred" heading
+    differently."""
+    # whitespace inside a list item: the bullet stays with its text
+    assert html_to_text("<ul><li>\n   Bachelor's degree required\n </li></ul>") == "- Bachelor's degree required"
+    # an inline heading before a block is a line of its own
+    def lines(raw):
+        return [line for line in html_to_text(raw).splitlines() if line]
+    assert lines("<div><strong>Preferred Qualifications</strong><p>Experience with vacuum pumps.</p></div>") == [
+        "Preferred Qualifications", "Experience with vacuum pumps."]
+    # table cells and smaller headings too
+    assert lines("<table><tr><td>Location</td><td>Phoenix, AZ</td></tr></table>") == ["Location", "Phoenix, AZ"]
+    assert lines("<h5>Requirements</h5>High school diploma") == ["Requirements", "High school diploma"]
+
+
+def test_postings_written_into_the_page_differently():
+    # JSON-LD whose description was escaped twice
+    ld = {"@context": "https://schema.org", "@type": "JobPosting", "title": "Technician",
+          "description": "&lt;p&gt;Requirements&lt;/p&gt;&lt;ul&gt;&lt;li&gt;Associate degree&lt;/li&gt;&lt;/ul&gt;"}
+    raw = f'<html><head><script type="application/ld+json">{json.dumps(ld)}</script></head><body></body></html>'
+    p = parse_html(raw, "https://jobs.example.com/1")
+    assert [line for line in p.description.splitlines() if line] == ["Requirements", "- Associate degree"]
+    # UKG Pro (Nikon) puts the posting in a script call
+    detail = {"Title": "Field Service Engineer", "RequisitionNumber": "FIELD001451", "PostedDate": "2026-07-08T21:04:44Z",
+              "Description": "<p><strong>Requirements</strong></p><ul><li>Must be a U.S. person (ITAR).</li></ul>",
+              "Locations": [{"LocalizedDescription": "Arizona", "Address": {"City": "Chandler", "State": {"Code": "AZ"}}},
+                            {"LocalizedDescription": "Phoenix, AZ", "Address": {"City": None, "State": {"Code": "AZ"}}}]}
+    raw = ("<html><body><div id='app'></div><script>var opportunity = new US.Opportunity.CandidateOpportunityDetail("
+           + json.dumps(detail) + ");</script></body></html>")
+    p = finalize(parse_html(raw, "https://recruiting2.ultipro.com/NIK1001NIKON/JobBoard/f11a/OpportunityDetail?opportunityId=1"))
+    assert p.title == "Field Service Engineer" and p.location == "Chandler, AZ; Phoenix, AZ" and p.parse_method == "ukg-page"
+    assert "- Must be a U.S. person (ITAR)." in p.description and p.ats == "ukg"
 
 
 def test_fetch_posting_over_http():

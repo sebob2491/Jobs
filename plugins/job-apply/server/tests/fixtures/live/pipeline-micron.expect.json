@@ -213,7 +213,7 @@
       "required": true
     },
     {
-      "label": "Yes",
+      "label": "I have a preferred name",
       "kind": "checkbox",
       "required": false
     },

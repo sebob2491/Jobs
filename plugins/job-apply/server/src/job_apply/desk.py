@@ -350,15 +350,18 @@ class Desk:
             try:
                 posting = await self.fetch(url)
                 if not posting.is_useful and detect_ats(url) in ("linkedin", "indeed"):
-                    posting = None
+                    posting = None  # their sign-in page, not the posting
             except Exception:  # FetchError, a timeout, an odd page: the browser gets a go
                 posting = None
-            if posting is None:
+            if posting is None or not posting.is_useful:  # or a page that builds itself with script
                 try:
-                    posting = finalize(parse_html(await self.srv.browser.background_html(url), url))
+                    seen = finalize(parse_html(await self.srv.browser.background_html(url), url))
+                    if posting is None or len(seen.description) > len(posting.description):
+                        posting = seen
                 except Exception as e:  # report it on the page; the other links still go in
-                    out.append({"url": url, "error": f"couldn't read the posting: {_first_line(e)}"})
-                    continue
+                    if posting is None:
+                        out.append({"url": url, "error": f"couldn't read the posting: {_first_line(e)}"})
+                        continue
             job, _ = self.srv.tracker().upsert(posting.to_dict())
             out.append({"url": job["url"], "job_id": job["id"], "title": job.get("title"), "company": job.get("company"),
                         "status": job.get("status"), "warnings": posting.warnings})

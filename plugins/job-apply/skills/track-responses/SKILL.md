@@ -30,7 +30,9 @@ stop.
    Also search for mail from the ATS platforms, then match the results to a company by
    the body text:
    `from:(myworkday.com OR greenhouse-mail.io OR hire.lever.co OR eightfold.ai OR successfactors.com OR icims.com OR taleo.net OR oraclecloud.com) newer_than:60d`
-   Skip any thread id that `logged_emails` already lists.
+   Skip a thread that `logged_emails` already lists, unless it has a message newer
+   than the `received_at` listed for it: a rejection or interview invite can arrive
+   as a reply in the same thread as the confirmation.
 
 3. **Read and classify** each new thread. Read only what you need to classify it.
    - `confirmation`: "we received your application", "thank you for applying".
@@ -46,7 +48,8 @@ stop.
 
 4. **Record** each one with `log_email(job_id, thread_id, category, summary, received_at)`.
    `summary` is one line, e.g. "Phone screen request from recruiter, reply with availability".
-   The tool never moves a status backwards and ignores threads it has already seen.
+   For a thread with several messages, classify and record its newest one. The tool
+   never moves a status backwards and ignores a message it has already seen.
 
 5. **Report** in a short table: company, role, what arrived, new status. Then list
    the action items: interviews to schedule, assessments with deadlines, emails
