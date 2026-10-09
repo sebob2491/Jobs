@@ -1901,3 +1901,23 @@ def test_employers_are_searched_eight_at_a_time():
             return await search_companies("accountant", client=client, companies=companies)
     out = asyncio.run(go())
     assert not out["errors"] and most == 8, (most, out["errors"])
+
+
+def test_an_employer_with_two_workday_sites_searches_both():
+    """PwC lists experienced openings and entry-level ones on two Workday sites: both are searched."""
+    import asyncio
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        site = "Exp" if "/Exp/" in str(request.url) else "Entry"
+        return httpx.Response(200, json={"total": 1, "jobPostings": [{
+            "title": f"Audit Associate ({site})", "externalPath": f"/job/AZ-Phoenix/Audit_{site}", "locationsText": "AZ-Phoenix",
+            "postedOn": "Posted Today", "bulletFields": [f"{site}1"]}]})
+
+    async def go():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            return await search_module._workday(client, ["https://pwc.wd3.myworkdayjobs.com/Exp",
+                                                         "https://pwc.wd3.myworkdayjobs.com/Entry"], "audit", 10, [])
+
+    found = asyncio.run(go())
+    assert sorted(x.url for x in found) == ["https://pwc.wd3.myworkdayjobs.com/Entry/job/AZ-Phoenix/Audit_Entry",
+                                            "https://pwc.wd3.myworkdayjobs.com/Exp/job/AZ-Phoenix/Audit_Exp"]
