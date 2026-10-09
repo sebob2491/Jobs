@@ -197,6 +197,7 @@ companies:
     ats: custom            # gr8people; internal jobs are listed on randstadusa.com and apply on randstadnorthamerica.workgr8.com
     az_sites: Phoenix, Tucson
     confidence: medium        # page seen, Oct 2026: two Arizona internal openings, neither in HR or recruiting
+    search: {randstad: https://www.randstadusa.com/jobs/internal}  # the page's own data (window.__ROUTE_DATA__)
   # Phoenix-metro utilities, aerospace and defense, tech, logistics and retail employers
   # (checked Oct 2026).
   - name: Arizona Public Service   # APS (Pinnacle West)
@@ -282,8 +283,9 @@ companies:
     careers_url: https://careers.insight.com/careers
     ats: eightfold            # Eightfold site (domain insight.com); www.insight.com/.../careers answered 403 (Access Denied)
     az_sites: Chandler (HQ), Tempe
-    confidence: medium        # page seen; no search: its /api/pcsx/search answers 403 "PCSX is not enabled for this user"
-                              # and the page in the browser never made that call (Oct 2026)
+    confidence: medium        # page seen, Oct 2026: its /api/pcsx/search answers 403 "PCSX is not enabled for this
+                              # user", and Eightfold's older /api/apply/v2/jobs answers (38 Arizona openings)
+    search: {eightfold: {host: careers.insight.com, domain: insight.com}}
   - name: Avnet
     careers_url: https://www.avnet.com/wps/portal/us/about-avnet/careers/
     ats: unknown              # avnet.com answered with a bot challenge ("Challenge Validation") from here; system not seen

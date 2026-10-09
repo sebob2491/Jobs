@@ -187,6 +187,8 @@ _TAILOR_SAYS = ("Waiting for a resume written for this job. In Claude Code, say 
                 "desk carries on with this job as soon as its resume is ready. Or use your usual resume.")
 _BOT_CHECK_SAYS = ("The site is checking that you're a person (a bot check or CAPTCHA). Solve it in the browser "
                    "window; the desk carries on by itself after that.")
+_ERROR_COUNT = re.compile(r"^\d+ errors? found\.?$", re.I)  # a section's count, not what's wrong
+_ROBOT = re.compile(r"not a robot|captcha|verify (?:that )?you(?:'re| are) (?:a )?human", re.I)
 _ERRORISH = re.compile(r"error|required|invalid|please|must|enter |select |missing|problem|fix|can'?t be blank", re.I)
 
 
@@ -1028,6 +1030,9 @@ class Applier:
                         problems = _flagged(now) or [  # a Next greyed out until a resume is attached, say
                             f"\u201c{a['text'].strip()}\u201d is greyed out, so the site still wants something (a file, "
                             "say, or a box to tick)" for a in _greyed_step(now)[:1]]
+                    if any(_ROBOT.search(p) for p in problems):  # Randstad's "verify that you are not a robot"
+                        await self._bring_forward(run)
+                        return self._pause(run, "bot_check", _BOT_CHECK_SAYS)
                     errors = "; ".join(problems)[:300].rstrip(" .")
                     return self._pause(run, "stuck", "The page didn't move on" + (f": {errors}." if errors else ".")
                                        + " Fix it in the browser, then press Resume.")
@@ -1290,15 +1295,22 @@ class Applier:
             srv._mark_ready(job, "filled by the Job Desk; has a CAPTCHA")
             return self._pause(run, "captcha", "Filled. The form has a CAPTCHA: tick it in the browser, then "
                                "press Submit here.")
+        shown = "; ".join(e for e in _flagged(data) if not _ERROR_COUNT.match(e))[:300].rstrip(" .")
+        if shown and run.submit and self.auto_submit:  # Insight's review page lists what's still missing
+            return self._pause(run, "stuck", f"The review page shows errors: {shown}. Fix them in the browser, then "
+                               "press Submit.")
         if run.submit and self.auto_submit:
             return await self._submit(run, by_person=False)
         srv._mark_ready(job, "filled by the Job Desk")
         run.status, run.need = "ready", ""
         run.reason = "Filled and waiting on the review page. Check it in the browser, then press Submit."
+        if shown:
+            run.reason = (f"Filled, but the review page shows errors: {shown}. Fix those in the browser before you "
+                          "press Submit.")
         if run.pressed_before:
             run.reason = ("Filled and waiting on the review page. Submit was pressed for this job before and no "
                           "confirmation showed, so it may have gone through: check your email or the site before you "
-                          "press Submit.")
+                          "press Submit." + (f" The review page also shows errors: {shown}." if shown else ""))
         self._log(run, "reached the review page")
 
     async def _submit(self, run: Run, by_person: bool = True) -> None:

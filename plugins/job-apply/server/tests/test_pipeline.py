@@ -2465,3 +2465,74 @@ def test_an_account_pause_holds_until_the_tab_leaves_the_account_site(srv):
     assert not applier._looks_past(r, signup, "")
     back = {**signup, "url": "https://www.jobs.example/jobs/1/apply", "title": "Apply", "headings": ["Apply"]}
     assert applier._looks_past(r, back, "")
+
+
+@pytest.mark.parametrize("auto", [False, True])
+def test_a_review_page_that_lists_errors_says_so_and_isnt_submitted_for_you(srv, monkeypatch, auto):
+    """Insight Enterprises' review page (live, Oct 2026) listed "Error: Last Name cannot be left
+    blank." and the desk called the job ready as if nothing were wrong; with Submit for me on, it
+    would have pressed Submit on it."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    job = srv.add_job(url=fixture_url("site/review-errors.html"), title="HRBP", company="Example Fab")["job"]
+    applier = Applier(srv)
+    applier.auto_submit = auto
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"], submit=auto)
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r, await r.page.evaluate("() => window.sent || false")
+        finally:
+            await applier.stop()
+
+    r, sent = run(go())
+    assert "Last Name cannot be left blank" in r.reason and "error found" not in r.reason, (r.status, r.reason)
+    assert not sent
+    if auto:
+        assert (r.status, r.need) == ("needs_you", "stuck"), (r.status, r.reason)
+    else:
+        assert r.status == "ready", (r.status, r.reason)
+
+
+def test_a_review_page_with_errors_after_an_earlier_press_says_both(srv, monkeypatch):
+    """Submit pressed for this job before, no confirmation, and the review page now lists an
+    error: the warning that it may have gone through doesn't hide what the page shows."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    job = srv.add_job(url=fixture_url("site/review-errors.html"), title="HRBP", company="Example Fab")["job"]
+    srv.tracker().update(job["id"], note="pressed Submit; no confirmation showed")
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert r.status == "ready" and "pressed for this job before" in r.reason, (r.status, r.reason)
+    assert "Last Name cannot be left blank" in r.reason, r.reason
+
+
+def test_a_page_that_asks_if_youre_a_robot_is_a_bot_check(srv, monkeypatch):
+    """Randstad's application (live, Oct 2026): Continue stayed put with "Please verify that you
+    are not a robot", and the desk called it stuck. It's a bot check: the person's to pass."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 1)
+    job = srv.add_job(url=fixture_url("site/robot-step.html"), title="Recruiter", company="Example Staffing")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert (r.status, r.need) == ("needs_you", "bot_check"), (r.status, r.need, r.reason, r.log)

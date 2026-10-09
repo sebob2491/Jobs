@@ -15,6 +15,7 @@ Each company in data/companies.yaml may carry a `search` block naming one of:
     jibe:            <Jibe site host>       (iCIMS's Jibe job sites: jobs.sprouts.com)
     jobvite:         <company>              (jobs.jobvite.com/<company>)
     amazon:          {loc_query: "Phoenix, AZ, USA", latitude: .., longitude: .., radius: 50km}  (amazon.jobs)
+    randstad:        https://www.randstadusa.com/jobs/internal  (Randstad's own jobs)
     icims:           <portal name>          (read in the browser)
     paycom:          <career portal key>    (read in the browser)
     ukg:             <job board address>    (UKG Pro / UltiPro; read in the browser)
@@ -55,7 +56,7 @@ WORKDAY_PAGE = 20  # Workday rejects larger pages
 MAX_ALTERNATIVES = 4
 FETCH_WHEN_FILTERING = 60  # results to scan per search when filtering by location ourselves
 CLIENT_SIDE = {"greenhouse", "lever", "applicantstack", "paycom", "ukg", "sfclassic", "infor", "phoenixchildrens",
-               "jobvite"}  # whole board at once; titles filtered here
+               "jobvite", "randstad"}  # whole board at once; titles filtered here
 # Searches whose data only comes through the site's own page in the browser (ASML's
 # Sitecore Discover widget; iCIMS portals, which turn away plain requests; Paycom, UKG
 # Pro and SuccessFactors' newer search, whose APIs want the session their page sets up;
@@ -961,6 +962,50 @@ def parse_jobvite(html: str, base: str) -> list[Listing]:
     return out
 
 
+# ----------------------------------------------------------------- Randstad's own jobs (randstadusa.com)
+RANDSTAD_PAGES = 4  # pages read nationwide; 30 openings a page
+
+
+async def _randstad(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, terms: list[str]) -> list[Listing]:
+    """Randstad's internal jobs (randstadusa.com/jobs/internal/) are listed in the page's own
+    data (window.__ROUTE_DATA__), 30 a page: one state's on a page of its own
+    (/jobs/internal/arizona/), the whole country's over several."""
+    base = str(cfg).rstrip("/")
+    state = icims_state(terms)
+    urls = ([f"{base}/{US_STATES[state].lower().replace(' ', '-')}/"] if state else
+            [f"{base}/"] + [f"{base}/page-{n}/" for n in range(2, RANDSTAD_PAGES + 1)])
+    found: list[Listing] = []
+    for url in urls:
+        batch = parse_randstad(await _board_page(client, url))
+        found += batch
+        if not batch:
+            break
+    return _titled(list({x.url: x for x in found}.values()), query)
+
+
+def parse_randstad(html: str) -> list[Listing]:
+    at = html.find("window.__ROUTE_DATA__")
+    start = html.find("{", at) if at >= 0 else -1
+    if start < 0:
+        return []
+    try:
+        data, _ = json.JSONDecoder().raw_decode(html, start)
+    except ValueError:
+        return []
+    out: list[Listing] = []
+    for hit in ((data.get("searchResults") or {}).get("hits") or []) if isinstance(data, dict) else []:
+        title, url = str(hit.get("title") or "").strip(), str(hit.get("detailsUrl") or hit.get("applyUrl") or "")
+        if not title or not url:
+            continue
+        where = hit.get("jobLocation") or {}
+        out.append(Listing(company="", title=title, url=url.split("?")[0], ats="custom",
+                           location=", ".join(str(x) for x in (where.get("city"), where.get("stateAbbreviation") or
+                                                               where.get("state")) if x),
+                           posted=_epoch_date(int(hit["createdDate"]) // 1000) if str(hit.get("createdDate") or "").isdigit()
+                           else "", external_id=str(hit.get("atsReference") or "")))
+    return out
+
+
 # ----------------------------------------------------------------- amazon.jobs
 AMAZON_PAGE = 100  # openings a search reads: its first page, nearest the place first
 
@@ -1462,6 +1507,8 @@ async def _eightfold(client: httpx.AsyncClient, cfg: Any, query: str, limit: int
     while len(out) < limit:
         params = {"domain": domain, "query": query, "location": "", "start": start}
         r = await _send(client, "GET", api, params=params, headers=headers)
+        if r.status_code == 403 and "not enabled" in r.text:  # Insight's site: "PCSX is not enabled for this user"
+            return await _eightfold_v2(client, host, domain, query, limit, terms)
         _raise_for(r, api)
         data = r.json()
         batch = parse_eightfold(data, host)
@@ -1469,6 +1516,41 @@ async def _eightfold(client: httpx.AsyncClient, cfg: Any, query: str, limit: int
         start += len(batch)
         total = (data.get("data") or {}).get("count") if isinstance(data.get("data"), dict) else data.get("count")
         if not batch or start >= int(total or 0):
+            break
+    return out[:limit]
+
+
+async def _eightfold_v2(client: httpx.AsyncClient, host: str, domain: str, query: str, limit: int,
+                        terms: list[str]) -> list[Listing]:
+    """Eightfold's older search (/api/apply/v2/jobs), for a site whose newer one is switched off
+    (Insight Enterprises', Oct 2026): 10 openings a page, filtered to a state when the search
+    is in one."""
+    api = f"https://{host}/api/apply/v2/jobs"
+    state = icims_state(terms)
+    if terms and not state:
+        limit = max(limit, AREA_SCAN)
+    out: list[Listing] = []
+    start = 0
+    while len(out) < limit:
+        params = {"domain": domain, "query": query, "start": start, "num": 10,
+                  **({"location": US_STATES[state]} if state else {})}
+        r = await _send(client, "GET", api, params=params, headers={"Accept": "application/json"})
+        _raise_for(r, api)
+        data = r.json()
+        positions = data.get("positions") or []
+        start += len(positions)
+        batch = []
+        for p in positions:
+            if not p.get("name") or not p.get("id"):
+                continue
+            places = [", ".join(x.strip() for x in str(place).split(",")) for place in p.get("locations") or []]
+            batch.append(Listing(company="", title=str(p["name"]).strip(), ats="eightfold",
+                                 url=p.get("canonicalPositionUrl") or f"https://{host}/careers/job/{p['id']}",
+                                 location="; ".join(places) or str(p.get("location") or ""),
+                                 posted=_epoch_date(p.get("t_create")),
+                                 external_id=str(p.get("display_job_id") or p.get("ats_job_id") or p["id"])))
+        out.extend(batch)
+        if not positions or start >= int(data.get("count") or 0):
             break
     return out[:limit]
 
@@ -1595,6 +1677,7 @@ SEARCHERS: dict[str, Callable[[httpx.AsyncClient, Any, str, int, list[str]], Awa
     "jibe": _jibe,
     "jobvite": _jobvite,
     "amazon": _amazon,
+    "randstad": _randstad,
 }
 
 
