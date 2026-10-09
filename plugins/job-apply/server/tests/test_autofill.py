@@ -955,3 +955,26 @@ def test_currently_employed_from_the_work_history():
     ended = [{**job, "end": "2024-06"} for job in data["work_history"]]
     path.write_text(yaml.safe_dump({**data, "work_history": ended}))
     assert resolve_field(f("Are you currently employed?", "radio_group", options=yes_no), prof()).value == "No"
+
+
+def test_a_veteran_question_and_a_family_members_are_answered_as_asked():
+    """"I am not a protected veteran" answered "Are you a veteran?" No, though a veteran who
+    isn't a protected one is a veteran; and the person's own answers went to "Are you the
+    spouse of a veteran?" and "Gender of your spouse"."""
+    import yaml
+    from job_apply import config
+
+    path = config.profile_path()
+    data = yaml.safe_load(path.read_text())
+    path.write_text(yaml.safe_dump({**data, "eeo": {**data["eeo"], "veteran": "I am not a protected veteran",
+                                                    "gender": "Male"}}))
+    yes_no = ["Yes", "No"]
+    assert resolve_field(f("Are you a veteran?", "radio_group", options=yes_no), prof()) is None
+    assert resolve_field(f("Are you the spouse of a veteran?", "radio_group", options=yes_no), prof()) is None
+    assert resolve_field(f("Gender of your spouse", "select", options=["Male", "Female"]), prof()) is None
+    # the questions as asked of the person still get their answers
+    status = ["I am not a protected veteran", "I identify as one or more of the classifications of protected veteran",
+              "I don't wish to answer"]
+    assert resolve_field(f("Veteran Status", "select", options=status), prof()).value == "I am not a protected veteran"
+    assert resolve_field(f("Are you a protected veteran?", "radio_group", options=yes_no), prof()).value == "No"
+    assert resolve_field(f("Gender", "select", options=["Male", "Female"]), prof()).value == "Male"
