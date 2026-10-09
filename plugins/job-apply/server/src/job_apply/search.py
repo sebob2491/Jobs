@@ -12,6 +12,9 @@ Each company in data/companies.yaml may carry a `search` block naming one of:
     taleo:           {host: myhiring.kforce.com, section: ex, portal: 101430233}  (Taleo career sections)
     talemetry:       <job site address>     (Symplr Talemetry job sites: Valleywise Health)
     phoenixchildrens: <job site address>    (Phoenix Children's own job site)
+    jibe:            <Jibe site host>       (iCIMS's Jibe job sites: jobs.sprouts.com)
+    jobvite:         <company>              (jobs.jobvite.com/<company>)
+    amazon:          {loc_query: "Phoenix, AZ, USA", latitude: .., longitude: .., radius: 50km}  (amazon.jobs)
     icims:           <portal name>          (read in the browser)
     paycom:          <career portal key>    (read in the browser)
     ukg:             <job board address>    (UKG Pro / UltiPro; read in the browser)
@@ -51,7 +54,8 @@ from .postings import USER_AGENT, html_to_text, place_in_text, successfactors_pl
 WORKDAY_PAGE = 20  # Workday rejects larger pages
 MAX_ALTERNATIVES = 4
 FETCH_WHEN_FILTERING = 60  # results to scan per search when filtering by location ourselves
-CLIENT_SIDE = {"greenhouse", "lever", "applicantstack", "paycom", "ukg", "sfclassic", "infor", "phoenixchildrens"}  # whole board at once; titles filtered here
+CLIENT_SIDE = {"greenhouse", "lever", "applicantstack", "paycom", "ukg", "sfclassic", "infor", "phoenixchildrens",
+               "jobvite"}  # whole board at once; titles filtered here
 # Searches whose data only comes through the site's own page in the browser (ASML's
 # Sitecore Discover widget; iCIMS portals, which turn away plain requests; Paycom, UKG
 # Pro and SuccessFactors' newer search, whose APIs want the session their page sets up;
@@ -873,6 +877,102 @@ def parse_phoenixchildrens(html: str, base: str) -> list[Listing]:
     return out
 
 
+# ----------------------------------------------------------------- iCIMS Jibe job sites (PetSmart, Sprouts, State Farm)
+JIBE_PAGES = 3  # pages per wording; 100 openings a page
+JIBE_PAGE = 100
+_ICIMS_APPLY = re.compile(r"^(https://[\w.-]+\.icims\.com)/jobs/(\d+)/login", re.I)
+
+
+async def _jibe(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, terms: list[str]) -> list[Listing]:
+    """iCIMS's Jibe job sites (jobs.sprouts.com, careers.petsmart.com) answer their own page's
+    search with JSON, 100 openings a page, filtered to a state when the search is in one.
+    Each opening links to its iCIMS posting, where the desk applies, when it has one."""
+    host = str(cfg).strip("/")
+    state = icims_state(terms)
+    out: list[Listing] = []
+    for page in range(1, JIBE_PAGES + 1):
+        params = {"keywords": query, "page": page, "limit": JIBE_PAGE, **({"location": US_STATES[state]} if state else {})}
+        url = f"https://{host}/api/jobs?" + urlencode(params)
+        r = await _send(client, "GET", url, headers={"Accept": "application/json"})
+        _raise_for(r, url)
+        jobs = r.json().get("jobs") or []
+        for item in jobs:
+            data = item.get("data") or {}
+            title, slug = str(data.get("title") or "").strip(), str(data.get("slug") or data.get("req_id") or "")
+            if not title or not slug:
+                continue
+            page_url = f"https://{host}/jobs/{quote(slug)}?lang=en-us"
+            m = _ICIMS_APPLY.match(str(data.get("apply_url") or ""))
+            where = data.get("full_location") or ", ".join(str(x) for x in (data.get("city"), data.get("state")) if x)
+            out.append(Listing(company="", title=title, url=f"{m.group(1)}/jobs/{m.group(2)}/job" if m else page_url,
+                               company_url=page_url if m else "", location=str(where or ""),
+                               posted=str(data.get("posted_date") or "")[:10], external_id=str(data.get("req_id") or slug),
+                               ats="icims" if m else "jibe"))
+        if len(jobs) < JIBE_PAGE or len(out) >= limit:
+            break
+    return out
+
+
+# ----------------------------------------------------------------- Jobvite job boards (Knight-Swift)
+async def _jobvite(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, terms: list[str]) -> list[Listing]:
+    """Jobvite boards (jobs.jobvite.com/<company>/jobs) list every opening on one page, each
+    with its place."""
+    base = f"https://jobs.jobvite.com/{str(cfg).strip('/')}"
+    url = f"{base}/jobs"
+    r = await _send(client, "GET", url)
+    _raise_for(r, url)
+    return [listing for listing in parse_jobvite(r.text, base) if title_matches(listing.title, query)]
+
+
+def parse_jobvite(html: str, base: str) -> list[Listing]:
+    soup = BeautifulSoup(html, "html.parser")
+    out: list[Listing] = []
+    seen: set[str] = set()
+    for item in soup.select(".jv-job-item, tr.jv-job-list-row, li.jv-job-list-item"):
+        link = item.select_one('.jv-job-list-name a[href*="/job/"]') or item.select_one('a[href*="/job/"]')
+        if link is None or not link.get_text(strip=True):
+            continue
+        url = urljoin(base + "/", str(link["href"]))
+        if url in seen:
+            continue
+        seen.add(url)
+        where = item.select_one(".jv-job-list-location")
+        out.append(Listing(company="", title=link.get_text(" ", strip=True), url=url, ats="jobvite",
+                           location=" ".join(where.get_text(" ", strip=True).split()) if where is not None else "",
+                           external_id=url.rstrip("/").rsplit("/", 1)[-1]))
+    return out
+
+
+# ----------------------------------------------------------------- amazon.jobs
+AMAZON_PAGES = 3  # pages per wording; 100 openings a page
+AMAZON_PAGE = 100
+
+
+async def _amazon(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, terms: list[str]) -> list[Listing]:
+    """amazon.jobs answers its search page's own JSON search, 100 openings a page, around a
+    place: its address, latitude and longitude and a radius (`loc_query`, `latitude`,
+    `longitude`, `radius`, as the employer list gives them)."""
+    out: list[Listing] = []
+    for page in range(AMAZON_PAGES):
+        params = {"base_query": query, "result_limit": AMAZON_PAGE, "offset": page * AMAZON_PAGE, "sort": "relevant",
+                  **{k: cfg[k] for k in ("loc_query", "latitude", "longitude", "radius") if cfg.get(k) is not None}}
+        url = "https://www.amazon.jobs/en/search.json?" + urlencode(params)
+        r = await _send(client, "GET", url, headers={"Accept": "application/json"})
+        _raise_for(r, url)
+        jobs = r.json().get("jobs") or []
+        for job in jobs:
+            title, path = str(job.get("title") or "").strip(), str(job.get("job_path") or "")
+            if not title or not path:
+                continue
+            out.append(Listing(company="", title=title, url=urljoin("https://www.amazon.jobs/", path), ats="amazon",
+                               location=str(job.get("normalized_location") or job.get("location") or ""),
+                               posted=_sf_date(" ".join(str(job.get("posted_date") or "").split())),  # "July  9, 2026"
+                               external_id=str(job.get("id_icims") or job.get("id") or "")))
+        if len(jobs) < AMAZON_PAGE or len(out) >= limit:
+            break
+    return out
+
+
 # ----------------------------------------------------------------- Paycom (Ebara), through the browser
 PAYCOM_TAKE = 100  # the page asks for 10 at a time
 PAYCOM_PAGES = 3
@@ -1148,7 +1248,7 @@ async def _successfactors(client: httpx.AsyncClient, cfg: Any, query: str, limit
 
 
 def _sf_date(text: str) -> str:
-    for fmt in ("%b %d, %Y", "%d %b %Y", "%m/%d/%Y", "%Y-%m-%d"):
+    for fmt in ("%b %d, %Y", "%B %d, %Y", "%d %b %Y", "%m/%d/%Y", "%Y-%m-%d"):
         try:
             return datetime.strptime(text.strip(), fmt).date().isoformat()
         except ValueError:
@@ -1443,6 +1543,9 @@ SEARCHERS: dict[str, Callable[[httpx.AsyncClient, Any, str, int, list[str]], Awa
     "taleo": _taleo,
     "talemetry": _talemetry,
     "phoenixchildrens": _phoenixchildrens,
+    "jibe": _jibe,
+    "jobvite": _jobvite,
+    "amazon": _amazon,
 }
 
 

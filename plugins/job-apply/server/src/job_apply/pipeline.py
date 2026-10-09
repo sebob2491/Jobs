@@ -70,6 +70,9 @@ _AFTER_CODE = re.compile(r"^(verify|confirm|continue|next)( (code|e-?mail|accoun
 _TRY_LATER = re.compile(r"\btoo many\b.{0,30}\b(?:attempts|requests|tries)\b|\btry again (?:later|in \d+)|\brate[- ]limit",
                         re.I)
 _CREATE_ACCOUNT = re.compile(r"^(create (?:an |your |a new )?account|sign up|register)[.!]?$", re.I)
+# A page whose only way on makes an account (amazon.jobs after an email it doesn't know: "Create an
+# account", "Proceed to create account"): the person's to do, as the desk never makes one
+_ACCOUNT_STEP = re.compile(r"\bcreate (?:an |your |a new )?account\b|^(?:sign up|register)(?: now)?[.!]?$", re.I)
 _ACCOUNT_KINDS = {"text", "email", "tel", "select", "combobox", "listbox"}  # not check boxes or files
 _SOCIAL = re.compile(r"\b(google|apple|linked ?in|facebook|microsoft|indeed|seek)\b", re.I)
 _STEP = re.compile(r"^(save (?:and|&) continue|continue|next|next step|review|review (?:and|&) submit|"
@@ -958,6 +961,11 @@ class Applier:
                     return self._pause(run, "stuck", f"The way on is \u201c{agree['text'].strip()}\u201d, which agrees to "
                                        "something in your name, so it's yours to press. Read it and press it in the "
                                        "browser window if you're happy to, then press Resume.")
+                if any(_ACCOUNT_STEP.search(a["text"]) and not a.get("disabled") for a in data.get("actions") or []):
+                    await self._bring_forward(run)
+                    return self._pause(run, "sign_in", f"{_site(run, data)} wants an account for this email, and the desk "
+                                       "never makes one: create it (or sign in with the email you use there) in the "
+                                       "browser window; the desk carries on by itself after that.", seen=data)
                 return self._pause(run, "stuck", "I couldn't find the button that moves this application on. "
                                    "Take it a step further in the browser, then press Resume.")
             key = (data.get("url"), tuple(data.get("headings") or []), action["text"].strip().lower())

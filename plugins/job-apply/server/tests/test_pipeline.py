@@ -2424,3 +2424,26 @@ def test_a_page_that_doesnt_move_on_says_its_next_is_greyed_out(srv, monkeypatch
     r = run(go())
     assert r.need == "stuck" and "“Next” is greyed out" in r.reason, (r.reason, r.log)
     assert not any("Apply!" in line for line in r.log), r.log  # a link to the form already on show: not pressed
+
+
+def test_a_page_whose_only_way_on_makes_an_account_is_left_to_the_person(srv, monkeypatch):
+    """amazon.jobs, after an email it doesn't know (live, Oct 2026), offers only "Proceed to create
+    account". The desk said it couldn't find the button; the account is the person's to make."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 1)
+    job = srv.add_job(url=fixture_url("site/account-step.html"), title="HRBP", company="Example Jobs")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status == "needs_you", about=state(r))
+            return r, await r.page.evaluate("() => window.creating || false")
+        finally:
+            await applier.stop()
+
+    r, creating = run(go())
+    assert r.need == "sign_in" and "wants an account for this email" in r.reason, (r.need, r.reason)
+    assert not creating  # never pressed
+    assert not pipeline._ACCOUNT_STEP.search("Sign up for job alerts")  # not an account the application needs

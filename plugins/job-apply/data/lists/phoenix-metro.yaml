@@ -76,7 +76,8 @@ companies:
     ats: custom            # peoplesoft; job search is PeopleSoft Talent Acquisition Manager: hcmprod.phoenix.gov/psc/hcmprodtam/EMPLOYEE/COP_TAM/c/HRS_HRAM_FL.HRS_CG_SEARCH_FL.GBL?FOCUS=Applicant
     az_sites: Phoenix
     confidence: high        # live check, Oct 2026
-    # No search block: PeopleSoft isn't one of the plugin's search kinds.
+    # No search block: its PeopleSoft list reads with plain requests (44 openings, Oct 2026), but no
+    # address opens one posting outside the site's own clicks (deep links go back to the search).
   - name: Maricopa County
     careers_url: https://maricopa.wd1.myworkdayjobs.com/MC_External
     ats: workday            # maricopa.gov Human Resources page's "View Postings" links here (live check, Oct 2026)
@@ -96,8 +97,8 @@ companies:
     careers_url: https://jobs.statefarm.com/main/
     ats: icims                # jobs.statefarm.com is an iCIMS Jibe front end over the careers-statefarm iCIMS portal
     az_sites: Tempe (Marina Heights regional hub)
-    confidence: medium        # page seen; no search: the iCIMS portal redirects to jobs.statefarm.com/jobs, which
-                              # answers the headless browser with 403 (Oct 2026), and Jibe's own search isn't a supported kind
+    confidence: medium        # page seen, Oct 2026
+    search: {jibe: jobs.statefarm.com}  # Jibe's own JSON search answers plain requests (Oct 2026)
   - name: American Express
     careers_url: https://careers.americanexpress.com/en/sites/CX_1/jobs
     ats: oracle_hcm           # americanexpress.com/careers "Jobs" links here; the page names the egug.fa.us2 Oracle pod
@@ -183,8 +184,8 @@ companies:
     careers_url: https://careers.insightglobal.com/insightglobal-careers/
     ats: icims                # an iCIMS Jibe front end over the careers-insightglobal iCIMS portal
     az_sites: Phoenix area
-    confidence: medium        # page seen; no search: the iCIMS portal redirects to the Jibe site, which answers the
-                              # headless browser with 403 (Oct 2026), and Jibe's own search isn't a supported kind
+    confidence: medium        # page seen, Oct 2026
+    search: {jibe: careers.insightglobal.com}  # Jibe's JSON search (Oct 2026)
   - name: Kforce
     careers_url: https://myhiring.kforce.com/careersection/ex/jobsearch.ftl
     ats: taleo                # kforce.com/about/careers-at-kforce links its internal jobs to this Taleo career section
@@ -269,8 +270,8 @@ companies:
     careers_url: https://careers.petsmart.com/
     ats: icims                # careers.petsmart.com is an iCIMS Jibe front end over the careers-petsmart iCIMS portal
     az_sites: Phoenix (HQ)
-    confidence: medium        # page seen; no search: the portal's search page only redirects to careers.petsmart.com/jobs
-                              # (0 results even for "manager", Oct 2026), and Jibe's own search isn't a supported kind
+    confidence: medium        # page seen, Oct 2026
+    search: {jibe: careers.petsmart.com}  # Jibe's JSON search; corporate jobs apply on 2careers-petsmart (iCIMS), stores on Cadient
   - name: U-Haul
     careers_url: https://jobs.uhaul.com/
     ats: workday              # jobs.uhaul.com links to this Workday site
@@ -300,13 +301,14 @@ companies:
     ats: icims                # jobs.sprouts.com is an iCIMS Jibe front end over the storesupport-, storeops- and
                               # distributioncenter-sprouts iCIMS portals
     az_sites: Phoenix (HQ)
-    confidence: medium        # page seen; no search: the portals' search pages only redirect to jobs.sprouts.com/jobs
-                              # (0 results even for "manager", Oct 2026), and Jibe's own search isn't a supported kind
+    confidence: medium        # page seen, Oct 2026
+    search: {jibe: jobs.sprouts.com}  # Jibe's JSON search covers all three portals (Oct 2026)
   - name: Knight-Swift Transportation
     careers_url: https://www.swifttrans.com/careers/office/opportunities
     ats: jobvite              # knight-swift.com answered 403 from here; Swift's office-jobs page lists jobs.jobvite.com/swifttrans
     az_sites: Phoenix (HQ)
-    confidence: medium        # page seen; no search: Jobvite isn't one of the plugin's search kinds
+    confidence: medium        # page seen, Oct 2026
+    search: {jobvite: swifttrans}  # every office opening on one page (Oct 2026)
   - name: American Airlines
     careers_url: https://jobs.aa.com/
     ats: unknown              # jobs.aa.com answered 403 (Access Denied) from here; system not seen
@@ -316,4 +318,5 @@ companies:
     careers_url: https://www.amazon.jobs/en/
     ats: custom               # amazon.jobs is Amazon's own job site
     az_sites: Phoenix, Tempe, Goodyear, Glendale
-    confidence: high          # page seen, Oct 2026; no search: amazon.jobs isn't one of the plugin's search kinds
+    confidence: high          # page seen, Oct 2026
+    search: {amazon: {loc_query: "Phoenix, AZ, USA", latitude: 33.44825, longitude: -112.0758, radius: 50km}}
