@@ -488,6 +488,18 @@ def _relocate(prof: Profile, job: dict) -> Any:
     return _yn("preferences.willing_to_relocate")(prof, job)
 
 
+def _local_or_relocate(prof: Profile, job: dict, label: str = "") -> Any:
+    """"Are you located within 100 miles of a campus, or willing to relocate?": Yes when the
+    person would move, or lives in the metro area of a place the job names (Tempe for a
+    Phoenix job). Else the person's to answer, as is "do you live nearby, or will you need to
+    relocate?", which asks which, not whether."""
+    if not re.search(r"\bor (are you |would you be )?(willing|able|open) to relocat", norm(label)):
+        return None
+    if prof.get("preferences.willing_to_relocate") is True or lives_near(prof, str(job.get("location") or "")):
+        return "Yes"
+    return None
+
+
 def _travel(prof: Profile, job: dict, label: str = "") -> Any:
     """Willing to travel: not whether anything stops the person travelling, nor a passport."""
     if re.search(r"restrict|passport|prevent|limitation|visa|unable to|not able to|anything that", norm(label)):
@@ -522,12 +534,13 @@ _CONTACT_RULES = {"email", "first_name", "middle_name", "last_name", "preferred_
                   "county", "state", "country"}
 
 # Getters that read the question itself, not only the profile
-_READS_QUESTION = {_travel, _previously_employed, _no_sponsorship, _sponsorship, _UNDER_18, _OVER_18, _phone}
+_READS_QUESTION = {_travel, _previously_employed, _no_sponsorship, _sponsorship, _UNDER_18, _OVER_18, _phone,
+                   _local_or_relocate}
 
 # (rule name, label regex, getter, max label length or None, allowed kinds or None)
 _TEXTY = {"text", "textarea", "select", "listbox", "combobox", "radio_group"}
 RULES: list[tuple[str, str, Getter, int | None, set[str] | None]] = [
-    ("how_heard", r"how did you (hear|find|learn)|where did you (hear|find|learn)|source of (application|referral)|^source$", _p("preferences.how_did_you_hear"), None, None),
+    ("how_heard", r"(how|where) did you (first )?(hear|find|learn)|source of (application|referral)|^source$", _p("preferences.how_did_you_hear"), None, None),
     # contact details: short labels only, so long questions that merely mention
     # "state" or "name" don't match
     ("email", r"^(confirm |re ?enter |re ?type |verify )?e ?mail( address)?( again)?$|^(your )?email\b|^enter (your )?e ?mail\b",
@@ -596,7 +609,7 @@ RULES: list[tuple[str, str, Getter, int | None, set[str] | None]] = [
     ("clearance", r"security clearance|active clearance", _p("work_authorization.security_clearance"), None, None),
     # "do you live nearby or are you willing to relocate?": a local applicant isn't relocating
     ("local_or_relocate", r"(located|live|living|reside|residing|based|commut).{0,60}relocat|relocat.{0,60}(located|live|living|reside|residing|commut)",
-     lambda p, j: None, None, None),
+     _local_or_relocate, None, None),
     # relocation money, or a role with none: not whether the person would move
     ("relocation_help", r"relocat\w* (assistance|package|benefit|reimburse|support|expense|allowance)|no relocat|"
      r"(assistance|help) .{0,20}relocat", lambda p, j: None, None, None),
@@ -994,6 +1007,35 @@ def county_of(prof: Profile) -> str | None:
         return None
     city = norm(prof.get("personal.address.city"))
     return next((county for county, cities in _AZ_COUNTIES.items() if city in cities), None)
+
+
+# Metro areas by county: Phoenix's takes in Pinal County's towns (San Tan Valley, Maricopa)
+_SAME_METRO = {"Pinal": "Maricopa"}
+_ICIMS_PLACE = re.compile(r"^\s*usa?\s*-\s*([a-z]{2})\s*-\s*(.+)$", re.I)  # "US-AZ-Chandler"
+
+
+def _az_metro(city: str) -> str | None:
+    county = next((c for c, cities in _AZ_COUNTIES.items() if city in cities), None)
+    return _SAME_METRO.get(county, county) if county else None
+
+
+def lives_near(prof: Profile, location: str) -> bool:
+    """Whether an Arizona profile's city is in the metro area of a place the job names:
+    "Tempe, AZ" or "Phoenix, Arizona, United States" for Chandler, not "Tucson, AZ"."""
+    if norm(prof.get("personal.address.state")) not in ("az", "arizona"):
+        return False
+    home = _az_metro(norm(prof.get("personal.address.city")))
+    if home is None:
+        return False
+    for place in re.split(r"[;|]", location):
+        if m := _ICIMS_PLACE.match(place):
+            state, town = m.group(1), m.group(2)
+        else:
+            town, _, rest = place.partition(",")
+            state = (norm(rest).split() or [""])[0]
+        if norm(state) in ("az", "arizona") and _az_metro(norm(town)) == home:
+            return True
+    return False
 
 
 def place_words(rule: str, prof: Profile) -> list[str]:

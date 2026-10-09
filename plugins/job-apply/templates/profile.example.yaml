@@ -113,6 +113,8 @@ answers:
     answer: ~
   - match: "(employed|worked) (by|for) (a|any) .*government"
     answer: ~
+  - match: "medicare|medicaid|excluded from .*(federal|government) (health|program)"   # hospitals ask
+    answer: ~
 
 settings:
   # review: Claude fills everything and stops at the review page; you say "submit".

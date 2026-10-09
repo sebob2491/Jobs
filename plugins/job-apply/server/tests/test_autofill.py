@@ -682,3 +682,62 @@ def test_a_long_list_of_places_is_searched_for_the_profiles():
     ans = resolve_field(f("City *", "combobox", options=towns), p)
     assert ans is not None and ans.value == "Chandler" and ans.rule == "city"
     assert resolve_field(f("City *", "combobox", options=towns[:5]), p) is None
+
+
+def test_located_near_the_job_or_willing_to_relocate():
+    """Mayo Clinic (live, Oct 2026) asks "Are you currently located within 100 miles of a Mayo
+    Clinic campus, or willing to relocate?" of a Phoenix job, and the desk left it to a person
+    who lives in Chandler. Yes for one living in the job's metro area, or who would move; a
+    question that asks which ("or will you need to relocate?") stays the person's."""
+    import yaml
+    from job_apply import config
+
+    p = prof()  # Chandler, AZ; not willing to relocate
+    yes_no = ["Yes", "No"]
+    mayo = ("This is a hybrid position and must be located within 100 miles of a Mayo Clinic campus. Are you "
+            "currently located within 100 miles of a Mayo Clinic campus, or willing to relocate?")
+
+    def answer(label, location, profile=p):
+        a = resolve_field(f(label, "radio_group", options=yes_no), profile, {"company": "Mayo Clinic", "location": location})
+        return a and a.value
+
+    assert answer(mayo, "Phoenix, AZ, United States") == "Yes"
+    assert answer(mayo, "Scottsdale, Arizona") == "Yes"
+    assert answer(mayo, "US-AZ-Phoenix") == "Yes"
+    assert answer(mayo, "Rochester, MN; Phoenix, AZ") == "Yes"
+    assert answer("Do you live within commuting distance of the job, or are you open to relocating?", "Tempe, AZ") == "Yes"
+    assert answer(mayo, "Tucson, AZ") is None  # another metro area
+    assert answer(mayo, "Glendale, CA") is None  # Arizona's Glendale is near, California's isn't
+    assert answer(mayo, "") is None
+    assert answer("Do you live in the area, or will you need to relocate?", "Phoenix, AZ") is None
+
+    path = config.profile_path()
+    data = yaml.safe_load(path.read_text())
+
+    def with_(personal=None, preferences=None):
+        new = {**data, "preferences": {**data.get("preferences", {}), **(preferences or {})}}
+        new["personal"] = {**data["personal"], "address": {**data["personal"]["address"], **(personal or {})}}
+        path.write_text(yaml.safe_dump(new))
+        return Profile.load()
+
+    assert answer(mayo, "Tucson, AZ", with_(preferences={"willing_to_relocate": True})) == "Yes"
+    assert answer(mayo, "Phoenix, AZ", with_(personal={"city": "San Tan Valley"})) == "Yes"  # Pinal County: still Phoenix's
+    assert answer(mayo, "Phoenix, AZ", with_(personal={"city": "Austin", "state": "TX"})) is None
+
+
+def test_how_did_you_first_hear():
+    """Mayo Clinic (live, Oct 2026) asks "How did you first hear about this opportunity?", which
+    the how-heard rule missed for the word "first": its "Mayo Clinic Career Site" is the
+    profile's "Company Website"."""
+    import yaml
+    from job_apply import config
+
+    path = config.profile_path()
+    data = yaml.safe_load(path.read_text())
+    path.write_text(yaml.safe_dump({**data, "preferences": {**data["preferences"], "how_did_you_hear": "Company Website"}}))
+    options = ["I am a current Mayo Clinic Employee (not a trainee)", "Handshake", "Indeed", "LinkedIn",
+               "Mayo Clinic Career Site", "Referral - Other", "Other"]
+    ans = resolve_field(f("How did you first hear about this opportunity?", "combobox", options=options), prof(),
+                        {"company": "Mayo Clinic"})
+    assert ans.value == "Mayo Clinic Career Site"
+    assert resolve_field(f("Where did you first learn of this job?"), prof()).value == "Company Website"
