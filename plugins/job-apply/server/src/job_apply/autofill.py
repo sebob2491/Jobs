@@ -50,7 +50,8 @@ _PLACEHOLDER_VALUES = re.compile(  # "-- Please Select --" may have a value of i
     r"^(-+|mm/dd/yyyy|mm/yyyy)$",  # "No Selection": SuccessFactors' empty dropdowns
     re.I,
 )
-_YES = re.compile(r"^(yes|y|true|i am\b(?! not)|i do\b(?! not)|i will\b(?! not)|i have\b(?! not)|i can\b(?! not)|agree)", re.I)
+# whole words: "Yuma, AZ", "Yearly" and "Yesterday" aren't a yes
+_YES = re.compile(r"^((yes|y|true|agreed?|i agree)\b|i am\b(?! not)|i do\b(?! not)|i will\b(?! not)|i have\b(?! not)|i can\b(?! not))", re.I)
 _NO = re.compile(r"^(no|n|false|never|i am not|i do not|i don'?t|i will not|i won'?t|i have not|i haven'?t|i have never|"
                  r"i'?ve never|i can ?not|i can'?t)\b", re.I)
 _FILLER = {"yes", "no", "y", "n", "i", "am", "a", "an", "the", "to", "for", "of", "in", "my", "and", "or", "is", "be",
@@ -91,6 +92,39 @@ def polarity(value: Any) -> bool | None:
     if _YES.match(s):
         return True
     return None
+
+
+_NEGATION = {"not", "non", "no", "never", "cannot", "can't", "don't", "doesn't", "didn't", "isn't", "aren't", "wasn't",
+             "haven't", "hasn't", "won't"}
+_SCOPE_END = {"(", ")", ",", ";", ":", "."}
+_FUNCTION_WORDS = {"a", "an", "the", "i", "am", "is", "are", "was", "be", "of", "or", "and", "to", "as", "have", "has",
+                   "had", "do", "does", "did", "will", "would", "my", "me", "any", "one", "more", "this", "that", "yes",
+                   "for", "in", "on", "with", "at", "by"}
+
+
+def _said_and_denied(text: str) -> tuple[set[str], set[str]]:
+    """The words a text says, and the ones it says are not so (from a "not" to the next comma
+    or bracket): "Asian (Not Hispanic or Latino)" says "asian" and denies "hispanic", "latino"."""
+    said: set[str] = set()
+    denied: set[str] = set()
+    negated = False
+    for t in re.findall(r"[a-z0-9]+(?:'[a-z]+)?|[(),;:.]", str(text).lower().replace("\u2019", "'")):
+        if t in _SCOPE_END:
+            negated = False
+        elif t in _NEGATION:
+            negated = True
+        elif t not in _FUNCTION_WORDS:
+            (denied if negated else said).add(t)
+    return said, denied
+
+
+def _contradicts(answer: Any, option: str) -> bool:
+    """The option says what the answer denies, or the other way round ("Not Hispanic or Latino"
+    and "Hispanic/Latino", "I am not a protected veteran" and "Protected Veteran"), or denies
+    more than the answer does: "Not a Veteran" for "I am not a protected veteran"."""
+    said_a, denied_a = _said_and_denied(answer)
+    said_o, denied_o = _said_and_denied(option)
+    return bool(said_a & denied_o or denied_a & said_o or denied_a & denied_o and not denied_a <= denied_o)
 
 
 def _aliases(n: str) -> set[str]:
@@ -144,6 +178,14 @@ def _partial_study(n: str) -> bool:
     return bool(_PARTIAL_STUDY.search(n) and (_STUDY_WORDS.search(n) or degree_key(n)))
 
 
+def _partial_level(n: str) -> str | None:
+    """What a partial study is of: "Some college" and "College coursework, no degree" are
+    college; "Some high school", high school; "Associate's (in progress)", an associate's."""
+    if not _partial_study(n):
+        return None
+    return degree_key(n) or ("college" if re.search(r"\b(college|university|coursework|credits?)\b", n) else None)
+
+
 _NUMBER = re.compile(r"\d+(?:\.\d+)?")
 
 
@@ -159,13 +201,14 @@ def _in_range(want: str, options: list[str]) -> str | None:
         nums = [float(v) for v in _NUMBER.findall(n)]
         if not nums:
             continue
-        if re.search(r"less than|under|below|fewer than", n):
+        # whole words: Oracle's ZIP "01022, Westover AFB, Hampden, MA" isn't "over 1022"
+        if re.search(r"\b(less than|under|below|fewer than)\b", n):
             low, high, high_open = float("-inf"), nums[0], True
-        elif re.search(r"or less|or fewer|or below", n) and len(nums) == 1:
+        elif re.search(r"\b(or less|or fewer|or below)\b", n) and len(nums) == 1:
             low, high, high_open = float("-inf"), nums[0], False
-        elif re.search(r"more than|over|greater than|above|or more|or higher|\+|plus", n) and len(nums) == 1:
+        elif re.search(r"\b(more than|over|greater than|above|or more|or higher|plus)\b|\+", n) and len(nums) == 1:
             low, high, high_open = nums[0], float("inf"), False
-            if re.search(r"more than|over|greater than", n):
+            if re.search(r"\b(more than|over|greater than)\b", n):
                 low += 1e-9
         elif len(nums) >= 2:
             low, high, high_open = nums[0], nums[1], False
@@ -211,11 +254,23 @@ def choose_option(desired: Any, options: list[str], exact_only: bool = False, na
         return None
     if names:
         return _containing(want, normed)
+    # never the opposite of the answer, when its own wording isn't among the choices: "Not
+    # Hispanic or Latino" isn't "Hispanic/Latino", nor "I am not a protected veteran" "Protected Veteran"
+    # (a decline's "not" is no denial: declines are matched as such below)
+    if not _DECLINE.search(str(desired)):
+        normed = [(o, n) for o, n in normed if not _contradicts(desired, o)]
+        opts = [o for o, _ in normed]
     if degree_key(want) or _partial_study(want):
         # schooling as it is, never more nor less: "High School Diploma" isn't "Some High
         # School", and "Associate's (in progress)" isn't "Associate's Degree"
         partial = _partial_study(want)
         normed = [(o, n) for o, n in normed if not (degree_key(n) or _partial_study(n)) or _partial_study(n) == partial]
+        # the one choice that is the same partial study, however worded: "Some college
+        # coursework" is "Some College, No Degree"
+        level = _partial_level(want)
+        alike = [o for o, n in normed if level and _partial_level(n) == level]
+        if len(alike) == 1:
+            return alike[0]
 
     # a number among ranges: "10" years -> "More than 3 years", a 3.8 GPA -> "3.50 - 4.00 or higher"
     ranged = _in_range(str(desired), opts)
@@ -343,6 +398,11 @@ def _full_name(prof: Profile, job: dict) -> str | None:
     return prof.full_name or None
 
 
+def _preferred_full_name(prof: Profile, job: dict) -> str | None:
+    first = prof.get("personal.preferred_name") or prof.get("personal.first_name")
+    return " ".join(str(x).strip() for x in (first, prof.get("personal.last_name")) if x) or None
+
+
 def _state(prof: Profile, job: dict) -> str | None:
     s = prof.get("personal.address.state")
     if s and str(s).upper() in US_STATES:
@@ -391,8 +451,9 @@ def _previously_employed(prof: Profile, job: dict, label: str = "") -> str | Non
     asked = norm(label)
     first = re.escape(company.split()[0])
     names_it = re.search(rf"\b(employ\w*|work\w*|intern\w*|contract\w*)( \w+){{0,3}}? (by|for|at|with|of) (the )?{first}\b"
-                         rf"|\b{first}( \w+)? (employee|employment|intern|contractor)s?\b", asked)
-    if not (names_it or re.search(r"(employed|worked) (by|for|at|with) (us|this|our|the company)\b|former employee", asked)):
+                         rf"|\b{first}( \w+)? (employee|employment|intern|contractor)s?\b"
+                         rf"|\bhired\b.{{0,60}}? (by|with|at) (the )?{first}\b", asked)
+    if not (names_it or re.search(r"(employed|worked|hired) (by|for|at|with) (us|this|our|the company)\b|former employee", asked)):
         return None
     if re.search(rf"\b{first}( \w+){{0,2}} (tools?|systems?|equipment|products?|software|technolog\w*|machines?|platforms?|"
                  r"scanners?|metrology|etch|deposition|parts)\b", asked):
@@ -401,7 +462,8 @@ def _previously_employed(prof: Profile, job: dict, label: str = "") -> str | Non
     entries = [e for e in _listed(prof.get("work_history")) if isinstance(e, dict)]
     past += [norm(e.get("company")) for e in entries]
     if not any(_same_employer(c, company) for c in past if c):
-        return "No"
+        # "...or any of its subsidiaries or affiliates": the profile can't say it's none of those
+        return None if re.search(r"\b(subsidiar|affiliat)", asked) else "No"
     now = [norm(e.get("company")) for e in entries if is_present(e.get("end")) or e.get("current") is True]
     now.append(norm(prof.get("experience.current_company")))
     return "Yes, currently" if any(_same_employer(c, company) for c in now if c) else "Yes, previously"
@@ -488,6 +550,20 @@ def _relocate(prof: Profile, job: dict) -> Any:
     return _yn("preferences.willing_to_relocate")(prof, job)
 
 
+def _local_or_relocate(prof: Profile, job: dict, label: str = "") -> Any:
+    """"Are you located within 100 miles of a campus, or willing to relocate?": Yes when the
+    person would move, or lives in the metro area of a place the job names (Tempe for a
+    Phoenix job). Else the person's to answer, as is "do you live nearby, or will you need to
+    relocate?", which asks which, not whether."""
+    asked = next((part for part in re.split(r"[.?!]\s+", label) if re.search(r"relocat", part, re.I)), "")
+    if not (re.match(r"\s*(are|do|would|will|can)\s+you\b", asked, re.I)
+            and re.search(r"\bor (are you |would you be )?(willing|able|open) to relocat", norm(asked))):
+        return None  # not a yes-or-no question: "Which campus are you near, or are you willing to relocate?"
+    if prof.get("preferences.willing_to_relocate") is True or lives_near(prof, str(job.get("location") or "")):
+        return "Yes"
+    return None
+
+
 def _travel(prof: Profile, job: dict, label: str = "") -> Any:
     """Willing to travel: not whether anything stops the person travelling, nor a passport."""
     if re.search(r"restrict|passport|prevent|limitation|visa|unable to|not able to|anything that", norm(label)):
@@ -517,17 +593,19 @@ _SOMEONE_ELSE = re.compile(r"\b(referen\w*|referee\w*|emergency|next of kin|supe
 # its section's ("Most Recent Employer", "High School")
 _OTHER_PARTY_LABEL = re.compile(r"\b(employer\w*|company|business|school)\b")
 _OTHER_PARTY_SECTION = re.compile(r"\b(employer\w*|school)\b")
-_CONTACT_RULES = {"email", "first_name", "middle_name", "last_name", "preferred_name", "full_name", "phone_type",
+_CONTACT_RULES = {"email", "first_name", "middle_name", "last_name", "preferred_name", "preferred_full_name", "full_name",
+                  "phone_type",
                   "phone_code", "phone_ext", "phone", "address1", "address2", "city", "postal_ext", "postal",
                   "county", "state", "country"}
 
 # Getters that read the question itself, not only the profile
-_READS_QUESTION = {_travel, _previously_employed, _no_sponsorship, _sponsorship, _UNDER_18, _OVER_18, _phone}
+_READS_QUESTION = {_travel, _previously_employed, _no_sponsorship, _sponsorship, _UNDER_18, _OVER_18, _phone,
+                   _local_or_relocate}
 
 # (rule name, label regex, getter, max label length or None, allowed kinds or None)
 _TEXTY = {"text", "textarea", "select", "listbox", "combobox", "radio_group"}
 RULES: list[tuple[str, str, Getter, int | None, set[str] | None]] = [
-    ("how_heard", r"how did you (hear|find|learn)|where did you (hear|find|learn)|source of (application|referral)|^source$", _p("preferences.how_did_you_hear"), None, None),
+    ("how_heard", r"(how|where) did you (first )?(hear|find|learn)|source of (application|referral)|^source$", _p("preferences.how_did_you_hear"), None, None),
     # contact details: short labels only, so long questions that merely mention
     # "state" or "name" don't match
     ("email", r"^(confirm |re ?enter |re ?type |verify )?e ?mail( address)?( again)?$|^(your )?email\b|^enter (your )?e ?mail\b",
@@ -535,6 +613,8 @@ RULES: list[tuple[str, str, Getter, int | None, set[str] | None]] = [
     ("first_name", r"^(legal )?(first|given)( name)?$|^(legal )?first name|^given name|^forename", _p("personal.first_name"), 45, None),
     ("middle_name", r"^middle (name|initial)", _p("personal.middle_name"), 45, None),
     ("last_name", r"^(legal )?(last|family|sur)( ?name)?$|^(legal )?(last|family) name|^surname", _p("personal.last_name"), 45, None),
+    # American Express's Oracle form: "Preferred Full Name", the name the person goes by and their last name
+    ("preferred_full_name", r"^preferred full name", _preferred_full_name, 45, None),
     ("preferred_name", r"^preferred (first )?name|^nick ?name", lambda p, j: p.get("personal.preferred_name") or p.get("personal.first_name"), 45, None),
     ("full_name", r"^(full |legal |your |candidate )?(full )?name$|^full (legal )?name|^legal name", _full_name, 45, None),
     ("phone_type", r"phone (device )?type|type of phone", lambda p, j: p.get("personal.phone_type", "Mobile"), 45, None),
@@ -596,7 +676,7 @@ RULES: list[tuple[str, str, Getter, int | None, set[str] | None]] = [
     ("clearance", r"security clearance|active clearance", _p("work_authorization.security_clearance"), None, None),
     # "do you live nearby or are you willing to relocate?": a local applicant isn't relocating
     ("local_or_relocate", r"(located|live|living|reside|residing|based|commut).{0,60}relocat|relocat.{0,60}(located|live|living|reside|residing|commut)",
-     lambda p, j: None, None, None),
+     _local_or_relocate, None, None),
     # relocation money, or a role with none: not whether the person would move
     ("relocation_help", r"relocat\w* (assistance|package|benefit|reimburse|support|expense|allowance)|no relocat|"
      r"(assistance|help) .{0,20}relocat", lambda p, j: None, None, None),
@@ -606,9 +686,14 @@ RULES: list[tuple[str, str, Getter, int | None, set[str] | None]] = [
     # desired_salary is one yearly figure: not an answer to "current salary" or a monthly/hourly rate
     ("other_salary", r"(current|last|previous|present|most recent|drawn) .{0,25}(salary|compensation|pay\b)"
      r"|(monthly|per month|hourly|per hour|weekly|per week) .{0,25}(salary|compensation|pay\b|rate)", lambda p, j: None, None, None),
+    # American Express: "Indicate your highest level of preference by work location:" among its offices
+    ("preferred_location", r"^(preferred|desired) (work )?(location|site|city)s?\b|location preference|"
+     r"preference (by|for) (work )?location|(which|what) (work )?location (would|do) you prefer",
+     lambda p, j: next(iter(_listed(p.get("preferences.locations"))), None), 120, None),
     ("salary", r"salary|compensation|pay (expectation|requirement)|desired pay|expected pay", _p("preferences.desired_salary"), None, None),
     ("start_date", r"start date|available to start|earliest (date|start)|when can you start|notice period", _p("preferences.earliest_start"), None, None),
-    ("previous_employee", r"(previously|ever|formerly) (been )?(employed|worked)|former employee|have you (ever )?worked (for|at)|worked .{0,40} before",
+    ("previous_employee", r"(previously|ever|formerly) (been )?(employed|worked)|former employee|have you (ever )?worked (for|at)|worked .{0,40} before|"
+     r"have you (ever )?been hired\b",
      _previously_employed, None, None),  # (only about this employer: see _previously_employed)
     # voluntary self-identification
     ("sexual_orientation", r"sexual orientation", _p("eeo.sexual_orientation"), None, None),
@@ -922,7 +1007,10 @@ def resolve_field(field: dict, prof: Profile, job: dict | None = None, file_inpu
 
     options = field.get("options")
     if kind in {"select", "radio_group", "listbox", "checkbox_group", "combobox"} and options:
-        chosen = choose_option(ans.value, options, names=is_name_rule(ans.rule))
+        # a place lookup's entries: the one in the rest of the profile's address ("Chandler,
+        # Maricopa, AZ", not "Chandler, Henderson, TX" listed before it)
+        chosen = (ans.rule in _PLACE_RULES and choose_place(ans.value, options, place_words(ans.rule, prof))
+                  or choose_option(ans.value, options, names=is_name_rule(ans.rule)))
         if chosen is None and ans.rule == "how_heard":
             chosen = _own_website(ans.value, options, job)
         # a search prompt lists only its top level, and a full page of a paged list (Qorvo's
@@ -992,8 +1080,40 @@ def county_of(prof: Profile) -> str | None:
         return named
     if norm(prof.get("personal.address.state")) not in ("az", "arizona"):
         return None
-    city = norm(prof.get("personal.address.city"))
+    return _az_county(norm(prof.get("personal.address.city")))
+
+
+# Metro areas by county: Phoenix's takes in Pinal County's towns (San Tan Valley, Maricopa)
+_SAME_METRO = {"Pinal": "Maricopa"}
+_ICIMS_PLACE = re.compile(r"^\s*usa?\s*-\s*([a-z]{2})\s*-\s*(.+)$", re.I)  # "US-AZ-Chandler"
+
+
+def _az_county(city: str) -> str | None:
     return next((county for county, cities in _AZ_COUNTIES.items() if city in cities), None)
+
+
+def _az_metro(city: str) -> str | None:
+    county = _az_county(city)
+    return _SAME_METRO.get(county, county) if county else None
+
+
+def lives_near(prof: Profile, location: str) -> bool:
+    """Whether an Arizona profile's city is in the metro area of a place the job names:
+    "Tempe, AZ" or "Phoenix, Arizona, United States" for Chandler, not "Tucson, AZ"."""
+    if norm(prof.get("personal.address.state")) not in ("az", "arizona"):
+        return False
+    home = _az_metro(norm(prof.get("personal.address.city")))
+    if home is None:
+        return False
+    for place in re.split(r"[;|/\n]| or ", location):
+        if m := _ICIMS_PLACE.match(place):
+            state, town = m.group(1), m.group(2)
+        else:
+            town, _, rest = place.partition(",")
+            state = (norm(rest).split() or [""])[0]
+        if norm(state) in ("az", "arizona") and _az_metro(norm(town)) == home:
+            return True
+    return False
 
 
 def place_words(rule: str, prof: Profile) -> list[str]:

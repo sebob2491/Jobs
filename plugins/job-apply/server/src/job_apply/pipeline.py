@@ -969,7 +969,8 @@ class Applier:
                 greyed = [a for a in data.get("actions") or [] if a.get("is_submit") and a.get("disabled")
                           and not a.get("aside")] or _greyed_step(data)
                 if greyed:
-                    said = "; ".join(e for e in data.get("errors") or [] if _ERRORISH.search(e))[:300]
+                    said = "; ".join(e for e in data.get("errors") or [] if _ERRORISH.search(e))[:300] \
+                        or _unanswered(data)
                     return self._pause(run, "stuck", f"\u201c{greyed[0]['text']}\u201d is greyed out, so the site still "
                                        "wants something" + (f": {said}" if said else ".") +
                                        " Fix it in the browser, then press Resume.")
@@ -1525,6 +1526,20 @@ def _account_step(data: dict[str, Any]) -> bool:
     return (not data.get("fields") and bool(_ACCOUNT_PAGE.search(about))
             and any(_CREATE_ACCOUNT.match(final_text(a["text"])) and not a.get("disabled")
                     for a in data.get("actions") or []))
+
+
+def _unanswered(data: dict[str, Any]) -> str:
+    """What a page whose Next is greyed out, and that says nothing itself, still waits on: its
+    required boxes still empty, by name ("I Agree", which is the person's), or else a file."""
+    fields = [f for f in data.get("fields") or [] if not f.get("disabled") and is_empty_value(f.get("value"))]
+    left = [clean_label(f["label"]) for f in fields if f.get("required") and f.get("label") and f.get("kind") != "file"]
+    left = [label if len(label) <= 80 else label[:77].rsplit(" ", 1)[0] + "\u2026" for label in left if label]
+    if left:
+        names = ", ".join(f"\u201c{label}\u201d" for label in left[:3]) + (" and more" if len(left) > 3 else "")
+        return names + (" isn't answered." if len(left) == 1 else " aren't answered.")
+    if any(f.get("kind") == "file" for f in fields):  # Phoenix Children's waits on a resume, its box not marked required
+        return "nothing is attached yet (your resume, say)."
+    return ""
 
 
 def _greyed_step(data: dict[str, Any]) -> list[dict[str, Any]]:

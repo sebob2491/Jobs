@@ -382,10 +382,12 @@ companies:
                               # user", and Eightfold's older /api/apply/v2/jobs answers (38 Arizona openings)
     search: {eightfold: {host: careers.insight.com, domain: insight.com}}
   - name: Avnet
-    careers_url: https://www.avnet.com/wps/portal/us/about-avnet/careers/
-    ats: unknown              # avnet.com answered with a bot challenge ("Challenge Validation") from here; system not seen
-    az_sites: Phoenix (HQ)
-    confidence: low           # careers page not seen (bot challenge, Oct 2026)
+    careers_url: https://avnet.wd1.myworkdayjobs.com/External
+    ats: workday              # avnet.com's own pages answer with a bot challenge; its Workday site answers (329 openings,
+                              # Tempe finance and business ones among them, Oct 2026)
+    az_sites: Phoenix (HQ), Tempe
+    confidence: high          # live check, Oct 2026
+    search: {workday: https://avnet.wd1.myworkdayjobs.com/External}
   - name: Circle K
     careers_url: https://workwithus.circlek.com/global/en/
     ats: workday              # circlek.com "Careers" links to workwithus.circlek.com (Phenom); its postings, store and

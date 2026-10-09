@@ -4,6 +4,7 @@ from job_apply.autofill import (
     is_empty_value,
     place_words,
     plan_autofill,
+    polarity,
     resolve_field,
 )
 from job_apply.config import Profile
@@ -682,3 +683,176 @@ def test_a_long_list_of_places_is_searched_for_the_profiles():
     ans = resolve_field(f("City *", "combobox", options=towns), p)
     assert ans is not None and ans.value == "Chandler" and ans.rule == "city"
     assert resolve_field(f("City *", "combobox", options=towns[:5]), p) is None
+
+
+def test_located_near_the_job_or_willing_to_relocate():
+    """Mayo Clinic (live, Oct 2026) asks "Are you currently located within 100 miles of a Mayo
+    Clinic campus, or willing to relocate?" of a Phoenix job, and the desk left it to a person
+    who lives in Chandler. Yes for one living in the job's metro area, or who would move; a
+    question that asks which ("or will you need to relocate?") stays the person's."""
+    import yaml
+    from job_apply import config
+
+    p = prof()  # Chandler, AZ; not willing to relocate
+    yes_no = ["Yes", "No"]
+    mayo = ("This is a hybrid position and must be located within 100 miles of a Mayo Clinic campus. Are you "
+            "currently located within 100 miles of a Mayo Clinic campus, or willing to relocate?")
+
+    def answer(label, location, profile=p):
+        a = resolve_field(f(label, "radio_group", options=yes_no), profile, {"company": "Mayo Clinic", "location": location})
+        return a and a.value
+
+    assert answer(mayo, "Phoenix, AZ, United States") == "Yes"
+    assert answer(mayo, "Scottsdale, Arizona") == "Yes"
+    assert answer(mayo, "US-AZ-Phoenix") == "Yes"
+    assert answer(mayo, "Rochester, MN; Phoenix, AZ") == "Yes"
+    assert answer("Do you live within commuting distance of the job, or are you open to relocating?", "Tempe, AZ") == "Yes"
+    assert answer(mayo, "Tucson, AZ") is None  # another metro area
+    assert answer(mayo, "Glendale, CA") is None  # Arizona's Glendale is near, California's isn't
+    assert answer(mayo, "") is None
+    assert answer("Do you live in the area, or will you need to relocate?", "Phoenix, AZ") is None
+    assert answer("Which campus are you located near, or are you willing to relocate?", "Phoenix, AZ") is None
+    assert answer(mayo, "Rochester, MN / Phoenix, AZ") == "Yes"
+
+    path = config.profile_path()
+    data = yaml.safe_load(path.read_text())
+
+    def with_(personal=None, preferences=None):
+        new = {**data, "preferences": {**data.get("preferences", {}), **(preferences or {})}}
+        new["personal"] = {**data["personal"], "address": {**data["personal"]["address"], **(personal or {})}}
+        path.write_text(yaml.safe_dump(new))
+        return Profile.load()
+
+    assert answer(mayo, "Tucson, AZ", with_(preferences={"willing_to_relocate": True})) == "Yes"
+    assert answer(mayo, "Phoenix, AZ", with_(personal={"city": "San Tan Valley"})) == "Yes"  # Pinal County: still Phoenix's
+    assert answer(mayo, "Phoenix, AZ", with_(personal={"city": "Austin", "state": "TX"})) is None
+
+
+def test_how_did_you_first_hear():
+    """Mayo Clinic (live, Oct 2026) asks "How did you first hear about this opportunity?", which
+    the how-heard rule missed for the word "first": its "Mayo Clinic Career Site" is the
+    profile's "Company Website"."""
+    import yaml
+    from job_apply import config
+
+    path = config.profile_path()
+    data = yaml.safe_load(path.read_text())
+    path.write_text(yaml.safe_dump({**data, "preferences": {**data["preferences"], "how_did_you_hear": "Company Website"}}))
+    options = ["I am a current Mayo Clinic Employee (not a trainee)", "Handshake", "Indeed", "LinkedIn",
+               "Mayo Clinic Career Site", "Referral - Other", "Other"]
+    ans = resolve_field(f("How did you first hear about this opportunity?", "combobox", options=options), prof(),
+                        {"company": "Mayo Clinic"})
+    assert ans.value == "Mayo Clinic Career Site"
+    assert resolve_field(f("Where did you first learn of this job?"), prof()).value == "Company Website"
+
+
+def test_a_preferred_full_name():
+    """American Express's Oracle form (live, Oct 2026) requires a "Preferred Full Name", which
+    the desk asked for: the name the person goes by, then their last name."""
+    assert resolve_field(f("Preferred Full Name"), prof()).value == "Sam Rivera"
+    assert resolve_field(f("Preferred Name"), prof()).value == "Sam"
+    assert resolve_field(f("Emergency contact: preferred full name"), prof()) is None
+
+
+def test_hired_before_by_this_employer():
+    """American Express (live, Oct 2026): "Have you been hired at any time in the past for a
+    position with American Express Company or any of its subsidiaries or affiliates?" is about
+    working there before. The profile can say Yes; it can't say No for the subsidiaries."""
+    yes_no = ["Yes", "No"]
+    asked = ("Have you been hired at any time in the past for a position with American Express Company or any of its "
+             "subsidiaries or affiliates?")
+    amex = {"company": "American Express"}
+    assert resolve_field(f(asked, "radio_group", options=yes_no), prof(), amex) is None
+    assert resolve_field(f("Have you been hired at any time in the past by American Express?", "radio_group",
+                           options=yes_no), prof(), amex).value == "No"
+    assert resolve_field(f("Have you ever been hired by us before?", "radio_group", options=yes_no), prof(),
+                         amex).value == "No"
+    assert resolve_field(f("Have you been hired at any time in the past for a position with Intel or its subsidiaries?",
+                           "radio_group", options=yes_no), prof(), {"company": "Intel Corporation"}).value == "Yes"
+
+
+def test_a_preferred_work_location_from_the_profiles_places():
+    """American Express (live, Oct 2026) asks "Indicate your highest level of preference by
+    work location:" among its offices; the profile's first place answers it."""
+    import yaml
+    from job_apply import config
+
+    offices = ["Fort Lauderdale, FL", "New York, NY", "Phoenix, AZ", "Palo Alto, CA", "Salt Lake City, UT"]
+    asked = f("Indicate your highest level of preference by work location:", "radio_group", options=offices)
+    assert resolve_field(asked, prof()) is None  # the profile names no places
+    path = config.profile_path()
+    data = yaml.safe_load(path.read_text())
+    path.write_text(yaml.safe_dump({**data, "preferences": {**data["preferences"], "locations": ["Phoenix, AZ", "Tempe, AZ"]}}))
+    assert resolve_field(asked, prof()).value == "Phoenix, AZ"
+    assert resolve_field(f("Preferred Location"), prof()).value == "Phoenix, AZ"
+
+
+def test_a_zip_is_never_read_as_a_range():
+    """Mayo Clinic's Oracle ZIP list (live, Oct 2026) opens at "00501, Holtsville, Suffolk, NY",
+    and the desk picked "01022, Westover AFB, Hampden, MA" for 85225: "Westover" read as "over
+    1022". That put the address in Massachusetts, and Chandler wasn't found among its cities."""
+    zips = ["00501, Holtsville, Suffolk, NY", "00544, Holtsville, Suffolk, NY", "01001, Agawam, Hampden, MA",
+            "01002, Amherst, Hampshire, MA", "01022, Westover AFB, Hampden, MA", "01026, Cummington, Hampshire, MA"]
+    zips += [f"010{n}, Springfield, Hampden, MA" for n in range(30, 50)]
+    ans = resolve_field(f("ZIP Code *", "combobox", options=zips), prof())
+    assert ans.value == "85225"  # not on the list's first page: searched for
+    assert choose_option("4", ["Under 2 years", "2-3 years", "More than 3 years"]) == "More than 3 years"
+    assert choose_option("1", ["Under 2 years", "2-3 years", "More than 3 years"]) == "Under 2 years"
+    assert choose_option("7", ["0-2", "3-5", "5+"]) == "5+"
+    assert choose_option("12", ["Thunder Bay 10", "Hanover 20"]) is None
+
+
+def test_a_yes_is_a_whole_word():
+    """polarity() read any answer starting with "y" as a yes: "Yuma, AZ" and "Yearly" counted
+    among the yeses of a choice list, and a city answer was taken as agreeing to something."""
+    for said in ("Yuma, AZ", "Youngtown", "Yearly", "Yesterday", "Agreement", "Trueblue"):
+        assert polarity(said) is None, said
+    for said in ("Yes", "Y", "yes, I agree", "Yes - 25%", "True", "Agree", "I agree", "Agreed", "I am a veteran"):
+        assert polarity(said) is True, said
+    assert choose_option("Yes", ["Yearly", "No"]) is None
+
+
+def test_never_the_opposite_of_the_answer():
+    """When a list doesn't have the profile's own wording, the closest-looking choice could be
+    its opposite: "Not Hispanic or Latino" went to "Hispanic or Latino" (and to "Hispanic/Latino"
+    over "Non-Hispanic/Latino"), "I am not a protected veteran" to "Protected Veteran"."""
+    assert choose_option("Not Hispanic or Latino", ["Hispanic or Latino", "Decline to answer"]) is None
+    assert choose_option("Not Hispanic or Latino", ["Hispanic/Latino", "Non-Hispanic/Latino"]) != "Hispanic/Latino"
+    assert choose_option("Hispanic or Latino", ["Not Hispanic or Latino", "Decline"]) is None
+    assert choose_option("Hispanic or Latino", ["Yes, Hispanic or Latino", "Not Hispanic or Latino"]) == "Yes, Hispanic or Latino"
+    assert choose_option("I am not a protected veteran", ["Protected Veteran", "Decline"]) is None
+    # nor a choice that denies more than the answer: a veteran who isn't a protected one is a veteran
+    assert choose_option("I am not a protected veteran", ["Protected Veteran", "Not a Veteran", "Decline"]) is None
+    assert choose_option("Not a Veteran", ["I am a protected veteran", "I am not a protected veteran"]) == \
+        "I am not a protected veteran"
+    # a denial about something else doesn't stand in the way
+    assert choose_option("Asian", ["Asian (Not Hispanic or Latino)", "White (Not Hispanic or Latino)"]) == \
+        "Asian (Not Hispanic or Latino)"
+    assert choose_option("No, I do not have a disability", ["Yes, I have a disability", "No, I don't have a disability",
+                                                             "I don't wish to answer"]) == "No, I don't have a disability"
+    assert choose_option("No, I will not require sponsorship", ["Yes, I will require sponsorship", "No"]) == "No"
+    # a decline's "not" denies nothing
+    assert choose_option("I don't wish to answer", ["Yes, I have a disability", "I do not want to answer"]) == \
+        "I do not want to answer"
+
+
+def test_a_short_list_of_places_is_read_with_the_rest_of_the_address():
+    """A City list short enough to be read whole ("Chandler, Henderson, TX", "Chandler, Lincoln,
+    OK", "Chandler, Maricopa, AZ") gave the first Chandler: the fill picks the one the rest of
+    the address names, but the plan had already chosen Texas."""
+    cities = ["Chandler, Henderson, TX", "Chandler, Lincoln, OK", "Chandler, Maricopa, AZ", "Chandler Heights, Maricopa, AZ"]
+    assert resolve_field(f("City *", "select", options=cities), prof()).value == "Chandler, Maricopa, AZ"
+    assert resolve_field(f("County", "select", options=["Maricopa, CA", "Maricopa, AZ"]), prof()).value == "Maricopa, AZ"
+    assert resolve_field(f("State", "select", options=["Arkansas", "Arizona"]), prof()).value == "Arizona"
+
+
+def test_some_college_however_a_list_words_it():
+    """"Some college coursework" (no degree) found nothing in a list whose choice is "Some
+    College, No Degree"; it's never a degree, nor high school."""
+    degrees = ["High School Diploma/GED", "Associate Degree (AA/AS)", "Some College, No Degree", "Bachelor Degree"]
+    assert choose_option("Some college coursework", degrees) == "Some College, No Degree"
+    assert choose_option("Some college coursework", ["Some high school", "College coursework, no degree"]) == \
+        "College coursework, no degree"
+    assert choose_option("Some college", ["High school diploma or GED", "Associate degree", "Bachelor's degree"]) is None
+    assert choose_option("Some high school", ["Some college, no degree", "Some high school, no diploma"]) == \
+        "Some high school, no diploma"

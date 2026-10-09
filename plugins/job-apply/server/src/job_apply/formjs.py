@@ -30,16 +30,22 @@ EXTRACT_JS = r"""
     return el.closest('label');
   };
   // Text before a control with no label of its own. Text before another control is that
-  // control's label: an unlabelled phone extension box isn't "Phone Number *".
+  // control's label: an unlabelled phone extension box isn't "Phone Number *". A long text
+  // is passed over, unless only a row's number comes before it: Phoenix Children's
+  // qualifications are a table of rows "5. | <the requirement> | Yes / No", and a long
+  // requirement's question was "5.".
   const CONTROL = 'input:not([type="hidden"]), select, textarea';
+  const ROW_NUMBER = /^\(?\d{1,3}[.):]?$/;
   const preceding = (el) => {
     let node = el;
     for (let depth = 0; depth < 4 && node; depth++) {
-      let sib = node.previousElementSibling;
+      let sib = node.previousElementSibling, long = '';
       while (sib) {
         if (sib.matches(CONTROL) || sib.querySelector(CONTROL)) return '';
         const t = txt(sib);
+        if (t && long && ROW_NUMBER.test(t)) return long;
         if (t && t.length < 300) return t;
+        if (t && !long) long = t.slice(0, 297).replace(/\s+\S*$/, '') + '\u2026';
         sib = sib.previousElementSibling;
       }
       node = node.parentElement;

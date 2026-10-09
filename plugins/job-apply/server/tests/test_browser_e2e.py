@@ -961,3 +961,15 @@ def test_answers_a_page_loses_in_a_quick_run_of_fills_are_put_in_again(srv):
     assert 1 <= times.get("Phone", 0) <= browser_module.LOST_FILL_TRIES and "Notes" not in times, times
     run(srv.fill_form([{"id": middle["id"], "value": "K"}]))
     assert run(cleared())["Phone"] == times["Phone"]
+
+
+def test_a_long_requirement_row_is_its_questions_label_not_its_number(srv):
+    """Phoenix Children's qualifications (live, Oct 2026) are a table of rows "5. | <the
+    requirement> | Yes / No". A requirement too long to read as a label left its question
+    called "5.", which tells the person nothing."""
+    run(srv.open_application(url=fixture_url("site/qualification-table.html")))
+    labels = [f["label"] for f in run(srv.browser.inspect(False))["fields"] if f["kind"] != "file"]
+    assert labels[0] == "Three (3+) or more years of experience in accounting. Required"
+    assert labels[1].startswith("Experience in system integrated Enterprise Resource Planning (ERP)")
+    assert labels[1].endswith("…") and len(labels[1]) <= 300
+    assert labels[2] == "I Agree"

@@ -68,3 +68,18 @@ def test_every_employer_list_loads_with_known_values():
                 assert kind in set(SEARCHERS) | BROWSER_SEARCHES, (name, c["name"], kind)
     template = yaml.safe_load((config.PLUGIN_ROOT / "templates" / "companies.example.yaml").read_text())
     assert set(template["lists"]) <= set(lists) and template["companies"] == []
+
+
+def test_the_templates_hospital_question_is_only_the_exclusion_question():
+    """The profile template's answer for hospitals' exclusion question (Mayo Clinic's, live)
+    must not answer a question that only mentions Medicare: its "No" would say the person has
+    no Medicare billing experience."""
+    import re
+
+    data = yaml.safe_load(config.TEMPLATE_PROFILE.read_text())
+    pattern = next(a["match"] for a in data["answers"] if "medicare" in a["match"])
+    for asked in ("Have you received notice from any government agency that you are or were unable to participate in "
+                  "Medicare, Medicaid, or any other government program?",
+                  "Have you ever been excluded from participation in any federal health care program?"):
+        assert re.search(pattern, asked, re.I), asked
+    assert not re.search(pattern, "Do you have experience with Medicare/Medicaid billing?", re.I)

@@ -1,0 +1,45 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Apply</title></head>
+<body>
+<!-- like Phoenix Children's application (markup as captured live, Oct 2026): the position's
+     qualifications are a table, each row a number, the requirement and Yes / No radios with
+     no label of their own. Next stays greyed out until every row is answered, "I Agree" is
+     ticked and a resume is attached (its box isn't marked required). -->
+<form id="f">
+  <h3>Position Qualifications</h3>
+  <span>Please review the following qualifications and specify whether you meet each of the requirements listed.</span>
+  <table class="table"><tbody>
+    <tr><th colspan="2"><h4>Experience</h4></th><th>Do you meet this requirement?</th></tr>
+    <tr>
+      <td class="num">1.</td>
+      <td>Three (3+) or more years of experience in accounting.<br><em>Required</em></td>
+      <td class="radios">
+        <label><input type="radio" name="Qual_Experience[0]" value="Yes" required><span> Yes</span></label>
+        <label><input type="radio" name="Qual_Experience[0]" value="No" required><span> No</span></label>
+      </td>
+    </tr>
+    <tr>
+      <td class="num">2.</td>
+      <td>Experience in system integrated Enterprise Resource Planning (ERP) to manage the business and automate
+        back office functions related to financial services. Must be technologically savvy, with an ability to
+        develop and implement new processes and systems that increased efficiency in a fast-paced and changing
+        environment.<br>Experience in effectively communicating key data, including presentations to senior
+        management, boards of directors, and outside partners.<br><em>Required</em></td>
+      <td class="radios">
+        <label><input type="radio" name="Qual_Experience[1]" value="Yes" required><span> Yes</span></label>
+        <label><input type="radio" name="Qual_Experience[1]" value="No" required><span> No</span></label>
+      </td>
+    </tr>
+  </tbody></table>
+  <input type="file" id="resume" name="files_QuickApply">
+  <label><input type="checkbox" id="agree" required> I Agree</label>
+  <button type="submit" id="next" disabled>Next</button>
+</form>
+<script>
+  const f = document.getElementById('f');
+  f.addEventListener('change', () => { document.getElementById('next').disabled = !f.checkValidity() || !document.getElementById('resume').files.length; });
+  f.addEventListener('submit', (e) => { e.preventDefault(); document.body.innerHTML = '<h1>Thank you for applying</h1>'; });
+</script>
+</body>
+</html>
