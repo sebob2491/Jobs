@@ -922,3 +922,23 @@ def test_a_captcha_on_show_is_said_but_its_frame_isnt_read(srv):
     assert "Verify" not in [a["text"] for a in shown["actions"]]
     assert not any("robot" in (f.get("label") or "") for f in shown["fields"])
     assert "captcha" not in hidden
+
+
+def test_answers_a_page_loses_in_a_quick_run_of_fills_are_put_in_again(srv):
+    """Insight Enterprises' Eightfold form (live, Oct 2026) lost some of a quick run of fills from
+    its own record and said "Email cannot be left blank" beside the address shown. The boxes it
+    marks invalid while they still show the answer are filled again, one at a time."""
+    job = srv.add_job(url=fixture_url("lossy_form.html"), title="HRBP", company="Example Fab")["job"]
+    run(srv.open_application(job_id=job["id"]))
+    run(srv.inspect_form())
+    result = run(srv.autofill())
+    assert {f["label"] for f in result["filled"]} >= {"First Name", "Last Name", "Email", "City", "Postal Code"}
+
+    async def record():
+        page = await srv.browser.page()
+        await page.wait_for_timeout(300)
+        return await page.evaluate("() => window.record")
+
+    assert run(record()) == {"First Name": "Sam", "Last Name": "Rivera", "Email": "sam.rivera@example.com",
+                             "City": "Chandler", "Postal Code": "85225"}
+    assert not [e for e in run(srv.inspect_form())["errors"] if "blank" in e]
