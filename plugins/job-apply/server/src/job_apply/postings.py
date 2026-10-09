@@ -471,7 +471,21 @@ async def _fetch_with(client: httpx.AsyncClient, url: str) -> Posting:
     return finalize(posting)
 
 
+# Apply links that go somewhere the public can't apply, and where the same job is open to them.
+# Edward Jones' home-office postings (live, Oct 2026) link Apply to its staff Brassring site
+# (siteid 5377), behind a staff sign-in that ends on a host the public can't reach; the same
+# job is on its public site (5374), with an "Apply to job" button.
+_PUBLIC_APPLY = [(re.compile(r"(sjobs\.brassring\.com/.*[?&]partnerid=26235&(?:amp;)?siteid=)5377\b", re.I), r"\g<1>5374")]
+
+
+def public_apply_url(url: str) -> str:
+    for staff, public in _PUBLIC_APPLY:
+        url = staff.sub(public, url)
+    return url
+
+
 def finalize(posting: Posting) -> Posting:
+    posting.apply_url = public_apply_url(posting.apply_url)
     posting.ats = detect_ats(posting.url)
     if posting.apply_url and detect_ats(posting.apply_url) != "company_site":
         # e.g. an asml.com posting whose Apply button goes to an ATS

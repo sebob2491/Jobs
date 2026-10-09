@@ -808,6 +808,11 @@ class Applier:
             entry_here = any(_ENTRY.match(final_text(a["text"])) and not a.get("disabled") for a in actions)
             if kind == "form" and entry_here and not _application_like(data):
                 kind = "page"  # a posting with a "send me similar jobs" box: go in through Apply
+            if str(data.get("url") or "").startswith("chrome-error://"):  # (its title is the host)
+                where = (data.get("title") or "").strip() or "a site"
+                return self._pause(run, "stuck", f"The application went on to {where}, which couldn't be reached, so "
+                                   "the page didn't load. Press Resume to try again, or open the posting in your own "
+                                   "browser to apply there.")
             if kind == "page" and not data.get("fields") and _TURNED_AWAY.search(data.get("title") or ""):
                 return self._pause(run, "stuck", f"{_site(run, data)} turned the desk's browser away (403 Forbidden). "
                                    "Open the posting in your own browser to apply there.")
