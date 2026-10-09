@@ -1323,3 +1323,7 @@ def test_where_you_are_and_when_you_can_start_among_choices():
     assert answer("When are you available to start?", waits) == "Immediate"
     path.write_text(yaml.safe_dump({**data, "preferences": {**data["preferences"], "earliest_start": "3 weeks"}}))
     assert answer("When are you available to start?", waits) is None  # never a sooner or later start
+    # a range isn't one wait: "2-4 Weeks" is no answer for a month
+    path.write_text(yaml.safe_dump({**data, "preferences": {**data["preferences"], "earliest_start": "1 month"}}))
+    assert answer("When are you available to start?", ["Immediate", "2-4 Weeks", "60 Days"]) is None
+    assert answer("When are you available to start?", ["Immediate", "1 to 2 months", "30 Days"]) == "30 Days"

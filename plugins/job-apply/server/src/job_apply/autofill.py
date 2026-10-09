@@ -1501,6 +1501,8 @@ def _days(text: Any) -> int | None:
     n = norm(text)
     if re.search(r"\b(immediate(ly)?|asap|right away)\b", n):
         return 0
+    if len(re.findall(r"\d+", n)) > 1 or re.search(r"\b(to|or|between)\b", n):
+        return None  # a range ("2-4 Weeks", "1 to 3 months"): not one wait
     m = _WAIT.search(n)
     if not m:
         return None
