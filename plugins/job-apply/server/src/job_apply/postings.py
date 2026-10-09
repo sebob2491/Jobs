@@ -264,7 +264,8 @@ def microdata_date(soup: BeautifulSoup) -> str:
     value = str((tag.get("content") or tag.get_text()) if tag else "").strip()
     if re.match(r"\d{4}-\d{2}-\d{2}", value):
         return value[:10]
-    for fmt in ("%a %b %d %H:%M:%S %Z %Y", "%b %d, %Y", "%B %d, %Y"):
+    value = re.sub(r"(\d{2}:\d{2}:\d{2}) [A-Za-z]{2,5} (\d{4})$", r"\1 \2", value)  # its zone (UTC, EDT): the day is enough
+    for fmt in ("%a %b %d %H:%M:%S %Y", "%b %d, %Y", "%B %d, %Y"):
         try:
             return datetime.strptime(value, fmt).date().isoformat()
         except ValueError:

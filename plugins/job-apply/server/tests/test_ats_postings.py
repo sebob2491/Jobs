@@ -264,3 +264,5 @@ def test_a_postings_microdata_date_is_read():
         "<p>Phoenix", '<span itemprop="datePosted">Oct 2, 2026</span><p>Phoenix')
     assert parse_html(shown, "https://careers.example.com/job/1/").posted_at == "2026-10-02"
     assert parse_html(page.replace("Fri Oct 02 00:00:00 UTC 2026", "soon"), "https://e.example/").posted_at == ""
+    # a site in another time zone names that one
+    assert parse_html(page.replace(" UTC ", " EDT "), "https://e.example/").posted_at == "2026-10-02"
