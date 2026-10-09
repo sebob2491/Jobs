@@ -57,6 +57,11 @@ _BOT_TITLE = re.compile(r"just a moment|attention required|access denied|pardon 
 # A bare "403 Forbidden" (Valleywise Health's postings, to the desk's browser): the site turns the
 # browser away. There's nothing to solve, so it holds nothing up: the person applies elsewhere
 _TURNED_AWAY = re.compile(r"^\s*(?:403\s*)?forbidden\s*$", re.I)
+# A posting that has closed: "The job posting you are looking for has expired or the position has
+# already been filled" (Edward Jones' BrassRing), "This job is no longer available"
+_CLOSED = re.compile(
+    r"\b(?:posting|job|position|requisition|opening|vacancy)\b[^.]{0,60}?\b(?:has|have|is|was)\b(?: already)?(?: been)?"
+    r" (?:expired|filled|closed|no longer (?:available|open|active|accepting))|no longer accepting applications", re.I)
 _BOT_TEXT = re.compile(r"verify (?:that )?you are (?:a )?human|are you a robot|checking (?:if the site connection is secure|"
                        r"your browser)|press (?:&|and) hold|complete the security check|unusual traffic from your|"
                        r"enable javascript and cookies to continue|request unsuccessful|you have been blocked", re.I)
@@ -981,6 +986,9 @@ class Applier:
                 if blank:
                     return self._pause(run, "stuck", "The page stayed blank: the site may be slow or down. Reload it "
                                        "in the browser, then press Resume.")
+                if closed := _closed_notice(data, text):
+                    return self._pause(run, "stuck", f"{_site(run, data)} says this posting has closed: \u201c{closed}\u201d "
+                                       "There's nothing to apply to, so skip this job.")
                 agree = next((a for a in data.get("actions") or [] if _AGREEMENT.search(a["text"].strip())
                               and not a.get("cookie") and "cookie" not in a["text"].lower()
                               and not a.get("disabled")), None)
@@ -1567,6 +1575,15 @@ def _site_key(url: str) -> str:
     """The part of a page's address that names its site ("myworkdayjobs.com", "asml.com"), near enough."""
     host = (urlparse(url).hostname or "").lower()
     return ".".join(host.split(".")[-2:])
+
+
+def _closed_notice(data: dict[str, Any], text: str) -> str:
+    """The page's own words that its posting has closed, or "" when it doesn't say so."""
+    for said in list(data.get("errors") or []) + [text or ""]:
+        if m := _CLOSED.search(said):
+            start, end = said.rfind(".", 0, m.start()) + 1, said.find(".", m.end())
+            return " ".join(said[start:end + 1 if end >= 0 else len(said)].split())[:200]
+    return ""
 
 
 def _site(run: Run, data: dict[str, Any]) -> str:
