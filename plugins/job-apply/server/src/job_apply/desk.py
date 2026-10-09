@@ -34,8 +34,9 @@ from starlette.routing import Route
 from . import config
 from .pipeline import DESK_PASSWORDS, Applier, question_key
 from .ats import detect_ats
-from .postings import fetch_posting, finalize, parse_html
+from .postings import FetchError, Posting, fetch_posting, finalize, parse_html
 from .recommend import recommend, score_listing
+from .search import ICIMS_FRAME
 
 PAGE = Path(__file__).resolve().parent / "static" / "desk.html"
 DEFAULT_PORT = 8765
@@ -331,6 +332,19 @@ class Desk:
         return JSONResponse({"added": await self.add_links(links[:MAX_LINKS]), "left": links[MAX_LINKS:]})
 
     # ------------------------------------------------------------- actions
+    async def read_in_browser(self, url: str) -> Posting:
+        """A posting that turns away plain requests, read in a background tab: iCIMS's (HTTP
+        405), from the frame its posting is drawn in. Others aren't read this way: Find jobs
+        reads dozens, and the browser is shared with the applications."""
+        if detect_ats(url) != "icims":
+            raise FetchError(f"not read in the browser: {url}")
+        framed = url + ("&" if "?" in url else "?") + "in_iframe=1"
+        pages = await self.srv.browser.frames_html(framed, inner=ICIMS_FRAME)
+        best = max((finalize(parse_html(html, url)) for html in pages), key=lambda p: len(p.description))
+        if not best.is_useful:
+            raise FetchError(f"no posting in {url}")
+        return best
+
     async def find_jobs(self) -> None:
         self.search.update(status="running", error=None, started=time.time())
         try:
@@ -338,7 +352,7 @@ class Desk:
                 return await self.srv.search_company_jobs(query, location=location, limit_per_company=limit)
 
             out = await recommend(config.Profile.load(), run_search, limit_per_company=10, read_postings=40,
-                                  fetch=self.fetch)
+                                  fetch=self.fetch, fetch_hard=self.read_in_browser)
             self.listings = out["results"]
             at = time.time()
             self.search.update(status="done", at=at, query=out["query"], location=out["location"],

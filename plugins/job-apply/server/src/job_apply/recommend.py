@@ -10,6 +10,7 @@ orders the list; every point comes with a plain-language reason or concern.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import re
 from dataclasses import asdict, dataclass, field
 from datetime import date
@@ -30,6 +31,11 @@ _DEGREE_NAME = {"high_school": "a high school diploma", "associate": "an Associa
 _SENIOR = re.compile(r"\b(senior|sr|staff|principal|lead|manager|director|head|vp|vice president|chief|supervisor)\b")
 _JUNIOR = re.compile(r"\b(early career|entry level|entry|junior|jr|graduate|new grad|apprentice|trainee)\b")
 _INTERN = re.compile(r"\b(intern|internship|co op|coop)\b")
+# Words in many titles that say nothing of the work: "HR Coordinator" is no reason to suggest an
+# "Enrollment Coordinator" or a "Clinical Research Coordinator"
+_GENERIC_TITLE_WORDS = {"coordinator", "specialist", "manager", "analyst", "associate", "assistant", "representative",
+                        "consultant", "director", "senior", "lead", "officer", "administrator", "clerk", "supervisor",
+                        "partner", "principal", "junior", "intern", "staff", "team", "level"}
 _TITLE_LEVEL = re.compile(r"\b(?:engineer|technician|tech|specialist|fse|representative|analyst|level)\s+(i{1,3}|iv|v|[1-5])\b")
 _ROMAN = {"i": 1, "ii": 2, "iii": 3, "iv": 4, "v": 5}
 _MONTHS = {m: i for i, m in enumerate(
@@ -333,10 +339,10 @@ def score_listing(listing: dict[str, Any], prof: Profile, description: str = "",
     if hit:
         fit.score += 25
         fit.reasons.append(f"title matches “{hit}”")
-    elif any(w in n.split() for t in targets for w in norm(t).split() if len(w) > 3):
-        fit.score += 5
-    else:
-        fit.score -= 15
+    elif any(w in n.split() for t in targets for w in norm(t).split() if len(w) > 3 and w not in _GENERIC_TITLE_WORDS):
+        fit.score += 5  # near one ("Field Engineer" for field service)
+    else:  # even fresh, nearby and qualified, not what the person looks for: shown, not preselected
+        fit.score -= 25
         fit.concerns.append("not one of your target titles")
 
     years = applicant_years(prof, today)
@@ -399,7 +405,11 @@ def _score_requirements(fit: Fit, req: dict[str, Any], prof: Profile, years: flo
             fit.score += 5
             fit.reasons.append(f"your degree meets the minimum ({asked})")
     if req["years"] is not None and years is not None:
-        if req["years"] > years + 0.5:
+        if req["years"] >= years + 3 and req["years"] > years * 1.5:
+            fit.score -= 12  # far short (10+ years asked, about 4.6 had): shown, not preselected
+            fit.blocked = True
+            fit.concerns.append(f"asks for {req['years']}+ years (you have about {years:g})")
+        elif req["years"] > years + 0.5:
             fit.score -= 12
             fit.concerns.append(f"asks for {req['years']}+ years (you have about {years:g})")
         else:
@@ -433,15 +443,34 @@ Search = Callable[[str, str | None, int], Awaitable[dict[str, Any]]]
 Fetch = Callable[[str], Awaitable[Posting]]
 
 
+async def _first_read(item: dict[str, Any], fetch: Fetch, fetch_hard: Fetch | None) -> Posting | None:
+    """A listing's posting, by its own address, else its page on the employer's own site (a
+    Jibe site's, over an iCIMS posting that turns away plain requests: still applied for where
+    the listing links), else by `fetch_hard`."""
+    with contextlib.suppress(Exception):
+        return await fetch(item["url"])
+    if item.get("company_url"):
+        with contextlib.suppress(Exception):
+            posting = await fetch(item["company_url"])
+            posting.apply_url = item["url"]
+            return posting
+    if fetch_hard is not None:
+        with contextlib.suppress(Exception):
+            return await fetch_hard(item["url"])
+    return None
+
+
 READ_AT_MOST = 150  # postings read per search: every one that would be preselected, up to this
 MIN_POSTING_TEXT = 200  # less than this, and the page held no posting (it builds itself with script)
 
 
 async def recommend(prof: Profile, search: Search, limit_per_company: int = 10, read_postings: int = 30,
-                    fetch: Fetch = fetch_posting, today: date | None = None) -> dict[str, Any]:
+                    fetch: Fetch = fetch_posting, today: date | None = None,
+                    fetch_hard: Fetch | None = None) -> dict[str, Any]:
     """Search every employer for the profile's target titles and area, score each listing,
     then read the postings (the top `read_postings`, and every one that would be preselected)
-    to check their requirements. One that wasn't read, or turns out to be elsewhere, isn't
+    to check their requirements: each by its own address, else its page on the employer's own
+    site, else `fetch_hard` (the desk's browser, for postings that turn away plain requests). One that wasn't read, or turns out to be elsewhere, isn't
     preselected: its requirements (a degree, a clearance) are unchecked."""
     query, location = target_query(prof), target_location(prof)
     found = await search(query, location, limit_per_company)
@@ -453,16 +482,9 @@ async def recommend(prof: Profile, search: Search, limit_per_company: int = 10, 
 
     async def read(item: dict[str, Any]) -> None:
         async with sem:
-            try:
-                posting = await fetch(item["url"])
-            except Exception:  # an unreadable posting keeps its title-based score
-                if not item.get("company_url"):
-                    return
-                try:  # its page on the employer's own site describes it too (a Jibe site's, over iCIMS's)
-                    posting = await fetch(item["company_url"])
-                except Exception:
-                    return
-                posting.apply_url = item["url"]  # still applied for where the listing links
+            posting = await _first_read(item, fetch, fetch_hard)
+            if posting is None:  # an unreadable posting keeps its title-based score
+                return
         item["posting"] = {k: getattr(posting, k) for k in
                            ("title", "location", "description", "apply_url", "salary", "employment_type",
                             "posted_at", "external_id", "ats")}

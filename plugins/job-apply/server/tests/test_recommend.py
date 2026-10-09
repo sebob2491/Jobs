@@ -302,3 +302,70 @@ def test_a_posting_that_wont_read_is_read_from_the_employers_own_page():
     top = out["results"][0]
     assert read == ["https://x.icims.com/jobs/1/job", "https://jobs.x.com/jobs/1"]
     assert top["posting"]["description"] == LAM_FSE2 and top["posting"]["apply_url"] == "https://x.icims.com/jobs/1/job"
+
+
+HR_POSTING = """Minimum Qualifications
+Bachelor's degree in any field.
+1+ years of office experience.
+"""
+
+
+def test_a_title_sharing_only_a_generic_word_isnt_preselected():
+    """An HR applicant's "HR Coordinator" target made "Associate Clinical Research Coordinator"
+    and "Enrollment Coordinator" (fresh, in Phoenix, requirements met) preselected at 80 (live,
+    Phoenix list, Oct 2026). "Coordinator" says nothing of the work; "Field" in "Field Engineer"
+    does, for a field service target."""
+    hr = tech(preferences={"titles": ["HR Generalist", "Recruiter", "HR Coordinator"], "locations": ["Phoenix, AZ"]},
+              education={"highest_degree": "Bachelor's Degree"})
+    fresh = {"location": "Phoenix, AZ", "posted": "2026-10-05"}
+    off = score_listing({**fresh, "title": "Associate Clinical Research Coordinator"}, hr, HR_POSTING, today=TODAY)
+    assert not off.recommended and "not one of your target titles" in off.concerns
+    on = score_listing({**fresh, "title": "HR Coordinator II"}, hr, HR_POSTING, today=TODAY)
+    assert on.recommended
+    near = score_listing({**fresh, "title": "Field Engineer"}, tech(), today=TODAY)
+    assert "not one of your target titles" not in near.concerns  # near a field service target
+
+
+def test_a_posting_asking_for_far_more_experience_isnt_preselected():
+    """Grand Canyon Education's "Human Resources Business Partner" asked for 10+ years of an
+    applicant with about 4.6 and was still preselected at 83. Far short, it's shown but not
+    preselected; a little short, it only scores lower."""
+    hr = tech(preferences={"titles": ["Human Resources"], "locations": ["Phoenix, AZ"]})
+    job = {"title": "Human Resources Business Partner", "location": "Phoenix, AZ", "posted": "2026-10-05"}
+    far = score_listing(job, hr, "Requirements\n10+ years of HR experience.\n", today=TODAY)
+    assert far.blocked and not far.recommended and any("10+ years" in c for c in far.concerns)
+    near = score_listing(job, hr, "Requirements\n5+ years of HR experience.\n", today=TODAY)
+    assert not near.blocked and near.recommended
+
+
+def test_a_posting_that_turns_away_plain_requests_is_read_the_hard_way_last():
+    """Aerotek's and TEKsystems' iCIMS postings answer plain requests with HTTP 405, so their
+    entry-level recruiter openings (an HR applicant's best matches, live, Oct 2026) were never
+    read, so never preselected. They're read by `fetch_hard` (the desk's browser), after the
+    plain read and the employer's own page."""
+    p = tech()
+
+    async def search(query, location, limit):
+        return {"results": [
+            {"company": "Aerotek", "title": "Field Service Engineer 2", "location": "Tempe, AZ",
+             "url": "https://careers-x.icims.com/jobs/1/job"},
+            {"company": "Sprouts", "title": "Field Service Engineer 2", "location": "Phoenix, AZ",
+             "url": "https://y.icims.com/jobs/2/job", "company_url": "https://jobs.y.com/jobs/2"}]}
+
+    order: list[str] = []
+
+    async def fetch(url):
+        order.append(url)
+        if "icims" in url:
+            raise RuntimeError("HTTP 405")
+        return Posting(url=url, description=LAM_FSE2)
+
+    async def hard(url):
+        order.append("hard " + url)
+        return Posting(url=url, description=LAM_FSE2, apply_url=url)
+
+    out = asyncio.run(recommend(p, search, read_postings=2, fetch=fetch, fetch_hard=hard, today=TODAY))
+    assert {r["company"]: r["posting"]["description"] == LAM_FSE2 for r in out["results"]} == {"Aerotek": True,
+                                                                                               "Sprouts": True}
+    assert "hard https://careers-x.icims.com/jobs/1/job" in order
+    assert "hard https://y.icims.com/jobs/2/job" not in order  # its employer's own page read it first

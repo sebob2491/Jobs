@@ -849,3 +849,27 @@ def test_report_a_problem_shows_the_report_with_a_link_to_file_it(srv, job_apply
 
     run(go())
     assert len(list((job_apply_home / "reports").iterdir())) == 1
+
+
+def test_the_desk_reads_an_icims_posting_in_its_browser(srv, monkeypatch):
+    """iCIMS postings turn away plain requests: Find jobs reads one in a background tab, from
+    the frame its posting is drawn in (in_iframe=1). Other sites' postings aren't read that way."""
+    from job_apply.postings import FetchError
+
+    asked = []
+
+    async def frames_html(url, inner=None):
+        asked.append((url, inner))
+        return ["<html><body><iframe id='icims_content_iframe'></iframe></body></html>",
+                "<html><head><title>Entry Level Recruiter</title></head><body><main><h1>Entry Level Recruiter</h1>"
+                + "<p>Recruit and place contract talent for clients across the Phoenix area every day.</p>" * 6
+                + "</main></body></html>"]
+
+    monkeypatch.setattr(srv.browser, "frames_html", frames_html)
+    desk = Desk(srv)
+    p = run(desk.read_in_browser("https://careers-aco.icims.com/jobs/13516/entry-level-recruiter/job"))
+    assert "Recruit and place contract talent" in p.description
+    assert asked == [("https://careers-aco.icims.com/jobs/13516/entry-level-recruiter/job?in_iframe=1",
+                      "#icims_content_iframe")]
+    with pytest.raises(FetchError):
+        run(desk.read_in_browser("https://boards.greenhouse.io/aco/jobs/1"))
