@@ -205,16 +205,17 @@ def test_find_issue_takes_the_oldest_with_the_title():
     assert lc.find_issue([]) is None
 
 
-def _run(tmp_path, issues, pipeline_records, search_records=(), partial=(), hr_records=None):
+def _run(tmp_path, issues, pipeline_records, search_records=(), partial=(), hr_records=None, finance_records=None):
     (tmp_path / "pipeline.log").write_text(log("LIVE_PIPELINE ", pipeline_records))
     (tmp_path / "search.log").write_text(log("LIVE_RESULT ", search_records))
     (tmp_path / "issues.json").write_text(json.dumps(issues))
     out = tmp_path / "github_output"
     out.write_text("")
     hr = []
-    if hr_records is not None:
-        (tmp_path / "hr.log").write_text(log("LIVE_PIPELINE ", hr_records))
-        hr = ["--log", f"hr={tmp_path / 'hr.log'}"]
+    for name, records in (("hr", hr_records), ("finance", finance_records)):
+        if records is not None:
+            (tmp_path / f"{name}.log").write_text(log("LIVE_PIPELINE ", records))
+            hr += ["--log", f"{name}={tmp_path / f'{name}.log'}"]
     argv = ["--issues", str(tmp_path / "issues.json"), "--run-url", "https://example.com/run/3",
             "--log", f"pipeline={tmp_path / 'pipeline.log'}", "--log", f"search={tmp_path / 'search.log'}", *hr,
             "--body-out", str(tmp_path / "body.md"), "--comment-out", str(tmp_path / "comment.md"),
@@ -281,3 +282,25 @@ def test_a_record_run_on_from_a_cut_screenshot_line_is_read():
     text += "\n" + log("LIVE_PIPELINE ", [pipeline_rec("KLA")])
     assert {name: r.outcome for name, r in lc.results("pipeline", text).items()} == {
         "ASM": "needs_you stuck", "KLA": "ready"}
+
+
+def test_the_finance_pipeline_check_is_a_check_of_its_own(tmp_path):
+    """The nightly check's finance run (the pipeline on the Phoenix list, as a finance applicant)
+    keeps its own results beside the HR run's: the same employer can end differently in each."""
+    body = _run(tmp_path, [], [pipeline_rec("ASM")], [search_rec("USAA")],
+                hr_records=[pipeline_rec("Axon")])[0]
+    issue = {"number": 7, "title": "Nightly live check", "state": "OPEN", "body": body}
+    fin1 = [pipeline_rec("Axon", "needs_you", "stuck"), pipeline_rec("EY", "needs_you", "your_submit")]
+    body, comment, outputs = _run(tmp_path, [issue], [pipeline_rec("ASM")], [search_rec("USAA")],
+                                  hr_records=[pipeline_rec("Axon")], finance_records=fin1)
+    assert comment is None and outputs["changes"] == "0"  # new since the last run: nothing added
+    state = lc.read_state(body)
+    assert state["finance"] == {"Axon": "needs_you stuck", "EY": "needs_you your_submit"}
+    assert state["hr"] == {"Axon": "ready"}
+    assert "### Apply pipeline, Phoenix list (finance jobs)" in body
+    issue["body"] = body
+    fin2 = [pipeline_rec("Axon", "needs_you", "stuck"), pipeline_rec("EY", "needs_you", "sign_in")]
+    body, comment, outputs = _run(tmp_path, [issue], [pipeline_rec("ASM")], [search_rec("USAA")],
+                                  hr_records=[pipeline_rec("Axon")], finance_records=fin2)
+    assert outputs["changes"] == "1"
+    assert "EY: `needs_you your_submit` → `needs_you sign_in`" in comment.split("finance jobs", 1)[1]

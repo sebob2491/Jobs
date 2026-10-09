@@ -5,7 +5,8 @@ name: live-nightly
 # scripts/live_compare.py:
 #   - the Job Desk pipeline on one posting per employer of the default semiconductor list:
 #     where it ended ("ready", "needs_you sign_in", "needs_you stuck", ...);
-#   - the same for HR jobs on the phoenix-metro list, as an applicant with an HR background;
+#   - the same for HR jobs on the phoenix-metro list, as an applicant with an HR background,
+#     and for finance jobs there, as an applicant with a finance background;
 #   - the search check on the phoenix-metro list: whether each employer's search works
 #     (how many openings it finds changes daily, and is never compared).
 # The issue titled "Nightly live check" (label live-check) holds the last results in its body.
@@ -31,7 +32,7 @@ permissions:
 jobs:
   check:
     runs-on: ubuntu-latest
-    timeout-minutes: 110
+    timeout-minutes: 140
     defaults:
       run:
         working-directory: plugins/job-apply/server
@@ -68,6 +69,15 @@ jobs:
           mkdir -p live-hr
           uv run --frozen python scripts/live_smoke.py --pipeline --fake-passwords --parallel 4 \
             --lists phoenix-metro --role hr --out live-hr 2>&1 | tee live-hr/run.log
+      - name: Pipeline check (finance jobs, phoenix-metro list)
+        id: finance
+        continue-on-error: true
+        timeout-minutes: 30
+        run: |
+          set -o pipefail
+          mkdir -p live-finance
+          uv run --frozen python scripts/live_smoke.py --pipeline --fake-passwords --parallel 4 \
+            --lists phoenix-metro --role finance --out live-finance 2>&1 | tee live-finance/run.log
       - name: Search check (phoenix-metro list)
         id: search
         continue-on-error: true
@@ -82,6 +92,7 @@ jobs:
         env:
           PIPELINE_OUTCOME: ${{ steps.pipeline.outcome }}
           HR_OUTCOME: ${{ steps.hr.outcome }}
+          FINANCE_OUTCOME: ${{ steps.finance.outcome }}
           SEARCH_OUTCOME: ${{ steps.search.outcome }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
@@ -89,11 +100,13 @@ jobs:
           gh issue list --label "$ISSUE_LABEL" --state all --limit 100 \
             --json number,title,state,body > live-compare/issues.json
           args=(--issues live-compare/issues.json --title "$ISSUE_TITLE" --run-url "$RUN_URL"
-                --log pipeline=live-pipeline/run.log --log hr=live-hr/run.log --log search=live-search/run.log
+                --log pipeline=live-pipeline/run.log --log hr=live-hr/run.log
+                --log finance=live-finance/run.log --log search=live-search/run.log
                 --body-out live-compare/body.md --comment-out live-compare/comment.md
                 --github-output "$GITHUB_OUTPUT")
           if [ "$PIPELINE_OUTCOME" != success ]; then args+=(--partial pipeline); fi
           if [ "$HR_OUTCOME" != success ]; then args+=(--partial hr); fi
+          if [ "$FINANCE_OUTCOME" != success ]; then args+=(--partial finance); fi
           if [ "$SEARCH_OUTCOME" != success ]; then args+=(--partial search); fi
           uv run --frozen python scripts/live_compare.py "${args[@]}"
           {
@@ -126,15 +139,20 @@ jobs:
           path: |
             plugins/job-apply/server/live-pipeline
             plugins/job-apply/server/live-hr
+            plugins/job-apply/server/live-finance
             plugins/job-apply/server/live-search
             plugins/job-apply/server/live-compare
           retention-days: 7
       - name: Fail if a check didn't finish
-        if: steps.pipeline.outcome != 'success' || steps.hr.outcome != 'success' || steps.search.outcome != 'success'
+        if: >-
+          steps.pipeline.outcome != 'success' || steps.hr.outcome != 'success' ||
+          steps.finance.outcome != 'success' || steps.search.outcome != 'success'
         env:
           PIPELINE_OUTCOME: ${{ steps.pipeline.outcome }}
           HR_OUTCOME: ${{ steps.hr.outcome }}
+          FINANCE_OUTCOME: ${{ steps.finance.outcome }}
           SEARCH_OUTCOME: ${{ steps.search.outcome }}
         run: |
-          echo "::error::A check didn't finish (pipeline: $PIPELINE_OUTCOME, hr: $HR_OUTCOME, search: $SEARCH_OUTCOME); see its log"
+          echo "::error::A check didn't finish (pipeline: $PIPELINE_OUTCOME, hr: $HR_OUTCOME," \
+               "finance: $FINANCE_OUTCOME, search: $SEARCH_OUTCOME); see its log"
           exit 1
