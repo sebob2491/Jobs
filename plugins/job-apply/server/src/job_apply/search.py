@@ -14,6 +14,7 @@ Each company in data/companies.yaml may carry a `search` block naming one of:
     phoenixchildrens: <job site address>    (Phoenix Children's own job site)
     jibe:            <Jibe site host>       (iCIMS's Jibe job sites: jobs.sprouts.com)
     talentbrew:      {host: www.commonspirit.careers, org: 35300}  (Radancy TalentBrew career sites)
+    careerpages:     {url: https://www.azstatejobs.gov, state: AZ}  (career-pages.com job sites)
     jobvite:         <company>              (jobs.jobvite.com/<company>)
     amazon:          {loc_query: "Phoenix, AZ, USA", latitude: .., longitude: .., radius: 50km}  (amazon.jobs)
     randstad:        https://www.randstadusa.com/jobs/internal  (Randstad's own jobs)
@@ -60,6 +61,8 @@ FETCH_WHEN_FILTERING = 60  # results to scan per search when filtering by locati
 EMPLOYERS_AT_ONCE = 8  # employers searched at the same time (each its own site; ~50 s for the Phoenix list, not ~100)
 CLIENT_SIDE = {"greenhouse", "lever", "applicantstack", "paycom", "ukg", "sfclassic", "infor", "phoenixchildrens",
                "jobvite", "randstad"}  # whole board at once; titles filtered here
+# Sites whose bot check a quick run of requests sets off (the State of Arizona's): one wording
+ONE_WORDING = CLIENT_SIDE | {"careerpages"}
 # Searches whose data only comes through the site's own page in the browser (ASML's
 # Sitecore Discover widget; iCIMS portals, which turn away plain requests; Paycom, UKG
 # Pro and SuccessFactors' newer search, whose APIs want the session their page sets up;
@@ -997,6 +1000,41 @@ async def _talentbrew(client: httpx.AsyncClient, cfg: Any, query: str, limit: in
     return out
 
 
+# ----------------------------------------------------------------- career-pages.com job sites (State of Arizona)
+CAREERPAGES_PAGES = 3  # pages of 30 read, at most (its AWS WAF challenges a quick run of requests)
+_CP_ROW = re.compile(r'<tr role="link"[^>]*data-job-url="([^"]+)"(.*?)</tr>', re.S)
+
+
+async def _careerpages(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, terms: list[str]) -> list[Listing]:
+    """career-pages.com job sites (the State of Arizona's azstatejobs.gov) list a search's openings
+    as a table, 30 a page: title, places ("PHOENIX", "REMOTE OPTIONS") and closing date. The places
+    carry no state; a site whose jobs are all in one (`state: AZ`) gets it added. A bot check
+    (its AWS WAF's challenge) ends the search: it's never got around, so the person searches the
+    site's own page."""
+    site = str(cfg["url"]).rstrip("/")
+    state = str(cfg.get("state") or "")
+    out: list[Listing] = []
+    for n in range(1, CAREERPAGES_PAGES + 1):
+        url = f"{site}/jobs/search?" + urlencode({"page": n, "query": query})
+        r = await _send(client, "GET", url, headers={"Accept": "text/html"})
+        _raise_for(r, url)
+        if r.status_code == 202 or r.headers.get("x-amzn-waf-action"):
+            raise SearchError(f"{site} answered with a bot check; search it on its own page")
+        rows = _CP_ROW.findall(r.text)
+        for link, row in rows:
+            title = re.search(r'aria-label="Title: ([^"]+)"', row)
+            if not title:
+                continue
+            places = list(dict.fromkeys(html.unescape(p).strip() for p in re.findall(r'aria-label="Location: ([^"]+)"', row)))
+            where = "; ".join(f"{p.title()}, {state}" if state else p.title() for p in places)
+            req = re.search(r'aria-label="Requisition Identifier: ([^"]+)"', row)
+            out.append(Listing(company="", title=html.unescape(title.group(1)).strip(), url=html.unescape(link),
+                               location=where, external_id=req.group(1) if req else ""))
+        if len(rows) < 30 or len(out) >= limit:
+            break
+    return out
+
+
 # ----------------------------------------------------------------- Jobvite job boards (Knight-Swift)
 JOBVITE_CATEGORIES = 10  # categories read past their first 20 openings ("Show More"), per search
 
@@ -1795,6 +1833,7 @@ SEARCHERS: dict[str, Callable[[httpx.AsyncClient, Any, str, int, list[str]], Awa
     "phoenixchildrens": _phoenixchildrens,
     "jibe": _jibe,
     "talentbrew": _talentbrew,
+    "careerpages": _careerpages,
     "jobvite": _jobvite,
     "amazon": _amazon,
     "randstad": _randstad,
@@ -1918,7 +1957,7 @@ async def search_companies(
             return
         fetch = max(limit, FETCH_WHEN_FILTERING) if terms else limit
         found: list[Listing] = []
-        wordings = [query] if kind in CLIENT_SIDE else alternatives(query)
+        wordings = [query] if kind in ONE_WORDING else alternatives(query)
         failed: list[str] = []
         async with sem:
             for wording in wordings:
