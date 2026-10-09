@@ -232,6 +232,7 @@ def test_a_menus_link_to_the_job_list_isnt_the_postings_apply_link():
             '<form id="apply" action="/Position/Apply" method="post"><input name="FirstName"></form></main></body></html>')
     p = parse_html(page, "https://careers.pchco.org/Positions/Posting/1064100")
     assert p.apply_url == ""  # applied on the posting's own page
-    page = page.replace('<a href="#apply">Apply!</a>', '<a href="https://apply.example.com/job/1064100">Apply</a>')
+    page = page.replace('<a href="#apply">Apply!</a>', '<a href="https://apply.example.com/job/1064100" '
+                        'aria-label="Apply for Executive Search Consultant">Apply</a>')  # "search" in its title
     assert parse_html(page, "https://careers.pchco.org/Positions/Posting/1064100").apply_url == \
         "https://apply.example.com/job/1064100"

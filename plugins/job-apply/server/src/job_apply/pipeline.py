@@ -53,7 +53,10 @@ SHARED_LOOK_BACK = 30  # seconds looked back for a job's code while an earlier j
 FINISHED = {"applied", "interviewing", "offer", "rejected", "withdrawn"}  # tracker statuses never applied to again
 
 _BOT_TITLE = re.compile(r"just a moment|attention required|access denied|pardon our interruption|security check|"
-                        r"are you a robot|bot (?:check|detection)|^\s*(?:403\s*)?forbidden\s*$", re.I)
+                        r"are you a robot|bot (?:check|detection)", re.I)
+# A bare "403 Forbidden" (Valleywise Health's postings, to the desk's browser): the site turns the
+# browser away. There's nothing to solve, so it holds nothing up: the person applies elsewhere
+_TURNED_AWAY = re.compile(r"^\s*(?:403\s*)?forbidden\s*$", re.I)
 _BOT_TEXT = re.compile(r"verify (?:that )?you are (?:a )?human|are you a robot|checking (?:if the site connection is secure|"
                        r"your browser)|press (?:&|and) hold|complete the security check|unusual traffic from your|"
                        r"enable javascript and cookies to continue|request unsuccessful|you have been blocked", re.I)
@@ -141,7 +144,8 @@ def classify(data: dict[str, Any], text: str) -> str:
     if data.get("challenge"):  # a CAPTCHA's pictures over the page (iCIMS after its email step)
         return "bot_check"
     fields = [f for f in data.get("fields", []) if not f.get("disabled")]
-    if not fields and (_BOT_TITLE.search(data.get("title") or "") or _BOT_TEXT.search(text[:3000])):
+    if not fields and (_BOT_TITLE.search(data.get("title") or "") or _BOT_TEXT.search(text[:3000])
+                       or data.get("captcha")):  # (a page with only a CAPTCHA's box on it, and its button)
         return "bot_check"
     if any(f["kind"] == "password" for f in fields):
         return "sign_in"
@@ -158,7 +162,7 @@ def classify(data: dict[str, Any], text: str) -> str:
 def pick_next(actions: list[dict[str, Any]], in_form: bool) -> dict[str, Any] | None:
     """The button that moves the application on: a step button inside a form, otherwise
     the way into it ("Apply Manually" before "Apply")."""
-    usable = [a for a in actions if not a.get("disabled") and not a.get("is_submit")]
+    usable = [a for a in actions if not a.get("disabled") and not a.get("is_submit") and not a.get("same_page")]
     steps = [a for a in usable if _STEP.match(final_text(a["text"]))]
     entries = [a for a in usable if _ENTRY.match(final_text(a["text"])) and not _SOCIAL.search(a["text"])
                and not (_AVOID.search(a["text"]) and "manually" not in a["text"].lower())]
@@ -795,6 +799,9 @@ class Applier:
             entry_here = any(_ENTRY.match(final_text(a["text"])) and not a.get("disabled") for a in actions)
             if kind == "form" and entry_here and not _application_like(data):
                 kind = "page"  # a posting with a "send me similar jobs" box: go in through Apply
+            if kind == "page" and not data.get("fields") and _TURNED_AWAY.search(data.get("title") or ""):
+                return self._pause(run, "stuck", f"{_site(run, data)} turned the desk's browser away (403 Forbidden). "
+                                   "Open the posting in your own browser to apply there.")
             if kind == "bot_check":
                 await self._bring_forward(run)
                 return self._pause(run, "bot_check", _BOT_CHECK_SAYS, seen=data)
@@ -917,8 +924,7 @@ class Applier:
                 if await self._wait_for_progress(wait):
                     continue
             drawn = (_page_key(data), _boxes(data))  # a page that has drawn more since is waited on again
-            if action is None and kind == "form" and drawn not in step_waited and any(
-                    a.get("disabled") and _FORWARD.match(final_text(a["text"])) for a in data.get("actions") or []):
+            if action is None and kind == "form" and drawn not in step_waited and _greyed_step(data):
                 # a form still being drawn: Oracle's Personal Info shows its upload boxes and a greyed-out
                 # Next first, then its name, email and phone boxes and an enabled Next
                 step_waited.add(drawn)
@@ -932,7 +938,7 @@ class Applier:
                                    "the browser window; the desk carries on by itself after that.", seen=data)
             if action is None:
                 greyed = [a for a in data.get("actions") or [] if a.get("is_submit") and a.get("disabled")
-                          and not a.get("aside")]
+                          and not a.get("aside")] or _greyed_step(data)
                 if greyed:
                     said = "; ".join(e for e in data.get("errors") or [] if _ERRORISH.search(e))[:300]
                     return self._pause(run, "stuck", f"\u201c{greyed[0]['text']}\u201d is greyed out, so the site still "
@@ -1000,12 +1006,12 @@ class Applier:
                 problems = [e for e in clicked.get("errors") or [] if _ERRORISH.search(e)]
                 if problems or stalls >= 2:
                     # say what's wrong: Workday lists it as links ("Error-Email") and marks fields
-                    now = (await self._look())[0]
-                    problems = _flagged(clicked) or _flagged(now)
-                    if not problems:  # Phoenix Children's Quick Apply: its Next stays greyed out without a resume
-                        problems = [f"\u201c{a['text'].strip()}\u201d is greyed out, so the site still wants something "
-                                    "(a file, say, or a box to tick)" for a in now.get("actions") or []
-                                    if a.get("disabled") and _FORWARD.match(final_text(a["text"]))][:1]
+                    problems = _flagged(clicked)
+                    if not problems:
+                        now = (await self._look())[0]
+                        problems = _flagged(now) or [  # a Next greyed out until a resume is attached, say
+                            f"\u201c{a['text'].strip()}\u201d is greyed out, so the site still wants something (a file, "
+                            "say, or a box to tick)" for a in _greyed_step(now)[:1]]
                     errors = "; ".join(problems)[:300].rstrip(" .")
                     return self._pause(run, "stuck", "The page didn't move on" + (f": {errors}." if errors else ".")
                                        + " Fix it in the browser, then press Resume.")
@@ -1462,6 +1468,11 @@ def _new_required(before: dict[str, Any], after: dict[str, Any]) -> bool:
 def _bare(url: str) -> str:
     """An address without its query and fragment."""
     return urlparse(url)._replace(query="", fragment="").geturl()
+
+
+def _greyed_step(data: dict[str, Any]) -> list[dict[str, Any]]:
+    """The page's step buttons (Next, Continue) that are greyed out."""
+    return [a for a in data.get("actions") or [] if a.get("disabled") and _FORWARD.match(final_text(a["text"]))]
 
 
 def _boxes(data: dict[str, Any]) -> int:

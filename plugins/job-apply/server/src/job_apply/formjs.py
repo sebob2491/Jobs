@@ -395,6 +395,11 @@ EXTRACT_JS = r"""
       }
     }
     if (el.disabled || el.getAttribute('aria-disabled') === 'true') a.disabled = true;
+    // A link to something already on show on this page (Phoenix Children's "Apply!" to its form,
+    // #apply) only scrolls there; one to something hidden may be what shows it
+    const anchor = el.tagName === 'A' && /^#([A-Za-z][\w:-]*)$/.exec(el.getAttribute('href') || '');
+    const target = anchor && document.getElementById(anchor[1]);
+    if (target && target.getClientRects().length > 0) a.same_page = true;
     actions.push(a);
   }
 

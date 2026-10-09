@@ -907,9 +907,17 @@ def test_a_captcha_on_show_is_said_but_its_frame_isnt_read(srv):
         shown = await srv.inspect_form(include_dropdown_options=False)
         await page.evaluate("() => { document.querySelector('iframe').style.visibility = 'hidden'; }")
         hidden = await srv.inspect_form(include_dropdown_options=False)
-        return shown, hidden
+        await page.evaluate("""() => {  // an invisible reCAPTCHA's badge, on show but asking nothing
+            const f = document.querySelector('iframe');
+            f.src = 'https://www.google.com/recaptcha/api2/anchor?k=x&size=invisible';
+            f.style.cssText = 'width:256px;height:60px';
+        }""")
+        await page.wait_for_timeout(500)
+        badge = await srv.inspect_form(include_dropdown_options=False)
+        return shown, hidden, badge
 
-    shown, hidden = run(go())
+    shown, hidden, badge = run(go())
+    assert "captcha" not in badge
     assert "CAPTCHA" in shown.get("captcha", "")
     assert "Verify" not in [a["text"] for a in shown["actions"]]
     assert not any("robot" in (f.get("label") or "") for f in shown["fields"])

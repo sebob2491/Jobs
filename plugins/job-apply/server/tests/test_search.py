@@ -199,6 +199,8 @@ def test_hr_and_human_resources_are_the_same_in_a_title():
     assert not title_matches("Hospital Unit Clerk", "hr")
     assert not title_matches("Registered Nurse - 36 Hrs Nights", "human resources | hr")
     assert not title_matches("Pharmacy Tech 32 Hrs/Wk", "hr | recruiter")
+    assert not title_matches("Registered Nurse - ICU - 12 Hr Nights", "human resources | hr generalist")
+    assert not title_matches("Security Officer 24 Hr Shift", "hr")
 
 def test_search_all_backends():
     seen.clear()
@@ -1562,3 +1564,21 @@ def test_phoenix_childrens_board_is_read_whole_and_filtered_by_title():
     assert [(r["title"], r["location"], r["url"]) for r in out["results"]] == [
         ("Recruiter", "Remote", "https://careers.pchco.org/Positions/Posting/990001"),  # (a remote one: no town)
         ("Talent Acquisition Coordinator", "Phoenix, AZ", "https://careers.pchco.org/Positions/Posting/1064100")]
+
+
+def test_a_taleo_rows_odd_columns():
+    """Another Taleo site's rows: a place as plain text, not a JSON list; a row without its
+    title column named."""
+    def answer(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"requisitionList": [
+            {"contestNo": "1", "linkedColumn": None, "locationsColumns": [1],
+             "column": ["Recruiter", "Arizona-Tempe", "Sep 30, 2026"]},
+            {"contestNo": "2", "linkedColumn": 0, "locationsColumns": [1, 7], "column": ["HR Generalist", '"Texas-Dallas"']}],
+            "pagingData": {"pageSize": 25}})
+
+    async def go():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(answer)) as client:
+            return await search_module._taleo(client, {"host": "jobs.tco.com", "portal": "1"}, "", 20, [])
+    found = asyncio.run(go())
+    assert [(x.title, x.location, x.posted) for x in found] == [
+        ("Recruiter", "Tempe, Arizona", "2026-09-30"), ("HR Generalist", "Dallas, Texas", "")]

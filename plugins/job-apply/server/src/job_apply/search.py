@@ -186,7 +186,7 @@ def alternatives(query: str) -> list[str]:
 def _title_words(title: str) -> str:
     """A title's words as matched, each way of saying it among them: "HR Business Partner" is
     a human resources job, and "Human Resources Generalist" an HR generalist one."""
-    text = norm(title)
+    text = re.sub(r"\b(\d+)\s*hrs?\b", r"\1 hours", norm(title))  # a nurse's "12 Hr Nights" isn't HR
     if re.search(r"\bhuman resources?\b", text):
         text += " hr"
     if re.search(r"\bhr\b", text):
@@ -767,42 +767,39 @@ async def _taleo(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, te
         data = r.json()
         rows = data.get("requisitionList") or []
         for req in rows:
-            columns = req.get("column") or []
-            title = str(columns[req.get("linkedColumn", 0)] if columns else "").strip()
+            columns = [str(c) for c in req.get("column") or []]
+            linked = req.get("linkedColumn")
+            title = (columns[linked] if isinstance(linked, int) and 0 <= linked < len(columns) else
+                     columns[0] if columns else "").strip()
             job = str(req.get("contestNo") or req.get("jobId") or "")
             if not title or not job:
                 continue
-            places: list[str] = []
-            for i in req.get("locationsColumns") or []:
-                try:
-                    places += [str(x) for x in json.loads(columns[i])]
-                except (IndexError, TypeError, ValueError):
-                    continue
-            when = next((c for c in columns[1:] if isinstance(c, str) and _TALEO_DATE.fullmatch(c.strip())), "")
+            places = [p for i in req.get("locationsColumns") or [] if isinstance(i, int) and 0 <= i < len(columns)
+                      for p in _taleo_places(columns[i])]
+            when = next((d for d in map(_sf_date, columns[1:]) if d), "")
             out.append(Listing(company="", title=title, ats="taleo", external_id=job,
                                url=f"https://{host}/careersection/{section}/jobdetail.ftl?" + urlencode({"job": job,
                                                                                                         "lang": "en"}),
-                               location="; ".join(_taleo_place(x) for x in places), posted=_taleo_posted(when)))
+                               location="; ".join(_taleo_place(x) for x in places), posted=when))
         size = int((data.get("pagingData") or {}).get("pageSize") or 25)
         if len(rows) < size or len(out) >= limit:  # (its total can be more than it lists: a short page ends it)
             break
     return out
 
 
-_TALEO_DATE = re.compile(r"[A-Z][a-z]{2} \d{1,2}, \d{4}")
+def _taleo_places(column: str) -> list[str]:
+    """A row's places: a JSON list in a string (Kforce's), or the place as it's written."""
+    try:
+        value = json.loads(column)
+    except ValueError:
+        value = column
+    return [str(x).strip() for x in (value if isinstance(value, list) else [value]) if str(x).strip()]
 
 
 def _taleo_place(place: str) -> str:
     """Taleo's "Arizona-Phoenix" (state, then town) as "Phoenix, Arizona"."""
     state, _, town = place.partition("-")
     return f"{town.strip()}, {state.strip()}" if town.strip() and state.strip() else place.strip()
-
-
-def _taleo_posted(when: str) -> str:
-    try:
-        return datetime.strptime(when.strip(), "%b %d, %Y").date().isoformat()
-    except ValueError:
-        return ""
 
 
 # ----------------------------------------------------------------- Talemetry job sites (Valleywise Health)

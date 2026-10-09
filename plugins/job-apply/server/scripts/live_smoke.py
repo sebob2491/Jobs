@@ -91,7 +91,7 @@ QUERY_ANY = "engineer | technician"  # fallback so every company still gets a br
 ROLES: dict[str, dict[str, Any]] = {
     "technician": {"query_az": QUERY_AZ, "query_any": QUERY_ANY},
     "hr": {
-        "query_az": "human resources | hr generalist | recruiter | talent acquisition | hr coordinator",
+        "query_az": "human resources | recruiter | talent acquisition | hr generalist",  # (four: the most searched)
         "query_any": "human resources | recruiter",
         "work_history": [{"title": "HR Coordinator", "company": "Example Staffing", "location": "Tempe, AZ",
                           "start": "2021-03", "end": "present"}],
