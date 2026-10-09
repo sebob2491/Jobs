@@ -36,6 +36,7 @@ from .pipeline import DESK_PASSWORDS, Applier, question_key
 from .ats import detect_ats
 from .postings import FetchError, Posting, fetch_posting, finalize, parse_html
 from .recommend import recommend, score_listing
+from .search import load_companies, own_companies_path
 
 PAGE = Path(__file__).resolve().parent / "static" / "desk.html"
 DEFAULT_PORT = 8765
@@ -500,6 +501,7 @@ class Desk:
             # saved or not, never the value
             "passwords": {name.removesuffix("_password"): saved for name, saved in
                           _saved([f"{ats}_password" for ats in SITE_PASSWORDS] + ["email_password"]).items()},
+            "password_systems": password_systems(),
             "mail_problem": self.applier.mail_problem,
             "profile_problem": profile_problem,
             "version": config.plugin_version(),
@@ -545,6 +547,34 @@ MAX_LINKS = 20  # pasted at once; a person's own picks, not a crawl
 # The job systems whose password the page lets the person save (the employers on the list
 # use these): the desk signs in with each on that system's own sites only (PASSWORD_SITES).
 SITE_PASSWORDS = tuple(name.removesuffix("_password") for name in DESK_PASSWORDS)
+_systems: tuple[float | None, list[dict[str, str]]] | None = None
+
+
+def password_systems() -> list[dict[str, str]]:
+    """The job systems a password can be saved for, each named with the employers on the
+    person's own lists that use it ("Workday: Banner Health, HonorHealth, Arizona State
+    University and 21 more"): the Phoenix list's for someone who searches it, not only the
+    semiconductor list's. Read again when their companies.yaml changes."""
+    global _systems
+    own = own_companies_path()
+    try:
+        key = own.stat().st_mtime if own.exists() else None
+    except OSError:
+        key = None
+    if _systems is not None and _systems[0] == key:
+        return _systems[1]
+    try:
+        companies = load_companies()
+    except (OSError, ValueError):  # a companies.yaml with a mistake: the systems without names
+        companies = []
+    out = []
+    for name, system in DESK_PASSWORDS.items():
+        ats = name.removesuffix("_password")
+        users = [str(c.get("name")) for c in companies if c.get("ats") == ats and c.get("name")]
+        more = f" and {len(users) - 3} more" if len(users) > 3 else ""
+        out.append({"value": ats, "label": f"{system}: {', '.join(users[:3])}{more}" if users else system})
+    _systems = (key, out)
+    return out
 
 _desk: Desk | None = None
 

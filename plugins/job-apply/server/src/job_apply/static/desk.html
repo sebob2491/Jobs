@@ -496,6 +496,16 @@ function renderHeader() {
   $("tailor-hint").textContent = s.tailor_resumes ? "On: each job waits for Claude to write a resume for it." : "Off: your usual resume goes with every application.";
   const systems = {workday: "Workday", successfactors: "SuccessFactors", icims: "iCIMS", applicantstack: "ApplicantStack",
                    ukg: "UKG Pro", infor: "Infor", email: "Email"};
+  // the systems named with the employers on the person's own lists (the page's own list until then)
+  const pick = $("pw-site");
+  const named = (state.password_systems || []).map((o) => `${o.value}\u0000${o.label}`).join("\n");
+  if (named && pick.dataset.named !== named && document.activeElement !== pick) {
+    const chosen = pick.value;
+    const email = [...pick.options].find((o) => o.value === "email");
+    pick.replaceChildren(...state.password_systems.map((o) => new Option(o.label, o.value)), ...(email ? [email] : []));
+    pick.value = [...pick.options].some((o) => o.value === chosen) ? chosen : pick.options[0].value;
+    pick.dataset.named = named;
+  }
   $("pw-state").innerHTML = Object.entries(state.passwords || {}).map(([site, saved]) =>
     `<span class="pill ${saved ? "good" : ""}" data-site="${esc(site)}">${esc(systems[site] || site)}: ${saved ? "saved" : "not saved"}</span>`).join(" ");
   const notes = [];
