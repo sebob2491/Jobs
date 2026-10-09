@@ -50,7 +50,8 @@ _PLACEHOLDER_VALUES = re.compile(  # "-- Please Select --" may have a value of i
     r"^(-+|mm/dd/yyyy|mm/yyyy)$",  # "No Selection": SuccessFactors' empty dropdowns
     re.I,
 )
-_YES = re.compile(r"^(yes|y|true|i am\b(?! not)|i do\b(?! not)|i will\b(?! not)|i have\b(?! not)|i can\b(?! not)|agree)", re.I)
+# whole words: "Yuma, AZ", "Yearly" and "Yesterday" aren't a yes
+_YES = re.compile(r"^((yes|y|true|agreed?|i agree)\b|i am\b(?! not)|i do\b(?! not)|i will\b(?! not)|i have\b(?! not)|i can\b(?! not))", re.I)
 _NO = re.compile(r"^(no|n|false|never|i am not|i do not|i don'?t|i will not|i won'?t|i have not|i haven'?t|i have never|"
                  r"i'?ve never|i can ?not|i can'?t)\b", re.I)
 _FILLER = {"yes", "no", "y", "n", "i", "am", "a", "an", "the", "to", "for", "of", "in", "my", "and", "or", "is", "be",

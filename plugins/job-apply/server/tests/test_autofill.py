@@ -4,6 +4,7 @@ from job_apply.autofill import (
     is_empty_value,
     place_words,
     plan_autofill,
+    polarity,
     resolve_field,
 )
 from job_apply.config import Profile
@@ -799,3 +800,13 @@ def test_a_zip_is_never_read_as_a_range():
     assert choose_option("1", ["Under 2 years", "2-3 years", "More than 3 years"]) == "Under 2 years"
     assert choose_option("7", ["0-2", "3-5", "5+"]) == "5+"
     assert choose_option("12", ["Thunder Bay 10", "Hanover 20"]) is None
+
+
+def test_a_yes_is_a_whole_word():
+    """polarity() read any answer starting with "y" as a yes: "Yuma, AZ" and "Yearly" counted
+    among the yeses of a choice list, and a city answer was taken as agreeing to something."""
+    for said in ("Yuma, AZ", "Youngtown", "Yearly", "Yesterday", "Agreement", "Trueblue"):
+        assert polarity(said) is None, said
+    for said in ("Yes", "Y", "yes, I agree", "Yes - 25%", "True", "Agree", "I agree", "Agreed", "I am a veteran"):
+        assert polarity(said) is True, said
+    assert choose_option("Yes", ["Yearly", "No"]) is None
