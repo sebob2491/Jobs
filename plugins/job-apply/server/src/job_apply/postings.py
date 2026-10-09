@@ -12,6 +12,7 @@ import html
 import json
 import re
 from dataclasses import asdict, dataclass, field
+from datetime import datetime
 from typing import Any
 from urllib.parse import urljoin
 
@@ -256,6 +257,21 @@ def _find_apply_link(soup: BeautifulSoup, base_url: str) -> str:
     return ""
 
 
+def microdata_date(soup: BeautifulSoup) -> str:
+    """The date a page gives as microdata rather than JSON-LD (SuccessFactors career sites,
+    EY's: itemprop="datePosted" content="Fri Oct 02 00:00:00 UTC 2026"), as YYYY-MM-DD."""
+    tag = soup.select_one("[itemprop=datePosted]")
+    value = str((tag.get("content") or tag.get_text()) if tag else "").strip()
+    if re.match(r"\d{4}-\d{2}-\d{2}", value):
+        return value[:10]
+    for fmt in ("%a %b %d %H:%M:%S %Z %Y", "%b %d, %Y", "%B %d, %Y"):
+        try:
+            return datetime.strptime(value, fmt).date().isoformat()
+        except ValueError:
+            continue
+    return ""
+
+
 def parse_html(raw_html: str, url: str) -> Posting:
     soup = BeautifulSoup(raw_html, "html.parser")
     ld = find_jsonld_jobposting(soup)
@@ -281,6 +297,7 @@ def parse_html(raw_html: str, url: str) -> Posting:
             p.company = str(site["content"])
         p.warnings.append("No structured JobPosting data; title/company may need correcting.")
     p.apply_url = p.apply_url or _find_apply_link(soup, url)
+    p.posted_at = p.posted_at or microdata_date(soup)
     p.location = p.location or successfactors_place(soup)
     if not p.location and "career_job_req_id=" in url:  # SuccessFactors' older sites: only the text says
         p.location = place_in_text(p.description)

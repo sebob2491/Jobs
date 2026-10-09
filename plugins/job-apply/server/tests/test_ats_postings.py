@@ -250,3 +250,17 @@ def test_an_apply_link_to_a_staff_only_site_goes_to_the_public_one():
     assert "partnerid=26235&siteid=5374&jobid=1427502" in posting.apply_url, posting.apply_url
     other = "https://sjobs.brassring.com/TGnewUI/Search/home/HomeWithPreLoad?partnerid=99999&siteid=5377&jobid=1"
     assert public_apply_url(other) == other
+
+
+def test_a_postings_microdata_date_is_read():
+    """EY's SuccessFactors postings give their date as microdata, not JSON-LD
+    (itemprop="datePosted" content="Fri Oct 02 00:00:00 UTC 2026"), and Find jobs had none for
+    them; read, it counts toward "posted this week" like the others' dates."""
+    page = ('<html><head><title>Indirect Tax Analyst</title><meta itemprop="datePosted" '
+            'content="Fri Oct 02 00:00:00 UTC 2026"></head><body><h1>Indirect Tax Analyst</h1>'
+            '<p>Phoenix, AZ</p></body></html>')
+    assert finalize(parse_html(page, "https://careers.example.com/job/1/")).posted_at == "2026-10-02"
+    shown = page.replace('<meta itemprop="datePosted" content="Fri Oct 02 00:00:00 UTC 2026">', "").replace(
+        "<p>Phoenix", '<span itemprop="datePosted">Oct 2, 2026</span><p>Phoenix')
+    assert parse_html(shown, "https://careers.example.com/job/1/").posted_at == "2026-10-02"
+    assert parse_html(page.replace("Fri Oct 02 00:00:00 UTC 2026", "soon"), "https://e.example/").posted_at == ""

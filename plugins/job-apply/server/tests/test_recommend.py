@@ -281,6 +281,27 @@ def test_recommend_holds_postings_it_could_not_check():
     assert "the posting says it's in Peoria, IL" in fits["https://x/elsewhere"]["concerns"]
 
 
+def test_a_listing_without_a_date_takes_its_postings():
+    """EY's SuccessFactors list and iCIMS portals' lists give no date, so their openings got no
+    "posted this week" credit beside the others' (a live Find jobs run, Oct 2026). A read
+    posting's own date (its datePosted) counts when the list had none, and never over the list's."""
+    p = tech()
+
+    async def search(query, location, limit):
+        return {"results": [
+            {"company": "EY", "title": "Field Service Engineer", "location": "Phoenix, AZ", "url": "https://x/undated"},
+            {"company": "KLA", "title": "Field Service Engineer", "location": "Phoenix, AZ", "url": "https://x/dated",
+             "posted": "2026-07-01"}]}
+
+    async def fetch(url):
+        return Posting(url=url, description=LAM_FSE2, posted_at="2026-10-02T00:00:00Z")
+
+    out = asyncio.run(recommend(p, search, read_postings=2, fetch=fetch, today=TODAY))
+    fits = {r["url"]: r["fit"] for r in out["results"]}
+    assert "posted this week" in fits["https://x/undated"]["reasons"], fits["https://x/undated"]
+    assert "posted over two months ago" in fits["https://x/dated"]["concerns"], fits["https://x/dated"]
+
+
 def test_a_posting_that_wont_read_is_read_from_the_employers_own_page():
     """A Jibe site's opening links to its iCIMS posting, which turns away plain requests (HTTP
     405); its page on the employer's site describes it too. It's still applied for on iCIMS."""
