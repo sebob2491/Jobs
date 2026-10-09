@@ -915,7 +915,8 @@ RULES: list[tuple[str, str, Getter, int | None, set[str] | None]] = [
     # "Do you have a Bachelor's degree?": see _has_degree
     ("has_degree", _DEGREE_ONLY, _has_degree, 200, {"select", "listbox", "combobox", "radio_group"}),
     ("degree", r"highest (level of )?(education|degree)|^degree$|education level", _edu("highest_degree", "degree"), 80, None),
-    ("school", r"^(school|university|college|institution)\b(?!.*\b(major|degree|gpa|city|state|location|country|year|date|address|"
+    ("school", r"^(school|university|college|institution)\b(?!.*\b(licen[cs]\w*|certif\w*|major|degree|gpa|city|state|location|"
+     r"country|year|date|address|"
      r"zip|postal|phone|e ?mail|fax|code)\b)",
      _edu("school", "school"), 45, None),
     ("major", r"^(major|field of study|discipline|area of study)", _edu("major", "major"), 45, None),
@@ -1533,30 +1534,25 @@ def _own_website(value: Any, options: list[str], job: dict) -> str | None:
     return sites[0] if len(sites) == 1 else None
 
 
-_EDU_START = re.compile(r"^(school|university|college|institution)\b")
-_EDU_FIELD = re.compile(r"^(school|university|college|institution|degree|discipline|major|field of study)\b")
+# not "Institution that issued your license": a licence's or certificate's, not a school's
+_EDU_START = re.compile(r"^(school|university|college|institution)\b(?!.*\b(licen[cs]\w*|certif\w*))")
+_EDU_FIELD = re.compile(r"^(school|university|college|institution|degree|discipline|major|field of study)\b"
+                        r"(?!.*\b(licen[cs]\w*|certif\w*))")
 # (not "Position Applied For", the job being applied to)
 _JOB_FIELD = re.compile(r"^(company|employer|job title|title|position)\b(?! (applied|you are applying|of interest|desired|sought))")
 _DATE_PART = re.compile(r"^(start|end|from|to)( date)?( (year|month))?$")
-# "Graduation Year", "Year of graduation", "Date graduated" (not "Expected graduation date")
-_GRAD_DATE = re.compile(r"^((year|date) (of )?graduat|graduat(ion|ed)( (year|date))?$)")
 
 
 def _with_context(fields: list[dict]) -> list[dict]:
     """Greenhouse-style forms put School, Degree, Discipline and "Start date year" together
     with no section heading: they're one school's, the first in the profile's education
     history, so its school is never given another school's degree. Unsectioned dates after
-    a job's boxes are that job's. A graduation year on a form that names a school, before
-    or after it, is that school's: education.graduation_year may be a diploma's, and beside
-    a college the person didn't finish it said they graduated from the college."""
-    labels = [norm(clean_label(f.get("label") or "")) for f in fields]
-    names_school = any(not f.get("section") and _EDU_START.match(label) for f, label in zip(fields, labels))
+    a job's boxes are that job's."""
     out, block, school = [], None, False
-    for f, label in zip(fields, labels):
+    for f in fields:
+        label = norm(clean_label(f.get("label") or ""))
         if not f.get("section"):
-            if names_school and _GRAD_DATE.match(label):
-                f = {**f, "section": "Education 1"}
-            elif _EDU_START.match(label):
+            if _EDU_START.match(label):
                 block, school = "Education 1", True
                 f = {**f, "section": block}
             elif _EDU_FIELD.match(label):
@@ -1595,9 +1591,47 @@ def plan_autofill(fields: list[dict], prof: Profile, job: dict | None = None, ov
         if ans is not None:
             to_fill.append({"id": f["id"], "label": f.get("label", ""), "value": ans.value, "rule": ans.rule})
         elif f.get("kind") != "password":
-            needs_input.append(
-                {k: f[k] for k in ("id", "kind", "label", "section", "sublabel", "required", "options")
-                 if k in f and f[k] not in (None, [])}
-            )
+            needs_input.append(_asked(f))
+    _graduation_of_the_school_given(fields, to_fill, needs_input, prof, job, file_inputs)
     needs_input.sort(key=lambda f: not f.get("required"))
     return {"to_fill": to_fill, "needs_input": needs_input, "already_filled": already}
+
+
+def _asked(f: dict) -> dict:
+    return {k: f[k] for k in ("id", "kind", "label", "section", "sublabel", "required", "options")
+            if k in f and f[k] not in (None, [])}
+
+
+_SCHOOL_FROM_ENTRY = re.compile(r"education_history\[(\d+)\]\.school")
+# a box about another credential than the school given: its own year, education.graduation_year
+_OTHER_CREDENTIAL = re.compile(r"\b(high school|ged|diploma|secondary)\b")
+
+
+def _graduation_of_the_school_given(fields: list[dict], to_fill: list[dict], needs_input: list[dict], prof: Profile,
+                                    job: dict | None, file_inputs: int) -> None:
+    """A form's School and Graduation Year came from two places: the school from an education
+    entry (or, with no education.school, the first one), the year from education.graduation_year,
+    which may be a diploma's or a GED's. Beside a college the person didn't finish they said
+    the person graduated from it. Whatever the layout, the year follows the school the form
+    was given: that school's own year when it was finished, else the person's to give."""
+    entry = None
+    for item in to_fill:
+        if m := _SCHOOL_FROM_ENTRY.fullmatch(item["rule"]):
+            entry = int(m.group(1))
+        elif item["rule"] == "school" and not prof.get("education.school"):
+            entry = 1  # _edu("school") falls back to the first entry
+        if entry:
+            break
+    if not entry:
+        return
+    by_id = {f["id"]: f for f in fields}
+    for item in [i for i in to_fill if i["rule"] == "grad_year"]:
+        f = by_id[item["id"]]
+        if _OTHER_CREDENTIAL.search(norm(clean_label(f.get("label") or ""))):
+            continue
+        ans = resolve_field({**f, "section": f"Education {entry}"}, prof, job, file_inputs)
+        if ans is None or ans.value == SKIP:
+            to_fill.remove(item)
+            needs_input.append(_asked(f))
+        else:
+            item["value"], item["rule"] = ans.value, ans.rule
