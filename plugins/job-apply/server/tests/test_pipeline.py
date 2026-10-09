@@ -2495,6 +2495,28 @@ def test_a_review_page_that_lists_errors_says_so_and_isnt_submitted_for_you(srv,
         assert r.status == "ready", (r.status, r.reason)
 
 
+def test_a_review_page_with_errors_after_an_earlier_press_says_both(srv, monkeypatch):
+    """Submit pressed for this job before, no confirmation, and the review page now lists an
+    error: the warning that it may have gone through doesn't hide what the page shows."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    job = srv.add_job(url=fixture_url("site/review-errors.html"), title="HRBP", company="Example Fab")["job"]
+    srv.tracker().update(job["id"], note="pressed Submit; no confirmation showed")
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert r.status == "ready" and "pressed for this job before" in r.reason, (r.status, r.reason)
+    assert "Last Name cannot be left blank" in r.reason, r.reason
+
+
 def test_a_page_that_asks_if_youre_a_robot_is_a_bot_check(srv, monkeypatch):
     """Randstad's application (live, Oct 2026): Continue stayed put with "Please verify that you
     are not a robot", and the desk called it stuck. It's a bot check: the person's to pass."""

@@ -1310,7 +1310,7 @@ class Applier:
         if run.pressed_before:
             run.reason = ("Filled and waiting on the review page. Submit was pressed for this job before and no "
                           "confirmation showed, so it may have gone through: check your email or the site before you "
-                          "press Submit.")
+                          "press Submit." + (f" The review page also shows errors: {shown}." if shown else ""))
         self._log(run, "reached the review page")
 
     async def _submit(self, run: Run, by_person: bool = True) -> None:
