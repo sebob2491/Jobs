@@ -1296,3 +1296,34 @@ def test_some_college_is_post_secondary_with_no_degree():
                "NA-NO POST SECONDARY EDU"]
     assert choose_option("Some college", options) == "PS-POST SECONDARY-NO DEGREE"
     assert choose_option("Some college", [o for o in options if not o.startswith("PS")]) is None
+
+
+def test_where_you_are_and_when_you_can_start_among_choices():
+    """Axon's "Where are you currently located?" lists countries; Insight's "When are you
+    available to start?" lists waits ("Immediate", "2 Week Notice", "30 Days")."""
+    import yaml
+    from job_apply import config
+
+    path = config.profile_path()
+    data = yaml.safe_load(path.read_text())
+    path.write_text(yaml.safe_dump({**data, "preferences": {**data["preferences"], "earliest_start": "2 weeks after offer"}}))
+
+    def answer(label, options, kind="combobox"):
+        a = resolve_field(f(label, kind, options=options), prof())
+        return a and a.value
+
+    countries = ["Australia", "Canada", "Netherlands", "United Kingdom", "United States", "Other"]
+    assert answer("Where are you currently located?*", countries) == "United States"
+    assert answer("Where are you currently located?", ["Phoenix hub", "Seattle hub", "Remote"]) is None
+    waits = ["Immediate", "2 Week Notice", "30 Days", "60 Days", "90 Days"]
+    assert answer("When are you available to start?", waits) == "2 Week Notice"
+    path.write_text(yaml.safe_dump({**data, "preferences": {**data["preferences"], "earliest_start": "1 month"}}))
+    assert answer("When are you available to start?", waits) == "30 Days"
+    path.write_text(yaml.safe_dump({**data, "preferences": {**data["preferences"], "earliest_start": "Immediately"}}))
+    assert answer("When are you available to start?", waits) == "Immediate"
+    path.write_text(yaml.safe_dump({**data, "preferences": {**data["preferences"], "earliest_start": "3 weeks"}}))
+    assert answer("When are you available to start?", waits) is None  # never a sooner or later start
+    # a range isn't one wait: "2-4 Weeks" is no answer for a month
+    path.write_text(yaml.safe_dump({**data, "preferences": {**data["preferences"], "earliest_start": "1 month"}}))
+    assert answer("When are you available to start?", ["Immediate", "2-4 Weeks", "60 Days"]) is None
+    assert answer("When are you available to start?", ["Immediate", "1 to 2 months", "30 Days"]) == "30 Days"

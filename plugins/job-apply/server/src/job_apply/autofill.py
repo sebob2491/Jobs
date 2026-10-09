@@ -889,7 +889,7 @@ RULES: list[tuple[str, str, Getter, int | None, set[str] | None]] = [
     ("city", r"^city|town|location city|current city|city of residence|"
              r"^(in )?(what|which) city do you (currently |presently )?(live|reside)( in)?$", _p("personal.address.city"), 45, None),
     ("current_location", r"^where are you (currently |presently )?(located|based|living)$|^(your )?current location$|"
-                         r"^where do you (currently |presently )?(live|reside)$", _city_state, 45, {"text"}),
+                         r"^where do you (currently |presently )?(live|reside)$", _city_state, 45, None),
     # Oracle's "Zip Code+4" wants the 4-digit extension, not the ZIP: left for the site to fill
     ("postal_ext", r"zip( code)? ?(\+|plus) ?4|^zip ?4$|zip (code )?extension", lambda p, j: None, 45, None),
     ("postal", r"zip|postal|post code|postcode", _p("personal.address.postal_code"), 45, None),
@@ -1328,10 +1328,18 @@ def resolve_field(field: dict, prof: Profile, job: dict | None = None, file_inpu
     if kind in {"select", "radio_group", "listbox", "checkbox_group", "combobox"} and options:
         # a place lookup's entries: the one in the rest of the profile's address ("Chandler,
         # Maricopa, AZ", not "Chandler, Henderson, TX" listed before it)
+        if ans.rule == "current_location":
+            # among countries (Axon's "Where are you currently located?"), the profile's own; a list
+            # of offices or regions is the person's to choose from
+            us = [o for o in options if _US.fullmatch(norm(o))]
+            home = _US.fullmatch(norm(prof.get("personal.address.country") or ""))
+            return Answer(us[0], ans.rule) if home and len(us) == 1 else None
         chosen = (ans.rule in _PLACE_RULES and choose_place(ans.value, options, place_words(ans.rule, prof))
                   or choose_option(ans.value, options, names=is_name_rule(ans.rule)))
         if chosen is None and ans.rule == "how_heard":
             chosen = _own_website(ans.value, options, job)
+        if chosen is None and ans.rule == "start_date":
+            chosen = _same_wait(ans.value, options)
         # a search prompt lists only its top level, and a full page of a paged list (Qorvo's
         # countries stop at Iran) only its start: the fill searches them for the answer. A
         # shorter paged list is all there is, so a search can't find anything else in it.
@@ -1481,6 +1489,36 @@ def is_name_rule(rule: str) -> bool:
 
 
 _WEBSITE = re.compile(r"\b(web ?site|careers? (site|page|portal)|company site)\b", re.I)
+
+
+_US = re.compile(r"(the )?(united states( of america)?|usa?)")
+_WAIT = re.compile(r"\b(\d+|one|two|three|four|six|eight)[ -]?(day|week|month)s?\b")
+_WORD_NUMBERS = {"one": 1, "two": 2, "three": 3, "four": 4, "six": 6, "eight": 8}
+
+
+def _days(text: Any) -> int | None:
+    """How long a start takes, in days: "Immediately" 0, "2 weeks after offer" 14, "30 Days" 30."""
+    n = norm(text)
+    if re.search(r"\b(immediate(ly)?|asap|right away)\b", n):
+        return 0
+    if len(re.findall(r"\d+", n)) > 1 or re.search(r"\b(to|or|between)\b", n):
+        return None  # a range ("2-4 Weeks", "1 to 3 months"): not one wait
+    m = _WAIT.search(n)
+    if not m:
+        return None
+    count = int(m.group(1)) if m.group(1).isdigit() else _WORD_NUMBERS[m.group(1)]
+    return count * {"day": 1, "week": 7, "month": 30}[m.group(2)]
+
+
+def _same_wait(value: Any, options: list[str]) -> str | None:
+    """The choice for the same start as the profile's earliest one, however each is worded
+    ("2 weeks after offer" is Insight's "2 Week Notice"; a month is "30 Days"). Never a sooner
+    or later one."""
+    want = _days(value)
+    if want is None:
+        return None
+    same = [o for o in options if (d := _days(o)) is not None and abs(d - want) <= 3]
+    return same[0] if len(same) == 1 else None
 
 
 def _own_website(value: Any, options: list[str], job: dict) -> str | None:
