@@ -82,7 +82,8 @@ preferences:
   earliest_start: ~           # e.g. "2 weeks after offer"
   how_did_you_hear: LinkedIn
   locations: []               # e.g. ["Phoenix, AZ", "Chandler, AZ", "Tempe, AZ"]
-  titles: []                  # e.g. ["Field Service Engineer", "Equipment Engineer"]
+  titles: []                  # e.g. ["Field Service Engineer", "Equipment Engineer"], ["HR Generalist",
+                              # "Recruiter"] or ["Staff Accountant", "Financial Analyst"]
 
 # Voluntary self-identification. These are optional by law; use your own answer
 # or a decline option such as "Decline to self-identify" / "I don't wish to answer".
@@ -107,6 +108,10 @@ answers:
   - match: "relatives?|family members?.*(employ|work)"
     answer: ~
   - match: "non-?compete|non-?solicit"
+    answer: ~
+  - match: "credit (check|history|report)"   # banks and finance roles ask
+    answer: ~
+  - match: "(employed|worked) (by|for) (a|any) .*government"
     answer: ~
 
 settings:
