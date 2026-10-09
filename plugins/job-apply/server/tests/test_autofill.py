@@ -1120,8 +1120,24 @@ def test_a_confirmed_degree_answers_yes():
                            [{"degree": "High school diploma", "end": 2015}])
     assert answer("Do you have a Bachelor's degree?", diploma) == "No"
     assert answer("Do you have a high school diploma?", diploma) == "Yes"
-    # a level written as a degree's name is read too
+    # a level written as a degree's name is read too, but nothing else
     assert answer("Do you have a Bachelor's degree?", with_degrees([{"level": "Bachelor's", "field": "Finance"}])) == "Yes"
+    for level, asked in (("Bachelor's (in progress)", "Do you have a Bachelor's degree?"),
+                         ("Some high school", "Do you have a high school diploma?"),
+                         ("MA", "Do you have a Master's degree?")):
+        assert answer(asked, with_degrees([{"level": level}], "Some college")) is None, level
+    # a comma list with no "or" may add a requirement
+    nursing = with_degrees([{"level": "bachelor", "field": "Nursing"}])
+    for asked in ("Bachelor's degree in Nursing, RN required", "Bachelor's degree in Finance, bilingual"):
+        assert answer(asked, nursing) is None and answer(asked, finance) is None, asked
+    assert answer("Bachelor's degree in Finance - required", finance) == "Yes"
+    # "or higher" with a field takes a higher degree in it
+    fin_masters = with_degrees([{"level": "master", "field": "Finance"}], "Master's Degree")
+    assert answer("Do you have a Bachelor's degree or higher in Finance?", fin_masters) == "Yes"
+    # a highest education or a confirmed degree it can't read stops the No
+    assert answer("Do you have a Master's degree?", with_degrees([{"level": "bachelor", "field": "Finance"}], "MBA")) is None
+    assert answer("Do you have a doctorate?",
+                  with_degrees([{"level": "master"}, {"level": "PharmD"}], "Master's Degree")) is None
     # without confirmed degrees, a free-text one never answers Yes
     free_text = with_degrees([], "Bachelor's Degree",
                              [{"degree": "Bachelor's Degree", "major": "Finance", "end": 2020}])
