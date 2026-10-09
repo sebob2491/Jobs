@@ -1,0 +1,36 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Apply</title></head>
+<body>
+<!-- like Insight Enterprises' application (live, Oct 2026): its review page counts each section's
+     errors and lists what's missing, and Submit is there all the same -->
+<div id="step">
+  <h2>Personal Information</h2>
+  <form id="details" novalidate>
+    <label for="fn">First Name</label><input id="fn" name="fn">
+    <button type="submit">Next</button>
+  </form>
+</div>
+<div id="review" hidden>
+  <h2>Review your application</h2>
+  <h3>Personal Information</h3>
+  <div class="section-error-count">1 error found</div>
+  <div class="field-error">Error: Last Name cannot be left blank.</div>
+  <form id="final">
+    <button type="submit">Submit</button>
+  </form>
+</div>
+<script>
+  document.getElementById('details').addEventListener('submit', (e) => {
+    e.preventDefault();
+    document.getElementById('step').remove();
+    document.getElementById('review').hidden = false;
+  });
+  document.getElementById('final').addEventListener('submit', (e) => {
+    e.preventDefault();
+    window.sent = true;
+    document.body.innerHTML = '<h1>Thank you for applying!</h1>';
+  });
+</script>
+</body>
+</html>

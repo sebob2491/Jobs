@@ -1781,3 +1781,67 @@ def test_a_successfactors_site_that_draws_its_results_as_tiles():
     out = asyncio.run(go())
     assert [r["title"] for r in out["results"]] == ["Compensation Analyst"]  # Austin's left out
     assert [a["startrow"] for a in asked] == ["0", "0"]  # a page per wording: all 2 of 2 were on it
+
+
+def test_an_eightfold_site_without_its_newer_search_uses_the_older_one():
+    """Insight Enterprises' Eightfold site answers /api/pcsx/search with 403 "PCSX is not enabled
+    for this user" (the page never makes that call either); its older /api/apply/v2/jobs answers,
+    10 a page, filtered to a state (Oct 2026)."""
+    asked = []
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        asked.append((request.url.path, dict(request.url.params)))
+        if request.url.path == "/api/pcsx/search":
+            return httpx.Response(403, json={"message": "PCSX is not enabled for this user."})
+        start = int(request.url.params["start"])
+        positions = [{"id": str(1000 + start + i), "name": f"Sales Manager {start + i}", "locations": ["Chandler,United States"],
+                      "t_create": 1791210658, "display_job_id": str(start + i),
+                      "canonicalPositionUrl": f"https://ins.eightfold.ai/careers/job/{1000 + start + i}"}
+                     for i in range(10 if start == 0 else 2)]
+        return httpx.Response(200, json={"count": 12, "positions": positions})
+
+    async def go():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(answer)) as client:
+            return await search_companies("sales manager", location="AZ", client=client, companies=[
+                {"name": "Ins Co", "search": {"eightfold": {"host": "careers.ins.com", "domain": "ins.com"}}}])
+    out = asyncio.run(go())
+    assert [p for p, _ in asked] == ["/api/pcsx/search", "/api/apply/v2/jobs", "/api/apply/v2/jobs"]
+    assert asked[1][1]["location"] == "Arizona" and asked[2][1]["start"] == "10"
+    first = out["results"][0]
+    assert (first["location"], first["posted"], first["url"]) == (
+        "Chandler, United States", "2026-10-05", "https://ins.eightfold.ai/careers/job/1000")
+    assert len(out["results"]) == 12 and not out["errors"]
+
+
+RANDSTAD_PAGE = """<html><body><script>
+window.__ROUTE_DATA__ = {"regionCitiesAggregation":[],"searchResults":{"totalSize":2,"hits":[
+ {"title":"Industrial Client Development Manager","createdDate":"1791453711239","atsReference":"52520",
+  "jobLocation":{"city":"Phoenix","state":"Arizona","stateAbbreviation":"AZ"},
+  "detailsUrl":"https://randco.workgr8.com/jobs/52520/industrial-client-development-manager?sid=11117"},
+ {"title":"Internal Recruiter","createdDate":"1791453717257","atsReference":"53302",
+  "jobLocation":{"city":"Tucson","state":"Arizona","stateAbbreviation":"AZ"},
+  "detailsUrl":"https://randco.workgr8.com/jobs/53302/internal-recruiter?sid=11117"}]}};
+                  window.__SEO_DATA__ = {"title": "Jobs"};
+</script></body></html>"""
+
+
+def test_randstads_own_jobs_are_read_from_the_pages_data():
+    """Randstad lists its internal jobs in the page's own data (window.__ROUTE_DATA__, followed by
+    more script), one state's on a page of its own (/jobs/internal/arizona/)."""
+    asked = []
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        asked.append(str(request.url))
+        return httpx.Response(200, text=RANDSTAD_PAGE if "page-2" not in str(request.url) else "<html></html>")
+
+    async def go(location):
+        async with httpx.AsyncClient(transport=httpx.MockTransport(answer)) as client:
+            return await search_companies("recruiter", location=location, client=client, companies=[
+                {"name": "R Co", "search": {"randstad": "https://www.randco.com/jobs/internal"}}])
+    out = asyncio.run(go("AZ"))
+    assert asked == ["https://www.randco.com/jobs/internal/arizona/"]
+    assert [(r["title"], r["location"], r["posted"], r["url"]) for r in out["results"]] == [
+        ("Internal Recruiter", "Tucson, AZ", "2026-10-08", "https://randco.workgr8.com/jobs/53302/internal-recruiter")]
+    asked.clear()
+    asyncio.run(go(None))
+    assert asked == ["https://www.randco.com/jobs/internal/", "https://www.randco.com/jobs/internal/page-2/"]

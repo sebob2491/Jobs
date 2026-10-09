@@ -1,0 +1,15 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Apply</title></head>
+<body>
+<!-- like Randstad's own application (live, Oct 2026): Continue stays put and asks the person to
+     prove they're not a robot -->
+<h2>Your details</h2>
+<form id="apply" onsubmit="event.preventDefault(); document.getElementById('err').hidden = false;">
+  <label for="fn">First Name</label><input id="fn" name="fn">
+  <label for="ln">Last Name</label><input id="ln" name="ln">
+  <div id="err" class="form-error" role="alert" hidden>Please verify that you are not a robot.</div>
+  <button type="submit">Continue</button>
+</form>
+</body>
+</html>
