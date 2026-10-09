@@ -610,15 +610,15 @@ def _veteran(prof: Profile, job: dict, label: str = "") -> Any:
 
 
 _LEVELS = ["high_school", "associate", "bachelor", "master", "doctorate"]
-# Degrees written the way setup writes them, or by their full names: nothing an abbreviation
-# could also be ("MA" is a Medical Assistant certificate too) and nothing more ("Equivalent",
-# "Program", "(expected 2027)")
+# Education written the way setup writes it ("Bachelor's Degree", "Some college") or by a
+# degree's full name: nothing an abbreviation could also be ("MA" is a Medical Assistant
+# certificate too), nothing more ("Equivalent", "(expected 2027)")
 _DEGREE_NAMES = [
     (0, r"high school( diploma)?|ged|high school diploma or ged|ged or high school diploma"),
     (1, r"associate( s|s)?( degree)?|associate of (applied )?(science|arts)"),
     (2, r"bachelor( s|s)?( degree)?|bachelor of (science|arts|fine arts|business administration)"),
     (3, r"master( s|s)?( degree)?|master of (science|arts|fine arts|business administration)"),
-    (4, r"doctorate|doctoral degree|ph d|doctor of philosophy"),
+    (4, r"doctorate|ph d|doctor of philosophy"),
 ]
 _SOME_STUDY = [(-1, r"some high school"),
                (0, r"some college( no degree| coursework)?|college coursework( no degree)?|some university")]
@@ -629,85 +629,37 @@ def _named_level(text: Any, names: list[tuple[int, str]] = _DEGREE_NAMES) -> int
     return next((rank for rank, pattern in names if re.fullmatch(pattern, n)), None)
 
 
-def _under_way(entry: dict) -> bool:
-    """An education_history entry that isn't over: an end of "present" or still to come,
-    marked current, or a status that isn't a finished one."""
-    end = entry.get("end")
-    if is_present(end) or entry.get("current") not in (None, False, "", "no", "false"):
-        return True
-    status = norm(entry.get("status"))
-    if status and not re.match(r"(completed?|graduated|finished|conferred|awarded|earned)\b", status):
-        return True
-    month, year = parse_month_year(end)
-    if not year:
-        return False
-    today = date.today()
-    return int(year) > today.year or int(year) == today.year and int(month or 12) >= today.month
-
-
-def _ended(entry: dict) -> bool:
-    """An entry with an end date already past (this year's only by an earlier month)."""
-    month, year = parse_month_year(entry.get("end"))
-    return bool(year) and not _under_way(entry)
-
-
-_FIELD_FILLER = {"of", "in", "the", "a", "an"}
-
-
-def _same_field(field: str, major: str) -> bool:
-    """A field a question names is the major, word for word: "Finance" is "Finance";
-    "Physics" isn't "Physical Education", nor "Computer Science" "Computer Arts"."""
-    words = set(field.split()) - _FIELD_FILLER
-    return bool(words) and words == set(major.split()) - _FIELD_FILLER
-
-
-# The question as nothing but a level of education, maybe "or higher", maybe "in <fields>":
-# a kind of degree ("Bachelor of Science", "BSN") or anything more ("with honors", "and a
-# CPA", "from an accredited university") isn't one the profile can confirm
+# A question asking for nothing but a level of education, maybe "or higher": a kind of degree
+# ("Bachelor of Science"), a field ("in Finance") or anything more ("from an accredited
+# university") isn't one the profile can settle
 _DEGREE_ONLY = (r"^(?:do you (?:have|hold|possess) |have you (?:earned|completed|received) )?(?:an? |the )?"
                 r"(?:high school diploma(?: or (?:a )?ged)?|ged|(?:associate|bachelor|master)(?: s|s)? degree|"
-                r"doctorate(?: degree)?|doctoral degree)(?: or (?:higher|above|greater))?(?: in (?P<fields>[a-z ]+?))?"
-                r"(?: (?:required|preferred|or higher|or above|or greater))*$")
+                r"doctorate(?: degree)?)(?: or (?:higher|above|greater))?(?: (?:required|preferred))*$")
 
 
 def _has_degree(prof: Profile, job: dict, label: str = "") -> Any:
-    """"Do you have a Bachelor's degree?", "Bachelor's Degree in Accounting or Finance
-    Required": from the education the profile states in the forms setup writes ("Bachelor's
-    Degree"; "Some college"). Yes when the highest degree stated is at that level or above
-    (and, for a field the question names, an education_history entry of that degree, ended,
-    whose major is the field). No when the highest stated is below it, no field is named and
-    no school lists anything else. Else the person's to say, as is a degree any school shows
-    still under way."""
-    shape = re.match(_DEGREE_ONLY, norm(label))
+    """"Do you have a Bachelor's degree?" answered No when the highest education the profile
+    states, as setup writes it ("Some college", "Associate's Degree"), is below the level asked
+    and no school it lists names a degree that isn't. Never Yes: which degrees a person holds
+    is theirs to say (a profile's education is free text, and a degree under way or written
+    another way can't be told from one earned)."""
     level = degree_key(norm(label))
-    if not shape or level is None:
+    if not re.match(_DEGREE_ONLY, norm(label)) or level is None:
         return None
     rank = _LEVELS.index(level)
-    fields: list[str] = []
-    if shape.group("fields"):  # read from the question as written, its commas telling fields apart
-        m = re.search(r"\bin (.+)$", label.lower())
-        named = re.sub(r"(\W+(required|preferred|or higher|or above|or greater))+\W*$", "", m.group(1)) if m else ""
-        fields = [norm(f) for f in re.split(r"\bor\b|[,;/]", named) if norm(f)]
-    schools = [e for e in _listed(prof.get("education_history")) if isinstance(e, dict)]
-    if any(_under_way(e) and (degree_key(norm(e.get("degree"))) or "") in _LEVELS[rank:] for e in schools):
-        return None  # a degree at that level still under way
+    history = prof.get("education_history")
+    if history is not None and not isinstance(history, list):
+        return None  # written some other way: not read
     highest = prof.get("education.highest_degree")
-    stated = _named_level(highest)
-    if stated is not None and stated >= rank:
-        if not fields:
-            return "Yes"
-        for e in schools:
-            earned = _named_level(e.get("degree"))
-            if earned is not None and earned >= rank and _ended(e) and any(_same_field(f, norm(e.get("major")))
-                                                                            for f in fields):
-                return "Yes"
+    most = _named_level(highest)
+    if most is None:
+        most = _named_level(highest, _SOME_STUDY)
+    if most is None or most >= rank:
         return None
-    most = stated if stated is not None else _named_level(highest, _SOME_STUDY)
-    if fields or most is None or most >= rank:
-        return None
-    for e in schools:  # every school's degree is none, or one below the level asked
-        listed = _named_level(e.get("degree"))
-        if str(e.get("degree") or "").strip() and (listed is None or listed >= rank):
+    for e in history or []:  # every school's degree is none, or one below the level asked
+        degree = str(e.get("degree") or "").strip() if isinstance(e, dict) else str(e)
+        listed = _named_level(degree)
+        if degree and (listed is None or listed >= rank):
             return None
     return "No"
 
