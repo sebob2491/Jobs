@@ -573,6 +573,50 @@ def test_a_schools_block_without_numbers_is_one_school():
     assert [f["id"] for f in plan["needs_input"]] == ["d"]
 
 
+def test_a_graduation_year_beside_a_school_is_that_schools():
+    """A form asking a School and a Graduation Year got the school from the education history (a
+    community college the person didn't finish) and the year from education.graduation_year (their
+    high school diploma's): a graduation from the college that never happened. Whatever the
+    layout, the year follows the school given: that school's own year when it was finished, else
+    the person's to give. On its own, or naming another credential, it's the profile's year."""
+    p = _person(education={"highest_degree": "High School Diploma", "graduation_year": 2015})
+    acme = {"company": "Acme"}
+
+    def plan(*fields, person=p):
+        out = plan_autofill(list(fields), person, acme)
+        return {f["id"]: f["value"] for f in out["to_fill"]}, [f["id"] for f in out["needs_input"]]
+
+    def box(id_, label, **kw):
+        return {"id": id_, "label": label, "kind": "text", "value": "", **kw}
+
+    school = box("s", "School name")
+    for label in ("Graduation year", "Graduation Year (YYYY)*", "Graduation date (mm/yyyy)", "Year of graduation"):
+        year = box("y", label)
+        for fields in ((school, year), (year, school)):
+            assert plan(*fields) == ({"s": "Mesa Community College"}, ["y"]), (label, fields[0]["id"])
+    for section in ("Education", "Education 1"):  # an unnumbered heading, and a numbered school with a loose year
+        filled, asked = plan(box("s", "School name", section=section), box("y", "Graduation year",
+                                                                           section="Education" if section == "Education" else None))
+        assert (filled, asked) == ({"s": "Mesa Community College"}, ["y"]), section
+    # on its own, or about another credential, the year is the profile's
+    assert plan(box("y", "Graduation year")) == ({"y": 2015}, [])
+    assert plan(school, box("y", "High school graduation year"))[0]["y"] == 2015
+    # a school the person finished gives its own year, not another credential's
+    graduate = _person(education={"highest_degree": "Bachelor's Degree", "graduation_year": 2015},
+                       education_history=[{"school": "Arizona State University", "degree": "Bachelor's Degree",
+                                           "start": 2016, "end": 2020}])
+    assert plan(school, box("y", "Graduation year"), person=graduate) == ({"s": "Arizona State University", "y": "2020"}, [])
+    # with no school in the profile, the School is the person's and the year stays the profile's
+    ged = _person(education={"highest_degree": "GED", "graduation_year": 2017}, education_history=[])
+    assert plan(school, box("y", "Graduation year"), person=ged) == ({"y": 2017}, ["s"])
+    # an expected graduation date has its own rule, school or not
+    expected = box("e", "Expected graduation date")
+    assert plan(school, expected)[0].get("e") == plan(expected)[0].get("e")
+    # a licence's issuing institution isn't a school
+    licence = box("l", "Institution that issued your license")
+    assert plan(licence, box("y", "Graduation year")) == ({"y": 2015}, ["l"])
+
+
 def test_worked_here_before_says_when_and_only_about_working_there():
     asm = ["I am CURRENTLY employed by ASM", "I was PREVIOUSLY employed by ASM", "I have NEVER been employed by ASM"]
     assert _answer("Have you ever been employed with ASM before?", kind="radio_group", options=asm, job={"company": "ASM"}) \
