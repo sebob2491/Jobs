@@ -596,6 +596,19 @@ def _relocate(prof: Profile, job: dict) -> Any:
     return _yn("preferences.willing_to_relocate")(prof, job)
 
 
+def _veteran(prof: Profile, job: dict, label: str = "") -> Any:
+    """The EEO veteran answer. "I am not a protected veteran" doesn't say whether the person is
+    a veteran at all: "Are you a veteran?" is then theirs to answer."""
+    v = prof.get("eeo.veteran")
+    if not v:
+        return None
+    asked = norm(label)
+    if re.search(r"\bare you an? (u s |us |military )?veteran\b", asked) and "protected" not in asked \
+            and polarity(v) is False and re.search(r"\bprotected\b", norm(v)):
+        return None
+    return v
+
+
 def _employed_now(prof: Profile, job: dict) -> Any:
     """Whether the person has a job now: a work history entry that hasn't ended. None when the
     profile lists no work at all."""
@@ -681,6 +694,12 @@ _SOMEONE_ELSE = re.compile(r"\b(referen\w*|referee\w*|emergency|next of kin|supe
 # its section's ("Most Recent Employer", "High School")
 _OTHER_PARTY_LABEL = re.compile(r"\b(employer\w*|company|business|school)\b")
 _OTHER_PARTY_SECTION = re.compile(r"\b(employer\w*|school)\b")
+_EEO_RULES = {"gender", "hispanic", "race", "veteran", "disability"}
+# A question about someone in the person's family ("Gender of your spouse", "Are you the spouse of a veteran?"),
+# not a family word in passing ("we partner with veterans", "family and medical leave")
+_FAMILY = re.compile(r"\b(your|their) (spouse|husband|wife|partner|parents?|child(ren)?|dependents?|relatives?|family"
+                     r"( members?)?|next of kin)\b|\b(spouse|husband|wife|widow\w*|partner|parent|child|dependent|relative|"
+                     r"family member) of (a|an|the|any)\b")
 _CONTACT_RULES = {"email", "first_name", "middle_name", "last_name", "preferred_name", "preferred_full_name", "full_name",
                   "phone_type",
                   "phone_code", "phone_ext", "phone", "address1", "address2", "city", "postal_ext", "postal",
@@ -688,7 +707,7 @@ _CONTACT_RULES = {"email", "first_name", "middle_name", "last_name", "preferred_
 
 # Getters that read the question itself, not only the profile
 _READS_QUESTION = {_travel, _previously_employed, _no_sponsorship, _sponsorship, _UNDER_18, _OVER_18, _phone,
-                   _local_or_relocate, _lives_in}
+                   _local_or_relocate, _lives_in, _veteran}
 
 # (rule name, label regex, getter, max label length or None, allowed kinds or None)
 _TEXTY = {"text", "textarea", "select", "listbox", "combobox", "radio_group"}
@@ -795,7 +814,7 @@ RULES: list[tuple[str, str, Getter, int | None, set[str] | None]] = [
     ("gender", r"\bgender\b|\bsex\b", _p("eeo.gender"), None, None),
     ("hispanic", r"hispanic|latin[oa]", _p("eeo.hispanic_latino"), None, None),
     ("race", r"\brace\b|ethnicity|ethnic", _p("eeo.race"), None, None),
-    ("veteran", r"veteran", _p("eeo.veteran"), None, None),
+    ("veteran", r"veteran", _veteran, None, None),
     # self-identification only: "Can you perform the essential functions … with or without
     # accommodation?" and "Do you need an accommodation?" are other questions
     ("disability", r"^(?!.*\b(essential function|accommodat|perform|able to)).*disabilit", _p("eeo.disability"), None, None),
@@ -1077,6 +1096,8 @@ def resolve_field(field: dict, prof: Profile, job: dict | None = None, file_inpu
         for name, pattern, getter, max_len, kinds in RULES:
             if someone_else and name in _CONTACT_RULES:
                 continue  # a reference's or an emergency contact's name, phone or email
+            if name in _EEO_RULES and _FAMILY.search(label):
+                continue  # "Are you the spouse of a veteran?", "Gender of your spouse": not the person's own
             if max_len is not None and len(label) > max_len:
                 continue
             if kinds is not None and kind not in kinds:
