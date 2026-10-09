@@ -27,8 +27,9 @@ The goal is a short, deduplicated list of real openings saved to the tracker
    titles before discarding them.
    It queries each company's own job search directly: Workday, Greenhouse, Lever,
    Eightfold, SmartRecruiters, Oracle, ApplicantStack, iCIMS, Paycom, UKG Pro, SuccessFactors
-   (Edwards, Qorvo, Amkor), Infor CloudSuite (Benchmark), Taleo (Kforce) and Talemetry
-   (Valleywise Health) sites and Phoenix Children's own job site, for the companies in
+   (Edwards, Qorvo, Amkor), Infor CloudSuite (Benchmark), Taleo (Kforce), Talemetry
+   (Valleywise Health), iCIMS Jibe (PetSmart, Sprouts, State Farm) and Jobvite (Knight-Swift)
+   sites, amazon.jobs and Phoenix Children's own job site, for the companies in
    the employer list `companies_file` in `setup_status` names: the plugin's
    `data/companies.yaml`, or the user's own `~/.job-apply/companies.yaml` when they have
    one (for other fields or places; the same shape). Pass `companies=[...]` to limit it to

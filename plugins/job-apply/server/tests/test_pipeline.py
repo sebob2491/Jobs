@@ -2424,3 +2424,44 @@ def test_a_page_that_doesnt_move_on_says_its_next_is_greyed_out(srv, monkeypatch
     r = run(go())
     assert r.need == "stuck" and "“Next” is greyed out" in r.reason, (r.reason, r.log)
     assert not any("Apply!" in line for line in r.log), r.log  # a link to the form already on show: not pressed
+
+
+def test_a_page_whose_only_way_on_makes_an_account_is_left_to_the_person(srv, monkeypatch):
+    """amazon.jobs, after an email it doesn't know (live, Oct 2026), offers only "Proceed to create
+    account". The desk said it couldn't find the button; the account is the person's to make."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 1)
+    job = srv.add_job(url=fixture_url("site/account-step.html"), title="HRBP", company="Example Jobs")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status == "needs_you", about=state(r))
+            return r, await r.page.evaluate("() => window.creating || false")
+        finally:
+            await applier.stop()
+
+    r, creating = run(go())
+    assert r.need == "sign_in" and "wants an account for this email" in r.reason, (r.need, r.reason)
+    assert not creating  # never pressed
+    posting = {"title": "HR Business Partner", "headings": ["HR Business Partner"], "fields": [],
+               "actions": [{"id": "1", "text": "Register"}, {"id": "2", "text": "Apply now ▾"}]}
+    assert not pipeline._account_step(posting)  # a header's "Register" on a posting: not the way on
+    assert not pipeline._account_step({**posting, "title": "Sign up", "actions": [{"id": "1", "text": "Sign up for job alerts"}]})
+
+
+def test_an_account_pause_holds_until_the_tab_leaves_the_account_site(srv):
+    """amazon.jobs' account steps after "Proceed to create account" (name, an emailed code) are
+    forms with no password box: read as past the pause, the desk would fill them and press on,
+    making the account the desk never makes. The pause holds until the tab leaves that site."""
+    applier = Applier(srv)
+    job = srv.add_job(url="https://www.jobs.example/jobs/1", title="HRBP", company="Example")["job"]
+    r = Run(job_id=job["id"], need="sign_in", url="https://passport.jobs.example/unknownEmail")
+    r.paused_host = r.hold_host = "passport.jobs.example"
+    signup = {"url": "https://passport.jobs.example/signup", "title": "Create your account", "headings": ["Your name"],
+              "fields": [{"id": "n", "kind": "text", "label": "Full name"}], "actions": [{"id": "c", "text": "Continue"}]}
+    assert not applier._looks_past(r, signup, "")
+    back = {**signup, "url": "https://www.jobs.example/jobs/1/apply", "title": "Apply", "headings": ["Apply"]}
+    assert applier._looks_past(r, back, "")

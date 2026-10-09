@@ -456,7 +456,13 @@ async def recommend(prof: Profile, search: Search, limit_per_company: int = 10, 
             try:
                 posting = await fetch(item["url"])
             except Exception:  # an unreadable posting keeps its title-based score
-                return
+                if not item.get("company_url"):
+                    return
+                try:  # its page on the employer's own site describes it too (a Jibe site's, over iCIMS's)
+                    posting = await fetch(item["company_url"])
+                except Exception:
+                    return
+                posting.apply_url = item["url"]  # still applied for where the listing links
         item["posting"] = {k: getattr(posting, k) for k in
                            ("title", "location", "description", "apply_url", "salary", "employment_type",
                             "posted_at", "external_id", "ats")}
