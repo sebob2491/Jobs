@@ -1177,8 +1177,12 @@ def test_a_citizens_visa_questions():
     assert answer("Have you ever held an H-1B visa?") is None
     statuses = ["U.S. Citizen", "Permanent Resident", "H-1B", "F-1 OPT", "Other"]
     assert answer("What is your current visa status?", "select", statuses) == "U.S. Citizen"
-    assert answer("Citizenship status", "select", ["Citizen of the United States", "Non-US Citizen", "Other"]) == \
+    assert answer("Immigration status", "select", ["Citizen of the United States", "Non-US Citizen", "Other"]) == \
         "Citizen of the United States"
+    # "Citizenship status" is still the citizenship rule's, from the profile's country
+    path.write_text(yaml.safe_dump({**data, "work_authorization": {**data["work_authorization"], "us_citizen": True,
+                                                                   "citizenship": "United States"}}))
+    assert answer("Citizenship status", "select", ["United States", "Other"]) == "United States"
     path.write_text(yaml.safe_dump({**data, "work_authorization": {**data["work_authorization"], "us_citizen": False}}))
     assert answer("What is your current visa status?", "select", statuses) is None
     assert answer("Do you currently hold an H-1B visa?") is None

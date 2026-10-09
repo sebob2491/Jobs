@@ -927,7 +927,8 @@ RULES: list[tuple[str, str, Getter, int | None, set[str] | None]] = [
      r"\b(hold|have|holding|on) an? (f ?1|h ?1 ?b|j ?1|l ?1|tn|o ?1|e ?3|h ?4)\b( visa| status)?",
      lambda p, j: "No" if p.get("work_authorization.us_citizen") is True else None, None, None),
     # "What is your current visa status?" among "U.S. Citizen", "H-1B", ...: a citizen's is the citizen one
-    ("citizen_status", r"^(what is )?(your )?(current )?(visa|immigration|citizenship) status$",
+    # ("Citizenship status" keeps the citizenship rule, from the profile's country)
+    ("citizen_status", r"^(what is )?(your )?(current )?(visa|immigration) status$",
      lambda p, j: "U.S. Citizen" if p.get("work_authorization.us_citizen") is True else None, 80, None),
     ("citizenship", r"citizenship|country of citizen|are you a (u ?s )?citizen", _p("work_authorization.citizenship"), None, None),
     ("clearance", r"security clearance|active clearance", _p("work_authorization.security_clearance"), None, None),
