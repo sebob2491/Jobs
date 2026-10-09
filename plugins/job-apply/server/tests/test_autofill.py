@@ -834,3 +834,13 @@ def test_never_the_opposite_of_the_answer():
     # a decline's "not" denies nothing
     assert choose_option("I don't wish to answer", ["Yes, I have a disability", "I do not want to answer"]) == \
         "I do not want to answer"
+
+
+def test_a_short_list_of_places_is_read_with_the_rest_of_the_address():
+    """A City list short enough to be read whole ("Chandler, Henderson, TX", "Chandler, Lincoln,
+    OK", "Chandler, Maricopa, AZ") gave the first Chandler: the fill picks the one the rest of
+    the address names, but the plan had already chosen Texas."""
+    cities = ["Chandler, Henderson, TX", "Chandler, Lincoln, OK", "Chandler, Maricopa, AZ", "Chandler Heights, Maricopa, AZ"]
+    assert resolve_field(f("City *", "select", options=cities), prof()).value == "Chandler, Maricopa, AZ"
+    assert resolve_field(f("County", "select", options=["Maricopa, CA", "Maricopa, AZ"]), prof()).value == "Maricopa, AZ"
+    assert resolve_field(f("State", "select", options=["Arkansas", "Arizona"]), prof()).value == "Arizona"

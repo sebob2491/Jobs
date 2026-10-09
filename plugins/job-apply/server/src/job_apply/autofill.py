@@ -993,7 +993,10 @@ def resolve_field(field: dict, prof: Profile, job: dict | None = None, file_inpu
 
     options = field.get("options")
     if kind in {"select", "radio_group", "listbox", "checkbox_group", "combobox"} and options:
-        chosen = choose_option(ans.value, options, names=is_name_rule(ans.rule))
+        # a place lookup's entries: the one in the rest of the profile's address ("Chandler,
+        # Maricopa, AZ", not "Chandler, Henderson, TX" listed before it)
+        chosen = (ans.rule in _PLACE_RULES and choose_place(ans.value, options, place_words(ans.rule, prof))
+                  or choose_option(ans.value, options, names=is_name_rule(ans.rule)))
         if chosen is None and ans.rule == "how_heard":
             chosen = _own_website(ans.value, options, job)
         # a search prompt lists only its top level, and a full page of a paged list (Qorvo's
