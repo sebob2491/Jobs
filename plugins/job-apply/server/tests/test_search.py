@@ -1879,3 +1879,25 @@ def test_an_m_cloud_search_is_read_for_its_places():
         ("Financial Analyst I", "Tempe, AZ; Saint Louis, MO", "2026-09-11"),
         ("Senior Financial Analyst III", "Tempe, AZ; Saint Louis, MO", "2026-09-11")]
     assert not out["errors"]
+
+
+def test_employers_are_searched_eight_at_a_time():
+    """Find jobs on the Phoenix list (about 50 employers with a search) took about 100 s,
+    searching four employers at a time; each is its own site, so eight at once halve it."""
+    busy, most = 0, 0
+
+    async def answer(request: httpx.Request) -> httpx.Response:
+        nonlocal busy, most
+        busy += 1
+        most = max(most, busy)
+        await asyncio.sleep(0.05)
+        busy -= 1
+        return httpx.Response(200, json={"jobs": []})
+
+    companies = [{"name": f"Employer {n}", "search": {"greenhouse": f"board{n}"}} for n in range(12)]
+
+    async def go():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(answer)) as client:
+            return await search_companies("accountant", client=client, companies=companies)
+    out = asyncio.run(go())
+    assert not out["errors"] and most == 8, (most, out["errors"])
