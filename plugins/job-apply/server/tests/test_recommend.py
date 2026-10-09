@@ -368,6 +368,10 @@ def test_a_job_away_from_the_persons_places_says_so():
         fit = score_listing({**fresh, "location": where}, stays, today=TODAY)
         assert fit.recommended and not any("away from" in c for c in fit.concerns), (where, fit)
     assert any("Tucson, AZ" in c for c in score_listing({**fresh, "location": "tucson-az"}, stays, today=TODAY).concerns)
+    # iCIMS writes the country and state first
+    assert any("Bagdad, AZ" in c for c in score_listing({**fresh, "location": "US-AZ-Bagdad"}, stays, today=TODAY).concerns)
+    for where in ("US-AZ-Ahwatukee", "US-AZ-Phoenix | US-TX-Austin"):
+        assert score_listing({**fresh, "location": where}, stays, today=TODAY).recommended, where
 
 
 def test_a_posting_asking_for_far_more_experience_isnt_preselected():

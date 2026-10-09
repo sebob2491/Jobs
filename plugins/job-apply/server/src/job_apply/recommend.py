@@ -43,10 +43,12 @@ _METROS = [
     {"phoenix", "chandler", "tempe", "mesa", "scottsdale", "gilbert", "glendale", "peoria", "goodyear",
      "surprise", "avondale", "queen creek", "maricopa", "buckeye", "tolleson", "laveen", "cave creek",
      "fountain hills", "el mirage", "litchfield park", "sun city", "paradise valley", "apache junction",
-     "san tan valley", "anthem", "casa grande"},
+     "san tan valley", "anthem", "casa grande", "ahwatukee", "sun city west", "sun lakes", "youngtown",
+     "waddell", "new river", "gold canyon"},
     {"tucson", "oro valley", "marana", "sahuarita", "vail"},
 ]
 _CITY_STATE = re.compile(r"^\s*([a-z][a-z .'-]*?)\s*[,-]\s*([a-z]{2})\b")
+_COUNTRY_STATE_CITY = re.compile(r"^\s*(?:us|usa)\s*-\s*([a-z]{2})\s*-\s*([a-z][a-z .'-]*?)\s*$")  # iCIMS's US-AZ-Bagdad
 _STATE_CODES = {code.lower() for code in US_STATES}
 
 
@@ -63,10 +65,15 @@ def _far_place(location: str, cities: list[str]) -> str | None:
         return None
     places = []
     for part in where.split(";"):
-        m = _CITY_STATE.match(part)
-        if not m or m.group(2) not in _STATE_CODES:
+        if m := _COUNTRY_STATE_CITY.match(part):
+            state, town = m.group(1), m.group(2)
+        elif (m := _CITY_STATE.match(part)) and m.group(1).strip() not in ("us", "usa"):
+            town, state = m.group(1), m.group(2)
+        else:
             return None
-        places.append(f"{m.group(1).strip().title()}, {m.group(2).upper()}")
+        if state not in _STATE_CODES:
+            return None
+        places.append(f"{town.strip().title()}, {state.upper()}")
     return places[0] if places else None
 
 
