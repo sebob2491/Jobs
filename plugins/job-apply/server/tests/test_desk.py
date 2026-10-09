@@ -905,3 +905,6 @@ def test_the_password_list_names_the_persons_own_employers(job_apply_home):
     os.utime(own, (time.time() + 5, time.time() + 5))  # a later change than the first write
     assert {s["value"]: s["label"] for s in desk_module.password_systems()}["ukg"] == \
         "UKG Pro: Desert Financial Credit Union"
+    own.write_text("lists: [phoenix-metro\n")  # a typo: the systems without names, the page still up
+    os.utime(own, (time.time() + 10, time.time() + 10))
+    assert {s["value"]: s["label"] for s in desk_module.password_systems()}["workday"] == "Workday"
