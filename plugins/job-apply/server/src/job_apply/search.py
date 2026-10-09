@@ -1015,8 +1015,8 @@ MCLOUD_PAGE = 100  # openings a request answers
 async def _mcloud(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, terms: list[str]) -> list[Listing]:
     """Career sites whose search is a Google Cloud Talent search at jobsapi-google.m-cloud.io
     (Edward Jones'): the words go in, openings from anywhere come out, 100 a page. It takes no
-    place, so a search in an area reads further and the places are filtered here."""
-    company = str(cfg.get("company") if isinstance(cfg, dict) else cfg)
+    place, so a search in an area reads further, and keep_listings keeps the area's."""
+    company = str(cfg["company"] if isinstance(cfg, dict) else cfg)  # a block without one fails loudly
     if terms:
         limit = max(limit, AREA_SCAN)
     out: dict[str, Listing] = {}
