@@ -1538,18 +1538,25 @@ _EDU_FIELD = re.compile(r"^(school|university|college|institution|degree|discipl
 # (not "Position Applied For", the job being applied to)
 _JOB_FIELD = re.compile(r"^(company|employer|job title|title|position)\b(?! (applied|you are applying|of interest|desired|sought))")
 _DATE_PART = re.compile(r"^(start|end|from|to)( date)?( (year|month))?$")
+# "Graduation Year", "Year of graduation", "Date graduated" (not "Expected graduation date")
+_GRAD_DATE = re.compile(r"^((year|date) (of )?graduat|graduat(ion|ed)( (year|date))?$)")
 
 
 def _with_context(fields: list[dict]) -> list[dict]:
     """Greenhouse-style forms put School, Degree, Discipline and "Start date year" together
     with no section heading: they're one school's, the first in the profile's education
     history, so its school is never given another school's degree. Unsectioned dates after
-    a job's boxes are that job's."""
+    a job's boxes are that job's. A graduation year on a form that names a school, before
+    or after it, is that school's: education.graduation_year may be a diploma's, and beside
+    a college the person didn't finish it said they graduated from the college."""
+    labels = [norm(clean_label(f.get("label") or "")) for f in fields]
+    names_school = any(not f.get("section") and _EDU_START.match(label) for f, label in zip(fields, labels))
     out, block, school = [], None, False
-    for f in fields:
-        label = norm(clean_label(f.get("label") or ""))
+    for f, label in zip(fields, labels):
         if not f.get("section"):
-            if _EDU_START.match(label):
+            if names_school and _GRAD_DATE.match(label):
+                f = {**f, "section": "Education 1"}
+            elif _EDU_START.match(label):
                 block, school = "Education 1", True
                 f = {**f, "section": block}
             elif _EDU_FIELD.match(label):

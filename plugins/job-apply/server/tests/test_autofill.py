@@ -573,6 +573,36 @@ def test_a_schools_block_without_numbers_is_one_school():
     assert [f["id"] for f in plan["needs_input"]] == ["d"]
 
 
+def test_a_graduation_year_beside_a_school_is_that_schools():
+    """A form asking "School name" and "Graduation year" with no section got the first school
+    in the education history (a community college the person didn't finish) and
+    education.graduation_year (their high school diploma's): a graduation from the college
+    that never happened. Beside a school, the year is that school's, or the person's to give
+    when it wasn't finished; on its own, it's the highest education's."""
+    p = _person(education={"highest_degree": "High School Diploma", "graduation_year": 2015})
+    school = {"id": "s", "label": "School name", "kind": "text", "value": ""}
+    for label in ("Graduation year", "Year of graduation", "Date graduated"):
+        year = {"id": "y", "label": label, "kind": "text", "value": ""}
+        for fields in ([school, year], [year, school]):
+            plan = plan_autofill(fields, p, {"company": "Acme"})
+            filled = {f["id"]: f["value"] for f in plan["to_fill"]}
+            assert filled == {"s": "Mesa Community College"}, (label, filled)
+            assert [f["id"] for f in plan["needs_input"]] == ["y"], label
+    year = {"id": "y", "label": "Graduation year", "kind": "text", "value": ""}
+    assert [f["value"] for f in plan_autofill([year], p, {"company": "Acme"})["to_fill"]] == [2015]
+    # a school the person finished gives its own year, not another credential's
+    graduate = _person(education={"highest_degree": "Bachelor's Degree", "graduation_year": 2015},
+                       education_history=[{"school": "Arizona State University", "degree": "Bachelor's Degree",
+                                           "start": 2016, "end": 2020}])
+    filled = {f["id"]: f["value"] for f in plan_autofill([school, year], graduate, {"company": "Acme"})["to_fill"]}
+    assert filled == {"s": "Arizona State University", "y": "2020"}, filled
+    # an expected graduation date isn't a graduation year: its own rule answers it
+    from job_apply.autofill import _with_context
+
+    expected = {"id": "e", "label": "Expected graduation date", "kind": "text", "value": ""}
+    assert "Education 1" not in {f.get("section") for f in _with_context([school, expected])[1:]}
+
+
 def test_worked_here_before_says_when_and_only_about_working_there():
     asm = ["I am CURRENTLY employed by ASM", "I was PREVIOUSLY employed by ASM", "I have NEVER been employed by ASM"]
     assert _answer("Have you ever been employed with ASM before?", kind="radio_group", options=asm, job={"company": "ASM"}) \
