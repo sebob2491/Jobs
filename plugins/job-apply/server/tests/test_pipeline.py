@@ -2587,18 +2587,25 @@ def test_a_posting_that_has_closed_says_so(srv, monkeypatch):
 
 def test_confirmation_wording():
     """What sites say once an application has gone: Eightfold's "Thanks for applying!", Oracle's
-    "Thank you for your job application", iCIMS's "Thank you for submitting your application"."""
-    from job_apply.browser import CONFIRMATION_RE
+    "Thank you for your job application", iCIMS's "Thank you for submitting your application".
+    And what never counts: a form sent back, a sign-in page's thanks, a sentence saying it didn't."""
+    from job_apply.browser import confirmations
 
-    said = CONFIRMATION_RE.search
     for text in ("Thanks for applying!", "Thank you for your job application.", "Thank you for applying",
                  "Thank you for submitting your application to Example Fab.", "Application Submitted",
-                 "Your application has been successfully submitted.", "You've successfully applied for this job.",
-                 "We have received your application."):
-        assert said(text), text
+                 "Your application has been successfully submitted.", "You\u2019ve successfully applied for this job.",
+                 "We\u2019ve received your application.", "Thank you for\napplying!", "Thank\xa0you for applying",
+                 "Your application is in!"):
+        assert confirmations(text), text
     for text in ("Submit your application", "Review your application before you submit it.",
-                 "Applications are reviewed weekly.", "Your application is incomplete."):
-        assert not said(text), text
+                 "Applications are reviewed weekly.", "Your application is incomplete.",
+                 "Your application is in progress.", "Your application is in draft.",
+                 "No application was submitted. Please try again.",
+                 "After your application has been submitted, you will get an email.",
+                 "If you have successfully applied, sign in to check its status.",
+                 "Thanks for your interest in Example Fab! Create an account to continue.",
+                 "Application completeness: 80%"):
+        assert not confirmations(text), text
 
 
 def test_closed_posting_wording():
