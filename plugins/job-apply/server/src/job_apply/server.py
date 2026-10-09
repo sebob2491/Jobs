@@ -25,10 +25,10 @@ from .autofill import is_empty_value, is_name_rule, place_words, plan_autofill, 
 from .browser import BrowserSession, BrowserUnavailable, SiteDown, SubmitBlocked
 from .postings import FetchError, Posting, fetch_posting, finalize, parse_html
 from .render import KINDS, render_pdf, to_html
-from .search import (CLIENT_SIDE, ICIMS_FRAME, alternatives, companies_path, eightfold_page_url, employer_lists,
+from .search import (ICIMS_FRAME, companies_path, eightfold_page_url, employer_lists,
                      icims_search, icims_state, infor_search, keep_listings, load_companies, location_terms,
                      parse_eightfold, paycom_search, rmk_search, search_companies, sfclassic_search, sitecore_search,
-                     ukg_search)
+                     ukg_search, wordings_for)
 from .tracker import Tracker
 
 INSTRUCTIONS = """\
@@ -356,7 +356,7 @@ async def search_company_jobs(
     for item in out.pop("needs_browser", []):
         name, cfg = item["company"], item["config"]
         found, failures = [], []
-        wordings = [query] if item["kind"] in CLIENT_SIDE else alternatives(query)
+        wordings = wordings_for(item["kind"], query)
         for wording in wordings:
             try:
                 if item["kind"] == "icims":

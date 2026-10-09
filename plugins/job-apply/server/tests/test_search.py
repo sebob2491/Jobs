@@ -1973,3 +1973,64 @@ def test_a_talentbrew_site_is_searched_in_the_state(monkeypatch):
     assert seen[0].params["Keywords"] == "accountant" and seen[0].params["OrganizationIds"] == "35300"
     # anywhere: the nationwide answer as it comes
     assert [x.title for x in asyncio.run(go([]))] == ["Patient Account Rep"]
+
+
+def test_a_career_pages_site_is_read_page_by_page(monkeypatch):
+    """The State of Arizona's azstatejobs.gov (career-pages.com) lists a search's openings as a
+    table, 30 a page, with places that carry no state ("PHOENIX", "REMOTE OPTIONS")."""
+    import asyncio
+
+    monkeypatch.setattr(search_module, "CAREERPAGES_PAUSE", 0)
+    monkeypatch.setattr(search_module, "_CHALLENGED", {})
+    row = ('<tr role="link" data-action="click-&gt;jobs--table-results#navigate" data-job-url="https://jobs.example.gov/jobs/{slug}">'
+           '<td class="job-search-results-title"><a aria-label="Title: {title}" href="https://jobs.example.gov/jobs/{slug}">{title}</a></td>'
+           '<td aria-label="Requisition Identifier: {req}">{req}</td><td class="job-search-results-location"><ul>{places}</ul></td></tr>')
+
+    def rows(slug, title, req, *places):
+        return row.format(slug=slug, title=title, req=req,
+                          places="".join(f'<li aria-label="Location: {p}">{p}</li>' for p in places))
+
+    asked: list[dict[str, str]] = []
+    pages = {("analyst", "1"): [rows(f"analyst-{i}", f"ANALYST {i}", str(500000 + i), "PHOENIX") for i in range(30)],
+             ("analyst", "2"): [rows("auditor", "INTERNAL AUDITOR", "543938", "REMOTE OPTIONS", "REMOTE OPTIONS"),
+                                rows("agent", "SPECIAL AGENT", "543939", "VARIOUS-STATEWIDE", "MCDOWELL")]}
+    challenge_on: set[tuple[str, str]] = set()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        key = (request.url.params["query"], request.url.params["page"])
+        asked.append(dict(request.url.params))
+        if key in challenge_on:
+            return httpx.Response(202, headers={"x-amzn-waf-action": "challenge"}, text="")
+        return httpx.Response(200, text=f"<table><tbody>{''.join(pages.get(key, []))}</tbody></table>")
+
+    def search(query):
+        async def go():
+            async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+                return await search_module._careerpages(client, {"url": "https://jobs.example.gov", "state": "AZ"},
+                                                        query, 100, location_terms("AZ"))
+        return asyncio.run(go())
+
+    found = search("analyst")
+    assert len(found) == 32 and [(p["query"], p["page"]) for p in asked] == [("analyst", "1"), ("analyst", "2")]
+    assert (found[0].title, found[0].location, found[0].url, found[0].external_id) == \
+        ("ANALYST 0", "Phoenix, AZ", "https://jobs.example.gov/jobs/analyst-0", "500000")
+    assert [x.location for x in found[-2:]] == ["Remote (Arizona)", "Statewide (Arizona); McDowell, AZ"]
+    # several wordings ("a | b"): each searched on its own, one page each, never as one string
+    asked.clear()
+    search("analyst | auditor")
+    assert [(p["query"], p["page"]) for p in asked] == [("analyst", "1"), ("auditor", "1")]
+    # a bot check ends the search at once (never retried), keeping what was read before it ...
+    asked.clear()
+    challenge_on.add(("analyst", "2"))
+    assert len(search("analyst")) == 30 and len(asked) == 2
+    # ... and the site is left alone a while after one
+    asked.clear()
+    with pytest.raises(search_module.SearchError, match="bot check"):
+        search("analyst")
+    assert asked == []
+    # a bot check before anything was read: said, never got around
+    monkeypatch.setattr(search_module, "_CHALLENGED", {})
+    challenge_on.add(("analyst", "1"))
+    with pytest.raises(search_module.SearchError, match="bot check"):
+        search("analyst")
+    assert len(asked) == 1

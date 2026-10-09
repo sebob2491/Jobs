@@ -90,9 +90,10 @@ companies:
     ats: custom            # pageup; azstatejobs.gov is a Clinch career site (state-of-arizona.career-pages.com); Apply goes to PageUp (secure.dc4.pageuppeople.com/apply/1045)
     az_sites: Phoenix (Capitol Mall), statewide
     confidence: high        # live check, Oct 2026
-    # No search block: azstatejobs.gov (a Clinch site) answers a few searches in a row, from a plain
-    # client or the browser, with an AWS WAF check (HTTP 202, x-amzn-waf-action: challenge; Oct 2026),
-    # and bot checks are never got around. The person searches it on its own page.
+    # azstatejobs.gov (a Clinch site) answers a quick run of searches with an AWS WAF check (HTTP
+    # 202, x-amzn-waf-action: challenge; Oct 2026). Bot checks are never got around: the search
+    # reads at most 3 pages, and a challenge ends it (the person searches the site's own page).
+    search: {careerpages: {url: https://www.azstatejobs.gov, state: AZ}}
   # Phoenix-metro finance/insurance offices and staffing/HR-services firms (checked Oct 2026).
   - name: State Farm
     careers_url: https://jobs.statefarm.com/main/
