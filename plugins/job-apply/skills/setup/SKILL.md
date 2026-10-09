@@ -56,6 +56,8 @@ All of the user's data lives in `~/.job-apply/`, outside the plugin:
      decline option such as "Decline to self-identify". Don't push for an answer.
    - Recurring screening questions in the `answers:` list: cleanroom work, lifting
      50 lbs, background check or drug screen, relatives at the company, non-compete.
+     For finance work, also a credit check, licenses held (CPA, FINRA registrations) and
+     government employment in the last few years (banks and accounting firms ask).
    - Submit mode: `review` (default, they approve each submit) or `auto` for chosen
      ATSs such as `[workday, greenhouse, lever]`. LinkedIn and Indeed always need
      them to click Submit themselves.

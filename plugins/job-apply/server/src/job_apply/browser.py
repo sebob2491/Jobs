@@ -31,7 +31,7 @@ from . import config
 from .ats import detect_ats
 from .autofill import choose_option, choose_place, is_empty_value, norm, polarity
 from .formjs import (CHALLENGE_JS, CLICK_CHOICE_JS, COVERED_JS, ELEMENT_INFO_JS, ENTRIES_JS, EXTRACT_JS, FIELD_OPTIONS_JS,
-                     MARK_OPTIONS_JS, OPEN_MENU_JS, OUTSIDE_CLICK_JS, QUIET_JS, SHOWN_VALUE_JS, VISIBLE_TEXT_JS,
+                     LOST_BOXES_JS, MARK_OPTIONS_JS, OPEN_MENU_JS, OUTSIDE_CLICK_JS, QUIET_JS, SHOWN_VALUE_JS, VISIBLE_TEXT_JS,
                      WORKDAY_CHOSEN_JS, WORKDAY_PROMPT_JS)
 
 SUBMIT_RE = re.compile(r"\bsubmit\b|send (my )?application|finish (my )?application|complete (my )?application", re.I)
@@ -90,6 +90,7 @@ POPUP_FOLLOW = 15  # seconds after a click of ours in which a tab it opens is fo
 FRAME_WAIT = 8  # seconds for a job board's frame (iCIMS's openings) to load its page, all told
 SETTLE_WAIT = 8  # seconds for a job board's page to stop loading things, at most
 LOST_FILL_WAIT = 0.5  # seconds after filling for a page to mark the boxes whose answers it lost
+LOST_FILL_TRIES = 3  # times a box is typed again on a page, at most (one the page refuses stays marked)
 # How long a click may wait for its button to become clickable, in ms.
 CLICK_TIMEOUT = 8000
 CONFIRMATION_RE = re.compile(
@@ -214,6 +215,9 @@ class BrowserSession:
         self.strict_tabs = False
         self._frame_ids: dict[Frame, str] = {}
         self._fields: dict[str, dict] = {}
+        # what the desk typed on a page (by address), and how often each box was typed again
+        self._typed: dict[str, set[str]] = {}
+        self._retyped: dict[tuple[str, str, str], int] = {}
         self._actions: dict[str, dict] = {}
         self.current_job_id: int | None = None
         self.tab_jobs: dict[Page, int] = {}  # the job each tab was opened for
@@ -905,7 +909,6 @@ class BrowserSession:
             page = await self.page()
             await self._close_menus(page)
             results = []
-            typed: list[tuple[dict, str]] = []
             known = dict(self._fields)  # the boxes as read before filling, by the ids given out then
             try:
                 for item in values:
@@ -921,40 +924,52 @@ class BrowserSession:
                             continue
                         outcome = await self._fill_one(page, field, item.get("value"))
                         results.append({"id": fid, "label": field.get("label", ""), "ok": True, "result": outcome})
-                        if outcome == "filled" and isinstance(item.get("value"), (str, int, float)):
-                            typed.append((field, str(item["value"])))
+                        if outcome in ("filled", "typed"):
+                            typed = self._typed.setdefault(page.url, set())
+                            if len(typed) < 200:
+                                typed.add(norm(str(item.get("value"))))
                     except Exception as e:  # report and keep going; one odd widget shouldn't stop the rest
                         results.append({"id": fid, "ok": False,
                                         "error": f"{type(e).__name__}: {str(e).splitlines()[0][:300]}",
                                         **({"options": e.entries} if isinstance(e, PickedAGroup) else {})})
-                if typed:
-                    await self._fill_lost(page, typed)
+                if self._typed.get(page.url) and any(r["ok"] and r["result"] != "already set" for r in results):
+                    await self._fill_lost(page)
             finally:
                 await self._close_menus(page)  # none left open over the buttons, or over its own field
             return results
 
-    async def _fill_lost(self, page: Page, typed: list[tuple[dict, str]]) -> None:
-        """Fill again the boxes the page marks invalid while they still show what was put in:
-        its own record of them was lost. Insight's Eightfold form drops some of a quick run of
-        fills, then says "Email cannot be left blank" beside the address shown. One at a time,
-        emptied first (a framework ignores a box set to the value it already shows). A second
-        look after that, for one the page marked a little later."""
+    async def _fill_lost(self, page: Page) -> None:
+        """Type again what a text box shows when it's something the desk typed on this page and
+        the page marks the box invalid all the same: the page's own record of it was lost.
+        Insight's Eightfold form drops some of a quick run of fills (this one's or an earlier
+        one's), then says "Last Name cannot be left blank" beside the name shown. One at a time,
+        emptied first (a framework ignores a box set to the value it already shows); never a
+        hidden box or the one the person is in. A second look after that, for one the page
+        marked a little later (or lost again in the rush). A box the page goes on refusing is
+        left alone after LOST_FILL_TRIES."""
+        typed = self._typed.get(page.url) or set()
         for _ in range(2):
             await page.wait_for_timeout(LOST_FILL_WAIT * 1000)
             again = False
-            for field, text in typed:
-                loc = self._locator(page, field["id"])
+            for frame in [f for f in page.frames if not f.is_detached()]:
                 try:
-                    if not text or not await loc.evaluate("el => el.getAttribute('aria-invalid') === 'true'") \
-                            or norm(await loc.input_value(timeout=2000)) != norm(text):
-                        continue
-                    await loc.fill("")
-                    await loc.fill(text)
-                    await loc.evaluate("el => el.blur()")
-                    await page.wait_for_timeout(LOST_FILL_WAIT * 400)
-                    again = True
-                except (PlaywrightError, PlaywrightTimeout):
+                    lost = await frame.evaluate(LOST_BOXES_JS)
+                except PlaywrightError:
                     continue
+                for box in lost:
+                    key = (page.url, box["id"], norm(box["value"]))
+                    if key[2] not in typed or self._retyped.get(key, 0) >= LOST_FILL_TRIES:
+                        continue
+                    self._retyped[key] = self._retyped.get(key, 0) + 1
+                    loc = frame.locator(f'[data-ja-id="{box["id"]}"]').first
+                    try:
+                        await loc.fill("", timeout=3000)
+                        await loc.fill(box["value"], timeout=3000)
+                        await loc.evaluate("el => el.blur()")
+                        await page.wait_for_timeout(LOST_FILL_WAIT * 800)
+                        again = True
+                    except (PlaywrightError, PlaywrightTimeout):
+                        continue
             if not again:
                 return
 

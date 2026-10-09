@@ -1,7 +1,8 @@
 # Large Phoenix-area employers across health care, education, government, finance,
-# staffing, utilities, aerospace, tech and retail: the places that hire HR generalists,
-# recruiters and other office roles in the Valley. A person's own ~/.job-apply/companies.yaml
-# names this list (`lists: [phoenix-metro]`) to search it; see templates/companies.example.yaml.
+# accounting, staffing, utilities, aerospace, tech and retail: the places that hire HR
+# generalists, recruiters, accountants, financial analysts and other office roles in the
+# Valley. A person's own ~/.job-apply/companies.yaml names this list (`lists: [phoenix-metro]`)
+# to search it; see templates/companies.example.yaml.
 # Same shape as data/companies.yaml. Each careers site and the system behind it was read off
 # the live pages in Oct 2026, and every `search` block was run through the plugin's own search
 # from a test machine and came back without an error. Employers with no `search` block run a
@@ -148,6 +149,53 @@ companies:
     az_sites: Tempe, Phoenix, Scottsdale
     confidence: high          # live check, Oct 2026: 62 Arizona openings, 52 in Tempe
     search: {workday: https://ntrs.wd1.myworkdayjobs.com/northerntrust}
+  - name: Western Alliance Bank
+    careers_url: https://westernalliancebank.wd5.myworkdayjobs.com/WAB
+    ats: workday              # westernalliancebancorporation.com/about-us/careers links here
+    az_sites: Phoenix (HQ), Chandler, Scottsdale
+    confidence: high          # live check, Oct 2026: 192 openings, 137 in Arizona (accountants, credit analysts)
+    search: {workday: https://westernalliancebank.wd5.myworkdayjobs.com/WAB}
+  - name: Bank of America
+    careers_url: https://careers.bankofamerica.com/en-us
+    ats: workday              # the page's openings apply on this Workday site (campus hiring is elsewhere)
+    az_sites: Chandler, Phoenix, Tempe, Mesa, Scottsdale
+    confidence: high          # live check, Oct 2026: ~2,000 openings, 111 in Arizona
+    search: {workday: https://ghr.wd1.myworkdayjobs.com/lateral-us}
+  - name: U.S. Bank
+    careers_url: https://careers.usbank.com/global/en
+    ats: workday              # a Phenom front end; its openings apply on this Workday site
+    az_sites: Tempe, Phoenix, Scottsdale, Gilbert, Chandler
+    confidence: high          # live check, Oct 2026: 103 Arizona openings (fund and tax accountants in Tempe)
+    search: {workday: https://usbank.wd1.myworkdayjobs.com/US_Bank_Careers}
+  - name: Early Warning Services   # Zelle, Paze
+    careers_url: https://earlywarning.wd5.myworkdayjobs.com/earlywarningcareers
+    ats: workday              # earlywarning.com/careers links here
+    az_sites: Scottsdale (HQ)
+    confidence: high          # live check, Oct 2026: 76 openings, 57 in Arizona
+    search: {workday: https://earlywarning.wd5.myworkdayjobs.com/earlywarningcareers}
+  - name: Desert Financial Credit Union
+    careers_url: https://jobs.desertfinancial.com/us/en
+    ats: ukg                  # a Phenom front end; its openings apply on this UKG Pro board
+    az_sites: Phoenix (HQ), Tempe, Mesa, Glendale, Scottsdale
+    confidence: high          # live check, Oct 2026: 56 openings, all in Arizona
+    search: {ukg: https://recruiting2.ultipro.com/DES1004DFCU/JobBoard/f7bd912a-2b09-44ea-bc10-15227eb43935/}
+  - name: Blue Cross Blue Shield of Arizona
+    careers_url: https://bcbsaz.wd1.myworkdayjobs.com/BCBSAZCareers
+    ats: workday              # jobs.azblue.com (a Paradox front end) links here
+    az_sites: Phoenix (HQ), Scottsdale, Mesa
+    confidence: high          # live check, Oct 2026: 41 openings, all in Arizona
+    search: {workday: https://bcbsaz.wd1.myworkdayjobs.com/BCBSAZCareers}
+  - name: Edward Jones
+    careers_url: https://careers.edwardjones.com/job-search-results/
+    ats: custom               # its search is a Google Cloud Talent proxy (jobsapi-google.m-cloud.io); apply is on Brassring
+    az_sites: Tempe (HQ campus)
+    confidence: high          # page seen, Oct 2026: Tempe finance openings (financial analysts, tax, payroll)
+    # No search block yet: no reader for its job API.
+  - name: PayPal
+    careers_url: https://careers.pypl.com/home/
+    ats: unknown              # careers.pypl.com answered with a Cloudflare challenge (403) from here; system not seen
+    az_sites: Scottsdale, Chandler
+    confidence: low
   - name: ADP
     careers_url: https://jobs.adp.com/
     ats: unknown              # jobs.adp.com answered with a Cloudflare challenge (403) from here; system not seen
@@ -198,6 +246,53 @@ companies:
     az_sites: Phoenix, Tucson
     confidence: medium        # page seen, Oct 2026: two Arizona internal openings, neither in HR or recruiting
     search: {randstad: https://www.randstadusa.com/jobs/internal}  # the page's own data (window.__ROUTE_DATA__)
+  # Phoenix-metro offices of accounting firms (checked Oct 2026).
+  - name: EY
+    careers_url: https://careers.ey.com/
+    ats: successfactors       # careers.ey.com/ey is a SuccessFactors career site
+    az_sites: Phoenix
+    confidence: high          # live check, Oct 2026: 163 openings with Arizona among their places
+    search: {successfactors: https://careers.ey.com/ey}
+  - name: Grant Thornton
+    careers_url: https://www.grantthornton.com/careers
+    ats: oracle_hcm
+    az_sites: Phoenix
+    confidence: high          # live check, Oct 2026: tax and accounting openings in Phoenix
+    search: {oracle: {host: ehzq.fa.us2.oraclecloud.com, site: CX_1}}
+  - name: BDO
+    careers_url: https://www.bdo.com/careers
+    ats: oracle_hcm           # bdo.com/careers links to two Oracle sites; this is the experienced one
+                              # (BDOEntryLevelCareers has the campus roles)
+    az_sites: Phoenix
+    confidence: high          # live check, Oct 2026: assurance and tax openings in Phoenix
+    search: {oracle: {host: ebqb.fa.us2.oraclecloud.com, site: BDOExperiencedCareers}}
+  - name: CliftonLarsonAllen (CLA)
+    careers_url: https://www.claconnect.com/en/careers
+    ats: workday
+    az_sites: Tempe, Phoenix
+    confidence: high          # live check, Oct 2026: 379 openings, 35 in Arizona (audit, tax, accounting)
+    search: {workday: https://cliftonlarsonallen.wd115.myworkdayjobs.com/CLA}
+  - name: Baker Tilly
+    careers_url: https://www.bakertilly.com/careers
+    ats: workday              # Moss Adams is part of Baker Tilly
+    az_sites: Phoenix, Tempe, Scottsdale
+    confidence: high          # live check, Oct 2026: 458 openings, 31 in Arizona
+    search: {workday: https://bakertilly.wd5.myworkdayjobs.com/BTCareers}
+  - name: Deloitte
+    careers_url: https://apply.deloitte.com/en_US/careers/SearchJobs
+    ats: custom               # avature
+    az_sites: Phoenix, Tempe
+    confidence: medium        # page seen, Oct 2026; no search: postings say "Multiple Locations", with no place to filter on
+  - name: KPMG
+    careers_url: https://www.kpmguscareers.com/job-search/
+    ats: custom               # its own job search (AZ - Phoenix, AZ - Tempe among its places)
+    az_sites: Phoenix, Tempe
+    confidence: medium        # page seen, Oct 2026; no search block yet
+  - name: PwC
+    careers_url: https://www.pwc.com/us/en/careers.html
+    ats: unknown              # pwc.com answered with an Akamai "Access Denied" (403) from here; system not seen
+    az_sites: Phoenix
+    confidence: low
   # Phoenix-metro utilities, aerospace and defense, tech, logistics and retail employers
   # (checked Oct 2026).
   - name: Arizona Public Service   # APS (Pinnacle West)
@@ -322,3 +417,16 @@ companies:
     az_sites: Phoenix, Tempe, Goodyear, Glendale
     confidence: high          # page seen, Oct 2026
     search: {amazon: {loc_query: "Phoenix, AZ, USA", latitude: 33.44825, longitude: -112.0758, radius: 50km}}
+  # Phoenix-area headquarters with finance and accounting teams (checked Oct 2026).
+  - name: Freeport-McMoRan
+    careers_url: https://jobs.fcx.com/
+    ats: successfactors       # a SuccessFactors career site (company freeportmc)
+    az_sites: Phoenix (HQ), Morenci, Bagdad, Safford
+    confidence: high          # live check, Oct 2026: accountants at the Phoenix HQ and the mine sites
+    search: {successfactors: https://jobs.fcx.com}
+  - name: Taylor Morrison
+    careers_url: https://careers.taylormorrison.com/
+    ats: workday              # Scottsdale-based homebuilder
+    az_sites: Scottsdale (HQ), Phoenix
+    confidence: high          # live check, Oct 2026: 48 openings, 9 in Arizona (staff accountants, a controller)
+    search: {workday: https://taylormorrison.wd1.myworkdayjobs.com/TaylorMorrisonCareers}

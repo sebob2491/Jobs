@@ -506,6 +506,24 @@ COVERED_JS = r"""
 }
 """
 
+# Text boxes the page marks invalid while they show a value: shown, editable, not a menu's
+# box, and not the one the person is typing in.
+LOST_BOXES_JS = r"""
+() => {
+  const out = [];
+  for (const el of document.querySelectorAll('input[data-ja-id], textarea[data-ja-id]')) {
+    const type = (el.getAttribute('type') || 'text').toLowerCase();
+    if (!['text', 'email', 'tel', 'url', 'number', 'search'].includes(type) && el.tagName !== 'TEXTAREA') continue;
+    if (el.getAttribute('aria-invalid') !== 'true' || el.readOnly || el.disabled) continue;
+    if (el.getAttribute('role') === 'combobox' || el.getAttribute('role') === 'spinbutton') continue;
+    if (el === document.activeElement || !el.value.trim()) continue;
+    if (!el.getClientRects().length || getComputedStyle(el).visibility === 'hidden') continue;
+    out.push({ id: el.getAttribute('data-ja-id'), value: el.value });
+  }
+  return out;
+}
+"""
+
 # Before opening a dropdown: remember which options are already showing (other menus
 # some sites leave open), so they're never mistaken for this field's choices.
 MARK_OPTIONS_JS = r"""

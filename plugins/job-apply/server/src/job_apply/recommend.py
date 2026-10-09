@@ -37,13 +37,20 @@ _INTERN = re.compile(r"\b(intern|internship|co op|coop)\b")
 _GENERIC_TITLE_WORDS = {"coordinator", "specialist", "manager", "analyst", "associate", "assistant", "representative",
                         "consultant", "director", "senior", "lead", "officer", "administrator", "clerk", "supervisor",
                         "partner", "principal", "junior", "intern", "staff", "team", "level"}
+# Words whose first letters don't say what the work is: an Account Specialist or Key Accounts
+# Manager looks after customers, an Accountant (or Accounts Payable) keeps the books.
+_SAME_WORK = {"accountant": "acctg", "accountants": "acctg", "accounting": "acctg", "accountancy": "acctg",
+              "account": "account", "accounts": "account"}
+_PAYABLES = re.compile(r"\baccounts? (payable|receivable)\b")
+
+
 def _near_target(title: str, targets: list[str]) -> bool:
     """A title sharing a word that says what the work is with a target title: "field" for field
     service, "recruiting" for Recruiter (a word's first six letters), "HR" for HR Generalist
     ("Human Resources Assistant" says HR too). Not a generic one: "coordinator"."""
     def stems(text: str) -> set[str]:
-        return {w[:6] for w in title_words(text).split()
-                if (len(w) > 3 or w == "hr") and w not in _GENERIC_TITLE_WORDS}
+        words = _PAYABLES.sub(r"accounting \1", title_words(text)).split()
+        return {_SAME_WORK.get(w, w[:6]) for w in words if (len(w) > 3 or w == "hr") and w not in _GENERIC_TITLE_WORDS}
     mine = stems(title)
     return any(stems(t) & mine for t in targets)
 

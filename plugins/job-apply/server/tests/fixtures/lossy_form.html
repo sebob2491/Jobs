@@ -5,7 +5,8 @@
 <!-- like Insight Enterprises' Eightfold form (live, Oct 2026): a quick run of fills loses some of
      them from the page's own record (each change is saved a moment later over the record as it
      stood, so one close behind another undoes it), and a box whose answer was lost is marked
-     "cannot be left blank" while it still shows the answer -->
+     "cannot be left blank" while it still shows the answer. Middle Name saves over the record as it
+     stood when the page loaded, so filling it later loses everything filled before -->
 <h2>Contact Information</h2>
 <form id="apply" novalidate>
   <label for="fn">First Name</label><input id="fn" name="First Name">
@@ -18,10 +19,17 @@
   <div class="field-error" id="ci-err" hidden></div>
   <label for="zp">Postal Code</label><input id="zp" name="Postal Code">
   <div class="field-error" id="zp-err" hidden></div>
+  <!-- a phone number this site never takes, and a note the desk didn't write: both marked invalid -->
+  <label for="ph">Phone</label><input id="ph" name="Phone">
+  <div class="field-error" id="ph-err" hidden>Phone number is invalid.</div>
+  <label for="nt">Notes</label><input id="nt" name="Notes" value="see attached" aria-invalid="true">
+  <label for="mn">Middle Name</label><input id="mn" name="Middle Name">
+  <div class="field-error" id="mn-err" hidden></div>
   <button type="submit">Next</button>
 </form>
 <script>
   window.record = {};
+  window.cleared = {};  // how many times each box was emptied
   const touched = new Set();
   function check() {
     for (const name of touched) {
@@ -35,7 +43,13 @@
   }
   for (const el of document.querySelectorAll('input')) {
     el.addEventListener('input', () => {
-      const stale = {...window.record};  // the record as it stood when the box changed
+      if (!el.value) window.cleared[el.name] = (window.cleared[el.name] || 0) + 1;
+      if (el.name === 'Phone' || el.name === 'Notes') {
+        el.setAttribute('aria-invalid', el.value ? 'true' : 'false');
+        return;
+      }
+      // the record as it stood when the box changed (Middle Name's: when the page loaded)
+      const stale = el.name === 'Middle Name' ? {} : {...window.record};
       const value = el.value;
       setTimeout(() => { window.record = {...stale, [el.name]: value}; touched.add(el.name); check(); }, 100);
     });
