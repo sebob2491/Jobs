@@ -159,9 +159,9 @@ def _aliases(n: str) -> set[str]:
 
 
 _DEGREES = [
-    ("doctorate", r"\b(ph ?d|doctor(ate)?|d ?phil|ed ?d|pharm ?d|psy ?d|dnp|dds|dvm|jd)\b"),
-    ("master", r"\b(master s?|masters|ms|m s|ma|m a|msc|meng|m eng|mba|mfa|msn|mph|mpa|macc|m ed|mfin)\b"),
-    ("bachelor", r"\b(bachelor s?|bachelors|bs|b s|ba|b a|bsc|beng|b eng|bse|bsee|bsme|bsn|bba|bfa|bsba)\b"),
+    ("doctorate", r"\b(ph ?d|doctor(ate)?|d ?phil|ed ?d)\b"),
+    ("master", r"\b(master s?|masters|ms|m s|ma|m a|msc|meng|m eng|mba|mfa)\b"),
+    ("bachelor", r"\b(bachelor s?|bachelors|bs|b s|ba|b a|bsc|beng|b eng|bse|bsee|bsme)\b"),
     ("associate", r"\b(associate s?|associates|aas|a a s)\b"),
     ("high_school", r"\b(high school|ged)\b"),
 ]
@@ -610,117 +610,106 @@ def _veteran(prof: Profile, job: dict, label: str = "") -> Any:
 
 
 _LEVELS = ["high_school", "associate", "bachelor", "master", "doctorate"]
-# Words that say a degree isn't (yet) earned, however a profile puts it: "Bachelor's (expected 2027)",
-# "BS - current student", "Bachelor's (not yet completed)", "graduating 2027", "ongoing"
-_NOT_EARNED = re.compile(r"\b(expected|anticipated|candidate|projected|pending|graduating|ongoing|current\w*|students?|"
-                         r"studying|pursuing|progress|process|not|incomplete|unfinished|yet|will|to be|toward\w*|some|"
-                         r"coursework|enrolled|attending|partial\w*|until)\b")
-_DONE_STATUS = {"completed", "complete", "graduated", "finished", "done", "conferred", "awarded", "earned"}
+# Degrees written the way setup writes them, or by their full names: nothing an abbreviation
+# could also be ("MA" is a Medical Assistant certificate too) and nothing more ("Equivalent",
+# "Program", "(expected 2027)")
+_DEGREE_NAMES = [
+    (0, r"high school( diploma)?|ged|high school diploma or ged|ged or high school diploma"),
+    (1, r"associate( s|s)?( degree)?|associate of (applied )?(science|arts)"),
+    (2, r"bachelor( s|s)?( degree)?|bachelor of (science|arts|fine arts|business administration)"),
+    (3, r"master( s|s)?( degree)?|master of (science|arts|fine arts|business administration)"),
+    (4, r"doctorate|doctoral degree|ph d|doctor of philosophy"),
+]
+_SOME_STUDY = [(-1, r"some high school"),
+               (0, r"some college( no degree| coursework)?|college coursework( no degree)?|some university")]
 
 
-def _plainly_a_degree(text: Any) -> bool:
-    """A degree written as just its name ("Bachelor's Degree", "BS Finance"): no year,
-    brackets or word saying it's still to come."""
-    raw = str(text or "")
-    return bool(degree_key(raw)) and not re.search(r"\d|[()\[\]]", raw) and not _NOT_EARNED.search(norm(raw))
+def _named_level(text: Any, names: list[tuple[int, str]] = _DEGREE_NAMES) -> int | None:
+    n = norm(text)
+    return next((rank for rank, pattern in names if re.fullmatch(pattern, n)), None)
 
 
-def _degree_done(entry: dict) -> bool:
-    """An education_history entry whose degree was earned, by positive evidence only: its
-    degree written plainly, an end date already past, and nothing marking it current."""
-    if not _plainly_a_degree(entry.get("degree")) or not finished_degree(entry.get("degree")):
-        return False
-    if norm(entry.get("current")) in ("true", "yes", "y", "1") or entry.get("current") is True:
-        return False
+def _under_way(entry: dict) -> bool:
+    """An education_history entry that isn't over: an end of "present" or still to come,
+    marked current, or a status that isn't a finished one."""
+    end = entry.get("end")
+    if is_present(end) or entry.get("current") not in (None, False, "", "no", "false"):
+        return True
     status = norm(entry.get("status"))
-    if status and status not in _DONE_STATUS:
-        return False
-    month, year = parse_month_year(entry.get("end"))
-    if not year or is_present(entry.get("end")):
+    if status and not re.match(r"(completed?|graduated|finished|conferred|awarded|earned)\b", status):
+        return True
+    month, year = parse_month_year(end)
+    if not year:
         return False
     today = date.today()
-    return int(year) < today.year or int(year) == today.year and bool(month) and int(month or 0) < today.month
+    return int(year) > today.year or int(year) == today.year and int(month or 12) >= today.month
 
 
-def _finished_levels(prof: Profile) -> tuple[list[tuple[int, list[str]]], int | None, bool]:
-    """What the profile says of the person's degrees: the earned ones it can rank, as (level
-    rank, majors); the most the person can have finished, by the highest education it states
-    (None when it states none it can read); and whether an earned degree couldn't be ranked (a
-    "No" can't then be told). "Some college" has finished no college degree; a degree written
-    as still to come, at most what comes below it."""
-    held: list[tuple[int, list[str]]] = []
-    unranked = False
-    for e in _listed(prof.get("education_history")):
-        if not isinstance(e, dict):
-            continue
-        if _degree_done(e):
-            majors = [norm(m) for m in re.split(r"\s*(?:,|/|&|\band\b)\s*", str(e.get("major") or e.get("field") or ""))]
-            held.append((_LEVELS.index(degree_key(str(e["degree"])) or ""), [m for m in majors if m]))
-        elif finished_degree(e.get("degree")) and not degree_key(str(e.get("degree") or "")):
-            unranked = True
-    highest = str(prof.get("education.highest_degree") or "").strip()
-    most = None
-    if highest:
-        n = norm(highest)
-        key = degree_key(n)
-        if _plainly_a_degree(highest) and finished_degree(highest):
-            most = _LEVELS.index(key or "")
-            held.append((most, []))
-        elif key:
-            most = _LEVELS.index(key) - 1  # that degree isn't earned
-        elif _partial_study(n):
-            most = -1 if _partial_level(n) == "high_school" else 0 if _partial_level(n) else None
-        else:
-            unranked = True
-    return held, most, unranked
+def _ended(entry: dict) -> bool:
+    """An entry with an end date already past (this year's only by an earlier month)."""
+    month, year = parse_month_year(entry.get("end"))
+    return bool(year) and not _under_way(entry)
 
 
-_FIELD_FILLER = {"of", "and", "in", "the", "a", "an", "science", "sciences", "arts", "degree", "major"}
+_FIELD_FILLER = {"of", "in", "the", "a", "an"}
 
 
 def _same_field(field: str, major: str) -> bool:
-    """A field a question names is one of the person's majors, word for word ("Finance" is
-    "Finance"; "Physics" isn't "Physical Education", nor "Mechanical Engineering" "Mechanical
-    Engineering Technology")."""
+    """A field a question names is the major, word for word: "Finance" is "Finance";
+    "Physics" isn't "Physical Education", nor "Computer Science" "Computer Arts"."""
     words = set(field.split()) - _FIELD_FILLER
     return bool(words) and words == set(major.split()) - _FIELD_FILLER
 
 
-# The question as nothing but a degree, maybe "or higher", maybe "in <fields>": anything else
-# ("with honors", "and a CPA", "from an accredited university") is a condition the profile can't confirm
-_DEGREE_ONLY = re.compile(
-    r"^(?:do you (?:have|hold|possess) |have you (?:earned|completed|received) )?(?:an? |the )?"
-    r"(?:high school diploma(?: or (?:a )?ged)?|ged|(?:[a-z]+ ){0,1}?(?:associate|bachelor|master|doctor|ph d|mba|bs|ba|ms|"
-    r"ma|bsn|bba|msn)\w*(?: s)?(?: of (?:science|arts|fine arts|business administration))?(?: degree| diploma)?)"
-    r"(?: or (?:higher|above|greater))?(?: in (?P<fields>[a-z ]+?))?"
-    r"(?: (?:required|preferred|or higher|or above|or greater))*$")
+# The question as nothing but a level of education, maybe "or higher", maybe "in <fields>":
+# a kind of degree ("Bachelor of Science", "BSN") or anything more ("with honors", "and a
+# CPA", "from an accredited university") isn't one the profile can confirm
+_DEGREE_ONLY = (r"^(?:do you (?:have|hold|possess) |have you (?:earned|completed|received) )?(?:an? |the )?"
+                r"(?:high school diploma(?: or (?:a )?ged)?|ged|(?:associate|bachelor|master)(?: s|s)? degree|"
+                r"doctorate(?: degree)?|doctoral degree)(?: or (?:higher|above|greater))?(?: in (?P<fields>[a-z ]+?))?"
+                r"(?: (?:required|preferred|or higher|or above|or greater))*$")
 
 
 def _has_degree(prof: Profile, job: dict, label: str = "") -> Any:
     """"Do you have a Bachelor's degree?", "Bachelor's Degree in Accounting or Finance
-    Required": from the degrees the profile shows earned. Yes when one is at that level or
-    above (one of its majors a field the question names, when it names some), and the
-    question asks nothing more. No when the most the person can have finished is below it and
-    no field is named. Else the person's to say: "...or equivalent experience", a degree
-    under way, two levels at once, a condition the profile can't confirm."""
-    asked = norm(label)
-    levels = {key for key, pattern in _DEGREES if re.search(pattern, asked)}
-    shape = _DEGREE_ONLY.match(asked)
-    if len(levels) != 1 or not shape:
+    Required": from the education the profile states in the forms setup writes ("Bachelor's
+    Degree"; "Some college"). Yes when the highest degree stated is at that level or above
+    (and, for a field the question names, an education_history entry of that degree, ended,
+    whose major is the field). No when the highest stated is below it, no field is named and
+    no school lists anything else. Else the person's to say, as is a degree any school shows
+    still under way."""
+    shape = re.match(_DEGREE_ONLY, norm(label))
+    level = degree_key(norm(label))
+    if not shape or level is None:
         return None
-    rank = _LEVELS.index(levels.pop())
+    rank = _LEVELS.index(level)
     fields: list[str] = []
     if shape.group("fields"):  # read from the question as written, its commas telling fields apart
         m = re.search(r"\bin (.+)$", label.lower())
         named = re.sub(r"(\W+(required|preferred|or higher|or above|or greater))+\W*$", "", m.group(1)) if m else ""
         fields = [norm(f) for f in re.split(r"\bor\b|[,;/]", named) if norm(f)]
-    held, most, unranked = _finished_levels(prof)
-    if any(r >= rank and (not fields or any(_same_field(f, major) for f in fields for major in majors))
-           for r, majors in held):
-        return "Yes"
-    if not fields and most is not None and not unranked and max([most, *(r for r, _ in held)]) < rank:
-        return "No"
-    return None
+    schools = [e for e in _listed(prof.get("education_history")) if isinstance(e, dict)]
+    if any(_under_way(e) and (degree_key(norm(e.get("degree"))) or "") in _LEVELS[rank:] for e in schools):
+        return None  # a degree at that level still under way
+    highest = prof.get("education.highest_degree")
+    stated = _named_level(highest)
+    if stated is not None and stated >= rank:
+        if not fields:
+            return "Yes"
+        for e in schools:
+            earned = _named_level(e.get("degree"))
+            if earned is not None and earned >= rank and _ended(e) and any(_same_field(f, norm(e.get("major")))
+                                                                            for f in fields):
+                return "Yes"
+        return None
+    most = stated if stated is not None else _named_level(highest, _SOME_STUDY)
+    if fields or most is None or most >= rank:
+        return None
+    for e in schools:  # every school's degree is none, or one below the level asked
+        listed = _named_level(e.get("degree"))
+        if str(e.get("degree") or "").strip() and (listed is None or listed >= rank):
+            return None
+    return "No"
 
 
 def _us_person(prof: Profile, job: dict) -> Any:
@@ -873,9 +862,7 @@ RULES: list[tuple[str, str, Getter, int | None, set[str] | None]] = [
     ("current_title", r"(current|most recent|present) (job )?(title|position|role)", _p("experience.current_title"), 60, None),
     ("total_years", r"^(total )?years of (professional |work )?experience$", _p("experience.total_years"), 60, None),
     # "Do you have a Bachelor's degree?", Phoenix Children's "Bachelor's Degree in Accounting or Finance Required"
-    ("has_degree", r"^(?!.*\b(major|minor|field of study|concentration|(?<!high )school|institution|name|date|year|gpa|graduat\w*|"
-     r"expected)\b)(do you (have|hold|possess) an? |have you (earned|completed|received) an? )?(high school diploma|ged\b|"
-     r"(associate|bachelor|master|doctor)\w*( s)? (degree|diploma))", _has_degree, 200, {"select", "listbox", "combobox", "radio_group"}),
+    ("has_degree", _DEGREE_ONLY, _has_degree, 200, {"select", "listbox", "combobox", "radio_group"}),
     ("degree", r"highest (level of )?(education|degree)|^degree$|education level", _edu("highest_degree", "degree"), 80, None),
     ("school", r"^(school|university|college|institution)\b(?!.*\b(major|degree|gpa|city|state|location|country|year|date|address|"
      r"zip|postal|phone|e ?mail|fax|code)\b)",

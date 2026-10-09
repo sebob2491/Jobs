@@ -1037,11 +1037,20 @@ def test_a_degree_question_from_the_degrees_finished():
     assert answer("Bachelor's Degree in Accounting or Finance Required", some_college) is None
     assert answer("Do you have a high school diploma or GED?", some_college) is None  # not said
     finance = with_education("Bachelor's Degree", [{"school": "Example State University", "degree": "Bachelor's Degree",
-                                                    "major": "Finance and Economics", "end": 2020}])
+                                                    "major": "Finance", "end": 2020}])
     assert answer("Bachelor's Degree in Accounting or Finance Required", finance) == "Yes"
     assert answer("Bachelor's degree in Business Administration, Finance, or related field", finance) == "Yes"
     assert answer("Do you have a high school diploma or GED?", finance) == "Yes"  # below a bachelor's
     assert answer("Bachelor's degree in Engineering", finance) is None
+    two = with_education("Bachelor's Degree", [{"degree": "Bachelor's Degree", "major": "Finance and Economics", "end": 2020}])
+    assert answer("Bachelor's Degree in Finance Required", two) is None  # a major is the field itself, whole
+    certificate = with_education("High School Diploma", [{"degree": "MA", "major": "Medical Assisting", "end": 2019}])
+    assert answer("Do you have a Master's degree?", certificate) is None  # "MA" is a certificate here
+    pursuing = with_education("Bachelor's Degree", [{"degree": "Bachelor's Degree", "end": 2030}])
+    assert answer("Do you have a Bachelor's degree?", pursuing) is None  # the stated degree is still under way
+    for highest in ("Bachelor's Degree Equivalent", "Bachelor's Degree Program", "BS - withdrew", "Bachelor's, senior year"):
+        assert answer("Do you have a Bachelor's degree?", with_education(highest, [])) is None, highest
+    assert answer("Do you have a Bachelor of Science degree?", finance) is None  # a kind of degree the profile doesn't name
     assert answer("Do you have a Master's degree?", finance) == "No"
     # a question asking anything more is the person's: equivalence, a condition, two levels, a second requirement
     for asked in ("Bachelor's degree or equivalent experience", "Do you have a Bachelor's degree from an accredited university?",
@@ -1072,7 +1081,7 @@ def test_a_degree_question_from_the_degrees_finished():
     odd = with_education("Bachelor's", [{"degree": "Licenciatura", "end": 2015}])
     assert answer("Do you have a Master's degree?", odd) is None
     msn = with_education("Bachelor's", [{"degree": "MSN", "end": 2018}])
-    assert answer("Do you have a Master's degree?", msn) == "Yes"
+    assert answer("Do you have a Master's degree?", msn) is None  # an abbreviation isn't read: the person says
     # a box asking about a degree's details isn't the question
     assert answer("Bachelor's Degree Major", finance, "text") != "Yes"
     assert answer("Bachelor's degree graduation date", finance, "text") != "Yes"
