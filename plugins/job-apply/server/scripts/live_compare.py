@@ -113,9 +113,9 @@ class Check:
 
 
 CHECKS = {
-    "pipeline": Check("Apply pipeline: where it ended on one posting per employer", "LIVE_PIPELINE ",
-                      pipeline_outcome),
-    "hr": Check("Apply pipeline, HR jobs on the Phoenix list: where it ended on one posting per employer",
+    "pipeline": Check("Apply pipeline, semiconductor list (technician jobs): where it ended on one posting per "
+                      "employer", "LIVE_PIPELINE ", pipeline_outcome),
+    "hr": Check("Apply pipeline, Phoenix list (HR jobs): where it ended on one posting per employer",
                 "LIVE_PIPELINE ", pipeline_outcome),
     "search": Check("Search: does each employer's search work", "LIVE_RESULT ", search_outcome),
 }
@@ -125,10 +125,11 @@ def read_log(text: str, prefix: str) -> dict[str, dict[str, Any]]:
     """The records in live_smoke.py's output, by company (its last record, if it has two)."""
     records: dict[str, dict[str, Any]] = {}
     for line in text.splitlines():
-        if not line.startswith(prefix):
+        at = line.find(prefix)  # (a record run on from a line cut short before it: a long screenshot's)
+        if at < 0:
             continue
         try:
-            rec = json.loads(line[len(prefix):])
+            rec = json.loads(line[at + len(prefix):])
         except ValueError:  # a line cut short by a run that was stopped
             continue
         if isinstance(rec, dict) and rec.get("company"):

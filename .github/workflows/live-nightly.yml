@@ -31,7 +31,7 @@ permissions:
 jobs:
   check:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 110
     defaults:
       run:
         working-directory: plugins/job-apply/server
@@ -62,7 +62,7 @@ jobs:
       - name: Pipeline check (HR jobs, phoenix-metro list)
         id: hr
         continue-on-error: true
-        timeout-minutes: 25
+        timeout-minutes: 30
         run: |
           set -o pipefail
           mkdir -p live-hr

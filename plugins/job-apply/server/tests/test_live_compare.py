@@ -205,14 +205,18 @@ def test_find_issue_takes_the_oldest_with_the_title():
     assert lc.find_issue([]) is None
 
 
-def _run(tmp_path, issues, pipeline_records, search_records=(), partial=()):
+def _run(tmp_path, issues, pipeline_records, search_records=(), partial=(), hr_records=None):
     (tmp_path / "pipeline.log").write_text(log("LIVE_PIPELINE ", pipeline_records))
     (tmp_path / "search.log").write_text(log("LIVE_RESULT ", search_records))
     (tmp_path / "issues.json").write_text(json.dumps(issues))
     out = tmp_path / "github_output"
     out.write_text("")
+    hr = []
+    if hr_records is not None:
+        (tmp_path / "hr.log").write_text(log("LIVE_PIPELINE ", hr_records))
+        hr = ["--log", f"hr={tmp_path / 'hr.log'}"]
     argv = ["--issues", str(tmp_path / "issues.json"), "--run-url", "https://example.com/run/3",
-            "--log", f"pipeline={tmp_path / 'pipeline.log'}", "--log", f"search={tmp_path / 'search.log'}",
+            "--log", f"pipeline={tmp_path / 'pipeline.log'}", "--log", f"search={tmp_path / 'search.log'}", *hr,
             "--body-out", str(tmp_path / "body.md"), "--comment-out", str(tmp_path / "comment.md"),
             "--github-output", str(out), *[a for p in partial for a in ("--partial", p)]]
     assert lc.main(argv) == 0
@@ -253,29 +257,27 @@ def test_main_a_check_that_stopped_part_way(tmp_path):
 def test_the_hr_pipeline_check_starts_quietly_then_reports_changes(tmp_path):
     """The nightly check's HR run (the pipeline on the Phoenix list, as an HR applicant) is a
     check of its own: its first night saves its employers without reporting each as added, and
-    after that a change in one is reported like the semiconductor list's."""
-    issue = {"number": 7, "title": "Nightly live check", "state": "OPEN",
-             "body": _run(tmp_path, [], [pipeline_rec("ASM")], [search_rec("USAA")])[0]}
-
-    def night(hr_records):
-        (tmp_path / "hr.log").write_text(log("LIVE_PIPELINE ", hr_records))
-        (tmp_path / "pipeline.log").write_text(log("LIVE_PIPELINE ", [pipeline_rec("ASM")]))
-        (tmp_path / "search.log").write_text(log("LIVE_RESULT ", [search_rec("USAA")]))
-        (tmp_path / "issues.json").write_text(json.dumps([issue]))
-        (tmp_path / "out").write_text("")
-        argv = ["--issues", str(tmp_path / "issues.json"), "--log", f"pipeline={tmp_path / 'pipeline.log'}",
-                "--log", f"hr={tmp_path / 'hr.log'}", "--log", f"search={tmp_path / 'search.log'}",
-                "--body-out", str(tmp_path / "body.md"), "--comment-out", str(tmp_path / "comment.md"),
-                "--github-output", str(tmp_path / "out")]
-        (tmp_path / "comment.md").unlink(missing_ok=True)
-        assert lc.main(argv) == 0
-        comment = tmp_path / "comment.md"
-        return (tmp_path / "body.md").read_text(), comment.read_text() if comment.exists() else None
-
-    body, comment = night([pipeline_rec("Axon"), pipeline_rec("Banner Health", "needs_you", "sign_in")])
-    assert comment is None  # a check new since the last run: nothing reported as added
+    after that a change in one is reported under its own heading."""
+    body = _run(tmp_path, [], [pipeline_rec("ASM")], [search_rec("USAA")])[0]
+    issue = {"number": 7, "title": "Nightly live check", "state": "OPEN", "body": body}
+    hr1 = [pipeline_rec("Axon"), pipeline_rec("Banner Health", "needs_you", "sign_in")]
+    body, comment, outputs = _run(tmp_path, [issue], [pipeline_rec("ASM")], [search_rec("USAA")], hr_records=hr1)
+    assert comment is None and outputs["changes"] == "0"  # a check new since the last run: nothing added
     assert lc.read_state(body)["hr"] == {"Axon": "ready", "Banner Health": "needs_you sign_in"}
-    assert "Apply pipeline, HR jobs on the Phoenix list" in body
+    assert "### Apply pipeline, Phoenix list (HR jobs)" in body
     issue["body"] = body
-    body, comment = night([pipeline_rec("Axon", "needs_you", "stuck"), pipeline_rec("Banner Health", "needs_you", "sign_in")])
-    assert comment is not None and "Axon: `ready` → `needs_you stuck`" in comment
+    hr2 = [pipeline_rec("Axon", "needs_you", "stuck"), pipeline_rec("Banner Health", "needs_you", "sign_in")]
+    body, comment, outputs = _run(tmp_path, [issue], [pipeline_rec("ASM")], [search_rec("USAA")], hr_records=hr2)
+    assert outputs["changes"] == "1"
+    hr_part = comment.split("Apply pipeline, Phoenix list (HR jobs)", 1)[1]
+    assert "Axon: `ready` → `needs_you stuck`" in hr_part and "ASM" not in comment
+
+
+def test_a_record_run_on_from_a_cut_screenshot_line_is_read():
+    """A screenshot printed before an employer's record was cut at 64 KiB, and the record ran on
+    into it: ASM, Ebara and onsemi went missing from the nightly issue, and 'stuck' outcomes (the
+    ones with a screenshot) were never saved."""
+    text = 'LIVE_SHOT "ASM" /9j/' + "A" * 65530 + "LIVE_PIPELINE " + json.dumps(pipeline_rec("ASM", "needs_you", "stuck"))
+    text += "\n" + log("LIVE_PIPELINE ", [pipeline_rec("KLA")])
+    assert {name: r.outcome for name, r in lc.results("pipeline", text).items()} == {
+        "ASM": "needs_you stuck", "KLA": "ready"}
