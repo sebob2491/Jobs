@@ -765,7 +765,7 @@ async def main() -> int:
             await server.close_browser()  # start the next company with a fresh browser
         rec["seconds"] = round(time.time() - started, 1)
         records.append(rec)
-        print("LIVE_RESULT " + json.dumps(rec, default=str), flush=True)
+        print("\nLIVE_RESULT " + json.dumps(rec, default=str), flush=True)
 
     for company in companies:
         if "sitecore" in (company.get("search") or {}):
@@ -840,6 +840,9 @@ def _cell(value: Any) -> str:
     return str(value).replace("|", "\\|")
 
 
+SHOT_CHARS = 48_000  # a screenshot's base64, at most, on its line of the log
+
+
 async def print_shot(name: str, page: Any) -> None:
     """A small screenshot in the log, where it can be read without the run's artifacts.
     The page only ever holds the fake applicant's details."""
@@ -848,10 +851,16 @@ async def print_shot(name: str, page: Any) -> None:
     if page is None or page.is_closed():
         return
     try:
-        data = await page.screenshot(type="jpeg", quality=35, full_page=False, scale="css")
-        print(f"LIVE_SHOT {json.dumps(name)} {base64.b64encode(data).decode()}", flush=True)
+        for quality in (35, 20, 10):  # well under 64 KiB a line: one longer was cut there, and the
+            # employer's record printed after it ran on into it (lost to live_compare.py, Oct 2026)
+            shot = base64.b64encode(await page.screenshot(type="jpeg", quality=quality, full_page=False,
+                                                          scale="css")).decode()
+            if len(shot) <= SHOT_CHARS:
+                print(f"\nLIVE_SHOT {json.dumps(name)} {shot}", flush=True)
+                return
+        print(f"\nLIVE_SHOT {json.dumps(name)} too large to print", flush=True)
     except Exception as e:  # noqa: BLE001
-        print(f"LIVE_SHOT {json.dumps(name)} failed: {e}", flush=True)
+        print(f"\nLIVE_SHOT {json.dumps(name)} failed: {e}", flush=True)
 
 
 def fake_answer(q: dict[str, Any]) -> Any:
@@ -1125,7 +1134,7 @@ async def pipeline_main(companies: list[dict[str, Any]], out: Path, fixtures: bo
             await server.close_browser()
         rec["seconds"] = round(time.time() - started, 1)
         records.append(rec)
-        print("LIVE_PIPELINE " + json.dumps(rec, default=str), flush=True)
+        print("\nLIVE_PIPELINE " + json.dumps(rec, default=str), flush=True)  # (on a line of its own, always)
     (out / "pipeline.json").write_text(json.dumps(records, indent=2, default=str))
     _pipeline_report(records, out)
     return 0
@@ -1147,17 +1156,23 @@ def _pipeline_report(records: list[dict[str, Any]], out: Path) -> None:
 
 async def parallel_main(args: argparse.Namespace) -> int:
     """Run the employers in args.parallel groups at once, each in its own process (a home, a
-    browser and a fake email of its own), then print their results in order as one run."""
+    browser and a fake email of its own). Each line they print is passed on as it comes, so a
+    run stopped part way (the nightly check's time limit) keeps the employers it reached."""
     n = args.parallel
     passed = [*(["--companies", args.companies] if args.companies else []), *(["--fixtures"] if args.fixtures else []),
               *(["--pipeline"] if args.pipeline else []), *(["--fake-passwords"] if args.fake_passwords else []),
               *(["--lists", args.lists] if args.lists else []), "--role", args.role]
     children = [await asyncio.create_subprocess_exec(
         sys.executable, __file__, *passed, "--shard", f"{i}/{n}", "--out", str(args.out / f"shard-{i}"),
-        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT) for i in range(n)]
-    outputs = await asyncio.gather(*(c.communicate() for c in children))
-    for stdout, _ in outputs:
-        sys.stdout.write(stdout.decode(errors="replace"))
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT, limit=2 ** 24) for i in range(n)]
+
+    async def relay(child: Any) -> None:
+        while line := await child.stdout.readline():  # whole lines only: they never run into each other
+            sys.stdout.write(line.decode(errors="replace"))
+            sys.stdout.flush()
+        await child.wait()
+
+    await asyncio.gather(*(relay(c) for c in children))
     if args.pipeline:
         records = []
         for i in range(n):

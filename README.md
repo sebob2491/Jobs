@@ -312,8 +312,10 @@ each in a browser of its own; every site is still visited once. A full run then
 takes about 6 minutes instead of 22.
 
 **Nightly live check.** The `live-nightly` workflow runs every night at 3:17 AM
-Arizona time (or from the Actions tab): the pipeline check on the semiconductor list
-and the search check on the phoenix-metro list, four employers at a time.
+Arizona time (or from the Actions tab), four employers at a time: the pipeline check on
+the semiconductor list (technician jobs), the pipeline check on the phoenix-metro list
+for HR jobs (`--role hr`, an applicant with an HR background), and the search check on
+the phoenix-metro list. Each has its own table in the issue.
 `scripts/live_compare.py` boils each employer down to one result that holds steady
 from night to night: where the pipeline ended (`ready`, `needs_you sign_in`,
 `needs_you stuck`, ...), or whether the search works (`works`, `error`, or `no search`).

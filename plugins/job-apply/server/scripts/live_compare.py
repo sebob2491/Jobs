@@ -1,7 +1,8 @@
 """What changed since last night's live check, employer by employer. No network.
 
     uv run python scripts/live_compare.py --issues issues.json \
-        --log pipeline=live-pipeline/run.log --log search=live-search/run.log [--partial search] \
+        --log pipeline=live-pipeline/run.log --log search=live-search/run.log --log hr=live-hr/run.log \
+        [--partial search] \
         --run-url URL --body-out body.md --comment-out comment.md [--github-output "$GITHUB_OUTPUT"]
 
 Reads what scripts/live_smoke.py printed (one LIVE_PIPELINE or LIVE_RESULT line of JSON per
@@ -15,6 +16,8 @@ The outcomes:
   pipeline  (live_smoke.py --pipeline): where the Job Desk's pipeline ended, the report's
             "Ended" and "Waiting on": "ready", "needs_you sign_in", "needs_you stuck",
             "failed", "no postings" (the search found none) or "crash".
+  hr        (live_smoke.py --pipeline --lists phoenix-metro --role hr): the same, for HR jobs on
+            the Phoenix list, as an applicant with an HR background.
   search    (live_smoke.py without --pipeline): whether the employer's search ran without an
             error: "works" or "error"; "no search" for an employer without a search block (its
             careers page is only opened). How many openings it found changes daily, so it's in
@@ -110,8 +113,10 @@ class Check:
 
 
 CHECKS = {
-    "pipeline": Check("Apply pipeline: where it ended on one posting per employer", "LIVE_PIPELINE ",
-                      pipeline_outcome),
+    "pipeline": Check("Apply pipeline, semiconductor list (technician jobs): where it ended on one posting per "
+                      "employer", "LIVE_PIPELINE ", pipeline_outcome),
+    "hr": Check("Apply pipeline, Phoenix list (HR jobs): where it ended on one posting per employer",
+                "LIVE_PIPELINE ", pipeline_outcome),
     "search": Check("Search: does each employer's search work", "LIVE_RESULT ", search_outcome),
 }
 
@@ -120,10 +125,11 @@ def read_log(text: str, prefix: str) -> dict[str, dict[str, Any]]:
     """The records in live_smoke.py's output, by company (its last record, if it has two)."""
     records: dict[str, dict[str, Any]] = {}
     for line in text.splitlines():
-        if not line.startswith(prefix):
+        at = line.find(prefix)  # (a record run on from a line cut short before it: a long screenshot's)
+        if at < 0:
             continue
         try:
-            rec = json.loads(line[len(prefix):])
+            rec = json.loads(line[at + len(prefix):])
         except ValueError:  # a line cut short by a run that was stopped
             continue
         if isinstance(rec, dict) and rec.get("company"):
