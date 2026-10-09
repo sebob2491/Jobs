@@ -371,9 +371,15 @@ def _workday_location_facets(facets: Any, terms: list[str]) -> dict[str, list[st
 
 async def _workday(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, terms: list[str]) -> list[Listing]:
     if isinstance(cfg, list):  # an employer with more than one site (PwC's experienced and entry-level ones)
-        found: list[Listing] = []
+        found: list[Listing] = []  # (keep_listings caps them all at the limit)
+        failed: list[Exception] = []
         for site_url in cfg:
-            found += await _workday(client, site_url, query, limit, terms)
+            try:
+                found += await _workday(client, site_url, query, limit, terms)
+            except Exception as e:  # one site down still leaves the other's openings
+                failed.append(e)
+        if failed and not found:
+            raise failed[0]
         return found
     parts = workday_parts(str(cfg).rstrip("/") + "/")
     if not parts:
