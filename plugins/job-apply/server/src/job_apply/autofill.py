@@ -649,9 +649,16 @@ _DEGREE_ONLY = (r"^(?:do you (?:have|hold|possess) |have you (?:earned|completed
 # isn't that degree ("Welding Certificate", "Juris Doctor", a diploma's equivalent: GED, HiSET, TASC, HSED)
 _NOT_DONE_FIELD = re.compile(r"\b(expected|anticipated|pending|progress|ongoing|current\w*|pursuing|enrolled|incomplete|"
                              r"unfinished|not|some|coursework|withdr\w*|abd|candidate|graduating|toward\w*|partial\w*|"
-                             r"\d{4})\b")
-_NOT_THAT_DEGREE = re.compile(r"\b(certificates?|certification|juris|jd|md|pharm ?d|hiset|tasc|hsed|ged|equivalen\w*|"
-                              r"general educational?)\b")
+                             r"hold|left|remaining|spring|summer|fall|winter)\b|'\d{2}\b")
+# a diploma's equivalents, and degrees a field may show to be something other than the level written
+_EQUIVALENT = r"ged|hiset|tasc|hsed|equivalen\w*|general educational development|general equivalency"
+_NOT_THAT_DEGREE = re.compile(rf"\b(certificates?|juris|jd|md|pharm ?d|{_EQUIVALENT}|doctor of (medicine|pharmacy|dental|"
+                              r"nursing|jurisprudence|osteopathic|veterinary|physical therapy|optometry|law))\b")
+
+
+def _future_year(text: str) -> bool:
+    """A year in a field still to come ("Finance 2027"): the degree isn't done."""
+    return any(int(y) > date.today().year for y in re.findall(r"\b((?:19|20)\d{2})\b", text))
 
 
 def _degrees_earned(prof: Profile) -> tuple[list[tuple[int, str]], bool]:
@@ -668,9 +675,10 @@ def _degrees_earned(prof: Profile) -> tuple[list[tuple[int, str]], bool]:
         if not isinstance(d, dict) or set(d) - {"level", "field"}:
             unread = True
             continue
-        field = norm(d.get("field"))
+        written = str(d.get("field") or "").lower()
+        field = norm(written)
         level = norm(d.get("level")).replace(" ", "_")
-        if _NOT_DONE_FIELD.search(field) or level != "ged" and _NOT_THAT_DEGREE.search(field):
+        if _NOT_DONE_FIELD.search(written) or _future_year(field) or level != "ged" and _NOT_THAT_DEGREE.search(field):
             unread = True
             continue
         if level == "ged":
@@ -702,8 +710,9 @@ def _has_degree(prof: Profile, job: dict, label: str = "") -> Any:
     # a high school diploma isn't a GED, nor a GED a diploma; "a high school diploma or GED" is either
     deg = shape.group("deg")
     kinds = {"", "ged"} if rank > 0 or "diploma" in deg and "ged" in deg else {"ged"} if deg == "ged" else {""}
-    if kinds == {""} and rank == 0 and re.search(r"\bged\b", norm(prof.get("education.highest_degree"))):
-        return None  # a diploma asked of someone whose highest is a GED: theirs to say
+    if kinds == {""} and rank == 0 and re.fullmatch(rf"(a )?({_EQUIVALENT})( diploma| certificate)?",
+                                                    norm(prof.get("education.highest_degree"))):
+        return None  # a diploma asked of someone whose highest is a GED (or HiSET...): theirs to say
     if any((r == rank and kind in kinds) or r > rank and higher for r, kind in earned):
         return "Yes"
     if unread:

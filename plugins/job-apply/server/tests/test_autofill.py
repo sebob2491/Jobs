@@ -1125,6 +1125,19 @@ def test_a_confirmed_degree_answers_yes():
                       with_degrees([{"level": "high_school", "field": equivalent}], "Some college")) is None, equivalent
     assert answer("Do you have a high school diploma?", with_degrees([{"level": "high_school"}], "GED")) is None
     assert answer("Do you have a GED?", with_degrees([{"level": "ged", "field": "GED"}], "GED")) == "Yes"
+    assert answer("Do you have a doctorate?", with_degrees([{"level": "doctorate", "field": "Doctor of Medicine"}])) is None
+    assert answer("Do you have a Bachelor's degree?",
+                  with_degrees([{"level": "bachelor", "field": "Finance (Spring '27)"}], "Some college")) is None
+    assert answer("Do you have a high school diploma?", with_degrees([{"level": "high_school"}], "HiSET")) is None
+    # ...but a past year, a combined highest, or a field that only sounds like one is read
+    diploma_or_ged = with_degrees([{"level": "high_school"}], "High School Diploma or GED")
+    assert answer("Do you have a high school diploma?", diploma_or_ged) == "Yes"
+    assert answer("Do you have a Bachelor's degree?",
+                  with_degrees([{"level": "bachelor", "field": "Computer Science, Class of 2015"}])) == "Yes"
+    assert answer("Do you have an Associate's degree?",
+                  with_degrees([{"level": "associate", "field": "General Education"}], "Associate's Degree")) == "Yes"
+    assert answer("Do you have a Master's degree?",
+                  with_degrees([{"level": "master", "field": "Teaching Certification"}], "Master's Degree")) == "Yes"
     # what is read: a degree's name as the level, a field as a diploma names it, a lone entry
     assert answer("Do you have a Bachelor's degree?", with_degrees([{"level": "Bachelor's", "field": "Finance"}])) == "Yes"
     assert answer("Do you have a Bachelor's degree?",
