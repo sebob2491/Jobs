@@ -311,10 +311,11 @@ Bachelor's degree in any field.
 
 
 def test_a_title_sharing_only_a_generic_word_isnt_preselected():
-    """An HR applicant's "HR Coordinator" target made "Associate Clinical Research Coordinator"
-    and "Enrollment Coordinator" (fresh, in Phoenix, requirements met) preselected at 80 (live,
-    Phoenix list, Oct 2026). "Coordinator" says nothing of the work; "Field" in "Field Engineer"
-    does, for a field service target."""
+    """A made-up HR applicant's "HR Coordinator" target made "Associate Clinical Research
+    Coordinator" and "Enrollment Coordinator" (fresh, in Phoenix, requirements met) preselected
+    at 80 (a live Find jobs run on the Phoenix list, Oct 2026). "Coordinator" says nothing of
+    the work; "Field" in "Field Engineer" does, for a field service target, and "HR",
+    "Human Resources" or "Recruiting" do for HR targets."""
     hr = tech(preferences={"titles": ["HR Generalist", "Recruiter", "HR Coordinator"], "locations": ["Phoenix, AZ"]},
               education={"highest_degree": "Bachelor's Degree"})
     fresh = {"location": "Phoenix, AZ", "posted": "2026-10-05"}
@@ -324,18 +325,27 @@ def test_a_title_sharing_only_a_generic_word_isnt_preselected():
     assert on.recommended
     near = score_listing({**fresh, "title": "Field Engineer"}, tech(), today=TODAY)
     assert "not one of your target titles" not in near.concerns  # near a field service target
+    for title in ("HR Assistant", "Human Resources Assistant", "Recruiting Coordinator"):
+        assert "not one of your target titles" not in score_listing({**fresh, "title": title}, hr).concerns, title
+    assert "not one of your target titles" in score_listing({**fresh, "title": "Enrollment Coordinator"}, hr).concerns
 
 
 def test_a_posting_asking_for_far_more_experience_isnt_preselected():
-    """Grand Canyon Education's "Human Resources Business Partner" asked for 10+ years of an
-    applicant with about 4.6 and was still preselected at 83. Far short, it's shown but not
-    preselected; a little short, it only scores lower."""
+    """A "Human Resources Business Partner" posting asked a made-up applicant with about 5 years
+    for 10+, and was still preselected at 83 (a live Find jobs run, Oct 2026). Far short, it's
+    shown but not preselected; a little short, it only scores lower; years that are the other
+    way to a degree the applicant has ("a Bachelor's or 4 years") hold nothing back."""
     hr = tech(preferences={"titles": ["Human Resources"], "locations": ["Phoenix, AZ"]})
     job = {"title": "Human Resources Business Partner", "location": "Phoenix, AZ", "posted": "2026-10-05"}
     far = score_listing(job, hr, "Requirements\n10+ years of HR experience.\n", today=TODAY)
     assert far.blocked and not far.recommended and any("10+ years" in c for c in far.concerns)
     near = score_listing(job, hr, "Requirements\n5+ years of HR experience.\n", today=TODAY)
     assert not near.blocked and near.recommended
+    grad = tech(preferences={"titles": ["Human Resources"], "locations": ["Phoenix, AZ"]},
+                education={"highest_degree": "Bachelor's Degree"},
+                work_history=[{"title": "HR Assistant", "company": "Example", "start": "2026-04", "end": "present"}])
+    either = score_listing(job, grad, "Requirements\nBachelor's degree or 4 years of related experience.\n", today=TODAY)
+    assert not either.blocked and either.recommended
 
 
 def test_a_posting_that_turns_away_plain_requests_is_read_the_hard_way_last():
@@ -367,5 +377,37 @@ def test_a_posting_that_turns_away_plain_requests_is_read_the_hard_way_last():
     out = asyncio.run(recommend(p, search, read_postings=2, fetch=fetch, fetch_hard=hard, today=TODAY))
     assert {r["company"]: r["posting"]["description"] == LAM_FSE2 for r in out["results"]} == {"Aerotek": True,
                                                                                                "Sprouts": True}
-    assert "hard https://careers-x.icims.com/jobs/1/job" in order
+    assert order.index("https://careers-x.icims.com/jobs/1/job") < order.index("hard https://careers-x.icims.com/jobs/1/job")
     assert "hard https://y.icims.com/jobs/2/job" not in order  # its employer's own page read it first
+
+
+def test_a_reading_with_no_posting_text_falls_through_and_hard_reads_are_few():
+    """A page that answers with its menu and no posting (one that builds itself with script) is
+    no reading: the next way is tried. Hard reads (the desk's browser, shared with the
+    applications) come one at a time, a few, and a portal that turned one away isn't asked
+    again."""
+    p = tech()
+    rows = [{"company": "A", "title": "Field Service Engineer 2", "location": "Tempe, AZ",
+             "url": "https://a.icims.com/jobs/1/job", "company_url": "https://jobs.a.com/jobs/1"}]
+    rows += [{"company": "B", "title": "Field Service Engineer 2", "location": "Tempe, AZ",
+              "url": f"https://b.icims.com/jobs/{n}/job"} for n in range(5)]
+    hard_asked: list[str] = []
+
+    async def search(query, location, limit):
+        return {"results": rows}
+
+    async def fetch(url):
+        if "icims" in url:
+            raise RuntimeError("HTTP 405")
+        return Posting(url=url, description="Menu | Jobs | Sign in")  # no posting text
+
+    async def hard(url):
+        hard_asked.append(url)
+        if "b.icims" in url:
+            raise RuntimeError("the portal is down")
+        return Posting(url=url, description=LAM_FSE2, apply_url=url)
+
+    out = asyncio.run(recommend(p, search, read_postings=10, fetch=fetch, fetch_hard=hard, today=TODAY))
+    a = next(r for r in out["results"] if r["company"] == "A")
+    assert a["posting"]["description"] == LAM_FSE2  # its own page's menu fell through to the hard read
+    assert len([u for u in hard_asked if "b.icims" in u]) == 1  # turned away once: not asked again

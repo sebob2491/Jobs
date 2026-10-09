@@ -15,11 +15,12 @@ import re
 from dataclasses import asdict, dataclass, field
 from datetime import date
 from typing import Any, Awaitable, Callable
+from urllib.parse import urlparse
 
 from .autofill import degree_key, norm
 from .config import Profile
 from .postings import QUESTIONS_HEADING, Posting, fetch_posting
-from .search import MAX_ALTERNATIVES, US_STATES, location_matches, location_terms, title_matches
+from .search import MAX_ALTERNATIVES, US_STATES, location_matches, location_terms, title_matches, title_words
 
 # Semiconductor equipment roles, used when the profile names no target titles.
 DEFAULT_TITLES = ["field service", "customer service engineer", "customer engineer", "equipment technician"]
@@ -36,6 +37,17 @@ _INTERN = re.compile(r"\b(intern|internship|co op|coop)\b")
 _GENERIC_TITLE_WORDS = {"coordinator", "specialist", "manager", "analyst", "associate", "assistant", "representative",
                         "consultant", "director", "senior", "lead", "officer", "administrator", "clerk", "supervisor",
                         "partner", "principal", "junior", "intern", "staff", "team", "level"}
+def _near_target(title: str, targets: list[str]) -> bool:
+    """A title sharing a word that says what the work is with a target title: "field" for field
+    service, "recruiting" for Recruiter (a word's first six letters), "HR" for HR Generalist
+    ("Human Resources Assistant" says HR too). Not a generic one: "coordinator"."""
+    def stems(text: str) -> set[str]:
+        return {w[:6] for w in title_words(text).split()
+                if (len(w) > 3 or w == "hr") and w not in _GENERIC_TITLE_WORDS}
+    mine = stems(title)
+    return any(stems(t) & mine for t in targets)
+
+
 _TITLE_LEVEL = re.compile(r"\b(?:engineer|technician|tech|specialist|fse|representative|analyst|level)\s+(i{1,3}|iv|v|[1-5])\b")
 _ROMAN = {"i": 1, "ii": 2, "iii": 3, "iv": 4, "v": 5}
 _MONTHS = {m: i for i, m in enumerate(
@@ -339,8 +351,8 @@ def score_listing(listing: dict[str, Any], prof: Profile, description: str = "",
     if hit:
         fit.score += 25
         fit.reasons.append(f"title matches “{hit}”")
-    elif any(w in n.split() for t in targets for w in norm(t).split() if len(w) > 3 and w not in _GENERIC_TITLE_WORDS):
-        fit.score += 5  # near one ("Field Engineer" for field service)
+    elif _near_target(title, targets):
+        fit.score += 5  # near one ("Field Engineer" for field service, "Recruiting Coordinator" for Recruiter)
     else:  # even fresh, nearby and qualified, not what the person looks for: shown, not preselected
         fit.score -= 25
         fit.concerns.append("not one of your target titles")
@@ -405,13 +417,14 @@ def _score_requirements(fit: Fit, req: dict[str, Any], prof: Profile, years: flo
             fit.score += 5
             fit.reasons.append(f"your degree meets the minimum ({asked})")
     if req["years"] is not None and years is not None:
-        if req["years"] >= years + 3 and req["years"] > years * 1.5:
-            fit.score -= 12  # far short (10+ years asked, about 4.6 had): shown, not preselected
-            fit.blocked = True
-            fit.concerns.append(f"asks for {req['years']}+ years (you have about {years:g})")
-        elif req["years"] > years + 0.5:
+        if req["years"] > years + 0.5:
             fit.score -= 12
             fit.concerns.append(f"asks for {req['years']}+ years (you have about {years:g})")
+            # far short (10+ asked of about 5): shown, not preselected; unless the years are the other
+            # way to a degree the applicant has ("a Bachelor's or 4 years")
+            degree_instead = req["degree_or_equivalent"] and mine and req["degree"] and \
+                _LEVEL[mine] >= _LEVEL[req["degree"]]
+            fit.blocked = fit.blocked or (req["years"] >= years + 3 and req["years"] > years * 1.5 and not degree_instead)
         else:
             fit.score += 5
             fit.reasons.append(f"you have the {req['years']}+ years it asks for")
@@ -443,24 +456,30 @@ Search = Callable[[str, str | None, int], Awaitable[dict[str, Any]]]
 Fetch = Callable[[str], Awaitable[Posting]]
 
 
-async def _first_read(item: dict[str, Any], fetch: Fetch, fetch_hard: Fetch | None) -> Posting | None:
-    """A listing's posting, by its own address, else its page on the employer's own site (a
-    Jibe site's, over an iCIMS posting that turns away plain requests: still applied for where
-    the listing links), else by `fetch_hard`."""
-    with contextlib.suppress(Exception):
-        return await fetch(item["url"])
-    if item.get("company_url"):
+async def _read(item: dict[str, Any], ways: list[tuple[Fetch, str]]) -> Posting | None:
+    """A listing's posting by the first of `ways` (a reader and an address) that reads one with
+    its text; a page that answers with a menu and no posting (one that builds itself with
+    script) only when none does. Read from another address, it's still applied for where the
+    listing links (a Jibe site's page describes an iCIMS posting)."""
+    short = None
+    for reader, url in ways:
         with contextlib.suppress(Exception):
-            posting = await fetch(item["company_url"])
-            posting.apply_url = item["url"]
-            return posting
-    if fetch_hard is not None:
-        with contextlib.suppress(Exception):
-            return await fetch_hard(item["url"])
-    return None
+            posting = await reader(url)
+            if url != item["url"]:
+                posting.apply_url = item["url"]
+            if _has_text(posting):
+                return posting
+            short = short or posting
+    return short
+
+
+def _has_text(posting: Posting | dict[str, Any] | None) -> bool:
+    text = posting.get("description", "") if isinstance(posting, dict) else posting.description if posting else ""
+    return len(str(text).strip()) >= MIN_POSTING_TEXT
 
 
 READ_AT_MOST = 150  # postings read per search: every one that would be preselected, up to this
+HARD_READS = 10  # postings read the hard way (the desk's browser, shared with applications) per search
 MIN_POSTING_TEXT = 200  # less than this, and the page held no posting (it builds itself with script)
 
 
@@ -480,22 +499,41 @@ async def recommend(prof: Profile, search: Search, limit_per_company: int = 10, 
     items.sort(key=lambda x: -x["fit"].score)
     sem = asyncio.Semaphore(6)
 
-    async def read(item: dict[str, Any]) -> None:
-        async with sem:
-            posting = await _first_read(item, fetch, fetch_hard)
-            if posting is None:  # an unreadable posting keeps its title-based score
-                return
+    def take(item: dict[str, Any], posting: Posting | None) -> None:
+        if posting is None:  # an unreadable posting keeps its title-based score
+            return
         item["posting"] = {k: getattr(posting, k) for k in
                            ("title", "location", "description", "apply_url", "salary", "employment_type",
                             "posted_at", "external_id", "ats")}
         item["fit"] = score_listing(item, prof, posting.description, today)
 
+    async def read(item: dict[str, Any]) -> None:
+        async with sem:
+            take(item, await _read(item, [(fetch, item["url"]), *([(fetch, item["company_url"])]
+                                                                  if item.get("company_url") else [])]))
+
     to_read = list({id(i): i for i in items[:read_postings] + [i for i in items if i["fit"].recommended]}.values())
-    await asyncio.gather(*(read(i) for i in to_read[:READ_AT_MOST]))
+    to_read = to_read[:READ_AT_MOST]
+    await asyncio.gather(*(read(i) for i in to_read))
+    if fetch_hard is not None:
+        # the rest the hard way, one at a time, best first, a few: the browser is shared with the
+        # applications, and a portal that turned one away (or is down) isn't asked again
+        failed: set[str] = set()
+        hard = 0
+        for item in sorted((i for i in to_read if not _has_text(i.get("posting"))), key=lambda i: -i["fit"].score):
+            host = urlparse(item["url"]).hostname or ""
+            if hard >= HARD_READS or host in failed:
+                continue
+            hard += 1
+            posting = await _read(item, [(fetch_hard, item["url"])])
+            if not _has_text(posting):
+                failed.add(host)
+                continue
+            take(item, posting)
     terms = location_terms(location)
     for item in items:
         fit = item["fit"]
-        if "posting" not in item or len(item["posting"]["description"].strip()) < MIN_POSTING_TEXT:
+        if "posting" not in item or not _has_text(item["posting"]):
             if fit.score >= RECOMMEND_AT and not fit.blocked:
                 fit.held = True
                 fit.concerns.append("posting not read yet: its requirements are unchecked" if "posting" not in item

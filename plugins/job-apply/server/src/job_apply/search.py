@@ -187,7 +187,7 @@ def alternatives(query: str) -> list[str]:
     return alts[:MAX_ALTERNATIVES] or [""]
 
 
-def _title_words(title: str) -> str:
+def title_words(title: str) -> str:
     """A title's words as matched, each way of saying it among them: "HR Business Partner" is
     a human resources job, and "Human Resources Generalist" an HR generalist one."""
     text = re.sub(r"\b(\d+)\s*hrs?\b", r"\1 hours", norm(title))  # a nurse's "12 Hr Nights" isn't HR
@@ -201,7 +201,7 @@ def _title_words(title: str) -> str:
 def title_matches(title: str, query: str) -> bool:
     """Every word of at least one alternative appears in the title: as the start of a word
     ("engineer" ~ "engineering"), or the whole word for one of two letters ("HR" isn't "36 Hrs")."""
-    text = f" {_title_words(title)} "
+    text = f" {title_words(title)} "
     for alt in alternatives(query):
         if all((f" {t} " if len(t) <= 2 else f" {t}") in text for t in norm(alt).split()):
             return True

@@ -36,7 +36,6 @@ from .pipeline import DESK_PASSWORDS, Applier, question_key
 from .ats import detect_ats
 from .postings import FetchError, Posting, fetch_posting, finalize, parse_html
 from .recommend import recommend, score_listing
-from .search import ICIMS_FRAME
 
 PAGE = Path(__file__).resolve().parent / "static" / "desk.html"
 DEFAULT_PORT = 8765
@@ -338,12 +337,7 @@ class Desk:
         reads dozens, and the browser is shared with the applications."""
         if detect_ats(url) != "icims":
             raise FetchError(f"not read in the browser: {url}")
-        framed = url + ("&" if "?" in url else "?") + "in_iframe=1"
-        pages = await self.srv.browser.frames_html(framed, inner=ICIMS_FRAME)
-        best = max((finalize(parse_html(html, url)) for html in pages), key=lambda p: len(p.description))
-        if not best.is_useful:
-            raise FetchError(f"no posting in {url}")
-        return best
+        return await self.srv.read_icims_posting(url)
 
     async def find_jobs(self) -> None:
         self.search.update(status="running", error=None, started=time.time())
@@ -422,7 +416,8 @@ class Desk:
                 posting = None
             if posting is None or not posting.is_useful:  # or a page that builds itself with script
                 try:
-                    seen = finalize(parse_html(await self.srv.browser.background_html(url), url))
+                    seen = (await self.srv.read_icims_posting(url) if detect_ats(url) == "icims" else
+                            finalize(parse_html(await self.srv.browser.background_html(url), url)))
                     if posting is None or len(seen.description) > len(posting.description):
                         posting = seen
                 except Exception as e:  # report it on the page; the other links still go in
