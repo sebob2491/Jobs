@@ -547,7 +547,7 @@ RULES: list[tuple[str, str, Getter, int | None, set[str] | None]] = [
     # Oracle's "Zip Code+4" wants the 4-digit extension, not the ZIP: left for the site to fill
     ("postal_ext", r"zip( code)? ?(\+|plus) ?4|^zip ?4$|zip (code )?extension", lambda p, j: None, 45, None),
     ("postal", r"zip|postal|post code|postcode", _p("personal.address.postal_code"), 45, None),
-    ("county", r"^county", lambda p, j: p.get("personal.address.county"), 45, None),
+    ("county", r"^county", lambda p, j: county_of(p), 45, None),
     # (not "State your desired salary", "State ID Number" or "Statement of accuracy")
     ("state", r"^state\b(?! (your|id|identification|licen[cs]e|the|any|why|how|what|whether|if|briefly)\b)|province|^region",
      _state, 45, None),
@@ -961,6 +961,36 @@ def _topic_from_options(options: list[str], prof: Profile, job: dict) -> Answer 
 
 _PLACE_RULES = {"address1", "postal", "city", "state", "county"}
 
+# Arizona's cities by county, for a form's County (Oracle's address block requires one) when the
+# profile names its city but not its county. A city split between counties counts where most of
+# it is (Peoria and Queen Creek in Maricopa, Apache Junction in Pinal); one split evenly (Sedona)
+# isn't listed, and the person is asked.
+_AZ_COUNTIES = {
+    "Maricopa": {"phoenix", "chandler", "tempe", "mesa", "scottsdale", "gilbert", "glendale", "peoria", "goodyear",
+                 "surprise", "avondale", "buckeye", "tolleson", "laveen", "cave creek", "carefree", "fountain hills",
+                 "el mirage", "litchfield park", "sun city", "sun city west", "paradise valley", "anthem",
+                 "ahwatukee", "youngtown", "waddell", "new river", "queen creek", "sun lakes", "wickenburg"},
+    "Pinal": {"san tan valley", "casa grande", "maricopa", "apache junction", "gold canyon", "florence", "coolidge",
+              "eloy"},
+    "Pima": {"tucson", "oro valley", "marana", "sahuarita", "vail", "green valley"},
+    "Yavapai": {"prescott", "prescott valley", "cottonwood", "chino valley", "camp verde"},
+    "Coconino": {"flagstaff", "page", "williams"},
+    "Yuma": {"yuma", "san luis", "somerton"},
+    "Mohave": {"lake havasu city", "kingman", "bullhead city"},
+    "Cochise": {"sierra vista", "douglas", "bisbee", "benson"},
+}
+
+
+def county_of(prof: Profile) -> str | None:
+    """The profile's county, or for an Arizona address the county its city is in."""
+    named = str(prof.get("personal.address.county") or "").strip()
+    if named:
+        return named
+    if norm(prof.get("personal.address.state")) not in ("az", "arizona"):
+        return None
+    city = norm(prof.get("personal.address.city"))
+    return next((county for county, cities in _AZ_COUNTIES.items() if city in cities), None)
+
 
 def place_words(rule: str, prof: Profile) -> list[str]:
     """For an address field: the rest of the profile's address, which tells apart the entries
@@ -968,8 +998,7 @@ def place_words(rule: str, prof: Profile) -> list[str]:
     Maricopa, AZ"). Empty for any other field."""
     if rule not in _PLACE_RULES:
         return []
-    words = [prof.get("personal.address.city"), prof.get("personal.address.postal_code"),
-             prof.get("personal.address.county")]
+    words = [prof.get("personal.address.city"), prof.get("personal.address.postal_code"), county_of(prof)]
     state = str(prof.get("personal.address.state") or "").strip()
     if state.upper() in US_STATES:
         words += [state.upper(), US_STATES[state.upper()]]

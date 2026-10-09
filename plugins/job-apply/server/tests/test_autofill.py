@@ -644,3 +644,30 @@ def test_a_profile_list_written_another_way_doesnt_stop_the_fill():
         p = _person(**{key: 1})
         plan_autofill([{"id": "1", "label": "Have you previously worked for Acme?", "kind": "text", "value": ""},
                        {"id": "2", "label": "Graduation Year", "kind": "text", "value": ""}], p, {"company": "Acme"})
+
+
+def test_a_county_comes_from_an_arizona_citys():
+    """Oracle's address block (Mayo Clinic's, live, Oct 2026) requires a County, and the desk
+    asked for it: the profile names Chandler, AZ, which is in Maricopa County. A county the
+    profile names wins; a city the table doesn't know, or another state's, is left to the person."""
+    import yaml
+    from job_apply import config
+
+    p = prof()
+    counties = ["Apache, AZ", "Cochise, AZ", "Maricopa, AZ", "Pima, AZ", "Pinal, AZ"]
+    assert resolve_field(f("County *", "combobox", options=counties), p).value == "Maricopa, AZ"
+    assert resolve_field(f("County"), p).value == "Maricopa"
+    assert "Maricopa" in place_words("city", p)
+
+    path = config.profile_path()
+    data = yaml.safe_load(path.read_text())
+
+    def with_address(**address):
+        path.write_text(yaml.safe_dump({**data, "personal": {**data["personal"],
+                                                            "address": {**data["personal"]["address"], **address}}}))
+        return Profile.load()
+
+    assert resolve_field(f("County"), with_address(county="Yavapai")).value == "Yavapai"
+    assert resolve_field(f("County"), with_address(city="San Tan Valley")).value == "Pinal"
+    assert resolve_field(f("County"), with_address(city="Sedona")) is None
+    assert resolve_field(f("County"), with_address(city="Austin", state="TX")) is None
