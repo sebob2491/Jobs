@@ -1286,3 +1286,13 @@ def test_questions_from_the_finance_run():
                   options=("Yes", "No", "I don't wish to answer")) == "I don't wish to answer"
     # a family member's isn't the person's
     assert answer("Is your spouse a member of the LGBTQ community?", options=("Yes", "No", "I don't wish to answer")) is None
+
+
+def test_some_college_is_post_secondary_with_no_degree():
+    """Knight-Swift's Education list (live, Oct 2026) says "PS-POST SECONDARY-NO DEGREE" for some
+    college; "NA-NO POST SECONDARY EDU" and the degrees are never it."""
+    options = ["Select an option...", "AA-AA DEGREE", "BA-BACHELOR OF ARTS", "BS-BACHELOR OF SCIENCE",
+               "MA-MASTER OF ARTS", "PS-POST SECONDARY-NO DEGREE", "TRADE-TRADE SCHOOL GRADUATE",
+               "NA-NO POST SECONDARY EDU"]
+    assert choose_option("Some college", options) == "PS-POST SECONDARY-NO DEGREE"
+    assert choose_option("Some college", [o for o in options if not o.startswith("PS")]) is None

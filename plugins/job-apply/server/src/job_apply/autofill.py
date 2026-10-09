@@ -201,7 +201,9 @@ def _partial_level(n: str) -> str | None:
     college; "Some high school", high school; "Associate's (in progress)", an associate's."""
     if not _partial_study(n):
         return None
-    return degree_key(n) or ("college" if re.search(r"\b(college|university|coursework|credits?)\b", n) else None)
+    # ("PS-Post Secondary-No Degree": Knight-Swift's)
+    return degree_key(n) or ("college" if re.search(r"\b(college|university|coursework|credits?|post ?secondary)\b", n)
+                             else None)
 
 
 _NUMBER = re.compile(r"\d+(?:\.\d+)?")
