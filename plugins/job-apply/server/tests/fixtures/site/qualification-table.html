@@ -4,8 +4,8 @@
 <body>
 <!-- like Phoenix Children's application (markup as captured live, Oct 2026): the position's
      qualifications are a table, each row a number, the requirement and Yes / No radios with
-     no label of their own. Next stays greyed out until every row is answered and "I Agree"
-     is ticked. -->
+     no label of their own. Next stays greyed out until every row is answered, "I Agree" is
+     ticked and a resume is attached (its box isn't marked required). -->
 <form id="f">
   <h3>Position Qualifications</h3>
   <span>Please review the following qualifications and specify whether you meet each of the requirements listed.</span>
@@ -32,12 +32,13 @@
       </td>
     </tr>
   </tbody></table>
+  <input type="file" id="resume" name="files_QuickApply">
   <label><input type="checkbox" id="agree" required> I Agree</label>
   <button type="submit" id="next" disabled>Next</button>
 </form>
 <script>
   const f = document.getElementById('f');
-  f.addEventListener('change', () => { document.getElementById('next').disabled = !f.checkValidity(); });
+  f.addEventListener('change', () => { document.getElementById('next').disabled = !f.checkValidity() || !document.getElementById('resume').files.length; });
   f.addEventListener('submit', (e) => { e.preventDefault(); document.body.innerHTML = '<h1>Thank you for applying</h1>'; });
 </script>
 </body>

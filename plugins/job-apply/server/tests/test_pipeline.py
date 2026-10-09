@@ -2574,9 +2574,9 @@ def test_the_host_chromes_error_page_names_is_read():
 
 
 def test_a_greyed_out_next_names_the_required_boxes_still_empty(srv):
-    """Phoenix Children's Next (live, Oct 2026) stays greyed out until its "I Agree" is ticked,
-    and the page says nothing about it: the desk's "the site still wants something" now says
-    what."""
+    """Phoenix Children's Next (live, Oct 2026) stays greyed out until its "I Agree" is ticked
+    and a resume attached, and the page says nothing about it: the desk's "the site still
+    wants something" now says what."""
     run(srv.open_application(url=fixture_url("site/qualification-table.html")))
     page = run(srv.browser.page())
     for row in (0, 1):
@@ -2585,4 +2585,8 @@ def test_a_greyed_out_next_names_the_required_boxes_still_empty(srv):
     assert pipeline._greyed_step(data)
     assert pipeline._unanswered(data) == "“I Agree” isn't answered."
     run(page.check("#agree"))
-    assert pipeline._unanswered(run(srv.browser.inspect(False))) == ""
+    # its resume box isn't marked required, but Next waits on it
+    assert pipeline._unanswered(run(srv.browser.inspect(False))) == "nothing is attached yet (your resume, say)."
+    run(page.set_input_files("#resume", files=[{"name": "resume.pdf", "mimeType": "application/pdf", "buffer": b"%PDF-1.4"}]))
+    data = run(srv.browser.inspect(False))
+    assert not pipeline._greyed_step(data) and pipeline._unanswered(data) == ""

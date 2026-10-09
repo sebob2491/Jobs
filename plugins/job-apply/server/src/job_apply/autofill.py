@@ -159,13 +159,14 @@ def _in_range(want: str, options: list[str]) -> str | None:
         nums = [float(v) for v in _NUMBER.findall(n)]
         if not nums:
             continue
-        if re.search(r"less than|under|below|fewer than", n):
+        # whole words: Oracle's ZIP "01022, Westover AFB, Hampden, MA" isn't "over 1022"
+        if re.search(r"\b(less than|under|below|fewer than)\b", n):
             low, high, high_open = float("-inf"), nums[0], True
-        elif re.search(r"or less|or fewer|or below", n) and len(nums) == 1:
+        elif re.search(r"\b(or less|or fewer|or below)\b", n) and len(nums) == 1:
             low, high, high_open = float("-inf"), nums[0], False
-        elif re.search(r"more than|over|greater than|above|or more|or higher|\+|plus", n) and len(nums) == 1:
+        elif re.search(r"\b(more than|over|greater than|above|or more|or higher|plus)\b|\+", n) and len(nums) == 1:
             low, high, high_open = nums[0], float("inf"), False
-            if re.search(r"more than|over|greater than", n):
+            if re.search(r"\b(more than|over|greater than)\b", n):
                 low += 1e-9
         elif len(nums) >= 2:
             low, high, high_open = nums[0], nums[1], False
@@ -398,7 +399,7 @@ def _previously_employed(prof: Profile, job: dict, label: str = "") -> str | Non
     names_it = re.search(rf"\b(employ\w*|work\w*|intern\w*|contract\w*)( \w+){{0,3}}? (by|for|at|with|of) (the )?{first}\b"
                          rf"|\b{first}( \w+)? (employee|employment|intern|contractor)s?\b"
                          rf"|\bhired\b.{{0,60}}? (by|with|at) (the )?{first}\b", asked)
-    if not (names_it or re.search(r"(employed|worked) (by|for|at|with) (us|this|our|the company)\b|former employee", asked)):
+    if not (names_it or re.search(r"(employed|worked|hired) (by|for|at|with) (us|this|our|the company)\b|former employee", asked)):
         return None
     if re.search(rf"\b{first}( \w+){{0,2}} (tools?|systems?|equipment|products?|software|technolog\w*|machines?|platforms?|"
                  r"scanners?|metrology|etch|deposition|parts)\b", asked):
@@ -500,8 +501,10 @@ def _local_or_relocate(prof: Profile, job: dict, label: str = "") -> Any:
     person would move, or lives in the metro area of a place the job names (Tempe for a
     Phoenix job). Else the person's to answer, as is "do you live nearby, or will you need to
     relocate?", which asks which, not whether."""
-    if not re.search(r"\bor (are you |would you be )?(willing|able|open) to relocat", norm(label)):
-        return None
+    asked = next((part for part in re.split(r"[.?!]\s+", label) if re.search(r"relocat", part, re.I)), "")
+    if not (re.match(r"\s*(are|do|would|will|can)\s+you\b", asked, re.I)
+            and re.search(r"\bor (are you |would you be )?(willing|able|open) to relocat", norm(asked))):
+        return None  # not a yes-or-no question: "Which campus are you near, or are you willing to relocate?"
     if prof.get("preferences.willing_to_relocate") is True or lives_near(prof, str(job.get("location") or "")):
         return "Yes"
     return None
@@ -629,6 +632,10 @@ RULES: list[tuple[str, str, Getter, int | None, set[str] | None]] = [
     # desired_salary is one yearly figure: not an answer to "current salary" or a monthly/hourly rate
     ("other_salary", r"(current|last|previous|present|most recent|drawn) .{0,25}(salary|compensation|pay\b)"
      r"|(monthly|per month|hourly|per hour|weekly|per week) .{0,25}(salary|compensation|pay\b|rate)", lambda p, j: None, None, None),
+    # American Express: "Indicate your highest level of preference by work location:" among its offices
+    ("preferred_location", r"^(preferred|desired) (work )?(location|site|city)s?\b|location preference|"
+     r"preference (by|for) (work )?location|(which|what) (work )?location (would|do) you prefer",
+     lambda p, j: next(iter(_listed(p.get("preferences.locations"))), None), 120, None),
     ("salary", r"salary|compensation|pay (expectation|requirement)|desired pay|expected pay", _p("preferences.desired_salary"), None, None),
     ("start_date", r"start date|available to start|earliest (date|start)|when can you start|notice period", _p("preferences.earliest_start"), None, None),
     ("previous_employee", r"(previously|ever|formerly) (been )?(employed|worked)|former employee|have you (ever )?worked (for|at)|worked .{0,40} before|"
@@ -1016,8 +1023,7 @@ def county_of(prof: Profile) -> str | None:
         return named
     if norm(prof.get("personal.address.state")) not in ("az", "arizona"):
         return None
-    city = norm(prof.get("personal.address.city"))
-    return next((county for county, cities in _AZ_COUNTIES.items() if city in cities), None)
+    return _az_county(norm(prof.get("personal.address.city")))
 
 
 # Metro areas by county: Phoenix's takes in Pinal County's towns (San Tan Valley, Maricopa)
@@ -1025,8 +1031,12 @@ _SAME_METRO = {"Pinal": "Maricopa"}
 _ICIMS_PLACE = re.compile(r"^\s*usa?\s*-\s*([a-z]{2})\s*-\s*(.+)$", re.I)  # "US-AZ-Chandler"
 
 
+def _az_county(city: str) -> str | None:
+    return next((county for county, cities in _AZ_COUNTIES.items() if city in cities), None)
+
+
 def _az_metro(city: str) -> str | None:
-    county = next((c for c, cities in _AZ_COUNTIES.items() if city in cities), None)
+    county = _az_county(city)
     return _SAME_METRO.get(county, county) if county else None
 
 
@@ -1038,7 +1048,7 @@ def lives_near(prof: Profile, location: str) -> bool:
     home = _az_metro(norm(prof.get("personal.address.city")))
     if home is None:
         return False
-    for place in re.split(r"[;|]", location):
+    for place in re.split(r"[;|/\n]| or ", location):
         if m := _ICIMS_PLACE.match(place):
             state, town = m.group(1), m.group(2)
         else:

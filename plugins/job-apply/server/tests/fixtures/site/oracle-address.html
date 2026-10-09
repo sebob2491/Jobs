@@ -15,9 +15,7 @@
      a State empties the County, City and ZIP below it, as Oracle does. The ZIP box lists "00000, …" on opening, and its
      search results come a moment after the typing. Words typed without a pick are no answer.
      Next shows "Thank you" once every box holds a pick. Zip Code+4 is the ZIP's 4-digit
-     extension, optional. ?slow[=ms]: the boxes drawn afresh are gone for a moment first (onsemi, live).
-     ?stale: City lists places from "Aaron, Clinton, KY" on opening, and while a search runs the
-     list from before stays with another place at its top, its results coming after (Mayo Clinic, live). -->
+     extension, optional. ?slow[=ms]: the boxes drawn afresh are gone for a moment first (onsemi, live). -->
 <h2>Address</h2>
 <form id="f" novalidate>
   <label for="addressLine1">Address Line 1 *</label>
@@ -55,10 +53,6 @@
     region1: ['Maricopa', 'Pima', 'Pinal'],
   };
   const ZIP_DEFAULT = ['00000, Baker Island, US Minor Outlying Islands, UM', '00000, Howland Island, US Minor Outlying Islands, UM'];
-  const CITY_DEFAULT = ['Aaron, Clinton, KY', 'Aaronsburg, Centre, PA', 'Abbeville, Abbeville, SC', 'Abbeville, Henry, AL',
-                        'Abbeville, Lafayette, MS', 'Abbeville, Vermilion, LA', 'Abbeville, Wilcox, GA', 'Abbot, Piscataquis, ME',
-                        'Abbotsford, Clark, WI', 'Abbotsford, Marathon, WI', 'Abbott Park, Lake, IL', 'Abbott, Hill, TX',
-                        'Abbottstown, Adams, PA', 'Abbyville, Reno, KS'];
   window.picked = {};
   const box = (id) => document.getElementById(id);
   const list = (id) => box(id + '-listbox');
@@ -71,11 +65,8 @@
   let search = 0;
   function show(id) {
     const q = box(id).value.trim().toLowerCase();
-    const stale = id === 'city' && params.has('stale');
-    if (id === 'postalCode' || stale) {  // the list from before the search stays until its results come
-      const before = stale ? CITY_DEFAULT : ZIP_DEFAULT;
-      if (!q) return render(id, before);
-      if (stale) render(id, ['Westover AFB, Hampden, MA', ...before]);
+    if (id === 'postalCode') {  // the list from before the search stays until its results come
+      if (!q) return render(id, ZIP_DEFAULT);
       const mine = ++search;
       setTimeout(() => { if (mine === search) render(id, DATA[id].filter((e) => e.toLowerCase().includes(q))); }, 600);
       return;

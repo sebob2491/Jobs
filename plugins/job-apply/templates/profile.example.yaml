@@ -113,7 +113,7 @@ answers:
     answer: ~
   - match: "(employed|worked) (by|for) (a|any) .*government"
     answer: ~
-  - match: "medicare|medicaid|excluded from .*(federal|government) (health|program)"   # hospitals ask
+  - match: "(excluded|unable to participate|ineligible|debarred|sanctioned).{0,80}(medicare|medicaid|federal health ?care|government program)"   # hospitals ask
     answer: ~
 
 settings:

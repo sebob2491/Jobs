@@ -710,6 +710,8 @@ def test_located_near_the_job_or_willing_to_relocate():
     assert answer(mayo, "Glendale, CA") is None  # Arizona's Glendale is near, California's isn't
     assert answer(mayo, "") is None
     assert answer("Do you live in the area, or will you need to relocate?", "Phoenix, AZ") is None
+    assert answer("Which campus are you located near, or are you willing to relocate?", "Phoenix, AZ") is None
+    assert answer(mayo, "Rochester, MN / Phoenix, AZ") == "Yes"
 
     path = config.profile_path()
     data = yaml.safe_load(path.read_text())
@@ -762,5 +764,38 @@ def test_hired_before_by_this_employer():
     assert resolve_field(f(asked, "radio_group", options=yes_no), prof(), amex) is None
     assert resolve_field(f("Have you been hired at any time in the past by American Express?", "radio_group",
                            options=yes_no), prof(), amex).value == "No"
+    assert resolve_field(f("Have you ever been hired by us before?", "radio_group", options=yes_no), prof(),
+                         amex).value == "No"
     assert resolve_field(f("Have you been hired at any time in the past for a position with Intel or its subsidiaries?",
                            "radio_group", options=yes_no), prof(), {"company": "Intel Corporation"}).value == "Yes"
+
+
+def test_a_preferred_work_location_from_the_profiles_places():
+    """American Express (live, Oct 2026) asks "Indicate your highest level of preference by
+    work location:" among its offices; the profile's first place answers it."""
+    import yaml
+    from job_apply import config
+
+    offices = ["Fort Lauderdale, FL", "New York, NY", "Phoenix, AZ", "Palo Alto, CA", "Salt Lake City, UT"]
+    asked = f("Indicate your highest level of preference by work location:", "radio_group", options=offices)
+    assert resolve_field(asked, prof()) is None  # the profile names no places
+    path = config.profile_path()
+    data = yaml.safe_load(path.read_text())
+    path.write_text(yaml.safe_dump({**data, "preferences": {**data["preferences"], "locations": ["Phoenix, AZ", "Tempe, AZ"]}}))
+    assert resolve_field(asked, prof()).value == "Phoenix, AZ"
+    assert resolve_field(f("Preferred Location"), prof()).value == "Phoenix, AZ"
+
+
+def test_a_zip_is_never_read_as_a_range():
+    """Mayo Clinic's Oracle ZIP list (live, Oct 2026) opens at "00501, Holtsville, Suffolk, NY",
+    and the desk picked "01022, Westover AFB, Hampden, MA" for 85225: "Westover" read as "over
+    1022". That put the address in Massachusetts, and Chandler wasn't found among its cities."""
+    zips = ["00501, Holtsville, Suffolk, NY", "00544, Holtsville, Suffolk, NY", "01001, Agawam, Hampden, MA",
+            "01002, Amherst, Hampshire, MA", "01022, Westover AFB, Hampden, MA", "01026, Cummington, Hampshire, MA"]
+    zips += [f"010{n}, Springfield, Hampden, MA" for n in range(30, 50)]
+    ans = resolve_field(f("ZIP Code *", "combobox", options=zips), prof())
+    assert ans.value == "85225"  # not on the list's first page: searched for
+    assert choose_option("4", ["Under 2 years", "2-3 years", "More than 3 years"]) == "More than 3 years"
+    assert choose_option("1", ["Under 2 years", "2-3 years", "More than 3 years"]) == "Under 2 years"
+    assert choose_option("7", ["0-2", "3-5", "5+"]) == "5+"
+    assert choose_option("12", ["Thunder Bay 10", "Hanover 20"]) is None

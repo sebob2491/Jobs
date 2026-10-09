@@ -37,9 +37,9 @@ EXTRACT_JS = r"""
   const CONTROL = 'input:not([type="hidden"]), select, textarea';
   const ROW_NUMBER = /^\(?\d{1,3}[.):]?$/;
   const preceding = (el) => {
-    let node = el, long = '';
+    let node = el;
     for (let depth = 0; depth < 4 && node; depth++) {
-      let sib = node.previousElementSibling;
+      let sib = node.previousElementSibling, long = '';
       while (sib) {
         if (sib.matches(CONTROL) || sib.querySelector(CONTROL)) return '';
         const t = txt(sib);
