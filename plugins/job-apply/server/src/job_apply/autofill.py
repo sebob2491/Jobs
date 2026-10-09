@@ -56,6 +56,7 @@ _NO = re.compile(r"^(no|n|false|never|i am not|i do not|i don'?t|i will not|i wo
 _FILLER = {"yes", "no", "y", "n", "i", "am", "a", "an", "the", "to", "for", "of", "in", "my", "and", "or", "is", "be",
            "this", "it", "up"}
 PAGED_LIST_PAGE = 100  # entries SuccessFactors' paginated select lists at a time
+PLACE_LIST_SLICE = 20  # a list of more places than this shows only some of them (a lookup's first page)
 _DECLINE = re.compile(r"decline|not (wish|want) to|prefer not|choose not|do not want|don'?t wish|not to (answer|disclose|self)|rather not", re.I)
 
 
@@ -927,7 +928,10 @@ def resolve_field(field: dict, prof: Profile, job: dict | None = None, file_inpu
         # a search prompt lists only its top level, and a full page of a paged list (Qorvo's
         # countries stop at Iran) only its start: the fill searches them for the answer. A
         # shorter paged list is all there is, so a search can't find anything else in it.
-        searched = field.get("search") or field.get("paged") and len(options) >= PAGED_LIST_PAGE
+        # A long list of places (Oracle's City on Mayo Clinic's form opened at "Aaron, Clinton, KY",
+        # its search flag unset) is a slice of them too: the fill searches it
+        searched = (field.get("search") or field.get("paged") and len(options) >= PAGED_LIST_PAGE
+                    or ans.rule in _PLACE_RULES and len(options) > PLACE_LIST_SLICE)
         if chosen is None and searched and not isinstance(ans.value, (list, dict)):
             return ans
         if chosen is None:
