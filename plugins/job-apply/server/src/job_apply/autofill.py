@@ -99,7 +99,7 @@ _NEGATION = {"not", "non", "no", "never", "cannot", "can't", "don't", "doesn't",
 _SCOPE_END = {"(", ")", ",", ";", ":", "."}
 _FUNCTION_WORDS = {"a", "an", "the", "i", "am", "is", "are", "was", "be", "of", "or", "and", "to", "as", "have", "has",
                    "had", "do", "does", "did", "will", "would", "my", "me", "any", "one", "more", "this", "that", "yes",
-                   "for", "in", "on", "with", "at", "by"}
+                   "for", "in", "on", "with", "at", "by", "currently", "presently", "now"}  # ("not currently" is "currently not")
 
 
 def _said_and_denied(text: str) -> tuple[set[str], set[str]]:
@@ -450,7 +450,7 @@ def _previously_employed(prof: Profile, job: dict, label: str = "") -> str | Non
         return None
     asked = norm(label)
     first = re.escape(company.split()[0])
-    names_it = re.search(rf"\b(employ\w*|work\w*|intern\w*|contract\w*)( \w+){{0,3}}? (by|for|at|with|of) (the )?{first}\b"
+    names_it = re.search(rf"\b(employ\w*|work\w*|intern\w*|contract\w*)( \w+){{0,3}}? (by|for|at|with|of) (the |any |an? )?{first}\b"
                          rf"|\b{first}( \w+)? (employee|employment|intern|contractor)s?\b"
                          rf"|\bhired\b.{{0,60}}? (by|with|at) (the )?{first}\b", asked)
     if not (names_it or re.search(r"(employed|worked|hired) (by|for|at|with) (us|this|our|the company)\b|former employee", asked)):
@@ -488,6 +488,29 @@ def _graduated(prof: Profile, job: dict) -> Any:
         return year
     finished = [e for e in _listed(prof.get("education_history")) if isinstance(e, dict) and finished_degree(e.get("degree"))]
     return finished[0].get("end") if finished else None
+
+
+def _expected_graduation(prof: Profile, job: dict) -> Any:
+    """When the person expects to graduate: the year of a school still under way, or, when
+    every school the profile lists has ended, that they aren't attending (a list's "I am
+    currently not attending school"). Never a past year, as if still to come."""
+    entries = [e for e in _listed(prof.get("education_history")) if isinstance(e, dict)]
+    if not entries:
+        return None
+    today = date.today()
+    ongoing: list[str | None] = []
+    for e in entries:
+        end = e.get("end")
+        month, year = parse_month_year(end)
+        if is_present(end) or end in (None, "") or not year:
+            ongoing.append(None)  # under way, or not said when it ends
+        elif int(year) > today.year or int(year) == today.year and month and int(month) >= today.month:
+            ongoing.append(year)
+        elif int(year) == today.year and not month:
+            ongoing.append(None)  # this year, month not given: maybe still to come
+    if ongoing:
+        return next((y for y in ongoing if y), None)  # a school under way: its year, if the profile has one
+    return "Not currently attending school"
 
 
 _AUTHORIZED = r"authori[sz]ed to work|eligible to work|legally (able|permitted|allowed) to work|right to work|" \
@@ -646,6 +669,9 @@ RULES: list[tuple[str, str, Getter, int | None, set[str] | None]] = [
      _edu("school", "school"), 45, None),
     ("major", r"^(major|field of study|discipline|area of study)", _edu("major", "major"), 45, None),
     ("gpa", r"^gpa|grade point", _edu("gpa", "gpa"), 45, None),
+    # "What is your expected graduation date:" (American Express): one done with school isn't attending
+    ("expected_grad", r"(expected|anticipated|projected) (graduation|completion)|graduation date.{0,20}(expected|anticipated)",
+     _expected_graduation, 80, None),
     ("grad_year", r"graduation (year|date)|year of graduation", _graduated, 60, None),
     ("signature", r"(electronic |e )?signature|sign your (full )?name", _full_name, 80, {"text"}),
     # questions (any length)

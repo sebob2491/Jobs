@@ -856,3 +856,41 @@ def test_some_college_however_a_list_words_it():
     assert choose_option("Some college", ["High school diploma or GED", "Associate degree", "Bachelor's degree"]) is None
     assert choose_option("Some high school", ["Some college, no degree", "Some high school, no diploma"]) == \
         "Some high school, no diploma"
+
+
+def test_previously_employed_by_any_of_the_employers_companies():
+    """Micron (live, Oct 2026): "Have you previously been employed by any Micron Company?" was
+    asked, the word "any" before the name hiding that it asks about working there before."""
+    yes_no = ["Yes", "No"]
+    asked = f("Have you previously been employed by any Micron Company?", "radio_group", options=yes_no)
+    assert resolve_field(asked, prof(), {"company": "Micron"}).value == "No"
+    assert resolve_field(f("Have you ever worked for an Intel company?", "radio_group", options=yes_no), prof(),
+                         {"company": "Intel Corporation"}).value == "Yes"
+
+
+def test_an_expected_graduation_date_is_never_a_past_year():
+    """American Express (live, Oct 2026) asks "What is your expected graduation date:" with
+    "I am currently not attending school" among its choices, and the desk typed 2020, the
+    year the profile's school ended, as if it were still to come."""
+    import yaml
+    from job_apply import config
+
+    choices = ["April - June 2026", "April - June 2027", "I am currently not attending school", "January - March 2027"]
+    asked = f("What is your expected graduation date:", "combobox", options=choices)
+    assert resolve_field(asked, prof()).value == "I am currently not attending school"
+    assert resolve_field(f("Graduation Date"), prof()).value == 2020  # (a finished school's own date)
+
+    path = config.profile_path()
+    data = yaml.safe_load(path.read_text())
+    school = {**data["education_history"][0], "end": "present"}
+    path.write_text(yaml.safe_dump({**data, "education_history": [school]}))
+    assert resolve_field(asked, prof()) is None  # still at school, no year: the person says
+
+    from datetime import date
+
+    today = date.today()
+    ended = f"{today.year}-01" if today.month > 1 else f"{today.year - 1}-12"  # earlier this year: done
+    path.write_text(yaml.safe_dump({**data, "education_history": [{**school, "end": ended}]}))
+    assert resolve_field(asked, prof()).value == "I am currently not attending school"
+    path.write_text(yaml.safe_dump({**data, "education_history": [{**school, "end": f"{today.year + 1}-05"}]}))
+    assert resolve_field(f("Expected graduation date"), prof()).value == str(today.year + 1)
