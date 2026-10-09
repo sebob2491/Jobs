@@ -922,8 +922,14 @@ RULES: list[tuple[str, str, Getter, int | None, set[str] | None]] = [
     ("us_citizen", r"are you a (u s|united states) citizen\b|are you a citizen of the (u s|united states)( of america)?$",
      _yn("work_authorization.us_citizen"), None, None),
     # TI: "Do you currently hold an H, L, E, J, or F nonimmigrant visa?" A citizen holds none
-    ("visa_holder", r"\b(hold|have) an? .{0,40}non ?immigrant visa",
+    ("visa_holder", r"\b(hold|have) an? .{0,40}non ?immigrant visa|"
+     # "Are you currently on an F-1 visa (OPT/CPT)?", "Do you currently hold an H-1B visa?": a citizen holds none
+     r"\b(hold|have|holding|on) an? (f ?1|h ?1 ?b|j ?1|l ?1|tn|o ?1|e ?3|h ?4)\b( visa| status)?",
      lambda p, j: "No" if p.get("work_authorization.us_citizen") is True else None, None, None),
+    # "What is your current visa status?" among "U.S. Citizen", "H-1B", ...: a citizen's is the citizen one
+    # ("Citizenship status" keeps the citizenship rule, from the profile's country)
+    ("citizen_status", r"^(what is )?(your )?(current )?(visa|immigration) status$",
+     lambda p, j: "U.S. Citizen" if p.get("work_authorization.us_citizen") is True else None, 80, None),
     ("citizenship", r"citizenship|country of citizen|are you a (u ?s )?citizen", _p("work_authorization.citizenship"), None, None),
     ("clearance", r"security clearance|active clearance", _p("work_authorization.security_clearance"), None, None),
     # "do you live nearby or are you willing to relocate?": a local applicant isn't relocating
@@ -1262,6 +1268,11 @@ def resolve_field(field: dict, prof: Profile, job: dict | None = None, file_inpu
         ans.value = "Yes" if ans.value else "No"
 
     options = field.get("options")
+    if ans.rule == "citizen_status" and options:
+        # the one choice that says U.S. citizen ("US Citizen", "Citizen of the United States"), not "Non-US Citizen"
+        citizen = [o for o in options if re.search(r"\b(u s|us|united states|american)\b.*\bcitizen|\bcitizen\b.*\b(u s|us|"
+                                                   r"united states|usa)\b", norm(o)) and not re.search(r"\bnon\b|\bnot\b", norm(o))]
+        return Answer(citizen[0], ans.rule) if len(citizen) == 1 else None
     if ans.rule == "has_degree":
         # a plain "Yes" or "No" among the choices shown: never "No, but I have equivalent experience" or
         # "No, but I'm enrolled", which say more than the profile does; nor where the section allows an equivalent
