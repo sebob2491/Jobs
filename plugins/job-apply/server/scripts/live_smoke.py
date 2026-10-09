@@ -1,6 +1,6 @@
 """Live smoke test against real employer career sites. Read-only by design.
 
-    uv run python scripts/live_smoke.py --out live-report [--companies "KLA,ASM"] [--fixtures] [--parallel 4] [--role hr]
+    uv run python scripts/live_smoke.py --out live-report [--companies "KLA,ASM"] [--fixtures] [--parallel 4] [--role hr|finance]
 
 For each company with a `search` config in data/companies.yaml:
   1. search_company_jobs for a broad query, and keep the first result;
@@ -97,6 +97,14 @@ ROLES: dict[str, dict[str, Any]] = {
                           "start": "2021-03", "end": "present"}],
         "education_history": [{"school": "Arizona State University", "degree": "Bachelor's Degree",
                                "major": "Business Administration", "start": 2016, "end": 2020}],
+    },
+    "finance": {
+        "query_az": "financial analyst | accountant | accounting | finance",
+        "query_any": "financial analyst | accountant",
+        "work_history": [{"title": "Financial Analyst", "company": "Example Bank", "location": "Phoenix, AZ",
+                          "start": "2021-03", "end": "present"}],
+        "education_history": [{"school": "Arizona State University", "degree": "Bachelor's Degree",
+                               "major": "Finance", "start": 2016, "end": 2020}],
     },
 }
 
