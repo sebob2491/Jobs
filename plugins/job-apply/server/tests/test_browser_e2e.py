@@ -949,3 +949,11 @@ def test_answers_a_page_loses_in_a_quick_run_of_fills_are_put_in_again(srv):
     run(srv.fill_form([{"id": middle["id"], "value": "J"}]))
     assert run(record()) == {**profile_answers, "Middle Name": "J"}
     assert not [e for e in run(srv.inspect_form())["errors"] if "blank" in e]
+
+    async def cleared():
+        return await (await srv.browser.page()).evaluate("() => window.cleared")
+
+    # a phone number the site never takes is typed again once, not on every fill; a note the
+    # desk didn't write is never touched
+    times = run(cleared())
+    assert times.get("Phone") == 1 and "Notes" not in times, times

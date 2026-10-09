@@ -1,7 +1,8 @@
-# Large Phoenix-area employers across health care, education, government, finance, accounting,
-# staffing, utilities, aerospace, tech and retail: the places that hire HR generalists,
-# recruiters, accountants, financial analysts and other office roles in the Valley. A person's own ~/.job-apply/companies.yaml
-# names this list (`lists: [phoenix-metro]`) to search it; see templates/companies.example.yaml.
+# Large Phoenix-area employers across health care, education, government, finance,
+# accounting, staffing, utilities, aerospace, tech and retail: the places that hire HR
+# generalists, recruiters, accountants, financial analysts and other office roles in the
+# Valley. A person's own ~/.job-apply/companies.yaml names this list (`lists: [phoenix-metro]`)
+# to search it; see templates/companies.example.yaml.
 # Same shape as data/companies.yaml. Each careers site and the system behind it was read off
 # the live pages in Oct 2026, and every `search` block was run through the plugin's own search
 # from a test machine and came back without an error. Employers with no `search` block run a
@@ -416,6 +417,7 @@ companies:
     az_sites: Phoenix, Tempe, Goodyear, Glendale
     confidence: high          # page seen, Oct 2026
     search: {amazon: {loc_query: "Phoenix, AZ, USA", latitude: 33.44825, longitude: -112.0758, radius: 50km}}
+  # Phoenix-area headquarters with finance and accounting teams (checked Oct 2026).
   - name: Freeport-McMoRan
     careers_url: https://jobs.fcx.com/
     ats: successfactors       # a SuccessFactors career site (company freeportmc)

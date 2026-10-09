@@ -338,10 +338,14 @@ def test_an_account_specialist_isnt_near_an_accountant():
     fresh = {"location": "Tempe, AZ", "posted": "2026-10-05"}
     off = score_listing({**fresh, "title": "Credit Card Customer Service Account Specialist I"}, fin, today=TODAY)
     assert not off.recommended and "not one of your target titles" in off.concerns
-    for title in ("Accounts Payable Specialist", "Accounting Manager", "Finance Manager"):
+    for title in ("Accounts Payable Specialist", "Accounts Receivable Clerk", "Accounting Manager", "Finance Manager"):
         assert "not one of your target titles" not in score_listing({**fresh, "title": title}, fin).concerns, title
+    for title in ("Key Accounts Manager", "National Accounts Representative"):  # a customer's accounts too
+        assert "not one of your target titles" in score_listing({**fresh, "title": title}, fin).concerns, title
     sales = tech(preferences={"titles": ["Account Manager"], "locations": ["Phoenix, AZ"]})
-    assert "not one of your target titles" not in score_listing({**fresh, "title": "Account Executive"}, sales).concerns
+    for title in ("Account Executive", "Key Accounts Manager"):
+        assert "not one of your target titles" not in score_listing({**fresh, "title": title}, sales).concerns, title
+    assert "not one of your target titles" in score_listing({**fresh, "title": "Staff Accountant"}, sales).concerns
 
 
 def test_a_posting_asking_for_far_more_experience_isnt_preselected():
