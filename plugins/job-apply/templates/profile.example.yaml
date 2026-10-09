@@ -147,3 +147,6 @@ settings:
   # Email (needs the Gmail connector in Claude). Both are off until you turn them on.
   email_codes: false          # Claude may read sign-in / verification codes that career sites email you
   email_tracking: false       # Claude may scan your email for replies to your applications
+  # Cookie banners: the desk declines them. One with no way to decline (TI's "Agree and
+  # Proceed") waits for you, unless you set this to true to let the desk accept it for you.
+  accept_cookies: false

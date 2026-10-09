@@ -1,0 +1,30 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Apply - Example Fab</title>
+<style>
+  #__tealiumGDPRecModal { position: fixed; inset: 0; background: rgba(0,0,0,.4); display: flex; align-items: center; justify-content: center; }
+  #__tealiumGDPRecModal .privacy_prompt { background: #fff; padding: 20px; }
+</style>
+</head>
+<body>
+<!-- like Texas Instruments' Tealium consent prompt over its Oracle application (live, Oct 2026):
+     "Manage Preferences" or "Agree and Proceed", and no way to decline on the banner itself -->
+<h1>Application Form</h1>
+<form id="app" onsubmit="event.preventDefault(); document.body.innerHTML = '<h1>Thank you for applying!</h1>';">
+  <label for="fn">First Name *</label><input id="fn" required>
+  <label for="ln">Last Name *</label><input id="ln" required>
+  <label for="em">Email *</label><input id="em" type="email" required>
+  <label for="cv">Resume</label><input id="cv" type="file">
+  <button type="submit">Submit application</button>
+</form>
+<div id="__tealiumGDPRecModal">
+  <div class="privacy_prompt">
+    <p>Our websites use cookies to optimize site functionality and improve your experience. Click Agree and Proceed to
+       accept cookies and enter the site.</p>
+    <button type="button" id="pref_center" onclick="window.prefs = (window.prefs || 0) + 1;">MANAGE PREFERENCES</button>
+    <button type="button" id="consent_prompt_submit"
+            onclick="window.accepted = (window.accepted || 0) + 1; document.getElementById('__tealiumGDPRecModal').remove();">AGREE AND PROCEED</button>
+  </div>
+</div>
+</body>
+</html>

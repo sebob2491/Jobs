@@ -437,6 +437,23 @@ def test_the_click_tool_refuses_a_cookie_banners_accept(srv):
     assert reject["clicked"] is True
 
 
+
+@pytest.mark.skipif(not browser_available(), reason="no Playwright Chromium installed")
+def test_the_click_tool_accepts_a_cookie_banner_only_where_the_person_allows_it(srv, job_apply_home):
+    from conftest import fixture_url
+
+    profile = job_apply_home / "profile.yaml"
+    profile.write_text(profile.read_text().replace("settings:\n", "settings:\n  accept_cookies: true\n"))
+
+    async def go():
+        await srv.browser.goto(fixture_url("site/cookie-form.html"))
+        accept = await srv.click("Accept")
+        return accept, await srv.browser._page.evaluate("() => window.accepted || 0")
+
+    accept, accepted = run(go())
+    assert accept["clicked"] is True and accepted == 1
+
+
 @needs_browser
 def test_a_failed_desk_jobs_tab_is_still_the_desks(srv):
     """Resume takes a failed job up again in its tab: Claude's open_application doesn't load

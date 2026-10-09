@@ -55,8 +55,9 @@ NAVIGATION_RE = re.compile(
     r"sign ?in|log ?in|create account|verify|send (me a )?code|ok|accept( all)?( cookies)?|i agree|apply manually|start)\b",
     re.I,
 )
-# What accepts a cookie or privacy banner (never pressed for the person): "Accept All
-# Cookies", or inside a banner "Accept", "Allow all", "I agree", "AGREE AND PROCEED" (TI's)
+# What accepts a cookie or privacy banner (never pressed for the person, unless they set
+# settings.accept_cookies): "Accept All Cookies", or inside a banner "Accept", "Allow all",
+# "I agree", "AGREE AND PROCEED" (TI's)
 _ACCEPT_WORDS = re.compile(r"^(accept|allow|agree|ok|okay|got it|i agree|i accept|i understand|yes,? i agree|"
                            r"agree (and|&) (proceed|continue|close)|accept (and|&) (proceed|continue|close))"
                            r"( all)?( cookies)?[.!]?$", re.I)
@@ -1310,10 +1311,11 @@ class BrowserSession:
     def _check_clickable(info: dict[str, Any], url: str = "") -> None:
         label = " ".join((info.get("label") or "").split())
         text = (info.get("text") or "").strip()
-        if _accepts_cookies(label, text, bool(info.get("cookie"))):
+        if _accepts_cookies(label, text, bool(info.get("cookie"))) and not config.Profile.load().settings.accept_cookies:
             raise SubmitBlocked(
                 f"Cookie and privacy banners are never accepted for the user: {label!r} would accept one. Decline it "
-                "if the banner offers that, or leave the choice to the user in the browser window.")
+                "if the banner offers that, or leave the choice to the user in the browser window (or they can set "
+                "accept_cookies: true under settings: in profile.yaml).")
         # a posting's own Apply on SuccessFactors' older sites: an empty form, so nothing is sent
         opens = bool(info.get("formSubmit") and POSTING_PAGE_RE.search(url) and re.match(r"^apply( now)?$", text, re.I)
                      and not info.get("formFields"))

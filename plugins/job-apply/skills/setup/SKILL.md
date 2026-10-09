@@ -73,6 +73,9 @@ All of the user's data lives in `~/.job-apply/`, outside the plugin:
    - Submit mode: `review` (default, they approve each submit) or `auto` for chosen
      ATSs such as `[workday, greenhouse, lever]`. LinkedIn and Indeed always need
      them to click Submit themselves.
+   - Cookie banners: the desk declines them, and one with no way to decline (TI's "Agree and
+     Proceed") waits for them. Ask whether the desk may accept those for them
+     (`settings.accept_cookies: true`); leave it off unless they say yes.
    - Email, only if the Gmail connector is connected: may Claude read the
      verification codes and links career sites email them (`settings.email_codes`)?
      May it check their email for replies to applications (`settings.email_tracking`)?

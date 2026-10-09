@@ -173,6 +173,7 @@ class Settings:
     browser_channel: str = "chrome"  # "chrome", "msedge" or "chromium" (bundled)
     email_codes: bool = False  # may Claude read sign-in/verification codes from the user's email
     email_tracking: bool = False  # may Claude scan email for replies to applications
+    accept_cookies: bool = False  # may the desk accept a cookie banner that offers no way to decline
     warnings: list[str] = field(default_factory=list)
 
     @classmethod
@@ -191,6 +192,7 @@ class Settings:
             browser_channel=channel,
             email_codes=d.get("email_codes") is True,
             email_tracking=d.get("email_tracking") is True,
+            accept_cookies=d.get("accept_cookies") is True,
         )
         if os.environ.get("JOB_APPLY_HEADLESS") == "1":
             s.headless = True

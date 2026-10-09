@@ -64,7 +64,9 @@ the scrubber (`python -m job_apply.fixtures`) before they become test fixtures.
   Practice mode (`submit_mode: dry_run`, `JOB_APPLY_NEVER_SUBMIT=1`) never sends anything.
 - **Bot checks:** never get around them, and never solve CAPTCHAs. The desk pauses for the
   person.
-- **Cookie banners** are declined or left to the person, never accepted.
+- **Cookie banners** are declined or left to the person, never accepted, unless the person
+  turned on `settings.accept_cookies` (off by default): then a banner with no way to decline
+  is accepted for them.
 - **Accounts:** the desk never creates an account.
 - **Passwords:**
   - a saved password goes only onto its own system's sites;

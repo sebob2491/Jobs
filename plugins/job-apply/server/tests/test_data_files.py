@@ -16,6 +16,13 @@ def test_profile_template_loads_with_safe_defaults(tmp_path):
     assert all("match" in a for a in data["answers"])
 
 
+def test_accepting_cookies_is_the_persons_choice():
+    """Off unless set to true, as written: "yes" or a missing setting leaves banners to the person."""
+    assert config.Settings.from_dict({}).accept_cookies is False
+    assert config.Settings.from_dict({"accept_cookies": "yes"}).accept_cookies is False
+    assert config.Settings.from_dict({"accept_cookies": True}).accept_cookies is True
+
+
 def test_submit_mode_spellings():
     from job_apply.config import Settings
 
