@@ -46,6 +46,8 @@ companies:
     ats: successfactors
     az_sites: Phoenix
     confidence: medium
+    # No search block: careers.tsmc.com answers with a Cloudflare challenge ("Just a moment...",
+    # HTTP 403, Oct 2026), and bot checks are never got around. The person searches it there.
   - name: Microchip Technology
     careers_url: https://microchiphr.wd5.myworkdayjobs.com/External
     ats: workday

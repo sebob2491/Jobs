@@ -1239,8 +1239,8 @@ def parse_rmk(data: Any, origin: str) -> list[Listing]:
     return out
 
 
-# ------------------------------------------------- SuccessFactors career sites' search pages (Qorvo)
-SF_PAGES = 4  # pages per wording; the site draws 25 rows a page
+# ------------------------------------------------- SuccessFactors career sites' search pages (Qorvo, SRP)
+SF_PAGES = 4  # pages per wording; a page holds 25 rows (Qorvo's table) or up to 100 tiles (SRP's)
 _SF_MORE = re.compile(r"\+\s*(\d+)\s*more\W*$", re.I)  # "Greensboro, NC, US, 27409 +3 more…"
 _SF_MORE_SHOWN = re.compile(r"\(\+\d+ more\)")
 _SF_TOTAL = re.compile(r"of\s+([\d,]+)")  # "Results 1 – 25 of 120"
@@ -1253,8 +1253,8 @@ def _sf_state(terms: list[str]) -> str:
 
 
 async def _successfactors(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, terms: list[str]) -> list[Listing]:
-    """SuccessFactors career sites (Qorvo) draw their search results as an HTML table, 25
-    openings a page. Given a state, the site's own location search narrows them; it also
+    """SuccessFactors career sites (Qorvo, Salt River Project) draw their search results as an
+    HTML table or as tiles, a page at a time. Given a state, the site's own location search narrows them; it also
     finds openings whose first place is elsewhere ("Greensboro, NC +3 more")."""
     site = str(cfg["url"] if isinstance(cfg, dict) else cfg).rstrip("/")
     if "://" not in site:
@@ -1262,19 +1262,21 @@ async def _successfactors(client: httpx.AsyncClient, cfg: Any, query: str, limit
     state = _sf_state(terms)
     url = f"{site}/search/"
     out: list[Listing] = []
+    start = 0  # the next page's first row, by the rows the site drew (not the ones kept)
     for _ in range(SF_PAGES):
-        params: dict[str, Any] = {"q": query, "startrow": len(out)}
+        params: dict[str, Any] = {"q": query, "startrow": start}
         if state:
             params["locationsearch"] = state
         r = await _send(client, "GET", url, params=params)
         _raise_for(r, url)
-        batch, total = parse_successfactors(r.text, site)
+        batch, total, drawn = _parse_sf(r.text, site)
+        start += drawn
         for listing in batch:
             if state and _SF_MORE_SHOWN.search(listing.location) and location_matches(listing.location, terms) is not True:
                 # one of its other places is in the state, or the site wouldn't have listed it
                 listing.location = f"{listing.location}; {state}"
         out.extend(batch)
-        if not batch or len(out) >= (total if total is not None else limit) or len(out) >= limit:
+        if not drawn or start >= (total if total is not None else limit) or len(out) >= limit:
             break
     return out
 
@@ -1290,31 +1292,46 @@ def _sf_date(text: str) -> str:
 
 def parse_successfactors(page: str, site: str) -> tuple[list[Listing], int | None]:
     """The openings on one page of a SuccessFactors search, and how many the search found."""
+    listings, total, _ = _parse_sf(page, site)
+    return listings, total
+
+
+def _parse_sf(page: str, site: str) -> tuple[list[Listing], int | None, int]:
+    """A SuccessFactors search page's openings, drawn as table rows (Qorvo's) or as tiles
+    (Salt River Project's), each with its place and date; how many the search found; and how
+    many rows the page drew (where the next page starts)."""
     soup = BeautifulSoup(page, "html.parser")
     out: list[Listing] = []
     seen: set[str] = set()
-    for row in soup.select("tr.data-row"):
+    rows = soup.select("tr.data-row") or soup.select("li.job-tile")  # (a table's page with a few tiles: its rows)
+    for row in rows:
         link = row.select_one("a.jobTitle-link[href]")
         if link is None:
             continue
         url = urljoin(site + "/", str(link["href"]))
-        title = link.get_text(" ", strip=True)
+        title = " ".join(link.get_text(" ", strip=True).split())
         if not title or url in seen:
             continue
         seen.add(url)
-        cell = row.select_one(".colLocation") or row.select_one(".jobLocation")
-        where = re.sub(r"\s+", " ", cell.get_text(" ", strip=True)) if cell is not None else ""
+        cell = (row.select_one(".colLocation") or row.select_one(".jobLocation")
+                or row.select_one('.section-field.location [id$="location-value"]'))
+        if cell is not None:
+            where = re.sub(r"\s+", " ", cell.get_text(" ", strip=True))
+        else:  # a tile site that names its place by town and state fields
+            where = ", ".join(" ".join(c.get_text(" ", strip=True).split()) for c in
+                              row.select('.section-field.city [id$="-value"], .section-field.state [id$="-value"]'))
         more = _SF_MORE.search(where)
         if more:  # "Greensboro, NC, US, 27409 (+3 more)"
             where = f"{where[:more.start()].strip()} (+{more.group(1)} more)"
-        when = row.select_one(".colDate .jobDate") or row.select_one(".jobDate")
+        when = (row.select_one(".colDate .jobDate") or row.select_one(".jobDate")
+                or row.select_one('.section-field.date [id$="date-value"]'))
         job_id = re.search(r"/(\d+)/?(?:\?|$)", str(link["href"]))
         out.append(Listing(company="", title=title, url=url, location=where,
                            posted=_sf_date(when.get_text(" ", strip=True)) if when is not None else "",
                            external_id=job_id.group(1) if job_id else "", ats="successfactors"))
-    label = soup.select_one(".paginationLabel")
+    label = soup.select_one(".paginationLabel, #tile-search-results-label")  # "Showing 1 to 16 of 16 Jobs"
     total = _SF_TOTAL.search(label.get_text(" ", strip=True)) if label is not None else None
-    return out, int(total.group(1).replace(",", "")) if total else None
+    return out, int(total.group(1).replace(",", "")) if total else None, len(rows)
 
 
 # SuccessFactors' older career sites (career8.successfactors.com, Amkor): the page's script

@@ -1732,3 +1732,52 @@ def test_a_jibe_search_not_in_one_state_reads_further_and_takes_an_address():
     asked.clear()
     asyncio.run(go("AZ"))
     assert len(asked) == 1 and asked[0][1]["location"] == "Arizona"  # the site's own filter: one page
+
+
+SF_TILES = """<div id="tile-search-results-label">Showing 1 to 2 of 2 Jobs</div><ul id="job-tile-list">
+<li class="job-tile job-id-1424491000 job-row-index-1" data-url="/job/Tempe-Compensation-Analyst-AZ-85280/1424491000/">
+ <div class="sub-section sub-section-desktop"><span class="section-title title" role="heading">
+  <a class="jobTitle-link" href="/job/Tempe-Compensation-Analyst-AZ-85280/1424491000/"> Compensation  Analyst </a></span>
+  <div class="section-field location" id="job-1424491000-desktop-section-location"><span class="section-label">Location</span>
+   <div id="job-1424491000-desktop-section-location-value">Tempe, AZ, US </div></div>
+  <div class="section-field date" id="job-1424491000-desktop-section-date"><span class="section-label">Date</span>
+   <div id="job-1424491000-desktop-section-date-value">Oct 2, 2026 </div></div></div>
+ <div class="sub-section sub-section-tablet">
+  <a class="jobTitle-link" href="/job/Tempe-Compensation-Analyst-AZ-85280/1424491000/"> Compensation Analyst </a></div>
+</li>
+<li class="job-tile job-id-1 job-row-index-2" data-url="/job/Austin-Recruiter-TX/1/">
+ <a class="jobTitle-link" href="/job/Austin-Recruiter-TX/1/">Recruiter</a>
+ <div class="section-field location"><div id="job-1-desktop-section-location-value">Austin, TX, US</div></div></li>
+</ul>"""
+
+
+def test_a_successfactors_site_that_draws_its_results_as_tiles():
+    """Salt River Project's SuccessFactors site draws its search results as tiles, not the table
+    rows Qorvo's has: the search found none (Oct 2026). Each tile has its title (twice: desktop
+    and tablet), place and date."""
+    from job_apply.search import parse_successfactors
+
+    rows, total = parse_successfactors(SF_TILES, "https://careers.srpnet.com")
+    assert [(r.title, r.location, r.posted, r.url, r.external_id) for r in rows] == [
+        ("Compensation Analyst", "Tempe, AZ, US", "2026-10-02",
+         "https://careers.srpnet.com/job/Tempe-Compensation-Analyst-AZ-85280/1424491000/", "1424491000"),
+        ("Recruiter", "Austin, TX, US", "", "https://careers.srpnet.com/job/Austin-Recruiter-TX/1/", "1")]
+    assert total == 2  # its own label: "Showing 1 to 2 of 2 Jobs"
+    town = SF_TILES.replace('<div class="section-field location"><div id="job-1-desktop-section-location-value">Austin, TX, US</div></div>',
+                            '<div class="section-field city"><div id="job-1-desktop-section-city-value">Austin</div></div>'
+                            '<div class="section-field state"><div id="job-1-desktop-section-state-value">TX</div></div>')
+    assert parse_successfactors(town, "https://careers.srpnet.com")[0][1].location == "Austin, TX"  # town and state fields
+
+    asked = []
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        asked.append(dict(request.url.params))
+        return httpx.Response(200, text=SF_TILES)
+
+    async def go():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(answer)) as client:
+            return await search_companies("compensation | recruiter", location="AZ", client=client, companies=[
+                {"name": "SRP Co", "search": {"successfactors": "https://careers.srpnet.com"}}])
+    out = asyncio.run(go())
+    assert [r["title"] for r in out["results"]] == ["Compensation Analyst"]  # Austin's left out
+    assert [a["startrow"] for a in asked] == ["0", "0"]  # a page per wording: all 2 of 2 were on it
