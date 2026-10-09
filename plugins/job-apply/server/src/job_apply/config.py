@@ -36,6 +36,40 @@ TEMPLATE_PROFILE = PLUGIN_ROOT / "templates" / "profile.example.yaml"
 # form, but the person clicks the final button themselves.
 HUMAN_SUBMIT_ONLY = {"linkedin", "indeed"}
 
+# Answer patterns from templates before 0.3.61, each with the template's pattern now. The old
+# ones also answered the opposite question: the "Yes" for "willing to take a drug test?" went
+# to "Have you ever failed one?". A profile still holding one word for word reads as the new one.
+RETIRED_ANSWER_PATTERNS = {
+    "clean ?room": r"^(?!.*\b(how (many|long|much)|years?|describe|explain|list)\b).*clean ?room",
+    "lift .*(25|35|50) ?(lb|pound)": r"lift .*\b(25|35|50) ?(lb|pound)",
+    "background check|drug (test|screen)":
+        r"^(?!.*\b(fail\w*|refus\w*|positive|convict\w*|felon\w*|misdemeanor\w*|arrest\w*|guilty|crimes?|charge[sd]?|"
+        r"offen[cs]es?|anything|prevent\w*|concerns?|issues?|problems?)\b)(?!.*\bcriminal (record|histor))"
+        r".*(background (check|screen|investigation)|drug (test|screen))",
+    "relatives?|family members?.*(employ|work)":
+        r"^(?!relative\W).*(\b(relatives?|family members?)\b(.{0,60}\b(employ|work)| (at|in|with)\b)"
+        r"|\b(employ|work).{0,60}\b(relatives?|family members?)\b)",
+    "non-?compete|non-?solicit":
+        r"^(?!.*\b(willing|agree|accept\w*|comply|abide|open to)\b)"
+        r".*(\b(bound|subject|party|signed|have|has|currently|existing|restrict\w*)\b.{0,60}non-?(compete|solicit)"
+        r"|non-?(compete|solicit).{0,80}\b(currently|in effect|restrict\w*|prevent\w*|bound|subject)\b)",
+    "credit (check|history|report)":
+        r"^(?!.*\b(ever|bankrupt\w*|delinquen\w*|default\w*|judgments?|liens?|collections?|negative|derogatory|"
+        r"anything|explain|describe|issues?|problems?)\b).*credit (check|history|report)",
+    "(employed|worked) (by|for) (a|any) .*government": r"^(?!.*\bcontract).*(employed|worked) (by|for) (a|any) .*government",
+}
+
+
+def _current_answer_patterns(data: dict[str, Any]) -> None:
+    """Swap an older template's answer pattern for the template's own now, in memory only (the
+    file is the person's). A pattern they wrote or changed is left alone."""
+    answers = data.get("answers")
+    if not isinstance(answers, list):
+        return
+    for item in answers:
+        if isinstance(item, dict) and isinstance(item.get("match"), str):
+            item["match"] = RETIRED_ANSWER_PATTERNS.get(item["match"], item["match"])
+
 
 def plugin_version() -> str:
     """The plugin's version from its manifest, for the person to tell an update arrived."""
@@ -209,6 +243,7 @@ class Profile:
             if not isinstance(data, dict):
                 raise ValueError(f"{path} should hold sections like 'personal:' and 'settings:'; it can't be read as it is")
             _zip_as_written(data, path)
+            _current_answer_patterns(data)
         if own:
             saved = saved_answers()
             if saved:  # exact questions answered in the Job Desk come before the general patterns
