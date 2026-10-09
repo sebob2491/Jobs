@@ -3,6 +3,8 @@
 import pytest
 from conftest import browser_available, by_label, fixture_url, run
 
+from job_apply import browser as browser_module
+
 pytestmark = pytest.mark.skipif(not browser_available(), reason="no Playwright Chromium installed")
 
 
@@ -953,7 +955,9 @@ def test_answers_a_page_loses_in_a_quick_run_of_fills_are_put_in_again(srv):
     async def cleared():
         return await (await srv.browser.page()).evaluate("() => window.cleared")
 
-    # a phone number the site never takes is typed again once, not on every fill; a note the
-    # desk didn't write is never touched
+    # a phone number the site never takes is typed again a few times, not on every fill; a note
+    # the desk didn't write is never touched
     times = run(cleared())
-    assert times.get("Phone") == 1 and "Notes" not in times, times
+    assert 1 <= times.get("Phone", 0) <= browser_module.LOST_FILL_TRIES and "Notes" not in times, times
+    run(srv.fill_form([{"id": middle["id"], "value": "K"}]))
+    assert run(cleared())["Phone"] == times["Phone"]

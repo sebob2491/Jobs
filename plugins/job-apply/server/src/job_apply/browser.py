@@ -90,6 +90,7 @@ POPUP_FOLLOW = 15  # seconds after a click of ours in which a tab it opens is fo
 FRAME_WAIT = 8  # seconds for a job board's frame (iCIMS's openings) to load its page, all told
 SETTLE_WAIT = 8  # seconds for a job board's page to stop loading things, at most
 LOST_FILL_WAIT = 0.5  # seconds after filling for a page to mark the boxes whose answers it lost
+LOST_FILL_TRIES = 3  # times a box is typed again on a page, at most (one the page refuses stays marked)
 # How long a click may wait for its button to become clickable, in ms.
 CLICK_TIMEOUT = 8000
 CONFIRMATION_RE = re.compile(
@@ -214,9 +215,9 @@ class BrowserSession:
         self.strict_tabs = False
         self._frame_ids: dict[Frame, str] = {}
         self._fields: dict[str, dict] = {}
-        # what the desk typed on a page (by address), and the boxes typing again didn't mend
+        # what the desk typed on a page (by address), and how often each box was typed again
         self._typed: dict[str, set[str]] = {}
-        self._mended_not: set[tuple[str, str, str]] = set()
+        self._retyped: dict[tuple[str, str, str], int] = {}
         self._actions: dict[str, dict] = {}
         self.current_job_id: int | None = None
         self.tab_jobs: dict[Page, int] = {}  # the job each tab was opened for
@@ -944,9 +945,9 @@ class BrowserSession:
         one's), then says "Last Name cannot be left blank" beside the name shown. One at a time,
         emptied first (a framework ignores a box set to the value it already shows); never a
         hidden box or the one the person is in. A second look after that, for one the page
-        marked a little later; a box typing again doesn't mend is left alone after that."""
+        marked a little later (or lost again in the rush). A box the page goes on refusing is
+        left alone after LOST_FILL_TRIES."""
         typed = self._typed.get(page.url) or set()
-        tried: set[tuple[str, str, str]] = set()
         for _ in range(2):
             await page.wait_for_timeout(LOST_FILL_WAIT * 1000)
             again = False
@@ -957,18 +958,15 @@ class BrowserSession:
                     continue
                 for box in lost:
                     key = (page.url, box["id"], norm(box["value"]))
-                    if key[2] not in typed or key in self._mended_not:
+                    if key[2] not in typed or self._retyped.get(key, 0) >= LOST_FILL_TRIES:
                         continue
-                    if key in tried:  # typed again already and still marked: not a lost answer
-                        self._mended_not.add(key)
-                        continue
-                    tried.add(key)
+                    self._retyped[key] = self._retyped.get(key, 0) + 1
                     loc = frame.locator(f'[data-ja-id="{box["id"]}"]').first
                     try:
                         await loc.fill("", timeout=3000)
                         await loc.fill(box["value"], timeout=3000)
                         await loc.evaluate("el => el.blur()")
-                        await page.wait_for_timeout(LOST_FILL_WAIT * 400)
+                        await page.wait_for_timeout(LOST_FILL_WAIT * 800)
                         again = True
                     except (PlaywrightError, PlaywrightTimeout):
                         continue
