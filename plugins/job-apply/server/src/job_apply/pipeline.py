@@ -53,7 +53,7 @@ SHARED_LOOK_BACK = 30  # seconds looked back for a job's code while an earlier j
 FINISHED = {"applied", "interviewing", "offer", "rejected", "withdrawn"}  # tracker statuses never applied to again
 
 _BOT_TITLE = re.compile(r"just a moment|attention required|access denied|pardon our interruption|security check|"
-                        r"are you a robot|bot (?:check|detection)", re.I)
+                        r"are you a robot|bot (?:check|detection)|^\s*(?:403\s*)?forbidden\s*$", re.I)
 _BOT_TEXT = re.compile(r"verify (?:that )?you are (?:a )?human|are you a robot|checking (?:if the site connection is secure|"
                        r"your browser)|press (?:&|and) hold|complete the security check|unusual traffic from your|"
                        r"enable javascript and cookies to continue|request unsuccessful|you have been blocked", re.I)
@@ -74,7 +74,7 @@ _STEP = re.compile(r"^(save (?:and|&) continue|continue|next|next step|review|re
 _FORWARD = re.compile(r"^(save (?:and|&) continue|continue|next|next step|review|review application|proceed|"
                       r"go to next step)$", re.I)
 _SIGN_IN_STEP = re.compile(r"create account\s*/\s*sign in|sign in\s*/\s*create account", re.I)  # Workday's step name
-_ENTRY = re.compile(r"^(apply manually|apply now|apply|easy apply|quick apply|"
+_ENTRY = re.compile(r"^(apply manually|apply now|apply online|apply|easy apply|quick apply|"
                     r"apply for (?:this|the) (?:job|position|role)(?: online)?|"
                     r"apply to (?:this )?job|start (?:your |my )?application|i'?m interested|"
                     r"continue to application|apply on (?:the )?(?:company|employer)(?:'s)? (?:site|website))$", re.I)
@@ -1000,7 +1000,12 @@ class Applier:
                 problems = [e for e in clicked.get("errors") or [] if _ERRORISH.search(e)]
                 if problems or stalls >= 2:
                     # say what's wrong: Workday lists it as links ("Error-Email") and marks fields
-                    problems = _flagged(clicked) or _flagged((await self._look())[0])
+                    now = (await self._look())[0]
+                    problems = _flagged(clicked) or _flagged(now)
+                    if not problems:  # Phoenix Children's Quick Apply: its Next stays greyed out without a resume
+                        problems = [f"\u201c{a['text'].strip()}\u201d is greyed out, so the site still wants something "
+                                    "(a file, say, or a box to tick)" for a in now.get("actions") or []
+                                    if a.get("disabled") and _FORWARD.match(final_text(a["text"]))][:1]
                     errors = "; ".join(problems)[:300].rstrip(" .")
                     return self._pause(run, "stuck", "The page didn't move on" + (f": {errors}." if errors else ".")
                                        + " Fix it in the browser, then press Resume.")

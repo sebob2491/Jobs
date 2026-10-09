@@ -9,6 +9,9 @@ Each company in data/companies.yaml may carry a `search` block naming one of:
     smartrecruiters: <company identifier>
     oracle:          {host: xxxx.fa.us2.oraclecloud.com, site: CX_1001}
     applicantstack:  <board name>
+    taleo:           {host: myhiring.kforce.com, section: ex, portal: 101430233}  (Taleo career sections)
+    talemetry:       <job site address>     (Symplr Talemetry job sites: Valleywise Health)
+    phoenixchildrens: <job site address>    (Phoenix Children's own job site)
     icims:           <portal name>          (read in the browser)
     paycom:          <career portal key>    (read in the browser)
     ukg:             <job board address>    (UKG Pro / UltiPro; read in the browser)
@@ -48,7 +51,7 @@ from .postings import USER_AGENT, html_to_text, place_in_text, successfactors_pl
 WORKDAY_PAGE = 20  # Workday rejects larger pages
 MAX_ALTERNATIVES = 4
 FETCH_WHEN_FILTERING = 60  # results to scan per search when filtering by location ourselves
-CLIENT_SIDE = {"greenhouse", "lever", "applicantstack", "paycom", "ukg", "sfclassic", "infor"}  # whole board at once; titles filtered here
+CLIENT_SIDE = {"greenhouse", "lever", "applicantstack", "paycom", "ukg", "sfclassic", "infor", "phoenixchildrens"}  # whole board at once; titles filtered here
 # Searches whose data only comes through the site's own page in the browser (ASML's
 # Sitecore Discover widget; iCIMS portals, which turn away plain requests; Paycom, UKG
 # Pro and SuccessFactors' newer search, whose APIs want the session their page sets up;
@@ -730,6 +733,149 @@ def parse_icims(html: str, base: str) -> list[Listing]:
 
 
 
+_REMOTEISH = re.compile(r"\b(remote|telework|virtual|statewide|various|multiple)\b", re.I)
+
+
+# ----------------------------------------------------------------- Taleo career sections (Kforce)
+TALEO_PAGES = 4  # pages per wording; 25 openings a page
+
+
+def _taleo_body(query: str, page: int) -> dict[str, Any]:
+    """The search the career section's own page sends: a keyword, no filters, newest first."""
+    filters = ["POSTING_DATE", "LOCATION", "JOB_FIELD", "JOB_TYPE", "JOB_SCHEDULE", "JOB_LEVEL"]
+    advanced = ["ORGANIZATION", "LOCATION", "JOB_FIELD", "JOB_NUMBER", "URGENT_JOB", "EMPLOYEE_STATUS", "STUDY_LEVEL",
+                "WILL_TRAVEL", "JOB_SHIFT"]
+    return {"multilineEnabled": False, "sortingSelection": {"sortBySelectionParam": "3", "ascendingSortingOrder": "false"},
+            "fieldData": {"fields": {"KEYWORD": query, "LOCATION": ""}, "valid": True},
+            "filterSelectionParam": {"searchFilterSelections": [{"id": f, "selectedValues": []} for f in filters]},
+            "advancedSearchFiltersSelectionParam": {
+                "searchFilterSelections": [{"id": f, "selectedValues": []} for f in advanced]},
+            "pageNo": page}
+
+
+async def _taleo(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, terms: list[str]) -> list[Listing]:
+    """Taleo career sections answer their own page's search with JSON, 25 openings a page.
+    It needs the time zone headers the page sends (without them: HTTP 500)."""
+    host, section, portal = cfg["host"], cfg.get("section", "ex"), cfg["portal"]
+    api = f"https://{host}/careersection/rest/jobboard/searchjobs?" + urlencode({"lang": "en", "portal": portal})
+    headers = {"Accept": "application/json", "Content-Type": "application/json", "X-Requested-With": "XMLHttpRequest",
+               "tz": "GMT-07:00", "tzname": "America/Phoenix"}
+    out: list[Listing] = []
+    for page in range(1, TALEO_PAGES + 1):
+        r = await _send(client, "POST", api, json=_taleo_body(query, page), headers=headers)
+        _raise_for(r, api)
+        data = r.json()
+        rows = data.get("requisitionList") or []
+        for req in rows:
+            columns = req.get("column") or []
+            title = str(columns[req.get("linkedColumn", 0)] if columns else "").strip()
+            job = str(req.get("contestNo") or req.get("jobId") or "")
+            if not title or not job:
+                continue
+            places: list[str] = []
+            for i in req.get("locationsColumns") or []:
+                try:
+                    places += [str(x) for x in json.loads(columns[i])]
+                except (IndexError, TypeError, ValueError):
+                    continue
+            when = next((c for c in columns[1:] if isinstance(c, str) and _TALEO_DATE.fullmatch(c.strip())), "")
+            out.append(Listing(company="", title=title, ats="taleo", external_id=job,
+                               url=f"https://{host}/careersection/{section}/jobdetail.ftl?" + urlencode({"job": job,
+                                                                                                        "lang": "en"}),
+                               location="; ".join(_taleo_place(x) for x in places), posted=_taleo_posted(when)))
+        size = int((data.get("pagingData") or {}).get("pageSize") or 25)
+        if len(rows) < size or len(out) >= limit:  # (its total can be more than it lists: a short page ends it)
+            break
+    return out
+
+
+_TALEO_DATE = re.compile(r"[A-Z][a-z]{2} \d{1,2}, \d{4}")
+
+
+def _taleo_place(place: str) -> str:
+    """Taleo's "Arizona-Phoenix" (state, then town) as "Phoenix, Arizona"."""
+    state, _, town = place.partition("-")
+    return f"{town.strip()}, {state.strip()}" if town.strip() and state.strip() else place.strip()
+
+
+def _taleo_posted(when: str) -> str:
+    try:
+        return datetime.strptime(when.strip(), "%b %d, %Y").date().isoformat()
+    except ValueError:
+        return ""
+
+
+# ----------------------------------------------------------------- Talemetry job sites (Valleywise Health)
+TALEMETRY_PAGES = 4  # pages per wording; 25 openings a page
+TALEMETRY_PAGE = 25
+
+
+async def _talemetry(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, terms: list[str]) -> list[Listing]:
+    """Symplr's Talemetry job sites (jobs.valleywisehealth.org) draw their search results on
+    the server, 25 a page, each with its place."""
+    base = str(cfg).rstrip("/")
+    out: list[Listing] = []
+    for page in range(1, TALEMETRY_PAGES + 1):
+        url = f"{base}/jobs/search?" + urlencode({"q": query, "page": page})
+        r = await _send(client, "GET", url)
+        _raise_for(r, url)
+        rows = parse_talemetry(r.text, base)
+        out.extend(rows)
+        if len(rows) < TALEMETRY_PAGE or len(out) >= limit:
+            break
+    return out
+
+
+def parse_talemetry(html: str, base: str) -> list[Listing]:
+    soup = BeautifulSoup(html, "html.parser")
+    out: list[Listing] = []
+    for item in soup.select("div.jobs-section__item"):
+        link = item.select_one("h4 a[href]")
+        if link is None or not link.get_text(strip=True):
+            continue
+        url = urljoin(base + "/", str(link["href"]))
+        marker = item.select_one("i.fa-map-marker")
+        cell = marker.find_parent(class_="jobcardtext") if marker is not None else None
+        m = re.search(r"/jobs/(\d+)", url)
+        out.append(Listing(company="", title=link.get_text(" ", strip=True), url=url, ats="talemetry",
+                           location=cell.get_text(" ", strip=True) if cell is not None else "",
+                           external_id=m.group(1) if m else ""))
+    return out
+
+
+# ----------------------------------------------------------------- Phoenix Children's own job site
+async def _phoenixchildrens(client: httpx.AsyncClient, cfg: Any, query: str, limit: int,
+                            terms: list[str]) -> list[Listing]:
+    """Phoenix Children's own job site lists every opening on one page (about 300), each
+    with its department, schedule and place ("Recruitment | Full-Time | Phoenix")."""
+    base = str(cfg).rstrip("/")
+    url = f"{base}/Positions/"
+    r = await _send(client, "GET", url)
+    _raise_for(r, url)
+    return [listing for listing in parse_phoenixchildrens(r.text, base) if title_matches(listing.title, query)]
+
+
+def parse_phoenixchildrens(html: str, base: str) -> list[Listing]:
+    soup = BeautifulSoup(html, "html.parser")
+    out: list[Listing] = []
+    seen: set[str] = set()
+    for item in soup.select("div.blog-item"):
+        link = item.select_one('h2 a[href*="/Positions/Posting/"]')
+        if link is None or not link.get_text(strip=True):
+            continue
+        url = urljoin(base + "/", str(link["href"]))
+        if url in seen:
+            continue
+        seen.add(url)
+        line = item.select_one("div.d-block")
+        parts = [x.strip() for x in (line.get_text(" ", strip=True) if line is not None else "").split("|")]
+        place = parts[-1] if len(parts) >= 3 else ""
+        out.append(Listing(company="", title=link.get_text(" ", strip=True), url=url, ats="custom",
+                           location=f"{place}, AZ" if place and not _REMOTEISH.search(place) else place,
+                           external_id=url.rstrip("/").rsplit("/", 1)[-1]))
+    return out
+
+
 # ----------------------------------------------------------------- Paycom (Ebara), through the browser
 PAYCOM_TAKE = 100  # the page asks for 10 at a time
 PAYCOM_PAGES = 3
@@ -1297,6 +1443,9 @@ SEARCHERS: dict[str, Callable[[httpx.AsyncClient, Any, str, int, list[str]], Awa
     "oracle": _oracle,
     "applicantstack": _applicantstack,
     "successfactors": _successfactors,
+    "taleo": _taleo,
+    "talemetry": _talemetry,
+    "phoenixchildrens": _phoenixchildrens,
 }
 
 

@@ -34,6 +34,7 @@ companies:
     ats: company_site       # Phoenix Children's own ASP.NET job site with its own accounts; no ATS behind it seen
     az_sites: Phoenix (main campus), Glendale (Arrowhead), Mesa (East Valley), Avondale, Chandler, Gilbert, Peoria, Scottsdale, Tempe
     confidence: medium      # live check, Oct 2026: postings at /Positions/Posting/<id>, filters by Phoenix-area city
+    search: {phoenixchildrens: https://careers.phoenixchildrens.com}  # every opening on one page (about 300)
   - name: Mayo Clinic            # the Arizona campus (Phoenix, Scottsdale)
     careers_url: https://jobs.mayoclinic.org/
     ats: oracle_hcm         # jobs.mayoclinic.org (TalentBrew) and careers.mayoclinic.org (Eightfold) front ends; Apply opens Oracle Recruiting site CX_1
@@ -46,7 +47,7 @@ companies:
     ats: custom            # symplr; valleywisehealth.org/careers redirects here; Apply goes to apply.healthcaretalentsource.com (Symplr / HealthcareSource)
     az_sites: Phoenix (Medical Center, Roosevelt), Mesa, Chandler, Glendale, community health centers across the Valley
     confidence: medium
-    # No search block: Symplr Recruit (HealthcareSource) isn't one of the plugin's search kinds.
+    search: {talemetry: https://jobs.valleywisehealth.org}  # Symplr's Talemetry job site, read Oct 2026
   - name: Arizona State University
     careers_url: https://asu.wd1.myworkdayjobs.com/ASUStaffCareers
     ats: workday            # cfo.asu.edu/applicant links here for external staff applicants (live check, Oct 2026)
@@ -87,7 +88,9 @@ companies:
     ats: custom            # pageup; azstatejobs.gov is a Clinch career site (state-of-arizona.career-pages.com); Apply goes to PageUp (secure.dc4.pageuppeople.com/apply/1045)
     az_sites: Phoenix (Capitol Mall), statewide
     confidence: high        # live check, Oct 2026
-    # No search block: PageUp / Clinch aren't among the plugin's search kinds.
+    # No search block: azstatejobs.gov (a Clinch site) answers a few searches in a row, from a plain
+    # client or the browser, with an AWS WAF check (HTTP 202, x-amzn-waf-action: challenge; Oct 2026),
+    # and bot checks are never got around. The person searches it on its own page.
   # Phoenix-metro finance/insurance offices and staffing/HR-services firms (checked Oct 2026).
   - name: State Farm
     careers_url: https://jobs.statefarm.com/main/
@@ -186,7 +189,8 @@ companies:
     careers_url: https://myhiring.kforce.com/careersection/ex/jobsearch.ftl
     ats: taleo                # kforce.com/about/careers-at-kforce links its internal jobs to this Taleo career section
     az_sites: Phoenix area
-    confidence: medium
+    confidence: medium        # Oct 2026: its internal openings were in FL, TX and remote, none in Arizona
+    search: {taleo: {host: myhiring.kforce.com, section: ex, portal: "101430233"}}
   - name: Randstad
     careers_url: https://www.randstadusa.com/jobs/internal/arizona/
     ats: custom            # gr8people; internal jobs are listed on randstadusa.com and apply on randstadnorthamerica.workgr8.com

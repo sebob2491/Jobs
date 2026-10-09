@@ -238,12 +238,18 @@ _SF_CLASSIC_TITLE = re.compile(r"^Career Opportunities:\s*(.+?)\s*\(\d+\)$")
 _PAGE_BOUND_APPLY = re.compile(r"/talentcommunity/apply/", re.I)
 
 
+# A menu's way to the job list, not this posting's application: Phoenix Children's "Browse &
+# Apply" (its whole job list), "Search & Apply", "View all jobs"
+_LIST_LINK = re.compile(r"\b(browse|search|find|view all|all (?:jobs|positions|openings)|other (?:jobs|positions))\b", re.I)
+
+
 def _find_apply_link(soup: BeautifulSoup, base_url: str) -> str:
     for a in soup.find_all("a", href=True):
         text = " ".join(a.get_text(" ").split()).lower()
         label = str(a.get("aria-label") or "").lower()
         href = str(a["href"])
-        if re.search(r"\bapply\b", text + " " + label) and not href.startswith(("#", "javascript:", "mailto:")):
+        if (re.search(r"\bapply\b", text + " " + label) and not href.startswith(("#", "javascript:", "mailto:"))
+                and not _LIST_LINK.search(text + " " + label)):
             return "" if _PAGE_BOUND_APPLY.search(href) else urljoin(base_url, href)
     return ""
 

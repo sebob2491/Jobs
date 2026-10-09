@@ -2369,3 +2369,35 @@ def test_arrow_buttons_on_a_posting_and_a_step(srv, monkeypatch):
     assert r.log[1] == "clicked “Apply now »”", r.log  # nothing filled on the posting first
     assert "clicked “Next ›”" in r.log and posts == [f"{site}/review"], (posts, r.log)
     assert r.status == "ready", (r.reason, r.log)
+
+
+def test_a_403_page_and_apply_online():
+    """Valleywise Health's postings answer the desk's browser with a bare "403 Forbidden" page
+    (live, Oct 2026): the site turning it away, for the person to take over. Kforce's Taleo
+    postings go in through "Apply Online"."""
+    assert classify({"title": "403 Forbidden", "fields": [], "actions": []}, "403 Forbidden") == "bot_check"
+    assert classify({"title": "Forbidden", "fields": [], "actions": []}, "Forbidden") == "bot_check"
+    assert classify({"title": "Forbidden Planet Store Manager", "fields": [], "actions": []}, "") == "page"
+    acts = [{"id": "1", "text": "Apply Online"}, {"id": "2", "text": "Add to My Job Cart"}]
+    assert pick_next(acts, False)["text"] == "Apply Online"
+
+
+def test_a_page_that_doesnt_move_on_says_its_next_is_greyed_out(srv, monkeypatch):
+    """Phoenix Children's Quick Apply: the desk pressed the posting's "Apply!" (it only scrolls to
+    the form) and said the page didn't move on; its Next is greyed out until a resume is
+    attached, and the desk now says so."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    job = srv.add_job(url=fixture_url("site/greyed-next.html"), title="TA Coordinator", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert r.need == "stuck" and "“Next” is greyed out" in r.reason, (r.reason, r.log)
