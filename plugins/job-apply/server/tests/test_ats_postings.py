@@ -3,7 +3,7 @@ import json
 from conftest import FIXTURES
 
 from job_apply.ats import detect_ats, greenhouse_form_url, greenhouse_parts, lever_parts, linkedin_job_id, workday_parts
-from job_apply.postings import finalize, html_to_text, parse_html, place_in_text
+from job_apply.postings import finalize, html_to_text, parse_html, place_in_text, public_apply_url
 
 
 def test_detect_ats():
@@ -236,3 +236,17 @@ def test_a_menus_link_to_the_job_list_isnt_the_postings_apply_link():
                         'aria-label="Apply for Executive Search Consultant">Apply</a>')  # "search" in its title
     assert parse_html(page, "https://careers.pchco.org/Positions/Posting/1064100").apply_url == \
         "https://apply.example.com/job/1064100"
+
+
+def test_an_apply_link_to_a_staff_only_site_goes_to_the_public_one():
+    """Edward Jones' home-office postings (live, Oct 2026) link Apply to its staff Brassring site
+    (siteid 5377), whose sign-in ends on a host the public can't reach; the same job is on its
+    public site (5374). Its branch postings already link there, and other Brassring sites are
+    left alone."""
+    page = ('<html><head><title>Senior Financial Analyst III</title></head><body><h1>Senior Financial Analyst III</h1>'
+            '<p>Tempe, AZ</p><a href="https://sjobs.brassring.com/TGnewUI/Search/home/HomeWithPreLoad?PageType=JobDetails'
+            '&amp;partnerid=26235&amp;siteid=5377&amp;jobid=1427502&amp;gqid=0&amp;al=1">Apply</a></body></html>')
+    posting = finalize(parse_html(page, "https://careers.example.com/job/1/senior-financial-analyst-iii/"))
+    assert "partnerid=26235&siteid=5374&jobid=1427502" in posting.apply_url, posting.apply_url
+    other = "https://sjobs.brassring.com/TGnewUI/Search/home/HomeWithPreLoad?partnerid=99999&siteid=5377&jobid=1"
+    assert public_apply_url(other) == other

@@ -2536,3 +2536,38 @@ def test_a_page_that_asks_if_youre_a_robot_is_a_bot_check(srv, monkeypatch):
 
     r = run(go())
     assert (r.status, r.need) == ("needs_you", "bot_check"), (r.status, r.need, r.reason, r.log)
+
+
+def test_an_application_that_ends_on_an_unreachable_host_says_so(srv, monkeypatch):
+    """Edward Jones' home-office postings (live, Oct 2026): the Apply link's page went on through a
+    staff sign-in to a host the public can't reach, and the desk said it couldn't find the button
+    on Chrome's error page. It says the page didn't load, and where it went."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 1)
+    job = srv.add_job(url=fixture_url("site/sso-unreachable.html"), title="Analyst", company="Example Investments")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert (r.status, r.need) == ("needs_you", "stuck") and "couldn't be reached" in r.reason, (r.reason, r.log)
+    assert "find the button" not in r.reason, r.reason
+
+
+def test_the_host_chromes_error_page_names_is_read():
+    """Chrome's error page names the host in its text, and some versions in its title too."""
+    said = pipeline.unreached_host
+    assert said({}, "This site can\u2019t be reached\n127.0.0.1 refused to connect.") == "127.0.0.1"
+    assert said({}, "The webpage at https://forgerock-ig-int.apps2.example.com/ig-nonce?jwt=x might be down") == \
+        "forgerock-ig-int.apps2.example.com"
+    assert said({}, "This site can\u2019t be reached\nCheck if there is a typo in sso.example.com.\n"
+                    "sso.example.com\u2019s server IP address could not be found.") == "sso.example.com"
+    assert said({"title": "forgerock-ig-int.apps2.example.com"}, "") == "forgerock-ig-int.apps2.example.com"
+    assert said({"title": "Job Details"}, "") == ""

@@ -192,6 +192,20 @@ _ROBOT = re.compile(r"not a robot|captcha|verify (?:that )?you(?:'re| are) (?:a 
 _ERRORISH = re.compile(r"error|required|invalid|please|must|enter |select |missing|problem|fix|can'?t be blank", re.I)
 
 
+_UNREACHED = [re.compile(p) for p in (r"\bhttps?://([\w.-]+)", r"([\w.-]+\.[a-z]{2,})(?:\u2019|')s server IP address",
+                                     r"([\w.-]+) refused to connect", r"([\w.-]+) took too long to respond")]
+
+
+def unreached_host(data: dict[str, Any], text: str) -> str:
+    """The host Chrome's "This site can't be reached" page names: in its text ("The webpage at
+    https://...", "127.0.0.1 refused to connect"), or its title, which some versions set to it."""
+    for pattern in _UNREACHED:
+        if m := pattern.search(text or ""):
+            return m.group(1)
+    title = (data.get("title") or "").strip()
+    return title if re.fullmatch(r"[\w.-]+\.[\w-]+|\d+(?:\.\d+){3}", title) else ""
+
+
 def _flagged(data: dict[str, Any]) -> list[str]:
     """What a page marks as wrong: its error messages, Workday's "Error-Email" links in its
     "Errors Found" box, and fields marked invalid."""
@@ -808,6 +822,12 @@ class Applier:
             entry_here = any(_ENTRY.match(final_text(a["text"])) and not a.get("disabled") for a in actions)
             if kind == "form" and entry_here and not _application_like(data):
                 kind = "page"  # a posting with a "send me similar jobs" box: go in through Apply
+            if str(data.get("url") or "").startswith("chrome-error://"):
+                host = unreached_host(data, text)
+                where = f"{host}, which" if host else "a page that"
+                return self._pause(run, "stuck", f"The application went on to {where} couldn't be reached, so the page "
+                                   "didn't load. Press Resume to try again, or open the posting in your own browser to "
+                                   "apply there.")
             if kind == "page" and not data.get("fields") and _TURNED_AWAY.search(data.get("title") or ""):
                 return self._pause(run, "stuck", f"{_site(run, data)} turned the desk's browser away (403 Forbidden). "
                                    "Open the posting in your own browser to apply there.")
