@@ -83,3 +83,44 @@ def test_the_templates_hospital_question_is_only_the_exclusion_question():
                   "Have you ever been excluded from participation in any federal health care program?"):
         assert re.search(pattern, asked, re.I), asked
     assert not re.search(pattern, "Do you have experience with Medicare/Medicaid billing?", re.I)
+
+
+def test_the_templates_answers_answer_only_the_question_they_are_for():
+    """A pattern is searched for anywhere in a question: the template's "background check|drug
+    (test|screen)", given "Yes" for "Are you willing to take a drug test?", answered "Have you
+    ever failed a drug test?" with Yes, and a felony question that mentioned a background check
+    too. Each pattern finds its own question; a look-alike asking the opposite is the person's."""
+    import re
+
+    data = yaml.safe_load(config.TEMPLATE_PROFILE.read_text())
+    patterns = [a["match"] for a in data["answers"]]
+
+    def found(asked: str) -> list[str]:
+        return [p for p in patterns if re.search(p, asked, re.I)]
+
+    for asked in ("Are you able to work in a cleanroom environment?",
+                  "Are you willing to work in a clean room wearing a full gown?",
+                  "Can you lift up to 50 lbs?",
+                  "Are you willing to submit to a background check and drug screen?",
+                  "Are you willing to submit to a criminal background check?",
+                  "This position requires a pre-employment drug test. Do you consent?",
+                  "Do you have any relatives currently employed by this company?",
+                  "Do any family members work here?",
+                  "Are you currently bound by a non-compete or non-solicitation agreement?",
+                  "Have you signed a non-compete with your current employer?",
+                  "Do you consent to a credit check?",
+                  "Have you been employed by any government agency in the last two years?"):
+        assert len(found(asked)) == 1, asked
+    for asked in ("Have you ever failed a drug test?",
+                  "Have you ever refused a drug screen?",
+                  "Have you ever tested positive on a drug test?",
+                  "Have you ever been convicted of a felony? A conviction will not automatically disqualify you; "
+                  "a background check will be conducted.",
+                  "How many years of cleanroom experience do you have?",
+                  "Describe your cleanroom experience.",
+                  "Relative's name",
+                  "Are you willing to sign a non-compete agreement as a condition of employment?",
+                  "Have you ever declared bankruptcy or had a negative item on your credit report?",
+                  "Is there anything in your credit history we should know about?",
+                  "Have you worked for a government contractor?"):
+        assert found(asked) == [], asked

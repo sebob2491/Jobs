@@ -102,21 +102,32 @@ eeo:
 
 # Reusable answers, checked before the built-in rules. `match` is a
 # case-insensitive regular expression tested against the question text.
-# Use this for questions you get on every application.
+# Use this for questions you get on every application. A pattern is found anywhere in
+# the question, so each one also says what it isn't: a "Yes" for "Are you willing to
+# take a drug test?" must not answer "Have you ever failed one?". Single quotes keep
+# the backslashes (\b) as they are.
 answers:
-  - match: "clean ?room"
+  # able to work in one; "How many years of cleanroom experience?" is left for you
+  - match: '^(?!.*\b(how (many|long|much)|years?|describe|explain|list)\b).*clean ?room'
     answer: ~                 # e.g. "Yes"
-  - match: "lift .*(25|35|50) ?(lb|pound)"
+  - match: 'lift .*(25|35|50) ?(lb|pound)'
     answer: ~
-  - match: "background check|drug (test|screen)"
+  # willing to take one; "ever failed / refused / tested positive", or a conviction
+  # question that mentions a background check, is left for you
+  - match: '^(?!.*\b(fail(ed|ure)?|refus(e|ed|al)|positive|convict(ed|ion)?|felony|misdemeanor|arrest(ed)?)\b).*(background (check|screen|investigation)|drug (test|screen))'
     answer: ~
-  - match: "relatives?|family members?.*(employ|work)"
+  # relatives employed there; not an emergency contact's "Relative's name"
+  - match: '(relatives?|family members?).{0,60}\b(employ|work)|\b(employ|work).{0,60}\b(relatives?|family members?)'
     answer: ~
-  - match: "non-?compete|non-?solicit"
+  # bound by one now; "Are you willing to sign one?" is left for you
+  - match: '^(?!.*\b(willing|agree|sign)\b).*non-?(compete|solicit)'
     answer: ~
-  - match: "credit (check|history|report)"   # banks and finance roles ask
+  # banks and finance roles: consent to a check; "ever had a bankruptcy or negative item?"
+  # is left for you
+  - match: '^(?!.*\b(ever|bankrupt\w*|delinquen\w*|default\w*|judgments?|liens?|collections?|negative|derogatory|anything)\b).*credit (check|history|report)'
     answer: ~
-  - match: "(employed|worked) (by|for) (a|any) .*government"
+  # employed by a government agency; "worked for a government contractor?" is left for you
+  - match: '^(?!.*\bcontract).*(employed|worked) (by|for) (a|any) .*government'
     answer: ~
   - match: "(excluded|unable to participate|ineligible|debarred|sanctioned).{0,80}(medicare|medicaid|federal health ?care|government program)"   # hospitals ask
     answer: ~
