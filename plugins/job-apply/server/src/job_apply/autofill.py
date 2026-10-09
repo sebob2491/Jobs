@@ -56,6 +56,7 @@ _NO = re.compile(r"^(no|n|false|never|i am not|i do not|i don'?t|i will not|i wo
 _FILLER = {"yes", "no", "y", "n", "i", "am", "a", "an", "the", "to", "for", "of", "in", "my", "and", "or", "is", "be",
            "this", "it", "up"}
 PAGED_LIST_PAGE = 100  # entries SuccessFactors' paginated select lists at a time
+PLACE_LIST_SLICE = 20  # a list of more places than this shows only some of them (a lookup's first page)
 _DECLINE = re.compile(r"decline|not (wish|want) to|prefer not|choose not|do not want|don'?t wish|not to (answer|disclose|self)|rather not", re.I)
 
 
@@ -547,7 +548,7 @@ RULES: list[tuple[str, str, Getter, int | None, set[str] | None]] = [
     # Oracle's "Zip Code+4" wants the 4-digit extension, not the ZIP: left for the site to fill
     ("postal_ext", r"zip( code)? ?(\+|plus) ?4|^zip ?4$|zip (code )?extension", lambda p, j: None, 45, None),
     ("postal", r"zip|postal|post code|postcode", _p("personal.address.postal_code"), 45, None),
-    ("county", r"^county", lambda p, j: p.get("personal.address.county"), 45, None),
+    ("county", r"^county", lambda p, j: county_of(p), 45, None),
     # (not "State your desired salary", "State ID Number" or "Statement of accuracy")
     ("state", r"^state\b(?! (your|id|identification|licen[cs]e|the|any|why|how|what|whether|if|briefly)\b)|province|^region",
      _state, 45, None),
@@ -927,7 +928,10 @@ def resolve_field(field: dict, prof: Profile, job: dict | None = None, file_inpu
         # a search prompt lists only its top level, and a full page of a paged list (Qorvo's
         # countries stop at Iran) only its start: the fill searches them for the answer. A
         # shorter paged list is all there is, so a search can't find anything else in it.
-        searched = field.get("search") or field.get("paged") and len(options) >= PAGED_LIST_PAGE
+        # A long list of places (Oracle's City on Mayo Clinic's form opened at "Aaron, Clinton, KY",
+        # its search flag unset) is a slice of them too: the fill searches it
+        searched = (field.get("search") or field.get("paged") and len(options) >= PAGED_LIST_PAGE
+                    or ans.rule in _PLACE_RULES and len(options) > PLACE_LIST_SLICE)
         if chosen is None and searched and not isinstance(ans.value, (list, dict)):
             return ans
         if chosen is None:
@@ -961,6 +965,36 @@ def _topic_from_options(options: list[str], prof: Profile, job: dict) -> Answer 
 
 _PLACE_RULES = {"address1", "postal", "city", "state", "county"}
 
+# Arizona's cities by county, for a form's County (Oracle's address block requires one) when the
+# profile names its city but not its county. A city split between counties counts where most of
+# it is (Peoria and Queen Creek in Maricopa, Apache Junction in Pinal); one split evenly (Sedona)
+# isn't listed, and the person is asked.
+_AZ_COUNTIES = {
+    "Maricopa": {"phoenix", "chandler", "tempe", "mesa", "scottsdale", "gilbert", "glendale", "peoria", "goodyear",
+                 "surprise", "avondale", "buckeye", "tolleson", "laveen", "cave creek", "carefree", "fountain hills",
+                 "el mirage", "litchfield park", "sun city", "sun city west", "paradise valley", "anthem",
+                 "ahwatukee", "youngtown", "waddell", "new river", "queen creek", "sun lakes", "wickenburg"},
+    "Pinal": {"san tan valley", "casa grande", "maricopa", "apache junction", "gold canyon", "florence", "coolidge",
+              "eloy"},
+    "Pima": {"tucson", "oro valley", "marana", "sahuarita", "vail", "green valley"},
+    "Yavapai": {"prescott", "prescott valley", "cottonwood", "chino valley", "camp verde"},
+    "Coconino": {"flagstaff", "page", "williams"},
+    "Yuma": {"yuma", "san luis", "somerton"},
+    "Mohave": {"lake havasu city", "kingman", "bullhead city"},
+    "Cochise": {"sierra vista", "douglas", "bisbee", "benson"},
+}
+
+
+def county_of(prof: Profile) -> str | None:
+    """The profile's county, or for an Arizona address the county its city is in."""
+    named = str(prof.get("personal.address.county") or "").strip()
+    if named:
+        return named
+    if norm(prof.get("personal.address.state")) not in ("az", "arizona"):
+        return None
+    city = norm(prof.get("personal.address.city"))
+    return next((county for county, cities in _AZ_COUNTIES.items() if city in cities), None)
+
 
 def place_words(rule: str, prof: Profile) -> list[str]:
     """For an address field: the rest of the profile's address, which tells apart the entries
@@ -968,8 +1002,7 @@ def place_words(rule: str, prof: Profile) -> list[str]:
     Maricopa, AZ"). Empty for any other field."""
     if rule not in _PLACE_RULES:
         return []
-    words = [prof.get("personal.address.city"), prof.get("personal.address.postal_code"),
-             prof.get("personal.address.county")]
+    words = [prof.get("personal.address.city"), prof.get("personal.address.postal_code"), county_of(prof)]
     state = str(prof.get("personal.address.state") or "").strip()
     if state.upper() in US_STATES:
         words += [state.upper(), US_STATES[state.upper()]]
