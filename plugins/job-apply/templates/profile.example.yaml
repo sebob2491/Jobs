@@ -24,6 +24,7 @@ personal:
   linkedin_url: ~
   github_url: ~
   website: ~
+  drivers_license: ~          # true/false — a valid driver's license (field and travel jobs ask)
 
 documents:
   resume: ~/.job-apply/resume.pdf      # default resume (PDF or DOCX)

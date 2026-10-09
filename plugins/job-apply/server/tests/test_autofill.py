@@ -1186,3 +1186,29 @@ def test_a_citizens_visa_questions():
     path.write_text(yaml.safe_dump({**data, "work_authorization": {**data["work_authorization"], "us_citizen": False}}))
     assert answer("What is your current visa status?", "select", statuses) is None
     assert answer("Do you currently hold an H-1B visa?") is None
+
+
+def test_a_drivers_license_question():
+    """"Do you have a valid driver's license?" (Southwest Gas asks it, and field jobs do) is
+    the profile's yes or no. Its record, a commercial license, or a license asked together
+    with something else stays the person's."""
+    import yaml
+    from job_apply import config
+
+    path = config.profile_path()
+    data = yaml.safe_load(path.read_text())
+    path.write_text(yaml.safe_dump({**data, "personal": {**data["personal"], "drivers_license": True}}))
+
+    def answer(label, kind="radio_group"):
+        a = resolve_field(f(label, kind, options=["Yes", "No"]), prof())
+        return a and a.value
+
+    assert answer("Do you have a valid driver’s license?*") == "Yes"
+    assert answer("Do you possess a current, valid drivers license?") == "Yes"
+    assert answer("Do you have a valid driver's license issued in the United States?", "select") == "Yes"
+    assert answer("Has your driver’s license been revoked or suspended in the past two years?") is None
+    assert answer("Do you have a valid commercial driver's license (CDL)?") is None
+    assert answer("Do you have a valid driver's license and reliable transportation?") is None
+    assert answer("Driver's License Number", "text") is None
+    path.write_text(yaml.safe_dump({**data, "personal": {**data["personal"], "drivers_license": False}}))
+    assert answer("Do you have a valid driver’s license?") == "No"

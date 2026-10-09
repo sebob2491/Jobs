@@ -61,7 +61,7 @@ FAKE_PROFILE = {
         # Chandler's city hall: a real street, so address lookups (Oracle's) can find it
         "address": {"line1": "175 S Arizona Ave", "city": "Chandler", "state": "AZ", "postal_code": "85225",
                     "country": "United States"},
-        "linkedin_url": "https://www.linkedin.com/in/example-test-profile",
+        "linkedin_url": "https://www.linkedin.com/in/example-test-profile", "drivers_license": True,
     },
     "documents": {"resume": None},
     "work_authorization": {"authorized_to_work": True, "requires_sponsorship": False, "us_person": True,

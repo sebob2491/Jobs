@@ -88,6 +88,12 @@ def test_requirements_from_posting_text():
     defense = requirements(DEFENSE)
     assert defense["clearance"] and defense["years"] == 5 and defense["degree"] is None
     assert requirements("Ability to obtain a security clearance.")["clearance_later"]
+    assert requirements("Requirements:\n- Valid driver\u2019s license and a clean driving record.")["drivers_license"]
+    assert not requirements("Requirements:\n- 2+ years.\nPreferred:\n- Valid driver's license.")["drivers_license"]
+    assert not requirements("Requirements:\n- A driver's license is not required.")["drivers_license"]
+    assert requirements("Requirements:\n- Valid driver's license required; prior experience not required.")[
+        "drivers_license"]
+    assert not requirements("Requirements:\n- This role does not require a driver's license.")["drivers_license"]
 
 
 def test_scores_read_like_the_brief():
@@ -114,6 +120,12 @@ def test_scores_read_like_the_brief():
     far = score_listing({"title": "Field Service Engineer"}, tech(preferences={"willing_to_travel": "up to 25%"}),
                         LAM_FSE2, TODAY)
     assert "up to 50% travel (you said 25%)" in far.concerns
+    driving = LAM_FSE2 + "\n- Valid driver's license required."
+    no_license = tech(personal={"address": {"city": "Phoenix", "state": "AZ"}, "drivers_license": False})
+    assert "requires a driver's license" in score_listing({"title": "Field Service Engineer"}, no_license, driving,
+                                                          TODAY).concerns
+    assert "requires a driver's license" not in score_listing({"title": "Field Service Engineer"}, p, driving,
+                                                              TODAY).concerns
 
 
 def test_recommend_reads_the_top_postings():

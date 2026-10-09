@@ -147,6 +147,10 @@ _YEARS = re.compile(r"(\d{1,2})(?:\s*(?:-|\u2013|to)\s*\d{1,2})?\s*\+?\s*(?:\+|o
 _TRAVEL = re.compile(r"(\d{2,3})\s*%\s*(?:of\s+(?:the\s+)?time\s+)?(?:domestic\s+|international\s+)?travel|"
                      r"travel[^.\n]{0,40}?(\d{2,3})\s*%")
 _SHIFTS = re.compile(r"night shift|nights|weekend|rotating shift|12[- ]hour|on[- ]call")
+_DRIVERS = re.compile(r"\b(?:driver'?s?|driving) licen[cs]e|\bcdl\b")
+# the license's own "not required", not another requirement's in the same sentence
+_NO_DRIVERS = re.compile(r"(?:licen[cs]e|\bcdl)(?: is| are)? not (?:\w+ )?(?:required|needed|necessary)\b|"
+                         r"\bno (?:\w+ )?(?:driver|cdl)|\b(?:do|does) not (?:need|require) (?:a |an )?(?:valid )?(?:driver|cdl)")
 
 
 @dataclass
@@ -352,7 +356,8 @@ def requirements(text: str) -> dict[str, Any]:
     text = text.split(f"\n{QUESTIONS_HEADING}\n")[0]  # the application form's questions, not the job's
     required, _ = _split_sections(text)
     out: dict[str, Any] = {"degree": None, "degree_or_equivalent": False, "years": None, "clearance": False,
-                           "clearance_later": False, "us_person": False, "travel": None, "shifts": False}
+                           "clearance_later": False, "us_person": False, "travel": None, "shifts": False,
+                           "drivers_license": False}
     degree_levels: list[int] = []
     years: list[int] = []
     sentences = _sentences(required.lower())
@@ -376,6 +381,8 @@ def requirements(text: str) -> dict[str, Any]:
                 out["clearance_later"] = True
             else:
                 out["clearance"] = True
+        if _DRIVERS.search(sentence) and not _NO_DRIVERS.search(sentence):
+            out["drivers_license"] = True
     low = (text or "").lower()
     out["us_person"] = bool(_US_PERSON.search(low) or _EAR.search(text or ""))
     travel = [int(a or b) for a, b in _TRAVEL.findall(low)]
@@ -503,6 +510,9 @@ def _score_requirements(fit: Fit, req: dict[str, Any], prof: Profile, years: flo
     if req["shifts"] and prof.get("preferences.flexible_schedule") is False:
         fit.score -= 5
         fit.concerns.append("shift, weekend or on-call work")
+    if req["drivers_license"] and prof.get("personal.drivers_license") is False:
+        fit.score -= 15
+        fit.concerns.append("requires a driver's license")
 
 
 # --------------------------------------------------------------------- whole list

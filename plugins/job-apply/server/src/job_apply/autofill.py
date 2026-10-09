@@ -943,6 +943,12 @@ RULES: list[tuple[str, str, Getter, int | None, set[str] | None]] = [
     ("lives_in", r"^(do|are) you (currently |presently )?(live|living|reside|residing|located|based) in ", _lives_in, 100, None),
     ("travel", r"travel", _travel, None, None),
     ("shift", r"shift work|rotating shift|nights and weekends|work (nights|weekends)|on ?call", _yn("preferences.flexible_schedule"), None, None),
+    # "Do you have a valid driver's license?" alone: not its record ("...been revoked or suspended"),
+    # a commercial one, or one asked with something else ("...and reliable transportation")
+    ("drivers_license", r"^(do you (currently )?(have|hold|possess)|are you in possession of) (a |an )?"
+                        r"((current|valid|active|unrestricted)( and| or)? )*(u s |us |state |arizona )?"
+                        r"(driver( s|s)?|driving) licen[cs]e( (issued )?in (the u s|the united states|arizona|your state))?$",
+     _yn("personal.drivers_license"), 120, None),
     # desired_salary is one yearly figure: not an answer to "current salary" or a monthly/hourly rate
     ("other_salary", r"(current|last|previous|present|most recent|drawn) .{0,25}(salary|compensation|pay\b)"
      r"|(monthly|per month|hourly|per hour|weekly|per week) .{0,25}(salary|compensation|pay\b|rate)", lambda p, j: None, None, None),

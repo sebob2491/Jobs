@@ -53,9 +53,9 @@ All of the user's data lives in `~/.job-apply/`, outside the plugin:
      later, US citizen, US person for export control (ITAR/EAR, common for
      semiconductor equipment jobs), security clearance.
    - Preferences: willing to relocate, willing to travel (Field Service roles often
-     travel 25–75%), shifts, nights, weekends and on-call, desired salary (or leave
-     it empty to be asked each time), earliest start date, target titles and
-     locations.
+     travel 25–75%), a valid driver's license (`personal.drivers_license`), shifts,
+     nights, weekends and on-call, desired salary (or leave it empty to be asked each
+     time), earliest start date, target titles and locations.
    - Voluntary self-identification (gender, Hispanic/Latino, race, veteran,
      disability): explain that these are optional, and record their answer or a
      decline option such as "Decline to self-identify". Don't push for an answer.
