@@ -44,10 +44,16 @@
 <script>
   // Opening the prompt lists its top level, where a group ("Job Board") opens its own list;
   // typing and Enter search every entry.
-  const groups = {'Job Board': ['Indeed', 'LinkedIn'], 'Social Media': ['Facebook', 'X'],
-                  'Company Website': ['Company Website']};  // Onto's "ONTO Website" holds "ONTO Website"
-  const topLevel = ['Advertisement', 'Company Website', 'Job Board', 'Social Media'];
-  const sources = ['Advertisement', 'Company Website', 'Indeed', 'LinkedIn', 'Facebook', 'X'];
+  // ?groups=staffing: Robert Half's (Oct 2026), where the employer's own site is an entry of a group
+  const staffing = location.search.includes('groups=staffing');
+  const board = ['CareerBuilder', 'Company Career Site', 'DICE', 'Glassdoor', 'Indeed', 'LinkedIn'];
+  const groups = staffing ? {'Website / Job Board Posting': board}
+    : {'Job Board': ['Indeed', 'LinkedIn'], 'Social Media': ['Facebook', 'X'],
+       'Company Website': ['Company Website']};  // Onto's "ONTO Website" holds "ONTO Website"
+  const topLevel = staffing ? ['Agency', 'Employee Referral', 'Website / Job Board Posting']
+    : ['Advertisement', 'Company Website', 'Job Board', 'Social Media'];
+  const sources = staffing ? ['Agency', 'Employee Referral', ...board]
+    : ['Advertisement', 'Company Website', 'Indeed', 'LinkedIn', 'Facebook', 'X'];
   const input = document.getElementById('source--source');
   const popup = document.getElementById('popup');
   const chosen = document.querySelector('#ms-source .chosen');

@@ -2561,6 +2561,43 @@ def test_an_application_that_ends_on_an_unreachable_host_says_so(srv, monkeypatc
     assert "find the button" not in r.reason, r.reason
 
 
+def test_a_posting_that_has_closed_says_so(srv, monkeypatch):
+    """Edward Jones' BrassRing page for an expired posting (live, Oct 2026) says "The job posting
+    you are looking for has expired or the position has already been filled", and the desk said
+    it couldn't find the button. It says the posting has closed."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 1)
+    job = srv.add_job(url=fixture_url("site/expired-posting.html"), title="Analyst", company="Example Investments")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert (r.status, r.need) == ("needs_you", "stuck") and "has closed" in r.reason, (r.reason, r.log)
+    assert "expired or the position has already been filled" in r.reason and "find the button" not in r.reason
+    assert not r.blocking
+
+
+def test_closed_posting_wording():
+    """What closed postings say, and what they don't."""
+    closed = pipeline._CLOSED.search
+    assert closed("The job posting you are looking for has expired or the position has already been filled.")
+    assert closed("This job is no longer available.")
+    assert closed("We are no longer accepting applications for this position.")
+    assert closed("Sorry, this position has been filled.")
+    assert closed("The requisition is closed.")
+    assert not closed("Applications close on Oct 30.")
+    assert not closed("Your session has expired. Please sign in again.")
+    assert not closed("This position is open to applicants in Arizona.")
+
+
 def test_the_host_chromes_error_page_names_is_read():
     """Chrome's error page names the host in its text, and some versions in its title too."""
     said = pipeline.unreached_host

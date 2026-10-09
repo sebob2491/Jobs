@@ -150,6 +150,19 @@ def test_a_successfactors_list_is_searched_and_a_search_that_picks_nothing_is_em
     assert by_label(run(srv.inspect_form(include_dropdown_options=False))["fields"], "country")["value"] == ""
 
 
+def test_an_answer_that_picks_a_group_is_chosen_again_among_its_entries(srv, job_apply_home):
+    """Robert Half's Workday (live, Oct 2026): "Company Website" matched only the top level's
+    "Website / Job Board Posting", a group whose entries hold "Company Career Site". The desk
+    asked the person; the answer is chosen again among the group's entries and filled."""
+    profile = job_apply_home / "profile.yaml"
+    profile.write_text(profile.read_text().replace("how_did_you_hear: LinkedIn", "how_did_you_hear: Company Website"))
+    run(srv.browser.goto(fixture_url("workday_prompt_2026.html") + "?groups=staffing"))
+    result = run(srv.autofill())
+    assert not [f for f in result["failed"] if "hear" in (f["label"] or "").lower()], result["failed"]
+    heard = by_label(run(srv.inspect_form(include_dropdown_options=False))["fields"], "how did you hear")
+    assert heard["value"] == "Company Career Site"
+
+
 def test_a_list_the_page_draws_is_read_page_by_page(srv):
     """Amkor's career site (SuccessFactors' older pages) draws its job list with a script,
     10 to a page: a bigger page is chosen, then the next-page arrow pressed until it's gone."""
