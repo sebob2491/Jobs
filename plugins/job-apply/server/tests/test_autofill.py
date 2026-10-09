@@ -1153,3 +1153,32 @@ def test_a_confirmed_degree_answers_yes():
     # without confirmed degrees, a free-text one never answers Yes
     free_text = with_degrees([], "Bachelor's Degree", [{"degree": "Bachelor's Degree", "major": "Finance", "end": 2020}])
     assert answer("Do you have a Bachelor's degree?", free_text) is None
+
+
+def test_a_citizens_visa_questions():
+    """A U.S. citizen holds no F-1, H-1B or TN visa ("Are you currently on an F-1 visa
+    (OPT/CPT)?" was asked), and their visa or citizenship status is the citizen choice. Only
+    a citizen's: a past visa ("Have you ever held...") or anyone else's status is theirs to say."""
+    import yaml
+    from job_apply import config
+
+    path = config.profile_path()
+    data = yaml.safe_load(path.read_text())
+    path.write_text(yaml.safe_dump({**data, "work_authorization": {**data["work_authorization"], "us_citizen": True}}))
+    yes_no = ["Yes", "No"]
+
+    def answer(label, kind="radio_group", options=yes_no):
+        a = resolve_field(f(label, kind, options=options), prof())
+        return a and a.value
+
+    assert answer("Are you currently on an F-1 visa (OPT/CPT)?") == "No"
+    assert answer("Do you currently hold an H-1B visa?") == "No"
+    assert answer("Are you currently in the U.S. on a TN visa?") == "No"
+    assert answer("Have you ever held an H-1B visa?") is None
+    statuses = ["U.S. Citizen", "Permanent Resident", "H-1B", "F-1 OPT", "Other"]
+    assert answer("What is your current visa status?", "select", statuses) == "U.S. Citizen"
+    assert answer("Citizenship status", "select", ["Citizen of the United States", "Non-US Citizen", "Other"]) == \
+        "Citizen of the United States"
+    path.write_text(yaml.safe_dump({**data, "work_authorization": {**data["work_authorization"], "us_citizen": False}}))
+    assert answer("What is your current visa status?", "select", statuses) is None
+    assert answer("Do you currently hold an H-1B visa?") is None
