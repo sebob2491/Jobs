@@ -599,8 +599,9 @@ async def inspect_form(include_dropdown_options: bool = True) -> dict[str, Any]:
     """List the fields and buttons on the current page (all frames). Each field has an id,
     kind (text, textarea, select, listbox, combobox, radio_group, checkbox_group, checkbox,
     file, password), label, required flag, options and current value. Buttons are listed
-    under `actions`; is_submit marks the final submit button. Ids stay valid until the
-    page changes; call this again after navigating."""
+    under `actions`; is_submit marks the final submit button. A CAPTCHA on show is said
+    under `captcha` (its own frame isn't listed): it's the user's to solve. Ids stay valid
+    until the page changes; call this again after navigating."""
     data = await browser.inspect(include_dropdown_options)
     data["ats"] = detect_ats(data["url"])
     return data

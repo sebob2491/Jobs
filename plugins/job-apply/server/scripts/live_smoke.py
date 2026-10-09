@@ -1055,9 +1055,7 @@ async def check_pipeline(company: dict[str, Any], out: Path, rec: dict[str, Any]
     if not found["results"]:
         rec["note"] = "no postings found"
         return
-    # a posting whose title is the kind of job looked for, where there is one: a search's other
-    # results matched on words in their descriptions ("human resources" is in most postings' fine print)
-    first = next((r for r in found["results"] if r.get("title_match")), found["results"][0])
+    first = found["results"][0]
     rec["posting"] = {k: first.get(k) for k in ("title", "location", "url")}
     apply_url = ""
     try:  # as the desk does: the posting's own apply link, when it has one

@@ -161,15 +161,6 @@ def test_helpers():
     assert title_matches("Equipment Engineering Technician", "field service | equipment engineer")
     assert not title_matches("Accountant", "field service | equipment engineer")
 
-
-def test_hr_and_human_resources_are_the_same_in_a_title():
-    """A search for HR jobs (a friend's Phoenix list, Oct 2026): "HR Business Partner" is a human
-    resources job, and "Human Resources Generalist" an HR generalist's."""
-    assert title_matches("HR Business Partner", "human resources | recruiter")
-    assert title_matches("Human Resources Generalist", "hr generalist")
-    assert title_matches("Sr. Human Resource Coordinator", "hr coordinator")
-    assert not title_matches("Housekeeping Associate", "human resources | hr generalist")
-    assert not title_matches("Hospital Unit Clerk", "hr")
     az = location_terms("AZ")
     assert az[:2] == ["az", "arizona"] and {"phoenix", "chandler", "tempe"} <= set(az)  # metro cities count too
     assert location_terms("Phoenix|Chandler") == ["phoenix", "chandler", "in:az"]  # another state's Phoenix isn't it
@@ -192,6 +183,22 @@ def test_hr_and_human_resources_are_the_same_in_a_title():
     assert eightfold_page_url({"host": "careers.x.com", "domain": "x.com"}, "field service | equipment", "AZ") == \
         "https://careers.x.com/careers?query=field+service+equipment&domain=x.com&location=Arizona"
 
+
+
+def test_hr_and_human_resources_are_the_same_in_a_title():
+    """HR searches on the Phoenix list (Oct 2026): "HR Business Partner" is a human resources
+    job, and "Human Resources Generalist" an HR generalist's. "HR" is a whole word: a nurse's
+    "36 Hrs" isn't HR."""
+    assert title_matches("HR Business Partner", "human resources | recruiter")
+    assert title_matches("Human Resources Generalist", "hr generalist")
+    assert title_matches("Sr. Human Resource Coordinator", "hr coordinator")
+    assert title_matches("HR/Payroll Specialist", "human resources")
+    assert title_matches("Human Resources Manager", "resources")  # each word still counts alone
+    assert title_matches("Human Resource Planner", "resource planner")
+    assert not title_matches("Housekeeping Associate", "human resources | hr generalist")
+    assert not title_matches("Hospital Unit Clerk", "hr")
+    assert not title_matches("Registered Nurse - 36 Hrs Nights", "human resources | hr")
+    assert not title_matches("Pharmacy Tech 32 Hrs/Wk", "hr | recruiter")
 
 def test_search_all_backends():
     seen.clear()
@@ -542,6 +549,8 @@ def test_an_icims_search_is_filtered_to_one_state_only():
     assert icims_state(location_terms("Phoenix|Chandler")) == "AZ"  # Arizona's cities
     assert icims_state(location_terms("Tempe, AZ 85281")) == "AZ"
     assert icims_state(location_terms("Austin, TX")) == "TX"
+    assert icims_state(location_terms("IN")) == "IN"  # "in" and "or" are broad words too, but here states
+    assert icims_state(location_terms("Portland, OR")) == "OR"
     for anywhere in (None, "", "AZ|TX", "Phoenix|Remote", "Remote", "United States", "Phoenix|Austin"):
         assert icims_state(location_terms(anywhere)) is None, anywhere
     assert "searchLocation=-12827-" in icims_page_url("careers-x", "recruiter", 2, "TX")

@@ -180,19 +180,23 @@ def alternatives(query: str) -> list[str]:
     return alts[:MAX_ALTERNATIVES] or [""]
 
 
-def _title_words(text: str) -> str:
-    """A title's words as matched: "Human Resources" and "HR" are the same ("HR Business
-    Partner" is a human resources job, "Human Resources Generalist" an HR generalist one)."""
-    return re.sub(r"\bhuman resources?\b", "hr", norm(text))
+def _title_words(title: str) -> str:
+    """A title's words as matched, each way of saying it among them: "HR Business Partner" is
+    a human resources job, and "Human Resources Generalist" an HR generalist one."""
+    text = norm(title)
+    if re.search(r"\bhuman resources?\b", text):
+        text += " hr"
+    if re.search(r"\bhr\b", text):
+        text += " human resources"
+    return text
 
 
 def title_matches(title: str, query: str) -> bool:
-    """Every word of at least one alternative appears in the title."""
-    words = _title_words(title).split()
-    text = " " + " ".join(words) + " "
+    """Every word of at least one alternative appears in the title: as the start of a word
+    ("engineer" ~ "engineering"), or the whole word for one of two letters ("HR" isn't "36 Hrs")."""
+    text = f" {_title_words(title)} "
     for alt in alternatives(query):
-        terms = _title_words(alt).split()
-        if all(f" {t}" in text for t in terms):  # prefix match: "engineer" ~ "engineering"
+        if all((f" {t} " if len(t) <= 2 else f" {t}") in text for t in norm(alt).split()):
             return True
     return False
 
@@ -642,7 +646,8 @@ def icims_state(terms: list[str]) -> str | None:
     """The one state a search's place is in, for an iCIMS portal's own location filter (a
     national portal's Arizona openings are then a page or two, not six): None for anywhere,
     places in several states, or a place that could be remote ("Phoenix | Remote")."""
-    if any(all(w in _BROAD_WORDS for w in t.split()) for t in terms if not t.startswith(IN_STATE)):
+    if any(all(w in _BROAD_WORDS for w in t.split()) for t in terms
+           if not t.startswith(IN_STATE) and t.upper() not in US_STATES):  # (Indiana's "in", Oregon's "or")
         return None
     states = {t.upper() for t in terms if t.upper() in US_STATES}
     states |= {t[len(IN_STATE):].upper() for t in terms if t.startswith(IN_STATE)}

@@ -765,7 +765,7 @@ class Applier:
         if not await self._open(run):
             return
         stalls, entries_done, waited, refilled, dismissed = 0, set(), False, set(), set()
-        step_waited: set[tuple[Any, ...]] = set()  # pages waited on for a greyed-out step button
+        step_waited: set[tuple[Any, ...]] = set()  # pages (as drawn) waited on for a greyed-out step button
         account_waited = False
         sign_ins: dict[str, int] = {}  # what the saved password was used for on this pass
         pressed: list[tuple[Any, ...]] = []  # (page, button) for each button pressed on this pass
@@ -916,12 +916,12 @@ class Applier:
                 wait = SIGN_IN_STEP_WAIT if sign_in_step else BLANK_PAGE_WAIT if blank else LATE_BUTTONS_WAIT
                 if await self._wait_for_progress(wait):
                     continue
-            here = (data.get("url"), tuple(data.get("headings") or []))
-            if action is None and kind == "form" and here not in step_waited and any(
+            drawn = (_page_key(data), _boxes(data))  # a page that has drawn more since is waited on again
+            if action is None and kind == "form" and drawn not in step_waited and any(
                     a.get("disabled") and _FORWARD.match(final_text(a["text"])) for a in data.get("actions") or []):
                 # a form still being drawn: Oracle's Personal Info shows its upload boxes and a greyed-out
                 # Next first, then its name, email and phone boxes and an enabled Next
-                step_waited.add(here)
+                step_waited.add(drawn)
                 if await self._wait_for_step(LATE_BUTTONS_WAIT, data):
                     continue
             if action is None and sign_in_step:
@@ -946,7 +946,8 @@ class Applier:
                     return self._pause(run, "stuck", "The page stayed blank: the site may be slow or down. Reload it "
                                        "in the browser, then press Resume.")
                 agree = next((a for a in data.get("actions") or [] if _AGREEMENT.search(a["text"].strip())
-                              and "cookie" not in a["text"].lower() and not a.get("disabled")), None)
+                              and not a.get("cookie") and "cookie" not in a["text"].lower()
+                              and not a.get("disabled")), None)
                 if agree is not None:
                     return self._pause(run, "stuck", f"The way on is \u201c{agree['text'].strip()}\u201d, which agrees to "
                                        "something in your name, so it's yours to press. Read it and press it in the "
@@ -1030,15 +1031,12 @@ class Applier:
 
     async def _wait_for_step(self, seconds: float, before: dict[str, Any]) -> bool:
         """Wait for a form still being drawn: its step button enabled, or more boxes to fill."""
-        def boxes(data: dict[str, Any]) -> int:
-            return sum(f.get("kind") != "file" and not f.get("disabled") for f in data.get("fields") or [])
-
-        had = boxes(before)
+        had = _boxes(before)
         deadline = time.monotonic() + seconds
         while time.monotonic() < deadline:
             await asyncio.sleep(1)
-            data, _ = await self._look()
-            if pick_next(data.get("actions") or [], in_form=True) or boxes(data) > had:
+            data = await self.srv.inspect_form(include_dropdown_options=False)
+            if pick_next(data.get("actions") or [], in_form=True) or _boxes(data) > had:
                 return True
         return False
 
@@ -1459,6 +1457,11 @@ def _new_required(before: dict[str, Any], after: dict[str, Any]) -> bool:
 def _bare(url: str) -> str:
     """An address without its query and fragment."""
     return urlparse(url)._replace(query="", fragment="").geturl()
+
+
+def _boxes(data: dict[str, Any]) -> int:
+    """How many boxes a page has to fill (not counting file uploads)."""
+    return sum(f.get("kind") != "file" and not f.get("disabled") for f in data.get("fields") or [])
 
 
 def _page_key(data: dict[str, Any]) -> tuple:
