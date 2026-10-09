@@ -978,3 +978,6 @@ def test_a_veteran_question_and_a_family_members_are_answered_as_asked():
     assert resolve_field(f("Veteran Status", "select", options=status), prof()).value == "I am not a protected veteran"
     assert resolve_field(f("Are you a protected veteran?", "radio_group", options=yes_no), prof()).value == "No"
     assert resolve_field(f("Gender", "select", options=["Male", "Female"]), prof()).value == "Male"
+    # a family word in passing doesn't make it someone else's question
+    assert resolve_field(f("We are an equal opportunity employer and partner with veterans. Veteran Status", "select",
+                           options=status), prof()).value == "I am not a protected veteran"

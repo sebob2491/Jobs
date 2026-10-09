@@ -695,7 +695,11 @@ _SOMEONE_ELSE = re.compile(r"\b(referen\w*|referee\w*|emergency|next of kin|supe
 _OTHER_PARTY_LABEL = re.compile(r"\b(employer\w*|company|business|school)\b")
 _OTHER_PARTY_SECTION = re.compile(r"\b(employer\w*|school)\b")
 _EEO_RULES = {"gender", "hispanic", "race", "veteran", "disability"}
-_FAMILY = re.compile(r"\b(spouse|husband|wife|partner|family|relatives?|parents?|child(ren)?|dependents?|next of kin)\b")
+# A question about someone in the person's family ("Gender of your spouse", "Are you the spouse of a veteran?"),
+# not a family word in passing ("we partner with veterans", "family and medical leave")
+_FAMILY = re.compile(r"\b(your|their) (spouse|husband|wife|partner|parents?|child(ren)?|dependents?|relatives?|family"
+                     r"( members?)?|next of kin)\b|\b(spouse|husband|wife|widow\w*|partner|parent|child|dependent|relative|"
+                     r"family member) of (a|an|the|any)\b")
 _CONTACT_RULES = {"email", "first_name", "middle_name", "last_name", "preferred_name", "preferred_full_name", "full_name",
                   "phone_type",
                   "phone_code", "phone_ext", "phone", "address1", "address2", "city", "postal_ext", "postal",
