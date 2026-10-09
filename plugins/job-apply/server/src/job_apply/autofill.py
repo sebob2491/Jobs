@@ -609,6 +609,62 @@ def _veteran(prof: Profile, job: dict, label: str = "") -> Any:
     return v
 
 
+_LEVELS = ["high_school", "associate", "bachelor", "master", "doctorate"]
+
+
+def _finished_levels(prof: Profile) -> tuple[list[tuple[int, str]], int | None]:
+    """The degrees the profile says were finished, as (level rank, major), and the rank of the
+    highest education it states (None when it states none): "Some college" has finished high
+    school, "Associate's (in progress)" too; "Some high school" nothing (-1)."""
+    held: list[tuple[int, str]] = []
+    for e in _listed(prof.get("education_history")):
+        if isinstance(e, dict) and finished_degree(e.get("degree")) and degree_key(str(e.get("degree") or "")):
+            held.append((_LEVELS.index(degree_key(str(e["degree"])) or ""), norm(e.get("major") or e.get("field") or "")))
+    highest = str(prof.get("education.highest_degree") or "").strip()
+    stated = None
+    if highest:
+        n = norm(highest)
+        if _partial_study(n):
+            part = _partial_level(n)
+            stated = -1 if part == "high_school" else 0 if part else None
+        elif degree_key(n):
+            stated = _LEVELS.index(degree_key(n) or "")
+            held.append((stated, ""))
+    return held, stated
+
+
+def _same_field(field: str, major: str) -> bool:
+    """A field a question names is the major's: their words of four letters or more begin
+    alike ("Accounting" ~ "Accountancy", "Finance" ~ "Finance and Economics")."""
+    words = [w[:6] for w in field.split() if len(w) >= 4]
+    return bool(words) and all(any(m.startswith(w) for m in major.split()) for w in words)
+
+
+def _has_degree(prof: Profile, job: dict, label: str = "") -> Any:
+    """"Do you have a Bachelor's degree?", "Bachelor's Degree in Accounting or Finance
+    Required": from the degrees the profile says were finished. Yes when one is at that level
+    or above (in a field named, when the question names some). No when the education the
+    profile states is below it and no field is named. Else the person's to say, as is "...or
+    equivalent experience" and anything still under way."""
+    asked = norm(label)
+    if re.search(r"equivalent|in lieu|experience|pursuing|working toward|enrolled|in progress|currently", asked):
+        return None
+    level = degree_key(asked)
+    if level is None:
+        return None
+    rank = _LEVELS.index(level)
+    # the fields named, read from the question as written: "in Business Administration, Finance, or related field"
+    m = re.search(r"\b(?:in|of) (.+)$", label.lower())
+    named = re.sub(r"(\W+(required|preferred|or higher|or above|or greater))+\W*$", "", m.group(1)) if m else ""
+    fields = [norm(f) for f in re.split(r"\bor\b|\band\b|[,;/]", named) if norm(f)]
+    held, stated = _finished_levels(prof)
+    if any(r >= rank and (not fields or any(_same_field(f, major) for f in fields)) for r, major in held):
+        return "Yes"
+    if not fields and stated is not None and max([stated, *(r for r, _ in held)]) < rank:
+        return "No"
+    return None
+
+
 def _us_person(prof: Profile, job: dict) -> Any:
     """A U.S. person (a citizen, permanent resident, refugee or asylee): the profile's answer,
     or Yes for a U.S. citizen, who is one."""
@@ -716,7 +772,7 @@ _CONTACT_RULES = {"email", "first_name", "middle_name", "last_name", "preferred_
 
 # Getters that read the question itself, not only the profile
 _READS_QUESTION = {_travel, _previously_employed, _no_sponsorship, _sponsorship, _UNDER_18, _OVER_18, _phone,
-                   _local_or_relocate, _lives_in, _veteran}
+                   _local_or_relocate, _lives_in, _veteran, _has_degree}
 
 # (rule name, label regex, getter, max label length or None, allowed kinds or None)
 _TEXTY = {"text", "textarea", "select", "listbox", "combobox", "radio_group"}
@@ -758,6 +814,9 @@ RULES: list[tuple[str, str, Getter, int | None, set[str] | None]] = [
     ("current_company", r"(current|most recent|present) (employer|company)", _p("experience.current_company"), 60, None),
     ("current_title", r"(current|most recent|present) (job )?(title|position|role)", _p("experience.current_title"), 60, None),
     ("total_years", r"^(total )?years of (professional |work )?experience$", _p("experience.total_years"), 60, None),
+    # "Do you have a Bachelor's degree?", Phoenix Children's "Bachelor's Degree in Accounting or Finance Required"
+    ("has_degree", r"^(do you (have|hold|possess) an? |have you (earned|completed|received) an? )?(high school diploma|ged\b|"
+     r"(associate|bachelor|master|doctor)\w*( s)? (degree|diploma))", _has_degree, 200, None),
     ("degree", r"highest (level of )?(education|degree)|^degree$|education level", _edu("highest_degree", "degree"), 80, None),
     ("school", r"^(school|university|college|institution)\b(?!.*\b(major|degree|gpa|city|state|location|country|year|date|address|"
      r"zip|postal|phone|e ?mail|fax|code)\b)",
