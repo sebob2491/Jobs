@@ -248,3 +248,34 @@ def test_main_a_check_that_stopped_part_way(tmp_path):
     assert comment is None and outputs["changes"] == "0"
     assert lc.read_state(body) == {"pipeline": {"ASM": "ready", "KLA": "ready"}, "search": {"USAA": "works"}}
     assert "This check didn't finish" in body
+
+
+def test_the_hr_pipeline_check_starts_quietly_then_reports_changes(tmp_path):
+    """The nightly check's HR run (the pipeline on the Phoenix list, as an HR applicant) is a
+    check of its own: its first night saves its employers without reporting each as added, and
+    after that a change in one is reported like the semiconductor list's."""
+    issue = {"number": 7, "title": "Nightly live check", "state": "OPEN",
+             "body": _run(tmp_path, [], [pipeline_rec("ASM")], [search_rec("USAA")])[0]}
+
+    def night(hr_records):
+        (tmp_path / "hr.log").write_text(log("LIVE_PIPELINE ", hr_records))
+        (tmp_path / "pipeline.log").write_text(log("LIVE_PIPELINE ", [pipeline_rec("ASM")]))
+        (tmp_path / "search.log").write_text(log("LIVE_RESULT ", [search_rec("USAA")]))
+        (tmp_path / "issues.json").write_text(json.dumps([issue]))
+        (tmp_path / "out").write_text("")
+        argv = ["--issues", str(tmp_path / "issues.json"), "--log", f"pipeline={tmp_path / 'pipeline.log'}",
+                "--log", f"hr={tmp_path / 'hr.log'}", "--log", f"search={tmp_path / 'search.log'}",
+                "--body-out", str(tmp_path / "body.md"), "--comment-out", str(tmp_path / "comment.md"),
+                "--github-output", str(tmp_path / "out")]
+        (tmp_path / "comment.md").unlink(missing_ok=True)
+        assert lc.main(argv) == 0
+        comment = tmp_path / "comment.md"
+        return (tmp_path / "body.md").read_text(), comment.read_text() if comment.exists() else None
+
+    body, comment = night([pipeline_rec("Axon"), pipeline_rec("Banner Health", "needs_you", "sign_in")])
+    assert comment is None  # a check new since the last run: nothing reported as added
+    assert lc.read_state(body)["hr"] == {"Axon": "ready", "Banner Health": "needs_you sign_in"}
+    assert "Apply pipeline, HR jobs on the Phoenix list" in body
+    issue["body"] = body
+    body, comment = night([pipeline_rec("Axon", "needs_you", "stuck"), pipeline_rec("Banner Health", "needs_you", "sign_in")])
+    assert comment is not None and "Axon: `ready` → `needs_you stuck`" in comment
