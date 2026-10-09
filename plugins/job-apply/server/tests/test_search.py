@@ -1934,3 +1934,42 @@ def test_an_employer_with_two_workday_sites_searches_both(monkeypatch):
                                                          "https://pwc.wd3.myworkdayjobs.com/Entry"], "audit", 10, [])
 
     assert [x.url for x in asyncio.run(go_half())] == ["https://pwc.wd3.myworkdayjobs.com/Entry/job/AZ-Phoenix/Audit_Entry"]
+
+
+def test_a_talentbrew_site_is_searched_in_the_state(monkeypatch):
+    """Dignity Health's commonspirit.careers (Radancy TalentBrew): its results endpoint answers
+    with HTML, nationwide until the site's own Arizona filter (named in its filters) is applied."""
+    import asyncio
+
+    monkeypatch.setattr(search_module, "RETRY_DELAY", 0)
+    item = ('<li class="list_item"><a class="list_item_anchor" href="/job/{city}/{slug}/35300/{id}" data-job-id="{id}">'
+            '<div class="job-information"><h2 class="search-results-list__heading">{title}</h2>'
+            '<span class="job-info job-department">Finance</span>'
+            '<span class="wai ats-url">https://careers-example.icims.com/jobs/{id}/login</span>'
+            '<span class="job-info location-name">Example Hospital</span><span class="job-location">{where}</span>'
+            '<span class="job-date-posted">09/16/2026</span></div></a></li>')
+    filters = ('<input type="checkbox" id="region-filter-0" class="filter-checkbox" data-facet-type="3" '
+               'data-id="6252001-5551752" data-count="2" data-display="Arizona, United States" data-field-name="">')
+    seen = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.url)
+        in_az = request.url.params.get("FacetFilters[0].ID") == "6252001-5551752"
+        rows = [("phoenix", "staff-accountant", "1", "Staff Accountant", "Phoenix, AZ"),
+                ("chandler", "payroll-specialist", "2", "Payroll Specialist", "Chandler, AZ")] if in_az else \
+               [("omaha", "patient-account-rep", "3", "Patient Account Rep", "Omaha, NE")]
+        html_rows = "".join(item.format(city=c, slug=s, id=i, title=t, where=w) for c, s, i, t, w in rows)
+        return httpx.Response(200, json={"filters": filters, "results": f"<ul>{html_rows}</ul>", "hasJobs": True})
+
+    async def go(terms):
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            return await search_module._talentbrew(client, {"host": "careers.example.org", "org": 35300}, "accountant",
+                                                   50, terms)
+
+    found = asyncio.run(go(location_terms("AZ")))
+    assert [(x.title, x.location, x.posted, x.ats) for x in found] == [
+        ("Staff Accountant", "Phoenix, AZ", "2026-09-16", "icims"), ("Payroll Specialist", "Chandler, AZ", "2026-09-16", "icims")]
+    assert found[0].url == "https://careers.example.org/job/phoenix/staff-accountant/35300/1"
+    assert seen[0].params["Keywords"] == "accountant" and seen[0].params["OrganizationIds"] == "35300"
+    # anywhere: the nationwide answer as it comes
+    assert [x.title for x in asyncio.run(go([]))] == ["Patient Account Rep"]
