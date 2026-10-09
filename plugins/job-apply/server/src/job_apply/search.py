@@ -40,6 +40,7 @@ import asyncio
 import html
 import json
 import re
+import time
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -61,8 +62,15 @@ FETCH_WHEN_FILTERING = 60  # results to scan per search when filtering by locati
 EMPLOYERS_AT_ONCE = 8  # employers searched at the same time (each its own site; ~50 s for the Phoenix list, not ~100)
 CLIENT_SIDE = {"greenhouse", "lever", "applicantstack", "paycom", "ukg", "sfclassic", "infor", "phoenixchildrens",
                "jobvite", "randstad"}  # whole board at once; titles filtered here
-# Sites whose bot check a quick run of requests sets off (the State of Arizona's): one wording
-ONE_WORDING = CLIENT_SIDE | {"careerpages"}
+# Searches that take the whole query and pace its wordings themselves (the State of Arizona's
+# site, whose bot check a quick run of requests sets off)
+OWN_WORDINGS = {"careerpages"}
+
+
+def wordings_for(kind: str, query: str) -> list[str]:
+    """The searches a query makes on a site: one for a whole board read at once (titles are
+    matched here) or a search that paces its own wordings, else one per wording."""
+    return [query] if kind in CLIENT_SIDE or kind in OWN_WORDINGS else alternatives(query)
 # Searches whose data only comes through the site's own page in the browser (ASML's
 # Sitecore Discover widget; iCIMS portals, which turn away plain requests; Paycom, UKG
 # Pro and SuccessFactors' newer search, whose APIs want the session their page sets up;
@@ -1001,36 +1009,71 @@ async def _talentbrew(client: httpx.AsyncClient, cfg: Any, query: str, limit: in
 
 
 # ----------------------------------------------------------------- career-pages.com job sites (State of Arizona)
-CAREERPAGES_PAGES = 3  # pages of 30 read, at most (its AWS WAF challenges a quick run of requests)
+CAREERPAGES_PAGES = 3  # pages of 30 read for one wording, at most (one page each for several)
+CAREERPAGES_WORDINGS = 4  # wordings searched, at most
+CAREERPAGES_PAUSE = 1.5  # seconds between requests: its AWS WAF challenges a quick run of them
+CAREERPAGES_COOLDOWN = 900  # seconds a site that challenged is left alone
+_CHALLENGED: dict[str, float] = {}  # site -> when it last answered with a bot check
 _CP_ROW = re.compile(r'<tr role="link"[^>]*data-job-url="([^"]+)"(.*?)</tr>', re.S)
+
+
+def _cp_place(place: str, state: str) -> str:
+    """A place as the site writes it ("PHOENIX", "REMOTE OPTIONS", "VARIOUS-STATEWIDE"), as a
+    person would: "Phoenix, AZ", "Remote (Arizona)", "Statewide (Arizona)"."""
+    upper = place.upper()
+    region = US_STATES.get(state, state)
+    if "REMOTE" in upper:
+        return f"Remote ({region})" if region else "Remote"
+    if re.search(r"VARIOUS|STATEWIDE", upper):
+        return f"Statewide ({region})" if region else "Statewide"
+    name = " ".join("Mc" + w[2:].capitalize() if w.startswith("mc") and len(w) > 3 else w.capitalize()
+                    for w in place.lower().split())
+    return f"{name}, {state}" if state else name
 
 
 async def _careerpages(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, terms: list[str]) -> list[Listing]:
     """career-pages.com job sites (the State of Arizona's azstatejobs.gov) list a search's openings
     as a table, 30 a page: title, places ("PHOENIX", "REMOTE OPTIONS") and closing date. The places
-    carry no state; a site whose jobs are all in one (`state: AZ`) gets it added. A bot check
-    (its AWS WAF's challenge) ends the search: it's never got around, so the person searches the
+    carry no state; a site whose jobs are all in one (`state: AZ`) gets it added.
+
+    Its AWS WAF challenges a quick run of requests, and bot checks are never got around: the
+    requests are paced and never retried, a challenge ends the search (keeping what was read
+    before it), and the site is left alone for a while after one. The person then searches the
     site's own page."""
     site = str(cfg["url"]).rstrip("/")
     state = str(cfg.get("state") or "")
+    if time.monotonic() - _CHALLENGED.get(site, float("-inf")) < CAREERPAGES_COOLDOWN:
+        raise SearchError(f"{site} answered with a bot check a few minutes ago; search it on its own page")
+    words = alternatives(query)[:CAREERPAGES_WORDINGS] or [query]
+    pages = CAREERPAGES_PAGES if len(words) == 1 else 1
     out: list[Listing] = []
-    for n in range(1, CAREERPAGES_PAGES + 1):
-        url = f"{site}/jobs/search?" + urlencode({"page": n, "query": query})
-        r = await _send(client, "GET", url, headers={"Accept": "text/html"})
-        _raise_for(r, url)
-        if r.status_code == 202 or r.headers.get("x-amzn-waf-action"):
-            raise SearchError(f"{site} answered with a bot check; search it on its own page")
-        rows = _CP_ROW.findall(r.text)
-        for link, row in rows:
-            title = re.search(r'aria-label="Title: ([^"]+)"', row)
-            if not title:
-                continue
-            places = list(dict.fromkeys(html.unescape(p).strip() for p in re.findall(r'aria-label="Location: ([^"]+)"', row)))
-            where = "; ".join(f"{p.title()}, {state}" if state else p.title() for p in places)
-            req = re.search(r'aria-label="Requisition Identifier: ([^"]+)"', row)
-            out.append(Listing(company="", title=html.unescape(title.group(1)).strip(), url=html.unescape(link),
-                               location=where, external_id=req.group(1) if req else ""))
-        if len(rows) < 30 or len(out) >= limit:
+    asked = 0
+    for wording in words:
+        for n in range(1, pages + 1):
+            if asked:
+                await asyncio.sleep(CAREERPAGES_PAUSE)
+            asked += 1
+            url = f"{site}/jobs/search?" + urlencode({"page": n, "query": wording})
+            r = await client.request("GET", url, headers={"Accept": "text/html"})  # once: no retries
+            if r.status_code == 202 or r.headers.get("x-amzn-waf-action"):
+                _CHALLENGED[site] = time.monotonic()
+                if out:
+                    return out
+                raise SearchError(f"{site} answered with a bot check; search it on its own page")
+            _raise_for(r, url)
+            rows = _CP_ROW.findall(r.text)
+            for link, row in rows:
+                title = re.search(r'aria-label="Title: ([^"]+)"', row)
+                if not title:
+                    continue
+                places = dict.fromkeys(html.unescape(p).strip() for p in re.findall(r'aria-label="Location: ([^"]+)"', row))
+                req = re.search(r'aria-label="Requisition Identifier: ([^"]+)"', row)
+                out.append(Listing(company="", title=html.unescape(title.group(1)).strip(), url=html.unescape(link),
+                                   location="; ".join(dict.fromkeys(_cp_place(p, state) for p in places)),
+                                   external_id=req.group(1) if req else ""))
+            if len(rows) < 30 or len(out) >= limit:
+                break
+        if len(out) >= limit:
             break
     return out
 
@@ -1957,7 +2000,7 @@ async def search_companies(
             return
         fetch = max(limit, FETCH_WHEN_FILTERING) if terms else limit
         found: list[Listing] = []
-        wordings = [query] if kind in ONE_WORDING else alternatives(query)
+        wordings = wordings_for(kind, query)
         failed: list[str] = []
         async with sem:
             for wording in wordings:
