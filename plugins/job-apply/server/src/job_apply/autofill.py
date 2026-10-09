@@ -127,6 +127,23 @@ def _contradicts(answer: Any, option: str) -> bool:
     return bool(said_a & denied_o or denied_a & said_o or denied_a & denied_o and not denied_a <= denied_o)
 
 
+_US_NAMES = {"united states", "united states of america", "usa", "us", "u s", "u s a"}
+
+
+def _place_parts(s: Any) -> tuple[str, ...]:
+    """A place's parts, a state as its code and without the country: "Phoenix, Arizona" and
+    "Phoenix, AZ" are ('phoenix', 'az'); "Arizona, United States" and "US-AZ" are ('az',)."""
+    raw = re.sub(r"^\s*usa?\s*-\s*", "", str(s), flags=re.I)
+    out = []
+    for part in re.split(r"\s*,\s*|\s+-\s+", raw):
+        n = norm(part)
+        if n:
+            out.append(next((code.lower() for code, name in US_STATES.items() if n in (code.lower(), norm(name))), n))
+    while out and out[-1] in _US_NAMES:
+        out.pop()
+    return tuple(out)
+
+
 def _aliases(n: str) -> set[str]:
     out = {n}
     for group in _COUNTRY_ALIASES:
@@ -250,6 +267,12 @@ def choose_option(desired: Any, options: list[str], exact_only: bool = False, na
     loose = [o for o, n in normed if n in wanted or _aliases(n) & wanted or _strip_codes(n) and _strip_codes(n) in wanted]
     if len(loose) == 1:  # not when only a number told them apart ("Yes - 25%" / "Yes - 75%")
         return loose[0]
+    # the same place, its state spelled the other way or its country added: "AZ" is "Arizona,
+    # United States" and "US-AZ", "Phoenix, AZ" is "Phoenix, Arizona"
+    place = _place_parts(desired)
+    same_place = [o for o in opts if place and _place_parts(o) == place]
+    if len(same_place) == 1:
+        return same_place[0]
     if exact_only:
         return None
     if names:

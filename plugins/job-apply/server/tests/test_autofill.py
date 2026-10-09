@@ -894,3 +894,13 @@ def test_an_expected_graduation_date_is_never_a_past_year():
     assert resolve_field(asked, prof()).value == "I am currently not attending school"
     path.write_text(yaml.safe_dump({**data, "education_history": [{**school, "end": f"{today.year + 1}-05"}]}))
     assert resolve_field(f("Expected graduation date"), prof()).value == str(today.year + 1)
+
+
+def test_the_same_place_spelled_another_way():
+    """A state or place list that spells the state the other way, or adds the country, found
+    nothing: "AZ" wasn't "Arizona, United States" nor "US-AZ", "Phoenix, AZ" wasn't "Phoenix,
+    Arizona". Never another place: "Arizona City" isn't Arizona."""
+    assert choose_option("AZ", ["Arizona, United States", "Arkansas, United States"]) == "Arizona, United States"
+    assert choose_option("Arizona", ["US-AK", "US-AZ", "US-AR"]) == "US-AZ"
+    assert choose_option("Phoenix, AZ", ["Phoenix, Arizona", "Tempe, Arizona"]) == "Phoenix, Arizona"
+    assert choose_option("AZ", ["Arizona City", "Arizona"]) == "Arizona"
