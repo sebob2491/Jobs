@@ -209,8 +209,8 @@ companies:
     careers_url: https://careers.srpnet.com/
     ats: successfactors       # SuccessFactors career site; www.srpnet.com/careers answered 403 (Access Denied) from here
     az_sites: Tempe (HQ), Phoenix
-    confidence: medium        # page seen; no search: its results are drawn as job tiles, not the table rows the
-                              # successfactors search reads (0 results even for "analyst", Oct 2026)
+    confidence: medium        # page seen, Oct 2026: its search draws its results as tiles
+    search: {successfactors: https://careers.srpnet.com}
   - name: Southwest Gas
     careers_url: https://ebtw.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1
     ats: oracle_hcm           # swgas.com/en/employment ("Jobs") links to this Oracle Recruiting site, incl. an Arizona filter

@@ -1732,3 +1732,34 @@ def test_a_jibe_search_not_in_one_state_reads_further_and_takes_an_address():
     asked.clear()
     asyncio.run(go("AZ"))
     assert len(asked) == 1 and asked[0][1]["location"] == "Arizona"  # the site's own filter: one page
+
+
+SF_TILES = """<ul id="job-tile-list">
+<li class="job-tile job-id-1424491000 job-row-index-1" data-url="/job/Tempe-Compensation-Analyst-AZ-85280/1424491000/">
+ <div class="sub-section sub-section-desktop"><span class="section-title title" role="heading">
+  <a class="jobTitle-link" href="/job/Tempe-Compensation-Analyst-AZ-85280/1424491000/"> Compensation Analyst </a></span>
+  <div class="section-field location" id="job-1424491000-desktop-section-location"><span class="section-label">Location</span>
+   <div id="job-1424491000-desktop-section-location-value">Tempe, AZ, US </div></div>
+  <div class="section-field date" id="job-1424491000-desktop-section-date"><span class="section-label">Date</span>
+   <div id="job-1424491000-desktop-section-date-value">Oct 2, 2026 </div></div></div>
+ <div class="sub-section sub-section-tablet">
+  <a class="jobTitle-link" href="/job/Tempe-Compensation-Analyst-AZ-85280/1424491000/"> Compensation Analyst </a></div>
+</li>
+<li class="job-tile job-id-1 job-row-index-2" data-url="/job/Austin-Recruiter-TX/1/">
+ <a class="jobTitle-link" href="/job/Austin-Recruiter-TX/1/">Recruiter</a>
+ <div class="section-field location"><div id="job-1-desktop-section-location-value">Austin, TX, US</div></div></li>
+</ul>"""
+
+
+def test_a_successfactors_site_that_draws_its_results_as_tiles():
+    """Salt River Project's SuccessFactors site draws its search results as tiles, not the table
+    rows Qorvo's has: the search found none (Oct 2026). Each tile has its title (twice: desktop
+    and tablet), place and date."""
+    from job_apply.search import parse_successfactors
+
+    rows, total = parse_successfactors(SF_TILES, "https://careers.srpco.com")
+    assert [(r.title, r.location, r.posted, r.url, r.external_id) for r in rows] == [
+        ("Compensation Analyst", "Tempe, AZ, US", "2026-10-02",
+         "https://careers.srpco.com/job/Tempe-Compensation-Analyst-AZ-85280/1424491000/", "1424491000"),
+        ("Recruiter", "Austin, TX, US", "", "https://careers.srpco.com/job/Austin-Recruiter-TX/1/", "1")]
+    assert total is None
