@@ -330,6 +330,20 @@ def test_a_title_sharing_only_a_generic_word_isnt_preselected():
     assert "not one of your target titles" in score_listing({**fresh, "title": "Enrollment Coordinator"}, hr).concerns
 
 
+def test_an_account_specialist_isnt_near_an_accountant():
+    """A made-up finance applicant's "Accountant" target made JPMorgan Chase's "Credit Card
+    Customer Service Account Specialist I" (fresh, in Tempe) preselected at 75 (a live Find jobs
+    run on the Phoenix list, Oct 2026): "Account" was taken for accounting's first letters."""
+    fin = tech(preferences={"titles": ["Financial Analyst", "Accountant"], "locations": ["Phoenix, AZ"]})
+    fresh = {"location": "Tempe, AZ", "posted": "2026-10-05"}
+    off = score_listing({**fresh, "title": "Credit Card Customer Service Account Specialist I"}, fin, today=TODAY)
+    assert not off.recommended and "not one of your target titles" in off.concerns
+    for title in ("Accounts Payable Specialist", "Accounting Manager", "Finance Manager"):
+        assert "not one of your target titles" not in score_listing({**fresh, "title": title}, fin).concerns, title
+    sales = tech(preferences={"titles": ["Account Manager"], "locations": ["Phoenix, AZ"]})
+    assert "not one of your target titles" not in score_listing({**fresh, "title": "Account Executive"}, sales).concerns
+
+
 def test_a_posting_asking_for_far_more_experience_isnt_preselected():
     """A "Human Resources Business Partner" posting asked a made-up applicant with about 5 years
     for 10+, and was still preselected at 83 (a live Find jobs run, Oct 2026). Far short, it's

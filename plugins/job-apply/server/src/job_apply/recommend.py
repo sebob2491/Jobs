@@ -41,8 +41,8 @@ def _near_target(title: str, targets: list[str]) -> bool:
     """A title sharing a word that says what the work is with a target title: "field" for field
     service, "recruiting" for Recruiter (a word's first six letters), "HR" for HR Generalist
     ("Human Resources Assistant" says HR too). Not a generic one: "coordinator"."""
-    def stems(text: str) -> set[str]:
-        return {w[:6] for w in title_words(text).split()
+    def stems(text: str) -> set[str]:  # "account" kept whole: an Account Specialist's is a customer's, not accounting
+        return {w if w == "account" else w[:6] for w in title_words(text).split()
                 if (len(w) > 3 or w == "hr") and w not in _GENERIC_TITLE_WORDS}
     mine = stems(title)
     return any(stems(t) & mine for t in targets)
