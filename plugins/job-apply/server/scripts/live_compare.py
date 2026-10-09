@@ -117,6 +117,8 @@ CHECKS = {
                       "employer", "LIVE_PIPELINE ", pipeline_outcome),
     "hr": Check("Apply pipeline, Phoenix list (HR jobs): where it ended on one posting per employer",
                 "LIVE_PIPELINE ", pipeline_outcome),
+    "finance": Check("Apply pipeline, Phoenix list (finance jobs): where it ended on one posting per employer",
+                     "LIVE_PIPELINE ", pipeline_outcome),
     "search": Check("Search: does each employer's search work", "LIVE_RESULT ", search_outcome),
 }
 
