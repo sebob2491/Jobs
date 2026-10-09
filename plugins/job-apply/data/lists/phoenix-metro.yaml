@@ -192,10 +192,11 @@ companies:
     confidence: high          # live check, Oct 2026: Tempe finance openings (financial analysts, tax, payroll)
     search: {mcloud: {company: companies/676b1209-7c4c-4a96-8991-69f52e2705a1}}  # its page's own search
   - name: PayPal
-    careers_url: https://careers.pypl.com/home/
-    ats: unknown              # careers.pypl.com answered with a Cloudflare challenge (403) from here; system not seen
+    careers_url: https://paypal.wd1.myworkdayjobs.com/jobs
+    ats: workday              # careers.pypl.com answers with a Cloudflare challenge; its postings are on Workday
     az_sites: Scottsdale, Chandler
-    confidence: low
+    confidence: high          # live check, Oct 2026: 56 openings matching Arizona, in Scottsdale
+    search: {workday: https://paypal.wd1.myworkdayjobs.com/jobs}
   - name: ADP
     careers_url: https://jobs.adp.com/
     ats: unknown              # jobs.adp.com answered with a Cloudflare challenge (403) from here; system not seen
@@ -289,10 +290,13 @@ companies:
     az_sites: Phoenix, Tempe
     confidence: medium        # page seen, Oct 2026; no search block yet
   - name: PwC
-    careers_url: https://www.pwc.com/us/en/careers.html
-    ats: unknown              # pwc.com answered with an Akamai "Access Denied" (403) from here; system not seen
+    careers_url: https://pwc.wd3.myworkdayjobs.com/US_Experienced_Careers
+    ats: workday              # pwc.com answers with an Akamai "Access Denied"; its postings are on Workday
     az_sites: Phoenix
-    confidence: low
+    confidence: high          # live check, Oct 2026: Phoenix audit and tax openings on its two US sites
+    search:
+      workday: [https://pwc.wd3.myworkdayjobs.com/US_Experienced_Careers,
+                https://pwc.wd3.myworkdayjobs.com/US_Entry_Level_Careers]
   # Phoenix-metro utilities, aerospace and defense, tech, logistics and retail employers
   # (checked Oct 2026).
   - name: Arizona Public Service   # APS (Pinnacle West)

@@ -1901,3 +1901,36 @@ def test_employers_are_searched_eight_at_a_time():
             return await search_companies("accountant", client=client, companies=companies)
     out = asyncio.run(go())
     assert not out["errors"] and most == 8, (most, out["errors"])
+
+
+def test_an_employer_with_two_workday_sites_searches_both(monkeypatch):
+    """PwC lists experienced openings and entry-level ones on two Workday sites: both are searched."""
+    import asyncio
+
+    monkeypatch.setattr(search_module, "RETRY_DELAY", 0)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        site = "Exp" if "/Exp/" in str(request.url) else "Entry"
+        return httpx.Response(200, json={"total": 1, "jobPostings": [{
+            "title": f"Audit Associate ({site})", "externalPath": f"/job/AZ-Phoenix/Audit_{site}", "locationsText": "AZ-Phoenix",
+            "postedOn": "Posted Today", "bulletFields": [f"{site}1"]}]})
+
+    async def go():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            return await search_module._workday(client, ["https://pwc.wd3.myworkdayjobs.com/Exp",
+                                                         "https://pwc.wd3.myworkdayjobs.com/Entry"], "audit", 10, [])
+
+    found = asyncio.run(go())
+    assert sorted(x.url for x in found) == ["https://pwc.wd3.myworkdayjobs.com/Entry/job/AZ-Phoenix/Audit_Entry",
+                                            "https://pwc.wd3.myworkdayjobs.com/Exp/job/AZ-Phoenix/Audit_Exp"]
+
+    # one site down still leaves the other's openings
+    def half_down(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(500) if "/Exp/" in str(request.url) else handler(request)
+
+    async def go_half():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(half_down)) as client:
+            return await search_module._workday(client, ["https://pwc.wd3.myworkdayjobs.com/Exp",
+                                                         "https://pwc.wd3.myworkdayjobs.com/Entry"], "audit", 10, [])
+
+    assert [x.url for x in asyncio.run(go_half())] == ["https://pwc.wd3.myworkdayjobs.com/Entry/job/AZ-Phoenix/Audit_Entry"]

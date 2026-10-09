@@ -2,7 +2,7 @@
 
 Each company in data/companies.yaml may carry a `search` block naming one of:
 
-    workday:         https://<tenant>.wd<N>.myworkdayjobs.com/<site>
+    workday:         https://<tenant>.wd<N>.myworkdayjobs.com/<site>   (or a list of such sites)
     greenhouse:      <board token>
     lever:           <company slug>
     eightfold:       {host: careers.example.com, domain: example.com}
@@ -370,6 +370,17 @@ def _workday_location_facets(facets: Any, terms: list[str]) -> dict[str, list[st
 
 
 async def _workday(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, terms: list[str]) -> list[Listing]:
+    if isinstance(cfg, list):  # an employer with more than one site (PwC's experienced and entry-level ones)
+        found: list[Listing] = []  # (keep_listings caps them all at the limit)
+        failed: list[Exception] = []
+        for site_url in cfg:
+            try:
+                found += await _workday(client, site_url, query, limit, terms)
+            except Exception as e:  # one site down still leaves the other's openings
+                failed.append(e)
+        if failed and not found:
+            raise failed[0]
+        return found
     parts = workday_parts(str(cfg).rstrip("/") + "/")
     if not parts:
         raise SearchError(f"Not a Workday site URL: {cfg}")
