@@ -1,0 +1,10 @@
+{
+  "name": "dev-kit",
+  "version": "0.1.0",
+  "description": "Development practices that make Claude Code faster and safer on any project: parallel tests, CI with required checks and auto-merge, a review pass on every PR, a regression test for every fix, and handoff notes. Includes /dev-kit:check to audit and set up a repo.",
+  "author": {
+    "name": "sebob2491"
+  },
+  "repository": "https://github.com/sebob2491/Jobs",
+  "keywords": ["development", "workflow", "ci", "testing", "code-review"]
+}

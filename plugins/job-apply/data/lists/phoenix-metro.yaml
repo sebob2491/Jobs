@@ -173,10 +173,9 @@ companies:
     careers_url: https://careers-aerotek.icims.com/jobs/search?ss=1
     ats: icims                # aerotek.com internal careers (Allegis Group) link here
     az_sites: none seen in today's listings
-    confidence: medium        # live check, Oct 2026: the iCIMS search works, but this portal shows each place
-                              # under "Location" in the row's details, which the iCIMS reader doesn't pick up yet,
-                              # so every result came back unplaced and unfiltered: no search block until it does
-                              # (search: {icims: careers-aerotek})
+    confidence: high          # live check, Oct 2026: recruiter openings come back; this portal shows each place
+                              # under "Location" in the row's details, which the iCIMS reader reads
+    search: {icims: careers-aerotek}
   - name: Insight Global
     careers_url: https://careers.insightglobal.com/insightglobal-careers/
     ats: icims                # an iCIMS Jibe front end over the careers-insightglobal iCIMS portal
@@ -235,9 +234,9 @@ companies:
     careers_url: https://careers-gdms.icims.com/jobs/search?ss=1
     ats: icims                # gdmissionsystems.com/careers links to the careers-gdms iCIMS portal
     az_sites: Scottsdale
-    confidence: medium        # live check, Oct 2026: the portal's search answers, but its rows carry no place the
-                              # iCIMS reader picks up, so results aren't narrowed to Arizona: no search block until
-                              # the reader reads each row's place (search: {icims: careers-gdms})
+    confidence: high          # live check, Oct 2026: the portal's search answers; each row's place is read from
+                              # its details
+    search: {icims: careers-gdms}
   - name: GoDaddy
     careers_url: https://careers.godaddy/jobs/search
     ats: greenhouse           # careers.godaddy is a Clinch front end; its postings carry Greenhouse job ids, and the

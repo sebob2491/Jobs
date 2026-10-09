@@ -254,7 +254,8 @@ class BrowserSession:
                     detail = " ".join(line.strip() for line in str(e).splitlines()[:4] if line.strip())[:500]
                     raise BrowserUnavailable(
                         f"{name} is installed but wouldn't start. If another window of it is open on the desk's "
-                        f"profile ({kwargs['user_data_dir']}), close that window and try again. Details: {detail}")
+                        f"profile ({kwargs['user_data_dir']}), close that window and try again. Details: {detail}"
+                    ) from e
         if self._ctx is None:
             await self._pw.stop()
             self._pw = None
@@ -271,7 +272,7 @@ class BrowserSession:
         if not getattr(tab, "_ja_watched", False):
             tab._ja_watched = True  # type: ignore[attr-defined]
             tab.on("popup", lambda popup: self._on_popup(tab, popup))
-            tab.on("close", lambda _: (self._openers.pop(tab, None), self.tab_jobs.pop(tab, None)))
+            tab.on("close", lambda _: (self._openers.pop(tab, None), self.tab_jobs.pop(tab, None)))  # type: ignore[call-overload]  # the handler's result is unused
 
     def _on_popup(self, opener: Page, popup: Page) -> None:
         # "Apply" buttons often open the application in a new tab: follow it, but only from

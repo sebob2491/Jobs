@@ -23,6 +23,10 @@ jobs:
           enable-cache: true
           cache-dependency-glob: plugins/job-apply/server/uv.lock
       - run: uv sync --frozen --extra dev
+      - name: Lint (ruff)
+        run: uv run --frozen ruff check --output-format=github .
+      - name: Type check (mypy)
+        run: uv run --frozen mypy src/job_apply
       - run: uv run --frozen playwright install --with-deps chromium
       - run: uv run --frozen pytest -q -n auto
 
@@ -37,3 +41,4 @@ jobs:
       - run: npm install -g @anthropic-ai/claude-code
       - run: claude plugin validate --strict .
       - run: claude plugin validate --strict plugins/job-apply
+      - run: claude plugin validate --strict plugins/dev-kit

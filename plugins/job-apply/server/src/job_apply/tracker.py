@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import builtins
 import csv
 import functools
 import re
@@ -279,7 +280,7 @@ class Tracker:
                 (job_id, now, status or "", note),
             )
         self.conn.commit()
-        return self.get(job_id)  # type: ignore[return-value]
+        return self.get(job_id)
 
     @_locked
     def log_email(self, job_id: int, thread_id: str, category: str, summary: str = "",
@@ -316,7 +317,7 @@ class Tracker:
         return {"already_logged": False, "status": new, "changed": new != current}
 
     @_locked
-    def logged_threads(self, since_days: int | None = None) -> list[dict[str, Any]]:
+    def logged_threads(self, since_days: int | None = None) -> builtins.list[dict[str, Any]]:  # (in here `list` is Tracker.list)
         q = "SELECT thread_id, job_id, category, received_at FROM emails"
         args: list[Any] = []
         if since_days is not None:
@@ -325,7 +326,7 @@ class Tracker:
         return [dict(r) for r in self.conn.execute(q + " ORDER BY logged_at DESC", args)]
 
     @_locked
-    def events(self, job_id: int) -> list[dict[str, Any]]:
+    def events(self, job_id: int) -> builtins.list[dict[str, Any]]:
         rows = self.conn.execute("SELECT at, status, note FROM events WHERE job_id = ? ORDER BY id", (job_id,))
         return [dict(r) for r in rows]
 

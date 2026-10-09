@@ -239,7 +239,9 @@ def title_level(title: str) -> int | None:
 def _split_sections(text: str) -> tuple[str, str]:
     """(required, preferred): lines under a "Preferred ..." heading count as preferred
     until the next heading."""
-    req, pref, mode = [], [], "req"
+    req: list[str] = []
+    pref: list[str] = []
+    mode = "req"
     for line in text.splitlines():
         # Markdown, as Eightfold's postings come: "## Preferred qualifications", "**Requirements:**"
         low = re.sub(r"^#+\s*|^\*\*(.*?)\*\*(:?)$", r"\1\2", line.strip().lower()).strip()

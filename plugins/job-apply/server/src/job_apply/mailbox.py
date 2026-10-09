@@ -98,10 +98,11 @@ def sender_allowed(sender: str, allowed: set[str]) -> bool:
     return bool(domain) and any(domain == d or domain.endswith("." + d) for d in allowed)
 
 
-def _parts(msg: email.message.Message) -> tuple[list[str], list[str]]:
+def _parts(msg: email.message.EmailMessage) -> tuple[list[str], list[str]]:
     """A message's text: its plain-text words, then its HTML's words (an email whose plain
     part leaves the code out has it in the HTML), and the links in its HTML."""
-    plain, markup = [], []
+    plain: list[str] = []
+    markup: list[str] = []
     for part in msg.walk() if msg.is_multipart() else [msg]:
         if part.get_content_maintype() != "text" or part.get_filename():
             continue
@@ -117,7 +118,7 @@ def _parts(msg: email.message.Message) -> tuple[list[str], list[str]]:
     return texts + ([html.unescape(words)] if markup else []), links
 
 
-def _text(msg: email.message.Message) -> tuple[str, list[str]]:
+def _text(msg: email.message.EmailMessage) -> tuple[str, list[str]]:
     """A message's words (plain text, or its HTML without tags) and the links in its HTML."""
     texts, links = _parts(msg)
     return (texts[0] if texts else ""), links
@@ -168,11 +169,11 @@ def find_link(text: str, links: list[str], allowed_link: Callable[[str], bool]) 
             return None
 
     urls = [u.strip().rstrip(".,;") for u in [*links, *_URL.findall(text)]]
-    urls = [u for u in urls if path(u) is not None and not _NOT_THIS_LINK.search(path(u))
+    urls = [u for u in urls if (p := path(u)) is not None and not _NOT_THIS_LINK.search(p)
             and not _UNDOES.search(urlparse(u).query) and allowed_link(u)]
     for where in (path, lambda u: u):
         for url in urls:
-            if _LINK_WORDS.search(where(url)):
+            if _LINK_WORDS.search(where(url) or ""):
                 return url
     return None
 
@@ -210,7 +211,7 @@ def search(address: str, password: str, since: float, allowed: set[str], want: s
             return None
         # When each arrived and who sent it, in one round trip; the whole message only for the
         # job site's own mail since the wait began
-        _, heads = box.fetch(b",".join(ids), "(INTERNALDATE BODY.PEEK[HEADER.FIELDS (FROM)])")
+        _, heads = box.fetch(b",".join(ids), "(INTERNALDATE BODY.PEEK[HEADER.FIELDS (FROM)])")  # type: ignore[arg-type]  # imaplib takes bytes too
         wanted = []
         for i, part in enumerate(heads):
             if not isinstance(part, tuple):
@@ -218,7 +219,7 @@ def search(address: str, password: str, since: float, allowed: set[str], want: s
             # the date comes before the header, or (as some servers order them) after it
             after = heads[i + 1] if i + 1 < len(heads) and isinstance(heads[i + 1], bytes) else b""
             try:
-                stamp = imaplib.Internaldate2tuple(part[0]) or imaplib.Internaldate2tuple(after)
+                stamp = imaplib.Internaldate2tuple(part[0]) or imaplib.Internaldate2tuple(after)  # type: ignore[arg-type]  # bytes: checked above
                 received = time.mktime(stamp) if stamp else 0.0
                 sender = str(email.message_from_bytes(part[1], policy=email.policy.default).get("From") or "")
                 mid = part[0].split()[0]
@@ -227,7 +228,7 @@ def search(address: str, password: str, since: float, allowed: set[str], want: s
             if received >= since - look_back and (before is None or received < before) and sender_allowed(sender, allowed):
                 wanted.append((received, mid, sender))
         for received, mid, sender in sorted(wanted, key=lambda w: w[0], reverse=True):  # newest first
-            _, parts = box.fetch(mid, "(BODY.PEEK[])")
+            _, parts = box.fetch(mid, "(BODY.PEEK[])")  # type: ignore[arg-type]  # imaplib takes bytes too
             raw = next((p for p in parts if isinstance(p, tuple)), None)
             if raw is None:
                 continue

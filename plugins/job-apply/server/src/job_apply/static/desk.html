@@ -33,6 +33,15 @@ button:hover { border-color: var(--muted); }
 button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); font-weight: 600; }
 button.primary:disabled { opacity: .5; cursor: default; }
 button.link { border: 0; background: none; color: var(--accent); padding: 0; }
+a.button { display: inline-block; border-radius: 8px; padding: 7px 12px; text-decoration: none; }
+a.button.primary { background: var(--accent); color: var(--accent-text); font-weight: 600; }
+dialog { max-width: min(760px, calc(100vw - 32px)); border: 1px solid var(--line); border-radius: 10px;
+  background: var(--surface); color: var(--text); padding: 16px; }
+dialog::backdrop { background: rgba(0,0,0,.4); }
+dialog h2 { font-size: 16px; margin: 0 0 8px; }
+dialog pre { max-height: 50vh; overflow: auto; white-space: pre-wrap; font-size: 12px; background: var(--bg);
+  border: 1px solid var(--line); border-radius: 8px; padding: 10px; }
+dialog .actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 main { max-width: 1240px; margin: 0 auto; padding: 16px; display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); gap: 16px; align-items: start; }
 /* one column on narrow screens: notices, then what needs the person, then the openings,
    then the password card */
@@ -192,6 +201,17 @@ footer { max-width: 1240px; margin: 0 auto; padding: 0 16px 24px; color: var(--m
     </section>
   </div>
 </main>
+<dialog id="report" aria-labelledby="report-h">
+  <h2 id="report-h">Report a problem</h2>
+  <p>This is everything the issue will hold, with your details taken out. GitHub issues are public:
+    anyone can read this one, and see which job you applied for. Read it over first.</p>
+  <pre id="report-text"></pre>
+  <p class="small" id="report-where"></p>
+  <div class="actions">
+    <a class="button primary" id="report-open" target="_blank" rel="noopener">Open the GitHub issue page</a>
+    <button data-act="report-close">Close</button>
+  </div>
+</dialog>
 <footer>
   The desk fills applications in the automation browser window and stops at each review page.
   It only submits when you press Submit, or when "Submit for me" is on. LinkedIn and Indeed are always submitted by you.
@@ -208,6 +228,7 @@ const selected = new Set();
 let filter = "recommended";
 let state = null;
 let busy = false;
+let reporting = false;  // a problem report being written
 let autoSearchedAt = 0;
 const STALE_SEARCH = 12 * 3600;  // seconds: listings older than this are searched again, also on a desk left open
 
@@ -397,6 +418,7 @@ function jobButtons(r, which) {
   if (which.includes("usual_resume")) out.push(b("usual_resume", "Use my usual resume"));
   if (which.includes("later")) out.push(b("later", "Later"));
   if (which.includes("skip")) out.push(b("skip", "Skip job"));
+  out.push(b("report", "Report a problem", "link"));
   return `<div class="actions">${out.join("")}</div>`;
 }
 
@@ -433,7 +455,7 @@ function renderSide() {
   const working = runs.filter((r) => r.status === "running");
   const queued = runs.filter((r) => r.status === "queued").length;
   const workEntries = working.map((r) => ({key: "w" + r.job_id, html: `<div class="task"><h3><span class="spin"></span> ${esc(r.title)} <span class="small">· ${esc(r.company)}</span></h3>
-    <ul class="log">${(r.log || []).slice(-4).map((l) => `<li>${esc(l)}</li>`).join("")}</ul></div>`}));
+    <ul class="log">${(r.log || []).slice(-4).map((l) => `<li>${esc(l)}</li>`).join("")}</ul>${jobButtons(r, [])}</div>`}));
   if (queued) workEntries.push({key: "q", html: `<div class="task small">${queued} more queued.</div>`});
   if (!workEntries.length) workEntries.push({key: "idle", html: `<div class="empty">Idle.</div>`});
   patch($("work"), workEntries);
@@ -441,7 +463,7 @@ function renderSide() {
   const done = runs.filter((r) => ["ready", "submitted", "failed"].includes(r.status));
   const doneEntries = done.map((r) => {
     const buttons = r.status === "ready" ? jobButtons(r, ["show", "submit", "skip"])
-      : r.status === "failed" ? jobButtons(r, ["show", "resume", "skip"]) : "";
+      : r.status === "failed" ? jobButtons(r, ["show", "resume", "skip"]) : jobButtons(r, []);  // submitted: Report only
     const [text, cls] = RUN[r.status];
     return {key: "d" + r.job_id + r.status, html: `<div class="task"><h3>${esc(r.title)} <span class="small">· ${esc(r.company)}</span>
       <span class="pill ${cls}">${esc(text)}</span></h3><p>${esc(r.reason)}</p>${buttons}</div>`};
@@ -604,6 +626,7 @@ document.addEventListener("click", (e) => {
   const a = t.dataset.act, job = t.dataset.job, jobAct = t.dataset.jobAct;
   if (!state && (a || jobAct)) return;  // the page hasn't loaded yet
   if (a === "find") act(() => api("/api/search", {}));
+  if (a === "report-close") $("report").close();
   if (a === "alerts" && "Notification" in window) {
     if (Notification.permission === "granted") {
       try { localStorage.setItem(ALERTS_KEY, alertsOn() ? "off" : "on"); } catch (err) { /* stays as it was */ }
@@ -641,6 +664,23 @@ document.addEventListener("click", (e) => {
     })).filter((x) => x.value);
     if (!answers.length) { alert("Answer at least one question first."); return; }
     act(async () => { const out = await api("/api/answer", {job_id: Number(job), answers}); if (out.note) alert(out.note); });
+  } else if (jobAct === "report") {
+    if (reporting) return;  // one at a time: a double click makes one report
+    reporting = true;
+    act(async () => {
+      try {
+        const out = await api(`/api/job/${job}/report`, {});
+        // shown in a dialog with a link: the person's own click opens GitHub, which a pop-up
+        // opened after the wait would not (browsers block those)
+        $("report-text").textContent = out.preview;
+        $("report-where").textContent = `It's saved in ${out.folder}, with report.zip: that also holds the pages the`
+          + " desk saved. They can still show your answers, so they stay on your computer and aren't in the issue.";
+        $("report-open").href = out.issue_url;
+        $("report").showModal();
+      } finally {
+        reporting = false;
+      }
+    }, false);
   } else if (jobAct === "submit") {
     if (confirm("Submit this application now?")) act(() => api(`/api/job/${job}/submit`, {}));
   } else if (jobAct) {
@@ -688,6 +728,8 @@ document.addEventListener("change", (e) => {
   }
   if (t.id === "tailor") act(() => api("/api/settings", {tailor_resumes: t.checked}));
 });
+
+$("report-open").addEventListener("click", () => $("report").close());  // the link opens GitHub in a new tab
 
 (async function poll() {
   await refresh();

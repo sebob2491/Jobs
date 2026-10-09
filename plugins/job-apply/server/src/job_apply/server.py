@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import functools
 import inspect
@@ -55,7 +56,7 @@ def _desk_driving() -> str | None:
 
     d = desk._desk
     job_id = d.applier.current if d is not None else None
-    if job_id is None:
+    if d is None or job_id is None:
         return None
     run = d.applier.runs.get(job_id)
     return f"{run.title} at {run.company}" if run and run.title else "an application"
@@ -522,6 +523,22 @@ async def tailoring_queue() -> dict[str, Any]:  # async: it reads the desk's run
 
 
 @tool()
+async def report_problem(job_id: int) -> dict[str, Any]:
+    """Write a problem report for a job that went wrong: what the Job Desk did and the fields
+    of the pages it saved, with the person's details taken out (no screenshots). Show the user
+    `preview`, all of it, before anything else, and say the issue will be public and shows
+    which job they applied for. Only with their OK, give them `issue_url` to open (a new issue
+    on the plugin's public GitHub repository with that text). Never file it without their OK.
+    `zip` also holds the saved pages, scrubbed but possibly still showing their answers: it
+    stays on their computer, and never goes on the public issue."""
+    from . import desk, report
+
+    job = _job(job_id)
+    run = desk._desk.applier.runs.get(job["id"]) if desk._desk is not None else None
+    return await asyncio.to_thread(report.build, job, run)
+
+
+@tool()
 def export_jobs_csv(path: str | None = None) -> dict[str, Any]:
     """Write every tracked job to a CSV (default ~/.job-apply/applications.csv) for a spreadsheet."""
     out = config.expand(path) if path else config.home() / "applications.csv"
@@ -546,7 +563,7 @@ async def open_application(job_id: int | None = None, url: str | None = None) ->
     if job_id is None:
         # the job saved at this address, if any: never the one opened before, whose documents
         # would go into this form and whose status a submit here would change
-        known = tracker().find_by_url(url)  # type: ignore[arg-type]
+        known = tracker().find_by_url(url)
         job_id = known["id"] if known else None
         browser.current_job_id = job_id
     else:

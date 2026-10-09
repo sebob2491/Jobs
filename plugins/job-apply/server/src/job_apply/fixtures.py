@@ -104,7 +104,7 @@ def _redact_page(soup: BeautifulSoup, secrets: list[str]) -> None:
     for tag in soup.find_all(True):
         for attr, value in list(tag.attrs.items()):
             if isinstance(value, list):
-                tag[attr] = [redact(v, secrets) for v in value]
+                tag[attr] = [redact(v, secrets) for v in value]  # type: ignore[assignment]  # bs4 writes a list out as words
             elif isinstance(value, str):
                 tag[attr] = redact(value, secrets)
 
@@ -114,14 +114,16 @@ _OPAQUE = re.compile(r"^eyJ[\w+/=-]+$|^[\w+/=-]{80,}$")  # base64 state, tokens
 
 
 def _without_query(url: str) -> str:
-    """A link without its query and fragment: session ids, tokens and the person's email."""
+    """A link without its query, fragment and path parameters: session ids, tokens and the
+    person's email."""
     if url.startswith("#"):
         return "#"  # a link to the page itself stays one ("" would reload it)
     try:
         parts = urlsplit(url)
     except ValueError:
         return ""
-    return urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))
+    path = re.sub(r";[^/]*", "", parts.path)  # ";jsessionid=..." path parameters too
+    return urlunsplit((parts.scheme, parts.netloc, path, "", ""))
 
 
 REMOTE = ("http:", "https:", "//")
@@ -233,7 +235,7 @@ class _CssPruner:
         self.ids: set[str] = set()
         for tag in soup.find_all(True):
             self.tags.add(tag.name.lower())
-            classes = tag.get("class") or []
+            classes: str | list[str] = tag.get("class") or []
             self.classes.update(c.lower() for c in ([classes] if isinstance(classes, str) else classes))
             if tag.get("id"):
                 self.ids.add(str(tag["id"]).lower())
@@ -302,7 +304,7 @@ def clean_html(raw: str, secrets: list[str], frame_map: dict[str, str] | None = 
     # what the person typed or chose: free-text answers, picked options, ticked boxes
     for tag in soup.find_all("textarea"):
         tag.string = ""
-    for tag in soup.find_all(attrs={"contenteditable": re.compile("^(true|)$", re.I)}):
+    for tag in soup.find_all(attrs={"contenteditable": re.compile("^(true|)$", re.I)}):  # type: ignore[call-overload]  # bs4 stubs want a name too
         tag.string = ""
     # Keep fixtures hermetic: nothing may load from the network when a test opens them.
     for tag in soup.find_all("link"):
@@ -325,7 +327,7 @@ def clean_html(raw: str, secrets: list[str], frame_map: dict[str, str] | None = 
                 if tag.get(attr):
                     tag[attr] = _without_query(str(tag[attr]))
         if tag.name == "iframe" and frame_map and tag.get("src"):
-            absolute = urljoin(base_url, tag["src"])
+            absolute = urljoin(base_url, str(tag["src"]))
             if absolute in frame_map:
                 tag["src"] = frame_map[absolute]
         if tag.name not in ("a", "area", "link", "form"):
@@ -333,12 +335,12 @@ def clean_html(raw: str, secrets: list[str], frame_map: dict[str, str] | None = 
                 if str(tag.get(attr, "")).strip().lower().startswith(REMOTE):
                     del tag[attr]
         if tag.get("style"):
-            tag["style"] = _CSS_REMOTE_URL.sub("none", tag["style"])
+            tag["style"] = _CSS_REMOTE_URL.sub("none", str(tag["style"]))
     pruner = _CssPruner(soup)
     sheets = [(tag, pruner.prune(tag.get_text())) for tag in soup.find_all("style")]
     # Design-token sheets define thousands of --variables; keep the ones something reads.
     keep = _used_custom_properties(
-        "\n".join(css for _, css in sheets) + "\n" + "\n".join(t["style"] for t in soup.find_all(style=True)))
+        "\n".join(css for _, css in sheets) + "\n" + "\n".join(str(t["style"]) for t in soup.find_all(style=True)))
     for tag, css in sheets:
         css = _drop_custom_properties(css, keep)
         if css:
@@ -349,9 +351,12 @@ def clean_html(raw: str, secrets: list[str], frame_map: dict[str, str] | None = 
     return str(soup)
 
 
-def convert(snapshot: Path, name: str, out_dir: Path = DEFAULT_DIR, prof: Profile | None = None) -> list[Path]:
+def convert(snapshot: Path, name: str, out_dir: Path = DEFAULT_DIR, prof: Profile | None = None,
+            secrets: list[str] | None = None) -> list[Path]:
+    """Scrub a saved snapshot into `out_dir`: `{name}.html`, its frames, and `{name}.expect.json`.
+    `secrets` (default: the profile's personal strings) are what's taken out."""
     meta = json.loads((snapshot / "snapshot.json").read_text(encoding="utf-8"))
-    secrets = personal_strings(prof or Profile.load())
+    secrets = secrets if secrets is not None else personal_strings(prof or Profile.load())
     out_dir.mkdir(parents=True, exist_ok=True)
     written: list[Path] = []
 

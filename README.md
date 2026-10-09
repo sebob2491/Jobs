@@ -278,6 +278,10 @@ uv run pytest -n auto
 temporary `JOB_APPLY_HOME` and browser, so they don't get in each other's way. Plain
 `uv run pytest` runs them one at a time.
 
+`uv run ruff check .` (lint for bugs: unused or undefined names, bugbear's patterns; it never
+reformats) and `uv run mypy src/job_apply` (type check) run in CI ahead of the tests; run them
+before opening a PR.
+
 The tests cover ATS detection, posting parsing, the profile-to-field matching
 rules, the tracker and email log, PDF rendering, fixture redaction, and
 end-to-end browser runs (headless Chromium) against mock forms: a generic form,
@@ -307,6 +311,37 @@ one-button pipeline instead. It checks the default semiconductor list; add
 each in a browser of its own; every site is still visited once. A full run then
 takes about 6 minutes instead of 22.
 
+**Nightly live check.** The `live-nightly` workflow runs every night at 3:17 AM
+Arizona time (or from the Actions tab): the pipeline check on the semiconductor list
+and the search check on the phoenix-metro list, four employers at a time.
+`scripts/live_compare.py` boils each employer down to one result that holds steady
+from night to night: where the pipeline ended (`ready`, `needs_you sign_in`,
+`needs_you stuck`, ...), or whether the search works (`works`, `error`, or `no search`).
+How many openings a search finds changes daily and is never compared. The issue titled
+"Nightly live check" (label `live-check`) keeps the last results in its body, and gets
+a comment, which notifies you, only when an employer's result changes or an employer
+joins or leaves a list. It's reopened if it was closed. A check that doesn't finish
+fails the run, and the employers it didn't reach keep their last result. Each run's
+reports and logs are kept as an artifact for 7 days. GitHub pauses scheduled workflows
+in a repository with no activity for 60 days.
+
+### Reporting a problem
+
+When the Job Desk gets a job wrong, press **Report a problem** on that job. It writes a
+report to `~/.job-apply/reports/<job>-<time>/`:
+- what the desk did, step by step;
+- each page it saved, with every field's label and whether it was filled (never what was in it);
+- `report.zip`, which also holds the saved pages.
+
+The profile's personal details, plus your city, schools and employers, are replaced by
+`REDACTED`. Web addresses lose their session codes, and screenshots are never included.
+The desk then shows you the whole report, with a link that opens a new issue on this
+repository with the report's text filled in. Nothing is sent unless you follow the link and
+file the issue. GitHub issues are public: anyone can read one, and see which job you
+reported, so read it over first. The saved pages in `report.zip` aren't in the issue,
+because a filled-in form can still show your answers; they stay on your computer. Claude
+can make the same report with `report_problem`.
+
 ### Turning a failure into a test
 
 When a field won't fill on a real site, the plugin saves a snapshot to
@@ -324,6 +359,21 @@ fields the extractor must keep finding. Fix the extractor or the matching rules,
 trim the expectations to fields you've checked, look the HTML over for any other
 personal data, and commit. `tests/test_live_fixtures.py` picks it up
 automatically.
+
+## dev-kit: development practices for any project
+
+This marketplace also carries **dev-kit**, a small plugin for working on code with
+Claude Code in any project. It isn't specific to job applications. It holds:
+- a practices skill Claude follows while it works: tests that run in parallel, CI with
+  required checks and auto-merge, a review pass on every PR, a test for every fix that
+  fails on the old code, fewer themed PRs, version bumps, parallel agents, handoff notes;
+- `/dev-kit:check`, which audits a repo against those practices and sets up what's
+  missing with your OK, including a `CLAUDE.md`, so cloud sessions on that repo follow them too;
+- a one-line reminder at the start of each session to run the check on projects that
+  haven't had one in 30 days.
+
+Install it like job-apply: `/plugin install dev-kit@sebob-jobs` in Claude Code, or
+`claude plugin install dev-kit@sebob-jobs` in a terminal.
 
 ## Limitations
 

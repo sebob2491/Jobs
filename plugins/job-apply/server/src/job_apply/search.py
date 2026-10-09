@@ -502,7 +502,7 @@ def parse_eightfold(data: Any, host: str) -> list[Listing]:
         out.append(Listing(
             company="", title=p.get("name") or p.get("title") or "",
             url=link or f"https://{host}/careers/job/{p.get('id')}",
-            location="; ".join(l for l in locs if l),
+            location="; ".join(loc for loc in locs if loc),
             external_id=str(p.get("display_job_id") or p.get("displayJobId") or p.get("id") or ""),
             posted=_epoch_date(p.get("t_create") or p.get("postedTs") or p.get("creationTs")), ats="eightfold",
         ))
@@ -611,18 +611,52 @@ def parse_applicantstack(html: str, base: str) -> list[Listing]:
     return out
 
 
-def icims_page_url(cfg: Any, query: str) -> str:
-    return f"https://{cfg}.icims.com/jobs/search?" + urlencode({"ss": "1", "searchKeyword": query, "in_iframe": "1"})
+ICIMS_PAGES = 4  # result pages read per search (20 openings each): a national portal's Arizona ones are often past the first
+
+
+def icims_page_url(cfg: Any, query: str, page: int = 0) -> str:
+    return f"https://{cfg}.icims.com/jobs/search?" + urlencode(
+        {"ss": "1", "searchKeyword": query, "in_iframe": "1", **({"pr": str(page)} if page else {})})
+
+
+def _icims_last_page(html: str) -> int:
+    """The last result page a search's page links go to (pr=0 is the first)."""
+    return max((int(n) for n in re.findall(r"[?&](?:amp;)?pr=(\d+)", html)), default=0)
 
 
 async def icims_search(frames_html: Callable[[str], Awaitable[list[str]]], cfg: Any, query: str,
                        found: list[Listing]) -> None:
     """iCIMS portals (Daifuku America) answer plain requests with HTTP 405, so the search
     page is read in the browser. The openings are drawn inside the portal's frame, each
-    with its location and posting date."""
+    with its location and posting date, 20 to a page: the first ICIMS_PAGES pages are read."""
     base = f"https://{cfg}.icims.com"
-    for html in await frames_html(icims_page_url(cfg, query)):
-        found.extend(parse_icims(html, base))
+    last = 0
+    for page in range(ICIMS_PAGES):
+        if page > last:
+            break
+        try:
+            docs = await frames_html(icims_page_url(cfg, query, page))
+        except Exception:
+            if not page:
+                raise
+            break  # a later page that won't load ends the reading; what's found stands
+        for doc in docs:
+            found.extend(parse_icims(doc, base))
+            last = max(last, _icims_last_page(doc))
+
+
+_ICIMS_PLACE = re.compile(r"^(job )?locations?$", re.I)  # not "Location Type", "Remote Location Eligible"
+
+
+def _icims_detail_place(row: Any) -> str:
+    """The place among a row's details: the one named "Location" (read out to screen readers
+    as "Location : Location")."""
+    for tag in row.select(".iCIMS_JobHeaderTag"):
+        name, value = tag.select_one("dt"), tag.select_one("dd")
+        words = [w.strip() for w in name.get_text(" ", strip=True).split(":")] if name is not None else []
+        if value is not None and words and all(_ICIMS_PLACE.match(w) for w in words if w):
+            return value.get_text(" ", strip=True)
+    return ""
 
 
 def parse_icims(html: str, base: str) -> list[Listing]:
@@ -648,6 +682,8 @@ def parse_icims(html: str, base: str) -> list[Listing]:
             if left is not None:
                 location = " ".join(s.get_text(" ", strip=True) for s in left.find_all("span", recursive=False)
                                     if "sr-only" not in (s.get("class") or []))
+            if not location.strip():  # or among the row's details (Aerotek's): Location: US-WI-Stoughton
+                location = _icims_detail_place(row)
             when = row.select_one(".header.right span[title]")  # Posted Date: 9/24/2026 6:18 PM
             if when is not None:
                 d = re.match(r"(\d{1,2})/(\d{1,2})/(\d{4})", str(when["title"]))
@@ -812,8 +848,13 @@ async def rmk_search(capture: Callable[..., Awaitable[Any]], cfg: Any, query: st
     call given the wording and a page number. The answer carries no locations, and the site's
     own location search finds nothing (Oct 2026): some titles end with the state ("Onsite
     Service Engineer - AZ"); the rest are read off each posting."""
-    url = str(cfg["url"] if isinstance(cfg, dict) else cfg)
-    origin = re.match(r"https?://[^/]+", url).group(0)
+    url = str(cfg["url"] if isinstance(cfg, dict) else cfg).strip()
+    if not re.match(r"https?://", url, re.I):  # a person's own list may leave it off, as SuccessFactors' may
+        url = "https://" + url.lstrip("/")
+    site = re.match(r"https?://[^/]+", url, re.I)
+    if site is None:
+        raise ValueError(f"rmk: {url!r} isn't a search page's address")
+    origin = site.group(0)
     mine: list[Listing] = []
     for page in range(RMK_PAGES):
         data = await capture(url, "/services/recruiting/v1/jobs", want=rmk_wants,
@@ -989,7 +1030,7 @@ def parse_sfclassic(page: str, cfg: Any) -> list[Listing]:
     for row in BeautifulSoup(page, "html.parser").select(SFCLASSIC_ROWS):
         link = row.select_one("a.jobTitle[href]")
         req = re.search(r"career_job_req_id=(\d+)", str(link["href"])) if link is not None else None
-        if req is None:
+        if link is None or req is None:
             continue
         note = row.select_one(".noteSection")
         posted = re.search(r"Posted on (\d{1,2}/\d{1,2}/\d{4})", note.get_text(" ", strip=True)) if note else None
@@ -1064,8 +1105,8 @@ def parse_infor(data: Any) -> list[Listing]:
         if not isinstance(fields, dict):
             continue
 
-        def value(key: str) -> str:
-            v = fields.get(key)
+        def value(key: str) -> str:  # (called only in this pass of the loop)
+            v = fields.get(key)  # noqa: B023
             return str(v.get("value") or "") if isinstance(v, dict) else ""
 
         title = value("Description").strip()

@@ -13,7 +13,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "pytest-xdist>=3.5"]
+dev = ["pytest>=8", "pytest-xdist>=3.5", "ruff>=0.16", "mypy>=2.4", "types-PyYAML>=6.0", "types-Markdown>=3.5"]
 
 [project.scripts]
 job-apply-mcp = "job_apply.server:main"
@@ -28,3 +28,28 @@ packages = ["src/job_apply"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+# Lint for bugs, not style: `uv run ruff check .` (never `ruff format`: the code keeps its own layout).
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+extend-exclude = ["tests/fixtures"]
+
+[tool.ruff.lint]
+# pyflakes (unused/undefined names), the error-level pycodestyle checks, and bugbear's
+# bug patterns (mutable defaults, late-binding closures, assert False, ...)
+select = ["E4", "E7", "E9", "F", "B"]
+ignore = [
+    "B007",  # loop variable unused in the body: the for/else/break idiom reads it after the loop
+    "B905",  # zip() without strict=: a style choice, and strict=True turns a short list into a crash
+]
+
+# `uv run mypy` (checks src/job_apply)
+[tool.mypy]
+python_version = "3.10"
+files = ["src/job_apply"]
+ignore_missing_imports = true
+check_untyped_defs = true
+strict_equality = true
+warn_unused_ignores = true
+warn_redundant_casts = true

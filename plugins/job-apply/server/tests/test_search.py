@@ -4,6 +4,7 @@ The shapes follow what the live smoke test (scripts/live_smoke.py) saw on real s
 import asyncio
 import json
 import re
+from urllib.parse import parse_qs, urlsplit
 
 import httpx
 import pytest
@@ -830,6 +831,28 @@ def test_successfactors_search_pages_through_results():
     assert found[0].url == "https://jobs.example.com/job/x/00-en_US" and found[0].location == "AZ"
 
 
+def test_successfactors_search_without_a_full_address_is_searched_at_https():
+    """A person's own employer list with the search page's address missing its https:// is
+    searched at https://, as the classic SuccessFactors search already does, not failed with
+    "'NoneType' object has no attribute 'group'"."""
+    from job_apply.search import Listing, rmk_search
+
+    opened = []
+
+    async def capture(url, url_part, timeout=25000, want=None, rewrite=None):
+        opened.append(url)
+        return {"totalJobs": 1, "jobSearchResult": [{"response": {
+            "id": "171942", "unifiedStandardTitle": "Field Service Engineer - AZ", "unifiedUrlTitle": "FSE"}}]}
+
+    async def read(url):
+        raise AssertionError("the title names the state")
+
+    found: list[Listing] = []
+    asyncio.run(rmk_search(capture, {"url": "jobs.example.com/search/?q="}, "service", found, read))
+    assert opened == ["https://jobs.example.com/search/?q="]
+    assert [x.url for x in found] == ["https://jobs.example.com/job/FSE/171942-en_US"]
+
+
 def test_edwards_postings_without_a_state_are_read_for_their_place():
     """Most Edwards titles carry no state (live, Oct 2026: Field Service Engineer in Phoenix
     and in San Jose); each posting's header names its city and state."""
@@ -1313,3 +1336,91 @@ def test_a_company_is_picked_by_the_name_asked_for_not_one_inside_it():
     assert [c["name"] for c in pick(companies, ["Maricopa County Community College District"])] == []
     assert [c["name"] for c in pick(companies, ["Intel Corporation"])] == ["Intel"]
     assert [c["name"] for c in pick(companies, ["Maricopa County"])] == ["Maricopa County"]
+
+
+def _icims_results(rows: list[tuple[str, str]], page: int, last: int) -> str:
+    """An iCIMS results page as Aerotek's draws it: the place among each row's details, and
+    links to the other pages (pr=0 is the first)."""
+    out = []
+    for n, (title, place) in enumerate(rows):
+        out.append(f'<div class="row"><div class="col-xs-6 header left"></div>'
+                   f'<div class="col-xs-12 title"><a class="iCIMS_Anchor" href="https://careers-x.icims.com/jobs/{page}{n}/'
+                   f'job-{page}-{n}/job?in_iframe=1"><h3>{title}</h3></a></div>'
+                   '<div class="col-xs-12 additionalFields"><dl class="iCIMS_JobHeaderGroup">'
+                   '<div class="iCIMS_JobHeaderTag"><dt class="iCIMS_JobHeaderField">Category</dt>'
+                   '<dd class="iCIMS_JobHeaderData"><span>Recruiting</span></dd></div>'
+                   '<div class="iCIMS_JobHeaderTag"><dt class="iCIMS_JobHeaderField"><span class="sr-only field-label">'
+                   f'Location : Location</span></dt><dd class="iCIMS_JobHeaderData"><span>{place}</span></dd></div>'
+                   '</dl></div></div>')
+    links = "".join(f'<a href="https://careers-x.icims.com/jobs/search?pr={p}&amp;in_iframe=1">{p + 1}</a>'
+                    for p in range(last + 1))
+    return f'<html><body>{"".join(out)}<div class="iCIMS_Paging">{links}</div></body></html>'
+
+
+def test_an_icims_rows_place_is_read_from_its_details_and_later_pages_are_read():
+    """Aerotek's portal: each row's place sits under "Location" in its details (results used to
+    come back unplaced, so nothing was left out as elsewhere), and Arizona openings are on
+    page 3 of a national search (only page 1 was read)."""
+    from job_apply.search import ICIMS_PAGES, icims_search, parse_icims
+
+    rows = parse_icims(_icims_results([("On Premise Recruiter", "US-WI-Stoughton")], 0, 0), "https://careers-x.icims.com")
+    assert [(r.title, r.location) for r in rows] == [("On Premise Recruiter", "US-WI-Stoughton")]
+
+    asked = []
+    pages = {0: [("Recruiter", "US-WI-Stoughton")], 1: [("Recruiter", "US-TX-Dallas")],
+             2: [("Recruiter", "US-AZ-Tempe")], 3: [("Recruiter", "US-AZ-Phoenix")], 4: [("Recruiter", "US-AZ-Mesa")]}
+
+    async def frames_html(url):
+        page = int(parse_qs(urlsplit(url).query).get("pr", ["0"])[0])
+        asked.append(page)
+        return [_icims_results(pages[page], page, 4)]
+
+    found = []
+    asyncio.run(icims_search(frames_html, "careers-x", "recruiter", found))
+    assert asked == list(range(ICIMS_PAGES)) == [0, 1, 2, 3]  # a few pages, not every one
+    assert [r.location for r in found if r.location.startswith("US-AZ")] == ["US-AZ-Tempe", "US-AZ-Phoenix"]
+    asked.clear()
+
+    async def one_page(url):
+        asked.append(url)
+        return [_icims_results(pages[0], 0, 0)]
+
+    asyncio.run(icims_search(one_page, "careers-x", "recruiter", []))
+    assert len(asked) == 1  # a search with one page of results is read once
+
+
+def test_an_icims_rows_location_type_is_not_its_place():
+    """Details named "Location Type" or "Remote Location Eligible" ahead of the row's
+    "Location" aren't its place: "Onsite" isn't in Arizona, so the opening was dropped."""
+    from job_apply.search import parse_icims
+
+    page = _icims_results([("Recruiter", "US-AZ-Phoenix")], 0, 0).replace(
+        '<div class="iCIMS_JobHeaderTag"><dt class="iCIMS_JobHeaderField">Category</dt>',
+        '<div class="iCIMS_JobHeaderTag"><dt class="iCIMS_JobHeaderField">Location Type</dt>'
+        '<dd class="iCIMS_JobHeaderData"><span>Onsite</span></dd></div>'
+        '<div class="iCIMS_JobHeaderTag"><dt class="iCIMS_JobHeaderField">Remote Location Eligible</dt>'
+        '<dd class="iCIMS_JobHeaderData"><span>No</span></dd></div>'
+        '<div class="iCIMS_JobHeaderTag"><dt class="iCIMS_JobHeaderField">Category</dt>')
+    assert [r.location for r in parse_icims(page, "https://careers-x.icims.com")] == ["US-AZ-Phoenix"]
+
+
+def test_an_icims_later_page_that_wont_load_keeps_what_was_found():
+    """Page 2 of 4 timing out ended the whole wording's search with an error, throwing away
+    the openings already read; a first page that won't load is still an error."""
+    from job_apply.search import icims_search
+
+    async def frames_html(url):
+        page = int(parse_qs(urlsplit(url).query).get("pr", ["0"])[0])
+        if page == 2:
+            raise TimeoutError("page 3 didn't load")
+        return [_icims_results([("Recruiter", f"US-AZ-Page{page}")], page, 3)]
+
+    found = []
+    asyncio.run(icims_search(frames_html, "careers-x", "recruiter", found))
+    assert [r.location for r in found] == ["US-AZ-Page0", "US-AZ-Page1"]
+
+    async def down(url):
+        raise TimeoutError("the portal is down")
+
+    with pytest.raises(TimeoutError):
+        asyncio.run(icims_search(down, "careers-x", "recruiter", []))

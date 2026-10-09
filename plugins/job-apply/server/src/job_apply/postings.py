@@ -241,9 +241,10 @@ _PAGE_BOUND_APPLY = re.compile(r"/talentcommunity/apply/", re.I)
 def _find_apply_link(soup: BeautifulSoup, base_url: str) -> str:
     for a in soup.find_all("a", href=True):
         text = " ".join(a.get_text(" ").split()).lower()
-        label = (a.get("aria-label") or "").lower()
-        if re.search(r"\bapply\b", text + " " + label) and not a["href"].startswith(("#", "javascript:", "mailto:")):
-            return "" if _PAGE_BOUND_APPLY.search(a["href"]) else urljoin(base_url, a["href"])
+        label = str(a.get("aria-label") or "").lower()
+        href = str(a["href"])
+        if re.search(r"\bapply\b", text + " " + label) and not href.startswith(("#", "javascript:", "mailto:")):
+            return "" if _PAGE_BOUND_APPLY.search(href) else urljoin(base_url, href)
     return ""
 
 
@@ -259,17 +260,17 @@ def parse_html(raw_html: str, url: str) -> Posting:
         title = ""
         og = soup.find("meta", property="og:title")
         if og and og.get("content"):
-            title = og["content"]
+            title = str(og["content"])
         elif soup.title:
             title = soup.title.get_text()
-        main = soup.find("main") or soup.find(attrs={"role": "main"}) or soup.body or soup
+        main = soup.find("main") or soup.find(attrs={"role": "main"}) or soup.body or soup  # type: ignore[call-overload]  # bs4 stubs want a name too
         p = Posting(url=url, title=" ".join(title.split()), description=html_to_text(str(main)), parse_method="page-text")
         m = _SF_CLASSIC_TITLE.match(p.title)
         if m:
             p.title = m.group(1)
         site = soup.find("meta", property="og:site_name")
         if site and site.get("content"):
-            p.company = site["content"]
+            p.company = str(site["content"])
         p.warnings.append("No structured JobPosting data; title/company may need correcting.")
     p.apply_url = p.apply_url or _find_apply_link(soup, url)
     p.location = p.location or successfactors_place(soup)
@@ -303,7 +304,7 @@ async def _fetch_workday(client: httpx.AsyncClient, url: str) -> Posting | None:
         url=url,
         title=info.get("title", ""),
         company=org or parts["tenant"],
-        location="; ".join(l for l in locs if l),
+        location="; ".join(loc for loc in locs if loc),
         description=html_to_text(info.get("jobDescription", "")),
         apply_url=info.get("externalUrl") or url,
         external_id=info.get("jobReqId", ""),

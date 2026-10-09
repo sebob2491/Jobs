@@ -4,13 +4,18 @@
     "name": "sebob2491"
   },
   "metadata": {
-    "description": "Job search and application tools for Claude Code."
+    "description": "Job search and application tools, and development practices, for Claude Code."
   },
   "plugins": [
     {
       "name": "job-apply",
       "source": "./plugins/job-apply",
       "description": "Fill and track job applications from LinkedIn, Indeed and company career sites in a real browser, with you approving each submit."
+    },
+    {
+      "name": "dev-kit",
+      "source": "./plugins/dev-kit",
+      "description": "Development practices for any project: parallel tests, CI with required checks and auto-merge, a review pass on every PR, a regression test for every fix, handoff notes; /dev-kit:check audits a repo."
     }
   ]
 }
