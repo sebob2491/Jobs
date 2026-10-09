@@ -1212,3 +1212,46 @@ def test_a_drivers_license_question():
     assert answer("Driver's License Number", "text") is None
     path.write_text(yaml.safe_dump({**data, "personal": {**data["personal"], "drivers_license": False}}))
     assert answer("Do you have a valid driver’s license?") == "No"
+
+
+def test_more_questions_the_profile_answers():
+    """Questions from the live runs the profile already answers: where the person lives (Axon),
+    sponsorship "to maintain your work authorization" (Grant Thornton), a citizen isn't an
+    alien (Axon), when they can start (Micron, GoDaddy), work experience at all (Southwest Gas),
+    and a trailing "(Yes/No)"."""
+    import yaml
+    from job_apply import config
+
+    path = config.profile_path()
+    data = yaml.safe_load(path.read_text())
+    path.write_text(yaml.safe_dump({**data, "work_authorization": {**data["work_authorization"], "us_citizen": True},
+                                    "personal": {**data["personal"], "drivers_license": True},
+                                    "preferences": {**data["preferences"], "earliest_start": "2 weeks after offer"}}))
+
+    def answer(label, kind="radio_group"):
+        a = resolve_field(f(label, kind, **({"options": ["Yes", "No"]} if kind != "text" else {})), prof())
+        return a and a.value
+
+    assert answer("What city do you currently reside in?*", "text") == "Chandler"
+    assert answer("Where are you currently located?*", "text") == "Chandler, AZ"
+    # a hub list or a question about coming in isn't the address
+    assert answer("Where are you currently located?") is None
+    assert answer("Where are you currently located? This role is onsite 4 days/week at one of our hubs.", "text") is None
+    assert answer("Will you require visa sponsorship, from Grant Thornton or otherwise, now or in the future to maintain "
+                  "your work authorization?") == "No"
+    # both halves in one question stay the person's
+    assert answer("Are you authorized to work in the U.S., or will you require sponsorship to obtain work "
+                  "authorization?") is None
+    assert answer("Are you an alien illegally or unlawfully in the United States?*") == "No"
+    assert answer("Are you an alien who has been admitted to the United States under a nonimmigrant visa? "
+                  "(i.e. H-1B, TN, F-1)") == "No"
+    assert answer("When would you be available if an offer was accepted?", "text") == "2 weeks after offer"
+    assert answer("What is the soonest you would be able to start?*", "text") == "2 weeks after offer"
+    assert answer("When would you be available for an interview?", "text") is None
+    assert answer("What is the soonest you would be available for a phone screen?", "text") is None
+    assert answer("Do you have previous work experience?") == "Yes"
+    assert answer("Do you have a valid driver's license? (Yes/No)") == "Yes"
+    assert answer("Do you have a valid driver's license? (Y/N)*") == "Yes"
+    path.write_text(yaml.safe_dump({**data, "work_history": []}))
+    assert answer("Do you have previous work experience?") is None
+    assert answer("Are you an alien illegally or unlawfully in the United States?*") is None

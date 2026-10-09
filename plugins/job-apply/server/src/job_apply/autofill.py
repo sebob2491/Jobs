@@ -71,6 +71,7 @@ def clean_label(label: str) -> str:
     # the form's marker, not the word in a question ("Sponsorship is not required for you?")
     label = re.sub(r"\(required\)|^\s*required\b[:\s]*|[\s:-]*\brequired\s*[*:]?\s*$", " ", label or "", flags=re.I)
     label = label.replace("*", " ")
+    label = re.sub(r"\(\s*(yes\s*/\s*no|y\s*/\s*n)\s*\)", " ", label, flags=re.I)  # "...license? (Yes/No)"
     label = re.sub(r"\s+", " ", label).strip(" :?")
     return label
 
@@ -387,6 +388,12 @@ def _p(path: str) -> Getter:
     return lambda prof, job: prof.get(path)
 
 
+def _city_state(prof: Profile, job: dict) -> Any:
+    """"Where are you currently located?": the address's city and state ("Chandler, AZ")."""
+    city, state = prof.get("personal.address.city"), prof.get("personal.address.state")
+    return f"{city}, {state}" if city and state else None
+
+
 def _yn(path: str, invert: bool = False) -> Getter:
     def g(prof: Profile, job: dict) -> Any:
         v = prof.get(path)
@@ -554,11 +561,17 @@ def _no_sponsorship(prof: Profile, job: dict, label: str = "") -> Any:
     return "No" if needs else "Yes"
 
 
+# what the sponsorship would be for, not a second question: "...require visa sponsorship...
+# to maintain your work authorization?" (Grant Thornton)
+_FOR_AUTHORIZATION = re.compile(r"\b(in order )?to (obtain|maintain|keep|retain|continue|extend)( your| my| the)?( current)?"
+                                r"( work| employment)? (authori[sz]ation|eligibility)\b|\bfor (work |employment )?authori[sz]ation\b")
+
+
 def _sponsorship(prof: Profile, job: dict, label: str = "") -> Any:
     """Will the person need sponsorship? Not answered when the same question also asks whether
     they're authorized ("Are you authorized … and will you require sponsorship?"), which a
     single Yes or No can't answer both halves of."""
-    if re.search(_AUTHORIZED, norm(label)):
+    if re.search(_AUTHORIZED, _FOR_AUTHORIZATION.sub(" ", norm(label))):
         return None
     return _yn("work_authorization.requires_sponsorship")(prof, job)
 
@@ -869,7 +882,10 @@ RULES: list[tuple[str, str, Getter, int | None, set[str] | None]] = [
     ("phone", r"phone|mobile|cell|telephone", _phone, 45, {"text", "combobox"}),
     ("address2", r"address line 2|^address 2|apartment|suite|^apt|^unit", _p("personal.address.line2"), 45, None),
     ("address1", r"address line 1|^address 1|^street|^(home |mailing |street )?address$", _p("personal.address.line1"), 45, None),
-    ("city", r"^city|town|location city|current city|city of residence", _p("personal.address.city"), 45, None),
+    ("city", r"^city|town|location city|current city|city of residence|"
+             r"^(in )?(what|which) city do you (currently |presently )?(live|reside)( in)?$", _p("personal.address.city"), 45, None),
+    ("current_location", r"^where are you (currently |presently )?(located|based|living)$|^(your )?current location$|"
+                         r"^where do you (currently |presently )?(live|reside)$", _city_state, 45, {"text"}),
     # Oracle's "Zip Code+4" wants the 4-digit extension, not the ZIP: left for the site to fill
     ("postal_ext", r"zip( code)? ?(\+|plus) ?4|^zip ?4$|zip (code )?extension", lambda p, j: None, 45, None),
     ("postal", r"zip|postal|post code|postcode", _p("personal.address.postal_code"), 45, None),
@@ -887,6 +903,8 @@ RULES: list[tuple[str, str, Getter, int | None, set[str] | None]] = [
     ("current_company", r"(current|most recent|present) (employer|company)", _p("experience.current_company"), 60, None),
     ("current_title", r"(current|most recent|present) (job )?(title|position|role)", _p("experience.current_title"), 60, None),
     ("total_years", r"^(total )?years of (professional |work )?experience$", _p("experience.total_years"), 60, None),
+    ("any_experience", r"^do you have (any )?(previous|prior|past) (work|employment) experience$",
+     lambda p, j: "Yes" if p.get("work_history") else None, 60, None),
     # "Do you have a Bachelor's degree?": see _has_degree
     ("has_degree", _DEGREE_ONLY, _has_degree, 200, {"select", "listbox", "combobox", "radio_group"}),
     ("degree", r"highest (level of )?(education|degree)|^degree$|education level", _edu("highest_degree", "degree"), 80, None),
@@ -921,6 +939,9 @@ RULES: list[tuple[str, str, Getter, int | None, set[str] | None]] = [
      _us_person, None, None),
     ("us_citizen", r"are you a (u s|united states) citizen\b|are you a citizen of the (u s|united states)( of america)?$",
      _yn("work_authorization.us_citizen"), None, None),
+    # "Are you an alien illegally in the United States?", "...admitted under a nonimmigrant visa?" (Axon)
+    ("alien", r"^are you an? (illegal )?alien\b", lambda p, j: "No" if p.get("work_authorization.us_citizen") is True else None,
+     200, {"select", "listbox", "combobox", "radio_group"}),
     # TI: "Do you currently hold an H, L, E, J, or F nonimmigrant visa?" A citizen holds none
     ("visa_holder", r"\b(hold|have) an? .{0,40}non ?immigrant visa|"
      # "Are you currently on an F-1 visa (OPT/CPT)?", "Do you currently hold an H-1B visa?": a citizen holds none
@@ -957,7 +978,10 @@ RULES: list[tuple[str, str, Getter, int | None, set[str] | None]] = [
      r"preference (by|for) (work )?location|(which|what) (work )?location (would|do) you prefer",
      lambda p, j: next(iter(_listed(p.get("preferences.locations"))), None), 120, None),
     ("salary", r"salary|compensation|pay (expectation|requirement)|desired pay|expected pay", _p("preferences.desired_salary"), None, None),
-    ("start_date", r"start date|available to start|earliest (date|start)|when can you start|notice period", _p("preferences.earliest_start"), None, None),
+    ("start_date", r"start date|available to start|earliest (date|start)|when can you start|notice period|"
+                   # to start work, not for an interview
+                   r"when (would|could|will) you be available( to (start|begin)| for (work|employment)| if .{0,10}offer\b.*)?$|"
+                   r"soonest .{0,30}(start|begin)\b", _p("preferences.earliest_start"), None, None),
     ("previous_employee", r"(previously|ever|formerly) (been )?(employed|worked)|former employee|have you (ever )?worked (for|at)|worked .{0,40} before|"
      r"have you (ever )?been hired\b",
      _previously_employed, None, None),  # (only about this employer: see _previously_employed)
