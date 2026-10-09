@@ -308,7 +308,7 @@ companies:
     ats: jobvite              # knight-swift.com answered 403 from here; Swift's office-jobs page lists jobs.jobvite.com/swifttrans
     az_sites: Phoenix (HQ)
     confidence: medium        # page seen, Oct 2026
-    search: {jobvite: swifttrans}  # every office opening on one page (Oct 2026)
+    search: {jobvite: swifttrans}  # 20 a category on its board, the rest on each category's own page (Oct 2026)
   - name: American Airlines
     careers_url: https://jobs.aa.com/
     ats: unknown              # jobs.aa.com answered 403 (Access Denied) from here; system not seen

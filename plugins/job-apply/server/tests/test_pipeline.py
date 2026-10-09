@@ -2446,4 +2446,22 @@ def test_a_page_whose_only_way_on_makes_an_account_is_left_to_the_person(srv, mo
     r, creating = run(go())
     assert r.need == "sign_in" and "wants an account for this email" in r.reason, (r.need, r.reason)
     assert not creating  # never pressed
-    assert not pipeline._ACCOUNT_STEP.search("Sign up for job alerts")  # not an account the application needs
+    posting = {"title": "HR Business Partner", "headings": ["HR Business Partner"], "fields": [],
+               "actions": [{"id": "1", "text": "Register"}, {"id": "2", "text": "Apply now ▾"}]}
+    assert not pipeline._account_step(posting)  # a header's "Register" on a posting: not the way on
+    assert not pipeline._account_step({**posting, "title": "Sign up", "actions": [{"id": "1", "text": "Sign up for job alerts"}]})
+
+
+def test_an_account_pause_holds_until_the_tab_leaves_the_account_site(srv):
+    """amazon.jobs' account steps after "Proceed to create account" (name, an emailed code) are
+    forms with no password box: read as past the pause, the desk would fill them and press on,
+    making the account the desk never makes. The pause holds until the tab leaves that site."""
+    applier = Applier(srv)
+    job = srv.add_job(url="https://www.jobs.example/jobs/1", title="HRBP", company="Example")["job"]
+    r = Run(job_id=job["id"], need="sign_in", url="https://passport.jobs.example/unknownEmail")
+    r.paused_host = r.hold_host = "passport.jobs.example"
+    signup = {"url": "https://passport.jobs.example/signup", "title": "Create your account", "headings": ["Your name"],
+              "fields": [{"id": "n", "kind": "text", "label": "Full name"}], "actions": [{"id": "c", "text": "Continue"}]}
+    assert not applier._looks_past(r, signup, "")
+    back = {**signup, "url": "https://www.jobs.example/jobs/1/apply", "title": "Apply", "headings": ["Apply"]}
+    assert applier._looks_past(r, back, "")

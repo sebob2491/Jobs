@@ -69,10 +69,10 @@ _SIGN_IN_ACTION = re.compile(r"^(sign in|log ?in|sign in with email)$", re.I)
 _AFTER_CODE = re.compile(r"^(verify|confirm|continue|next)( (code|e-?mail|account|my e-?mail))?$", re.I)
 _TRY_LATER = re.compile(r"\btoo many\b.{0,30}\b(?:attempts|requests|tries)\b|\btry again (?:later|in \d+)|\brate[- ]limit",
                         re.I)
-_CREATE_ACCOUNT = re.compile(r"^(create (?:an |your |a new )?account|sign up|register)[.!]?$", re.I)
-# A page whose only way on makes an account (amazon.jobs after an email it doesn't know: "Create an
-# account", "Proceed to create account"): the person's to do, as the desk never makes one
-_ACCOUNT_STEP = re.compile(r"\bcreate (?:an |your |a new )?account\b|^(?:sign up|register)(?: now)?[.!]?$", re.I)
+_CREATE_ACCOUNT = re.compile(r"^(?:proceed to |continue to )?(create (?:an |your |a new )?account|sign up|register)"
+                             r"(?: now)?[.!]?$", re.I)
+# A page about making an account ("Create an account", amazon.jobs after an email it doesn't know)
+_ACCOUNT_PAGE = re.compile(r"\b(create (?:an |your |a new )?account|sign up|register)\b", re.I)
 _ACCOUNT_KINDS = {"text", "email", "tel", "select", "combobox", "listbox"}  # not check boxes or files
 _SOCIAL = re.compile(r"\b(google|apple|linked ?in|facebook|microsoft|indeed|seek)\b", re.I)
 _STEP = re.compile(r"^(save (?:and|&) continue|continue|next|next step|review|review (?:and|&) submit|"
@@ -118,6 +118,7 @@ class Run:
     paused_at: float = 0.0
     paused_site: str = ""  # the site it paused on, so a tab taken to webmail isn't "moved on"
     paused_host: str = ""  # and the exact address host (one employer's Workday, not any)
+    hold_host: str = ""  # an account site paused on: nothing there is past the pause (amazon.jobs' passport)
     submit: bool = False  # submit once the review page is reached
     usual_resume: bool = False  # the person chose to go ahead without a tailored resume
     once: dict[str, Any] = field(default_factory=dict)  # answers for this application only, by question
@@ -508,6 +509,8 @@ class Applier:
         paused on, not that kind of page any more, and still this job's (see _own_place)."""
         if data.get("loading") or (run.pause_sig is not None and _page_sig(data) == run.pause_sig):
             return False
+        if run.hold_host and (urlparse(data.get("url") or "").hostname or "").lower() == run.hold_host.lower():
+            return False  # still on the account site the person is making their account on
         return classify(data, text) != run.need and self._own_place(run, data.get("url") or "")
 
     def _own_place(self, run: Run, url: str, own: set[str] | None = None) -> bool:
@@ -714,6 +717,7 @@ class Applier:
         run.mail_checked, run.mail_done = 0.0, False
         run.paused_site = _site_key(run.url)
         run.paused_host = urlparse(run.url).hostname or ""
+        run.hold_host = ""
         self._log(run, reason)
 
     async def _look(self) -> tuple[dict[str, Any], str]:
@@ -961,11 +965,15 @@ class Applier:
                     return self._pause(run, "stuck", f"The way on is \u201c{agree['text'].strip()}\u201d, which agrees to "
                                        "something in your name, so it's yours to press. Read it and press it in the "
                                        "browser window if you're happy to, then press Resume.")
-                if any(_ACCOUNT_STEP.search(a["text"]) and not a.get("disabled") for a in data.get("actions") or []):
+                if _account_step(data):
+                    # the person's to do (the desk never makes an account), and theirs until they're off the
+                    # account site: its next steps (name, email code) read as forms, but aren't the application
                     await self._bring_forward(run)
-                    return self._pause(run, "sign_in", f"{_site(run, data)} wants an account for this email, and the desk "
-                                       "never makes one: create it (or sign in with the email you use there) in the "
-                                       "browser window; the desk carries on by itself after that.", seen=data)
+                    self._pause(run, "sign_in", f"{_site(run, data)} wants an account for this email, and the desk "
+                                "never makes one: create it (or sign in with the email you use there) in the browser "
+                                "window; the desk carries on by itself after that.", seen=data)
+                    run.hold_host = run.paused_host
+                    return
                 return self._pause(run, "stuck", "I couldn't find the button that moves this application on. "
                                    "Take it a step further in the browser, then press Resume.")
             key = (data.get("url"), tuple(data.get("headings") or []), action["text"].strip().lower())
@@ -1476,6 +1484,15 @@ def _new_required(before: dict[str, Any], after: dict[str, Any]) -> bool:
 def _bare(url: str) -> str:
     """An address without its query and fragment."""
     return urlparse(url)._replace(query="", fragment="").geturl()
+
+
+def _account_step(data: dict[str, Any]) -> bool:
+    """A page about making an account, with nothing to fill and a button that makes one: not a
+    page that only has a "Register" link in its header."""
+    about = " ".join([data.get("title") or "", *(data.get("headings") or [])])
+    return (not data.get("fields") and bool(_ACCOUNT_PAGE.search(about))
+            and any(_CREATE_ACCOUNT.match(final_text(a["text"])) and not a.get("disabled")
+                    for a in data.get("actions") or []))
 
 
 def _greyed_step(data: dict[str, Any]) -> list[dict[str, Any]]:

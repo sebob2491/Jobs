@@ -601,14 +601,22 @@ def eightfold_page_url(cfg: dict[str, Any], query: str, location: str | None) ->
     return f"https://{cfg['host']}/careers?{urlencode(params)}"
 
 
+async def _board_page(client: httpx.AsyncClient, url: str) -> str:
+    """One page of a board that lists its openings whole (titles are matched here)."""
+    r = await _send(client, "GET", url)
+    _raise_for(r, url)
+    return r.text
+
+
+def _titled(listings: list[Listing], query: str) -> list[Listing]:
+    return [listing for listing in listings if title_matches(listing.title, query)]
+
+
 async def _applicantstack(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, terms: list[str]) -> list[Listing]:
     """ApplicantStack boards (SCREEN SPE USA) list every opening on one page, each with
     its location."""
     base = f"https://{cfg}.applicantstack.com"
-    url = f"{base}/x/openings"
-    r = await _send(client, "GET", url)
-    _raise_for(r, url)
-    return [listing for listing in parse_applicantstack(r.text, base) if title_matches(listing.title, query)]
+    return _titled(parse_applicantstack(await _board_page(client, f"{base}/x/openings"), base), query)
 
 
 def parse_applicantstack(html: str, base: str) -> list[Listing]:
@@ -850,10 +858,7 @@ async def _phoenixchildrens(client: httpx.AsyncClient, cfg: Any, query: str, lim
     """Phoenix Children's own job site lists every opening on one page (about 300), each
     with its department, schedule and place ("Recruitment | Full-Time | Phoenix")."""
     base = str(cfg).rstrip("/")
-    url = f"{base}/Positions/"
-    r = await _send(client, "GET", url)
-    _raise_for(r, url)
-    return [listing for listing in parse_phoenixchildrens(r.text, base) if title_matches(listing.title, query)]
+    return _titled(parse_phoenixchildrens(await _board_page(client, f"{base}/Positions/"), base), query)
 
 
 def parse_phoenixchildrens(html: str, base: str) -> list[Listing]:
@@ -878,7 +883,7 @@ def parse_phoenixchildrens(html: str, base: str) -> list[Listing]:
 
 
 # ----------------------------------------------------------------- iCIMS Jibe job sites (PetSmart, Sprouts, State Farm)
-JIBE_PAGES = 3  # pages per wording; 100 openings a page
+JIBE_PAGES = 3  # pages per wording at most; 100 openings a page
 JIBE_PAGE = 100
 _ICIMS_APPLY = re.compile(r"^(https://[\w.-]+\.icims\.com)/jobs/(\d+)/login", re.I)
 
@@ -887,8 +892,11 @@ async def _jibe(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, ter
     """iCIMS's Jibe job sites (jobs.sprouts.com, careers.petsmart.com) answer their own page's
     search with JSON, 100 openings a page, filtered to a state when the search is in one.
     Each opening links to its iCIMS posting, where the desk applies, when it has one."""
-    host = str(cfg).strip("/")
+    host = urlsplit(str(cfg) if "//" in str(cfg) else f"https://{cfg}").hostname or str(cfg)
     state = icims_state(terms)
+    # Not one state ("Phoenix | Remote", a town the plugin doesn't place): the national list is
+    # read further, as its few local openings are anywhere in it (PetSmart's: 1900 of them)
+    want = max(limit, AREA_SCAN) if terms and not state else limit
     out: list[Listing] = []
     for page in range(1, JIBE_PAGES + 1):
         params = {"keywords": query, "page": page, "limit": JIBE_PAGE, **({"location": US_STATES[state]} if state else {})}
@@ -908,35 +916,45 @@ async def _jibe(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, ter
                                company_url=page_url if m else "", location=str(where or ""),
                                posted=str(data.get("posted_date") or "")[:10], external_id=str(data.get("req_id") or slug),
                                ats="icims" if m else "jibe"))
-        if len(jobs) < JIBE_PAGE or len(out) >= limit:
+        if len(jobs) < JIBE_PAGE or len(out) >= want:
             break
     return out
 
 
 # ----------------------------------------------------------------- Jobvite job boards (Knight-Swift)
+JOBVITE_CATEGORIES = 10  # categories read past their first 20 openings ("Show More"), per search
+
+
 async def _jobvite(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, terms: list[str]) -> list[Listing]:
-    """Jobvite boards (jobs.jobvite.com/<company>/jobs) list every opening on one page, each
-    with its place."""
+    """Jobvite boards (jobs.jobvite.com/<company>/jobs) list their openings by category, the
+    first 20 of each with its place; a longer category's "Show More" lists the rest on a
+    search page of its own (Knight-Swift's Operations and Shop, Oct 2026)."""
     base = f"https://jobs.jobvite.com/{str(cfg).strip('/')}"
-    url = f"{base}/jobs"
-    r = await _send(client, "GET", url)
-    _raise_for(r, url)
-    return [listing for listing in parse_jobvite(r.text, base) if title_matches(listing.title, query)]
+    html = await _board_page(client, f"{base}/jobs")
+    found = parse_jobvite(html, base)
+    more = dict.fromkeys(urljoin(base + "/", str(a["href"])) for a in BeautifulSoup(html, "html.parser").select(
+        'a[href*="search?c="]'))
+    for url in list(more)[:JOBVITE_CATEGORIES]:
+        found += parse_jobvite(await _board_page(client, url), base)
+    return _titled(list({x.url: x for x in found}.values()), query)
 
 
 def parse_jobvite(html: str, base: str) -> list[Listing]:
+    """A board's openings, as its category lists (div.jv-job-item) or a search page's table
+    rows show them: each name's link and, beside it, its place."""
     soup = BeautifulSoup(html, "html.parser")
     out: list[Listing] = []
     seen: set[str] = set()
-    for item in soup.select(".jv-job-item, tr.jv-job-list-row, li.jv-job-list-item"):
-        link = item.select_one('.jv-job-list-name a[href*="/job/"]') or item.select_one('a[href*="/job/"]')
+    for name in soup.select(".jv-job-list-name"):
+        link = name.select_one('a[href*="/job/"]')
         if link is None or not link.get_text(strip=True):
             continue
         url = urljoin(base + "/", str(link["href"]))
         if url in seen:
             continue
         seen.add(url)
-        where = item.select_one(".jv-job-list-location")
+        row = name.find_parent(class_="jv-job-item") or name.find_parent("tr") or name.parent
+        where = row.select_one(".jv-job-list-location") if row is not None else None
         out.append(Listing(company="", title=link.get_text(" ", strip=True), url=url, ats="jobvite",
                            location=" ".join(where.get_text(" ", strip=True).split()) if where is not None else "",
                            external_id=url.rstrip("/").rsplit("/", 1)[-1]))
@@ -944,33 +962,47 @@ def parse_jobvite(html: str, base: str) -> list[Listing]:
 
 
 # ----------------------------------------------------------------- amazon.jobs
-AMAZON_PAGES = 3  # pages per wording; 100 openings a page
-AMAZON_PAGE = 100
+AMAZON_PAGE = 100  # openings a search reads: its first page, nearest the place first
 
 
 async def _amazon(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, terms: list[str]) -> list[Listing]:
-    """amazon.jobs answers its search page's own JSON search, 100 openings a page, around a
-    place: its address, latitude and longitude and a radius (`loc_query`, `latitude`,
-    `longitude`, `radius`, as the employer list gives them)."""
+    """amazon.jobs answers its search page's own JSON search around a place: the employer
+    list's address, latitude, longitude and radius (`loc_query`, `latitude`, `longitude`,
+    `radius`). A search for anywhere searches the world. Each opening names every place it's
+    offered in (a Seattle job is often in Tempe too)."""
+    where = {k: cfg[k] for k in ("loc_query", "latitude", "longitude", "radius") if cfg.get(k) is not None} if terms else {}
+    params = {"base_query": query, "result_limit": AMAZON_PAGE, "offset": 0, "sort": "relevant", **where}
+    url = "https://www.amazon.jobs/en/search.json?" + urlencode(params)
+    r = await _send(client, "GET", url, headers={"Accept": "application/json"})
+    _raise_for(r, url)
     out: list[Listing] = []
-    for page in range(AMAZON_PAGES):
-        params = {"base_query": query, "result_limit": AMAZON_PAGE, "offset": page * AMAZON_PAGE, "sort": "relevant",
-                  **{k: cfg[k] for k in ("loc_query", "latitude", "longitude", "radius") if cfg.get(k) is not None}}
-        url = "https://www.amazon.jobs/en/search.json?" + urlencode(params)
-        r = await _send(client, "GET", url, headers={"Accept": "application/json"})
-        _raise_for(r, url)
-        jobs = r.json().get("jobs") or []
-        for job in jobs:
-            title, path = str(job.get("title") or "").strip(), str(job.get("job_path") or "")
-            if not title or not path:
-                continue
-            out.append(Listing(company="", title=title, url=urljoin("https://www.amazon.jobs/", path), ats="amazon",
-                               location=str(job.get("normalized_location") or job.get("location") or ""),
-                               posted=_sf_date(" ".join(str(job.get("posted_date") or "").split())),  # "July  9, 2026"
-                               external_id=str(job.get("id_icims") or job.get("id") or "")))
-        if len(jobs) < AMAZON_PAGE or len(out) >= limit:
-            break
+    for job in r.json().get("jobs") or []:
+        title, path = str(job.get("title") or "").strip(), str(job.get("job_path") or "")
+        if not title or not path:
+            continue
+        places = _amazon_places(job.get("locations") or [])
+        out.append(Listing(company="", title=title, url=urljoin("https://www.amazon.jobs/", path), ats="amazon",
+                           location="; ".join(places) or str(job.get("normalized_location") or job.get("location") or ""),
+                           posted=_sf_date(" ".join(str(job.get("posted_date") or "").split())),  # "July  9, 2026"
+                           external_id=str(job.get("id_icims") or job.get("id") or "")))
     return out
+
+
+def _amazon_places(locations: list[Any]) -> list[str]:
+    """An opening's places, each a JSON object in a string: "Tempe, Arizona"."""
+    places: list[str] = []
+    for item in locations:
+        try:
+            place = json.loads(item) if isinstance(item, str) else item
+        except ValueError:
+            continue
+        if isinstance(place, dict):
+            town, state = str(place.get("city") or "").strip(), str(place.get("normalizedStateName") or "").strip()
+            town = town.title() if town.isupper() else town  # "MESA" and "Mesa" are one place
+            text = ", ".join(x for x in (town, state) if x) or str(place.get("normalizedCountryName") or "")
+            if text and text.lower() not in (x.lower() for x in places):
+                places.append(text)
+    return places
 
 
 # ----------------------------------------------------------------- Paycom (Ebara), through the browser

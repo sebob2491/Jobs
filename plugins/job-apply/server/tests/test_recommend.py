@@ -279,3 +279,26 @@ def test_recommend_holds_postings_it_could_not_check():
     assert "the posting's text couldn't be read: its requirements are unchecked" in fits["https://x/blank"]["concerns"]
     assert not fits["https://x/elsewhere"]["recommended"]
     assert "the posting says it's in Peoria, IL" in fits["https://x/elsewhere"]["concerns"]
+
+
+def test_a_posting_that_wont_read_is_read_from_the_employers_own_page():
+    """A Jibe site's opening links to its iCIMS posting, which turns away plain requests (HTTP
+    405); its page on the employer's site describes it too. It's still applied for on iCIMS."""
+    p = tech()
+
+    async def search(query, location, limit):
+        return {"results": [{"company": "Sprouts", "title": "Field Service Engineer 2", "location": "Phoenix, AZ",
+                             "url": "https://x.icims.com/jobs/1/job", "company_url": "https://jobs.x.com/jobs/1"}]}
+
+    read: list[str] = []
+
+    async def fetch(url):
+        read.append(url)
+        if "icims" in url:
+            raise RuntimeError("HTTP 405")
+        return Posting(url=url, description=LAM_FSE2, apply_url="https://x.icims.com/jobs/login?loginOnly=1")
+
+    out = asyncio.run(recommend(p, search, read_postings=1, fetch=fetch, today=TODAY))
+    top = out["results"][0]
+    assert read == ["https://x.icims.com/jobs/1/job", "https://jobs.x.com/jobs/1"]
+    assert top["posting"]["description"] == LAM_FSE2 and top["posting"]["apply_url"] == "https://x.icims.com/jobs/1/job"

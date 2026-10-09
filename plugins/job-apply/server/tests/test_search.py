@@ -1651,26 +1651,84 @@ def test_a_jobvite_board_is_read_whole_and_filtered_by_title():
 
 def test_amazon_jobs_is_searched_around_a_place():
     """amazon.jobs answers its search page's JSON search around a place (its address, latitude,
-    longitude and radius); without them it searches the world (Tokyo's recruiters first)."""
+    longitude and radius); without them it searches the world (Tokyo's recruiters first). Each
+    opening names every place it's offered in: more than half of its Phoenix-area managers'
+    openings were in Seattle or Bellevue first, and in Tempe too (live, Oct 2026)."""
     asked = []
 
     def answer(request: httpx.Request) -> httpx.Response:
         asked.append(dict(request.url.params))
-        return httpx.Response(200, json={"hits": 2, "jobs": [
+        def place(town, state):
+            return json.dumps({"city": town, "normalizedStateName": state, "normalizedCountryName": "United States"})
+        return httpx.Response(200, json={"hits": 3, "jobs": [
             {"title": "HR Business Partner", "job_path": "/en/jobs/10493265/hr-business-partner",
-             "normalized_location": "Phoenix, Arizona, USA", "posted_date": "August  5, 2026", "id_icims": "10493265"},
+             "normalized_location": "Phoenix, Arizona, USA", "posted_date": "August  5, 2026", "id_icims": "10493265",
+             "locations": [place("Phoenix", "Arizona"), place("PHOENIX", "Arizona")]},  # (one place)
+            {"title": "HR Manager", "job_path": "/en/jobs/2/hr-manager", "normalized_location": "Seattle, Washington, USA",
+             "posted_date": "Sep 24, 2026", "locations": [place("Seattle", "Washington"), place("Tempe", "Arizona")]},
             {"title": "Recruiter", "job_path": "/en/jobs/1/recruiter", "normalized_location": "Seattle, Washington, USA",
-             "posted_date": "Sep 24, 2026"}]})
+             "posted_date": "Sep 24, 2026", "locations": [place("Seattle", "Washington")]}]})
 
-    async def go():
+    async def go(location):
         async with httpx.AsyncClient(transport=httpx.MockTransport(answer)) as client:
-            return await search_companies("human resources | hr business partner", location="AZ", client=client,
+            return await search_companies("human resources | hr business partner", location=location, client=client,
                                           companies=[{"name": "A Co", "search": {"amazon": {
                                               "loc_query": "Phoenix, AZ, USA", "latitude": 33.44825,
                                               "longitude": -112.0758, "radius": "50km"}}}])
-    out = asyncio.run(go())
+    out = asyncio.run(go("AZ"))
     assert asked[0]["loc_query"] == "Phoenix, AZ, USA" and asked[0]["radius"] == "50km"
     assert asked[0]["latitude"] == "33.44825" and asked[0]["base_query"] == "human resources"
     assert [(r["title"], r["location"], r["posted"], r["url"]) for r in out["results"]] == [
-        ("HR Business Partner", "Phoenix, Arizona, USA", "2026-08-05",
-         "https://www.amazon.jobs/en/jobs/10493265/hr-business-partner")]  # Seattle's left out
+        ("HR Business Partner", "Phoenix, Arizona", "2026-08-05",
+         "https://www.amazon.jobs/en/jobs/10493265/hr-business-partner"),
+        ("HR Manager", "Seattle, Washington; Tempe, Arizona", "2026-09-24",  # a Seattle job offered in Tempe too
+         "https://www.amazon.jobs/en/jobs/2/hr-manager")]  # Seattle's alone left out
+    asked.clear()
+    asyncio.run(go(None))
+    assert "loc_query" not in asked[0] and "latitude" not in asked[0]  # anywhere: the world
+
+
+def test_a_jobvite_boards_longer_categories_are_read_past_their_first_twenty():
+    """Knight-Swift's board lists 20 openings a category; its Operations and Shop categories go
+    on, through "Show More", on search pages of their own (31 of 97 openings, Oct 2026)."""
+    board = JOBVITE_PAGE.replace("</tbody></table>", '<a href="/kco/search?c=Shop&amp;p=0">Show More</a></tbody></table>')
+    shop = """<table class="jv-job-list jv-search-list"><tr><td class="jv-job-list-name">
+    <a href="/kco/job/oShop1">Shop Recruiter</a></td><td class="jv-job-list-location"> Laredo, Texas </td></tr>
+    <tr><td class="jv-job-list-name"><a href="/kco/job/oShop2">Diesel Technician</a></td>
+    <td class="jv-job-list-location"> Phoenix, Arizona </td></tr></table>"""
+    asked = []
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        asked.append(str(request.url))
+        return httpx.Response(200, text=shop if "search" in str(request.url) else board)
+
+    async def go():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(answer)) as client:
+            return await search_companies("recruiter", location=None, client=client, companies=[
+                {"name": "K Co", "search": {"jobvite": "kco"}}])
+    out = asyncio.run(go())
+    assert asked == ["https://jobs.jobvite.com/kco/jobs", "https://jobs.jobvite.com/kco/search?c=Shop&p=0"]
+    assert [(r["title"], r["location"]) for r in out["results"]] == [
+        ("Shop Recruiter", "Laredo, Texas"), ("Transportation Recruiter", "Phoenix, Arizona")]
+
+
+def test_a_jibe_search_not_in_one_state_reads_further_and_takes_an_address():
+    """Not one state ("Phoenix | Remote"): PetSmart's national list has its few Arizona openings
+    anywhere in its 1900, so more of it is read. A full address in the employer list works too."""
+    asked = []
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        asked.append((request.url.host, dict(request.url.params)))
+        jobs = [{"data": {"slug": f"{len(asked)}-{i}", "title": "Recruiter", "full_location": "Dallas, Texas"}}
+                for i in range(100)]
+        return httpx.Response(200, json={"jobs": jobs})
+
+    async def go(location):
+        async with httpx.AsyncClient(transport=httpx.MockTransport(answer)) as client:
+            return await search_companies("recruiter", location=location, client=client, companies=[
+                {"name": "J Co", "search": {"jibe": "https://careers.jco.com/"}}])
+    asyncio.run(go("Phoenix | Remote"))
+    assert [h for h, _ in asked] == ["careers.jco.com", "careers.jco.com"] and "location" not in asked[0][1]
+    asked.clear()
+    asyncio.run(go("AZ"))
+    assert len(asked) == 1 and asked[0][1]["location"] == "Arizona"  # the site's own filter: one page
