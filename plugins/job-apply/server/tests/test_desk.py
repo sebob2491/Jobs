@@ -849,3 +849,37 @@ def test_report_a_problem_shows_the_report_with_a_link_to_file_it(srv, job_apply
 
     run(go())
     assert len(list((job_apply_home / "reports").iterdir())) == 1
+
+
+def test_the_desk_reads_an_icims_posting_in_its_browser(srv, monkeypatch):
+    """iCIMS postings turn away plain requests: Find jobs reads one in a background tab, from
+    the frame its posting is drawn in (in_iframe=1). Other sites' postings aren't read that way."""
+    from job_apply.postings import FetchError
+
+    asked = []
+
+    async def frames_html(url, inner=None):
+        asked.append((url, inner))
+        outer = ("<html><head><title>Careers at Example</title></head><body><nav>" + "Jobs | Locations | Benefits | " * 20
+                 + "</nav><iframe id='icims_content_iframe'></iframe></body></html>")  # long, but no posting
+        return [outer, "<html><head><title>Entry Level Recruiter</title></head><body><div class='iCIMS_JobContent'>"
+                "<h1>Entry Level Recruiter</h1>"
+                + "<p>Recruit and place contract talent for clients across the Phoenix area every day.</p>" * 6
+                + "<a href='/jobs/13516/login?in_iframe=1'>Apply for this job online</a></div></body></html>"]
+
+    monkeypatch.setattr(srv.browser, "frames_html", frames_html)
+    desk = Desk(srv)
+    p = run(desk.read_in_browser("https://careers-aco.icims.com/jobs/13516/entry-level-recruiter/job#top"))
+    assert "Recruit and place contract talent" in p.description and "Benefits" not in p.description
+    assert p.apply_url == "https://careers-aco.icims.com/jobs/13516/entry-level-recruiter/job#top"  # not its framed sign-in
+    assert asked == [("https://careers-aco.icims.com/jobs/13516/entry-level-recruiter/job?in_iframe=1",
+                      "#icims_content_iframe")]  # (in its query, not after its #)
+
+    async def outer_only(url, inner=None):
+        return ["<html><head><title>Careers</title></head><body>" + "Jobs | Benefits | " * 40 + "</body></html>"]
+
+    monkeypatch.setattr(srv.browser, "frames_html", outer_only)
+    with pytest.raises(FetchError):  # the frame never drew its posting: no reading, not the page around it
+        run(desk.read_in_browser("https://careers-aco.icims.com/jobs/1/x/job"))
+    with pytest.raises(FetchError):
+        run(desk.read_in_browser("https://boards.greenhouse.io/aco/jobs/1"))

@@ -34,7 +34,7 @@ from starlette.routing import Route
 from . import config
 from .pipeline import DESK_PASSWORDS, Applier, question_key
 from .ats import detect_ats
-from .postings import fetch_posting, finalize, parse_html
+from .postings import FetchError, Posting, fetch_posting, finalize, parse_html
 from .recommend import recommend, score_listing
 
 PAGE = Path(__file__).resolve().parent / "static" / "desk.html"
@@ -331,6 +331,14 @@ class Desk:
         return JSONResponse({"added": await self.add_links(links[:MAX_LINKS]), "left": links[MAX_LINKS:]})
 
     # ------------------------------------------------------------- actions
+    async def read_in_browser(self, url: str) -> Posting:
+        """A posting that turns away plain requests, read in a background tab: iCIMS's (HTTP
+        405), from the frame its posting is drawn in. Others aren't read this way: Find jobs
+        reads dozens, and the browser is shared with the applications."""
+        if detect_ats(url) != "icims":
+            raise FetchError(f"not read in the browser: {url}")
+        return await self.srv.read_icims_posting(url)
+
     async def find_jobs(self) -> None:
         self.search.update(status="running", error=None, started=time.time())
         try:
@@ -338,7 +346,7 @@ class Desk:
                 return await self.srv.search_company_jobs(query, location=location, limit_per_company=limit)
 
             out = await recommend(config.Profile.load(), run_search, limit_per_company=10, read_postings=40,
-                                  fetch=self.fetch)
+                                  fetch=self.fetch, fetch_hard=self.read_in_browser)
             self.listings = out["results"]
             at = time.time()
             self.search.update(status="done", at=at, query=out["query"], location=out["location"],
@@ -408,7 +416,8 @@ class Desk:
                 posting = None
             if posting is None or not posting.is_useful:  # or a page that builds itself with script
                 try:
-                    seen = finalize(parse_html(await self.srv.browser.background_html(url), url))
+                    seen = (await self.srv.read_icims_posting(url) if detect_ats(url) == "icims" else
+                            finalize(parse_html(await self.srv.browser.background_html(url), url)))
                     if posting is None or len(seen.description) > len(posting.description):
                         posting = seen
                 except Exception as e:  # report it on the page; the other links still go in

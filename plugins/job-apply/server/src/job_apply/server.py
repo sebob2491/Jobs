@@ -14,7 +14,7 @@ import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlsplit, urlunsplit
 
 from mcp.server.mcpserver import Image, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
@@ -281,6 +281,11 @@ async def ingest_job(url: str, use_browser: bool = False) -> dict[str, Any]:
                 "next": "Call ingest_job again with use_browser=true, or add_job with details the user provides "
                         "(for Indeed, the Indeed connector's get_job_details also works).",
             }
+        if detect_ats(url) == "icims":  # drawn inside a frame, which the page read below misses
+            with contextlib.suppress(FetchError, BrowserUnavailable):
+                posting = await read_icims_posting(url)
+                job, created = tracker().upsert(posting.to_dict())
+                return {"saved": True, "created": created, "job": job, "warnings": posting.warnings}
         try:
             if _desk_tab_job(browser.current_tab) is not None:
                 await browser.new_tab()  # the Job Desk comes back to that tab: the posting gets its own
@@ -292,6 +297,22 @@ async def ingest_job(url: str, use_browser: bool = False) -> dict[str, Any]:
             return {"saved": False, "error": str(e)}
     job, created = tracker().upsert(posting.to_dict())
     return {"saved": True, "created": created, "job": job, "warnings": posting.warnings}
+
+
+async def read_icims_posting(url: str) -> Posting:
+    """An iCIMS posting, read in a background tab: iCIMS turns away plain requests (HTTP 405)
+    and draws the posting inside a frame (in_iframe=1), which a read of the page itself misses.
+    It's applied for from the posting: its own Apply goes to a framed sign-in page."""
+    parts = urlsplit(url)
+    framed = urlunsplit((parts.scheme, parts.netloc, parts.path, "&".join(q for q in (parts.query, "in_iframe=1") if q), ""))
+    drawn = [html for html in await browser.frames_html(framed, inner=ICIMS_FRAME) if "iCIMS_JobContent" in html]
+    if not drawn:
+        raise FetchError(f"The posting wasn't drawn in its frame: {url}")
+    posting = finalize(parse_html(drawn[0], url))
+    if not posting.is_useful:
+        raise FetchError(f"No posting text in {url}")
+    posting.apply_url = url
+    return posting
 
 
 @tool()
