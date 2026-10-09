@@ -37,6 +37,39 @@ _INTERN = re.compile(r"\b(intern|internship|co op|coop)\b")
 _GENERIC_TITLE_WORDS = {"coordinator", "specialist", "manager", "analyst", "associate", "assistant", "representative",
                         "consultant", "director", "senior", "lead", "officer", "administrator", "clerk", "supervisor",
                         "partner", "principal", "junior", "intern", "staff", "team", "level"}
+# Metro areas the employer lists cover: a place in the same one as a person's named places is
+# near them (Mesa for Tempe), one outside it isn't (Bagdad's or Morenci's mines for Phoenix).
+_METROS = [
+    {"phoenix", "chandler", "tempe", "mesa", "scottsdale", "gilbert", "glendale", "peoria", "goodyear",
+     "surprise", "avondale", "queen creek", "maricopa", "buckeye", "tolleson", "laveen", "cave creek",
+     "fountain hills", "el mirage", "litchfield park", "sun city", "paradise valley", "apache junction",
+     "san tan valley", "anthem", "casa grande"},
+    {"tucson", "oro valley", "marana", "sahuarita", "vail"},
+]
+_CITY_STATE = re.compile(r"^\s*([a-z][a-z .'-]*?)\s*[,-]\s*([a-z]{2})\b")
+_STATE_CODES = {code.lower() for code in US_STATES}
+
+
+def _far_place(location: str, cities: list[str]) -> str | None:
+    """The place a listing names when every place it names is a "City, ST" away from the metro
+    area of the person's own places ("Bagdad, AZ" for Phoenix); None when any is near, remote,
+    or not a city ("Arizona", "2 Locations", "+80 more"), or the person's places aren't in an
+    area this knows."""
+    near = next((m for m in _METROS if any(c in m for c in cities)), None)
+    where = location.lower()
+    if near is None or not where.strip() or re.search(r"remote|\bmore\b", where):
+        return None
+    if any(re.search(rf"\b{re.escape(c)}\b", where) for c in near | set(cities)):
+        return None
+    places = []
+    for part in where.split(";"):
+        m = _CITY_STATE.match(part)
+        if not m or m.group(2) not in _STATE_CODES:
+            return None
+        places.append(f"{m.group(1).strip().title()}, {m.group(2).upper()}")
+    return places[0] if places else None
+
+
 # Words whose first letters don't say what the work is: an Account Specialist or Key Accounts
 # Manager looks after customers, an Accountant (or Accounts Payable) keeps the books.
 _SAME_WORK = {"accountant": "acctg", "accountants": "acctg", "accounting": "acctg", "accountancy": "acctg",
@@ -399,6 +432,14 @@ def score_listing(listing: dict[str, Any], prof: Profile, description: str = "",
     if city:
         fit.score += 5
         fit.reasons.append(f"in {city.title()}")
+    elif far := _far_place(listing.get("location") or "", cities):
+        if prof.get("preferences.willing_to_relocate") is False:  # shown, not preselected
+            fit.score -= 25
+            fit.blocked = True
+            fit.concerns.append(f"in {far}, away from the places you named (and you'd rather not relocate)")
+        else:
+            fit.score -= 5
+            fit.concerns.append(f"in {far}, away from the places you named")
     for note in listing.get("notes") or []:
         fit.concerns.append(note)
 
