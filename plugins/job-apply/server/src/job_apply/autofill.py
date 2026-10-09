@@ -596,6 +596,46 @@ def _relocate(prof: Profile, job: dict) -> Any:
     return _yn("preferences.willing_to_relocate")(prof, job)
 
 
+def _employed_now(prof: Profile, job: dict) -> Any:
+    """Whether the person has a job now: a work history entry that hasn't ended. None when the
+    profile lists no work at all."""
+    entries = [e for e in _listed(prof.get("work_history")) if isinstance(e, dict)]
+    if not entries:
+        return None
+    return "Yes" if any(is_present(e.get("end")) or e.get("current") is True for e in entries) else "No"
+
+
+def _lives_in(prof: Profile, job: dict, label: str = "") -> Any:
+    """"Do you currently live in Arizona?", "...in the Phoenix area?": from the profile's
+    address. A state is the address's state; a city the address's city or, asked about its
+    area, a town in its metro area (Arizona's). A distance is the person's to judge."""
+    asked = norm(label)
+    m = re.search(r"\b(?:live|living|reside|residing|located|based) in (?:the )?(.+)$", asked)
+    if not m or re.search(r"\d|\bmiles?\b|\bwithin\b|commut|distance|relocat|\bor\b", asked):
+        return None
+    place = m.group(1).strip()
+    area = bool(re.search(r"\b(area|metro\w*|region|valley)$", place))
+    place = re.sub(r"\s*\b(metro(politan)? area|metro|area|region|valley)$", "", place).strip()
+    state = str(prof.get("personal.address.state") or "").strip()
+    home_code = state.upper() if state.upper() in US_STATES else next(
+        (code for code, name in US_STATES.items() if norm(name) == norm(state)), None)
+    if place in _US_NAMES:
+        country = norm(prof.get("personal.address.country"))
+        return ("Yes" if country in _US_NAMES else "No") if country else None
+    asked_code = place.upper() if len(place) == 2 and place.upper() in US_STATES else next(
+        (code for code, name in US_STATES.items() if norm(name) == place), None)
+    if asked_code:
+        return ("Yes" if asked_code == home_code else "No") if home_code else None
+    city = norm(prof.get("personal.address.city"))
+    if not city or not home_code:
+        return None
+    if place == city:
+        return "Yes"
+    if home_code == "AZ" and area and _az_metro(place) and _az_metro(city):
+        return "Yes" if _az_metro(place) == _az_metro(city) else "No"
+    return None
+
+
 def _local_or_relocate(prof: Profile, job: dict, label: str = "") -> Any:
     """"Are you located within 100 miles of a campus, or willing to relocate?": Yes when the
     person would move, or lives in the metro area of a place the job names (Tempe for a
@@ -611,8 +651,10 @@ def _local_or_relocate(prof: Profile, job: dict, label: str = "") -> Any:
 
 
 def _travel(prof: Profile, job: dict, label: str = "") -> Any:
-    """Willing to travel: not whether anything stops the person travelling, nor a passport."""
-    if re.search(r"restrict|passport|prevent|limitation|visa|unable to|not able to|anything that", norm(label)):
+    """Willing to travel: not whether anything stops the person travelling, nor a passport, nor
+    travel abroad, which a willingness to travel (some of the time) doesn't say."""
+    if re.search(r"restrict|passport|prevent|limitation|visa|unable to|not able to|anything that|international|overseas|"
+                 r"abroad|outside (of )?(the )?(u s|us|united states|country)", norm(label)):
         return None
     v = prof.get("preferences.willing_to_travel")
     percent = r"(\d+) ?(?:%|percent|per cent)"
@@ -646,7 +688,7 @@ _CONTACT_RULES = {"email", "first_name", "middle_name", "last_name", "preferred_
 
 # Getters that read the question itself, not only the profile
 _READS_QUESTION = {_travel, _previously_employed, _no_sponsorship, _sponsorship, _UNDER_18, _OVER_18, _phone,
-                   _local_or_relocate}
+                   _local_or_relocate, _lives_in}
 
 # (rule name, label regex, getter, max label length or None, allowed kinds or None)
 _TEXTY = {"text", "textarea", "select", "listbox", "combobox", "radio_group"}
@@ -683,6 +725,8 @@ RULES: list[tuple[str, str, Getter, int | None, set[str] | None]] = [
     ("linkedin", r"linked ?in", _p("personal.linkedin_url"), 60, {"text", "textarea"}),
     ("github", r"github", _p("personal.github_url"), 45, {"text"}),
     ("website", r"website|portfolio|personal (site|url)|^url$|blog", _p("personal.website"), 45, {"text"}),
+    # "Are you currently employed?" (only that: "...by Intel?" asks about one employer): from the work history
+    ("employed_now", r"^(are you )?(currently|presently) employed$", _employed_now, 40, None),
     ("current_company", r"(current|most recent|present) (employer|company)", _p("experience.current_company"), 60, None),
     ("current_title", r"(current|most recent|present) (job )?(title|position|role)", _p("experience.current_title"), 60, None),
     ("total_years", r"^(total )?years of (professional |work )?experience$", _p("experience.total_years"), 60, None),
@@ -730,6 +774,8 @@ RULES: list[tuple[str, str, Getter, int | None, set[str] | None]] = [
     ("relocation_help", r"relocat\w* (assistance|package|benefit|reimburse|support|expense|allowance)|no relocat|"
      r"(assistance|help) .{0,20}relocat", lambda p, j: None, None, None),
     ("relocate", r"relocat", _relocate, None, None),
+    # "Do you currently live in Arizona?" / "...in the Phoenix area?": the profile's address
+    ("lives_in", r"^(do|are) you (currently |presently )?(live|living|reside|residing|located|based) in ", _lives_in, 100, None),
     ("travel", r"travel", _travel, None, None),
     ("shift", r"shift work|rotating shift|nights and weekends|work (nights|weekends)|on ?call", _yn("preferences.flexible_schedule"), None, None),
     # desired_salary is one yearly figure: not an answer to "current salary" or a monthly/hourly rate

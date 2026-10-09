@@ -904,3 +904,54 @@ def test_the_same_place_spelled_another_way():
     assert choose_option("Arizona", ["US-AK", "US-AZ", "US-AR"]) == "US-AZ"
     assert choose_option("Phoenix, AZ", ["Phoenix, Arizona", "Tempe, Arizona"]) == "Phoenix, Arizona"
     assert choose_option("AZ", ["Arizona City", "Arizona"]) == "Arizona"
+
+
+def test_where_the_person_lives_from_the_address():
+    """"Do you currently live in Arizona?" was asked though the profile's address says so. A
+    state is the address's; a city the address's city or, asked about its area, any town in
+    its metro area. A distance, or a city that isn't theirs, is the person's to say."""
+    yes_no = ["Yes", "No"]
+
+    def answer(label, profile=None):
+        a = resolve_field(f(label, "radio_group", options=yes_no), profile or prof())  # Chandler, AZ
+        return a and a.value
+
+    assert answer("Do you currently live in Arizona?") == "Yes"
+    assert answer("Do you live in AZ?") == "Yes"
+    assert answer("Do you live in Texas?") == "No"
+    assert answer("Are you located in the Phoenix metro area?") == "Yes"
+    assert answer("Do you live in the Tucson area?") == "No"
+    assert answer("Do you reside in Chandler?") == "Yes"
+    assert answer("Do you live in the United States?") == "Yes"
+    assert answer("Do you live in Phoenix?") is None  # Chandler isn't Phoenix, though it's in its area
+    assert answer("Do you live within 30 miles of Tempe?") is None
+
+
+def test_willing_to_travel_isnt_willing_to_travel_abroad():
+    """A profile willing to travel "up to 75%" said Yes to "Are you willing to travel
+    internationally?", which it doesn't say."""
+    yes_no = ["Yes", "No"]
+    assert resolve_field(f("Are you willing to travel internationally?", "radio_group", options=yes_no), prof()) is None
+    assert resolve_field(f("Are you willing to travel outside the United States?", "radio_group", options=yes_no),
+                         prof()) is None
+    assert resolve_field(f("Are you willing to travel?", "radio_group", options=yes_no), prof()).value == "Yes"
+
+
+def test_currently_employed_from_the_work_history():
+    """"Are you currently employed?" was asked at every employer (an answer given at one is
+    about that one): the work history says, by an entry that hasn't ended. "...by Intel?"
+    asks about one employer, and is answered as such."""
+    import yaml
+    from job_apply import config
+
+    yes_no = ["Yes", "No"]
+    assert resolve_field(f("Are you currently employed?", "radio_group", options=yes_no), prof()).value == "Yes"
+    assert resolve_field(f("Currently employed?", "select", options=yes_no), prof()).value == "Yes"
+    by_acme = resolve_field(f("Are you currently employed by Acme?", "radio_group", options=yes_no), prof(),
+                            {"company": "Acme"})
+    assert by_acme is None or by_acme.rule != "employed_now"
+    path = config.profile_path()
+    data = yaml.safe_load(path.read_text())
+    ended = [{**job, "end": "2024-06"} for job in data["work_history"]]
+    path.write_text(yaml.safe_dump({**data, "work_history": ended}))
+    assert resolve_field(f("Are you currently employed?", "radio_group", options=yes_no), prof()).value == "No"
