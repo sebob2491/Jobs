@@ -67,7 +67,8 @@ FAKE_PROFILE = {
     "work_authorization": {"authorized_to_work": True, "requires_sponsorship": False, "us_person": True,
                            "us_citizen": True, "over_18": True},
     "preferences": {"how_did_you_hear": "Company Website", "willing_to_relocate": True,
-                    "willing_to_travel": "Yes", "flexible_schedule": True},
+                    "willing_to_travel": "Yes", "flexible_schedule": True,
+                    "locations": ["Phoenix, AZ", "Chandler, AZ", "Tempe, AZ"]},
     "eeo": {"gender": "Decline to self-identify", "hispanic_latino": "Decline to self-identify",
             "race": "Decline to self-identify", "veteran": "I don't wish to answer",
             "disability": "I do not want to answer"},
@@ -75,6 +76,9 @@ FAKE_PROFILE = {
                       "start": "2021-03", "end": "present"}],
     "education_history": [{"school": "Arizona State University", "degree": "Bachelor's Degree",
                            "major": "Electrical Engineering", "start": 2016, "end": 2020}],
+    # as setup writes it: the degrees confirmed finished answer "Do you have a Bachelor's degree?"
+    "education": {"highest_degree": "Bachelor's Degree",
+                  "degrees_earned": [{"level": "high_school"}, {"level": "bachelor", "field": "Electrical Engineering"}]},
     "settings": {"submit_mode": "dry_run", "browser_channel": "chromium", "headless": True},
 }
 (_HOME / "profile.yaml").write_text(yaml.safe_dump(FAKE_PROFILE))
@@ -97,6 +101,8 @@ ROLES: dict[str, dict[str, Any]] = {
                           "start": "2021-03", "end": "present"}],
         "education_history": [{"school": "Arizona State University", "degree": "Bachelor's Degree",
                                "major": "Business Administration", "start": 2016, "end": 2020}],
+        "education": {"highest_degree": "Bachelor's Degree",
+                      "degrees_earned": [{"level": "high_school"}, {"level": "bachelor", "field": "Business Administration"}]},
     },
     "finance": {
         "query_az": "financial analyst | accountant | accounting | finance",
@@ -105,6 +111,8 @@ ROLES: dict[str, dict[str, Any]] = {
                           "start": "2021-03", "end": "present"}],
         "education_history": [{"school": "Arizona State University", "degree": "Bachelor's Degree",
                                "major": "Finance", "start": 2016, "end": 2020}],
+        "education": {"highest_degree": "Bachelor's Degree",
+                      "degrees_earned": [{"level": "high_school"}, {"level": "bachelor", "field": "Finance"}]},
     },
 }
 
@@ -114,7 +122,7 @@ def use_role(name: str) -> None:
     global QUERY_AZ, QUERY_ANY
     role = ROLES[name]
     QUERY_AZ, QUERY_ANY = role["query_az"], role["query_any"]
-    profile = {**FAKE_PROFILE, **{k: role[k] for k in ("work_history", "education_history") if k in role}}
+    profile = {**FAKE_PROFILE, **{k: role[k] for k in ("work_history", "education_history", "education") if k in role}}
     (_HOME / "profile.yaml").write_text(yaml.safe_dump(profile))
 APPLY = re.compile(r"^(apply( now| for (this|the) (job|position|role)( online)?)?|quick apply|apply to (this )?job|i'?m interested|"
                    r"start (your |my )?application|apply manually)$", re.I)
