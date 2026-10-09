@@ -844,3 +844,15 @@ def test_a_short_list_of_places_is_read_with_the_rest_of_the_address():
     assert resolve_field(f("City *", "select", options=cities), prof()).value == "Chandler, Maricopa, AZ"
     assert resolve_field(f("County", "select", options=["Maricopa, CA", "Maricopa, AZ"]), prof()).value == "Maricopa, AZ"
     assert resolve_field(f("State", "select", options=["Arkansas", "Arizona"]), prof()).value == "Arizona"
+
+
+def test_some_college_however_a_list_words_it():
+    """"Some college coursework" (no degree) found nothing in a list whose choice is "Some
+    College, No Degree"; it's never a degree, nor high school."""
+    degrees = ["High School Diploma/GED", "Associate Degree (AA/AS)", "Some College, No Degree", "Bachelor Degree"]
+    assert choose_option("Some college coursework", degrees) == "Some College, No Degree"
+    assert choose_option("Some college coursework", ["Some high school", "College coursework, no degree"]) == \
+        "College coursework, no degree"
+    assert choose_option("Some college", ["High school diploma or GED", "Associate degree", "Bachelor's degree"]) is None
+    assert choose_option("Some high school", ["Some college, no degree", "Some high school, no diploma"]) == \
+        "Some high school, no diploma"

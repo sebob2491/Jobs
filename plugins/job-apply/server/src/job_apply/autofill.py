@@ -178,6 +178,14 @@ def _partial_study(n: str) -> bool:
     return bool(_PARTIAL_STUDY.search(n) and (_STUDY_WORDS.search(n) or degree_key(n)))
 
 
+def _partial_level(n: str) -> str | None:
+    """What a partial study is of: "Some college" and "College coursework, no degree" are
+    college; "Some high school", high school; "Associate's (in progress)", an associate's."""
+    if not _partial_study(n):
+        return None
+    return degree_key(n) or ("college" if re.search(r"\b(college|university|coursework|credits?)\b", n) else None)
+
+
 _NUMBER = re.compile(r"\d+(?:\.\d+)?")
 
 
@@ -257,6 +265,12 @@ def choose_option(desired: Any, options: list[str], exact_only: bool = False, na
         # School", and "Associate's (in progress)" isn't "Associate's Degree"
         partial = _partial_study(want)
         normed = [(o, n) for o, n in normed if not (degree_key(n) or _partial_study(n)) or _partial_study(n) == partial]
+        # the one choice that is the same partial study, however worded: "Some college
+        # coursework" is "Some College, No Degree"
+        level = _partial_level(want)
+        alike = [o for o, n in normed if level and _partial_level(n) == level]
+        if len(alike) == 1:
+            return alike[0]
 
     # a number among ranges: "10" years -> "More than 3 years", a 3.8 GPA -> "3.50 - 4.00 or higher"
     ranged = _in_range(str(desired), opts)
