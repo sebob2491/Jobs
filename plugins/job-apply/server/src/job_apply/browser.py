@@ -93,9 +93,14 @@ LOST_FILL_WAIT = 0.5  # seconds after filling for a page to mark the boxes whose
 LOST_FILL_TRIES = 3  # times a box is typed again on a page, at most (one the page refuses stays marked)
 # How long a click may wait for its button to become clickable, in ms.
 CLICK_TIMEOUT = 8000
+# What a page says once an application has gone ("Thanks for applying!", Oracle's "Thank you for
+# your job application", "Thank you for submitting your application"); only words that weren't
+# on the page before Submit count ("Your application is incomplete" is no "...is in")
 CONFIRMATION_RE = re.compile(
-    r"thank you for (applying|your application|your interest)|application (has been |was )?(submitted|received|complete)"
-    r"|we('ve| have) received your application|successfully (submitted|applied)|your application is (in|on its way)",
+    r"thank(?:s| you) for (applying|your (job )?application|your interest|submitting (your |an )?application)"
+    r"|application (has been |was )?(successfully )?(submitted|received|complete)"
+    r"|we('ve| have) received your application|successfully (submitted|applied)|your application is (in\b|on its way)"
+    r"|you('ve| have) (successfully )?applied (for|to)\b",
     re.I,
 )
 

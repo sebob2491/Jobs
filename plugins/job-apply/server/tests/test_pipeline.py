@@ -2585,6 +2585,22 @@ def test_a_posting_that_has_closed_says_so(srv, monkeypatch):
     assert not r.blocking
 
 
+def test_confirmation_wording():
+    """What sites say once an application has gone: Eightfold's "Thanks for applying!", Oracle's
+    "Thank you for your job application", iCIMS's "Thank you for submitting your application"."""
+    from job_apply.browser import CONFIRMATION_RE
+
+    said = CONFIRMATION_RE.search
+    for text in ("Thanks for applying!", "Thank you for your job application.", "Thank you for applying",
+                 "Thank you for submitting your application to Example Fab.", "Application Submitted",
+                 "Your application has been successfully submitted.", "You've successfully applied for this job.",
+                 "We have received your application."):
+        assert said(text), text
+    for text in ("Submit your application", "Review your application before you submit it.",
+                 "Applications are reviewed weekly.", "Your application is incomplete."):
+        assert not said(text), text
+
+
 def test_closed_posting_wording():
     """What closed postings say, and what they don't."""
     closed = pipeline._CLOSED.search
