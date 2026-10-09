@@ -939,6 +939,13 @@ def test_answers_a_page_loses_in_a_quick_run_of_fills_are_put_in_again(srv):
         await page.wait_for_timeout(300)
         return await page.evaluate("() => window.record")
 
-    assert run(record()) == {"First Name": "Sam", "Last Name": "Rivera", "Email": "sam.rivera@example.com",
-                             "City": "Chandler", "Postal Code": "85225"}
+    profile_answers = {"First Name": "Sam", "Last Name": "Rivera", "Email": "sam.rivera@example.com",
+                       "City": "Chandler", "Postal Code": "85225"}
+    assert run(record()) == profile_answers
+    assert not [e for e in run(srv.inspect_form())["errors"] if "blank" in e]
+
+    # a later fill (the person's answer) that loses the earlier ones: those are put in again too
+    middle = by_label(run(srv.inspect_form())["fields"], "middle name")
+    run(srv.fill_form([{"id": middle["id"], "value": "J"}]))
+    assert run(record()) == {**profile_answers, "Middle Name": "J"}
     assert not [e for e in run(srv.inspect_form())["errors"] if "blank" in e]

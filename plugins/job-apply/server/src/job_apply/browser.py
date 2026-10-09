@@ -905,7 +905,6 @@ class BrowserSession:
             page = await self.page()
             await self._close_menus(page)
             results = []
-            typed: list[tuple[dict, str]] = []
             known = dict(self._fields)  # the boxes as read before filling, by the ids given out then
             try:
                 for item in values:
@@ -921,39 +920,41 @@ class BrowserSession:
                             continue
                         outcome = await self._fill_one(page, field, item.get("value"))
                         results.append({"id": fid, "label": field.get("label", ""), "ok": True, "result": outcome})
-                        if outcome == "filled" and isinstance(item.get("value"), (str, int, float)):
-                            typed.append((field, str(item["value"])))
                     except Exception as e:  # report and keep going; one odd widget shouldn't stop the rest
                         results.append({"id": fid, "ok": False,
                                         "error": f"{type(e).__name__}: {str(e).splitlines()[0][:300]}",
                                         **({"options": e.entries} if isinstance(e, PickedAGroup) else {})})
-                if typed:
-                    await self._fill_lost(page, typed)
+                if any(r["ok"] and r["result"] != "already set" for r in results):
+                    await self._fill_lost(page, [f for f in self._fields.values()
+                                                 if f.get("kind") in ("text", "textarea") and f.get("role") != "spinbutton"])
             finally:
                 await self._close_menus(page)  # none left open over the buttons, or over its own field
             return results
 
-    async def _fill_lost(self, page: Page, typed: list[tuple[dict, str]]) -> None:
-        """Fill again the boxes the page marks invalid while they still show what was put in:
-        its own record of them was lost. Insight's Eightfold form drops some of a quick run of
-        fills, then says "Email cannot be left blank" beside the address shown. One at a time,
-        emptied first (a framework ignores a box set to the value it already shows). A second
-        look after that, for one the page marked a little later."""
+    async def _fill_lost(self, page: Page, boxes: list[dict]) -> None:
+        """Type again what a text box shows when the page marks it invalid all the same: its own
+        record of it was lost. Insight's Eightfold form drops some of a quick run of fills (this
+        one's or an earlier one's), then says "Last Name cannot be left blank" beside the name
+        shown. One at a time, emptied first (a framework ignores a box set to the value it
+        already shows). A second look after that, for one the page marked a little later."""
         for _ in range(2):
             await page.wait_for_timeout(LOST_FILL_WAIT * 1000)
             again = False
-            for field, text in typed:
-                loc = self._locator(page, field["id"])
+            for field in boxes:
                 try:
-                    if not text or not await loc.evaluate("el => el.getAttribute('aria-invalid') === 'true'") \
-                            or norm(await loc.input_value(timeout=2000)) != norm(text):
+                    loc = self._locator(page, field["id"])
+                    if not await loc.evaluate("el => el.getAttribute('aria-invalid') === 'true' && !el.readOnly "
+                                              "&& !el.disabled", timeout=2000):
+                        continue
+                    text = await loc.input_value(timeout=2000)
+                    if not text.strip():
                         continue
                     await loc.fill("")
                     await loc.fill(text)
                     await loc.evaluate("el => el.blur()")
                     await page.wait_for_timeout(LOST_FILL_WAIT * 400)
                     again = True
-                except (PlaywrightError, PlaywrightTimeout):
+                except (PlaywrightError, PlaywrightTimeout, KeyError):
                     continue
             if not again:
                 return
