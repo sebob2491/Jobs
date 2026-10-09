@@ -609,6 +609,73 @@ def _veteran(prof: Profile, job: dict, label: str = "") -> Any:
     return v
 
 
+_LEVELS = ["high_school", "associate", "bachelor", "master", "doctorate"]
+# Education written the way setup writes it ("Bachelor's Degree", "Some college") or by a
+# degree's full name: nothing an abbreviation could also be ("MA" is a Medical Assistant
+# certificate too), nothing more ("Equivalent", "(expected 2027)")
+_DEGREE_NAMES = [
+    ("high_school", r"high school( diploma)?|ged|high school diploma or ged|ged or high school diploma"),
+    ("associate", r"associate( s|s)?( degree)?|associate of (applied )?(science|arts)"),
+    ("bachelor", r"bachelor( s|s)?( degree)?|bachelor of (science|arts|fine arts|business administration)"),
+    ("master", r"master( s|s)?( degree)?|master of (science|arts|fine arts|business administration)"),
+    ("doctorate", r"doctorate|ph d|doctor of philosophy"),
+]
+
+
+def _named_level(text: Any) -> int | None:
+    """The rank in _LEVELS of a degree written as setup writes it, or by its full name."""
+    n = norm(text)
+    return next((_LEVELS.index(key) for key, pattern in _DEGREE_NAMES if re.fullmatch(pattern, n)), None)
+
+
+# Partial study written the way setup writes it, and the most it lets the person have finished:
+# only these, word for word ("Graduate coursework" or "Attended university" say other things)
+_SOME_STUDY = [(-1, r"some high school"),
+               (0, r"some college( no degree| coursework)?|college coursework( no degree)?")]
+
+
+def _studied_level(text: Any) -> int | None:
+    n = norm(text)
+    return next((rank for rank, pattern in _SOME_STUDY if re.fullmatch(pattern, n)), None)
+
+
+# A question asking for nothing but a level of education, maybe "or higher": a kind of degree
+# ("Bachelor of Science"), a field ("in Finance") or anything more ("from an accredited
+# university") isn't one the profile can settle
+_DEGREE_ONLY = (r"^(?:do you (?:have|hold|possess) |have you (?:earned|completed|received) )?(?:an? |the )?"
+                r"(?:high school diploma(?: or (?:a )?ged)?|ged|(?:associate|bachelor|master)(?: s|s)? degree|"
+                r"doctorate(?: degree)?)(?: or (?:higher|above|greater))?(?: (?:required|preferred))*$")
+
+
+def _has_degree(prof: Profile, job: dict, label: str = "") -> Any:
+    """"Do you have a Bachelor's degree?" answered No when the highest education the profile
+    states, as setup writes it ("Some college", "Associate's Degree"), is below the level asked
+    and no school it lists names a degree that isn't. Never Yes: which degrees a person holds
+    is theirs to say (a profile's education is free text, and a degree under way or written
+    another way can't be told from one earned)."""
+    level = degree_key(norm(label))
+    if not re.match(_DEGREE_ONLY, norm(label)) or level is None:
+        return None
+    rank = _LEVELS.index(level)
+    history = prof.get("education_history")
+    if history is not None and not isinstance(history, list):
+        return None  # written some other way: not read
+    highest = prof.get("education.highest_degree")
+    most = _named_level(highest)
+    if most is None:
+        most = _studied_level(highest)
+    if most is None or most >= rank:
+        return None
+    for e in history or []:  # every school's degree is none (written so: setup's "" for one not finished), or below
+        if not isinstance(e, dict) or "degree" not in e:
+            return None
+        degree = str(e.get("degree") or "").strip()
+        listed = _named_level(degree)
+        if degree and (listed is None or listed >= rank):
+            return None
+    return "No"
+
+
 def _us_person(prof: Profile, job: dict) -> Any:
     """A U.S. person (a citizen, permanent resident, refugee or asylee): the profile's answer,
     or Yes for a U.S. citizen, who is one."""
@@ -716,7 +783,7 @@ _CONTACT_RULES = {"email", "first_name", "middle_name", "last_name", "preferred_
 
 # Getters that read the question itself, not only the profile
 _READS_QUESTION = {_travel, _previously_employed, _no_sponsorship, _sponsorship, _UNDER_18, _OVER_18, _phone,
-                   _local_or_relocate, _lives_in, _veteran}
+                   _local_or_relocate, _lives_in, _veteran, _has_degree}
 
 # (rule name, label regex, getter, max label length or None, allowed kinds or None)
 _TEXTY = {"text", "textarea", "select", "listbox", "combobox", "radio_group"}
@@ -758,6 +825,8 @@ RULES: list[tuple[str, str, Getter, int | None, set[str] | None]] = [
     ("current_company", r"(current|most recent|present) (employer|company)", _p("experience.current_company"), 60, None),
     ("current_title", r"(current|most recent|present) (job )?(title|position|role)", _p("experience.current_title"), 60, None),
     ("total_years", r"^(total )?years of (professional |work )?experience$", _p("experience.total_years"), 60, None),
+    # "Do you have a Bachelor's degree?" (only No: see _has_degree)
+    ("has_degree", _DEGREE_ONLY, _has_degree, 200, {"select", "listbox", "combobox", "radio_group"}),
     ("degree", r"highest (level of )?(education|degree)|^degree$|education level", _edu("highest_degree", "degree"), 80, None),
     ("school", r"^(school|university|college|institution)\b(?!.*\b(major|degree|gpa|city|state|location|country|year|date|address|"
      r"zip|postal|phone|e ?mail|fax|code)\b)",
@@ -1131,6 +1200,13 @@ def resolve_field(field: dict, prof: Profile, job: dict | None = None, file_inpu
         ans.value = "Yes" if ans.value else "No"
 
     options = field.get("options")
+    if ans.rule == "has_degree":
+        # a plain "No" among the choices shown: never "No, but I have equivalent experience" or "No, but
+        # I'm enrolled", which say more than the profile does; nor where the section allows an equivalent
+        plain = next((o for o in options or [] if norm(o) == "no"), None)
+        if plain is None or "equivalen" in section:
+            return None
+        return Answer(plain, ans.rule)
     if kind in {"select", "radio_group", "listbox", "checkbox_group", "combobox"} and options:
         # a place lookup's entries: the one in the rest of the profile's address ("Chandler,
         # Maricopa, AZ", not "Chandler, Henderson, TX" listed before it)

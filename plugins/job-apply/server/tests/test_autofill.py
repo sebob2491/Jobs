@@ -1007,3 +1007,60 @@ def test_a_citizen_is_a_us_person_and_eligibility_is_authorization():
     assert answer("Can you provide proof of eligibility to work in the US upon hire?") == "Yes"
     assert answer("Are you legally eligible for employment in the United States?") == "Yes"
     assert answer("Race of your household members", ["White", "Black", "Asian"]) is None
+
+
+def test_a_degree_the_person_lacks_is_answered_no():
+    """"Do you have a Bachelor's degree?" was always asked, though a profile whose highest
+    education is "Some college" says the answer. It's No when the highest education stated is
+    below the level asked and no school lists a degree that isn't. Never Yes: which degrees a
+    person holds is theirs to say (a degree under way or written another way can't be told
+    from one earned), and a field, a kind of degree or a condition is theirs too."""
+    import yaml
+    from job_apply import config
+
+    path = config.profile_path()
+    data = yaml.safe_load(path.read_text())
+
+    def with_education(highest, history):
+        path.write_text(yaml.safe_dump({**data, "education": {"highest_degree": highest}, "education_history": history}))
+        return Profile.load()
+
+    def answer(label, profile, kind="radio_group"):
+        a = resolve_field(f(label, kind, options=["Yes", "No"] if kind != "text" else None), profile)
+        return a and a.value
+
+    some_college = with_education("Some college", [{"school": "Example Community College", "degree": "", "end": 2019}])
+    assert answer("Do you have a Bachelor's degree?", some_college) == "No"
+    assert answer("Do you have an Associate's degree or higher?", some_college) == "No"
+    assert answer("Master's degree preferred", some_college) == "No"
+    assert answer("Do you have a high school diploma or GED?", some_college) is None  # not said
+    for asked in ("Bachelor's Degree in Accounting or Finance Required", "Do you have a Bachelor of Science degree?",
+                  "Do you have a Bachelor's degree from an accredited university?", "Bachelor's degree or equivalent experience"):
+        assert answer(asked, some_college) is None, asked
+    associate = with_education("Associate's Degree", [])
+    assert answer("Do you have a Bachelor's degree?", associate) == "No"
+    assert answer("Do you have an Associate's degree?", associate) is None  # never Yes
+    # a school listing a degree it can't place, or one at the level asked, stops the No
+    for history in ([{"degree": "Bachelor's Degree"}], [{"degree": "BSN", "end": 2019}],
+                    [{"degree": "BS", "status": "Graduated (honors)", "end": 2019}]):
+        assert answer("Do you have a Bachelor's degree?", with_education("Associate's Degree", history)) is None, history
+    # a highest degree written any other way isn't read
+    for highest in ("Bachelor's Degree (BS)", "Bachelor's (not finished)", "PhD ABD", "Bachelor's Degree Equivalent"):
+        assert answer("Do you have a Master's degree?", with_education(highest, [])) is None, highest
+    # a degree's details aren't the question
+    assert answer("Bachelor's Degree Major", some_college, "text") is None
+    # only a plain "No", with the choices shown: never one that says more than the profile
+    for choices in (["Yes", "No, but I have equivalent work experience"], ["Yes", "No, but I am currently enrolled"], []):
+        a = resolve_field(f("Do you have a Bachelor's degree?", "combobox", options=choices), some_college)
+        assert a is None, choices
+    # a school whose entry doesn't say its degree stops the No
+    unsaid = with_education("Associate's Degree", [{"school": "Example State University", "major": "Finance", "end": 2020}])
+    assert answer("Do you have a Bachelor's degree?", unsaid) is None
+    assert answer("Do you have a Bachelor's degree?", with_education("College coursework, no degree", [])) == "No"
+    assert answer("Do you have a high school diploma?", with_education("Some high school", [])) == "No"
+    for highest in ("Graduate coursework", "Attended university", "Currently enrolled in university"):
+        assert answer("Do you have a Bachelor's degree?", with_education(highest, [])) is None, highest
+    # a section about education and experience doesn't make it an equivalence
+    a = resolve_field(f("Do you have a Bachelor's degree?", "radio_group", options=["Yes", "No"],
+                        section="Education and Experience"), some_college)
+    assert a.value == "No"
