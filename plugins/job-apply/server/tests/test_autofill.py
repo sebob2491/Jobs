@@ -1064,3 +1064,92 @@ def test_a_degree_the_person_lacks_is_answered_no():
     a = resolve_field(f("Do you have a Bachelor's degree?", "radio_group", options=["Yes", "No"],
                         section="Education and Experience"), some_college)
     assert a.value == "No"
+
+
+def test_a_confirmed_degree_answers_yes():
+    """Setup records each degree the person confirmed they finished in education.degrees_earned
+    ({level, field}); only those answer "Do you have a Bachelor's degree?" Yes: one at that
+    level, or above it when the question says "or higher". A field the question names, a
+    kind of degree or a condition stays the person's, as does any entry it can't read; a
+    GED answers for a GED only. Free-text education never answers Yes."""
+    import yaml
+    from job_apply import config
+
+    path = config.profile_path()
+    data = yaml.safe_load(path.read_text())
+
+    def with_degrees(degrees, highest="Bachelor's Degree", history=None):
+        path.write_text(yaml.safe_dump({**data, "education": {"highest_degree": highest, "degrees_earned": degrees},
+                                        "education_history": history or []}))
+        return Profile.load()
+
+    def answer(label, profile, options=("Yes", "No")):
+        a = resolve_field(f(label, "radio_group", options=list(options)), profile)
+        return a and a.value
+
+    finance = with_degrees([{"level": "bachelor", "field": "Finance"}])
+    assert answer("Do you have a Bachelor's degree?", finance) == "Yes"
+    assert answer("Bachelor's degree required", finance) == "Yes"
+    assert answer("Do you have an Associate's degree or higher?", finance) == "Yes"
+    assert answer("Do you have an Associate's degree?", finance) is None  # not "or higher"
+    assert answer("Do you have a Master's degree?", finance) == "No"  # the most finished is a bachelor's
+    for asked in ("Bachelor's Degree in Accounting or Finance Required", "Bachelor's degree in Finance",
+                  "Bachelor's degree in Nursing, CCRN, or CNOR", "Do you have a Bachelor's degree with honors?",
+                  "Do you have a Bachelor of Science degree?", "Bachelor's degree or equivalent experience",
+                  "Do you have a Bachelor's degree from an accredited university?"):
+        assert answer(asked, finance) is None, asked
+    # only a plain "Yes"
+    assert answer("Do you have a Bachelor's degree?", finance, ("Yes, in a related field", "No")) is None
+    # a GED answers for a GED, not a diploma; a diploma confirmed gives the No above it
+    ged = with_degrees([{"level": "ged"}], "GED")
+    assert answer("Do you have a high school diploma?", ged) is None
+    assert answer("Do you have a GED?", ged) == "Yes"
+    assert answer("Do you have a high school diploma or GED?", ged) == "Yes"
+    assert answer("Do you have a Bachelor's degree?", ged) == "No"
+    assert answer("Do you have a high school diploma?", with_degrees([{"level": "high_school", "field": "GED"}], "GED")) is None
+    diploma = with_degrees([{"level": "high_school"}], "High school diploma", [{"degree": "High school diploma", "end": 2015}])
+    assert answer("Do you have a high school diploma?", diploma) == "Yes"
+    assert answer("Do you have a Bachelor's degree?", diploma) == "No"
+    # anything it can't read: a level, a status, a field saying it isn't done or is something else
+    for degrees in ([{"level": "Bachelor's (in progress)"}], [{"level": "MA"}], [{"level": "BS"}],
+                    [{"level": "bachelor", "field": "Finance", "status": "in progress"}],
+                    [{"level": "bachelor", "field": "Finance (expected 2027)"}],
+                    [{"level": "bachelor", "field": "Finance coursework"}], [{"level": "bachelor", "field": "Finance - ABD"}],
+                    [{"level": "bachelor", "field": "Finance - withdrew"}]):
+        assert answer("Do you have a Bachelor's degree?", with_degrees(degrees, "Some college")) is None, degrees
+    assert answer("Do you have a doctorate?", with_degrees([{"level": "doctorate", "field": "Juris Doctor"}])) is None
+    assert answer("Do you have an Associate's degree?",
+                  with_degrees([{"level": "associate", "field": "Welding Certificate"}], "Some college")) is None
+    for equivalent in ("General Educational Development", "HiSET"):
+        assert answer("Do you have a high school diploma?",
+                      with_degrees([{"level": "high_school", "field": equivalent}], "Some college")) is None, equivalent
+    assert answer("Do you have a high school diploma?", with_degrees([{"level": "high_school"}], "GED")) is None
+    assert answer("Do you have a GED?", with_degrees([{"level": "ged", "field": "GED"}], "GED")) == "Yes"
+    assert answer("Do you have a doctorate?", with_degrees([{"level": "doctorate", "field": "Doctor of Medicine"}])) is None
+    assert answer("Do you have a Bachelor's degree?",
+                  with_degrees([{"level": "bachelor", "field": "Finance (Spring '27)"}], "Some college")) is None
+    assert answer("Do you have a high school diploma?", with_degrees([{"level": "high_school"}], "HiSET")) is None
+    # ...but a past year, a combined highest, or a field that only sounds like one is read
+    diploma_or_ged = with_degrees([{"level": "high_school"}], "High School Diploma or GED")
+    assert answer("Do you have a high school diploma?", diploma_or_ged) == "Yes"
+    assert answer("Do you have a Bachelor's degree?",
+                  with_degrees([{"level": "bachelor", "field": "Computer Science, Class of 2015"}])) == "Yes"
+    assert answer("Do you have an Associate's degree?",
+                  with_degrees([{"level": "associate", "field": "General Education"}], "Associate's Degree")) == "Yes"
+    assert answer("Do you have a Master's degree?",
+                  with_degrees([{"level": "master", "field": "Teaching Certification"}], "Master's Degree")) == "Yes"
+    # what is read: a degree's name as the level, a field as a diploma names it, a lone entry
+    assert answer("Do you have a Bachelor's degree?", with_degrees([{"level": "Bachelor's", "field": "Finance"}])) == "Yes"
+    assert answer("Do you have a Bachelor's degree?",
+                  with_degrees([{"level": "bachelor", "field": "Business Administration (Finance)"}])) == "Yes"
+    assert answer("Do you have a Bachelor's degree?", with_degrees({"level": "bachelor", "field": "Finance"})) == "Yes"
+    # one it can't read doesn't stop a Yes from one it can, but stops a No
+    mixed = with_degrees([{"level": "bachelor", "field": "Finance"}, {"level": "certificate"}])
+    assert answer("Do you have a Bachelor's degree?", mixed) == "Yes"
+    assert answer("Do you have a Master's degree?", mixed) is None
+    # no highest education stated, or one it can't read: no No
+    assert answer("Do you have a Bachelor's degree?", with_degrees([{"level": "high_school"}], "")) is None
+    assert answer("Do you have a Master's degree?", with_degrees([{"level": "bachelor"}], "MBA")) is None
+    # without confirmed degrees, a free-text one never answers Yes
+    free_text = with_degrees([], "Bachelor's Degree", [{"degree": "Bachelor's Degree", "major": "Finance", "end": 2020}])
+    assert answer("Do you have a Bachelor's degree?", free_text) is None
