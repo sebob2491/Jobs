@@ -1,6 +1,6 @@
 """Live smoke test against real employer career sites. Read-only by design.
 
-    uv run python scripts/live_smoke.py --out live-report [--companies "KLA,ASM"] [--fixtures] [--parallel 4]
+    uv run python scripts/live_smoke.py --out live-report [--companies "KLA,ASM"] [--fixtures] [--parallel 4] [--role hr]
 
 For each company with a `search` config in data/companies.yaml:
   1. search_company_jobs for a broad query, and keep the first result;
@@ -87,6 +87,27 @@ from job_apply.search import load_companies, sitecore_search  # noqa: E402
 
 QUERY_AZ = "field service | customer service engineer | customer engineer | equipment technician"  # in Arizona
 QUERY_ANY = "engineer | technician"  # fallback so every company still gets a browser check
+# --role: the kind of job a run looks for, and the fake applicant's background to match
+ROLES: dict[str, dict[str, Any]] = {
+    "technician": {"query_az": QUERY_AZ, "query_any": QUERY_ANY},
+    "hr": {
+        "query_az": "human resources | hr generalist | recruiter | talent acquisition | hr coordinator",
+        "query_any": "human resources | recruiter",
+        "work_history": [{"title": "HR Coordinator", "company": "Example Staffing", "location": "Tempe, AZ",
+                          "start": "2021-03", "end": "present"}],
+        "education_history": [{"school": "Arizona State University", "degree": "Bachelor's Degree",
+                               "major": "Business Administration", "start": 2016, "end": 2020}],
+    },
+}
+
+
+def use_role(name: str) -> None:
+    """Search for this role's jobs, as an applicant with its background (this run's home only)."""
+    global QUERY_AZ, QUERY_ANY
+    role = ROLES[name]
+    QUERY_AZ, QUERY_ANY = role["query_az"], role["query_any"]
+    profile = {**FAKE_PROFILE, **{k: role[k] for k in ("work_history", "education_history") if k in role}}
+    (_HOME / "profile.yaml").write_text(yaml.safe_dump(profile))
 APPLY = re.compile(r"^(apply( now| for (this|the) (job|position|role)( online)?)?|quick apply|apply to (this )?job|i'?m interested|"
                    r"start (your |my )?application|apply manually)$", re.I)
 NEVER = re.compile(r"autofill|resume|last application|submit|sign ?in|log ?in|create account|register|upload|"
@@ -706,8 +727,11 @@ async def main() -> int:
     ap.add_argument("--shard", default="", help="I/N: only the I-th of N groups (what --parallel runs)")
     ap.add_argument("--lists", default="", help="the plugin's employer lists to check, comma-separated "
                                                 "(default: semiconductor-az; e.g. phoenix-metro,semiconductor-az)")
+    ap.add_argument("--role", choices=sorted(ROLES), default="technician",
+                    help="the kind of job to look for, with a fake applicant to match (default: technician)")
     args = ap.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
+    use_role(args.role)
     if args.lists:  # as a person's own companies.yaml names them, in this run's own home
         (_HOME / "companies.yaml").write_text(yaml.safe_dump({"lists": [n.strip() for n in args.lists.split(",")
                                                                         if n.strip()]}))
@@ -1127,7 +1151,7 @@ async def parallel_main(args: argparse.Namespace) -> int:
     n = args.parallel
     passed = [*(["--companies", args.companies] if args.companies else []), *(["--fixtures"] if args.fixtures else []),
               *(["--pipeline"] if args.pipeline else []), *(["--fake-passwords"] if args.fake_passwords else []),
-              *(["--lists", args.lists] if args.lists else [])]
+              *(["--lists", args.lists] if args.lists else []), "--role", args.role]
     children = [await asyncio.create_subprocess_exec(
         sys.executable, __file__, *passed, "--shard", f"{i}/{n}", "--out", str(args.out / f"shard-{i}"),
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT) for i in range(n)]

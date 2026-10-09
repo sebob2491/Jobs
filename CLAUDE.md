@@ -35,7 +35,8 @@ the scrubber (`python -m job_apply.fixtures`) before they become test fixtures.
   - The full suite takes about 4 minutes. While iterating, run only the affected test files.
 - Live checks against real employer sites: `uv run python scripts/live_smoke.py`.
   - Add `--pipeline --fake-passwords --parallel 4` to drive the Job Desk pipeline. The full run takes about 6 minutes.
-  - Add `--lists phoenix-metro` to check another list.
+  - Add `--lists phoenix-metro` to check another list, and `--role hr` to look for HR jobs as an
+    applicant with an HR background (the default is technician jobs).
   - It forces a fake profile and `JOB_APPLY_NEVER_SUBMIT=1`, so nothing can be submitted.
   - Compare a run with the previous one per employer. A changed outcome is the signal.
 - Plugin manifests: `claude plugin validate --strict .`, plus the same for each plugin folder.

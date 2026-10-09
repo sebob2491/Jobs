@@ -67,6 +67,15 @@ _DECLINES = re.compile(r"reject|decline|necessary|essential|required only|only r
                        r"preferences|customi[sz]e|without", re.I)
 
 
+CAPTCHA_SAYS = ("A CAPTCHA (a bot check: an \"I'm not a robot\" box or pictures) is on this page. It's for the "
+                "user to solve; ask them to, and never try it yourself.")
+# A CAPTCHA's own frames: never read as part of the form. iCIMS's sign-in pages carry a hidden
+# hCaptcha whose "Verify" and "Refresh Challenge." read as the page's buttons, and the desk
+# never touches a CAPTCHA anyway
+_CAPTCHA_FRAME = re.compile(r"^https?://([\w-]+\.)*(hcaptcha\.com|recaptcha\.net|challenges\.cloudflare\.com)/|"
+                            r"^https?://(www\.)?google\.com/recaptcha/", re.I)
+
+
 def _accepts_cookies(label: str, text: str, in_banner: bool) -> bool:
     if _DECLINES.search(label):
         return False  # "Accept necessary cookies only", "Reject all": the private choice
@@ -78,6 +87,8 @@ def _accepts_cookies(label: str, text: str, in_banner: bool) -> bool:
 POSTING_PAGE_RE = re.compile(r"career(?:_|%5f)ns=job(?:_|%5f)listing(?:&|#|$)", re.I)
 SHORT_MENU = 12  # a menu this short shows every choice; a longer one may show only some
 POPUP_FOLLOW = 15  # seconds after a click of ours in which a tab it opens is followed
+FRAME_WAIT = 10  # seconds for a job board's frame (iCIMS's openings) to load its page, all told
+SETTLE_WAIT = 8  # seconds for a job board's page to stop loading things, at most
 # How long a click may wait for its button to become clickable, in ms.
 CLICK_TIMEOUT = 8000
 CONFIRMATION_RE = re.compile(
@@ -423,17 +434,31 @@ class BrowserSession:
         for frame in page.frames:
             if frame.is_detached():
                 continue
+            if frame is not page.main_frame and _CAPTCHA_FRAME.match(frame.url):
+                if await self._shown(frame):  # never read, but said: it's for the person to solve
+                    result["captcha"] = CAPTCHA_SAYS
+                continue
             if frame is not page.main_frame and (not frame.url or frame.url == "about:blank"):
                 continue
             try:
                 data = await frame.evaluate(EXTRACT_JS, self._frame_prefix(frame, page))
             except PlaywrightError:
                 continue  # cross-origin frame that refused, or navigated mid-read
-            for key in result:
+            for key in ("fields", "actions", "errors", "headings"):
                 result[key].extend(data.get(key, []))
         self._fields = {f["id"]: f for f in result["fields"]}
         self._actions = {a["id"]: a for a in result["actions"]}
         return result
+
+    @staticmethod
+    async def _shown(frame: Frame) -> bool:
+        """Is this frame on show (a CAPTCHA's box or picture check), not kept hidden on the page?"""
+        try:
+            element = await frame.frame_element()
+            box = await element.bounding_box()
+            return bool(box and box["width"] > 20 and box["height"] > 20 and await element.is_visible())
+        except PlaywrightError:
+            return False
 
     async def _summary(self, page: Page) -> dict[str, Any]:
         data = await self._extract(page)
@@ -446,6 +471,7 @@ class BrowserSession:
             "empty_required": sum(1 for f in fields if f.get("required") and is_empty_value(f.get("value"))),
             "actions": [a["text"] for a in data["actions"]][:25],
             "errors": data["errors"],
+            **({"captcha": data["captcha"]} if data.get("captcha") else {}),
         }
 
     async def _activate(self, loc: Locator) -> None:
@@ -657,7 +683,8 @@ class BrowserSession:
                 if frame.is_detached() or frame is not tab.main_frame and (not frame.url or frame.url == "about:blank"):
                     continue
                 try:
-                    found = await frame.evaluate(EXTRACT_JS, self._frame_prefix(frame, tab))
+                    found = ({} if _CAPTCHA_FRAME.match(frame.url) else
+                             await frame.evaluate(EXTRACT_JS, self._frame_prefix(frame, tab)))
                     text = await frame.evaluate(VISIBLE_TEXT_JS)
                     challenge = challenge or bool(await frame.evaluate(CHALLENGE_JS))
                 except PlaywrightError:
@@ -698,9 +725,12 @@ class BrowserSession:
             # (Cloudflare's "Just a moment…" check comes as a 503 too, and clears by itself)
             raise SiteDown(f"{urlparse(url).hostname} is down right now (HTTP {response.status}); try again later")
 
-    async def frames_html(self, url: str) -> list[str]:
+    async def frames_html(self, url: str, inner: str | None = None) -> list[str]:
         """The HTML of `url` and of each frame on it, read in a background tab. Some job
-        boards (iCIMS) turn away plain requests and list their openings inside a frame."""
+        boards (iCIMS) turn away plain requests and list their openings inside a frame. With
+        `inner` (that frame's selector), the page is read as soon as the frame's own page is
+        in: iCIMS portals go on loading trackers for seconds after their openings are drawn,
+        and the browser is held meanwhile."""
         async with self._lock:
             if self._ctx is None:
                 await self._launch()
@@ -708,10 +738,15 @@ class BrowserSession:
             tab = await self._ctx.new_page()
             try:
                 await self._open_board(tab, url)
-                try:
-                    await tab.wait_for_load_state("networkidle", timeout=8000)
-                except PlaywrightTimeout:
-                    pass  # pages that keep polling: what's drawn by now is enough
+                started = time.monotonic()
+                if not inner or not await self._frame_loaded(tab, inner):
+                    # (for no longer than the page would have been given anyway: the browser is held)
+                    left = SETTLE_WAIT - (time.monotonic() - started)
+                    try:
+                        if left > 0:
+                            await tab.wait_for_load_state("networkidle", timeout=left * 1000)
+                    except PlaywrightTimeout:
+                        pass  # pages that keep polling: what's drawn by now is enough
                 pages = []
                 for frame in tab.frames:
                     try:
@@ -721,6 +756,22 @@ class BrowserSession:
                 return pages
             finally:
                 await tab.close()
+
+    @staticmethod
+    async def _frame_loaded(tab: Page, selector: str) -> bool:
+        """Wait for the frame `selector` names to load its page (not the about:blank it starts
+        on), for FRAME_WAIT seconds in all."""
+        deadline = time.monotonic() + FRAME_WAIT
+        try:
+            element = await tab.wait_for_selector(selector, state="attached", timeout=FRAME_WAIT * 1000)
+            inner = await element.content_frame() if element is not None else None
+            left = deadline - time.monotonic()
+            if inner is None or left <= 0:
+                return False
+            await inner.wait_for_url(re.compile(r"^https?://"), wait_until="domcontentloaded", timeout=left * 1000)
+            return True
+        except PlaywrightError:  # (a timeout too): read it once the page has settled instead
+            return False
 
     async def listing_pages(self, url: str, rows: str, per_page: tuple[str, str] | None = None,
                             next_button: str | None = None, max_pages: int = 5) -> list[str]:
@@ -1210,7 +1261,7 @@ class BrowserSession:
 
     async def _find_by_text(self, page: Page, text: str) -> Locator | None:
         """First visible button/link named `text`, then any visible text match, across frames."""
-        frames = [f for f in page.frames if not f.is_detached()]
+        frames = [f for f in page.frames if not f.is_detached() and not _CAPTCHA_FRAME.match(f.url)]
         for exact_role in (True, False):
             for frame in frames:
                 if exact_role:

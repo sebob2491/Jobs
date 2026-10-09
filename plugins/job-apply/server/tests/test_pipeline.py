@@ -2257,3 +2257,115 @@ def test_a_press_the_tracker_remembers_isnt_made_again_without_its_record(srv):
     applier.auto_submit = True
     r = applier.enqueue(job["id"], submit=True)
     assert r.pressed_before and not r.submit
+
+
+def test_a_button_with_an_arrow_after_its_words_is_still_the_way_in():
+    """APS's SuccessFactors posting (live, Oct 2026): "Apply now »" wasn't read as Apply, so the
+    desk said it couldn't find the button."""
+    def acts(*texts):
+        return [{"id": str(i), "text": t} for i, t in enumerate(texts)]
+
+    assert pick_next(acts("Search Jobs", "Create Alert", "Apply now »", "Apply now »"), False)["text"] == "Apply now »"
+    assert pick_next(acts("Back", "Next ›"), True)["text"] == "Next ›"
+
+
+def test_reject_non_essential_cookies_is_a_way_to_decline():
+    """Aerotek's iCIMS banner (live, Oct 2026) offers "Reject Non-Essential Cookies"."""
+    assert pipeline._DECLINE_COOKIES.match("Reject Non-Essential Cookies")
+    assert pipeline._DECLINE_COOKIES.match("Decline nonessential")
+    assert not pipeline._DECLINE_COOKIES.match("Accept Non-Essential Cookies")
+
+
+def test_a_form_still_being_drawn_is_waited_for(srv, monkeypatch):
+    """Oracle's Personal Info step (Southwest Gas's, American Express's, live): upload boxes and a
+    greyed-out Next first, the name and email boxes a moment later. The desk said it couldn't
+    find the button; it waits for the form, fills it and goes on."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    job = srv.add_job(url=fixture_url("site/late-form.html"), title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert r.status == "ready", (r.need, r.reason, r.log)
+    assert "clicked “Next”" in r.log and r.url.endswith("review.html"), r.log
+
+
+def test_an_agreement_is_left_to_the_person_and_a_captchas_buttons_arent_the_pages(srv, monkeypatch):
+    """Schwab's iCIMS sign-in (live, Oct 2026): the way on is "I Acknowledge the Privacy Notice",
+    and a hidden hCaptcha frame's "Verify" and "Refresh Challenge." were read as the page's own
+    buttons. The CAPTCHA's frame isn't read, and the desk names the button that agrees to
+    something rather than pressing it or saying it couldn't find one."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 1)
+    job = srv.add_job(url=fixture_url("site/privacy-signin.html"), title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        await srv.browser.page()
+        await srv.browser._ctx.route("https://newassets.hcaptcha.com/**", lambda route: route.fulfill(
+            status=200, content_type="text/html",
+            body="<html><body><button>Verify</button><button>Refresh Challenge.</button></body></html>"))
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status == "needs_you", about=state(r))
+            return r, await r.page.evaluate("() => window.acknowledged || false")
+        finally:
+            await applier.stop()
+
+    r, acknowledged = run(go())
+    assert r.need == "stuck" and "“I Acknowledge the Privacy Notice”" in r.reason, (r.reason, r.log)
+    assert not acknowledged
+    assert not {"Verify", "Refresh Challenge."} & set(r.page_info.get("actions") or []), r.page_info
+
+
+def test_an_apply_button_with_an_arrow_isnt_read_as_an_emailed_link():
+    """A posting that mentions checking your email, with "Apply now »": the way in, not a
+    "we emailed you a link" page."""
+    data = {"fields": [], "actions": [{"id": "a", "text": "Apply now »"}], "headings": ["Recruiter"]}
+    assert classify(data, "After you apply, check your email for a link to verify your account.") == "page"
+
+
+def test_arrow_buttons_on_a_posting_and_a_step(srv, monkeypatch):
+    """A posting with a job-alerts box goes in through its "Apply now »", without filling the
+    alerts box; on step 1, "Next ›" beside a Submit is the way on, not a sign it's the review page."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    site = "https://careers.acme-fab.example"
+    posting = (f'<html><head><meta charset="utf-8"><title>Field Service Engineer - Acme Fab</title></head><body><h1>Field Service '
+               f'Engineer</h1><p>Install and service equipment in Chandler.</p><a href="{site}/apply/step1">Apply now »'
+               '</a><footer><p>Get job alerts</p><form id="alerts" method="post" action="/job-alerts"><label for="ae">'
+               'Email</label><input id="ae" name="ae" type="email"><button type="submit">Subscribe</button></form>'
+               '</footer></body></html>')
+    step1 = ('<html><head><meta charset="utf-8"><title>Acme Fab application</title></head><body><div>current step 1 of 2</div>'
+             '<h2>My Information</h2><form method="post" action="/review"><label for="fn">First Name *</label>'
+             '<input id="fn" name="fn" required><label for="ln">Last Name *</label><input id="ln" name="ln" required>'
+             '<button type="submit">Next ›</button><button type="button">Submit Application</button></form></body></html>')
+    review = ('<html><body><div>current step 2 of 2</div><h2>Review</h2><form method="post" action="/posted">'
+              '<button type="submit">Submit Application</button></form></body></html>')
+    pages = {f"{site}/jobs/1": posting, f"{site}/apply/step1": step1, ("POST", f"{site}/review"): review}
+    posts: list[str] = []
+    job = srv.add_job(url=f"{site}/jobs/1", title="FSE", company="Acme Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        await _serve(srv, pages, posts)
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert r.log[1] == "clicked “Apply now »”", r.log  # nothing filled on the posting first
+    assert "clicked “Next ›”" in r.log and posts == [f"{site}/review"], (posts, r.log)
+    assert r.status == "ready", (r.reason, r.log)
