@@ -343,6 +343,11 @@ def _full_name(prof: Profile, job: dict) -> str | None:
     return prof.full_name or None
 
 
+def _preferred_full_name(prof: Profile, job: dict) -> str | None:
+    first = prof.get("personal.preferred_name") or prof.get("personal.first_name")
+    return " ".join(str(x).strip() for x in (first, prof.get("personal.last_name")) if x) or None
+
+
 def _state(prof: Profile, job: dict) -> str | None:
     s = prof.get("personal.address.state")
     if s and str(s).upper() in US_STATES:
@@ -391,7 +396,8 @@ def _previously_employed(prof: Profile, job: dict, label: str = "") -> str | Non
     asked = norm(label)
     first = re.escape(company.split()[0])
     names_it = re.search(rf"\b(employ\w*|work\w*|intern\w*|contract\w*)( \w+){{0,3}}? (by|for|at|with|of) (the )?{first}\b"
-                         rf"|\b{first}( \w+)? (employee|employment|intern|contractor)s?\b", asked)
+                         rf"|\b{first}( \w+)? (employee|employment|intern|contractor)s?\b"
+                         rf"|\bhired\b.{{0,60}}? (by|with|at) (the )?{first}\b", asked)
     if not (names_it or re.search(r"(employed|worked) (by|for|at|with) (us|this|our|the company)\b|former employee", asked)):
         return None
     if re.search(rf"\b{first}( \w+){{0,2}} (tools?|systems?|equipment|products?|software|technolog\w*|machines?|platforms?|"
@@ -401,7 +407,8 @@ def _previously_employed(prof: Profile, job: dict, label: str = "") -> str | Non
     entries = [e for e in _listed(prof.get("work_history")) if isinstance(e, dict)]
     past += [norm(e.get("company")) for e in entries]
     if not any(_same_employer(c, company) for c in past if c):
-        return "No"
+        # "...or any of its subsidiaries or affiliates": the profile can't say it's none of those
+        return None if re.search(r"\b(subsidiar|affiliat)", asked) else "No"
     now = [norm(e.get("company")) for e in entries if is_present(e.get("end")) or e.get("current") is True]
     now.append(norm(prof.get("experience.current_company")))
     return "Yes, currently" if any(_same_employer(c, company) for c in now if c) else "Yes, previously"
@@ -529,7 +536,8 @@ _SOMEONE_ELSE = re.compile(r"\b(referen\w*|referee\w*|emergency|next of kin|supe
 # its section's ("Most Recent Employer", "High School")
 _OTHER_PARTY_LABEL = re.compile(r"\b(employer\w*|company|business|school)\b")
 _OTHER_PARTY_SECTION = re.compile(r"\b(employer\w*|school)\b")
-_CONTACT_RULES = {"email", "first_name", "middle_name", "last_name", "preferred_name", "full_name", "phone_type",
+_CONTACT_RULES = {"email", "first_name", "middle_name", "last_name", "preferred_name", "preferred_full_name", "full_name",
+                  "phone_type",
                   "phone_code", "phone_ext", "phone", "address1", "address2", "city", "postal_ext", "postal",
                   "county", "state", "country"}
 
@@ -548,6 +556,8 @@ RULES: list[tuple[str, str, Getter, int | None, set[str] | None]] = [
     ("first_name", r"^(legal )?(first|given)( name)?$|^(legal )?first name|^given name|^forename", _p("personal.first_name"), 45, None),
     ("middle_name", r"^middle (name|initial)", _p("personal.middle_name"), 45, None),
     ("last_name", r"^(legal )?(last|family|sur)( ?name)?$|^(legal )?(last|family) name|^surname", _p("personal.last_name"), 45, None),
+    # American Express's Oracle form: "Preferred Full Name", the name the person goes by and their last name
+    ("preferred_full_name", r"^preferred full name", _preferred_full_name, 45, None),
     ("preferred_name", r"^preferred (first )?name|^nick ?name", lambda p, j: p.get("personal.preferred_name") or p.get("personal.first_name"), 45, None),
     ("full_name", r"^(full |legal |your |candidate )?(full )?name$|^full (legal )?name|^legal name", _full_name, 45, None),
     ("phone_type", r"phone (device )?type|type of phone", lambda p, j: p.get("personal.phone_type", "Mobile"), 45, None),
@@ -621,7 +631,8 @@ RULES: list[tuple[str, str, Getter, int | None, set[str] | None]] = [
      r"|(monthly|per month|hourly|per hour|weekly|per week) .{0,25}(salary|compensation|pay\b|rate)", lambda p, j: None, None, None),
     ("salary", r"salary|compensation|pay (expectation|requirement)|desired pay|expected pay", _p("preferences.desired_salary"), None, None),
     ("start_date", r"start date|available to start|earliest (date|start)|when can you start|notice period", _p("preferences.earliest_start"), None, None),
-    ("previous_employee", r"(previously|ever|formerly) (been )?(employed|worked)|former employee|have you (ever )?worked (for|at)|worked .{0,40} before",
+    ("previous_employee", r"(previously|ever|formerly) (been )?(employed|worked)|former employee|have you (ever )?worked (for|at)|worked .{0,40} before|"
+     r"have you (ever )?been hired\b",
      _previously_employed, None, None),  # (only about this employer: see _previously_employed)
     # voluntary self-identification
     ("sexual_orientation", r"sexual orientation", _p("eeo.sexual_orientation"), None, None),

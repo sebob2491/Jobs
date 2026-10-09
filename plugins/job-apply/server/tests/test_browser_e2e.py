@@ -961,3 +961,29 @@ def test_answers_a_page_loses_in_a_quick_run_of_fills_are_put_in_again(srv):
     assert 1 <= times.get("Phone", 0) <= browser_module.LOST_FILL_TRIES and "Notes" not in times, times
     run(srv.fill_form([{"id": middle["id"], "value": "K"}]))
     assert run(cleared())["Phone"] == times["Phone"]
+
+
+def test_a_lookup_still_showing_its_opening_list_is_waited_on(srv):
+    """Mayo Clinic's Oracle City (live, Oct 2026) lists places from "Aaron, Clinton, KY" when
+    it opens; a moment after "Chandler" is typed it shows that list with "Westover AFB" at its
+    top, and only then its results. The desk read the list in between, found no Chandler in
+    it and gave up: City was asked though the profile has it."""
+    run(srv.open_application(url=fixture_url("site/oracle-address.html") + "?stale"))
+    fields = run(srv.browser.inspect(True))["fields"]
+    city = next(f for f in fields if f["label"].startswith("City"))
+    results = run(srv.browser.fill([{"id": city["id"], "value": "Chandler", "near": ["Maricopa", "AZ", "85225"]}]))
+    assert results[0]["ok"], results
+    page = run(srv.browser.page())
+    assert run(page.evaluate("() => window.picked.city")) == "Chandler, Maricopa, AZ"
+
+
+def test_a_long_requirement_row_is_its_questions_label_not_its_number(srv):
+    """Phoenix Children's qualifications (live, Oct 2026) are a table of rows "5. | <the
+    requirement> | Yes / No". A requirement too long to read as a label left its question
+    called "5.", which tells the person nothing."""
+    run(srv.open_application(url=fixture_url("site/qualification-table.html")))
+    labels = [f["label"] for f in run(srv.browser.inspect(False))["fields"]]
+    assert labels[0] == "Three (3+) or more years of experience in accounting. Required"
+    assert labels[1].startswith("Experience in system integrated Enterprise Resource Planning (ERP)")
+    assert labels[1].endswith("…") and len(labels[1]) <= 300
+    assert labels[2] == "I Agree"

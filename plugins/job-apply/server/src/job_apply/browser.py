@@ -86,6 +86,7 @@ def _accepts_cookies(label: str, text: str, in_banner: bool) -> bool:
 # "Apply". With nothing in the form to fill, it opens the application; it sends nothing.
 POSTING_PAGE_RE = re.compile(r"career(?:_|%5f)ns=job(?:_|%5f)listing(?:&|#|$)", re.I)
 SHORT_MENU = 12  # a menu this short shows every choice; a longer one may show only some
+STALE_SHARE = 0.8  # a menu sharing this much of the list it opened with, after a search, may not have its results yet
 POPUP_FOLLOW = 15  # seconds after a click of ours in which a tab it opens is followed
 FRAME_WAIT = 8  # seconds for a job board's frame (iCIMS's openings) to load its page, all told
 SETTLE_WAIT = 8  # seconds for a job board's page to stop loading things, at most
@@ -200,6 +201,19 @@ def _search_words(text: str) -> str:
     America" does."""
     words = re.sub(r"\([^)]*\)|\+\d+|[^\w\s,.'&/-]", " ", text)
     return re.sub(r"\s+", " ", words).strip() or text
+
+
+def _stale_list(options: list[str], opened: list[str], query: str) -> bool:
+    """A picker's menu still showing the list from before a search: the same, or mostly the
+    same with nothing in it that has the words searched for (Mayo Clinic's Oracle City, live,
+    showed "Westover AFB, Hampden, MA" above its "Aaron, Clinton, KY…" a moment after the
+    typing, and its results for "Chandler" came after that)."""
+    if not options or not opened:
+        return False
+    if options == opened:
+        return True
+    return (len(set(options) & set(opened)) >= STALE_SHARE * len(options)
+            and not any(norm(query) in norm(o) for o in options))
 
 
 class BrowserSession:
@@ -1183,7 +1197,7 @@ class BrowserSession:
             await loc.fill("")
             await loc.press_sequentially(query, delay=30)
             options = await self._field_options(page, field["id"], loc, 2500)
-            if options and options == opened and not await loc.evaluate(WORKDAY_PROMPT_JS):
+            if _stale_list(options, opened, query) and not await loc.evaluate(WORKDAY_PROMPT_JS):
                 # still the list from before the search (Oracle's ZIP lists "00000, …" on opening):
                 # its results come a moment later
                 options = await self._results_for(page, field["id"], loc, query, 3000) or options

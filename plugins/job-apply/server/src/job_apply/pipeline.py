@@ -969,7 +969,8 @@ class Applier:
                 greyed = [a for a in data.get("actions") or [] if a.get("is_submit") and a.get("disabled")
                           and not a.get("aside")] or _greyed_step(data)
                 if greyed:
-                    said = "; ".join(e for e in data.get("errors") or [] if _ERRORISH.search(e))[:300]
+                    said = "; ".join(e for e in data.get("errors") or [] if _ERRORISH.search(e))[:300] \
+                        or _unanswered(data)
                     return self._pause(run, "stuck", f"\u201c{greyed[0]['text']}\u201d is greyed out, so the site still "
                                        "wants something" + (f": {said}" if said else ".") +
                                        " Fix it in the browser, then press Resume.")
@@ -1525,6 +1526,17 @@ def _account_step(data: dict[str, Any]) -> bool:
     return (not data.get("fields") and bool(_ACCOUNT_PAGE.search(about))
             and any(_CREATE_ACCOUNT.match(final_text(a["text"])) and not a.get("disabled")
                     for a in data.get("actions") or []))
+
+
+def _unanswered(data: dict[str, Any]) -> str:
+    """The required boxes still empty, by name, for a page whose Next is greyed out and that
+    says nothing itself: Phoenix Children's waits on its "I Agree", which is the person's."""
+    left = [f["label"] for f in data.get("fields") or [] if f.get("required") and f.get("label")
+            and not f.get("disabled") and f.get("kind") != "file" and is_empty_value(f.get("value"))]
+    if not left:
+        return ""
+    names = ", ".join(f"\u201c{label[:80]}\u201d" for label in left[:3]) + (" and more" if len(left) > 3 else "")
+    return names + (" isn't answered." if len(left) == 1 else " aren't answered.")
 
 
 def _greyed_step(data: dict[str, Any]) -> list[dict[str, Any]]:

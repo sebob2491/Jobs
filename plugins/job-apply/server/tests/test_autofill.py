@@ -741,3 +741,26 @@ def test_how_did_you_first_hear():
                         {"company": "Mayo Clinic"})
     assert ans.value == "Mayo Clinic Career Site"
     assert resolve_field(f("Where did you first learn of this job?"), prof()).value == "Company Website"
+
+
+def test_a_preferred_full_name():
+    """American Express's Oracle form (live, Oct 2026) requires a "Preferred Full Name", which
+    the desk asked for: the name the person goes by, then their last name."""
+    assert resolve_field(f("Preferred Full Name"), prof()).value == "Sam Rivera"
+    assert resolve_field(f("Preferred Name"), prof()).value == "Sam"
+    assert resolve_field(f("Emergency contact: preferred full name"), prof()) is None
+
+
+def test_hired_before_by_this_employer():
+    """American Express (live, Oct 2026): "Have you been hired at any time in the past for a
+    position with American Express Company or any of its subsidiaries or affiliates?" is about
+    working there before. The profile can say Yes; it can't say No for the subsidiaries."""
+    yes_no = ["Yes", "No"]
+    asked = ("Have you been hired at any time in the past for a position with American Express Company or any of its "
+             "subsidiaries or affiliates?")
+    amex = {"company": "American Express"}
+    assert resolve_field(f(asked, "radio_group", options=yes_no), prof(), amex) is None
+    assert resolve_field(f("Have you been hired at any time in the past by American Express?", "radio_group",
+                           options=yes_no), prof(), amex).value == "No"
+    assert resolve_field(f("Have you been hired at any time in the past for a position with Intel or its subsidiaries?",
+                           "radio_group", options=yes_no), prof(), {"company": "Intel Corporation"}).value == "Yes"
