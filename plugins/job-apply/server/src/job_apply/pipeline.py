@@ -986,9 +986,6 @@ class Applier:
                 if blank:
                     return self._pause(run, "stuck", "The page stayed blank: the site may be slow or down. Reload it "
                                        "in the browser, then press Resume.")
-                if closed := _closed_notice(data, text):
-                    return self._pause(run, "stuck", f"{_site(run, data)} says this posting has closed: \u201c{closed}\u201d "
-                                       "There's nothing to apply to, so skip this job.")
                 agree = next((a for a in data.get("actions") or [] if _AGREEMENT.search(a["text"].strip())
                               and not a.get("cookie") and "cookie" not in a["text"].lower()
                               and not a.get("disabled")), None)
@@ -1005,6 +1002,9 @@ class Applier:
                                 "window; the desk carries on by itself after that.", seen=data)
                     run.hold_host = run.paused_host
                     return
+                if closed := _closed_notice(data, text):  # only where nothing else explains the stop
+                    return self._pause(run, "stuck", f"{_site(run, data)} says this posting has closed: \u201c{closed}\u201d "
+                                       "There's nothing to apply to, so skip this job.")
                 return self._pause(run, "stuck", "I couldn't find the button that moves this application on. "
                                    "Take it a step further in the browser, then press Resume.")
             key = (data.get("url"), tuple(data.get("headings") or []), action["text"].strip().lower())
