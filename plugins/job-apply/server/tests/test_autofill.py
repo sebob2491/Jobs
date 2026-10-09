@@ -981,3 +981,29 @@ def test_a_veteran_question_and_a_family_members_are_answered_as_asked():
     # a family word in passing doesn't make it someone else's question
     assert resolve_field(f("We are an equal opportunity employer and partner with veterans. Veteran Status", "select",
                            options=status), prof()).value == "I am not a protected veteran"
+
+
+def test_a_citizen_is_a_us_person_and_eligibility_is_authorization():
+    """"Are you a U.S. citizen or permanent resident?" waited on a us_person answer that a
+    citizen's profile needn't give; "Can you provide proof of eligibility to work in the US?"
+    and "...legally eligible for employment..." weren't read as work authorization; and
+    "Race of your household members" got the person's own race."""
+    import yaml
+    from job_apply import config
+
+    path = config.profile_path()
+    data = yaml.safe_load(path.read_text())
+    auth = {k: v for k, v in data["work_authorization"].items() if k != "us_person"}
+    path.write_text(yaml.safe_dump({**data, "work_authorization": {**auth, "us_citizen": True},
+                                    "eeo": {**data["eeo"], "race": "White"}}))
+    yes_no = ["Yes", "No"]
+
+    def answer(label, options=yes_no):
+        a = resolve_field(f(label, "radio_group", options=options), prof())
+        return a and a.value
+
+    assert answer("Are you a U.S. citizen or permanent resident?") == "Yes"
+    assert answer("Are you a US citizen, permanent resident, refugee or asylee?") == "Yes"
+    assert answer("Can you provide proof of eligibility to work in the US upon hire?") == "Yes"
+    assert answer("Are you legally eligible for employment in the United States?") == "Yes"
+    assert answer("Race of your household members", ["White", "Black", "Asian"]) is None

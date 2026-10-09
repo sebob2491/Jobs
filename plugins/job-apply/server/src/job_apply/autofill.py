@@ -536,7 +536,7 @@ def _expected_graduation(prof: Profile, job: dict) -> Any:
     return "Not currently attending school"
 
 
-_AUTHORIZED = r"authori[sz]ed to work|eligible to work|legally (able|permitted|allowed) to work|right to work|" \
+_AUTHORIZED = r"authori[sz]ed to work|eligible to work|eligibility to work|eligible for employment|legally (able|permitted|allowed) to work|right to work|" \
               r"work authori[sz]ation|employment eligibility|unrestricted authori[sz]ation"
 
 
@@ -607,6 +607,15 @@ def _veteran(prof: Profile, job: dict, label: str = "") -> Any:
             and polarity(v) is False and re.search(r"\bprotected\b", norm(v)):
         return None
     return v
+
+
+def _us_person(prof: Profile, job: dict) -> Any:
+    """A U.S. person (a citizen, permanent resident, refugee or asylee): the profile's answer,
+    or Yes for a U.S. citizen, who is one."""
+    v = prof.get("work_authorization.us_person")
+    if isinstance(v, bool):
+        return "Yes" if v else "No"
+    return "Yes" if prof.get("work_authorization.us_citizen") is True else None
 
 
 def _employed_now(prof: Profile, job: dict) -> Any:
@@ -698,7 +707,7 @@ _EEO_RULES = {"gender", "hispanic", "race", "veteran", "disability"}
 # A question about someone in the person's family ("Gender of your spouse", "Are you the spouse of a veteran?"),
 # not a family word in passing ("we partner with veterans", "family and medical leave")
 _FAMILY = re.compile(r"\b(your|their) (spouse|husband|wife|partner|parents?|child(ren)?|dependents?|relatives?|family"
-                     r"( members?)?|next of kin)\b|\b(spouse|husband|wife|widow\w*|partner|parent|child|dependent|relative|"
+                     r"( members?)?|household( members?)?|next of kin)\b|\bhousehold members?\b|\b(spouse|husband|wife|widow\w*|partner|parent|child|dependent|relative|"
                      r"family member) of (a|an|the|any)\b")
 _CONTACT_RULES = {"email", "first_name", "middle_name", "last_name", "preferred_name", "preferred_full_name", "full_name",
                   "phone_type",
@@ -778,7 +787,7 @@ RULES: list[tuple[str, str, Getter, int | None, set[str] | None]] = [
     # also comes with other questions, e.g. Micron's "are you a citizen of Cuba, Iran ...?"
     ("us_person", r"^(?!.*\b(other than|another country|any (other )?country|foreign)\b).*"
      r"(\bu ?s person\b|citizen.{0,80}(permanent resident|green card|refugee|asyl|protected individual))",
-     _yn("work_authorization.us_person"), None, None),
+     _us_person, None, None),
     ("us_citizen", r"are you a (u s|united states) citizen\b|are you a citizen of the (u s|united states)( of america)?$",
      _yn("work_authorization.us_citizen"), None, None),
     # TI: "Do you currently hold an H, L, E, J, or F nonimmigrant visa?" A citizen holds none
