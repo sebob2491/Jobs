@@ -348,6 +348,32 @@ def test_an_account_specialist_isnt_near_an_accountant():
     assert "not one of your target titles" in score_listing({**fresh, "title": "Staff Accountant"}, sales).concerns
 
 
+def test_a_job_away_from_the_persons_places_says_so():
+    """Freeport-McMoRan's Accountant I openings at its Bagdad and Morenci mines, hours from
+    Phoenix, were preselected at 85 for a made-up finance applicant who named Phoenix, Tempe and
+    Chandler (a live Find jobs run, Oct 2026). Away from the person's metro area, a job says so,
+    and isn't preselected for someone who'd rather not relocate. Remote jobs, state-only places
+    and lists of many places aren't judged."""
+    places = {"titles": ["Accountant"], "locations": ["Phoenix, AZ", "Tempe, AZ", "Chandler, AZ"]}
+    stays = tech(preferences={**places, "willing_to_relocate": False})
+    moves = tech(preferences={**places, "willing_to_relocate": True})
+    fresh = {"title": "Accountant I", "posted": "2026-10-05"}
+    mine = {**fresh, "location": "Bagdad, AZ, US, 86321"}
+    far = score_listing(mine, stays, today=TODAY)
+    assert not far.recommended and any("Bagdad, AZ" in c and "relocate" in c for c in far.concerns), far
+    moving = score_listing(mine, moves, today=TODAY)
+    assert moving.recommended and any("Bagdad, AZ" in c for c in moving.concerns), moving
+    for where in ("Mesa, AZ", "Remote, AZ, United States", "Dallas, TX, US, 75270 (+80 more); Arizona", "2 Locations",
+                  "Arizona", "AZ - Scottsdale Corporate", "tucson-az; Phoenix, AZ"):
+        fit = score_listing({**fresh, "location": where}, stays, today=TODAY)
+        assert fit.recommended and not any("away from" in c for c in fit.concerns), (where, fit)
+    assert any("Tucson, AZ" in c for c in score_listing({**fresh, "location": "tucson-az"}, stays, today=TODAY).concerns)
+    # iCIMS writes the country and state first
+    assert any("Bagdad, AZ" in c for c in score_listing({**fresh, "location": "US-AZ-Bagdad"}, stays, today=TODAY).concerns)
+    for where in ("US-AZ-Ahwatukee", "US-AZ-Phoenix | US-TX-Austin"):
+        assert score_listing({**fresh, "location": where}, stays, today=TODAY).recommended, where
+
+
 def test_a_posting_asking_for_far_more_experience_isnt_preselected():
     """A "Human Resources Business Partner" posting asked a made-up applicant with about 5 years
     for 10+, and was still preselected at 83 (a live Find jobs run, Oct 2026). Far short, it's
