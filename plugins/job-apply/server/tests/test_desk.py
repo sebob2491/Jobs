@@ -203,8 +203,10 @@ def test_desk_page_buttons_reach_the_api(srv, tmp_path):
                 # not left sitting in the page (cleared once the save returns; the page's own
                 # refresh can show it saved a moment before that)
                 await page.wait_for_function("() => document.getElementById('pw').value === ''", timeout=5000)
-                # another system's password (Edwards, Qorvo and Amkor are on SuccessFactors)
+                # another system's password (Edwards, Qorvo and Amkor are on SuccessFactors), named
+                # with the employers on the person's lists that use it
                 assert await page.locator("#pw-state [data-site=successfactors].good").count() == 0
+                assert "Edwards" in await page.locator("#pw-site option[value=successfactors]").inner_text()
                 await page.select_option("#pw-site", "successfactors")
                 await page.fill("#pw", "another-one")
                 await page.click("#pw-form button[type=submit]")
@@ -883,3 +885,23 @@ def test_the_desk_reads_an_icims_posting_in_its_browser(srv, monkeypatch):
         run(desk.read_in_browser("https://careers-aco.icims.com/jobs/1/x/job"))
     with pytest.raises(FetchError):
         run(desk.read_in_browser("https://boards.greenhouse.io/aco/jobs/1"))
+
+
+def test_the_password_list_names_the_persons_own_employers(job_apply_home):
+    """The desk page named only the semiconductor list's employers by each job system ("Workday:
+    Intel, Applied, KLA and 10 more"), whatever lists a person searches. Someone on the Phoenix
+    list sees its employers, their own first, and it's read again when their file changes."""
+    from job_apply import desk as desk_module
+
+    desk_module._systems = None
+    own = job_apply_home / "companies.yaml"
+    own.write_text("lists: [phoenix-metro]\ncompanies:\n"
+                   "  - {name: Example Credit Union, careers_url: 'https://e.example', ats: ukg}\n")
+    systems = {s["value"]: s["label"] for s in desk_module.password_systems()}
+    assert systems["workday"].startswith("Workday: Banner Health, HonorHealth, Arizona State University and "), systems
+    assert systems["ukg"] == "UKG Pro: Example Credit Union, Desert Financial Credit Union"
+    assert systems["applicantstack"] == "ApplicantStack"  # no employer on these lists uses it
+    own.write_text("lists: [phoenix-metro]\ncompanies: []\n")
+    os.utime(own, (time.time() + 5, time.time() + 5))  # a later change than the first write
+    assert {s["value"]: s["label"] for s in desk_module.password_systems()}["ukg"] == \
+        "UKG Pro: Desert Financial Credit Union"
