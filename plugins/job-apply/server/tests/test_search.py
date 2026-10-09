@@ -199,6 +199,8 @@ def test_hr_and_human_resources_are_the_same_in_a_title():
     assert not title_matches("Hospital Unit Clerk", "hr")
     assert not title_matches("Registered Nurse - 36 Hrs Nights", "human resources | hr")
     assert not title_matches("Pharmacy Tech 32 Hrs/Wk", "hr | recruiter")
+    assert not title_matches("Registered Nurse - ICU - 12 Hr Nights", "human resources | hr generalist")
+    assert not title_matches("Security Officer 24 Hr Shift", "hr")
 
 def test_search_all_backends():
     seen.clear()
@@ -1465,3 +1467,118 @@ def test_an_icims_later_page_that_wont_load_keeps_what_was_found():
 
     with pytest.raises(TimeoutError):
         asyncio.run(icims_search(down, "careers-x", "recruiter", []))
+
+
+def test_a_taleo_career_section_is_searched_with_its_own_pages_request():
+    """Kforce's internal jobs (a Taleo career section, Oct 2026): the page's own JSON search,
+    which answers HTTP 500 without its time zone headers. Each row's columns are the title, its
+    places ("Arizona-Phoenix", as a JSON list in a string) and the date posted. Its total can be
+    more than it lists, so a short page ends the reading."""
+    asked = []
+
+    def row(i, place, when="Oct 7, 2026"):
+        return {"jobId": str(9000 + i), "contestNo": str(26000 + i), "linkedColumn": 0, "locationsColumns": [1],
+                "column": [f"Recruiter {i}", json.dumps([place]), when]}
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        assert request.method == "POST" and request.headers.get("tz") and request.headers.get("tzname")
+        assert str(request.url) == "https://myhiring.kco.com/careersection/rest/jobboard/searchjobs?lang=en&portal=101"
+        body = json.loads(request.content)
+        asked.append((body["fieldData"]["fields"]["KEYWORD"], body["pageNo"]))
+        rows = [row(i, "Texas-Dallas") for i in range(25)] if body["pageNo"] == 1 else [
+            row(30, "Arizona-Phoenix"), row(31, "Florida-EE Specific City - WFH", "Sep 1, 2026")]
+        return httpx.Response(200, json={"requisitionList": rows,
+                                         "pagingData": {"currentPageNo": body["pageNo"], "pageSize": 25, "totalCount": 90}})
+
+    async def go():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(answer)) as client:
+            return await search_companies("recruiter", location="AZ", client=client, companies=[
+                {"name": "K Co", "search": {"taleo": {"host": "myhiring.kco.com", "section": "ex", "portal": "101"}}}])
+    out = asyncio.run(go())
+    assert asked == [("recruiter", 1), ("recruiter", 2)]
+    assert [(r["title"], r["location"], r["posted"], r["url"]) for r in out["results"]] == [
+        ("Recruiter 30", "Phoenix, Arizona", "2026-10-07",
+         "https://myhiring.kco.com/careersection/ex/jobdetail.ftl?job=26030&lang=en")]
+    assert not out["errors"]
+
+
+VALLEYWISE_PAGE = """<div class="jobs-section__item p-3"><div class="row"><div class="col-12">
+<h4><a href="https://jobs.vwco.org/jobs/2231639-team-specialist">Team Specialist</a></h4>
+<a class="btn" href="#" onclick="return pmApplyURL('/jobs/2231639-team-specialist/record_apply_start_return_url');">Apply Now</a>
+<div class="row"><div class="col-xs-12 col-sm-6 jobcardtext"><i class="fas fa-map-marker" title="Location"></i>
+ Mesa, AZ, United States </div><div class="col-xs-12 col-sm-6 jobcardtext"><i class="fas fa-sitemap" title="Department"></i>
+ BH Specialty Clinic - Mesa </div></div></div></div></div>
+<div class="jobs-section__item p-3"><h4><a href="/jobs/2230959-hr-specialist">HR Specialist</a></h4>
+<div class="jobcardtext"><i class="fas fa-map-marker"></i> Phoenix, AZ, United States</div></div>"""
+
+
+def test_a_talemetry_job_site_is_read_page_by_page():
+    """Valleywise Health's Symplr (Talemetry) job site: results drawn on the server, 25 a page,
+    each with its place beside a map marker."""
+    from job_apply.search import parse_talemetry
+
+    rows = parse_talemetry(VALLEYWISE_PAGE, "https://jobs.vwco.org")
+    assert [(r.title, r.location, r.url, r.external_id) for r in rows] == [
+        ("Team Specialist", "Mesa, AZ, United States", "https://jobs.vwco.org/jobs/2231639-team-specialist", "2231639"),
+        ("HR Specialist", "Phoenix, AZ, United States", "https://jobs.vwco.org/jobs/2230959-hr-specialist", "2230959")]
+    asked = []
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        asked.append(str(request.url))
+        return httpx.Response(200, text=VALLEYWISE_PAGE)
+
+    async def go():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(answer)) as client:
+            return await search_companies("specialist", location="AZ", client=client, companies=[
+                {"name": "VW Co", "search": {"talemetry": "https://jobs.vwco.org"}}])
+    out = asyncio.run(go())
+    assert asked == ["https://jobs.vwco.org/jobs/search?q=specialist&page=1"]  # a short page: no more to read
+    assert [r["title"] for r in out["results"]] == ["HR Specialist", "Team Specialist"]
+
+
+PCH_PAGE = """<div class="blog-item"><div class="row position"><div class="col-12 col-lg-9 blog-content">
+<h2><a href="/Positions/Posting/1064100">Talent Acquisition Coordinator</a></h2>
+<div class="d-block d-lg-none mb-3">Recruitment | Full-Time | Phoenix<br/></div>
+<article><strong>Posting Note:</strong> Join our recruiting team.</article></div></div></div>
+<div class="blog-item"><h2><a href="/Positions/Posting/982403">Allergist Immunologist</a></h2>
+<div class="d-block">Allergy and Immunology | Full-Time | Glendale</div></div>
+<div class="blog-item"><h2><a href="/Positions/Posting/990001">Recruiter</a></h2>
+<div class="d-block">Recruitment | Full-Time | Remote</div></div>"""
+
+
+def test_phoenix_childrens_board_is_read_whole_and_filtered_by_title():
+    """Phoenix Children's own job site lists every opening (about 300) on one page, each with
+    "department | schedule | place"; its places are Phoenix-area towns."""
+    asked = []
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        asked.append(str(request.url))
+        return httpx.Response(200, text=PCH_PAGE)
+
+    async def go():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(answer)) as client:
+            return await search_companies("talent acquisition | recruiter", location="AZ", client=client, companies=[
+                {"name": "PCH Co", "search": {"phoenixchildrens": "https://careers.pchco.org"}}])
+    out = asyncio.run(go())
+    assert asked == ["https://careers.pchco.org/Positions/"]  # the whole board, once
+    assert [(r["title"], r["location"], r["url"]) for r in out["results"]] == [
+        ("Recruiter", "Remote", "https://careers.pchco.org/Positions/Posting/990001"),  # (a remote one: no town)
+        ("Talent Acquisition Coordinator", "Phoenix, AZ", "https://careers.pchco.org/Positions/Posting/1064100")]
+
+
+def test_a_taleo_rows_odd_columns():
+    """Another Taleo site's rows: a place as plain text, not a JSON list; a row without its
+    title column named."""
+    def answer(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"requisitionList": [
+            {"contestNo": "1", "linkedColumn": None, "locationsColumns": [1],
+             "column": ["Recruiter", "Arizona-Tempe", "Sep 30, 2026"]},
+            {"contestNo": "2", "linkedColumn": 0, "locationsColumns": [1, 7], "column": ["HR Generalist", '"Texas-Dallas"']}],
+            "pagingData": {"pageSize": 25}})
+
+    async def go():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(answer)) as client:
+            return await search_module._taleo(client, {"host": "jobs.tco.com", "portal": "1"}, "", 20, [])
+    found = asyncio.run(go())
+    assert [(x.title, x.location, x.posted) for x in found] == [
+        ("Recruiter", "Tempe, Arizona", "2026-09-30"), ("HR Generalist", "Dallas, Texas", "")]

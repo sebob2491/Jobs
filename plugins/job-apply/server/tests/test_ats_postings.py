@@ -220,3 +220,19 @@ def test_job_systems_on_the_phoenix_employers_own_addresses():
                      ("https://jobs.northropgrumman.com/careers/job/3", "eightfold"),
                      ("https://careers.insight.com/careers/job/4", "eightfold")):
         assert detect_ats(url) == ats, url
+
+
+def test_a_menus_link_to_the_job_list_isnt_the_postings_apply_link():
+    """Phoenix Children's postings (live, Oct 2026): the menu's "Browse & Apply" goes to the whole
+    job list, and the posting's own "Apply!" to its form on the same page. Taken for the apply
+    link, the list sent the desk to the first posting on it: another job."""
+    page = ("<html><head><title>Talent Acquisition Coordinator</title></head><body>"
+            '<nav><a href="/Positions/">Browse &amp; Apply</a><a href="/Positions/Search">Search and apply</a></nav>'
+            '<main><h2>Talent Acquisition Coordinator</h2><a href="#apply">Apply!</a><p>Coordinate interviews.</p>'
+            '<form id="apply" action="/Position/Apply" method="post"><input name="FirstName"></form></main></body></html>')
+    p = parse_html(page, "https://careers.pchco.org/Positions/Posting/1064100")
+    assert p.apply_url == ""  # applied on the posting's own page
+    page = page.replace('<a href="#apply">Apply!</a>', '<a href="https://apply.example.com/job/1064100" '
+                        'aria-label="Apply for Executive Search Consultant">Apply</a>')  # "search" in its title
+    assert parse_html(page, "https://careers.pchco.org/Positions/Posting/1064100").apply_url == \
+        "https://apply.example.com/job/1064100"

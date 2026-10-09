@@ -87,7 +87,7 @@ def _accepts_cookies(label: str, text: str, in_banner: bool) -> bool:
 POSTING_PAGE_RE = re.compile(r"career(?:_|%5f)ns=job(?:_|%5f)listing(?:&|#|$)", re.I)
 SHORT_MENU = 12  # a menu this short shows every choice; a longer one may show only some
 POPUP_FOLLOW = 15  # seconds after a click of ours in which a tab it opens is followed
-FRAME_WAIT = 10  # seconds for a job board's frame (iCIMS's openings) to load its page, all told
+FRAME_WAIT = 8  # seconds for a job board's frame (iCIMS's openings) to load its page, all told
 SETTLE_WAIT = 8  # seconds for a job board's page to stop loading things, at most
 # How long a click may wait for its button to become clickable, in ms.
 CLICK_TIMEOUT = 8000
@@ -452,7 +452,10 @@ class BrowserSession:
 
     @staticmethod
     async def _shown(frame: Frame) -> bool:
-        """Is this frame on show (a CAPTCHA's box or picture check), not kept hidden on the page?"""
+        """Is this frame on show (a CAPTCHA's box or picture check), not kept hidden on the page?
+        An invisible reCAPTCHA's badge (size=invisible) is on show but asks nothing."""
+        if re.search(r"[?&]size=invisible\b", frame.url):
+            return False
         try:
             element = await frame.frame_element()
             box = await element.bounding_box()

@@ -303,7 +303,7 @@ async def search_company_jobs(
 ) -> dict[str, Any]:
     """Search employers' own careers sites for openings through their applicant tracking
     system's public search: Workday, Greenhouse, Lever, Eightfold, SmartRecruiters, Oracle,
-    ApplicantStack. ASML's site, iCIMS portals, Paycom and UKG Pro boards and SuccessFactors'
+    ApplicantStack, Taleo, Talemetry, and Phoenix Children's own site. ASML's site, iCIMS portals, Paycom and UKG Pro boards and SuccessFactors'
     newer search (Edwards) and older career sites (Amkor) and Infor CloudSuite boards (Benchmark)
     are read in a background browser tab.
 

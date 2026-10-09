@@ -2369,3 +2369,58 @@ def test_arrow_buttons_on_a_posting_and_a_step(srv, monkeypatch):
     assert r.log[1] == "clicked “Apply now »”", r.log  # nothing filled on the posting first
     assert "clicked “Next ›”" in r.log and posts == [f"{site}/review"], (posts, r.log)
     assert r.status == "ready", (r.reason, r.log)
+
+
+def test_apply_online_and_a_page_with_only_a_captcha():
+    """Kforce's Taleo postings go in through "Apply Online". A page with nothing but a CAPTCHA's
+    box (its frame isn't read) and a button is a bot check, not a page to press on from."""
+    acts = [{"id": "1", "text": "Apply Online"}, {"id": "2", "text": "Add to My Job Cart"}]
+    assert pick_next(acts, False)["text"] == "Apply Online"
+    gate = {"title": "Verify", "fields": [], "actions": [{"id": "1", "text": "Continue"}], "captcha": "A CAPTCHA..."}
+    assert classify(gate, "Please confirm to continue.") == "bot_check"
+    assert classify({**gate, "fields": [{"id": "f", "kind": "text", "label": "Email"}]}, "") == "form"
+
+
+def test_a_site_that_turns_the_browser_away_holds_nothing_up(srv, monkeypatch):
+    """Valleywise Health's postings answer the desk's browser with a bare "403 Forbidden" (live,
+    Oct 2026). There's nothing to solve: the person applies in their own browser, and the
+    queue isn't held for it as for a bot check."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    job = srv.add_job(url=fixture_url("site/forbidden.html"), title="Analyst", company="Example Health")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert r.need == "stuck" and not r.blocking, (r.need, r.reason)
+    assert "turned the desk's browser away (403 Forbidden)" in r.reason
+
+
+def test_a_page_that_doesnt_move_on_says_its_next_is_greyed_out(srv, monkeypatch):
+    """Phoenix Children's Quick Apply: the desk pressed the posting's "Apply!" (a link to the form,
+    already on show) three times and said the page didn't move on; its Next is greyed out until
+    a resume is attached, and the desk now says so."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 1)
+    job = srv.add_job(url=fixture_url("site/greyed-next.html"), title="TA Coordinator", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert r.need == "stuck" and "“Next” is greyed out" in r.reason, (r.reason, r.log)
+    assert not any("Apply!" in line for line in r.log), r.log  # a link to the form already on show: not pressed
