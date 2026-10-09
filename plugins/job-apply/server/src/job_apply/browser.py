@@ -89,6 +89,7 @@ SHORT_MENU = 12  # a menu this short shows every choice; a longer one may show o
 POPUP_FOLLOW = 15  # seconds after a click of ours in which a tab it opens is followed
 FRAME_WAIT = 8  # seconds for a job board's frame (iCIMS's openings) to load its page, all told
 SETTLE_WAIT = 8  # seconds for a job board's page to stop loading things, at most
+LOST_FILL_WAIT = 0.5  # seconds after filling for a page to mark the boxes whose answers it lost
 # How long a click may wait for its button to become clickable, in ms.
 CLICK_TIMEOUT = 8000
 CONFIRMATION_RE = re.compile(
@@ -904,6 +905,7 @@ class BrowserSession:
             page = await self.page()
             await self._close_menus(page)
             results = []
+            typed: list[tuple[dict, str]] = []
             known = dict(self._fields)  # the boxes as read before filling, by the ids given out then
             try:
                 for item in values:
@@ -919,13 +921,42 @@ class BrowserSession:
                             continue
                         outcome = await self._fill_one(page, field, item.get("value"))
                         results.append({"id": fid, "label": field.get("label", ""), "ok": True, "result": outcome})
+                        if outcome == "filled" and isinstance(item.get("value"), (str, int, float)):
+                            typed.append((field, str(item["value"])))
                     except Exception as e:  # report and keep going; one odd widget shouldn't stop the rest
                         results.append({"id": fid, "ok": False,
                                         "error": f"{type(e).__name__}: {str(e).splitlines()[0][:300]}",
                                         **({"options": e.entries} if isinstance(e, PickedAGroup) else {})})
+                if typed:
+                    await self._fill_lost(page, typed)
             finally:
                 await self._close_menus(page)  # none left open over the buttons, or over its own field
             return results
+
+    async def _fill_lost(self, page: Page, typed: list[tuple[dict, str]]) -> None:
+        """Fill again the boxes the page marks invalid while they still show what was put in:
+        its own record of them was lost. Insight's Eightfold form drops some of a quick run of
+        fills, then says "Email cannot be left blank" beside the address shown. One at a time,
+        emptied first (a framework ignores a box set to the value it already shows). A second
+        look after that, for one the page marked a little later."""
+        for _ in range(2):
+            await page.wait_for_timeout(LOST_FILL_WAIT * 1000)
+            again = False
+            for field, text in typed:
+                loc = self._locator(page, field["id"])
+                try:
+                    if not text or not await loc.evaluate("el => el.getAttribute('aria-invalid') === 'true'") \
+                            or norm(await loc.input_value(timeout=2000)) != norm(text):
+                        continue
+                    await loc.fill("")
+                    await loc.fill(text)
+                    await loc.evaluate("el => el.blur()")
+                    await page.wait_for_timeout(LOST_FILL_WAIT * 400)
+                    again = True
+                except (PlaywrightError, PlaywrightTimeout):
+                    continue
+            if not again:
+                return
 
     async def fill_secret(self, field_id: str, secret: str, site_ok: Callable[[str], bool] | None = None) -> None:
         """Type a secret into a password box, on a page `site_ok` accepts (by its frame's
