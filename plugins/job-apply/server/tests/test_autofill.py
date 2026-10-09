@@ -1057,3 +1057,10 @@ def test_a_degree_the_person_lacks_is_answered_no():
     unsaid = with_education("Associate's Degree", [{"school": "Example State University", "major": "Finance", "end": 2020}])
     assert answer("Do you have a Bachelor's degree?", unsaid) is None
     assert answer("Do you have a Bachelor's degree?", with_education("College coursework, no degree", [])) == "No"
+    assert answer("Do you have a high school diploma?", with_education("Some high school", [])) == "No"
+    for highest in ("Graduate coursework", "Attended university", "Currently enrolled in university"):
+        assert answer("Do you have a Bachelor's degree?", with_education(highest, [])) is None, highest
+    # a section about education and experience doesn't make it an equivalence
+    a = resolve_field(f("Do you have a Bachelor's degree?", "radio_group", options=["Yes", "No"],
+                        section="Education and Experience"), some_college)
+    assert a.value == "No"

@@ -628,14 +628,15 @@ def _named_level(text: Any) -> int | None:
     return next((_LEVELS.index(key) for key, pattern in _DEGREE_NAMES if re.fullmatch(pattern, n)), None)
 
 
+# Partial study written the way setup writes it, and the most it lets the person have finished:
+# only these, word for word ("Graduate coursework" or "Attended university" say other things)
+_SOME_STUDY = [(-1, r"some high school"),
+               (0, r"some college( no degree| coursework)?|college coursework( no degree)?")]
+
+
 def _studied_level(text: Any) -> int | None:
-    """The most a partial study ("Some college", "College coursework, no degree", "Some high
-    school") lets the person have finished: high school's rank, or below it."""
     n = norm(text)
-    if not _partial_study(n) or degree_key(n):
-        return None  # "Associate's (in progress)" says only that that one isn't finished
-    part = _partial_level(n)
-    return -1 if part == "high_school" else _LEVELS.index("high_school") if part == "college" else None
+    return next((rank for rank, pattern in _SOME_STUDY if re.fullmatch(pattern, n)), None)
 
 
 # A question asking for nothing but a level of education, maybe "or higher": a kind of degree
@@ -1203,7 +1204,7 @@ def resolve_field(field: dict, prof: Profile, job: dict | None = None, file_inpu
         # a plain "No" among the choices shown: never "No, but I have equivalent experience" or "No, but
         # I'm enrolled", which say more than the profile does; nor where the section allows an equivalent
         plain = next((o for o in options or [] if norm(o) == "no"), None)
-        if plain is None or re.search(r"equivalen|experience", norm(field.get("section"))):
+        if plain is None or "equivalen" in section:
             return None
         return Answer(plain, ans.rule)
     if kind in {"select", "radio_group", "listbox", "checkbox_group", "combobox"} and options:
