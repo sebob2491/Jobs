@@ -497,13 +497,17 @@ def _expected_graduation(prof: Profile, job: dict) -> Any:
     entries = [e for e in _listed(prof.get("education_history")) if isinstance(e, dict)]
     if not entries:
         return None
-    this_year = date.today().year
-    ongoing = []
+    today = date.today()
+    ongoing: list[str | None] = []
     for e in entries:
         end = e.get("end")
-        _, year = parse_month_year(end)
-        if is_present(end) or end in (None, "") or (year and int(year) >= this_year):
-            ongoing.append(year if year and int(year) >= this_year else None)
+        month, year = parse_month_year(end)
+        if is_present(end) or end in (None, "") or not year:
+            ongoing.append(None)  # under way, or not said when it ends
+        elif int(year) > today.year or int(year) == today.year and month and int(month) >= today.month:
+            ongoing.append(year)
+        elif int(year) == today.year and not month:
+            ongoing.append(None)  # this year, month not given: maybe still to come
     if ongoing:
         return next((y for y in ongoing if y), None)  # a school under way: its year, if the profile has one
     return "Not currently attending school"

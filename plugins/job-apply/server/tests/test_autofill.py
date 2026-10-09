@@ -885,3 +885,12 @@ def test_an_expected_graduation_date_is_never_a_past_year():
     school = {**data["education_history"][0], "end": "present"}
     path.write_text(yaml.safe_dump({**data, "education_history": [school]}))
     assert resolve_field(asked, prof()) is None  # still at school, no year: the person says
+
+    from datetime import date
+
+    today = date.today()
+    ended = f"{today.year}-01" if today.month > 1 else f"{today.year - 1}-12"  # earlier this year: done
+    path.write_text(yaml.safe_dump({**data, "education_history": [{**school, "end": ended}]}))
+    assert resolve_field(asked, prof()).value == "I am currently not attending school"
+    path.write_text(yaml.safe_dump({**data, "education_history": [{**school, "end": f"{today.year + 1}-05"}]}))
+    assert resolve_field(f("Expected graduation date"), prof()).value == str(today.year + 1)
