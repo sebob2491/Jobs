@@ -1845,3 +1845,37 @@ def test_randstads_own_jobs_are_read_from_the_pages_data():
     asked.clear()
     asyncio.run(go(None))
     assert asked == ["https://www.randco.com/jobs/internal/", "https://www.randco.com/jobs/internal/page-2/"]
+
+
+def test_an_m_cloud_search_is_read_for_its_places():
+    """Edward Jones' career site searches through a Google Cloud Talent search at
+    jobsapi-google.m-cloud.io: words in, openings from anywhere out (no place filter), 100 a page,
+    some listed twice under two ids with one job number (Oct 2026)."""
+    asked = []
+
+    def job(n: int, title: str, city: str, state: str, ref: str) -> dict:
+        return {"job": {"title": title, "url": f"https://careers.example.com/job/{n}/", "ref": ref,
+                        "open_date": "2026-09-11T00:00:00", "primary_city": city, "primary_state": state,
+                        "addtnl_locations": [{"addtnl_city": "Saint Louis", "addtnl_state": "MO"}]}}
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        asked.append(dict(request.url.params))
+        if request.url.params["offset"] == "0":
+            hits = [job(1, "Senior Financial Analyst III", "Tempe", "AZ", "118370BR"),
+                    job(2, "Senior Financial Analyst III", "Tempe", "AZ", "118370BR"),
+                    job(3, "Financial Analyst II", "Saint Louis", "MO", "118371BR")]
+        else:
+            hits = [job(4, "Financial Analyst I", "Tempe", "AZ", "118372BR")]
+        return httpx.Response(200, json={"totalHits": 4, "searchResults": hits})
+
+    async def go():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(answer)) as client:
+            return await search_companies("financial analyst", location="AZ", client=client, companies=[
+                {"name": "Example Investments", "search": {"mcloud": {"company": "companies/abc"}}}])
+    out = asyncio.run(go())
+    assert asked[0]["companyName"] == "companies/abc" and asked[0]["query"] == "financial analyst"
+    assert [a["offset"] for a in asked] == ["0", "3"]
+    assert [(r["title"], r["location"], r["posted"]) for r in out["results"]] == [
+        ("Financial Analyst I", "Tempe, AZ; Saint Louis, MO", "2026-09-11"),
+        ("Senior Financial Analyst III", "Tempe, AZ; Saint Louis, MO", "2026-09-11")]
+    assert not out["errors"]

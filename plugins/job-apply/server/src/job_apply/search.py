@@ -16,6 +16,7 @@ Each company in data/companies.yaml may carry a `search` block naming one of:
     jobvite:         <company>              (jobs.jobvite.com/<company>)
     amazon:          {loc_query: "Phoenix, AZ, USA", latitude: .., longitude: .., radius: 50km}  (amazon.jobs)
     randstad:        https://www.randstadusa.com/jobs/internal  (Randstad's own jobs)
+    mcloud:          {company: companies/<id>}  (a Google Cloud Talent search at jobsapi-google.m-cloud.io: Edward Jones)
     icims:           <portal name>          (read in the browser)
     paycom:          <career portal key>    (read in the browser)
     ukg:             <job board address>    (UKG Pro / UltiPro; read in the browser)
@@ -1006,6 +1007,50 @@ def parse_randstad(html: str) -> list[Listing]:
     return out
 
 
+# ----------------------------------------------------------------- m-cloud (a Google Cloud Talent job search)
+MCLOUD_API = "https://jobsapi-google.m-cloud.io/api/job/search"
+MCLOUD_PAGE = 100  # openings a request answers
+
+
+async def _mcloud(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, terms: list[str]) -> list[Listing]:
+    """Career sites whose search is a Google Cloud Talent search at jobsapi-google.m-cloud.io
+    (Edward Jones'): the words go in, openings from anywhere come out, 100 a page. It takes no
+    place, so a search in an area reads further and the places are filtered here."""
+    company = str(cfg.get("company") if isinstance(cfg, dict) else cfg)
+    if terms:
+        limit = max(limit, AREA_SCAN)
+    out: dict[str, Listing] = {}
+    offset = 0
+    while len(out) < limit:
+        r = await _send(client, "GET", MCLOUD_API, params={"companyName": company, "query": query,
+                                                           "pageSize": MCLOUD_PAGE, "offset": offset})
+        _raise_for(r, MCLOUD_API)
+        data = r.json()
+        hits = data.get("searchResults") or []
+        for listing in parse_mcloud(data):  # an opening listed twice (two ids) counts once, by its number
+            out.setdefault(listing.external_id or listing.url, listing)
+        offset += len(hits)
+        if not hits or offset >= int(data.get("totalHits") or 0):
+            break
+    return list(out.values())[:limit]
+
+
+def parse_mcloud(data: dict[str, Any]) -> list[Listing]:
+    found: list[Listing] = []
+    for hit in data.get("searchResults") or []:
+        job = hit.get("job") or {}
+        title, url = str(job.get("title") or "").strip(), str(job.get("url") or "")
+        if not title or not url:
+            continue
+        places = [", ".join(str(x) for x in (job.get("primary_city"), job.get("primary_state")) if x)]
+        places += [", ".join(str(x) for x in (p.get("addtnl_city"), p.get("addtnl_state")) if x)
+                   for p in job.get("addtnl_locations") or [] if isinstance(p, dict)]
+        found.append(Listing(company="", title=title, url=url, ats="custom",
+                             location="; ".join(dict.fromkeys(p for p in places if p)),
+                             posted=str(job.get("open_date") or "")[:10], external_id=str(job.get("ref") or "")))
+    return found
+
+
 # ----------------------------------------------------------------- amazon.jobs
 AMAZON_PAGE = 100  # openings a search reads: its first page, nearest the place first
 
@@ -1678,6 +1723,7 @@ SEARCHERS: dict[str, Callable[[httpx.AsyncClient, Any, str, int, list[str]], Awa
     "jobvite": _jobvite,
     "amazon": _amazon,
     "randstad": _randstad,
+    "mcloud": _mcloud,
 }
 
 
