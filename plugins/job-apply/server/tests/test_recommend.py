@@ -91,6 +91,9 @@ def test_requirements_from_posting_text():
     assert requirements("Requirements:\n- Valid driver\u2019s license and a clean driving record.")["drivers_license"]
     assert not requirements("Requirements:\n- 2+ years.\nPreferred:\n- Valid driver's license.")["drivers_license"]
     assert not requirements("Requirements:\n- A driver's license is not required.")["drivers_license"]
+    assert requirements("Requirements:\n- Valid driver's license required; prior experience not required.")[
+        "drivers_license"]
+    assert not requirements("Requirements:\n- This role does not require a driver's license.")["drivers_license"]
 
 
 def test_scores_read_like_the_brief():

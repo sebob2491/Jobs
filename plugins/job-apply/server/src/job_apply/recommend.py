@@ -148,7 +148,9 @@ _TRAVEL = re.compile(r"(\d{2,3})\s*%\s*(?:of\s+(?:the\s+)?time\s+)?(?:domestic\s
                      r"travel[^.\n]{0,40}?(\d{2,3})\s*%")
 _SHIFTS = re.compile(r"night shift|nights|weekend|rotating shift|12[- ]hour|on[- ]call")
 _DRIVERS = re.compile(r"\b(?:driver'?s?|driving) licen[cs]e|\bcdl\b")
-_NO_DRIVERS = re.compile(r"\bnot (?:\w+ )?(?:required|needed|necessary)\b|\bno (?:\w+ )?(?:driver|cdl)")
+# the license's own "not required", not another requirement's in the same sentence
+_NO_DRIVERS = re.compile(r"(?:licen[cs]e|\bcdl)(?: is| are)? not (?:\w+ )?(?:required|needed|necessary)\b|"
+                         r"\bno (?:\w+ )?(?:driver|cdl)|\b(?:do|does) not (?:need|require) (?:a |an )?(?:valid )?(?:driver|cdl)")
 
 
 @dataclass
