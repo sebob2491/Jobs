@@ -560,6 +560,8 @@ async def recommend(prof: Profile, search: Search, limit_per_company: int = 10, 
         item["posting"] = {k: getattr(posting, k) for k in
                            ("title", "location", "description", "apply_url", "salary", "employment_type",
                             "posted_at", "external_id", "ats")}
+        if not str(item.get("posted") or "").strip() and posting.posted_at:
+            item["posted"] = posting.posted_at  # the list didn't say when (EY's, iCIMS portals'); the posting does
         item["fit"] = score_listing(item, prof, posting.description, today)
 
     async def read(item: dict[str, Any]) -> None:
