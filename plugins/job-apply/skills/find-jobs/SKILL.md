@@ -1,6 +1,6 @@
 ---
 name: find-jobs
-description: Find job openings that match the user's profile, using Indeed (through the Indeed connector) and semiconductor-company career sites (ASML, Lam Research, Applied Materials, KLA, Intel, TSMC, Microchip and others), then save the good matches to the job-apply tracker. Use when the user asks to find, search for or line up jobs, e.g. "find field service engineer jobs in Phoenix" or "what's open at Lam and ASML?".
+description: Find job openings that match the user's profile, using Indeed (through the Indeed connector) and employers' own career sites (Arizona semiconductor companies such as ASML, Lam Research, Applied Materials, KLA, Intel, TSMC and Microchip by default, or large Phoenix-area employers in health care, finance, government and more on the Phoenix list), then save the good matches to the job-apply tracker. Use when the user asks to find, search for or line up jobs, e.g. "find field service engineer jobs in Phoenix", "find HR or accounting jobs in Phoenix" or "what's open at Lam and ASML?".
 ---
 
 # Find jobs
