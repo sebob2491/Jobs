@@ -102,21 +102,35 @@ eeo:
 
 # Reusable answers, checked before the built-in rules. `match` is a
 # case-insensitive regular expression tested against the question text.
-# Use this for questions you get on every application.
+# Use this for questions you get on every application. A pattern is found anywhere in
+# the question, so each one also says what it isn't: a "Yes" for "Are you willing to
+# take a drug test?" must not answer "Have you ever failed one?". Single quotes keep
+# the backslashes (\b) as they are.
 answers:
-  - match: "clean ?room"
+  # able to work in one; "How many years of cleanroom experience?" is left for you
+  - match: '^(?!.*\b(how (many|long|much)|years?|describe|explain|list)\b).*clean ?room'
     answer: ~                 # e.g. "Yes"
-  - match: "lift .*(25|35|50) ?(lb|pound)"
+  # 25, 35 or 50 lb; not 125, 150 or 250
+  - match: 'lift .*\b(25|35|50) ?(lb|pound)'
     answer: ~
-  - match: "background check|drug (test|screen)"
+  # willing to take one; "ever failed / refused / tested positive", a record, charges or a
+  # conviction that mentions a background check, and "anything that would prevent you from
+  # passing one?" are left for you
+  - match: '^(?!.*\b(fail\w*|refus\w*|positive|convict\w*|felon\w*|misdemeanor\w*|arrest\w*|guilty|crimes?|charge[sd]?|offen[cs]es?|anything|prevent\w*|concerns?|issues?|problems?)\b)(?!.*\bcriminal (record|histor)).*(background (check|screen|investigation)|drug (test|screen))'
     answer: ~
-  - match: "relatives?|family members?.*(employ|work)"
+  # relatives employed there, or at the company; not an emergency contact's "Relative's name"
+  # or "Relative's work phone"
+  - match: '^(?!relative\W).*(\b(relatives?|family members?)\b(.{0,60}\b(employ|work)| (at|in|with)\b)|\b(employ|work).{0,60}\b(relatives?|family members?)\b)'
     answer: ~
-  - match: "non-?compete|non-?solicit"
+  # bound by one now; "Are you willing to sign / Would you accept one?" is left for you
+  - match: '^(?!.*\b(willing|agree|accept\w*|comply|abide|open to)\b).*(\b(bound|subject|party|signed|have|has|currently|existing|restrict\w*)\b.{0,60}non-?(compete|solicit)|non-?(compete|solicit).{0,80}\b(currently|in effect|restrict\w*|prevent\w*|bound|subject)\b)'
     answer: ~
-  - match: "credit (check|history|report)"   # banks and finance roles ask
+  # banks and finance roles: consent to a check; "ever had a bankruptcy or negative item?"
+  # and "explain any issues" are left for you
+  - match: '^(?!.*\b(ever|bankrupt\w*|delinquen\w*|default\w*|judgments?|liens?|collections?|negative|derogatory|anything|explain|describe|issues?|problems?)\b).*credit (check|history|report)'
     answer: ~
-  - match: "(employed|worked) (by|for) (a|any) .*government"
+  # employed by a government agency; "worked for a government contractor?" is left for you
+  - match: '^(?!.*\bcontract).*(employed|worked) (by|for) (a|any) .*government'
     answer: ~
   - match: "(excluded|unable to participate|ineligible|debarred|sanctioned).{0,80}(medicare|medicaid|federal health ?care|government program)"   # hospitals ask
     answer: ~

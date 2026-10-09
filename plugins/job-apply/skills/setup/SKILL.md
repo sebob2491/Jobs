@@ -66,6 +66,10 @@ All of the user's data lives in `~/.job-apply/`, outside the plugin:
      For hospitals and health systems (Banner Health, HonorHealth, Mayo Clinic…), also
      whether a government agency has ever excluded them from Medicare, Medicaid or other
      government programs.
+     A pattern is searched for anywhere in a question, so keep each one to the question
+     it answers. Use the template's patterns, and when you write a new one, test it on
+     the question and its opposite: a "Yes" for "Are you willing to take a drug test?"
+     must not answer "Have you ever failed one?".
    - Submit mode: `review` (default, they approve each submit) or `auto` for chosen
      ATSs such as `[workday, greenhouse, lever]`. LinkedIn and Indeed always need
      them to click Submit themselves.

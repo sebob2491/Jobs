@@ -83,3 +83,83 @@ def test_the_templates_hospital_question_is_only_the_exclusion_question():
                   "Have you ever been excluded from participation in any federal health care program?"):
         assert re.search(pattern, asked, re.I), asked
     assert not re.search(pattern, "Do you have experience with Medicare/Medicaid billing?", re.I)
+
+
+def test_the_templates_answers_answer_only_the_question_they_are_for():
+    """A pattern is searched for anywhere in a question: the template's "background check|drug
+    (test|screen)", given "Yes" for "Are you willing to take a drug test?", answered "Have you
+    ever failed a drug test?" with Yes, and a felony question that mentioned a background check
+    too. Each pattern answers its own question, through the answer bank forms are filled from;
+    a look-alike asking the opposite is the person's."""
+    import re
+
+    from job_apply.autofill import _answer_bank
+
+    data = yaml.safe_load(config.TEMPLATE_PROFILE.read_text())
+    patterns = [a["match"] for a in data["answers"]]
+    prof = config.Profile({"answers": [{"match": p, "answer": f"answer {i}"} for i, p in enumerate(patterns)]})
+
+    def answered(asked: str) -> bool:
+        return _answer_bank(prof, asked) is not None
+
+    for asked in ("Are you able to work in a cleanroom environment?",
+                  "Are you willing to work in a clean room wearing a full gown?",
+                  "Can you lift up to 50 lbs?",
+                  "Can you lift 25-50 lbs?",
+                  "Are you willing to submit to a background check and drug screen?",
+                  "Are you willing to submit to a criminal background check?",
+                  "This position requires a pre-employment drug test. Do you consent?",
+                  "Would you be able to pass a background check and drug screen?",
+                  "Do you have any relatives currently employed by this company?",
+                  "Do any family members work here?",
+                  "Do you have any relatives at this company?",
+                  "Are you currently bound by a non-compete or non-solicitation agreement?",
+                  "Have you signed a non-compete with your current employer?",
+                  "Are you bound by a non-compete that would prevent you from working here?",
+                  "Do you consent to a credit check?",
+                  "Have you been employed by any government agency in the last two years?"):
+        assert answered(asked), asked
+        assert len([p for p in patterns if re.search(p, asked, re.I)]) == 1, asked  # not two patterns' answers
+    for asked in ("Have you ever failed a drug test?",
+                  "Have you ever refused a drug screen?",
+                  "Have you ever tested positive on a drug test?",
+                  "Have you ever been convicted of a felony? A conviction will not automatically disqualify you; "
+                  "a background check will be conducted.",
+                  "Do you have any criminal convictions? A background check will be performed.",
+                  "Do you have a criminal record? All offers are contingent on a background check.",
+                  "Is there anything in your background that would prevent you from passing a background check or "
+                  "drug screen?",
+                  "Do you have any pending charges? A background check is required.",
+                  "How many years of cleanroom experience do you have?",
+                  "Describe your cleanroom experience.",
+                  "Can you lift 150 lbs?",
+                  "Are you able to lift 250 pounds?",
+                  "Relative's name",
+                  "Relative's work phone",
+                  "Are you willing to sign a non-compete agreement as a condition of employment?",
+                  "Would you accept a non-compete agreement?",
+                  "Would you be able to comply with a non-compete clause?",
+                  "Have you ever declared bankruptcy or had a negative item on your credit report?",
+                  "Is there anything in your credit history we should know about?",
+                  "Please explain any issues in your credit history.",
+                  "Have you worked for a government contractor?"):
+        assert not answered(asked), asked
+
+
+def test_a_profile_from_an_older_template_answers_with_todays_patterns(job_apply_home):
+    """Profiles made before 0.3.61 kept the old patterns, which answered "Have you ever failed a
+    drug test?" with the Yes given for "willing to take one?". Read now, such a profile uses the
+    template's pattern; one the person wrote themselves is theirs, and the file isn't touched."""
+    from job_apply.autofill import _answer_bank
+
+    template = [a["match"] for a in yaml.safe_load(config.TEMPLATE_PROFILE.read_text())["answers"]]
+    assert set(config.RETIRED_ANSWER_PATTERNS.values()) <= set(template)
+    old = ("answers:\n"
+           "  - match: \"background check|drug (test|screen)\"\n    answer: \"Yes\"\n"
+           "  - match: \"drug-free\"\n    answer: \"Yes\"\n")
+    (job_apply_home / "profile.yaml").write_text(old)
+    prof = config.Profile.load()
+    assert _answer_bank(prof, "Have you ever failed a drug test?") is None
+    assert _answer_bank(prof, "Are you willing to take a drug test?").value == "Yes"
+    assert [a["match"] for a in prof.get("answers")][-1] == "drug-free"
+    assert (job_apply_home / "profile.yaml").read_text() == old
