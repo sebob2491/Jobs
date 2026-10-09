@@ -639,24 +639,63 @@ def _studied_level(text: Any) -> int | None:
     return next((rank for rank, pattern in _SOME_STUDY if re.fullmatch(pattern, n)), None)
 
 
-# A question asking for nothing but a level of education, maybe "or higher": a kind of degree
-# ("Bachelor of Science"), a field ("in Finance") or anything more ("from an accredited
-# university") isn't one the profile can settle
+# A question asking for nothing but a level of education, maybe "or higher", maybe "in <fields>":
+# a kind of degree ("Bachelor of Science") or anything more ("from an accredited university")
+# isn't one the profile can settle
 _DEGREE_ONLY = (r"^(?:do you (?:have|hold|possess) |have you (?:earned|completed|received) )?(?:an? |the )?"
                 r"(?:high school diploma(?: or (?:a )?ged)?|ged|(?:associate|bachelor|master)(?: s|s)? degree|"
-                r"doctorate(?: degree)?)(?: or (?:higher|above|greater))?(?: (?:required|preferred))*$")
+                r"doctorate(?: degree)?)(?: or (?:higher|above|greater))?(?: in (?P<fields>[a-z ]+?))?"
+                r"(?: (?:required|preferred))*$")
+# Fields named as plain alternatives: "Accounting or Finance", "Business Administration, Finance, or related
+# field"; never a list that adds something else ("Accounting; CPA", "Finance and an active CPA license")
+_FIELD_LIST = re.compile(r"[a-z ]+(?:(?:\s*,\s*(?:or\s+)?|\s+or\s+)[a-z ]+)*")
+
+
+def _fields_named(label: str) -> list[str] | None:
+    """The fields a degree question names, as written ([] when it names none), or None when
+    what follows "in" isn't a plain list of alternatives."""
+    m = re.search(r"\bin (.+)$", label.lower().replace("\u2019", "'"))
+    if not m:
+        return []
+    named = re.sub(r"[\s*:?.]*((required|preferred)[\s*:?.]*)*$", "", m.group(1)).strip()
+    if not _FIELD_LIST.fullmatch(named):
+        return None
+    return [norm(f) for f in re.split(r"\s*,\s*(?:or\s+)?|\s+or\s+", named) if norm(f)]
+
+
+def _degrees_earned(prof: Profile) -> list[tuple[int, str]]:
+    """The degrees the person confirmed they finished (education.degrees_earned, which setup
+    writes after asking about each), as (level rank, field)."""
+    out = []
+    for d in _listed(prof.get("education.degrees_earned")):
+        if isinstance(d, dict) and norm(d.get("level")).replace(" ", "_") in _LEVELS:
+            out.append((_LEVELS.index(norm(d.get("level")).replace(" ", "_")), norm(d.get("field"))))
+    return out
 
 
 def _has_degree(prof: Profile, job: dict, label: str = "") -> Any:
-    """"Do you have a Bachelor's degree?" answered No when the highest education the profile
-    states, as setup writes it ("Some college", "Associate's Degree"), is below the level asked
-    and no school it lists names a degree that isn't. Never Yes: which degrees a person holds
-    is theirs to say (a profile's education is free text, and a degree under way or written
-    another way can't be told from one earned)."""
+    """"Do you have a Bachelor's degree?", "Bachelor's Degree in Accounting or Finance
+    Required". Yes only from the degrees the person confirmed they finished
+    (education.degrees_earned): one at that level or above, or, when the question names
+    fields, one at that level in one of them, word for word. No when the highest education the
+    profile states, as setup writes it ("Some college", "Associate's Degree"), is below the
+    level asked, no field is named, and no school it lists names a degree that isn't. Else
+    the person's to say: free-text education can't tell a degree earned from one under way."""
     level = degree_key(norm(label))
-    if not re.match(_DEGREE_ONLY, norm(label)) or level is None:
+    shape = re.match(_DEGREE_ONLY, norm(label))
+    if not shape or level is None:
         return None
     rank = _LEVELS.index(level)
+    fields = _fields_named(label) if shape.group("fields") else []
+    if fields is None:
+        return None
+    earned = _degrees_earned(prof)
+    if fields:
+        return "Yes" if any(r == rank and any(_same_field(f, field) for f in fields) for r, field in earned) else None
+    if any(r >= rank for r, _ in earned):
+        return "Yes"
+    if earned:
+        return None  # confirmed degrees below the level: the person says
     history = prof.get("education_history")
     if history is not None and not isinstance(history, list):
         return None  # written some other way: not read
@@ -674,6 +713,16 @@ def _has_degree(prof: Profile, job: dict, label: str = "") -> Any:
         if degree and (listed is None or listed >= rank):
             return None
     return "No"
+
+
+_FIELD_FILLER = {"of", "in", "the", "a", "an"}
+
+
+def _same_field(named: str, field: str) -> bool:
+    """A field a question names is the degree's field, word for word: "Finance" is "Finance";
+    "Physics" isn't "Physical Education", nor "Finance" "Finance and Economics"."""
+    words = set(named.split()) - _FIELD_FILLER
+    return bool(words) and words == set(field.split()) - _FIELD_FILLER
 
 
 def _us_person(prof: Profile, job: dict) -> Any:
@@ -825,7 +874,7 @@ RULES: list[tuple[str, str, Getter, int | None, set[str] | None]] = [
     ("current_company", r"(current|most recent|present) (employer|company)", _p("experience.current_company"), 60, None),
     ("current_title", r"(current|most recent|present) (job )?(title|position|role)", _p("experience.current_title"), 60, None),
     ("total_years", r"^(total )?years of (professional |work )?experience$", _p("experience.total_years"), 60, None),
-    # "Do you have a Bachelor's degree?" (only No: see _has_degree)
+    # "Do you have a Bachelor's degree?": see _has_degree
     ("has_degree", _DEGREE_ONLY, _has_degree, 200, {"select", "listbox", "combobox", "radio_group"}),
     ("degree", r"highest (level of )?(education|degree)|^degree$|education level", _edu("highest_degree", "degree"), 80, None),
     ("school", r"^(school|university|college|institution)\b(?!.*\b(major|degree|gpa|city|state|location|country|year|date|address|"
@@ -1201,9 +1250,9 @@ def resolve_field(field: dict, prof: Profile, job: dict | None = None, file_inpu
 
     options = field.get("options")
     if ans.rule == "has_degree":
-        # a plain "No" among the choices shown: never "No, but I have equivalent experience" or "No, but
-        # I'm enrolled", which say more than the profile does; nor where the section allows an equivalent
-        plain = next((o for o in options or [] if norm(o) == "no"), None)
+        # a plain "Yes" or "No" among the choices shown: never "No, but I have equivalent experience" or
+        # "No, but I'm enrolled", which say more than the profile does; nor where the section allows an equivalent
+        plain = next((o for o in options or [] if norm(o) == norm(ans.value)), None)
         if plain is None or "equivalen" in section:
             return None
         return Answer(plain, ans.rule)

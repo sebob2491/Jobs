@@ -38,7 +38,10 @@ All of the user's data lives in `~/.job-apply/`, outside the plugin:
    for each one. If it wasn't completed, record that school in `education_history`
    with `degree: ""` and the classes as the major or a note, and set
    `education.highest_degree` to the highest one completed (a GED or high school
-   diploma, say). Applications ask about degrees and employers check, so a wrong
+   diploma, say, or "Some college" when there is none). Add each degree confirmed
+   finished to `education.degrees_earned` as `{level: bachelor, field: Finance}`
+   (level: high_school, associate, bachelor, master or doctorate; field as the
+   diploma names it): only these answer "Do you have a Bachelor's degree?" with Yes. Applications ask about degrees and employers check, so a wrong
    one costs more than a missing one. If the source resume lists it wrongly, tell
    the user where to fix it (for Indeed, profile.indeed.com).
 

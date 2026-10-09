@@ -1064,3 +1064,47 @@ def test_a_degree_the_person_lacks_is_answered_no():
     a = resolve_field(f("Do you have a Bachelor's degree?", "radio_group", options=["Yes", "No"],
                         section="Education and Experience"), some_college)
     assert a.value == "No"
+
+
+def test_a_confirmed_degree_answers_yes():
+    """Setup records each degree the person confirmed they finished in education.degrees_earned
+    ({level, field}); only those answer "Do you have a Bachelor's degree?" Yes, and a field the
+    question names must be one of theirs at that level, word for word, in a plain list of
+    alternatives. Free-text education never does (an abbreviation, a degree under way)."""
+    import yaml
+    from job_apply import config
+
+    path = config.profile_path()
+    data = yaml.safe_load(path.read_text())
+
+    def with_degrees(degrees, highest="Bachelor's Degree", history=None):
+        path.write_text(yaml.safe_dump({**data, "education": {"highest_degree": highest, "degrees_earned": degrees},
+                                        "education_history": history or []}))
+        return Profile.load()
+
+    def answer(label, profile, options=("Yes", "No")):
+        a = resolve_field(f(label, "radio_group", options=list(options)), profile)
+        return a and a.value
+
+    finance = with_degrees([{"level": "bachelor", "field": "Finance"}])
+    assert answer("Do you have a Bachelor's degree?", finance) == "Yes"
+    assert answer("Do you have an Associate's degree or higher?", finance) == "Yes"
+    assert answer("Bachelor's Degree in Accounting or Finance Required", finance) == "Yes"
+    assert answer("Bachelor's degree in Business Administration, Finance, or related field", finance) == "Yes"
+    assert answer("Do you have a Master's degree?", finance) is None  # confirmed degrees below it: the person says
+    for asked in ("Bachelor's degree in Engineering", "Bachelor's Degree in Accounting; CPA Required",
+                  "Do you have a Bachelor's degree in Finance and an active CPA license?",
+                  "Do you have a Bachelor's degree with honors?", "Do you have a Bachelor of Science degree?",
+                  "Bachelor's degree or equivalent experience"):
+        assert answer(asked, finance) is None, asked
+    # a higher degree in the field isn't the lower one asked for
+    masters = with_degrees([{"level": "master", "field": "Electrical Engineering"}, {"level": "bachelor", "field": "History"}],
+                           "Master's Degree")
+    assert answer("Do you have a Bachelor's degree in Electrical Engineering?", masters) is None
+    assert answer("Do you have a Bachelor's degree?", masters) == "Yes"
+    # only a plain "Yes"
+    assert answer("Do you have a Bachelor's degree?", finance, ("Yes, in a related field", "No")) is None
+    # without confirmed degrees, a free-text one never answers Yes
+    free_text = with_degrees([], "Bachelor's Degree",
+                             [{"degree": "Bachelor's Degree", "major": "Finance", "end": 2020}])
+    assert answer("Do you have a Bachelor's degree?", free_text) is None
