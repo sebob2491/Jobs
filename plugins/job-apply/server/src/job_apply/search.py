@@ -56,6 +56,7 @@ from .postings import USER_AGENT, html_to_text, place_in_text, successfactors_pl
 WORKDAY_PAGE = 20  # Workday rejects larger pages
 MAX_ALTERNATIVES = 4
 FETCH_WHEN_FILTERING = 60  # results to scan per search when filtering by location ourselves
+EMPLOYERS_AT_ONCE = 8  # employers searched at the same time (each its own site; ~50 s for the Phoenix list, not ~100)
 CLIENT_SIDE = {"greenhouse", "lever", "applicantstack", "paycom", "ukg", "sfclassic", "infor", "phoenixchildrens",
                "jobvite", "randstad"}  # whole board at once; titles filtered here
 # Searches whose data only comes through the site's own page in the browser (ASML's
@@ -1829,7 +1830,7 @@ async def search_companies(
     errors: dict[str, str] = {}
     browser_only: list[dict[str, str]] = []
     needs_browser: list[dict[str, Any]] = []
-    sem = asyncio.Semaphore(4)
+    sem = asyncio.Semaphore(EMPLOYERS_AT_ONCE)
 
     async def one(company: dict[str, Any]) -> None:
         search = company.get("search") or {}
