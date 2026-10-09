@@ -1255,3 +1255,34 @@ def test_more_questions_the_profile_answers():
     path.write_text(yaml.safe_dump({**data, "work_history": []}))
     assert answer("Do you have previous work experience?") is None
     assert answer("Are you an alien illegally or unlawfully in the United States?*") is None
+
+
+def test_questions_from_the_finance_run():
+    """GoDaddy's long LinkedIn label and its "(Please note, ...)" aside, Grant Thornton's
+    "Preferred Last Name", GoDaddy's LGBTQ self-identification and Axon's I-9 question."""
+    import yaml
+    from job_apply import config
+
+    path = config.profile_path()
+    data = yaml.safe_load(path.read_text())
+    path.write_text(yaml.safe_dump({**data, "eeo": {**data["eeo"], "sexual_orientation": "Decline to self-identify"},
+                                    "preferences": {**data["preferences"], "desired_salary": "$85,000"}}))
+
+    def answer(label, kind="combobox", options=("Yes", "No")):
+        a = resolve_field(f(label, kind, **({"options": list(options)} if kind != "text" else {})), prof())
+        return a and a.value
+
+    assert answer("LinkedIn profile (if you do not have one or if you prefer not to provide one, enter N/A):*", "text") == \
+        "https://www.linkedin.com/in/samrivera"
+    assert answer("Do you currently reside in the United States? (Please note, your answer to this question and the "
+                  "related sub-questions, as applicable, will be used to determine your eligibility.)") == "Yes"
+    # a note that isn't an aside after the question stays part of it
+    assert answer("Desired pay (note: hourly rate)", "text") is None
+    assert answer("Preferred Last Name", "text") == "Rivera"
+    assert answer("Can you provide verification of both your identity and authorization to work in the United States, "
+                  "to the extent required by law?*") == "Yes"
+    assert answer("Can you provide verification of authorization to work in a country other than the United States?") is None
+    assert answer("Do you consider yourself a member of the Lesbian, Gay, or Bisexual (LGBTQ) community?*",
+                  options=("Yes", "No", "I don't wish to answer")) == "I don't wish to answer"
+    # a family member's isn't the person's
+    assert answer("Is your spouse a member of the LGBTQ community?", options=("Yes", "No", "I don't wish to answer")) is None

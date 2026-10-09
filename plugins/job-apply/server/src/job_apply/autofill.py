@@ -845,13 +845,14 @@ _SOMEONE_ELSE = re.compile(r"\b(referen\w*|referee\w*|emergency|next of kin|supe
 # its section's ("Most Recent Employer", "High School")
 _OTHER_PARTY_LABEL = re.compile(r"\b(employer\w*|company|business|school)\b")
 _OTHER_PARTY_SECTION = re.compile(r"\b(employer\w*|school)\b")
-_EEO_RULES = {"gender", "hispanic", "race", "veteran", "disability"}
+_EEO_RULES = {"gender", "hispanic", "race", "veteran", "disability", "sexual_orientation"}
 # A question about someone in the person's family ("Gender of your spouse", "Are you the spouse of a veteran?"),
 # not a family word in passing ("we partner with veterans", "family and medical leave")
 _FAMILY = re.compile(r"\b(your|their) (spouse|husband|wife|partner|parents?|child(ren)?|dependents?|relatives?|family"
                      r"( members?)?|household( members?)?|next of kin)\b|\bhousehold members?\b|\b(spouse|husband|wife|widow\w*|partner|parent|child|dependent|relative|"
                      r"family member) of (a|an|the|any)\b")
-_CONTACT_RULES = {"email", "first_name", "middle_name", "last_name", "preferred_name", "preferred_full_name", "full_name",
+_CONTACT_RULES = {"email", "first_name", "middle_name", "last_name", "preferred_last_name", "preferred_name",
+                  "preferred_full_name", "full_name",
                   "phone_type",
                   "phone_code", "phone_ext", "phone", "address1", "address2", "city", "postal_ext", "postal",
                   "county", "state", "country"}
@@ -873,6 +874,7 @@ RULES: list[tuple[str, str, Getter, int | None, set[str] | None]] = [
     ("last_name", r"^(legal )?(last|family|sur)( ?name)?$|^(legal )?(last|family) name|^surname", _p("personal.last_name"), 45, None),
     # American Express's Oracle form: "Preferred Full Name", the name the person goes by and their last name
     ("preferred_full_name", r"^preferred full name", _preferred_full_name, 45, None),
+    ("preferred_last_name", r"^preferred (last|family|sur) ?name", _p("personal.last_name"), 45, None),
     ("preferred_name", r"^preferred (first )?name|^nick ?name", lambda p, j: p.get("personal.preferred_name") or p.get("personal.first_name"), 45, None),
     ("full_name", r"^(full |legal |your |candidate )?(full )?name$|^full (legal )?name|^legal name", _full_name, 45, None),
     ("phone_type", r"phone (device )?type|type of phone", lambda p, j: p.get("personal.phone_type", "Mobile"), 45, None),
@@ -895,6 +897,9 @@ RULES: list[tuple[str, str, Getter, int | None, set[str] | None]] = [
      _state, 45, None),
     # the address's country: not "Country of citizenship / birth" (those are other questions)
     ("country", r"^country\b(?!.*\b(citizen|birth|born|nationalit|passport|origin)\w*)", _p("personal.address.country"), 45, None),
+    # "LinkedIn profile (if you do not have one or if you prefer not to provide one, enter N/A)" (GoDaddy)
+    ("linkedin", r"^(your )?linked ?in (profile|url|profile url|address)\b", _p("personal.linkedin_url"), 200,
+     {"text", "textarea"}),
     ("linkedin", r"linked ?in", _p("personal.linkedin_url"), 60, {"text", "textarea"}),
     ("github", r"github", _p("personal.github_url"), 45, {"text"}),
     ("website", r"website|portfolio|personal (site|url)|^url$|blog", _p("personal.website"), 45, {"text"}),
@@ -931,6 +936,11 @@ RULES: list[tuple[str, str, Getter, int | None, set[str] | None]] = [
      r"(required|needed|necessary)", _no_sponsorship, None, None),
     ("sponsorship", r"(require|need|seek)\w* .{0,40}sponsor|sponsor\w* .{0,40}(require|need)|"
      r"^(visa |employment |immigration )?sponsorship( status| required| needed)?$", _sponsorship, None, None),
+    # the I-9: "Can you provide verification of both your identity and authorization to work in the
+    # United States, to the extent required by law?" (Axon)
+    ("work_proof", r"^can you (provide|furnish|submit|present) (proof|verification|documentation|documents?) (of|for|showing) "
+                   r".{0,40}(authori[sz]ation to work|eligibility to work|employment eligibility|work authori[sz]ation)",
+     _yn("work_authorization.authorized_to_work"), 200, {"select", "listbox", "combobox", "radio_group"}),
     ("authorized", _AUTHORIZED, _authorized, None, None),
     # Only questions that ask whether you are a U.S. person: export-control wording
     # also comes with other questions, e.g. Micron's "are you a citizen of Cuba, Iran ...?"
@@ -986,7 +996,7 @@ RULES: list[tuple[str, str, Getter, int | None, set[str] | None]] = [
      r"have you (ever )?been hired\b",
      _previously_employed, None, None),  # (only about this employer: see _previously_employed)
     # voluntary self-identification
-    ("sexual_orientation", r"sexual orientation", _p("eeo.sexual_orientation"), None, None),
+    ("sexual_orientation", r"sexual orientation|\blgbt", _p("eeo.sexual_orientation"), None, None),
     ("gender", r"\bgender\b|\bsex\b", _p("eeo.gender"), None, None),
     ("hispanic", r"hispanic|latin[oa]", _p("eeo.hispanic_latino"), None, None),
     ("race", r"\brace\b|ethnicity|ethnic", _p("eeo.race"), None, None),
@@ -1196,7 +1206,8 @@ _OTHER_COUNTRIES = re.compile(
     r"\b(canada|mexico|united kingdom|uk|england|britain|ireland|germany|netherlands|france|belgium|italy|spain|"
     r"switzerland|austria|sweden|denmark|norway|finland|poland|czech|israel|india|china|japan|korea|taiwan|singapore|"
     r"malaysia|philippines|vietnam|thailand|australia|new zealand|brazil|costa rica|european union|eu)\b")
-_WORK_RULES = {"no_sponsorship", "sponsorship", "authorized", "us_person", "us_citizen", "citizenship", "visa_holder"}
+_WORK_RULES = {"no_sponsorship", "sponsorship", "authorized", "work_proof", "us_person", "us_citizen", "citizenship",
+               "visa_holder"}
 _OTHER_THAN = re.compile(r"\b(other than|another country|any (other )?country|foreign)\b")
 # Documents other than a resume that a lone file box may ask for
 _OTHER_DOCUMENT = re.compile(r"\b(degree|diploma|transcripts?|certificat\w*|licen[cs]e|passport|portfolio|writing sample|"
@@ -1207,7 +1218,9 @@ _OTHER_EVENT = re.compile(r"\b(conviction|criminal|offen[cs]e|incident|violation
 
 
 def _without_notes(label: str) -> str:
-    """The question without the employer's notes in it, which say what the employer offers."""
+    """The question without the employer's notes in it, which say what the employer offers, or
+    an aside ("Do you currently reside in the United States? (Please note, your answer ...)")."""
+    label = re.sub(r"(?<=\?)\s*\(\s*(please )?note\b[^)]*\)?", " ", label or "", flags=re.I).strip() or label
     parts = re.split(r"(?<=[.?!])\s+|[()]", label or "")
     kept = [p for p in parts if p.strip() and not _EMPLOYER_NOTE.search(p)]
     return " ".join(kept) if len(kept) < len([p for p in parts if p.strip()]) else label
