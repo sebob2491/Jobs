@@ -48,7 +48,7 @@ education:
   # Each degree you finished (setup asks about each one): answers "Do you have a Bachelor's
   # degree (in Finance)?". Coursework isn't a degree; leave this empty when there are none.
   degrees_earned: []          # e.g. [{level: bachelor, field: Finance}]; level is one of
-                              # high_school, associate, bachelor, master, doctorate
+                              # high_school (a diploma), ged, associate, bachelor, master, doctorate
   school: ~
   major: ~
   graduation_year: ~

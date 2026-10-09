@@ -1134,6 +1134,22 @@ def test_a_confirmed_degree_answers_yes():
     # "or higher" with a field takes a higher degree in it
     fin_masters = with_degrees([{"level": "master", "field": "Finance"}], "Master's Degree")
     assert answer("Do you have a Bachelor's degree or higher in Finance?", fin_masters) == "Yes"
+    # a license among the "fields", a GED for a diploma, a status saying it isn't done, no highest stated
+    eng = with_degrees([{"level": "bachelor", "field": "Engineering"}])
+    assert answer("Bachelor's degree in Nursing, RN or LPN required", nursing) is None
+    assert answer("Bachelor's degree in Engineering, PE or EIT", eng) is None
+    assert answer("Bachelor's degree in Finance, required", finance) == "Yes"
+    ged = with_degrees([{"level": "ged"}], "GED")
+    assert answer("Do you have a high school diploma?", ged) is None
+    assert answer("Do you have a GED?", ged) == "Yes"
+    assert answer("Do you have a high school diploma or GED?", ged) == "Yes"
+    assert answer("Do you have a Bachelor's degree?", ged) == "No"
+    in_progress = with_degrees([{"level": "bachelor", "field": "Finance", "status": "in progress"}], "Some college")
+    assert answer("Do you have a Bachelor's degree?", in_progress) is None
+    assert answer("Do you have a Bachelor's degree?", with_degrees([{"level": "high_school"}], "")) is None
+    # one it can't read doesn't stop a Yes from one it can
+    assert answer("Do you have a Bachelor's degree?",
+                  with_degrees([{"level": "bachelor", "field": "Finance"}, {"level": "certificate"}])) == "Yes"
     # a highest education or a confirmed degree it can't read stops the No
     assert answer("Do you have a Master's degree?", with_degrees([{"level": "bachelor", "field": "Finance"}], "MBA")) is None
     assert answer("Do you have a doctorate?",

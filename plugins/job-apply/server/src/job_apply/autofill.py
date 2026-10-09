@@ -659,29 +659,40 @@ def _fields_named(label: str) -> list[str] | None:
     m = re.search(r"\bin (.+)$", " ".join(label.lower().replace("\u2019", "'").split()))
     if not m:
         return None
-    named = re.sub(r"[\s*:?.\-\u2013()]*((required|preferred)[\s*:?.\-\u2013()]*)*$", "", m.group(1)).strip()
+    named = re.sub(r"[\s*:?.,\-\u2013()]*((required|preferred)[\s*:?.,\-\u2013()]*)*$", "", m.group(1)).strip()
     # alternatives only: "A", "A or B", "A, B, or C"; a comma with no "or" ("Nursing, RN required",
     # "Finance, bilingual") may add a requirement, and "Accounting/Finance" or "Accounting; CPA" isn't a plain list
-    if not re.fullmatch(r"[a-z ]+|[a-z ]+(?:, [a-z ]+)*,? or [a-z ]+", named):
+    if not re.fullmatch(r"[a-z ]+|[a-z ]+ or [a-z ]+|[a-z ]+(?:, [a-z ]+)+, or [a-z ]+", named):
         return None
     fields = [norm(f) for f in re.split(r"\s*,\s*(?:or\s+)?|\s+or\s+", named) if norm(f)]
-    if not fields or any(_NOT_A_FIELD.search(f) for f in fields):
+    # a word of three letters or fewer is more likely a license than a field ("RN", "LPN", "PE", "EIT")
+    if not fields or any(_NOT_A_FIELD.search(f) or any(len(w) <= 3 and w not in ("of", "the") for w in f.split())
+                         for f in fields):
         return None
     return fields
 
 
-def _degrees_earned(prof: Profile) -> list[tuple[int, str]] | None:
+def _degrees_earned(prof: Profile) -> tuple[list[tuple[int, str, str]], bool]:
     """The degrees the person confirmed they finished (education.degrees_earned, which setup
-    writes after asking about each), as (level rank, field): a level is one of _LEVELS or a
-    degree's name as setup writes it ("Bachelor's Degree"). None when one can't be read."""
-    out = []
+    writes after asking about each), as (level rank, field, kind: "ged" for a GED, else ""),
+    and whether any entry couldn't be read (a level not one of _LEVELS, "ged" or a degree as
+    setup writes it, or anything besides a level and a field: a status says it may not be done)."""
+    out: list[tuple[int, str, str]] = []
+    unread = False
     for d in _listed(prof.get("education.degrees_earned")):
-        level = norm(d.get("level")).replace(" ", "_") if isinstance(d, dict) else ""
-        rank = _LEVELS.index(level) if level in _LEVELS else _named_level(d.get("level")) if isinstance(d, dict) else None
-        if rank is None:
-            return None  # one it can't read ("BS", "PharmD", "Bachelor's (in progress)"): the person says
-        out.append((rank, norm(d.get("field"))))
-    return out
+        if not isinstance(d, dict) or set(d) - {"level", "field"}:
+            unread = True
+            continue
+        level = norm(d.get("level")).replace(" ", "_")
+        if level == "ged":
+            out.append((0, "", "ged"))
+            continue
+        rank = _LEVELS.index(level) if level in _LEVELS else _named_level(d.get("level"))
+        if rank is None or level != "high_school" and rank == 0 and "ged" in level:
+            unread = True
+            continue
+        out.append((rank, norm(d.get("field")), ""))
+    return out, unread
 
 
 def _has_degree(prof: Profile, job: dict, label: str = "") -> Any:
@@ -701,15 +712,18 @@ def _has_degree(prof: Profile, job: dict, label: str = "") -> Any:
     fields = _fields_named(label) if shape.group("fields") else []
     if fields is None:
         return None
-    earned = _degrees_earned(prof)
-    if earned is None:
-        return None
+    earned, unread = _degrees_earned(prof)
     higher = bool(shape.group("higher"))
     if fields:
         return "Yes" if any((r == rank or r > rank and higher) and any(_same_field(f, field) for f in fields)
-                            for r, field in earned) else None
-    if any(r == rank or r > rank and higher for r, _ in earned):
+                            for r, field, _ in earned) else None
+    # a high school diploma isn't a GED, nor a GED a diploma; "a high school diploma or GED" is either
+    deg = shape.group("deg")
+    kinds = {"", "ged"} if rank > 0 or "diploma" in deg and "ged" in deg else {"ged"} if deg == "ged" else {""}
+    if any((r == rank and kind in kinds) or r > rank and higher for r, _, kind in earned):
         return "Yes"
+    if unread:
+        return None  # a degree it couldn't read may be the one asked about
     history = prof.get("education_history")
     if history is not None and not isinstance(history, list):
         return None  # written some other way: not read
@@ -717,10 +731,9 @@ def _has_degree(prof: Profile, job: dict, label: str = "") -> Any:
     stated = _named_level(highest)
     if stated is None:
         stated = _studied_level(highest)
-    if stated is None and str(highest or "").strip():
-        return None  # a highest education it can't read ("MBA", "PharmD") may be above the level asked
-    known = [r for r, _ in earned] + ([stated] if stated is not None else [])
-    if not known or max(known) >= rank:
+    if stated is None:
+        return None  # no highest education stated, or one it can't read ("MBA"): the confirmed degrees are only the least
+    if max([stated, *(r for r, _, _ in earned)]) >= rank:
         return None
     for e in history or []:  # every school's degree is none (written so: setup's "" for one not finished), or below
         if not isinstance(e, dict) or "degree" not in e:
