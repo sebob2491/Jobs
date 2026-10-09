@@ -2257,3 +2257,71 @@ def test_a_press_the_tracker_remembers_isnt_made_again_without_its_record(srv):
     applier.auto_submit = True
     r = applier.enqueue(job["id"], submit=True)
     assert r.pressed_before and not r.submit
+
+
+def test_a_button_with_an_arrow_after_its_words_is_still_the_way_in():
+    """APS's SuccessFactors posting (live, Oct 2026): "Apply now »" wasn't read as Apply, so the
+    desk said it couldn't find the button."""
+    def acts(*texts):
+        return [{"id": str(i), "text": t} for i, t in enumerate(texts)]
+
+    assert pick_next(acts("Search Jobs", "Create Alert", "Apply now »", "Apply now »"), False)["text"] == "Apply now »"
+    assert pick_next(acts("Back", "Next ›"), True)["text"] == "Next ›"
+
+
+def test_reject_non_essential_cookies_is_a_way_to_decline():
+    """Aerotek's iCIMS banner (live, Oct 2026) offers "Reject Non-Essential Cookies"."""
+    assert pipeline._DECLINE_COOKIES.match("Reject Non-Essential Cookies")
+    assert pipeline._DECLINE_COOKIES.match("Decline nonessential")
+    assert not pipeline._DECLINE_COOKIES.match("Accept Non-Essential Cookies")
+
+
+def test_a_form_still_being_drawn_is_waited_for(srv, monkeypatch):
+    """Oracle's Personal Info step (Southwest Gas's, American Express's, live): upload boxes and a
+    greyed-out Next first, the name and email boxes a moment later. The desk said it couldn't
+    find the button; it waits for the form, fills it and goes on."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    job = srv.add_job(url=fixture_url("site/late-form.html"), title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert r.status == "ready", (r.need, r.reason, r.log)
+    assert "clicked “Next”" in r.log and r.url.endswith("review.html"), r.log
+
+
+def test_an_agreement_is_left_to_the_person_and_a_captchas_buttons_arent_the_pages(srv, monkeypatch):
+    """Schwab's iCIMS sign-in (live, Oct 2026): the way on is "I Acknowledge the Privacy Notice",
+    and a hidden hCaptcha frame's "Verify" and "Refresh Challenge." were read as the page's own
+    buttons. The CAPTCHA's frame isn't read, and the desk names the button that agrees to
+    something rather than pressing it or saying it couldn't find one."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 1)
+    job = srv.add_job(url=fixture_url("site/privacy-signin.html"), title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        await srv.browser.page()
+        await srv.browser._ctx.route("https://newassets.hcaptcha.com/**", lambda route: route.fulfill(
+            status=200, content_type="text/html",
+            body="<html><body><button>Verify</button><button>Refresh Challenge.</button></body></html>"))
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status == "needs_you", about=state(r))
+            return r, await r.page.evaluate("() => window.acknowledged || false")
+        finally:
+            await applier.stop()
+
+    r, acknowledged = run(go())
+    assert r.need == "stuck" and "“I Acknowledge the Privacy Notice”" in r.reason, (r.reason, r.log)
+    assert not acknowledged
+    assert not {"Verify", "Refresh Challenge."} & set(r.page_info.get("actions") or []), r.page_info

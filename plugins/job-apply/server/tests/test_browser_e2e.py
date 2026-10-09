@@ -843,3 +843,43 @@ def test_groups_with_the_same_label_are_each_filled(srv):
     run(page.evaluate("() => document.querySelector('input[name=g1]').parentElement.remove()"))
     out = run(srv.fill_form([{"id": first["id"], "value": "No"}]))
     assert out["ok"], out
+
+
+def test_a_boards_frame_is_read_once_its_page_is_in(srv):
+    """iCIMS portals draw their openings in a frame, then go on loading trackers for seconds
+    (Allegis Group's: a survey and an ad pixel). Each page of results waited for the network to
+    go quiet, up to 8 seconds, holding the browser meanwhile; it's read once the frame is in."""
+    import threading
+    import time
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    class Board(BaseHTTPRequestHandler):
+        def do_GET(self):
+            if self.path.startswith("/poll"):  # a tracker that never lets the network go quiet
+                time.sleep(0.5)
+                body = b"{}"
+            elif self.path.startswith("/inner"):
+                body = b"<html><body><a href='/jobs/1/recruiter/job'><h3>Recruiter</h3></a></body></html>"
+            else:
+                body = (b"<html><body><script>setInterval(() => fetch('/poll?' + Math.random()), 200);"
+                        b"setTimeout(() => { const f = document.createElement('iframe'); f.id = 'icims_content_iframe';"
+                        b"f.src = '/inner'; document.body.append(f); }, 300);</script></body></html>")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args):
+            pass
+
+    site = ThreadingHTTPServer(("127.0.0.1", 0), Board)
+    threading.Thread(target=site.serve_forever, daemon=True).start()
+    try:
+        url = f"http://127.0.0.1:{site.server_address[1]}/jobs/search?ss=1"
+        start = time.monotonic()
+        pages = run(srv.browser.frames_html(url, inner="#icims_content_iframe"))
+        assert time.monotonic() - start < 5
+        assert any("Recruiter" in p for p in pages)
+    finally:
+        site.shutdown()

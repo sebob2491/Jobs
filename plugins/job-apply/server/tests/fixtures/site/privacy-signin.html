@@ -1,0 +1,21 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Login</title></head>
+<body>
+<!-- like Schwab's iCIMS sign-in (live, Oct 2026): the way on acknowledges a privacy notice, and a
+     hidden hCaptcha frame carries buttons of its own ("Verify", "Refresh Challenge.") -->
+<h2>Privacy Notice and Sign-In</h2>
+<p>Please review our privacy notice before you continue.</p>
+<form id="login" novalidate>
+  <label for="em">Email</label><input id="em" type="email">
+  <button type="submit">I Acknowledge the Privacy Notice</button>
+</form>
+<div style="visibility: hidden; position: absolute; top: -10000px">
+  <iframe title="Main content of the hCaptcha challenge" style="width:400px;height:480px"
+          src="https://newassets.hcaptcha.com/captcha/v1/static/hcaptcha.html#frame=challenge"></iframe>
+</div>
+<script>
+  document.getElementById('login').addEventListener('submit', (e) => { e.preventDefault(); window.acknowledged = true; });
+</script>
+</body>
+</html>

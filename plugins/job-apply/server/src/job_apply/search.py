@@ -180,12 +180,18 @@ def alternatives(query: str) -> list[str]:
     return alts[:MAX_ALTERNATIVES] or [""]
 
 
+def _title_words(text: str) -> str:
+    """A title's words as matched: "Human Resources" and "HR" are the same ("HR Business
+    Partner" is a human resources job, "Human Resources Generalist" an HR generalist one)."""
+    return re.sub(r"\bhuman resources?\b", "hr", norm(text))
+
+
 def title_matches(title: str, query: str) -> bool:
     """Every word of at least one alternative appears in the title."""
-    words = norm(title).split()
+    words = _title_words(title).split()
     text = " " + " ".join(words) + " "
     for alt in alternatives(query):
-        terms = norm(alt).split()
+        terms = _title_words(alt).split()
         if all(f" {t}" in text for t in terms):  # prefix match: "engineer" ~ "engineering"
             return True
     return False
@@ -612,11 +618,35 @@ def parse_applicantstack(html: str, base: str) -> list[Listing]:
 
 
 ICIMS_PAGES = 4  # result pages read per search (20 openings each): a national portal's Arizona ones are often past the first
+# iCIMS portals' location filter names a state by iCIMS's own number, the same on every portal
+# (Aerotek's, TEKsystems', Allegis Group's, Schwab's, GDMS's and Daifuku's, live, Oct 2026)
+ICIMS_STATES = {
+    "AL": 12782, "AK": 12783, "AZ": 12784, "AR": 12785, "CA": 12789, "CO": 12790, "CT": 12791, "DE": 12792,
+    "FL": 12793, "GA": 12794, "HI": 12795, "ID": 12796, "IL": 12797, "IN": 12798, "IA": 12799, "KS": 12800,
+    "KY": 12801, "LA": 12802, "ME": 12803, "MD": 12804, "MA": 12805, "MI": 12806, "MN": 12807, "MS": 12808,
+    "MO": 12809, "MT": 12810, "NE": 12811, "NV": 12812, "NH": 12813, "NJ": 12814, "NM": 12815, "NY": 12816,
+    "NC": 12817, "ND": 12818, "OH": 12819, "OK": 12820, "OR": 12821, "PA": 12822, "RI": 12823, "SC": 12824,
+    "SD": 12825, "TN": 12826, "TX": 12827, "UT": 12828, "VT": 12829, "VA": 12830, "WA": 12831, "DC": 12832,
+    "WV": 12833, "WI": 12834, "WY": 12835,
+}
+ICIMS_FRAME = "#icims_content_iframe"  # where a portal's search page draws its openings
 
 
-def icims_page_url(cfg: Any, query: str, page: int = 0) -> str:
+def icims_page_url(cfg: Any, query: str, page: int = 0, state: str | None = None) -> str:
+    where = {"searchLocation": f"-{ICIMS_STATES[state]}-"} if state in ICIMS_STATES else {}
     return f"https://{cfg}.icims.com/jobs/search?" + urlencode(
-        {"ss": "1", "searchKeyword": query, "in_iframe": "1", **({"pr": str(page)} if page else {})})
+        {"ss": "1", "searchKeyword": query, "in_iframe": "1", **where, **({"pr": str(page)} if page else {})})
+
+
+def icims_state(terms: list[str]) -> str | None:
+    """The one state a search's place is in, for an iCIMS portal's own location filter (a
+    national portal's Arizona openings are then a page or two, not six): None for anywhere,
+    places in several states, or a place that could be remote ("Phoenix | Remote")."""
+    if any(all(w in _BROAD_WORDS for w in t.split()) for t in terms if not t.startswith(IN_STATE)):
+        return None
+    states = {t.upper() for t in terms if t.upper() in US_STATES}
+    states |= {t[len(IN_STATE):].upper() for t in terms if t.startswith(IN_STATE)}
+    return states.pop() if len(states) == 1 else None
 
 
 def _icims_last_page(html: str) -> int:
@@ -625,17 +655,18 @@ def _icims_last_page(html: str) -> int:
 
 
 async def icims_search(frames_html: Callable[[str], Awaitable[list[str]]], cfg: Any, query: str,
-                       found: list[Listing]) -> None:
+                       found: list[Listing], state: str | None = None) -> None:
     """iCIMS portals (Daifuku America) answer plain requests with HTTP 405, so the search
     page is read in the browser. The openings are drawn inside the portal's frame, each
-    with its location and posting date, 20 to a page: the first ICIMS_PAGES pages are read."""
+    with its location and posting date, 20 to a page: the first ICIMS_PAGES pages are read,
+    of the openings in `state` when one is given."""
     base = f"https://{cfg}.icims.com"
     last = 0
     for page in range(ICIMS_PAGES):
         if page > last:
             break
         try:
-            docs = await frames_html(icims_page_url(cfg, query, page))
+            docs = await frames_html(icims_page_url(cfg, query, page, state))
         except Exception:
             if not page:
                 raise

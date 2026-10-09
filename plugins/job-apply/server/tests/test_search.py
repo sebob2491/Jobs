@@ -160,6 +160,16 @@ def test_helpers():
     assert title_matches("Field Service Engineer II", "field service")
     assert title_matches("Equipment Engineering Technician", "field service | equipment engineer")
     assert not title_matches("Accountant", "field service | equipment engineer")
+
+
+def test_hr_and_human_resources_are_the_same_in_a_title():
+    """A search for HR jobs (a friend's Phoenix list, Oct 2026): "HR Business Partner" is a human
+    resources job, and "Human Resources Generalist" an HR generalist's."""
+    assert title_matches("HR Business Partner", "human resources | recruiter")
+    assert title_matches("Human Resources Generalist", "hr generalist")
+    assert title_matches("Sr. Human Resource Coordinator", "hr coordinator")
+    assert not title_matches("Housekeeping Associate", "human resources | hr generalist")
+    assert not title_matches("Hospital Unit Clerk", "hr")
     az = location_terms("AZ")
     assert az[:2] == ["az", "arizona"] and {"phoenix", "chandler", "tempe"} <= set(az)  # metro cities count too
     assert location_terms("Phoenix|Chandler") == ["phoenix", "chandler", "in:az"]  # another state's Phoenix isn't it
@@ -502,8 +512,8 @@ def test_icims_board_is_read_in_the_browser(srv, monkeypatch):
 
     pages = []
 
-    async def fake_frames_html(url):
-        pages.append(url)
+    async def fake_frames_html(url, inner=None):
+        pages.append((url, inner))
         return ['<html><body><iframe id="icims_content_iframe"></iframe></body></html>', ICIMS_PAGE]
 
     monkeypatch.setattr(srv.browser, "frames_html", fake_frames_html)
@@ -511,16 +521,38 @@ def test_icims_board_is_read_in_the_browser(srv, monkeypatch):
     assert [(r["title"], r["location"], r["posted"], r["url"]) for r in out["results"]] == [
         ("Field Service Engineer 1", "US-AZ-Chandler", "2026-09-24",
          "https://careers-icco.icims.com/jobs/19224/field-service-engineer-1/job")]  # Novi, MI left out
-    assert pages == [icims_page_url("careers-daifuku-america", "field service")] == [
-        "https://careers-daifuku-america.icims.com/jobs/search?ss=1&searchKeyword=field+service&in_iframe=1"]
+    # the portal's own Arizona filter, and read once its openings' frame is in
+    assert pages == [(icims_page_url("careers-daifuku-america", "field service", state="AZ"), "#icims_content_iframe")]
+    assert pages[0][0] == ("https://careers-daifuku-america.icims.com/jobs/search?ss=1&searchKeyword=field+service"
+                           "&in_iframe=1&searchLocation=-12784-")
     assert not out["errors"]
+    pages.clear()
+    asyncio.run(srv.search_company_jobs("field service", companies=["Daifuku"], location=None))
+    assert pages == [("https://careers-daifuku-america.icims.com/jobs/search?ss=1&searchKeyword=field+service"
+                      "&in_iframe=1", "#icims_content_iframe")]  # anywhere: no filter
+
+
+def test_an_icims_search_is_filtered_to_one_state_only():
+    """A national portal's Arizona openings are a page or two with the portal's own state filter
+    (Aerotek's recruiter openings: 3 on one page, not 6 pages of 20, live). Places in several
+    states, or a place that could be remote, aren't filtered: the filter would drop some."""
+    from job_apply.search import icims_page_url, icims_state, location_terms
+
+    assert icims_state(location_terms("AZ")) == icims_state(location_terms("Arizona")) == "AZ"
+    assert icims_state(location_terms("Phoenix|Chandler")) == "AZ"  # Arizona's cities
+    assert icims_state(location_terms("Tempe, AZ 85281")) == "AZ"
+    assert icims_state(location_terms("Austin, TX")) == "TX"
+    for anywhere in (None, "", "AZ|TX", "Phoenix|Remote", "Remote", "United States", "Phoenix|Austin"):
+        assert icims_state(location_terms(anywhere)) is None, anywhere
+    assert "searchLocation=-12827-" in icims_page_url("careers-x", "recruiter", 2, "TX")
+    assert "searchLocation" not in icims_page_url("careers-x", "recruiter", 0, None)
 
 
 def test_a_board_that_is_down_is_said_to_be_down(srv, monkeypatch):
     """Daifuku's iCIMS board answered HTTP 521 (live, Oct 2026): no openings would be wrong."""
     from job_apply.browser import SiteDown
 
-    async def down(url):
+    async def down(url, inner=None):
         raise SiteDown("careers-daifuku-america.icims.com is down right now (HTTP 521); try again later")
 
     monkeypatch.setattr(srv.browser, "frames_html", down)

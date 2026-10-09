@@ -29,7 +29,7 @@ from urllib.parse import urlparse
 from . import config, mailbox
 from .ats import ATS_NAMES, detect_ats, shared_system
 from .autofill import clean_label, is_empty_value, norm, plan_autofill, tailored_document
-from .browser import TabClosed
+from .browser import TabClosed, final_text
 
 NEW_TAB_WAIT = 4  # seconds to wait for a tab opened late by a click before calling it a stall
 ONCE_SETTLE = 1.0  # seconds after filling the person's answers before checking they stayed in
@@ -80,13 +80,18 @@ _ENTRY = re.compile(r"^(apply manually|apply now|apply|easy apply|quick apply|"
                     r"continue to application|apply on (?:the )?(?:company|employer)(?:'s)? (?:site|website))$", re.I)
 _AVOID = re.compile(r"autofill|with resume|resume parse|sign ?in|log ?in|create account|register|upload|back|"
                     r"previous|cancel|save for later|withdraw|delete|remove|search|share|print|email (?:me|this)", re.I)
+# A button that agrees to something ("I Acknowledge the Privacy Notice", Schwab's iCIMS sign-in):
+# never pressed for the person
+_AGREEMENT = re.compile(r"^(?:i )?(?:acknowledge|agree|accept|consent)\b.*\b(?:notice|terms|policy|privacy|statement|"
+                        r"agreement|conditions)\b|^i (?:acknowledge|agree|accept|consent)\b", re.I)
 _EXPERIENCE_PAGE = re.compile(r"my experience|work experience|employment history", re.I)
 # A note laid over the page (Nikon's UKG board: "Accessibility Note") with nothing else to press.
 _DISMISS_NOTE = re.compile(r"^(dismiss(?: (?:note|notice|message))?|close (?:note|notice|message))$", re.I)
 # Cookie banners: only ever the privacy-preserving choice, and only when the site offers one.
 _DECLINE_COOKIES = re.compile(r"^(reject(?: all)?(?: cookies)?|decline(?: all)?(?: cookies)?|only (?:strictly )?necessary"
                               r"|necessary (?:cookies )?only|use necessary cookies only|accept (?:only )?necessary"
-                              r"(?: cookies)?|reject optional(?: cookies)?)$", re.I)
+                              r"(?: cookies)?|reject optional(?: cookies)?|(?:reject|decline) non-?essential(?: cookies)?)$",
+                              re.I)
 
 
 @dataclass
@@ -145,7 +150,7 @@ def classify(data: dict[str, Any], text: str) -> str:
         return "sign_in"  # Workday: "Sign in with email / Google / Apple"
     if any(_CODE_FIELD.search(f.get("label") or "") for f in fields if f["kind"] in ("text", "number")):
         return "email_code"
-    if not fields and _VERIFY_EMAIL.search(text[:3000]) and not any(_ENTRY.match(a.strip()) for a in actions):
+    if not fields and _VERIFY_EMAIL.search(text[:3000]) and not any(_ENTRY.match(final_text(a)) for a in actions):
         return "email_code"  # "we sent you a link to verify your account"
     return "form" if fields else "page"
 
@@ -154,8 +159,8 @@ def pick_next(actions: list[dict[str, Any]], in_form: bool) -> dict[str, Any] | 
     """The button that moves the application on: a step button inside a form, otherwise
     the way into it ("Apply Manually" before "Apply")."""
     usable = [a for a in actions if not a.get("disabled") and not a.get("is_submit")]
-    steps = [a for a in usable if _STEP.match(a["text"].strip())]
-    entries = [a for a in usable if _ENTRY.match(a["text"].strip()) and not _SOCIAL.search(a["text"])
+    steps = [a for a in usable if _STEP.match(final_text(a["text"]))]
+    entries = [a for a in usable if _ENTRY.match(final_text(a["text"])) and not _SOCIAL.search(a["text"])
                and not (_AVOID.search(a["text"]) and "manually" not in a["text"].lower())]
     # an open menu's own entry ("Apply Now" under Qorvo's "Apply now ▾") before the toggle again
     entries.sort(key=lambda a: (not a.get("menu"), "manually" not in a["text"].lower()))
@@ -760,6 +765,7 @@ class Applier:
         if not await self._open(run):
             return
         stalls, entries_done, waited, refilled, dismissed = 0, set(), False, set(), set()
+        step_waited: set[tuple[Any, ...]] = set()  # pages waited on for a greyed-out step button
         account_waited = False
         sign_ins: dict[str, int] = {}  # what the saved password was used for on this pass
         pressed: list[tuple[Any, ...]] = []  # (page, button) for each button pressed on this pass
@@ -786,7 +792,7 @@ class Applier:
                 run.try_later = run.status == "needs_you"
                 return
             actions = data.get("actions") or []
-            entry_here = any(_ENTRY.match(a["text"].strip()) and not a.get("disabled") for a in actions)
+            entry_here = any(_ENTRY.match(final_text(a["text"])) and not a.get("disabled") for a in actions)
             if kind == "form" and entry_here and not _application_like(data):
                 kind = "page"  # a posting with a "send me similar jobs" box: go in through Apply
             if kind == "bot_check":
@@ -887,10 +893,10 @@ class Applier:
                     return self._pause(run, "questions", f"{len(pending)} question(s) your profile doesn't answer. "
                                        "Answer them here and the desk fills them in (and remembers them).", pending)
                 actions = data.get("actions") or []
-                entry_here = any(_ENTRY.match(a["text"].strip()) and not a.get("disabled") for a in actions)
+                entry_here = any(_ENTRY.match(final_text(a["text"])) and not a.get("disabled") for a in actions)
             # a step button beside a Submit (a footer "Submit" on step 1 of 4) means there's more to
             # fill: the review page is only where Submit is the way on
-            forward_here = any(_FORWARD.match(a["text"].strip()) and not a.get("disabled") and not a.get("is_submit")
+            forward_here = any(_FORWARD.match(final_text(a["text"])) and not a.get("disabled") and not a.get("is_submit")
                                for a in data.get("actions") or [])
             if ((kind == "form" or run.seen_form and not entry_here) and not forward_here
                     and await srv.browser.find_submit()):
@@ -909,6 +915,14 @@ class Applier:
                 waited = True  # slow pages (Intel's Workday, Eightfold forms) draw their buttons late
                 wait = SIGN_IN_STEP_WAIT if sign_in_step else BLANK_PAGE_WAIT if blank else LATE_BUTTONS_WAIT
                 if await self._wait_for_progress(wait):
+                    continue
+            here = (data.get("url"), tuple(data.get("headings") or []))
+            if action is None and kind == "form" and here not in step_waited and any(
+                    a.get("disabled") and _FORWARD.match(final_text(a["text"])) for a in data.get("actions") or []):
+                # a form still being drawn: Oracle's Personal Info shows its upload boxes and a greyed-out
+                # Next first, then its name, email and phone boxes and an enabled Next
+                step_waited.add(here)
+                if await self._wait_for_step(LATE_BUTTONS_WAIT, data):
                     continue
             if action is None and sign_in_step:
                 # Workday's sign-in step whose sign-in buttons never drew (Applied's, now and then):
@@ -931,6 +945,12 @@ class Applier:
                 if blank:
                     return self._pause(run, "stuck", "The page stayed blank: the site may be slow or down. Reload it "
                                        "in the browser, then press Resume.")
+                agree = next((a for a in data.get("actions") or [] if _AGREEMENT.search(a["text"].strip())
+                              and "cookie" not in a["text"].lower() and not a.get("disabled")), None)
+                if agree is not None:
+                    return self._pause(run, "stuck", f"The way on is \u201c{agree['text'].strip()}\u201d, which agrees to "
+                                       "something in your name, so it's yours to press. Read it and press it in the "
+                                       "browser window if you're happy to, then press Resume.")
                 return self._pause(run, "stuck", "I couldn't find the button that moves this application on. "
                                    "Take it a step further in the browser, then press Resume.")
             key = (data.get("url"), tuple(data.get("headings") or []), action["text"].strip().lower())
@@ -1007,6 +1027,20 @@ class Applier:
             await asyncio.sleep(1)
             if _account_and_application((await self._look())[0]):
                 return
+
+    async def _wait_for_step(self, seconds: float, before: dict[str, Any]) -> bool:
+        """Wait for a form still being drawn: its step button enabled, or more boxes to fill."""
+        def boxes(data: dict[str, Any]) -> int:
+            return sum(f.get("kind") != "file" and not f.get("disabled") for f in data.get("fields") or [])
+
+        had = boxes(before)
+        deadline = time.monotonic() + seconds
+        while time.monotonic() < deadline:
+            await asyncio.sleep(1)
+            data, _ = await self._look()
+            if pick_next(data.get("actions") or [], in_form=True) or boxes(data) > had:
+                return True
+        return False
 
     async def _wait_for_progress(self, seconds: float) -> bool:
         """Wait for a form, a sign-in, a bot check or a button that moves things on to appear
