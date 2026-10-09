@@ -1110,13 +1110,26 @@ def test_a_confirmed_degree_answers_yes():
     diploma = with_degrees([{"level": "high_school"}], "High school diploma", [{"degree": "High school diploma", "end": 2015}])
     assert answer("Do you have a high school diploma?", diploma) == "Yes"
     assert answer("Do you have a Bachelor's degree?", diploma) == "No"
-    # anything it can't read: a level, a status, a field saying it isn't done, a list written otherwise
+    # anything it can't read: a level, a status, a field saying it isn't done or is something else
     for degrees in ([{"level": "Bachelor's (in progress)"}], [{"level": "MA"}], [{"level": "BS"}],
                     [{"level": "bachelor", "field": "Finance", "status": "in progress"}],
                     [{"level": "bachelor", "field": "Finance (expected 2027)"}],
-                    {"level": "bachelor", "field": "Finance"}):
+                    [{"level": "bachelor", "field": "Finance coursework"}], [{"level": "bachelor", "field": "Finance - ABD"}],
+                    [{"level": "bachelor", "field": "Finance - withdrew"}]):
         assert answer("Do you have a Bachelor's degree?", with_degrees(degrees, "Some college")) is None, degrees
+    assert answer("Do you have a doctorate?", with_degrees([{"level": "doctorate", "field": "Juris Doctor"}])) is None
+    assert answer("Do you have an Associate's degree?",
+                  with_degrees([{"level": "associate", "field": "Welding Certificate"}], "Some college")) is None
+    for equivalent in ("General Educational Development", "HiSET"):
+        assert answer("Do you have a high school diploma?",
+                      with_degrees([{"level": "high_school", "field": equivalent}], "Some college")) is None, equivalent
+    assert answer("Do you have a high school diploma?", with_degrees([{"level": "high_school"}], "GED")) is None
+    assert answer("Do you have a GED?", with_degrees([{"level": "ged", "field": "GED"}], "GED")) == "Yes"
+    # what is read: a degree's name as the level, a field as a diploma names it, a lone entry
     assert answer("Do you have a Bachelor's degree?", with_degrees([{"level": "Bachelor's", "field": "Finance"}])) == "Yes"
+    assert answer("Do you have a Bachelor's degree?",
+                  with_degrees([{"level": "bachelor", "field": "Business Administration (Finance)"}])) == "Yes"
+    assert answer("Do you have a Bachelor's degree?", with_degrees({"level": "bachelor", "field": "Finance"})) == "Yes"
     # one it can't read doesn't stop a Yes from one it can, but stops a No
     mixed = with_degrees([{"level": "bachelor", "field": "Finance"}, {"level": "certificate"}])
     assert answer("Do you have a Bachelor's degree?", mixed) == "Yes"

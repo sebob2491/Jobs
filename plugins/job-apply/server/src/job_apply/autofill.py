@@ -645,9 +645,13 @@ def _studied_level(text: Any) -> int | None:
 _DEGREE_ONLY = (r"^(?:do you (?:have|hold|possess) |have you (?:earned|completed|received) )?(?:an? |the )?"
                 r"(?P<deg>high school diploma(?: or (?:a )?ged)?|ged|(?:associate|bachelor|master)(?: s|s)? degree|"
                 r"doctorate(?: degree)?)(?P<higher> or (?:higher|above|greater))?(?: (?:required|preferred))*$")
-# A field that says the degree isn't done, or isn't the diploma: "Finance (expected 2027)", "GED"
-_NOT_PLAIN_FIELD = re.compile(r"\d|[()\[\]]|\b(expected|anticipated|pending|progress|current\w*|ongoing|not|incomplete|"
-                              r"pursuing|enrolled|ged|equivalen\w*|general education)\b", re.I)
+# A field that says the degree isn't done ("Finance coursework", "Finance (expected 2027)", "ABD"), or
+# isn't that degree ("Welding Certificate", "Juris Doctor", a diploma's equivalent: GED, HiSET, TASC, HSED)
+_NOT_DONE_FIELD = re.compile(r"\b(expected|anticipated|pending|progress|ongoing|current\w*|pursuing|enrolled|incomplete|"
+                             r"unfinished|not|some|coursework|withdr\w*|abd|candidate|graduating|toward\w*|partial\w*|"
+                             r"\d{4})\b")
+_NOT_THAT_DEGREE = re.compile(r"\b(certificates?|certification|juris|jd|md|pharm ?d|hiset|tasc|hsed|ged|equivalen\w*|"
+                              r"general educational?)\b")
 
 
 def _degrees_earned(prof: Profile) -> tuple[list[tuple[int, str]], bool]:
@@ -655,15 +659,20 @@ def _degrees_earned(prof: Profile) -> tuple[list[tuple[int, str]], bool]:
     writes after asking about each), as (level rank, kind: "ged" for a GED, else ""), and
     whether anything there couldn't be read: a level not one of _LEVELS, "ged" or a degree as
     setup writes it; anything besides a level and a field (a status); a field saying the
-    degree isn't done or isn't a diploma; a list written some other way."""
+    degree isn't done, or is something else (a certificate, a JD, a diploma's equivalent)."""
     raw = prof.get("education.degrees_earned")
+    entries = raw if isinstance(raw, list) else [raw] if isinstance(raw, dict) else []
     out: list[tuple[int, str]] = []
-    unread = raw is not None and not isinstance(raw, list)
-    for d in raw if isinstance(raw, list) else []:
-        if not isinstance(d, dict) or set(d) - {"level", "field"} or _NOT_PLAIN_FIELD.search(str(d.get("field") or "")):
+    unread = raw is not None and not isinstance(raw, (list, dict))
+    for d in entries:
+        if not isinstance(d, dict) or set(d) - {"level", "field"}:
             unread = True
             continue
+        field = norm(d.get("field"))
         level = norm(d.get("level")).replace(" ", "_")
+        if _NOT_DONE_FIELD.search(field) or level != "ged" and _NOT_THAT_DEGREE.search(field):
+            unread = True
+            continue
         if level == "ged":
             out.append((0, "ged"))
             continue
@@ -693,6 +702,8 @@ def _has_degree(prof: Profile, job: dict, label: str = "") -> Any:
     # a high school diploma isn't a GED, nor a GED a diploma; "a high school diploma or GED" is either
     deg = shape.group("deg")
     kinds = {"", "ged"} if rank > 0 or "diploma" in deg and "ged" in deg else {"ged"} if deg == "ged" else {""}
+    if kinds == {""} and rank == 0 and re.search(r"\bged\b", norm(prof.get("education.highest_degree"))):
+        return None  # a diploma asked of someone whose highest is a GED: theirs to say
     if any((r == rank and kind in kinds) or r > rank and higher for r, kind in earned):
         return "Yes"
     if unread:
