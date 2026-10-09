@@ -610,50 +610,66 @@ def _veteran(prof: Profile, job: dict, label: str = "") -> Any:
 
 
 _LEVELS = ["high_school", "associate", "bachelor", "master", "doctorate"]
-# a degree still to come, however the profile words it: "Bachelor's (expected 2027)", "BS, in progress"
-_NOT_YET = re.compile(r"\b(expected|anticipated|candidate|projected|pending)\b")
+# Words that say a degree isn't (yet) earned, however a profile puts it: "Bachelor's (expected 2027)",
+# "BS - current student", "Bachelor's (not yet completed)", "graduating 2027", "ongoing"
+_NOT_EARNED = re.compile(r"\b(expected|anticipated|candidate|projected|pending|graduating|ongoing|current\w*|students?|"
+                         r"studying|pursuing|progress|process|not|incomplete|unfinished|yet|will|to be|toward\w*|some|"
+                         r"coursework|enrolled|attending|partial\w*|until)\b")
+_DONE_STATUS = {"completed", "complete", "graduated", "finished", "done", "conferred", "awarded", "earned"}
+
+
+def _plainly_a_degree(text: Any) -> bool:
+    """A degree written as just its name ("Bachelor's Degree", "BS Finance"): no year,
+    brackets or word saying it's still to come."""
+    raw = str(text or "")
+    return bool(degree_key(raw)) and not re.search(r"\d|[()\[\]]", raw) and not _NOT_EARNED.search(norm(raw))
 
 
 def _degree_done(entry: dict) -> bool:
-    """An education_history entry whose degree was earned: one the entry names as finished,
-    not still under way (an end of "present", a current school, an end year still to come)."""
-    degree = str(entry.get("degree") or "")
-    if not finished_degree(degree) or _partial_study(norm(degree)) or _NOT_YET.search(norm(degree)):
+    """An education_history entry whose degree was earned, by positive evidence only: its
+    degree written plainly, an end date already past, and nothing marking it current."""
+    if not _plainly_a_degree(entry.get("degree")) or not finished_degree(entry.get("degree")):
         return False
-    end = entry.get("end")
-    if is_present(end) or entry.get("current") is True:
+    if norm(entry.get("current")) in ("true", "yes", "y", "1") or entry.get("current") is True:
         return False
-    _, year = parse_month_year(end)
-    return not (year and int(year) > date.today().year)
+    status = norm(entry.get("status"))
+    if status and status not in _DONE_STATUS:
+        return False
+    month, year = parse_month_year(entry.get("end"))
+    if not year or is_present(entry.get("end")):
+        return False
+    today = date.today()
+    return int(year) < today.year or int(year) == today.year and bool(month) and int(month or 0) < today.month
 
 
-def _finished_levels(prof: Profile) -> tuple[list[tuple[int, str]], int | None, bool]:
-    """What the profile says of the person's degrees: the finished ones it can rank, as (level
-    rank, major); the most the person can have finished, by the highest education it states
-    (None when it states none it can read); and whether a finished degree couldn't be ranked
-    (a "No" can't then be told). "Some college" has finished no college degree; "Bachelor's
-    (not finished)" at most what comes below a bachelor's."""
-    held: list[tuple[int, str]] = []
+def _finished_levels(prof: Profile) -> tuple[list[tuple[int, list[str]]], int | None, bool]:
+    """What the profile says of the person's degrees: the earned ones it can rank, as (level
+    rank, majors); the most the person can have finished, by the highest education it states
+    (None when it states none it can read); and whether an earned degree couldn't be ranked (a
+    "No" can't then be told). "Some college" has finished no college degree; a degree written
+    as still to come, at most what comes below it."""
+    held: list[tuple[int, list[str]]] = []
     unranked = False
     for e in _listed(prof.get("education_history")):
-        if isinstance(e, dict) and _degree_done(e):
-            key = degree_key(str(e.get("degree") or ""))
-            if key:
-                held.append((_LEVELS.index(key), norm(e.get("major") or e.get("field") or "")))
-            else:
-                unranked = True
+        if not isinstance(e, dict):
+            continue
+        if _degree_done(e):
+            majors = [norm(m) for m in re.split(r"\s*(?:,|/|&|\band\b)\s*", str(e.get("major") or e.get("field") or ""))]
+            held.append((_LEVELS.index(degree_key(str(e["degree"])) or ""), [m for m in majors if m]))
+        elif finished_degree(e.get("degree")) and not degree_key(str(e.get("degree") or "")):
+            unranked = True
     highest = str(prof.get("education.highest_degree") or "").strip()
     most = None
     if highest:
         n = norm(highest)
         key = degree_key(n)
-        if _partial_study(n) and not key:
-            most = -1 if _partial_level(n) == "high_school" else 0 if _partial_level(n) else None
-        elif key and (_partial_study(n) or _NOT_YET.search(n) or not finished_degree(highest)):
-            most = _LEVELS.index(key) - 1  # that degree isn't finished
+        if _plainly_a_degree(highest) and finished_degree(highest):
+            most = _LEVELS.index(key or "")
+            held.append((most, []))
         elif key:
-            most = _LEVELS.index(key)
-            held.append((most, ""))
+            most = _LEVELS.index(key) - 1  # that degree isn't earned
+        elif _partial_study(n):
+            most = -1 if _partial_level(n) == "high_school" else 0 if _partial_level(n) else None
         else:
             unranked = True
     return held, most, unranked
@@ -663,34 +679,44 @@ _FIELD_FILLER = {"of", "and", "in", "the", "a", "an", "science", "sciences", "ar
 
 
 def _same_field(field: str, major: str) -> bool:
-    """A field a question names is the major itself, word for word ("Finance" is "Finance";
-    "Physics" isn't "Physical Education", nor "Mechanical Engineering" "Mechanical Engineering
-    Technology")."""
+    """A field a question names is one of the person's majors, word for word ("Finance" is
+    "Finance"; "Physics" isn't "Physical Education", nor "Mechanical Engineering" "Mechanical
+    Engineering Technology")."""
     words = set(field.split()) - _FIELD_FILLER
     return bool(words) and words == set(major.split()) - _FIELD_FILLER
 
 
+# The question as nothing but a degree, maybe "or higher", maybe "in <fields>": anything else
+# ("with honors", "and a CPA", "from an accredited university") is a condition the profile can't confirm
+_DEGREE_ONLY = re.compile(
+    r"^(?:do you (?:have|hold|possess) |have you (?:earned|completed|received) )?(?:an? |the )?"
+    r"(?:high school diploma(?: or (?:a )?ged)?|ged|(?:[a-z]+ ){0,1}?(?:associate|bachelor|master|doctor|ph d|mba|bs|ba|ms|"
+    r"ma|bsn|bba|msn)\w*(?: s)?(?: of (?:science|arts|fine arts|business administration))?(?: degree| diploma)?)"
+    r"(?: or (?:higher|above|greater))?(?: in (?P<fields>[a-z ]+?))?"
+    r"(?: (?:required|preferred|or higher|or above|or greater))*$")
+
+
 def _has_degree(prof: Profile, job: dict, label: str = "") -> Any:
     """"Do you have a Bachelor's degree?", "Bachelor's Degree in Accounting or Finance
-    Required": from the degrees the profile says were finished. Yes when one is at that level
-    or above (in a field named, when the question names some, and with no other condition the
-    profile can't confirm: "from an accredited university"). No when the most the person can
-    have finished is below it and no field is named. Else the person's to say, as is "...or
-    equivalent experience", anything still under way, and a question naming two levels."""
+    Required": from the degrees the profile shows earned. Yes when one is at that level or
+    above (one of its majors a field the question names, when it names some), and the
+    question asks nothing more. No when the most the person can have finished is below it and
+    no field is named. Else the person's to say: "...or equivalent experience", a degree
+    under way, two levels at once, a condition the profile can't confirm."""
     asked = norm(label)
-    if re.search(r"equivalent|in lieu|experience|pursuing|working toward|enrolled|in progress|currently", asked):
-        return None
     levels = {key for key, pattern in _DEGREES if re.search(pattern, asked)}
-    if len(levels) != 1:
-        return None  # "Bachelor's degree required, Master's degree preferred": which is asked?
+    shape = _DEGREE_ONLY.match(asked)
+    if len(levels) != 1 or not shape:
+        return None
     rank = _LEVELS.index(levels.pop())
-    m = re.search(r"\b(?:in|of) (.+)$", label.lower())
-    named = re.sub(r"(\W+(required|preferred|or higher|or above|or greater))+\W*$", "", m.group(1)) if m else ""
-    fields = [norm(f) for f in re.split(r"\bor\b|\band\b|[,;/]", named) if norm(f)]
-    conditioned = re.search(r"\b(from|accredit\w*|institution|abroad|foreign|u s|united states|country|within|since|"
-                            r"last)\b", asked)
+    fields: list[str] = []
+    if shape.group("fields"):  # read from the question as written, its commas telling fields apart
+        m = re.search(r"\bin (.+)$", label.lower())
+        named = re.sub(r"(\W+(required|preferred|or higher|or above|or greater))+\W*$", "", m.group(1)) if m else ""
+        fields = [norm(f) for f in re.split(r"\bor\b|[,;/]", named) if norm(f)]
     held, most, unranked = _finished_levels(prof)
-    if not conditioned and any(r >= rank and (not fields or any(_same_field(f, major) for f in fields)) for r, major in held):
+    if any(r >= rank and (not fields or any(_same_field(f, major) for f in fields for major in majors))
+           for r, majors in held):
         return "Yes"
     if not fields and most is not None and not unranked and max([most, *(r for r, _ in held)]) < rank:
         return "No"

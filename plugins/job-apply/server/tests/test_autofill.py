@@ -1009,15 +1009,15 @@ def test_a_citizen_is_a_us_person_and_eligibility_is_authorization():
     assert answer("Race of your household members", ["White", "Black", "Asian"]) is None
 
 
-
 def test_a_degree_question_from_the_degrees_finished():
     """"Do you have a Bachelor's degree?" and Phoenix Children's qualification rows ("Bachelor's
     Degree in Accounting or Finance Required", live, Oct 2026) were always asked. Yes takes a
-    finished degree at that level or above, in a field the question names when it names some;
-    No, the most the profile lets the person have finished being below it. A degree under way
-    is never one held, coursework is never a degree, and "...or equivalent experience" is the
-    person's to judge."""
+    degree shown earned (written plainly, an end date past) at that level or above, one of its
+    majors a field the question names when it names some, and a question asking nothing more;
+    No, the most the profile lets the person have finished being below it. A degree under
+    way, however written, is never one held, and coursework is never a degree."""
     import yaml
+    from datetime import date
     from job_apply import config
 
     path = config.profile_path()
@@ -1029,7 +1029,7 @@ def test_a_degree_question_from_the_degrees_finished():
 
     def answer(label, profile, kind="radio_group"):
         a = resolve_field(f(label, kind, options=["Yes", "No"] if kind != "text" else None), profile)
-        return a and (a.value if a.rule == "has_degree" else f"({a.rule})")
+        return a and a.value
 
     some_college = with_education("Some college", [{"school": "Example Community College", "degree": "", "end": 2019}])
     assert answer("Do you have a Bachelor's degree?", some_college) == "No"
@@ -1037,21 +1037,33 @@ def test_a_degree_question_from_the_degrees_finished():
     assert answer("Bachelor's Degree in Accounting or Finance Required", some_college) is None
     assert answer("Do you have a high school diploma or GED?", some_college) is None  # not said
     finance = with_education("Bachelor's Degree", [{"school": "Example State University", "degree": "Bachelor's Degree",
-                                                    "major": "Finance", "end": 2020}])
+                                                    "major": "Finance and Economics", "end": 2020}])
     assert answer("Bachelor's Degree in Accounting or Finance Required", finance) == "Yes"
     assert answer("Bachelor's degree in Business Administration, Finance, or related field", finance) == "Yes"
+    assert answer("Do you have a high school diploma or GED?", finance) == "Yes"  # below a bachelor's
     assert answer("Bachelor's degree in Engineering", finance) is None
     assert answer("Do you have a Master's degree?", finance) == "No"
-    assert answer("Do you have a high school diploma or GED?", finance) == "Yes"  # below a bachelor's
-    assert answer("Bachelor's degree or equivalent experience", finance) is None
-    # a condition the profile can't confirm, or two levels asked at once
-    assert answer("Do you have a Bachelor's degree from an accredited university?", finance) is None
-    assert answer("Bachelor's degree required, Master's degree preferred", finance) is None
-    # a degree under way, however written, is not held
+    # a question asking anything more is the person's: equivalence, a condition, two levels, a second requirement
+    for asked in ("Bachelor's degree or equivalent experience", "Do you have a Bachelor's degree from an accredited university?",
+                  "Bachelor's degree required, Master's degree preferred", "Do you have a Bachelor's degree with honors?",
+                  "Do you have a Bachelor's degree and a CPA?",
+                  "Do you have a Bachelor's degree in Finance and an active CPA license?"):
+        assert answer(asked, finance) is None, asked
+    # a degree under way, however written, is never held
+    today = date.today()
+    later_this_year = f"{today.year}-12" if today.month < 12 else f"{today.year + 1}-01"
     for highest, history in (("Bachelor's (not finished)", []), ("Bachelor's degree (expected 2027)", []),
+                             ("Bachelor's (not yet completed)", []), ("Bachelor's (ongoing)", []),
+                             ("Bachelor's - current student", []), ("Bachelor's in process", []),
                              ("Some college", [{"degree": "Bachelor of Science", "end": "Present"}]),
-                             ("Some college", [{"degree": "Bachelor of Science", "current": True}]),
-                             ("Some college", [{"degree": "BS Finance (expected May 2027)"}])):
+                             ("Some college", [{"degree": "Bachelor of Science", "current": True, "end": 2020}]),
+                             ("Some college", [{"degree": "Bachelor of Science", "current": "yes", "end": 2020}]),
+                             ("Some college", [{"degree": "BS", "status": "in progress", "end": 2020}]),
+                             ("Some college", [{"degree": "BS Finance (expected May 2027)"}]),
+                             ("Some college", [{"degree": "BS", "end": "Expected May 2027"}]),
+                             ("Some college", [{"degree": "BS", "end": later_this_year}]),
+                             ("Some college", [{"degree": "Bachelor's (2027)"}]),
+                             ("Some college", [{"degree": "BS, current student"}])):
         assert answer("Do you have a Bachelor's degree?", with_education(highest, history)) != "Yes", (highest, history)
     # a major is the field itself, not one that starts the same way
     physical = with_education("Bachelor's Degree", [{"degree": "Bachelor's Degree", "major": "Physical Education", "end": 2015}])
