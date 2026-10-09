@@ -93,11 +93,30 @@ LOST_FILL_WAIT = 0.5  # seconds after filling for a page to mark the boxes whose
 LOST_FILL_TRIES = 3  # times a box is typed again on a page, at most (one the page refuses stays marked)
 # How long a click may wait for its button to become clickable, in ms.
 CLICK_TIMEOUT = 8000
+# What a page says once an application has gone ("Thanks for applying!", Oracle's "Thank you for
+# your job application", "Thank you for submitting your application"); only words that weren't
+# on the page before Submit count. Not "Thank you for your interest", which a sign-in page says
+# too, nor "Your application is in progress" or "...incomplete"
 CONFIRMATION_RE = re.compile(
-    r"thank you for (applying|your application|your interest)|application (has been |was )?(submitted|received|complete)"
-    r"|we('ve| have) received your application|successfully (submitted|applied)|your application is (in|on its way)",
+    r"thank(?:s| you) for (applying|your (job )?application|submitting (your |an )?application)"
+    r"|application (has been |was )?(successfully )?(submitted|received|completed?)\b"
+    r"|we('ve| have) received your application|successfully (submitted|applied)\b"
+    r"|your application is (in(?=\s*(?:[.!]|$))|on its way)",
     re.I,
 )
+# Words earlier in the sentence that make it no confirmation: "No application was submitted",
+# "after your application has been submitted, you will...", "If you have successfully applied"
+_NOT_CONFIRMED = re.compile(r"\b(no|not|never|once|after|when|if|until|before|unless)\b[^.!?]{0,40}$", re.I)
+# A form sent back: what its errors say
+_FORM_ERROR = re.compile(r"required|invalid|error|must be|can'?t be blank|missing|"
+                         r"please (enter|select|provide|fix|correct|complete|review)", re.I)
+
+
+def confirmations(text: str) -> set[str]:
+    """The confirmations a page's text gives, however its spaces, lines and apostrophes come."""
+    flat = re.sub(r"\s+", " ", (text or "").replace("\u2019", "'").replace("\xa0", " "))
+    return {m.group(0).lower() for m in CONFIRMATION_RE.finditer(flat)
+            if not _NOT_CONFIRMED.search(flat[max(0, m.start() - 60):m.start()])}
 
 
 def _css_string(text: str) -> str:
@@ -1393,13 +1412,12 @@ class BrowserSession:
             page = await self.page()
             text = await self._page_text(page)
             data = await self._extract(page)
-            # a thank-you that wasn't there before: "Thank you for your interest in X" on the form
-            # itself says nothing about whether it went
-            said = {m.group(0).lower() for m in CONFIRMATION_RE.finditer(text)}
-            said_before = {m.group(0).lower() for m in CONFIRMATION_RE.finditer(before)}
+            # a thank-you that wasn't there before, on a page that doesn't say what's wrong with the form
+            new = confirmations(text) - confirmations(before)
+            sent_back = any(_FORM_ERROR.search(e or "") for e in data["errors"])
             return {
                 "url": page.url,
-                "confirmed": bool(said - said_before),
+                "confirmed": bool(new) and not sent_back,
                 "errors": data["errors"],
                 "text_excerpt": text.strip()[:1500],
             }
