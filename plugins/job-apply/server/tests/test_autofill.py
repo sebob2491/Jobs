@@ -1049,3 +1049,11 @@ def test_a_degree_the_person_lacks_is_answered_no():
         assert answer("Do you have a Master's degree?", with_education(highest, [])) is None, highest
     # a degree's details aren't the question
     assert answer("Bachelor's Degree Major", some_college, "text") is None
+    # only a plain "No", with the choices shown: never one that says more than the profile
+    for choices in (["Yes", "No, but I have equivalent work experience"], ["Yes", "No, but I am currently enrolled"], []):
+        a = resolve_field(f("Do you have a Bachelor's degree?", "combobox", options=choices), some_college)
+        assert a is None, choices
+    # a school whose entry doesn't say its degree stops the No
+    unsaid = with_education("Associate's Degree", [{"school": "Example State University", "major": "Finance", "end": 2020}])
+    assert answer("Do you have a Bachelor's degree?", unsaid) is None
+    assert answer("Do you have a Bachelor's degree?", with_education("College coursework, no degree", [])) == "No"

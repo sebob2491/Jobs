@@ -614,19 +614,28 @@ _LEVELS = ["high_school", "associate", "bachelor", "master", "doctorate"]
 # degree's full name: nothing an abbreviation could also be ("MA" is a Medical Assistant
 # certificate too), nothing more ("Equivalent", "(expected 2027)")
 _DEGREE_NAMES = [
-    (0, r"high school( diploma)?|ged|high school diploma or ged|ged or high school diploma"),
-    (1, r"associate( s|s)?( degree)?|associate of (applied )?(science|arts)"),
-    (2, r"bachelor( s|s)?( degree)?|bachelor of (science|arts|fine arts|business administration)"),
-    (3, r"master( s|s)?( degree)?|master of (science|arts|fine arts|business administration)"),
-    (4, r"doctorate|ph d|doctor of philosophy"),
+    ("high_school", r"high school( diploma)?|ged|high school diploma or ged|ged or high school diploma"),
+    ("associate", r"associate( s|s)?( degree)?|associate of (applied )?(science|arts)"),
+    ("bachelor", r"bachelor( s|s)?( degree)?|bachelor of (science|arts|fine arts|business administration)"),
+    ("master", r"master( s|s)?( degree)?|master of (science|arts|fine arts|business administration)"),
+    ("doctorate", r"doctorate|ph d|doctor of philosophy"),
 ]
-_SOME_STUDY = [(-1, r"some high school"),
-               (0, r"some college( no degree| coursework)?|college coursework( no degree)?|some university")]
 
 
-def _named_level(text: Any, names: list[tuple[int, str]] = _DEGREE_NAMES) -> int | None:
+def _named_level(text: Any) -> int | None:
+    """The rank in _LEVELS of a degree written as setup writes it, or by its full name."""
     n = norm(text)
-    return next((rank for rank, pattern in names if re.fullmatch(pattern, n)), None)
+    return next((_LEVELS.index(key) for key, pattern in _DEGREE_NAMES if re.fullmatch(pattern, n)), None)
+
+
+def _studied_level(text: Any) -> int | None:
+    """The most a partial study ("Some college", "College coursework, no degree", "Some high
+    school") lets the person have finished: high school's rank, or below it."""
+    n = norm(text)
+    if not _partial_study(n) or degree_key(n):
+        return None  # "Associate's (in progress)" says only that that one isn't finished
+    part = _partial_level(n)
+    return -1 if part == "high_school" else _LEVELS.index("high_school") if part == "college" else None
 
 
 # A question asking for nothing but a level of education, maybe "or higher": a kind of degree
@@ -653,11 +662,13 @@ def _has_degree(prof: Profile, job: dict, label: str = "") -> Any:
     highest = prof.get("education.highest_degree")
     most = _named_level(highest)
     if most is None:
-        most = _named_level(highest, _SOME_STUDY)
+        most = _studied_level(highest)
     if most is None or most >= rank:
         return None
-    for e in history or []:  # every school's degree is none, or one below the level asked
-        degree = str(e.get("degree") or "").strip() if isinstance(e, dict) else str(e)
+    for e in history or []:  # every school's degree is none (written so: setup's "" for one not finished), or below
+        if not isinstance(e, dict) or "degree" not in e:
+            return None
+        degree = str(e.get("degree") or "").strip()
         listed = _named_level(degree)
         if degree and (listed is None or listed >= rank):
             return None
@@ -813,7 +824,7 @@ RULES: list[tuple[str, str, Getter, int | None, set[str] | None]] = [
     ("current_company", r"(current|most recent|present) (employer|company)", _p("experience.current_company"), 60, None),
     ("current_title", r"(current|most recent|present) (job )?(title|position|role)", _p("experience.current_title"), 60, None),
     ("total_years", r"^(total )?years of (professional |work )?experience$", _p("experience.total_years"), 60, None),
-    # "Do you have a Bachelor's degree?", Phoenix Children's "Bachelor's Degree in Accounting or Finance Required"
+    # "Do you have a Bachelor's degree?" (only No: see _has_degree)
     ("has_degree", _DEGREE_ONLY, _has_degree, 200, {"select", "listbox", "combobox", "radio_group"}),
     ("degree", r"highest (level of )?(education|degree)|^degree$|education level", _edu("highest_degree", "degree"), 80, None),
     ("school", r"^(school|university|college|institution)\b(?!.*\b(major|degree|gpa|city|state|location|country|year|date|address|"
@@ -1188,6 +1199,13 @@ def resolve_field(field: dict, prof: Profile, job: dict | None = None, file_inpu
         ans.value = "Yes" if ans.value else "No"
 
     options = field.get("options")
+    if ans.rule == "has_degree":
+        # a plain "No" among the choices shown: never "No, but I have equivalent experience" or "No, but
+        # I'm enrolled", which say more than the profile does; nor where the section allows an equivalent
+        plain = next((o for o in options or [] if norm(o) == "no"), None)
+        if plain is None or re.search(r"equivalen|experience", norm(field.get("section"))):
+            return None
+        return Answer(plain, ans.rule)
     if kind in {"select", "radio_group", "listbox", "checkbox_group", "combobox"} and options:
         # a place lookup's entries: the one in the rest of the profile's address ("Chandler,
         # Maricopa, AZ", not "Chandler, Henderson, TX" listed before it)
