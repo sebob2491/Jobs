@@ -26,10 +26,10 @@ companies:
     careers_url: https://www.commonspirit.careers/
     ats: icims              # TalentBrew (Radancy) front end; Apply goes to the iCIMS portal careers-commonspirit
     az_sites: Phoenix (St. Joseph's), Chandler (Chandler Regional), Gilbert (Mercy Gilbert), Glendale (St. Joseph's Westgate)
-    confidence: medium
-    # No search block: the iCIMS portal's search answers with an AWS WAF captcha ("Human
-    # Verification", HTTP 405), and the plugin's browser read of it found nothing even for
-    # "nurse" (live check, Oct 2026). The careers page is searched in the browser instead.
+    confidence: high          # live check, Oct 2026: Phoenix and Chandler finance and HR openings
+    # The iCIMS portal's own search answers with an AWS WAF captcha ("Human Verification",
+    # HTTP 405); the TalentBrew front end's search, filtered to Arizona, lists the same openings.
+    search: {talentbrew: {host: www.commonspirit.careers, org: 35300}}
   - name: Phoenix Children's
     careers_url: https://careers.phoenixchildrens.com/Positions/
     ats: company_site       # Phoenix Children's own ASP.NET job site with its own accounts; no ATS behind it seen

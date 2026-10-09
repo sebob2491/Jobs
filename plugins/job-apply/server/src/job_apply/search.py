@@ -13,6 +13,7 @@ Each company in data/companies.yaml may carry a `search` block naming one of:
     talemetry:       <job site address>     (Symplr Talemetry job sites: Valleywise Health)
     phoenixchildrens: <job site address>    (Phoenix Children's own job site)
     jibe:            <Jibe site host>       (iCIMS's Jibe job sites: jobs.sprouts.com)
+    talentbrew:      {host: www.commonspirit.careers, org: 35300}  (Radancy TalentBrew career sites)
     jobvite:         <company>              (jobs.jobvite.com/<company>)
     amazon:          {loc_query: "Phoenix, AZ, USA", latitude: .., longitude: .., radius: 50km}  (amazon.jobs)
     randstad:        https://www.randstadusa.com/jobs/internal  (Randstad's own jobs)
@@ -935,6 +936,67 @@ async def _jibe(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, ter
     return out
 
 
+# ----------------------------------------------------------------- Radancy TalentBrew career sites (Dignity Health)
+TALENTBREW_PAGE = 100  # openings a page
+TALENTBREW_PAGES = 5  # pages read, at most (the keyword search is loose: titles are matched afterwards)
+_TB_ITEM = re.compile(r'<li class="list_item">(.*?)</li>', re.S)
+
+
+def _tb_text(block: str, cls: str) -> str:
+    m = re.search(rf'class="[^"]*\b{cls}\b[^"]*"[^>]*>(.*?)</', block, re.S)
+    return html.unescape(re.sub(r"\s+", " ", m.group(1))).strip() if m else ""
+
+
+async def _talentbrew(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, terms: list[str]) -> list[Listing]:
+    """Radancy TalentBrew career sites (Dignity Health's commonspirit.careers) answer their search
+    page's own requests with the results as HTML, filtered to a state by the site's state filter
+    (named in the first answer's filters). Each opening links to its own page, whose posting names
+    the job system the desk applies on (iCIMS, for Dignity)."""
+    host, org = str(cfg["host"]), str(cfg["org"])
+    state = icims_state(terms)
+    base: dict[str, Any] = {
+        "ActiveFacetID": 0, "RecordsPerPage": TALENTBREW_PAGE, "Distance": 50, "RadiusUnitType": 0, "Keywords": query,
+        "Location": "", "ShowRadius": "False", "IsPagination": "False", "SearchResultsModuleName": "Search Results",
+        "SearchFiltersModuleName": "Search Filters", "SortCriteria": 0, "SortDirection": 0, "SearchType": 5,
+        "OrganizationIds": org}
+
+    async def page(n: int, facet: dict[str, Any]) -> dict[str, Any]:
+        url = f"https://{host}/search-jobs/results?" + urlencode({**base, "CurrentPage": n, **facet})
+        r = await _send(client, "GET", url, headers={"Accept": "application/json", "X-Requested-With": "XMLHttpRequest"})
+        _raise_for(r, url)
+        return r.json()
+
+    data = await page(1, {})
+    facet: dict[str, Any] = {}
+    if state:
+        name = US_STATES[state]
+        m = re.search(rf'data-facet-type="3" data-id="([\d-]+)"[^>]*data-display="{re.escape(name)}, United States"',
+                      str(data.get("filters") or ""))
+        if m:
+            facet = {"ActiveFacetID": m.group(1), "FacetFilters[0].ID": m.group(1), "FacetFilters[0].FacetType": 3,
+                     "FacetFilters[0].Display": f"{name}, United States", "FacetFilters[0].IsApplied": "true",
+                     "FacetFilters[0].FieldName": ""}
+            data = await page(1, facet)
+    out: list[Listing] = []
+    for n in range(2, TALENTBREW_PAGES + 2):
+        items = _TB_ITEM.findall(str(data.get("results") or ""))
+        for block in items:
+            link, title = re.search(r'href="(/job/[^"]+)"', block), _tb_text(block, "search-results-list__heading")
+            if not link or not title:
+                continue
+            posted = _tb_text(block, "job-date-posted")
+            if d := re.fullmatch(r"(\d{1,2})/(\d{1,2})/(\d{4})", posted):
+                posted = f"{d.group(3)}-{int(d.group(1)):02d}-{int(d.group(2)):02d}"
+            out.append(Listing(company="", title=title, url=f"https://{host}{link.group(1)}",
+                               location=_tb_text(block, "job-location"), posted=posted,
+                               external_id=link.group(1).rsplit("/", 1)[-1],
+                               ats="icims" if "icims.com" in _tb_text(block, "ats-url") else ""))
+        if len(items) < TALENTBREW_PAGE or len(out) >= limit or n > TALENTBREW_PAGES:
+            break
+        data = await page(n, facet)
+    return out
+
+
 # ----------------------------------------------------------------- Jobvite job boards (Knight-Swift)
 JOBVITE_CATEGORIES = 10  # categories read past their first 20 openings ("Show More"), per search
 
@@ -1732,6 +1794,7 @@ SEARCHERS: dict[str, Callable[[httpx.AsyncClient, Any, str, int, list[str]], Awa
     "talemetry": _talemetry,
     "phoenixchildrens": _phoenixchildrens,
     "jibe": _jibe,
+    "talentbrew": _talentbrew,
     "jobvite": _jobvite,
     "amazon": _amazon,
     "randstad": _randstad,
