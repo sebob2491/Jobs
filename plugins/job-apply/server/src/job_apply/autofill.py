@@ -643,46 +643,57 @@ def _studied_level(text: Any) -> int | None:
 # a kind of degree ("Bachelor of Science") or anything more ("from an accredited university")
 # isn't one the profile can settle
 _DEGREE_ONLY = (r"^(?:do you (?:have|hold|possess) |have you (?:earned|completed|received) )?(?:an? |the )?"
-                r"(?:high school diploma(?: or (?:a )?ged)?|ged|(?:associate|bachelor|master)(?: s|s)? degree|"
-                r"doctorate(?: degree)?)(?: or (?:higher|above|greater))?(?: in (?P<fields>[a-z ]+?))?"
+                r"(?P<deg>high school diploma(?: or (?:a )?ged)?|ged|(?:associate|bachelor|master)(?: s|s)? degree|"
+                r"doctorate(?: degree)?)(?P<higher> or (?:higher|above|greater))?(?: in (?P<fields>[a-z ]+?))?"
                 r"(?: (?:required|preferred))*$")
-# Fields named as plain alternatives: "Accounting or Finance", "Business Administration, Finance, or related
-# field"; never a list that adds something else ("Accounting; CPA", "Finance and an active CPA license")
-_FIELD_LIST = re.compile(r"[a-z ]+(?:(?:\s*,\s*(?:or\s+)?|\s+or\s+)[a-z ]+)*")
+# Words that make a list of fields more than fields: another requirement ("and an active CPA license",
+# "with honors", "from an accredited university", "or equivalent experience", "MS preferred")
+_NOT_A_FIELD = re.compile(r"\b(and|with|from|plus|at|in|by|years?|experience|equivalent|active|licen[cs]\w*|certif\w*|"
+                          r"cpa|accredit\w*|united|states|us|preferred|required|minimum|least|gpa|honors|ms|ma|mba|bs|ba|"
+                          r"ph|phd|master\w*|bachelor\w*|associate\w*|doctor\w*|degree|diploma)\b")
 
 
 def _fields_named(label: str) -> list[str] | None:
-    """The fields a degree question names, as written ([] when it names none), or None when
-    what follows "in" isn't a plain list of alternatives."""
+    """The fields a degree question names as plain alternatives ("Accounting or Finance",
+    "Business Administration, Finance, or related field"), or None when the list says more."""
     m = re.search(r"\bin (.+)$", label.lower().replace("\u2019", "'"))
     if not m:
-        return []
-    named = re.sub(r"[\s*:?.]*((required|preferred)[\s*:?.]*)*$", "", m.group(1)).strip()
-    if not _FIELD_LIST.fullmatch(named):
         return None
-    return [norm(f) for f in re.split(r"\s*,\s*(?:or\s+)?|\s+or\s+", named) if norm(f)]
+    named = re.sub(r"[\s*:?.]*\(?\s*((required|preferred)\s*\)?[\s*:?.]*)*$", "", m.group(1)).strip()
+    if re.search(r"[^a-z ,]", named):
+        return None  # "Accounting/Finance", "Accounting; CPA": not a plain list
+    fields = [norm(f) for f in re.split(r"\s*,\s*(?:or\s+)?|\s+or\s+", named) if norm(f)]
+    if not fields or any(_NOT_A_FIELD.search(f) for f in fields):
+        return None
+    return fields
 
 
 def _degrees_earned(prof: Profile) -> list[tuple[int, str]]:
     """The degrees the person confirmed they finished (education.degrees_earned, which setup
-    writes after asking about each), as (level rank, field)."""
+    writes after asking about each), as (level rank, field). A level is one of _LEVELS or a
+    degree's name ("Bachelor's", "BS": in this list, a degree)."""
     out = []
     for d in _listed(prof.get("education.degrees_earned")):
-        if isinstance(d, dict) and norm(d.get("level")).replace(" ", "_") in _LEVELS:
-            out.append((_LEVELS.index(norm(d.get("level")).replace(" ", "_")), norm(d.get("field"))))
+        if not isinstance(d, dict):
+            continue
+        level = norm(d.get("level")).replace(" ", "_")
+        key = level if level in _LEVELS else degree_key(norm(d.get("level")))
+        if key:
+            out.append((_LEVELS.index(key), norm(d.get("field"))))
     return out
 
 
 def _has_degree(prof: Profile, job: dict, label: str = "") -> Any:
     """"Do you have a Bachelor's degree?", "Bachelor's Degree in Accounting or Finance
     Required". Yes only from the degrees the person confirmed they finished
-    (education.degrees_earned): one at that level or above, or, when the question names
-    fields, one at that level in one of them, word for word. No when the highest education the
-    profile states, as setup writes it ("Some college", "Associate's Degree"), is below the
-    level asked, no field is named, and no school it lists names a degree that isn't. Else
-    the person's to say: free-text education can't tell a degree earned from one under way."""
-    level = degree_key(norm(label))
+    (education.degrees_earned): one at that level (or above it, when the question says "or
+    higher"); with fields named, one at that level in one of them, word for word. No when the
+    most the person has finished, by those degrees and the highest education the profile
+    states as setup writes it ("Some college", "Associate's Degree"), is below the level asked,
+    no field is named, and no school it lists names a degree that isn't. Else the person's to
+    say: free-text education can't tell a degree earned from one under way."""
     shape = re.match(_DEGREE_ONLY, norm(label))
+    level = degree_key(shape.group("deg")) if shape else None
     if not shape or level is None:
         return None
     rank = _LEVELS.index(level)
@@ -692,18 +703,17 @@ def _has_degree(prof: Profile, job: dict, label: str = "") -> Any:
     earned = _degrees_earned(prof)
     if fields:
         return "Yes" if any(r == rank and any(_same_field(f, field) for f in fields) for r, field in earned) else None
-    if any(r >= rank for r, _ in earned):
+    if any(r == rank or r > rank and shape.group("higher") for r, _ in earned):
         return "Yes"
-    if earned:
-        return None  # confirmed degrees below the level: the person says
     history = prof.get("education_history")
     if history is not None and not isinstance(history, list):
         return None  # written some other way: not read
     highest = prof.get("education.highest_degree")
-    most = _named_level(highest)
-    if most is None:
-        most = _studied_level(highest)
-    if most is None or most >= rank:
+    stated = _named_level(highest)
+    if stated is None:
+        stated = _studied_level(highest)
+    known = [r for r, _ in earned] + ([stated] if stated is not None else [])
+    if not known or max(known) >= rank:
         return None
     for e in history or []:  # every school's degree is none (written so: setup's "" for one not finished), or below
         if not isinstance(e, dict) or "degree" not in e:
