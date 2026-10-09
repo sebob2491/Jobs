@@ -810,3 +810,27 @@ def test_a_yes_is_a_whole_word():
     for said in ("Yes", "Y", "yes, I agree", "Yes - 25%", "True", "Agree", "I agree", "Agreed", "I am a veteran"):
         assert polarity(said) is True, said
     assert choose_option("Yes", ["Yearly", "No"]) is None
+
+
+def test_never_the_opposite_of_the_answer():
+    """When a list doesn't have the profile's own wording, the closest-looking choice could be
+    its opposite: "Not Hispanic or Latino" went to "Hispanic or Latino" (and to "Hispanic/Latino"
+    over "Non-Hispanic/Latino"), "I am not a protected veteran" to "Protected Veteran"."""
+    assert choose_option("Not Hispanic or Latino", ["Hispanic or Latino", "Decline to answer"]) is None
+    assert choose_option("Not Hispanic or Latino", ["Hispanic/Latino", "Non-Hispanic/Latino"]) != "Hispanic/Latino"
+    assert choose_option("Hispanic or Latino", ["Not Hispanic or Latino", "Decline"]) is None
+    assert choose_option("Hispanic or Latino", ["Yes, Hispanic or Latino", "Not Hispanic or Latino"]) == "Yes, Hispanic or Latino"
+    assert choose_option("I am not a protected veteran", ["Protected Veteran", "Decline"]) is None
+    # nor a choice that denies more than the answer: a veteran who isn't a protected one is a veteran
+    assert choose_option("I am not a protected veteran", ["Protected Veteran", "Not a Veteran", "Decline"]) is None
+    assert choose_option("Not a Veteran", ["I am a protected veteran", "I am not a protected veteran"]) == \
+        "I am not a protected veteran"
+    # a denial about something else doesn't stand in the way
+    assert choose_option("Asian", ["Asian (Not Hispanic or Latino)", "White (Not Hispanic or Latino)"]) == \
+        "Asian (Not Hispanic or Latino)"
+    assert choose_option("No, I do not have a disability", ["Yes, I have a disability", "No, I don't have a disability",
+                                                             "I don't wish to answer"]) == "No, I don't have a disability"
+    assert choose_option("No, I will not require sponsorship", ["Yes, I will require sponsorship", "No"]) == "No"
+    # a decline's "not" denies nothing
+    assert choose_option("I don't wish to answer", ["Yes, I have a disability", "I do not want to answer"]) == \
+        "I do not want to answer"

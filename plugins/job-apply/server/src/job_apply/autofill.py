@@ -94,6 +94,39 @@ def polarity(value: Any) -> bool | None:
     return None
 
 
+_NEGATION = {"not", "non", "no", "never", "cannot", "can't", "don't", "doesn't", "didn't", "isn't", "aren't", "wasn't",
+             "haven't", "hasn't", "won't"}
+_SCOPE_END = {"(", ")", ",", ";", ":", "."}
+_FUNCTION_WORDS = {"a", "an", "the", "i", "am", "is", "are", "was", "be", "of", "or", "and", "to", "as", "have", "has",
+                   "had", "do", "does", "did", "will", "would", "my", "me", "any", "one", "more", "this", "that", "yes",
+                   "for", "in", "on", "with", "at", "by"}
+
+
+def _said_and_denied(text: str) -> tuple[set[str], set[str]]:
+    """The words a text says, and the ones it says are not so (from a "not" to the next comma
+    or bracket): "Asian (Not Hispanic or Latino)" says "asian" and denies "hispanic", "latino"."""
+    said: set[str] = set()
+    denied: set[str] = set()
+    negated = False
+    for t in re.findall(r"[a-z0-9]+(?:'[a-z]+)?|[(),;:.]", str(text).lower().replace("\u2019", "'")):
+        if t in _SCOPE_END:
+            negated = False
+        elif t in _NEGATION:
+            negated = True
+        elif t not in _FUNCTION_WORDS:
+            (denied if negated else said).add(t)
+    return said, denied
+
+
+def _contradicts(answer: Any, option: str) -> bool:
+    """The option says what the answer denies, or the other way round ("Not Hispanic or Latino"
+    and "Hispanic/Latino", "I am not a protected veteran" and "Protected Veteran"), or denies
+    more than the answer does: "Not a Veteran" for "I am not a protected veteran"."""
+    said_a, denied_a = _said_and_denied(answer)
+    said_o, denied_o = _said_and_denied(option)
+    return bool(said_a & denied_o or denied_a & said_o or denied_a & denied_o and not denied_a <= denied_o)
+
+
 def _aliases(n: str) -> set[str]:
     out = {n}
     for group in _COUNTRY_ALIASES:
@@ -213,6 +246,12 @@ def choose_option(desired: Any, options: list[str], exact_only: bool = False, na
         return None
     if names:
         return _containing(want, normed)
+    # never the opposite of the answer, when its own wording isn't among the choices: "Not
+    # Hispanic or Latino" isn't "Hispanic/Latino", nor "I am not a protected veteran" "Protected Veteran"
+    # (a decline's "not" is no denial: declines are matched as such below)
+    if not _DECLINE.search(str(desired)):
+        normed = [(o, n) for o, n in normed if not _contradicts(desired, o)]
+        opts = [o for o, _ in normed]
     if degree_key(want) or _partial_study(want):
         # schooling as it is, never more nor less: "High School Diploma" isn't "Some High
         # School", and "Associate's (in progress)" isn't "Associate's Degree"
