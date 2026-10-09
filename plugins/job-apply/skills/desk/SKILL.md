@@ -35,10 +35,10 @@ The desk is a local web page served by this plugin. It does what the `find-jobs`
     password in the chat either: it goes into the desk page.
   - **Alert me** (in the header) turns on desktop notifications for jobs that come to
     need the user or are ready to submit, so the desk can be left in the background.
-- **Site passwords** stores one password per job system: Workday (13 of the 28
-  employers), SuccessFactors (Edwards, Qorvo, Amkor), iCIMS (Daifuku), ApplicantStack
-  (SCREEN), UKG Pro (Nikon Precision) or Infor (Benchmark). Each employer has its own
-  account. With a password saved, the desk signs in by itself and fills in Create Account
+- **Site passwords** stores one password per job system: Workday, SuccessFactors, iCIMS,
+  ApplicantStack, UKG Pro or Infor. The page names, by each system, the employers on the
+  user's own lists that use it (on the semiconductor list, Workday has 12 of them; on the
+  Phoenix list, 24). Each employer has its own account. With a password saved, the desk signs in by itself and fills in Create Account
   forms (email, password, name and country from the profile), leaving the terms box, any
   picture code and the button to the user. If the password doesn't sign in (usually a
   first application there), the desk opens that employer's Create Account form ("Create
