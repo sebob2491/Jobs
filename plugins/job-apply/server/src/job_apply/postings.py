@@ -479,6 +479,8 @@ _PUBLIC_APPLY = [(re.compile(r"(sjobs\.brassring\.com/.*[?&]partnerid=26235&(?:a
 
 
 def public_apply_url(url: str) -> str:
+    if not url:
+        return url
     for staff, public in _PUBLIC_APPLY:
         url = staff.sub(public, url)
     return url
