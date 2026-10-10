@@ -4113,3 +4113,28 @@ def test_the_tabs_of_jobs_that_went_in_are_closed_but_the_newest_few(srv, monkey
     runs, open_ = run(go())
     assert [r.status for r in runs] == ["needs_you"] + ["submitted"] * 5, [(r.status, r.reason) for r in runs]
     assert open_ == [True, False, False, False, True, True], open_
+
+
+def test_a_paused_jobs_tab_that_crashes_doesnt_hold_the_queue(srv, monkeypatch):
+    """A job holding the queue for the person's sign-in, whose tab crashes ("Aw, Snap!"): a
+    crashed tab isn't closed to Playwright, so the desk went on reading it and holding the
+    queue for HANDS_ON_IDLE. Like a closed tab, it's opened again: there's nothing left in it."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    job = srv.add_job(url=fixture_url("site/posting.html"), title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status == "needs_you")
+            assert r.need == "sign_in" and r.blocking, r.reason
+            await _crash(r.page)
+            await until(lambda: any("its tab crashed" in line for line in r.log), timeout=20, about=state(r))
+            await until(lambda: r.status == "needs_you", about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert r.need == "sign_in" and not srv.browser.lost(r.page), (r.status, r.reason, r.log)

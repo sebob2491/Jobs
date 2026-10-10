@@ -456,7 +456,7 @@ class Applier:
 
     async def focus(self, job_id: int) -> bool:
         run = self.runs.get(job_id)
-        if run is None or run.page is None or run.page.is_closed():
+        if run is None or run.page is None or self.srv.browser.lost(run.page):
             return False
         await run.page.bring_to_front()
         return True
@@ -475,7 +475,7 @@ class Applier:
         """Between jobs: carry on with any the queue went on without whose tab the person has
         since got past its sign-in, check or code. A closed tab waits for Resume."""
         for run in [r for r in self.runs.values() if r.left and r.status == "needs_you" and not r.blocking]:
-            if run.page is None or run.page.is_closed():
+            if run.page is None or self.srv.browser.lost(run.page):
                 continue
             if run.need == "email_code":
                 await self._check_mail_safely(run)  # the code or link came after the queue went on
@@ -626,8 +626,8 @@ class Applier:
         """Has the person got the paused tab past its sign-in, check or code? Only on the
         same site, or on into an application system: a tab they've taken to their webmail
         or a sign-in provider isn't the application moving on."""
-        if run.page is None or run.page.is_closed():
-            return True  # they closed it: start the job again
+        if run.page is None or self.srv.browser.lost(run.page):
+            return True  # they closed it (or it crashed, or the browser with it): start the job again
         # read without taking over the tools' tab: Claude may be using them meanwhile
         data, text = await self.srv.browser.peek(run.page)
         # the address and what's in the boxes: a change is the person at work in the tab (a bot
