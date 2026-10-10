@@ -4081,3 +4081,92 @@ def test_a_live_runs_stops_are_noted_without_the_persons_answers(srv, monkeypatc
     assert "403 Forbidden" in forbidden and "## stuck: Analyst, at an employer with its own careers site" in forbidden
     assert "Example Health" not in forbidden
     assert "- Preferred Locale/Language (" in answers and "Klingon" not in answers and "Example Semi" not in answers
+
+
+def test_the_tabs_of_jobs_that_went_in_are_closed_but_the_newest_few(srv, monkeypatch):
+    """One tab per job adds up over a long queue: in a long live run (Oct 2026) the desk's
+    Chrome crashed with every job's tab still open. A job that went in keeps its tab (its
+    confirmation, for the person to see) only while it's among the newest DONE_TABS_KEPT; a
+    job waiting on the person keeps its tab, with the work in it, however old."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "DONE_TABS_KEPT", 2, raising=False)
+    urls = [f"https://careers.acme-fab.example/apply/{n}" for n in range(6)]
+    pages = {u: _form("Acme Fab") for u in urls[1:]}
+    pages[urls[0]] = _form("Acme Fab", "Do you hold an active TS/SCI clearance?")  # waits on the person
+    posts: list[str] = []
+    jobs = [srv.add_job(url=u, title=f"Technician {n}", company="Acme Fab")["job"] for n, u in enumerate(urls)]
+    applier = Applier(srv)
+    applier.auto_submit = True
+
+    async def go():
+        await _serve(srv, pages, posts)
+        applier.start()
+        try:
+            runs = [applier.enqueue(j["id"], submit=True) for j in jobs]
+            await until(lambda: all(r.status not in ("queued", "running") for r in runs) and applier.current is None,
+                        about=[state(r) for r in runs])
+            await asyncio.sleep(0.5)
+            return runs, [r.page is not None and not r.page.is_closed() for r in runs]
+        finally:
+            await applier.stop()
+
+    runs, open_ = run(go())
+    assert [r.status for r in runs] == ["needs_you"] + ["submitted"] * 5, [(r.status, r.reason) for r in runs]
+    assert open_ == [True, False, False, False, True, True], open_
+
+
+def test_a_paused_jobs_tab_that_crashes_doesnt_hold_the_queue(srv, monkeypatch):
+    """A job holding the queue for the person's sign-in, whose tab crashes ("Aw, Snap!"): a
+    crashed tab isn't closed to Playwright, so the desk went on reading it and holding the
+    queue for HANDS_ON_IDLE. Like a closed tab, it's opened again: there's nothing left in it."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    job = srv.add_job(url=fixture_url("site/posting.html"), title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status == "needs_you")
+            assert r.need == "sign_in" and r.blocking, r.reason
+            await _crash(r.page)
+            await until(lambda: any("its tab crashed" in line for line in r.log), timeout=20, about=state(r))
+            await until(lambda: r.status == "needs_you", about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert r.need == "sign_in" and not srv.browser.lost(r.page), (r.status, r.reason, r.log)
+
+
+def test_a_stops_page_info_holds_a_whole_workday_experience_page():
+    """Four jobs and two schools on a Workday site's My Experience page come to 70 boxes and
+    more: a report that kept only the first 40 showed the last blocks as never read."""
+    fields = [{"label": f"Box {n}", "kind": "text", "section": f"Work Experience {n // 11 + 1}", "value": ""}
+              for n in range(80)]
+    actions = [{"text": f"Delete {n}"} for n in range(45)]
+    info = pipeline._page_info({"url": "https://x.example", "fields": fields, "actions": actions})
+    assert len(info["fields"]) == 80 and info["fields"][-1]["section"] == "Work Experience 8"
+    assert len(info["actions"]) == 45
+
+
+def test_a_tab_another_job_still_has_is_never_closed_with_a_finished_job(srv, monkeypatch, loop):
+    """A finished job's tabs are closed with the tab that opened its application, but never one
+    another job still has: a waiting job's work would go with it."""
+    monkeypatch.setattr(pipeline, "DONE_TABS_KEPT", 0)
+    applier = Applier(srv)
+
+    async def go():
+        shared = await srv.browser.new_tab()
+        await shared.goto(fixture_url("site/posting.html"))
+        async with shared.expect_popup() as opened:
+            await shared.evaluate("u => { window.open(u) }", fixture_url("site/step1.html"))
+        waiting_tab = await opened.value
+        applier.runs[1] = Run(1, status="submitted", page=shared, updated=1.0)
+        applier.runs[2] = Run(2, status="needs_you", page=waiting_tab, updated=2.0)
+        await applier._close_done_tabs()
+        return shared.is_closed(), waiting_tab.is_closed(), applier.runs[1].page
+
+    shared_closed, waiting_closed, done_page = run(go())
+    assert not shared_closed and not waiting_closed and done_page is None

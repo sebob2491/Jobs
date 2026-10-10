@@ -71,6 +71,9 @@ ACCOUNT_WAIT = 15
 # password this many times at most (once more after a password reset)
 SIGN_IN_TRIES = 2
 NOTICE_WAIT = 5  # seconds for a notice agreed to for the person to go (one may fade out)
+# A job that went in keeps its tab (its confirmation, for the person to see) while it's among the newest
+# this many: one tab per job adds up over a long queue
+DONE_TABS_KEPT = 3
 SHARED_LOOK_BACK = 30  # seconds looked back for a job's code while an earlier job waits on the same sender
 FINISHED = {"applied", "interviewing", "offer", "rejected", "withdrawn"}  # tracker statuses never applied to again
 
@@ -312,12 +315,14 @@ def _flagged(data: dict[str, Any]) -> list[str]:
 
 
 def _page_info(data: dict[str, Any]) -> dict[str, Any]:
-    """Enough to see why a job paused, without any of the values typed into the page."""
+    """Enough to see why a job paused, without any of the values typed into the page. Room for
+    a whole Workday My Experience page (four jobs and two schools: 70 boxes and more): a
+    report that stops at its 40th box shows the last blocks as never read."""
     return {
         "url": data.get("url"), "title": data.get("title"), "headings": (data.get("headings") or [])[:8],
-        "actions": [a.get("text", "") + (" (disabled)" if a.get("disabled") else "") for a in data.get("actions") or []][:30],
+        "actions": [a.get("text", "") + (" (disabled)" if a.get("disabled") else "") for a in data.get("actions") or []][:60],
         "fields": [{**{k: f.get(k) for k in ("label", "kind", "required", "section", "sublabel") if f.get(k) is not None},
-                    "empty": is_empty_value(f.get("value"))} for f in data.get("fields") or []][:40],
+                    "empty": is_empty_value(f.get("value"))} for f in data.get("fields") or []][:150],
         "errors": (data.get("errors") or [])[:5],
     }
 
@@ -453,7 +458,7 @@ class Applier:
 
     async def focus(self, job_id: int) -> bool:
         run = self.runs.get(job_id)
-        if run is None or run.page is None or run.page.is_closed():
+        if run is None or run.page is None or self.srv.browser.lost(run.page):
             return False
         await run.page.bring_to_front()
         return True
@@ -472,7 +477,7 @@ class Applier:
         """Between jobs: carry on with any the queue went on without whose tab the person has
         since got past its sign-in, check or code. A closed tab waits for Resume."""
         for run in [r for r in self.runs.values() if r.left and r.status == "needs_you" and not r.blocking]:
-            if run.page is None or run.page.is_closed():
+            if run.page is None or self.srv.browser.lost(run.page):
                 continue
             if run.need == "email_code":
                 await self._check_mail_safely(run)  # the code or link came after the queue went on
@@ -572,6 +577,26 @@ class Applier:
             if run.status == "running":  # the desk was stopped part-way
                 run.status, run.reason = "failed", "Stopped before it finished. Press Resume to carry on."
             run.updated = time.time()
+        await self._close_done_tabs()
+
+    async def _close_done_tabs(self) -> None:
+        """Close the tabs of jobs that went in, but the newest DONE_TABS_KEPT. With one tab per
+        job, a long queue left dozens open (a long live run's Chrome crashed with them, Oct 2026).
+        A job waiting on the person, ready for their Submit, or failed (Resume carries on in its
+        tab) keeps its tab with the work in it."""
+        done = sorted((r for r in self.runs.values() if r.status == "submitted" and r.page is not None),
+                      key=lambda r: r.updated, reverse=True)
+        closing = done[DONE_TABS_KEPT:]
+        # never a tab another job still has (each job opens its own, but a tab never goes twice)
+        gone = {r.job_id for r in closing}
+        kept = {t for r in self.runs.values() if r.job_id not in gone and r.page is not None
+                for t in self.srv.browser.lineage(r.page)}
+        for run in closing:
+            for tab in self.srv.browser.lineage(run.page):  # its application tab, and the tab that opened it
+                if tab not in kept and not tab.is_closed():
+                    with contextlib.suppress(Exception):
+                        await tab.close()
+            run.page = None
 
     def _hold_tools(self, job_id: int) -> tuple[Any, Any, Any]:
         """Take the browser tools for one of this job's steps: Claude's calls that act in the
@@ -608,8 +633,8 @@ class Applier:
         """Has the person got the paused tab past its sign-in, check or code? Only on the
         same site, or on into an application system: a tab they've taken to their webmail
         or a sign-in provider isn't the application moving on."""
-        if run.page is None or run.page.is_closed():
-            return True  # they closed it: start the job again
+        if run.page is None or self.srv.browser.lost(run.page):
+            return True  # they closed it (or it crashed, or the browser with it): start the job again
         # read without taking over the tools' tab: Claude may be using them meanwhile
         data, text = await self.srv.browser.peek(run.page)
         # the address and what's in the boxes: a change is the person at work in the tab (a bot
