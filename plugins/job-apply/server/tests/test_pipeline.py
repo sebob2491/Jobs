@@ -5328,17 +5328,20 @@ def test_with_manage_accounts_an_email_first_site_makes_the_account_with_the_ema
     assert r.status != "submitted", (r.status, r.reason)
 
 
-def test_with_manage_accounts_a_choice_to_be_considered_for_other_jobs_stays_the_persons(srv, monkeypatch,
-                                                                                        job_apply_home):
-    """Northrop Grumman's agreement step also asks for its required "Contact Consent": "I understand that
-    I may be considered for other open positions in my country". Being considered for other jobs is
-    never chosen for the person (as a talent community isn't): the desk ticks the Privacy Policy box,
-    stops for them naming the choice, and once they've chosen it and pressed Submit, makes the account
-    with the email and the emailed code by itself, and carries on."""
+@pytest.mark.parametrize("contact", ["required", "optional", "required&late"])
+def test_with_manage_accounts_a_required_choice_to_be_considered_for_other_jobs_is_given(srv, monkeypatch,
+                                                                                       job_apply_home, contact):
+    """Northrop Grumman's agreement step also asks for its "Contact Consent": "I understand that I may be
+    considered for other open positions in my country", and won't go on without it ("You must select
+    one option"; not marked required). The owner's call (Oct 10): a consent like that is given for the
+    person when the site won't make the account without it. The desk ticks the Privacy Policy box and
+    presses Submit; refused, it chooses the consent, says so, presses Submit again and makes the account
+    with the email and the emailed code. Where the site goes on without it, it's never chosen. Live, its
+    Submit was drawn a moment after its boxes, and the desk said it couldn't find the button (late)."""
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
     manage_accounts(job_apply_home)
     inbox_with_code(monkeypatch)
-    job = srv.add_job(url=fixture_url(EIGHTFOLD) + "?contact=required", title="Financial Analyst",
+    job = srv.add_job(url=fixture_url(EIGHTFOLD) + f"?contact={contact}", title="Financial Analyst",
                       company="Example Corp")["job"]
     applier = Applier(srv)
 
@@ -5346,24 +5349,37 @@ def test_with_manage_accounts_a_choice_to_be_considered_for_other_jobs_stays_the
         applier.start()
         try:
             r = applier.enqueue(job["id"])
-            await until(lambda: r.status not in ("queued", "running"), about=state(r))
-            first = (r.status, r.need, r.reason)
-            boxes = await r.page.evaluate("() => [document.getElementById('consent-checkbox').checked, "
-                                          "document.getElementById('contact-consent-choice-0').checked]")
-            await r.page.check("#contact-consent-choice-0")  # the person chooses it, and presses Submit
-            await r.page.click("#agree")
-            await until(lambda: r.need == "questions" or r.status == "ready", about=state(r))
-            return r, first, boxes, await r.page.evaluate("() => sessionStorage.getItem('account')")
+            await until(lambda: r.need == "questions" or r.status == "ready", about=state(r))  # nobody touched it
+            return r, await r.page.evaluate("() => sessionStorage.getItem('account')")
         finally:
             await applier.stop()
 
-    r, (status, need, reason), boxes, account = run(go())
-    assert (status, need) == ("needs_you", "sign_in"), (status, need, reason)
-    assert boxes == [True, False], boxes  # the Privacy Policy ticked; the other choice left to the person
-    assert "“Contact Consent: I understand that I may be considered for other open positions" in reason, reason
-    assert "the desk never chooses for you" in reason and "You must select one option" in reason, reason
+    r, account = run(go())
     assert account == "sam.rivera@example.com" and "/site/" in r.url and "eightfold" not in r.url, (account, r.url, r.log)
-    assert any(line.startswith("created your account on") for line in r.log), r.log
+    log = "\n".join(r.log)
+    assert "ticked “I have read and agree to the Privacy Policy” to make your account" in log, log
+    chose = [line for line in r.log if line.startswith("chose “Contact Consent: I understand that I may be considered "
+                                                        "for other open positions")]
+    if contact.startswith("required"):
+        assert len(chose) == 1 and "as it wouldn't go on without it (settings.manage_accounts)" in chose[0], log
+    else:
+        assert not chose, log
+    assert any(line.startswith("created your account on") for line in r.log), log
+
+
+def test_a_consent_to_other_positions_is_given_only_on_its_own():
+    """What counts as a consent to be considered for other open positions: on its own, as a box or a
+    group's one choice. Never one that also signs the person up for job alerts, a newsletter or a
+    talent pool, nor a group asking yes or no."""
+    said = "I understand that I may be considered for other open positions in my country"
+    assert pipeline._other_positions_consent({"kind": "checkbox", "label": said}) is True
+    assert pipeline._other_positions_consent({"kind": "radio_group", "label": "Contact Consent", "options": [said]}) == said
+    assert pipeline._other_positions_consent({"kind": "checkbox_group", "label": "", "options": [said]}) == [said]
+    for label in [said + " and to receive job alerts", said + " and to join the talent community",
+                  "Consider me for other opportunities and send me the newsletter", "I agree to the privacy policy"]:
+        assert pipeline._other_positions_consent({"kind": "checkbox", "label": label}) is None, label
+    assert pipeline._other_positions_consent({"kind": "radio_group", "label": "May we consider you for other positions?",
+                                              "options": ["Yes", "No"]}) is None
 
 
 def test_without_manage_accounts_an_email_first_sites_account_steps_stay_the_persons(srv, monkeypatch):

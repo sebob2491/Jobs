@@ -65,7 +65,8 @@ The desk is a local web page served by this plugin. It does what the `find-jobs`
   Phoenix list, 24). Each employer has its own account. With a password saved, the desk signs in by itself
   (pressing the sign-in form's own button, whatever it reads: SuccessFactors' says "Submit")
   and creates the account from Create Account forms (email, password, name and country from
-  the profile; it ticks the site's terms, never a newsletter, and presses the button; a
+  the profile; it ticks the site's terms, never a newsletter, and a consent to be considered for
+  other open positions only when the site won't make the account without it; it presses the button; a
   picture code stays the user's). If the password doesn't sign in, then with the email app
   password saved the desk first resets that employer's password to the saved one through
   the site's "Forgot password" email; when the site says it has no account for the email,

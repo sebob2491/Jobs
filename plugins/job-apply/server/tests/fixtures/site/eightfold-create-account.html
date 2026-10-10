@@ -10,7 +10,7 @@
      2. "Create an account" opens "Please review before continuing": a box agreeing to the Privacy
         Policy, then Submit. ?contact=required: also a required "Contact Consent" with one choice,
         being considered for other open positions (Northrop's); ?contact=optional: the same, not
-        required.
+        required. ?late: its Submit is drawn a moment after its boxes (Northrop's, live).
      3. "Create an account": the email (kept from the sign-in), Continue. An email it has an account
         for gets "An account already exists with this email." (?exists).
      4. "Check your email": a box per digit of the emailed code (123456), Submit. Then the application
@@ -65,16 +65,20 @@
         + 'aria-label="I understand that I may be considered for other open positions in my country, in addition to '
         + 'the role(s) to which I apply"><label for="contact-consent-choice-0">I understand that I may be considered '
         + 'for other open positions in my country, in addition to the role(s) to which I apply</label></div></div>' : '')
-      + '<p id="consent-error" role="alert"></p>'
-      + '<button type="button" id="agree">Submit</button>';
+      + '<p id="consent-error" role="alert"></p><span id="buttons"></span>';
+    const agree = () => {
+      document.getElementById('buttons').innerHTML = '<button type="button" id="agree">Submit</button>';
+      document.getElementById('agree').addEventListener('click', submitted);
+    };
+    if (params.has('late')) setTimeout(agree, 1500); else agree();
     document.getElementById('consent-checkbox').addEventListener('change', (e) => { privacy = e.target.checked; });
     if (contact) document.getElementById('contact-consent-choice-0').addEventListener('change', () => { chosen = true; });
-    document.getElementById('agree').addEventListener('click', () => {
+    function submitted() {
       const said = document.getElementById('consent-error');
       if (!privacy) { said.textContent = 'Please accept the privacy policy'; return; }
       if (contact === 'required' && !chosen) { said.textContent = 'You must select one option'; return; }
       signIn(true);
-    });
+    }
   }
 
   function code() {

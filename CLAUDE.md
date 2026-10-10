@@ -91,7 +91,10 @@ the scrubber (`python -m job_apply.fixtures`) before they become test fixtures.
   chose; setup tells each person; never in practice mode, except the live check's test identity)
   the desk creates an account with that system's saved password, ticking only the site's terms
   (never a newsletter), and resets a saved password the site refuses, through the site's own
-  "Forgot password" and its emailed link. A CAPTCHA or security question on the way stays the
+  "Forgot password" and its emailed link. A consent to be considered for other open positions too
+  (Northrop's "Contact Consent") is given only when the site won't make the account without it
+  (marked required, or refused until it's given: the owner's call, Oct 10); never when its words
+  also sign the person up for job alerts, a newsletter, a talent community or marketing. A CAPTCHA or security question on the way stays the
   person's. With it off, it never creates one.
   - The live check's test identity (the owner's call, Oct 10) is the one exception to "never in
     practice mode", for accounts and notices alike: a clearly fake applicant ("Jobdesk Test")
