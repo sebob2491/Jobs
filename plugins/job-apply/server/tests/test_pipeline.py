@@ -4195,3 +4195,37 @@ def test_an_email_the_site_has_no_account_for_is_said_so_with_its_way_to_make_on
     assert (r.status, r.need) == ("needs_you", "sign_in"), (r.status, r.need, r.reason, r.log)
     assert "no account for your email" in r.reason and "“Create an account”" in r.reason, r.reason
     assert "We don't recognize this email" in r.reason and "marked invalid" not in r.reason
+
+
+def test_a_job_sent_to_a_maintenance_page_is_said_down_for_maintenance(srv, monkeypatch):
+    """A careers site down for its maintenance sends every job to its maintenance page ("We'll
+    be back.", live, Oct 2026): the desk said it couldn't find the button that moves the
+    application on."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    url = "https://careers.acme-fab.example/job/1"
+    job = srv.add_job(url=url, title="Field Service Engineer", company="Acme Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        async def handler(route):
+            if route.request.url.split("?")[0] == url:  # (sent on as the site's own script does)
+                await route.fulfill(status=200, content_type="text/html", body="<html><head><script>location.replace("
+                                    "'https://www.acme-fab.example/en/maintenance')</script></head></html>")
+            else:
+                await route.fulfill(status=200, content_type="text/html",
+                                    body="<html><body><h1>We'll be back.</h1><p>Our site is being updated.</p>"
+                                         "<a href='/careers'>Careers</a></body></html>")
+
+        await srv.browser.page()
+        await srv.browser._ctx.route("https://**.example/**", handler)
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert r.need == "stuck" and "down for maintenance" in r.reason, (r.status, r.need, r.reason, r.log)
+    assert "https://www.acme-fab.example/en/maintenance" in r.reason
