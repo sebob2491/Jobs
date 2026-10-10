@@ -198,8 +198,11 @@ ever used to read those emails, and the password-reset email a site was just ask
 Claude can't have it typed into any page.
 
 The desk works in each job's own browser tab and follows only the tabs an application
-opens itself, so a tab you open (to check your email, say) is left alone. Jobs already
-marked applied are never queued again. If Submit doesn't bring up a confirmation, the job
+opens itself, so a tab you open (to check your email, say) is left alone. Once a job has
+gone in, its tab stays open for you to see the confirmation while it's among the three newest
+that did; older ones are closed, so a long queue doesn't leave dozens of tabs open. A job
+waiting on you, or that failed, keeps its tab. Jobs already marked applied are never queued
+again. If Submit doesn't bring up a confirmation, the job
 waits in **Needs you** with **I submitted it** rather than being counted as sent, and
 **Submit for me** never presses that job's Submit again (even after a restart): picked
 again, it stops at the review page for you. A job-alerts or newsletter box with its own

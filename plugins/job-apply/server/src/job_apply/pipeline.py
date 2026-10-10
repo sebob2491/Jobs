@@ -71,6 +71,9 @@ ACCOUNT_WAIT = 15
 # password this many times at most (once more after a password reset)
 SIGN_IN_TRIES = 2
 NOTICE_WAIT = 5  # seconds for a notice agreed to for the person to go (one may fade out)
+# A job that went in keeps its tab (its confirmation, for the person to see) while it's among the newest
+# this many: one tab per job adds up over a long queue
+DONE_TABS_KEPT = 3
 SHARED_LOOK_BACK = 30  # seconds looked back for a job's code while an earlier job waits on the same sender
 FINISHED = {"applied", "interviewing", "offer", "rejected", "withdrawn"}  # tracker statuses never applied to again
 
@@ -572,6 +575,21 @@ class Applier:
             if run.status == "running":  # the desk was stopped part-way
                 run.status, run.reason = "failed", "Stopped before it finished. Press Resume to carry on."
             run.updated = time.time()
+        await self._close_done_tabs()
+
+    async def _close_done_tabs(self) -> None:
+        """Close the tabs of jobs that went in, but the newest DONE_TABS_KEPT. With one tab per
+        job, a long queue left dozens open (a long live run's Chrome crashed with them, Oct 2026).
+        A job waiting on the person, ready for their Submit, or failed (Resume carries on in its
+        tab) keeps its tab with the work in it."""
+        done = sorted((r for r in self.runs.values() if r.status == "submitted" and r.page is not None),
+                      key=lambda r: r.updated, reverse=True)
+        for run in done[DONE_TABS_KEPT:]:
+            for tab in self.srv.browser.lineage(run.page):  # its application tab, and the tab that opened it
+                if not tab.is_closed():
+                    with contextlib.suppress(Exception):
+                        await tab.close()
+            run.page = None
 
     def _hold_tools(self, job_id: int) -> tuple[Any, Any, Any]:
         """Take the browser tools for one of this job's steps: Claude's calls that act in the

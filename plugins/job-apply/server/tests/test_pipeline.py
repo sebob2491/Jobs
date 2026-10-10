@@ -4081,3 +4081,35 @@ def test_a_live_runs_stops_are_noted_without_the_persons_answers(srv, monkeypatc
     assert "403 Forbidden" in forbidden and "## stuck: Analyst, at an employer with its own careers site" in forbidden
     assert "Example Health" not in forbidden
     assert "- Preferred Locale/Language (" in answers and "Klingon" not in answers and "Example Semi" not in answers
+
+
+def test_the_tabs_of_jobs_that_went_in_are_closed_but_the_newest_few(srv, monkeypatch):
+    """One tab per job adds up over a long queue: in a long live run (Oct 2026) the desk's
+    Chrome crashed with every job's tab still open. A job that went in keeps its tab (its
+    confirmation, for the person to see) only while it's among the newest DONE_TABS_KEPT; a
+    job waiting on the person keeps its tab, with the work in it, however old."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "DONE_TABS_KEPT", 2, raising=False)
+    urls = [f"https://careers.acme-fab.example/apply/{n}" for n in range(6)]
+    pages = {u: _form("Acme Fab") for u in urls[1:]}
+    pages[urls[0]] = _form("Acme Fab", "Do you hold an active TS/SCI clearance?")  # waits on the person
+    posts: list[str] = []
+    jobs = [srv.add_job(url=u, title=f"Technician {n}", company="Acme Fab")["job"] for n, u in enumerate(urls)]
+    applier = Applier(srv)
+    applier.auto_submit = True
+
+    async def go():
+        await _serve(srv, pages, posts)
+        applier.start()
+        try:
+            runs = [applier.enqueue(j["id"], submit=True) for j in jobs]
+            await until(lambda: all(r.status not in ("queued", "running") for r in runs) and applier.current is None,
+                        about=[state(r) for r in runs])
+            await asyncio.sleep(0.5)
+            return runs, [r.page is not None and not r.page.is_closed() for r in runs]
+        finally:
+            await applier.stop()
+
+    runs, open_ = run(go())
+    assert [r.status for r in runs] == ["needs_you"] + ["submitted"] * 5, [(r.status, r.reason) for r in runs]
+    assert open_ == [True, False, False, False, True, True], open_
