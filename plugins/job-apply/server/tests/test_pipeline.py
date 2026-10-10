@@ -2810,6 +2810,128 @@ def test_a_job_skipped_while_its_paused_tab_is_looked_at_isnt_started_again(srv,
     assert paused.status == "skipped" and not applier.tasks
 
 
+def test_undo_puts_a_skipped_job_back_in_its_place_and_until_then_it_isnt_applied_to(srv, monkeypatch):
+    """Skip had no undo. Undo now gives the tracker back the job's status from before, and puts the
+    job back in the queue where it was, with its log; until then neither Apply, Resume nor the
+    queue going on starts it. It goes back with Submit for me off for it: Undo sends nothing."""
+    a, b, c = (srv.add_job(url=f"https://example.com/jobs/{n}", title=f"Job {n}", company="Example Co")["job"]["id"]
+               for n in "abc")
+    srv.update_job(b, status="in_progress", notes="asked about the night shift")
+    applier = Applier(srv)
+    driven = []
+
+    async def drive(r):  # (no browser: what the queue starts is what matters here)
+        driven.append(r.job_id)
+        r.status, r.reason = "ready", "Filled and waiting on the review page."
+
+    monkeypatch.setattr(applier, "_drive", drive)
+    for job_id in (a, b, c):
+        applier.enqueue(job_id, submit=True)
+    applier.runs[b].log.append("an earlier try")
+
+    run(applier.skip(b))
+    assert [j for _, j in applier.tasks] == [a, c] and srv.get_job(b)["job"]["status"] == "skipped"
+    for start in (lambda: applier.enqueue(b), lambda: applier.resume(b)):
+        with pytest.raises(ValueError, match="skipped"):
+            start()
+    assert [j for _, j in applier.tasks] == [a, c]
+
+    events = len(srv.get_job(a)["history"])
+    assert run(applier.unskip(a)) is applier.runs[a]  # not skipped: left as it is
+    assert applier.runs[a].status == "queued" and len(srv.get_job(a)["history"]) == events
+    with pytest.raises(KeyError):
+        run(applier.unskip(777))
+
+    r = run(applier.unskip(b))
+    assert [j for _, j in applier.tasks] == [a, b, c]  # its place
+    assert r.status == "queued" and not r.submit
+    assert r.log[0] == "an earlier try" and r.log[-1] == "Skip undone: back in the queue"
+    job = srv.get_job(b)
+    assert job["job"]["status"] == "in_progress" and job["job"]["notes"] == "asked about the night shift"
+    assert [e["status"] for e in job["history"]][-2:] == ["skipped", "in_progress"]
+
+    # skipped again: the queue goes on without it, and Undo puts it back to be applied to
+    run(applier.skip(b))
+    while applier.tasks:
+        run(applier._tick())
+    assert driven == [a, c] and applier.runs[b].status == "skipped"
+    run(applier.unskip(b))
+    run(applier._tick())
+    assert driven == [a, c, b] and applier.runs[b].status == "ready"
+
+
+def test_undo_waits_for_the_step_the_job_was_skipped_in(srv, monkeypatch):
+    """Skip pressed while the worker was still on the job (saving the page it paused on, say): an
+    Undo straight after it put the job back while that step still ran, which could carry on in the
+    tab Skip closed. Undo waits for the step to end, and says to press it again if it doesn't."""
+    job = srv.add_job(url="https://example.com/jobs/1", title="Job", company="Example Co")["job"]["id"]
+    applier = Applier(srv)
+    applier.runs[job] = Run(job, "Job", "Example Co", status="needs_you", need="sign_in")
+    applier.current = job  # the worker, still on it
+
+    async def go():
+        await applier.skip(job)
+        undo = asyncio.ensure_future(applier.unskip(job))
+        await asyncio.sleep(0.3)
+        assert not undo.done() and not applier.tasks and srv.get_job(job)["job"]["status"] == "skipped"
+        applier.current = None  # its step ends
+        return await undo
+
+    assert run(go()).status == "queued" and [j for _, j in applier.tasks] == [job]
+    monkeypatch.setattr(pipeline, "UNSKIP_WAIT", 0.2)
+    run(applier.skip(job))
+    applier.current = job
+    with pytest.raises(ValueError, match="still stopping"):
+        run(applier.unskip(job))
+    assert applier.runs[job].status == "skipped" and srv.get_job(job)["job"]["status"] == "skipped"
+
+
+def test_undo_of_a_skip_never_sends_or_queues_a_job_that_went_in(srv):
+    """Skipped after it went in (marked applied): Undo gives the tracker back "applied", and the job
+    is never queued again (with Submit for me on, that would apply twice). One skipped before the desk
+    began it goes back to the list."""
+    sent = srv.add_job(url="https://example.com/jobs/sent", title="Sent", company="Example Co")["job"]["id"]
+    fresh = srv.add_job(url="https://example.com/jobs/fresh", title="Fresh", company="Example Co")["job"]["id"]
+    applier = Applier(srv)
+    applier.auto_submit = True
+    applier.enqueue(sent, submit=True)
+    srv.update_job(sent, status="applied")
+    applier.mark_applied(sent)
+    run(applier.skip(sent))
+    run(applier.skip(fresh))
+    r = run(applier.unskip(sent))
+    assert r.status == "submitted" and not applier.tasks and srv.get_job(sent)["job"]["status"] == "applied"
+    assert run(applier.unskip(fresh)) is None and fresh not in applier.runs and not applier.tasks
+    assert srv.get_job(fresh)["job"]["status"] == "saved"
+
+
+def test_a_job_put_back_by_undo_opens_again_and_says_why_it_starts_over(srv, monkeypatch):
+    """Skip closed the job's tab: put back by Undo, it opens again in a new tab, its log saying why
+    its application starts over, and stops where it stopped before."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    job = srv.add_job(url=fixture_url("site/posting.html"), title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.need == "sign_in", about=state(r))
+            first = r.page
+            await applier.skip(job["id"])
+            assert first.is_closed() and srv.get_job(job["id"])["job"]["status"] == "skipped"
+            await applier.unskip(job["id"])  # (the worker may still be saving the paused page)
+            await until(lambda: r.need == "sign_in" and r.page is not first, about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert r.status == "needs_you" and not r.page.is_closed()
+    assert any(line.startswith("its tab was closed, so I opened the job again in a new tab") for line in r.log), r.log
+    assert srv.get_job(job["id"])["job"]["status"] == "in_progress"
+
+
 def test_a_flow_that_goes_round_in_a_circle_stops_after_one_lap(srv, monkeypatch):
     """Oracle's sites, refusing a code for an address: Next leads to a Continue that goes back
     to the posting. Going round again would only repeat it (and might email another code)."""

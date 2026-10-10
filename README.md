@@ -160,6 +160,8 @@ opens a page on your computer (served by the plugin on `127.0.0.1`):
 4. Press **Submit** on each finished application, or turn on **Submit for me**, so
    that every application that needs nothing from you is sent. LinkedIn and Indeed
    are always yours to submit.
+5. Pressed **Skip job** by mistake? **Undo** on its card (or by its row in the list) puts it back
+   where it was, back in the queue or in the list, and sends nothing: it stops at its review page for you.
 
 Each employer has its own account on its job site. In the desk's **Site passwords**
 card, save one password for a job system: Workday (13 of the employers), SuccessFactors

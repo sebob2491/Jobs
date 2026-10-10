@@ -274,6 +274,8 @@ class Desk:
                 a.later(job_id)
             elif action == "skip":
                 await a.skip(job_id)
+            elif action == "unskip":  # Undo on a skipped job
+                await a.unskip(job_id)
             elif action == "submit":
                 a.submit_now(job_id)
             elif action == "show":
@@ -397,7 +399,8 @@ class Desk:
 
     def apply(self, urls: list[str], job_ids: list[int], submit: bool) -> tuple[list[int], list[str]]:
         """Queue these jobs. Returns the ids queued, and the titles of any already applied to,
-        which are never queued again (with "Submit for me" on, that would apply twice)."""
+        which are never queued again (with "Submit for me" on, that would apply twice), or
+        skipped (queued once the person's Undo puts them back)."""
         t = self.srv.tracker()
         ids = [int(j) for j in job_ids]
         for url in urls:

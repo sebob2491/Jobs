@@ -77,6 +77,7 @@ NOTICE_WAIT = 5  # seconds for a notice agreed to for the person to go (one may 
 DONE_TABS_KEPT = 3
 SHARED_LOOK_BACK = 30  # seconds looked back for a job's code while an earlier job waits on the same sender
 FINISHED = {"applied", "interviewing", "offer", "rejected", "withdrawn"}  # tracker statuses never applied to again
+UNSKIP_WAIT = 10  # seconds an Undo waits for the worker to finish the step a job was skipped in
 
 _BOT_TITLE = re.compile(r"just a moment|attention required|access denied|pardon our interruption|security check|"
                         r"are you a robot|bot (?:check|detection)", re.I)
@@ -399,6 +400,8 @@ class Applier:
         self._worker_task: asyncio.Task | None = None
         self.mail_problem: str | None = None  # why the inbox couldn't be read, for the desk page
         self._mail_refused: str | None = None  # the app password the mail service turned down
+        # where each skipped job was, for Undo: its run's status ("" with no run yet) and its place in the queue
+        self._before_skip: dict[int, tuple[str, int | None]] = {}
 
     # ------------------------------------------------------------- control
     def start(self) -> None:
@@ -422,6 +425,8 @@ class Applier:
         if job.get("status") in FINISHED or run is not None and run.status == "submitted":
             # applying again could send a second application ("Submit for me")
             raise ValueError(f"{job.get('title') or 'That job'} is already marked {job.get('status') or 'submitted'}")
+        if job.get("status") == "skipped":  # never applied to until the person's Undo
+            raise ValueError(f"{job.get('title') or 'That job'} is skipped. Press Undo on it first.")
         run = run or Run(job_id, job.get("title", ""), job.get("company", ""))
         self.runs[job_id] = run
         if run.status == "running" and self.current == job_id:
@@ -512,10 +517,15 @@ class Applier:
     async def skip(self, job_id: int) -> Run:
         if self.srv.tracker().get(job_id, with_description=False) is None:
             raise KeyError(f"No job with id {job_id}")  # a stale page: no entry is made for it
-        run = self.runs.get(job_id) or Run(job_id)
+        run = self.runs.get(job_id)
+        if run is None or run.status != "skipped":  # (a second Skip keeps where it was before the first)
+            place = next((i for i, task in enumerate(self.tasks) if task == ("apply", job_id)), None)
+            self._before_skip[job_id] = (run.status if run else "", place)
+        run = run or Run(job_id)
         self.runs[job_id] = run
         self._cancel(job_id)
-        run.status, run.need, run.blocking, run.reason = "skipped", "", False, "Skipped"
+        run.status, run.need, run.blocking, run.reason = "skipped", "", False, "Skipped. Undo puts it back."
+        self._log(run, "skipped")
         self.srv.tracker().update(job_id, status="skipped", note="skipped in the Job Desk")
         for tab in self.srv.browser.lineage(run.page):  # its application tab, and the tab that opened it
             if not tab.is_closed():
@@ -523,7 +533,46 @@ class Applier:
                     await tab.close()
                 except Exception:
                     pass
-        run.page = None
+        # run.page stays, closed: put back by Undo, the job opens again in a new tab, and says why it starts over
+        return run
+
+    async def unskip(self, job_id: int) -> Run | None:
+        """The person's Undo on a skipped job. The tracker gets back the status the job had before
+        (its history keeps it), and the job goes back where it was: one the desk had begun goes back
+        in the queue (at its place, if it was waiting there), opened again in a new tab when Skip
+        closed its own; one it hadn't, back to the list, unselected. Its log, notes and answers stay.
+        Undo never sends anything: the job goes back with Submit for me off for it (it stops at its
+        review page for the person's Submit), and one sent or marked applied isn't queued again. A
+        job that isn't skipped is left as it is."""
+        tracker = self.srv.tracker()
+        if tracker.get(job_id, with_description=False) is None:
+            raise KeyError(f"No job with id {job_id}")
+        run = self.runs.get(job_id)
+        # Skipped while the worker was still on it (saving the page it paused on, or mid-step): its
+        # step ends first, or it would carry on in the tab Skip closed
+        deadline = time.monotonic() + UNSKIP_WAIT
+        while run is not None and run.status == "skipped" and self.current == job_id:
+            if time.monotonic() > deadline:
+                raise ValueError("That job is still stopping after its Skip. Press Undo again in a moment.")
+            await asyncio.sleep(0.1)
+        tracker.unskip(job_id, note="skip undone in the Job Desk")
+        before, place = self._before_skip.pop(job_id, (None, None))
+        if run is None or run.status != "skipped":
+            return run
+        if before == "":  # skipped before the desk began it
+            del self.runs[job_id]
+            return None
+        if self._already_done(run):  # marked applied (or past that): never queued again
+            return run
+        if before == "submitted":
+            run.status, run.reason = "submitted", "Skip undone. It went in before, so it isn't applied to again."
+            self._log(run, run.reason)
+            return run
+        self._log(run, "Skip undone: back in the queue")
+        self.enqueue(job_id)  # (submit=False: Undo is no Submit)
+        if place is not None:
+            self._cancel(job_id)
+            self.tasks.insert(min(place, len(self.tasks)), ("apply", job_id))
         return run
 
     async def focus(self, job_id: int) -> bool:

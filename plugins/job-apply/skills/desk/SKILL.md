@@ -84,6 +84,10 @@ The desk is a local web page served by this plugin. It does what the `find-jobs`
 - **Submit** sends one application. **Submit for me** sends every application that
   needs nothing, and stays off until the user turns it on. LinkedIn and Indeed are
   always submitted by the user.
+- **Skip job** takes a job out of the queue and closes its tab; it's never applied to until
+  **Undo** (on its card under Ready and done, or by its row in the list) puts it back where it
+  was, with the tracker's status from before: back in the queue (opened again from the start), or
+  in the list unticked if the desk hadn't begun it. Undo sends nothing: the job stops at its review page.
 - **A newer version**: the desk looks at the plugin's published version when it starts and
   every few hours, and says when a newer one is out, with the two update commands (then a
   restart of the Claude app). Best done between runs. `JOB_APPLY_NO_UPDATE_CHECK=1` turns the look off.

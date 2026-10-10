@@ -1286,3 +1286,109 @@ def test_the_desk_page_fits_its_window(srv, width):
 
     scroll, client = run(go())
     assert scroll <= client, (scroll, client)
+
+
+@pytest.mark.parametrize("width", [1280, 390])
+def test_undo_on_the_page_puts_a_skipped_job_back(srv, width):
+    """Skip couldn't be undone. After Skip, the job's card (and its row in the list) offers Undo:
+    a job the desk had begun goes back in the queue, with the tracker's status from before; one
+    skipped before the desk restarted goes back to the list, unticked. The page still fits a phone."""
+    from playwright.async_api import async_playwright
+
+    from job_apply.pipeline import Run
+
+    fit = {"score": 80, "reasons": ["title matches"], "concerns": [], "blocked": False, "recommended": True}
+    begun = srv.add_job(url=fixture_url("site/posting.html"), title="Field Service Engineer", company="Example Fab")["job"]
+    srv.update_job(begun["id"], status="in_progress")
+    earlier = srv.add_job(url="https://example.com/jobs/earlier", title="Equipment Technician", company="Example Litho")["job"]
+    srv.update_job(earlier["id"], status="skipped")  # skipped before the desk was restarted: no run
+    desk = Desk(srv)
+    desk.applier.start = lambda: None  # (the queue isn't worked: where Undo puts the job is what's looked at)
+    desk.search.update(status="done", at=time.time())
+    desk.listings = [{"url": j["url"], "title": j["title"], "company": j["company"], "fit": fit} for j in (begun, earlier)]
+    desk.applier.runs[begun["id"]] = Run(begun["id"], "Field Service Engineer", "Example Fab", status="needs_you",
+                                         need="sign_in", reason="Sign in on Example Fab's site.")
+    undo = "button[data-job-act=unskip]"
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with async_playwright() as pw:
+                browser = await pw.chromium.launch(**launch_options())
+                page = await browser.new_page(viewport={"width": width, "height": 900})
+                await page.goto(desk.url)
+                await page.click(f"#needs button[data-job='{begun['id']}'][data-job-act=skip]")
+                await page.wait_for_selector(f"#done {undo}[data-job='{begun['id']}']")
+                assert desk.applier.runs[begun["id"]].status == "skipped"
+                assert srv.get_job(begun["id"])["job"]["status"] == "skipped"
+                assert await page.locator(f"#rows {undo}").count() == 2  # both skipped rows offer it too
+                sizes = await page.evaluate("() => [document.documentElement.scrollWidth, "
+                                            "document.documentElement.clientWidth]")
+                assert sizes[0] <= sizes[1], sizes
+
+                await page.click(f"#done {undo}[data-job='{begun['id']}']")
+                await page.wait_for_selector(f"#done {undo}", state="detached")
+                row = page.locator("li.row", has_text="Field Service Engineer")
+                await row.locator(".pill:text('Queued')").wait_for()
+                assert desk.applier.runs[begun["id"]].status == "queued"
+                assert [j for _, j in desk.applier.tasks] == [begun["id"]]
+                assert srv.get_job(begun["id"])["job"]["status"] == "in_progress"
+
+                other = page.locator("li.row", has_text="Equipment Technician")
+                await other.locator(undo).click()
+                await other.locator(f"{undo}").wait_for(state="detached")
+                box = other.locator("input[type=checkbox]")
+                assert await box.is_enabled() and not await box.is_checked()
+                assert srv.get_job(earlier["id"])["job"]["status"] == "saved" and earlier["id"] not in desk.applier.runs
+                assert [j for _, j in desk.applier.tasks] == [begun["id"]]
+                await browser.close()
+        finally:
+            await desk.stop()
+
+    run(go())
+
+
+def test_a_skipped_job_isnt_applied_to_until_undone_and_undo_elsewhere_changes_nothing(srv):
+    """Through the desk's API: Apply and Resume leave a skipped job out (a stale page, another
+    window); Undo on a job that isn't skipped, or on none, changes nothing; one marked applied and then
+    skipped goes back to applied and is never queued again."""
+    desk = Desk(srv)
+    desk.applier.start = lambda: None
+    ids = [srv.add_job(url=f"https://example.com/jobs/{n}", title=f"Job {n}", company="Example Co")["job"]["id"]
+           for n in range(3)]
+    a, b, sent = ids
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with _client(desk) as c:
+                h = {"x-desk-token": desk.token}
+
+                async def job(job_id, action):
+                    return await c.post(f"/api/job/{job_id}/{action}", headers=h)
+
+                assert (await c.post("/api/apply", headers=h, json={"job_ids": ids})).json()["queued"] == ids
+                assert (await job(sent, "applied")).json() == {"ok": True}
+                assert (await job(b, "skip")).json() == {"ok": True}
+                out = (await c.post("/api/apply", headers=h, json={"job_ids": [b], "submit": True})).json()
+                assert out == {"queued": [], "already_applied": ["Job 1"]}
+                refused = await job(b, "resume")
+                assert refused.status_code == 400 and "skipped" in refused.json()["error"]
+                assert [j for _, j in desk.applier.tasks] == [a]
+
+                history = srv.get_job(a)["history"]
+                assert (await job(a, "unskip")).json() == {"ok": True}  # not skipped: nothing changes
+                assert [j for _, j in desk.applier.tasks] == [a] and desk.applier.runs[a].status == "queued"
+                assert srv.get_job(a)["history"] == history
+                assert (await job(777, "unskip")).status_code == 400
+
+                assert (await job(sent, "skip")).json() == {"ok": True}
+                assert (await job(sent, "unskip")).json() == {"ok": True}
+                assert (await job(b, "unskip")).json() == {"ok": True}
+        finally:
+            await desk.stop()
+
+    run(go())
+    assert [j for _, j in desk.applier.tasks] == [a, b]
+    assert desk.applier.runs[b].status == "queued" and srv.get_job(b)["job"]["status"] == "saved"
+    assert desk.applier.runs[sent].status == "submitted" and srv.get_job(sent)["job"]["status"] == "applied"
