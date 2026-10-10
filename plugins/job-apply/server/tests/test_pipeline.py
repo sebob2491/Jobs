@@ -4368,7 +4368,7 @@ def test_a_greyed_out_next_names_the_required_boxes_still_empty(srv):
 
 def _notes(home: Path) -> list[str]:
     folder = home / "notes"
-    return [p.read_text() for p in sorted(folder.glob("*.md"))] if folder.is_dir() else []
+    return [p.read_text(encoding="utf-8") for p in sorted(folder.glob("*.md"))] if folder.is_dir() else []
 
 
 def _paused_run(srv, need="stuck", reason="I couldn't find the button that moves this application on.", **kw):

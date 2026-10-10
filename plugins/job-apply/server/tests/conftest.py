@@ -1,5 +1,6 @@
 import asyncio
 import os
+import sys
 import zlib
 from pathlib import Path
 
@@ -67,11 +68,22 @@ def launch_options() -> dict:
     return {"executable_path": exe} if exe else {}
 
 
+def playwright_browsers() -> Path:
+    """Where `playwright install` puts its browsers: its own default on each system (on Windows,
+    AppData\\Local; looking only in ~/.cache skipped every browser test there)."""
+    if os.environ.get("PLAYWRIGHT_BROWSERS_PATH"):
+        return Path(os.environ["PLAYWRIGHT_BROWSERS_PATH"])
+    if sys.platform == "win32":
+        return Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local") / "ms-playwright"
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Caches" / "ms-playwright"
+    return Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache") / "ms-playwright"
+
+
 def browser_available() -> bool:
     if os.environ.get("JOB_APPLY_CHROMIUM_PATH"):
         return True
-    root = Path(os.environ.get("PLAYWRIGHT_BROWSERS_PATH", Path.home() / ".cache" / "ms-playwright"))
-    return any(root.glob("chromium-*"))
+    return any(playwright_browsers().glob("chromium-*"))
 
 
 @pytest.fixture

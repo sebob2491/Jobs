@@ -40,6 +40,37 @@ jobs:
         env:
           JOB_APPLY_TEST_SHARD: ${{ matrix.part }}/2
 
+  windows:
+    # The same suite on Windows, where the owner runs the plugin (Claude's desktop app). Not one
+    # of the checks main's ruleset requires (server below doesn't wait for it): a failure here is
+    # for a person to look at. No PYTHONUTF8: Python on Windows writes a file without an encoding
+    # as cp1252 there, as it will on the owner's computer, so a missing encoding="utf-8" shows.
+    name: windows (Python 3.13, part ${{ matrix.part }}/2)
+    runs-on: windows-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        part: [1, 2]
+    defaults:
+      run:
+        shell: bash
+        working-directory: plugins/job-apply/server
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.13"
+          enable-cache: true
+          cache-dependency-glob: plugins/job-apply/server/uv.lock
+      - run: uv sync --frozen --extra dev
+      - run: uv run --frozen playwright install chromium
+      - name: The tests find the browser (else every browser test would be skipped, not failed)
+        run: uv run --frozen python -c "import sys; sys.path.insert(0, 'tests'); from conftest import browser_available; sys.exit(not browser_available())"
+      - run: uv run --frozen pytest -q -n auto
+        env:
+          JOB_APPLY_TEST_SHARD: ${{ matrix.part }}/2
+
   server:
     # The checks main's ruleset requires, by these names: green only when every part passed.
     # (Run always: a skipped required check would count as passed.)

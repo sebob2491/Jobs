@@ -1,6 +1,9 @@
 """First run on the person's own computer: finding a browser to drive."""
 
-from conftest import run
+import os
+import sys
+
+from conftest import browser_available, run
 
 from job_apply import config, server
 from job_apply.browser import launch_attempts
@@ -33,7 +36,8 @@ def test_the_desks_browser_doesnt_offer_to_save_passwords(tmp_path):
     prefs = json.loads((fresh / "Default" / "Preferences").read_text())
     assert prefs == {"credentials_enable_service": False, "credentials_enable_autosignin": False,
                      "profile": {"password_manager_enabled": False, "password_manager_leak_detection": False}}
-    assert oct((fresh / "Default").stat().st_mode & 0o777) == "0o700"  # private, as the browser makes it
+    if os.name == "posix":  # (Windows has no such mode bits)
+        assert oct((fresh / "Default").stat().st_mode & 0o777) == "0o700"  # private, as the browser makes it
     quiet_password_manager(fresh)  # already quiet: left as it is
     assert not (fresh / "Default" / "Preferences.tmp").exists()
 
@@ -79,6 +83,19 @@ def test_chrome_installed_for_one_user_is_found(monkeypatch, tmp_path):
     exe.write_bytes(b"")
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "AppData" / "Local"))
     assert server.chrome_installed()
+
+
+def test_the_tests_find_playwrights_chromium_on_windows(monkeypatch, tmp_path):
+    """`playwright install chromium` puts it in AppData\\Local on Windows: the suite looked in
+    ~/.cache alone, and skipped every browser test there."""
+    for var in ("JOB_APPLY_CHROMIUM_PATH", "PLAYWRIGHT_BROWSERS_PATH"):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(config.Path, "home", lambda: tmp_path / "home")
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "AppData" / "Local"))
+    assert not browser_available()
+    (tmp_path / "AppData" / "Local" / "ms-playwright" / "chromium-1194").mkdir(parents=True)
+    assert browser_available()
 
 
 def test_the_email_app_password_is_never_typed_into_a_page(srv, monkeypatch):

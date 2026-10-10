@@ -30,7 +30,8 @@ def _saved_page(folder: Path) -> None:
         "<html><body><h1>My Information</h1><label for=a>First Name</label><input id=a value='Jordan'>"
         "<p>Signed in as jquill77@example.org · 602-555-0142 · 88 W Example Rd, Gilbertville AZ 85201</p>"
         "<p>Saguaro Valley College · Blue Mesa Fab · Copperline Tools</p>"
-        "<iframe src='https://acme.wd1.myworkdayjobs.com/frame/questions?sid=XYZ'></iframe></body></html>")
+        "<iframe src='https://acme.wd1.myworkdayjobs.com/frame/questions?sid=XYZ'></iframe></body></html>",
+        encoding="utf-8")  # as the browser's snapshot writes it
     (snap / "frame-1.html").write_text("<html><body><h2>Questions</h2><p>Gilbertville</p></body></html>")
     (snap / "screenshot.jpg").write_bytes(b"\xff\xd8 a picture of the page with Jordan Quill on it")
     (snap / "snapshot.json").write_text(json.dumps({
