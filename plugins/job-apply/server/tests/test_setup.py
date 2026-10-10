@@ -20,6 +20,41 @@ def test_without_chrome_edge_comes_before_a_download(monkeypatch):
     assert launch_attempts(chrome) == [{"executable_path": "/opt/chromium"}]
 
 
+def test_the_desks_browser_doesnt_offer_to_save_passwords(tmp_path):
+    """Chrome's "Save password?" bubble came up over the page after every sign-in in the desk's
+    window (live, Oct 2026): the desk keeps the passwords itself. Its offer is turned off in the
+    desk's own profile, keeping the profile's other settings; a file that can't be read is left."""
+    import json
+
+    from job_apply.browser import quiet_password_manager
+
+    fresh = tmp_path / "fresh"
+    quiet_password_manager(fresh)
+    prefs = json.loads((fresh / "Default" / "Preferences").read_text())
+    assert prefs == {"credentials_enable_service": False, "credentials_enable_autosignin": False,
+                     "profile": {"password_manager_enabled": False, "password_manager_leak_detection": False}}
+    assert oct((fresh / "Default").stat().st_mode & 0o777) == "0o700"  # private, as the browser makes it
+    quiet_password_manager(fresh)  # already quiet: left as it is
+    assert not (fresh / "Default" / "Preferences.tmp").exists()
+
+    used = tmp_path / "used"
+    (used / "Default").mkdir(parents=True)
+    (used / "Default" / "Preferences").write_text(json.dumps({"profile": {"name": "Person 1"}, "homepage": "x"}))
+    quiet_password_manager(used)
+    prefs = json.loads((used / "Default" / "Preferences").read_text())
+    assert prefs["profile"] == {"name": "Person 1", "password_manager_enabled": False,
+                                "password_manager_leak_detection": False} and prefs["homepage"] == "x"
+    written = (used / "Default" / "Preferences").read_text()
+    quiet_password_manager(used)
+    assert (used / "Default" / "Preferences").read_text() == written
+
+    broken = tmp_path / "broken"
+    (broken / "Default").mkdir(parents=True)
+    (broken / "Default" / "Preferences").write_text("{not json")
+    quiet_password_manager(broken)
+    assert (broken / "Default" / "Preferences").read_text() == "{not json"
+
+
 def test_an_unexpanded_plugin_root_is_ignored():
     """Claude Desktop passed .mcp.json's env through as the literal "${CLAUDE_PLUGIN_ROOT}":
     setup found no profile template to copy and the desk no employer list."""
