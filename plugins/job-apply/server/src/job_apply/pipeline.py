@@ -105,7 +105,15 @@ _AFTER_CODE = re.compile(r"^(verify|confirm|continue|next)( (code|e-?mail|accoun
 _TRY_LATER = re.compile(r"\btoo many\b.{0,30}\b(?:attempts|requests|tries)\b|\btry again (?:later|in \d+)|\brate[- ]limit",
                         re.I)
 _CREATE_ACCOUNT = re.compile(r"^(?:proceed to |continue to )?(create (?:an |your |a new )?account|sign up|register)"
-                             r"(?: now)?[.!]?$|^don['\u2019]?t have an account(?: yet)?\??$", re.I)  # (SuccessFactors' link)
+                             r"(?: now)?[.!]?$|^don['\u2019]?t have an account(?: yet)?\??$|"  # (SuccessFactors' link)
+                             r"^new user\??$", re.I)  # (Taleo's button)
+# A sign-in or Create Account box for a user name, not the email (Taleo's "User Name"): the desk
+# puts the profile email in it, and signs in with that later
+_USER_NAME = re.compile(r"\buser ?name\b|\blog ?in\b", re.I)
+# A Create Account form's security question or its answer (some Taleo sites ask for them): the
+# person's to choose and answer, never made up
+_SECURITY_QUESTION = re.compile(r"\b(?:security|secret|challenge|password (?:reminder|recovery|hint))\b[^.?!]{0,20}?"
+                                r"\b(?:questions?|answers?)\b|\bpassword hint\b", re.I)
 # With settings.manage_accounts: a Create Account form's own button, the boxes on it that agree to
 # the site's terms (required ones, or its terms, or a privacy policy or notice read: "Yes, I confirm that
 # I have read the privacy notice", a Workday site's; never a newsletter's, job alerts', being kept informed
@@ -1310,10 +1318,17 @@ class Applier:
                 if done == "prefilled":
                     first = (" Your saved password didn't sign in there, so this is probably your first application "
                              "with them; if you do have an account, sign in instead." if sign_ins.get("create_account") else "")
+                    fields = data.get("fields") or []
+                    user = (" (your email as its user name: sign in there with it)" if any(
+                        _user_name_box(f) for f in fields if f.get("kind") in ("text", "email")) else "")
+                    asks = ("Fill in anything it still asks for (a picture code, say), tick their terms box if there is "
+                            "one and create the account (then verify your email if they ask)")
+                    if _security_boxes(fields):  # (never made up, so never pressed for the person: _make_account)
+                        asks = ("It also asks for security questions and their answers: those are yours to choose (the "
+                                "desk never makes up answers). Fill them in there and create the account")
                     return self._pause(run, "sign_in", f"I filled in {_site(run, data)}'s Create Account form with your "
-                                       "details and saved password. Fill in anything it still asks for (a picture code, "
-                                       "say), tick their terms box if there is one and create the account (then verify "
-                                       "your email if they ask); the desk carries on after that." + first, seen=data)
+                                       f"details and saved password{user}. {asks}; the desk carries on after that."
+                                       + first, seen=data)
                 if done == "filled":
                     return self._pause(run, "sign_in", f"I filled in your email and saved password on {_site(run, data)}'s "
                                        "sign-in form. Press its sign-in button in the browser window; the desk carries on "
@@ -1789,8 +1804,9 @@ class Applier:
         the form's own button, after its password boxes (its submit button, or a link or plain button
         in that form that its script sends it with: ApplicantStack's "Submit"). Once a job
         (Run.accounts_tried). Not with a CAPTCHA on the page: that's the person's. True when it was
-        pressed; the account is said to be made only once the site shows it (Run.account_made, in _drive)."""
-        if data.get("captcha") or data.get("challenge"):
+        pressed; the account is said to be made only once the site shows it (Run.account_made, in _drive).
+        Nor with security questions on the form (some Taleo sites'): their answers are the person's."""
+        if data.get("captcha") or data.get("challenge") or _security_boxes(data.get("fields") or []):
             return False
         srv = self.srv
         boxes = [f for f in data.get("fields") or [] if f.get("kind") == "checkbox" and is_empty_value(f.get("value"))
@@ -1810,9 +1826,12 @@ class Applier:
         run.accounts_tried += 1
         site = _site(run, data)
         ticked = ", ".join(f"\u201c{_short(f.get('label') or '')}\u201d" for f in boxes)
-        self._log(run, f"pressed \u201c{button['text'].strip()}\u201d to create your account on {site} with your saved "
-                  "password" + (f", after ticking {ticked}" if boxes else ""))
-        run.account_made = (f"created your account on {site} with your saved password" + (" and agreed to its terms"
+        # (a user name it asks for is the email: _sign_in put it there, and signs in with it later)
+        with_ = "your email as its user name and your saved password" if any(
+            _user_name_box(f) for f in data.get("fields") or [] if f.get("kind") in ("text", "email")) else "your saved password"
+        self._log(run, f"pressed \u201c{button['text'].strip()}\u201d to create your account on {site} with {with_}"
+                  + (f", after ticking {ticked}" if boxes else ""))
+        run.account_made = (f"created your account on {site} with {with_}" + (" and agreed to its terms"
                             if boxes else "") + " (manage_accounts: false in profile.yaml leaves this to you)")
         await self._wait_for_account(data)
         return True
@@ -2203,7 +2222,7 @@ class Applier:
         new_account = len(passwords) == 2 or signing_up
         if new_account:
             # The email in every box that asks for it ("Retype Email Address"; the user name
-            # SCREEN's form asks for is the email too), and the rest from the profile.
+            # SCREEN's and Taleo's forms ask for is the email too), and the rest from the profile.
             if details:
                 await self._fill_account_details(fields)
             await srv.fill_form([{"id": f["id"], "value": address} for f in boxes])
@@ -2212,8 +2231,10 @@ class Applier:
         for box in passwords:
             if not (await srv.fill_secret(box["id"], secret)).get("ok"):
                 return None  # it didn't go in: say nothing about a saved password
+        as_user = any(_user_name_box(f) for f in (boxes if new_account else boxes[:1]))
         if new_account:  # its terms and button: the person's, unless they let the desk (_make_account)
-            self._log(run, "filled the Create Account form with your details and saved password")
+            self._log(run, "filled the Create Account form with your details and saved password"
+                      + (" (your email as its user name)" if as_user else ""))
             return "prefilled"
         # The form's own button, after its password box: a "Sign In" in the site's header opens
         # its sign-in page or pop-up instead, and sends nothing (Workday's). Failing that, the
@@ -2226,14 +2247,18 @@ class Applier:
         await srv.click(button["id"])
         run.sign_in_tries += 1
         # whether that signed in is the next look's to say
-        self._log(run, f"pressed \u201c{button['text'].strip()}\u201d with your saved password")
+        self._log(run, f"pressed \u201c{button['text'].strip()}\u201d with your saved password"
+                  + (" and your email as the user name" if as_user else ""))
         return "submitted"
 
     async def _fill_account_details(self, fields: list[dict[str, Any]]) -> None:
         """A Create Account form's other boxes, from the profile: names, country. Its check
         boxes (a newsletter, the site's terms) and file boxes ("upload your resume now?") are
-        left alone, as is anything the profile doesn't answer (Benchmark's picture code)."""
-        empty = [f for f in fields if f.get("kind") in _ACCOUNT_KINDS and is_empty_value(f.get("value"))]
+        left alone, as is anything the profile doesn't answer (Benchmark's picture code), and
+        its security questions and answers (the person's)."""
+        questions = {f["id"] for f in _security_boxes(fields)}
+        empty = [f for f in fields if f.get("kind") in _ACCOUNT_KINDS and is_empty_value(f.get("value"))
+                 and f["id"] not in questions]
         plan = plan_autofill(empty, config.Profile.load(), {})
         if plan["to_fill"]:
             await self.srv.fill_form([{"id": f["id"], "value": f["value"]} for f in plan["to_fill"]])
@@ -2537,6 +2562,21 @@ def _forgot_action(actions: list[dict[str, Any]]) -> dict[str, Any] | None:
     return next((a for a in actions if not a.get("disabled") and not a.get("cookie") and _FORGOT.search(a["text"])), None)
 
 
+def _user_name_box(field: dict[str, Any]) -> bool:
+    """A box for a user name, not the email (Taleo's "User Name"): the desk puts the email in it."""
+    label = field.get("label") or ""
+    return bool(_USER_NAME.search(label)) and not re.search(r"e-?mail", label, re.I)
+
+
+def _security_boxes(fields: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """A Create Account form's security questions and their answer boxes (a plain "Answer"
+    beside them too): the person's to choose and answer, never made up."""
+    if not any(_SECURITY_QUESTION.search(f.get("label") or "") for f in fields):
+        return []
+    return [f for f in fields if f.get("kind") not in ("password", "checkbox", "file")
+            and re.search(r"\bquestions?\b|\banswers?\b|\bhint\b", f.get("label") or "", re.I)]
+
+
 # A posting page's own boxes, never an application's: Phenom's "Save Job" ticks and its chatbot's box
 _PAGE_WIDGET = re.compile(r"^save (?:this )?job$|\bchat ?bot\b", re.I)
 
@@ -2552,11 +2592,13 @@ def _application_like(data: dict[str, Any]) -> bool:
 
 # A saved password is typed only into its own system's pages, on that system's own domains:
 # never into a page that just mentions one in its address (evil.example/myworkdayjobs.com).
+# Taleo's are also an employer's own career section that Oracle hosts on the employer's address
+# (Kforce's myhiring.kforce.com, data/lists/phoenix-metro.yaml): named here one by one.
 PASSWORD_SITES = {
     "workday": ("myworkdayjobs.com", "myworkday.com", "myworkdaysite.com"),
     "successfactors": ("successfactors.com", "successfactors.eu", "sapsf.com", "sapsf.eu"),
     "icims": ("icims.com",), "applicantstack": ("applicantstack.com",), "ukg": ("ultipro.com",),
-    "infor": ("inforcloudsuite.com",), "taleo": ("taleo.net",), "brassring": ("brassring.com",),
+    "infor": ("inforcloudsuite.com",), "taleo": ("taleo.net", "myhiring.kforce.com"), "brassring": ("brassring.com",),
     "avature": ("avature.net",),
 }
 
@@ -2573,7 +2615,8 @@ def password_for(url: str) -> str | None:
 
 # The systems whose password the desk page lets the person save, by the name it shows
 DESK_PASSWORDS = {"workday_password": "Workday", "successfactors_password": "SuccessFactors", "icims_password": "iCIMS",
-                  "applicantstack_password": "ApplicantStack", "ukg_password": "UKG Pro", "infor_password": "Infor"}
+                  "applicantstack_password": "ApplicantStack", "ukg_password": "UKG Pro", "infor_password": "Infor",
+                  "taleo_password": "Taleo"}
 
 
 def _password_tip(url: str) -> str:

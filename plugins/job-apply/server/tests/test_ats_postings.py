@@ -200,7 +200,8 @@ def test_a_job_system_is_known_by_its_host_not_by_words_elsewhere_in_the_address
     for own, ats in (("https://careers.lamresearch.com/careers/job/1", "eightfold"),
                      ("https://jobs.infineon.com/careers/job/2", "eightfold"),
                      ("https://careers.qorvo.com/job/Greensboro/x/3/", "successfactors"),
-                     ("https://www.jobs.atlascopcogroup.com/job/Chandler-FSE-AZ-85226/4/", "successfactors")):
+                     ("https://www.jobs.atlascopcogroup.com/job/Chandler-FSE-AZ-85226/4/", "successfactors"),
+                     ("https://myhiring.kforce.com/careersection/ex/jobdetail.ftl?job=5", "taleo")):
         assert detect_ats(own) == ats, own
     assert detect_ats("https://careers.ti.com/en/sites/CX/job/123") == "oracle_hcm"  # its Oracle site, by its path
 

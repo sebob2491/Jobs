@@ -1,0 +1,81 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Login</title></head>
+<body>
+<!-- like an Oracle Taleo career section's Login page (Kforce's, live, Oct 2026: careersection/iam/
+     accessmanagement/login.jsf, reached from a posting's "Apply Online" and its privacy agreement):
+     it asks for a "User Name", not an email; "Login" and "New User" are plain buttons whose script
+     sends the page's one form; "Forgot your user name?" and "Need a Password?" are links (the
+     password one goes to a reset that asks for the user name and email and emails an access code).
+     Served by the tests at Kforce's own address (routed: nothing goes to the real site).
+     ?user=&pw=: the account the site has (none without them). The page comes back with an error
+     after a refused sign-in, as Taleo's does. -->
+<div id="dialogTemplate-dialogForm-header">
+  <span class="welcome">Welcome to Example Staffing...Great Careers start here! You are not yet signed in.</span>
+  <span class="grouplink"><a href="#" id="jobSearchTabAction" onclick="return false;" title="Go to the section Job Search">Job Search</a></span>
+</div>
+<form id="dialogTemplate-dialogForm" name="dialogTemplate-dialogForm" method="post" action="login.jsf">
+  <span class="mainsection" id="dialogTemplate-dialogForm-masterbody">
+    <span class="page-header">
+      <h1 class="page-heading-header-title"><span>Login</span></h1>
+      <span class="page-header-text">To access your account, please identify yourself by providing the information
+        requested in the fields below, then click "Login". If you are not registered yet, click "New user" and follow
+        the instructions to create an account.</span>
+    </span>
+    <span class="entity-mandatory-field">Mandatory fields are marked with an asterisk.</span>
+    <span id="err" class="errorMessage" role="alert"></span>
+    <span class="squared-border-linkedin-content">
+      <span class="subtitle">Returning user</span>
+      <table cellpadding="0" cellspacing="0" id="dialogTemplate-dialogForm:login:main-layout-table" width="100%">
+        <tbody><tr><td class="dialog-columns-linkedin">
+          <span class="dialog-section">
+            <label class="entity-label" for="dialogTemplate-dialogForm-login-name1" title="The field User Name is mandatory.">
+              <img alt="" class="iam-entity-label-mandatory" src="data:,">User Name<span class="hidden-audible">.</span><span class="hidden-audible">Required</span>
+            </label>
+            <input autocomplete="off" id="dialogTemplate-dialogForm-login-name1" maxlength="255" name="dialogTemplate-dialogForm-login-name1" type="text">
+          </span>
+          <label class="entity-label" for="dialogTemplate-dialogForm-login-password" title="The field Password is mandatory.">
+            <img alt="" class="iam-entity-label-mandatory" src="data:,">Password<span class="hidden-audible">.</span><span class="hidden-audible">Required</span>
+          </label>
+          <input autocomplete="off" id="dialogTemplate-dialogForm-login-password" maxlength="60" name="dialogTemplate-dialogForm-login-password" type="password" value="">
+          <span class="button-group-linkedin-with-paddingbottom">
+            <input class="nav-btn" id="dialogTemplate-dialogForm-login-defaultCmd" onclick="login(); return false;" title="Log in to the system" type="button" value="Login">
+          </span>
+          <span class="iam-link-small-no-text-decoration">
+            <a href="forgotUsername.jsf" id="dialogTemplate-dialogForm-login-forgotUsernameLinkBottom" title="Access the forgotten user name instructions page">Forgot your user name?</a>
+          </span>
+          <span class="iam-link-small-no-text-decoration">
+            <a href="forgotPasswordAccessCode.jsf" id="dialogTemplate-dialogForm-login-forgotPasswordLinkBottom" title="Access the forgotten password instructions page">Need a Password?</a>
+          </span>
+        </td></tr></tbody>
+      </table>
+      <hr>
+      <span class="subtitle">Don&rsquo;t have an account?</span>
+      <table id="dialogTemplate-dialogForm:login:newusertable" width="100%">
+        <tbody><tr><td class="dialog-columns-login-buttonpanel">
+          <input class="nav-btn button-group-margin-styling" id="dialogTemplate-dialogForm-login-register" onclick="location.href = 'register.jsf' + location.search.replace(/[?&]failed=1/, ''); return false;" title="Access the registration page" type="button" value="New User">
+        </td></tr></tbody>
+      </table>
+    </span>
+  </span>
+</form>
+<script>
+  const params = new URLSearchParams(location.search);
+  if (params.get('failed')) {
+    document.getElementById('err').textContent = 'The user name or password is not valid. Please try again.';
+  }
+  function login() {
+    const user = document.getElementById('dialogTemplate-dialogForm-login-name1').value;
+    const pw = document.getElementById('dialogTemplate-dialogForm-login-password').value;
+    sessionStorage.setItem('logins', String(Number(sessionStorage.getItem('logins') || 0) + 1));
+    if (params.get('user') && user === params.get('user') && pw === params.get('pw')) {
+      sessionStorage.setItem('signedIn', user);
+      location.href = '/careersection/application.jss';
+    } else {
+      params.set('failed', '1');
+      location.href = 'login.jsf?' + params.toString();
+    }
+  }
+</script>
+</body>
+</html>

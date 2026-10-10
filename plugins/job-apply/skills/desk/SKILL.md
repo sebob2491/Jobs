@@ -59,7 +59,8 @@ The desk is a local web page served by this plugin. It does what the `find-jobs`
   and where it stopped: no employer, job title, address or requisition number in the issue
   or the saved pages. Offer it when the user would rather not show which job they applied for.
 - **Site passwords** stores one password per job system: Workday, SuccessFactors, iCIMS,
-  ApplicantStack, UKG Pro or Infor. The page names, by each system, the employers on the
+  ApplicantStack, UKG Pro, Infor or Taleo (Kforce's; where Taleo asks for a user name, the desk
+  uses the profile email as it). The page names, by each system, the employers on the
   user's own lists that use it (on the semiconductor list, Workday has 15 of them; on the
   Phoenix list, 24). Each employer has its own account. With a password saved, the desk signs in by itself
   (pressing the sign-in form's own button, whatever it reads: SuccessFactors' says "Submit")

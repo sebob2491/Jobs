@@ -7,6 +7,7 @@ import contextlib
 import json
 import time
 from pathlib import Path
+from urllib.parse import urlparse
 
 import pytest
 from conftest import browser_available, fixture_url, run
@@ -1828,6 +1829,135 @@ def test_a_sign_in_page_good_for_one_visit_is_reached_again_through_the_posting(
     assert "created your account" in log and r.seen_form, (r.reason, r.log)
 
 
+# Kforce's Taleo career section, on Kforce's own address (data/lists/phoenix-metro.yaml)
+TALEO_LOGIN = "https://myhiring.kforce.com/careersection/iam/accessmanagement/login.jsf"
+
+
+async def _taleo_site(srv) -> None:
+    """Kforce's Taleo career section from the hand-written pages (site/taleo-*.html) at its own
+    address, so its saved password is Taleo's as it is live; routed: nothing reaches the real site.
+    Its application is a plain form."""
+    site = Path(__file__).parent / "fixtures" / "site"
+    pages = {"/careersection/iam/accessmanagement/login.jsf": (site / "taleo-login.html").read_text(encoding="utf-8"),
+             "/careersection/iam/accessmanagement/register.jsf": (site / "taleo-register.html").read_text(encoding="utf-8"),
+             "/careersection/application.jss": _form("Kforce")}
+
+    async def handler(route):
+        page = pages.get(urlparse(route.request.url).path)
+        await route.fulfill(status=200 if page else 404, content_type="text/html",
+                            body=page or "<html><body>not found</body></html>")
+
+    await srv.browser.page()
+    await srv.browser._ctx.route("https://myhiring.kforce.com/**", handler)
+
+
+def test_taleos_saved_password_goes_on_its_career_sections_only():
+    """Kforce's Taleo career section is on Kforce's own address: the saved Taleo password goes there
+    (as on taleo.net), and on nothing that only looks like it."""
+    assert pipeline.password_for(TALEO_LOGIN + "?lang=en") == "taleo_password"
+    assert pipeline.password_for("https://acme.taleo.net/careersection/2/jobapply.ftl") == "taleo_password"
+    for url in ("http://myhiring.kforce.com/careersection/iam/accessmanagement/login.jsf",
+                "https://myhiring.kforce.com.evil.example/careersection/", "https://evil.example/myhiring.kforce.com/",
+                "https://www.kforce.com/careers/"):
+        assert pipeline.password_for(url) is None, url
+    assert pipeline._CREATE_ACCOUNT.match("New User")  # Taleo's way to a new account
+    assert "Save a Taleo password" in pipeline._password_tip(TALEO_LOGIN)  # (none saved in the test's home)
+
+
+def test_taleo_signs_in_with_its_saved_password_and_the_email_as_user_name(srv, monkeypatch, job_apply_home):
+    """Kforce's Taleo Login (live, Oct 10) asks for a "User Name", and is on Kforce's own address: the
+    desk didn't take it for Taleo's and stopped at once ("Sign in (or create your account)"), the saved
+    Taleo password untried. It signs in there with that password, the profile email as the user name
+    (the one the desk makes an account with), and goes on to the application."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setenv("JOB_APPLY_SECRET_TALEO_PASSWORD", "not-a-real-password")
+    job = srv.add_job(url=TALEO_LOGIN + "?user=sam.rivera%40example.com&pw=not-a-real-password", title="Recruiter",
+                      company="Kforce")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        await _taleo_site(srv)
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r, await r.page.evaluate("() => [sessionStorage.getItem('signedIn'), sessionStorage.getItem('logins')]")
+        finally:
+            await applier.stop()
+
+    r, (signed_in, logins) = run(go())
+    assert (signed_in, logins) == ("sam.rivera@example.com", "1"), (signed_in, logins, r.reason, r.log)
+    assert "pressed “Login” with your saved password and your email as the user name" in r.log, r.log
+    assert r.seen_form and not any("account" in line for line in r.log), (r.status, r.reason, r.log)
+
+
+def test_with_manage_accounts_taleo_makes_the_account_through_new_user(srv, monkeypatch, job_apply_home):
+    """The live check's test identity has no account at Kforce's Taleo. The saved Taleo password
+    doesn't sign in, and Taleo's reset ("Need a Password?") asks for the user name and emails an
+    access code, which the desk can't do, so even with the inbox watched it makes the account: Taleo's
+    "New User", the profile email as the user name (said in the log) and the saved password twice,
+    then "Register"."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setenv("JOB_APPLY_SECRET_TALEO_PASSWORD", "not-a-real-password")
+    manage_accounts(job_apply_home)
+    watched_inbox(monkeypatch)
+    job = srv.add_job(url=TALEO_LOGIN + "?lang=en", title="Recruiter", company="Kforce")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        await _taleo_site(srv)
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r, await r.page.evaluate(
+                "() => [sessionStorage.getItem('registered'), sessionStorage.getItem('logins'),"
+                " sessionStorage.getItem('registers')]")
+        finally:
+            await applier.stop()
+
+    r, (registered, logins, registers) = run(go())
+    assert (registered, logins, registers) == ("sam.rivera@example.com", "1", "1"), (registered, logins, r.reason, r.log)
+    log = "\n".join(r.log)
+    assert "your saved password didn't sign in, so I opened Create Account" in log, log
+    assert "filled the Create Account form with your details and saved password (your email as its user name)" in log
+    assert "pressed “Register” to create your account on Oracle Taleo with your email as its user name" in log
+    assert any(line.startswith("created your account on Oracle Taleo with your email as its user name")
+               for line in r.log), log
+    assert "password reset" not in log and r.seen_form, (r.status, r.reason, log)
+
+
+def test_taleos_security_questions_are_left_to_the_person(srv, monkeypatch, job_apply_home):
+    """A Taleo New User form that asks for a security question and its answer: the desk fills in the
+    user name (the email) and the password, never makes up the questions' answers, and so leaves the
+    form to the person (Register unpressed) with what it wants."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setenv("JOB_APPLY_SECRET_TALEO_PASSWORD", "not-a-real-password")
+    manage_accounts(job_apply_home)
+    job = srv.add_job(url=TALEO_LOGIN + "?questions=1", title="Recruiter", company="Kforce")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        await _taleo_site(srv)
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r, await r.page.evaluate(
+                "() => [document.getElementById('dialogTemplate-dialogForm-userName').value,"
+                " document.getElementById('dialogTemplate-dialogForm-question1').value,"
+                " document.getElementById('dialogTemplate-dialogForm-answer1').value,"
+                " sessionStorage.getItem('registers')]")
+        finally:
+            await applier.stop()
+
+    r, shown = run(go())
+    assert shown == ["sam.rivera@example.com", "", "", None], (shown, r.reason, r.log)
+    assert r.need == "sign_in" and "security questions" in r.reason and "never makes up answers" in r.reason, r.reason
+    assert "your email as its user name" in r.reason, r.reason
+    assert not any(line.startswith(("pressed “Register", "created your account")) for line in r.log), r.log
+
+
 @pytest.mark.parametrize("mode", ["workday", "workday-late"])
 def test_a_workday_reset_that_says_if_an_account_exists_waits_then_makes_one(srv, monkeypatch, job_apply_home, mode):
     """Workday's password reset stays on its form and says "You will receive an email with
@@ -2623,7 +2753,9 @@ def test_a_create_account_form_is_filled_from_the_profile(srv, monkeypatch, page
             await applier.stop()
 
     r = run(go())
-    assert "filled the Create Account form with your details and saved password" in r.log
+    # (SCREEN's asks for a user name too, and is told it's the email)
+    user = " (your email as its user name)" if "username" in page else ""
+    assert "filled the Create Account form with your details and saved password" + user in r.log, r.log
     assert srv.tracker().get(job["id"])["status"] != "ready"
 
 
@@ -3401,7 +3533,8 @@ def test_a_sign_in_by_hand_mentions_the_password_the_desk_could_save(monkeypatch
     assert "Save an Infor password" in pipeline._password_tip("https://css-benchmark-prd.inforcloudsuite.com/sso/SSOServlet")
     assert "Save an ApplicantStack password" in pipeline._password_tip("https://seus.applicantstack.com/x/login")
     assert "Save a UKG Pro password" in pipeline._password_tip("https://signin-us.ultipro.com/u/login")
-    assert pipeline._password_tip("https://www.taleo.net/careersection/login") == ""  # not offered on the page
+    assert "Save a Taleo password" in pipeline._password_tip("https://acme.taleo.net/careersection/iam/login.jsf")
+    assert pipeline._password_tip("https://sjobs.brassring.com/TGnewUI/Home") == ""  # not offered on the page
     assert pipeline._password_tip("https://example.com/careers/login") == ""
     monkeypatch.setattr(pipeline, "_secret", lambda name: "saved")
     assert pipeline._password_tip("https://career8.successfactors.com/career?x=1") == ""

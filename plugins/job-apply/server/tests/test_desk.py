@@ -386,7 +386,7 @@ def test_a_site_password_goes_to_secrets_only(srv):
                 body = {"name": "workday_password", "value": "s3cret: #1"}
                 assert (await c.post("/api/password", json=body)).status_code == 403
                 none = {"workday": False, "successfactors": False, "icims": False, "applicantstack": False,
-                        "ukg": False, "infor": False, "email": False}
+                        "ukg": False, "infor": False, "taleo": False, "email": False}
                 assert (await c.get("/api/state", headers=h)).json()["passwords"] == none
                 assert (await c.post("/api/password", headers=h, json=body)).json() == {"saved": True}
                 after = await c.get("/api/state", headers=h)
@@ -430,7 +430,7 @@ def test_a_hand_typed_secrets_file_doesnt_break_the_page(srv, job_apply_home):
     config.secrets_path().write_text("workday_password: [unclosed\nnot a line of names\n")
     assert Desk(srv).state()["passwords"] == {"workday": True, "successfactors": False, "icims": False,
                                               "applicantstack": False, "ukg": False, "infor": False,
-                                              "email": False}
+                                              "taleo": False, "email": False}
     assert config.get_secret("workday_password") == "[unclosed"
 
 
@@ -1154,6 +1154,7 @@ def test_the_password_list_names_the_persons_own_employers(job_apply_home):
     assert systems["workday"].startswith("Workday: Banner Health, HonorHealth, Arizona State University and "), systems
     assert systems["ukg"] == "UKG Pro: Example Credit Union, Desert Financial Credit Union"
     assert systems["applicantstack"] == "ApplicantStack"  # no employer on these lists uses it
+    assert systems["taleo"] == "Taleo: Kforce"  # (its own address, where the saved Taleo password goes too)
     own.write_text("lists: [phoenix-metro]\ncompanies: []\n")
     os.utime(own, (time.time() + 5, time.time() + 5))  # a later change than the first write
     assert {s["value"]: s["label"] for s in desk_module.password_systems()}["ukg"] == \
