@@ -1,5 +1,6 @@
 """The YAML shipped with the plugin must load and use known values."""
 
+import pytest
 import yaml
 
 from job_apply import config
@@ -63,6 +64,66 @@ def test_accepting_notices_is_on_unless_turned_off_and_never_in_practice_mode(mo
     monkeypatch.delenv("JOB_APPLY_NEVER_SUBMIT")
     template = yaml.safe_load(config.TEMPLATE_PROFILE.read_text())
     assert template["settings"]["accept_notices"] is True  # the template says so, and how to turn it off
+
+
+IDENTITY_EMAIL = "jobdesk.test@example.com"
+PRACTICE = {"submit_mode": "dry_run", "manage_accounts": True, "accept_notices": True}
+
+
+def _identity_settings(email=IDENTITY_EMAIL, settings=None):
+    return config.Profile({"personal": {"email": email}, "settings": settings or PRACTICE}).settings
+
+
+def test_the_live_checks_test_identity_makes_accounts_and_agrees_in_practice_mode(monkeypatch):
+    """The nightly live check's test identity (scripts/live_smoke.py --test-identity; the owner's call,
+    Oct 10) is the one exception to "never in practice mode": it makes accounts and agrees to notices
+    there. Only with JOB_APPLY_LIVE_TEST_IDENTITY=1 and the hard switch JOB_APPLY_NEVER_SUBMIT=1 in the
+    environment, and the profile's email being the environment's LIVE_TEST_EMAIL."""
+    assert not _identity_settings().may_manage_accounts  # practice mode, as ever
+    monkeypatch.setenv("JOB_APPLY_NEVER_SUBMIT", "1")
+    monkeypatch.setenv("LIVE_TEST_EMAIL", IDENTITY_EMAIL)
+    assert not _identity_settings().test_identity  # the live check's switch isn't on
+    monkeypatch.setenv("JOB_APPLY_LIVE_TEST_IDENTITY", "1")
+    s = _identity_settings()
+    assert (s.test_identity, s.may_manage_accounts, s.may_accept_notices) == (True, True, True)
+    assert _identity_settings(" JobDesk.Test@Example.com ").test_identity  # however a site wrote it back
+    # the profile still says: off is off
+    off = _identity_settings(settings={**PRACTICE, "manage_accounts": False, "accept_notices": False})
+    assert off.test_identity and not off.may_manage_accounts and not off.may_accept_notices
+    # without the hard switch on Submit, it isn't the live check
+    monkeypatch.delenv("JOB_APPLY_NEVER_SUBMIT")
+    assert not _identity_settings().test_identity and not _identity_settings().may_manage_accounts
+    monkeypatch.setenv("JOB_APPLY_NEVER_SUBMIT", "1")
+    monkeypatch.setenv("JOB_APPLY_LIVE_TEST_IDENTITY", "true")  # only "1" turns it on
+    assert not _identity_settings().test_identity
+
+
+@pytest.mark.parametrize("email", ["sam.rivera@example.com", "", None, "jobdesk.test@example.com.example.net",
+                                   "x.jobdesk.test@example.com"])
+def test_a_persons_own_profile_is_never_the_test_identity(monkeypatch, email):
+    """With the live check's switches on, a profile whose email isn't LIVE_TEST_EMAIL (a person's own)
+    makes no account and agrees to nothing in practice mode, whatever its settings say; and with no
+    LIVE_TEST_EMAIL at all, a profile without an email isn't the test identity either."""
+    monkeypatch.setenv("JOB_APPLY_NEVER_SUBMIT", "1")
+    monkeypatch.setenv("JOB_APPLY_LIVE_TEST_IDENTITY", "1")
+    monkeypatch.setenv("LIVE_TEST_EMAIL", IDENTITY_EMAIL)
+    s = _identity_settings(email)
+    assert not (s.test_identity or s.may_manage_accounts or s.may_accept_notices)
+    monkeypatch.setenv("LIVE_TEST_EMAIL", "")
+    assert not _identity_settings(email).test_identity
+
+
+def test_the_test_identity_never_submits(monkeypatch):
+    """The test identity is let make accounts and agree to notices, and nothing more: practice mode
+    stays (the hard switch makes even submit_mode: auto a dry run), so no Submit is pressed for it,
+    automatically or when asked."""
+    monkeypatch.setenv("JOB_APPLY_NEVER_SUBMIT", "1")
+    monkeypatch.setenv("JOB_APPLY_LIVE_TEST_IDENTITY", "1")
+    monkeypatch.setenv("LIVE_TEST_EMAIL", IDENTITY_EMAIL)
+    s = _identity_settings(settings={**PRACTICE, "submit_mode": "auto", "auto_submit_ats": ["workday", "greenhouse"]})
+    assert s.test_identity and s.may_manage_accounts
+    assert s.dry_run and s.submit_mode == "dry_run"
+    assert not s.may_auto_submit("workday") and not s.may_auto_submit("greenhouse")
 
 
 def test_submit_mode_spellings():

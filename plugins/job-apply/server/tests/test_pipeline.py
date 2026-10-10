@@ -1145,11 +1145,24 @@ def test_with_manage_accounts_the_desk_creates_the_account(srv, monkeypatch, job
     assert r.need != "sign_in" and "Create Account" not in r.reason, (r.status, r.reason, r.log)
 
 
-def test_in_practice_mode_the_desk_never_creates_an_account(srv, monkeypatch, job_apply_home):
-    """Practice mode sends nothing, an account's details included, whatever manage_accounts says."""
+def as_test_identity(monkeypatch, job_apply_home, email="sam.rivera@example.com"):
+    """The nightly live check's switches on (live_smoke.py --test-identity), with `email` as the test
+    identity's: the conftest profile's own makes it the test identity, in practice mode."""
+    monkeypatch.setenv("JOB_APPLY_NEVER_SUBMIT", "1")
+    monkeypatch.setenv("JOB_APPLY_LIVE_TEST_IDENTITY", "1")
+    monkeypatch.setenv("LIVE_TEST_EMAIL", email)
+    manage_accounts(job_apply_home, submit_mode="dry_run")
+
+
+@pytest.mark.parametrize("identity", [None, "jobdesk.test@example.com"], ids=["practice", "not-the-test-identity"])
+def test_in_practice_mode_the_desk_never_creates_an_account(srv, monkeypatch, job_apply_home, identity):
+    """Practice mode sends nothing, an account's details included, whatever manage_accounts says.
+    So too with the live check's switches on, for a profile that isn't its test identity's."""
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
     saved_password(monkeypatch)
     manage_accounts(job_apply_home, submit_mode="dry_run")
+    if identity:
+        as_test_identity(monkeypatch, job_apply_home, identity)
     job = srv.add_job(url=fixture_url("site/create-account.html"), title="FSE", company="Example Fab")["job"]
     applier = Applier(srv)
 
@@ -1164,6 +1177,65 @@ def test_in_practice_mode_the_desk_never_creates_an_account(srv, monkeypatch, jo
 
     r, created = run(go())
     assert (r.need, created) == ("sign_in", 0) and "Create Account form" in r.reason, (r.reason, r.log)
+
+
+def test_the_live_checks_test_identity_creates_the_account_in_practice_mode(srv, monkeypatch, job_apply_home):
+    """The nightly live check's test identity (a clearly fake applicant with its own inbox; the
+    owner's call, Oct 10) makes the account in practice mode, so the check goes on past sign-in."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    saved_password(monkeypatch)
+    as_test_identity(monkeypatch, job_apply_home)
+    job = srv.add_job(url=fixture_url("site/create-account.html"), title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert any(line.startswith("created your account on") for line in r.log), (r.reason, r.log)
+    assert r.need != "sign_in" and "Create Account" not in r.reason, (r.status, r.reason, r.log)
+
+
+def test_the_live_checks_test_identity_never_submits(srv, monkeypatch, job_apply_home):
+    """The test identity makes accounts and agrees to notices in practice mode, and that's all: with
+    "Submit for me" on, and with Submit pressed on the desk, nothing is sent, and the last lock on the
+    button (press_submit) still refuses it. Loosening any of them for the test identity fails this."""
+    from job_apply.browser import SubmitBlocked
+
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    as_test_identity(monkeypatch, job_apply_home)
+    assert config.Profile.load().settings.may_manage_accounts  # (it is the test identity)
+    url = "https://careers.acme-fab.example/apply/1"
+    posts: list[str] = []
+    job = srv.add_job(url=url, title="FSE", company="Acme Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        await _serve(srv, {url: _form("Acme Fab", action="/application")}, posts)
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"], submit=True)
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            first = r.status
+            applier.submit_now(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            assert srv.browser.use_tab(r.page)  # (the job's own tab)
+            [button] = await srv.browser.find_submit()
+            with pytest.raises(SubmitBlocked):
+                await srv.browser.press_submit(button["id"])
+            return r, first
+        finally:
+            await applier.stop()
+
+    r, first = run(go())
+    assert first == "ready" and posts == [], (first, posts, r.reason, r.log)
+    assert r.status != "submitted" and srv.tracker().get(job["id"])["status"] == "ready_to_submit", (r.status, r.reason)
 
 
 def test_with_manage_accounts_a_refused_saved_password_is_reset(srv, monkeypatch, job_apply_home):

@@ -205,14 +205,15 @@ def test_find_issue_takes_the_oldest_with_the_title():
     assert lc.find_issue([]) is None
 
 
-def _run(tmp_path, issues, pipeline_records, search_records=(), partial=(), hr_records=None, finance_records=None):
+def _run(tmp_path, issues, pipeline_records, search_records=(), partial=(), hr_records=None, finance_records=None,
+         accounts_records=None):
     (tmp_path / "pipeline.log").write_text(log("LIVE_PIPELINE ", pipeline_records))
     (tmp_path / "search.log").write_text(log("LIVE_RESULT ", search_records))
     (tmp_path / "issues.json").write_text(json.dumps(issues))
     out = tmp_path / "github_output"
     out.write_text("")
     hr = []
-    for name, records in (("hr", hr_records), ("finance", finance_records)):
+    for name, records in (("hr", hr_records), ("finance", finance_records), ("accounts", accounts_records)):
         if records is not None:
             (tmp_path / f"{name}.log").write_text(log("LIVE_PIPELINE ", records))
             hr += ["--log", f"{name}={tmp_path / f'{name}.log'}"]
@@ -326,3 +327,56 @@ def test_a_site_down_for_maintenance_keeps_its_employers_last_outcome():
     state, changes = lc.compare(previous, current)
     assert [(c.employer, c.after) for c in changes] == [("Intel", "ready")]
     assert state["pipeline"] == {"ASML": "needs_you sign_in", "Intel": "ready", "KLA": "needs_you sign_in"}
+
+
+ACCOUNTS = "Apply pipeline with the test identity (accounts made and signed in)"
+
+
+def test_the_accounts_check_is_left_out_until_set_up_then_reports_its_own_changes(tmp_path):
+    """The test identity's check (live_smoke.py --pipeline --test-identity) is a check of its own.
+    Until the repository has its secrets the nightly leaves it out (no --log for it): nothing of it
+    is saved or shown. Its first night saves its employers without reporting each as added; after
+    that a change in one is reported under its own heading, apart from the same employer's result
+    in another check. With its secrets gone again, its last results stay."""
+    sign_in = [pipeline_rec("KLA", "needs_you", "sign_in")]
+    body = _run(tmp_path, [], sign_in, [search_rec("USAA")])[0]
+    assert ACCOUNTS not in body and "accounts" not in lc.read_state(body)
+    issue = {"number": 7, "title": "Nightly live check", "state": "OPEN", "body": body}
+
+    night1 = [pipeline_rec("KLA", "needs_you", "email_code"), pipeline_rec("onsemi")]
+    body, comment, outputs = _run(tmp_path, [issue], sign_in, [search_rec("USAA")], accounts_records=night1)
+    assert comment is None and outputs["changes"] == "0"  # new since the last run: nothing added
+    assert f"### {ACCOUNTS}" in body
+    state = lc.read_state(body)
+    assert state["accounts"] == {"KLA": "needs_you email_code", "onsemi": "ready"}
+    assert state["pipeline"] == {"KLA": "needs_you sign_in"}
+    issue["body"] = body
+
+    night2 = [pipeline_rec("KLA"), pipeline_rec("onsemi")]
+    body, comment, outputs = _run(tmp_path, [issue], sign_in, [search_rec("USAA")], accounts_records=night2)
+    assert outputs["changes"] == "1"
+    assert "KLA: `needs_you email_code` → `ready`" in comment.split(f"**{ACCOUNTS}", 1)[1]
+    issue["body"] = body
+
+    body, comment, outputs = _run(tmp_path, [issue], sign_in, [search_rec("USAA")])  # its secrets removed
+    assert comment is None and outputs["changes"] == "0"
+    assert lc.read_state(body)["accounts"] == {"KLA": "ready", "onsemi": "ready"}
+    assert "Not checked in this run" in body.split(ACCOUNTS, 1)[1]
+
+
+def test_an_accounts_check_that_stopped_part_way_keeps_the_employers_it_didnt_reach(tmp_path):
+    """Waiting on emailed codes, the test identity's check can run into its time limit: the employers
+    it didn't reach keep their last results, as in the other checks. One that finished and no longer
+    reports an employer has dropped it from its list."""
+    night1 = [pipeline_rec("KLA"), pipeline_rec("Kforce", "needs_you", "stuck")]
+    body = _run(tmp_path, [], [pipeline_rec("ASM")], [search_rec("USAA")], accounts_records=night1)[0]
+    issue = {"number": 7, "title": "Nightly live check", "state": "OPEN", "body": body}
+    body, comment, outputs = _run(tmp_path, [issue], [pipeline_rec("ASM")], [search_rec("USAA")],
+                                  partial=["accounts"], accounts_records=[pipeline_rec("KLA")])
+    assert comment is None and outputs["changes"] == "0"
+    assert lc.read_state(body)["accounts"] == {"KLA": "ready", "Kforce": "needs_you stuck"}
+    assert "This check didn't finish" in body.split(ACCOUNTS, 1)[1]
+    issue["body"] = body
+    body, comment, outputs = _run(tmp_path, [issue], [pipeline_rec("ASM")], [search_rec("USAA")],
+                                  accounts_records=[pipeline_rec("KLA")])
+    assert outputs["changes"] == "1" and "Kforce: `needs_you stuck` → *no longer checked*" in comment

@@ -2,7 +2,7 @@
 
     uv run python scripts/live_compare.py --issues issues.json \
         --log pipeline=live-pipeline/run.log --log search=live-search/run.log --log hr=live-hr/run.log \
-        [--partial search] \
+        [--log accounts=live-accounts/run.log] [--partial search] \
         --run-url URL --body-out body.md --comment-out comment.md [--github-output "$GITHUB_OUTPUT"]
 
 Reads what scripts/live_smoke.py printed (one LIVE_PIPELINE or LIVE_RESULT line of JSON per
@@ -18,6 +18,12 @@ The outcomes:
             "failed", "no postings" (the search found none) or "crash".
   hr        (live_smoke.py --pipeline --lists phoenix-metro --role hr): the same, for HR jobs on
             the Phoenix list, as an applicant with an HR background.
+  finance   (... --role finance): the same, for finance jobs, as a finance applicant.
+  accounts  (live_smoke.py --pipeline --test-identity): the same, as the test identity, a clearly
+            fake applicant with an inbox of its own whose accounts are made and signed in to, at
+            one or two employers per job system (scripts/test_identity_employers.yaml). Only once
+            the repository has the test identity's secrets (scripts/TEST_IDENTITY.md): until then
+            the nightly leaves it out, and it isn't compared.
   search    (live_smoke.py without --pipeline): whether the employer's search ran without an
             error: "works" or "error"; "no search" for an employer without a search block (its
             careers page is only opened). How many openings it found changes daily, so it's in
@@ -131,6 +137,8 @@ CHECKS = {
     "finance": Check("Apply pipeline, Phoenix list (finance jobs): where it ended on one posting per employer",
                      "LIVE_PIPELINE ", pipeline_outcome),
     "search": Check("Search: does each employer's search work", "LIVE_RESULT ", search_outcome),
+    "accounts": Check("Apply pipeline with the test identity (accounts made and signed in): where it ended at one "
+                      "or two employers per job system", "LIVE_PIPELINE ", pipeline_outcome),
 }
 
 
@@ -227,9 +235,9 @@ def render_body(state: dict[str, dict[str, str]], current: dict[str, dict[str, R
                 run_url: str = "", partial: set[str] | frozenset[str] = frozenset()) -> str:
     lines = [
         "<!-- Rewritten by .github/workflows/live-nightly.yml after every run: edits here are lost. -->",
-        "A read-only check of employers' career sites every night (scripts/live_smoke.py: a fake profile, "
-        "submitting turned off). A comment is added here only when an employer's result changes; "
-        "the tables are the latest run's.",
+        "A check of employers' career sites every night (scripts/live_smoke.py: a fake profile, submitting "
+        "turned off; only the test identity's check makes accounts). A comment is added here only when an "
+        "employer's result changes; the tables are the latest run's.",
         "",
         f"Last checked: {checked_at}" + (f" · [run]({run_url})" if run_url else ""),
     ]

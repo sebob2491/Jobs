@@ -1,0 +1,84 @@
+# The employers where the live check's test identity applies (live_smoke.py --test-identity, the
+# nightly's "accounts" check; see TEST_IDENTITY.md). The test identity is a clearly fake applicant,
+# "Jobdesk Test", with an inbox of its own: it makes an account on each of these sites, reads the
+# codes they email, and goes on past sign-in to the application, but never submits one.
+#
+# One or two employers per job system, and no more: each is an account in a fake applicant's name
+# on a real employer's site. An employer is here because the nightly check with the throwaway
+# profile stops at its sign-in (or at a step only an account or a resume gets past), so this check
+# tests what comes after.
+#
+# Each: name (as the plugin's list has it), list (which of the plugin's lists), role (the jobs it
+# looks for there: technician, hr or finance, as live_smoke.py's --role), system (the job system
+# its applications run on), and why it's here.
+#
+# The order matters: with --parallel 2, employers 1, 3, 5, ... run in one group and 2, 4, 6, ... in
+# the other, at the same time. Two employers on the same job system go in the same group (here
+# both Workday ones are odd), so one inbox is never waiting on two codes from the same sender.
+
+employers:
+  - name: KLA
+    list: semiconductor-az
+    role: technician
+    system: Workday
+    why: the most common system; its Create Account form, email verification and sign-in, on the semiconductor list
+  - name: Nikon Precision
+    list: semiconductor-az
+    role: technician
+    system: UKG Pro
+    why: UKG Pro's Create Account form, then its application steps
+  - name: Banner Health
+    list: phoenix-metro
+    role: hr
+    system: Workday
+    why: a second Workday site (another tenant, as an HR applicant), whose forms differ from KLA's
+  - name: Arizona Public Service
+    list: phoenix-metro
+    role: finance
+    system: SuccessFactors
+    why: SAP SuccessFactors' Create Account form (its newer career site), then its application
+  - name: Charles Schwab
+    list: phoenix-metro
+    role: finance
+    system: iCIMS
+    why: iCIMS; its "I Acknowledge the Privacy Notice" step is agreed to with accept_notices
+  - name: onsemi
+    list: semiconductor-az
+    role: technician
+    system: Oracle
+    why: Oracle Recruiting Cloud, which signs in with an emailed code and wants a resume uploaded
+  - name: Northrop Grumman
+    list: phoenix-metro
+    role: finance
+    system: Eightfold
+    why: Eightfold's "create a new account" for an email it doesn't know yet
+  - name: Kforce
+    list: phoenix-metro
+    role: finance
+    system: Taleo
+    why: Taleo; its "I Accept" step is agreed to with accept_notices, then its account
+  - name: Edward Jones
+    list: phoenix-metro
+    role: finance
+    system: BrassRing
+    why: BrassRing's sign-in and account steps
+  - name: Linde
+    list: semiconductor-az
+    role: technician
+    system: Cornerstone
+    why: Cornerstone's application and account steps
+  - name: Ebara Technologies
+    list: semiconductor-az
+    role: technician
+    system: Paycom
+    why: Paycom, whose form needs a resume uploaded before it goes on
+  - name: SCREEN SPE USA
+    list: semiconductor-az
+    role: technician
+    system: ApplicantStack
+    why: ApplicantStack's Create Account form, then its application
+  - name: Benchmark Electronics
+    list: semiconductor-az
+    role: technician
+    system: Infor
+    why: Infor CloudSuite's Create Account form, then its application

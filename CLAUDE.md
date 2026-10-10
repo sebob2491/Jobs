@@ -43,6 +43,12 @@ the scrubber (`python -m job_apply.fixtures`) before they become test fixtures.
   - Add `--lists phoenix-metro` to check another list, and `--role hr` (or `--role finance`) to look
     for HR (or finance) jobs as an applicant with that background (the default is technician jobs).
   - It forces a fake profile and `JOB_APPLY_NEVER_SUBMIT=1`, so nothing can be submitted.
+  - `--pipeline --test-identity` applies as the test identity instead ("Jobdesk Test", with an inbox
+    of its own) at the employers in `scripts/test_identity_employers.yaml`: it makes their accounts
+    and reads their emailed codes, and still never submits. It needs `LIVE_TEST_EMAIL`,
+    `LIVE_TEST_EMAIL_PASSWORD` and `LIVE_TEST_SITE_PASSWORD` in the environment (setting them up:
+    `scripts/TEST_IDENTITY.md`), refuses to start without them, and masks them in all it prints
+    and writes. The nightly's `accounts` check runs it once the repository has them as secrets.
   - Compare a run with the previous one per employer. A changed outcome is the signal.
 - Plugin manifests: `claude plugin validate --strict .`, plus the same for each plugin folder.
 
@@ -73,7 +79,8 @@ the scrubber (`python -m job_apply.fixtures`) before they become test fixtures.
   turned on `settings.accept_cookies` (off by default): then a banner with no way to decline
   is accepted for them.
 - **Notices and attestations:** with `settings.accept_notices` (on unless the person turns it
-  off, as the owner chose; never in practice mode) the desk agrees to an employer's notice about
+  off, as the owner chose; never in practice mode, except the live check's test identity: see
+  Accounts) the desk agrees to an employer's notice about
   AI screening and to its privacy notice and terms of use (a gate's "I Accept", a dialog's agree
   or Ok, a required box: the owner's call, Oct 10), and picks an application's attestation that
   its information is true (or consent to the background check that comes with applying), logging
@@ -81,10 +88,17 @@ the scrubber (`python -m job_apply.fixtures`) before they become test fixtures.
   marketing, and cookie banners keep their own rule. Any other dialog over the form stops the
   desk for the person.
 - **Accounts:** with `settings.manage_accounts` (on unless the person turns it off, as the owner
-  chose; setup tells each person; never in practice mode) the desk creates an account with that
-  system's saved password, ticking only the site's terms (never a newsletter), and resets a saved
-  password the site refuses, through the site's own "Forgot password" and its emailed link. A
-  CAPTCHA or security question on the way stays the person's. With it off, it never creates one.
+  chose; setup tells each person; never in practice mode, except the live check's test identity)
+  the desk creates an account with that system's saved password, ticking only the site's terms
+  (never a newsletter), and resets a saved password the site refuses, through the site's own
+  "Forgot password" and its emailed link. A CAPTCHA or security question on the way stays the
+  person's. With it off, it never creates one.
+  - The live check's test identity (the owner's call, Oct 10) is the one exception to "never in
+    practice mode", for accounts and notices alike: a clearly fake applicant ("Jobdesk Test")
+    with its own inbox, at one or two employers per job system, which never submits. It's on
+    only with `JOB_APPLY_LIVE_TEST_IDENTITY=1` and `JOB_APPLY_NEVER_SUBMIT=1` set and the
+    profile's email being `LIVE_TEST_EMAIL` (`config.live_test_identity`), so a person's own
+    profile never turns it on; Submit stays refused in it.
 - **Passwords:**
   - a saved password goes only onto its own system's sites;
   - the inbox app password only reads sign-up codes (and, with `manage_accounts`, the reset

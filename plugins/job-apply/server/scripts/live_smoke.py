@@ -23,6 +23,16 @@ Safety: JOB_APPLY_NEVER_SUBMIT=1 is forced, so nothing can be submitted. The fak
 profile has no resume, so nothing is uploaded. It never clicks sign-in, account
 creation, "Autofill with Resume", "Next", or third-party apply buttons (LinkedIn,
 Indeed, SEEK), and LinkedIn and Indeed are never contacted.
+
+--pipeline --test-identity applies as the live check's test identity instead (live_identity.py;
+setting it up: TEST_IDENTITY.md): "Jobdesk Test", a clearly fake applicant with an inbox of its own
+and one password for its job-site accounts, from LIVE_TEST_EMAIL, LIVE_TEST_EMAIL_PASSWORD and
+LIVE_TEST_SITE_PASSWORD (it refuses to start without them). Only at the employers in
+test_identity_employers.yaml (one or two per job system, each with its role; --companies narrows
+them): the desk makes the accounts, reads their emailed codes, agrees to notices and uploads a test
+resume made for the run, and still never submits (practice mode and JOB_APPLY_NEVER_SUBMIT stay on).
+The three values are masked in everything it prints and writes. --fake-passwords, --lists and
+--role don't apply.
 """
 
 from __future__ import annotations
@@ -39,7 +49,7 @@ import tempfile
 import time
 import traceback
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import urlsplit
 
 os.environ["JOB_APPLY_NEVER_SUBMIT"] = "1"
@@ -90,6 +100,8 @@ from job_apply.search import title_matches  # noqa: E402
 from job_apply.autofill import is_empty_value, polarity  # noqa: E402
 from job_apply.search import load_companies, sitecore_search  # noqa: E402
 
+import live_identity  # noqa: E402  (scripts/live_identity.py, beside this one)
+
 QUERY_AZ = "field service | customer service engineer | customer engineer | equipment technician"  # in Arizona
 QUERY_ANY = "engineer | technician"  # fallback so every company still gets a browser check
 # --role: the kind of job a run looks for, and the fake applicant's background to match
@@ -118,13 +130,65 @@ ROLES: dict[str, dict[str, Any]] = {
 }
 
 
+TEST_IDENTITY = False  # --test-identity: the test identity applies, in place of the throwaway profile
+ROLE_AT: dict[str, str] = {}  # with it, each of its employers' role (test_identity_employers.yaml)
+MAIL_WAIT = 4 * 60  # with it, how long a run waits for the desk to read an emailed code or link
+MAIL_ROUNDS = 2  # and how many times, on top of the rounds of questions
+
+
+def _no_mask(text: str) -> str:
+    return text
+
+
+_mask: Callable[[str], str] = _no_mask  # with it, masks its email and passwords
+
+
 def use_role(name: str) -> None:
     """Search for this role's jobs, as an applicant with its background (this run's home only)."""
     global QUERY_AZ, QUERY_ANY
     role = ROLES[name]
     QUERY_AZ, QUERY_ANY = role["query_az"], role["query_any"]
     profile = {**FAKE_PROFILE, **{k: role[k] for k in ("work_history", "education_history", "education") if k in role}}
+    if TEST_IDENTITY:  # its name and inbox, and a test resume with this role's background
+        resume = _HOME / live_identity.RESUME_NAME
+        profile = live_identity.identity_profile(profile, live_identity.credentials(os.environ)[0], resume)
+        resume.write_bytes(live_identity.resume_pdf(profile))
     (_HOME / "profile.yaml").write_text(yaml.safe_dump(profile))
+
+
+def start_test_identity(announce: bool = True) -> list[dict[str, str]]:
+    """--test-identity: from here on, everything the run prints has the identity's email and
+    passwords masked; its passwords are the desk's saved ones for this run (in the environment,
+    which the groups --parallel starts share: never in a file); and its employers' lists are
+    this run's. Its profile is written by use_role. Returns its employers."""
+    global TEST_IDENTITY, _mask
+    email, inbox, site = live_identity.credentials(os.environ)  # (trimmed; the app password without its spaces)
+    _mask = live_identity.masker(email, [site, inbox, *(os.environ[k] for k in live_identity.ENV_VARS[1:])])
+    sys.stdout = live_identity.MaskedStream(sys.stdout, _mask)
+    sys.stderr = live_identity.MaskedStream(sys.stderr, _mask)
+    employers = live_identity.load_employers()
+    unknown = [e["role"] for e in employers if e["role"] not in ROLES]
+    if unknown:
+        raise ValueError(f"{live_identity.EMPLOYERS_FILE.name}: no role named {unknown[0]!r}; roles: {', '.join(ROLES)}")
+    os.environ.update(live_identity.secret_env(site, inbox))
+    os.environ[live_identity.IDENTITY_SWITCH] = "1"  # (config.live_test_identity: with the profile's email)
+    TEST_IDENTITY = True
+    ROLE_AT.clear()
+    ROLE_AT.update({e["name"]: e["role"] for e in employers})
+    (_HOME / "companies.yaml").write_text(yaml.safe_dump({"lists": sorted({e["list"] for e in employers})}))
+    if announce:
+        print(f"Test identity: {live_identity.FIRST_NAME} {live_identity.LAST_NAME} ({live_identity.EMAIL_MASK}), at "
+              + ", ".join(f"{e['name']} ({e['system']})" for e in employers)
+              + ". Its email and passwords are masked in everything this run prints and writes.", flush=True)
+    return employers
+
+
+def _save(path: Path, text: str) -> None:
+    """A file the run writes, with the test identity's email and passwords masked, as they are
+    in everything it prints."""
+    path.write_text(_mask(text))
+
+
 APPLY = re.compile(r"^(apply( now| for (this|the) (job|position|role)( online)?)?|quick apply|apply to (this )?job|i'?m interested|"
                    r"start (your |my )?application|apply manually)$", re.I)
 NEVER = re.compile(r"autofill|resume|last application|submit|sign ?in|log ?in|create account|register|upload|"
@@ -746,21 +810,40 @@ async def main() -> int:
                                                 "(default: semiconductor-az; e.g. phoenix-metro,semiconductor-az)")
     ap.add_argument("--role", choices=sorted(ROLES), default="technician",
                     help="the kind of job to look for, with a fake applicant to match (default: technician)")
+    ap.add_argument("--test-identity", action="store_true",
+                    help="with --pipeline: apply as the test identity (LIVE_TEST_EMAIL, LIVE_TEST_EMAIL_PASSWORD and "
+                         "LIVE_TEST_SITE_PASSWORD; scripts/TEST_IDENTITY.md) at the employers in "
+                         "scripts/test_identity_employers.yaml: it makes accounts and reads their emailed codes, "
+                         "and never submits")
     args = ap.parse_args()
+    if args.test_identity:  # before anything else: without its inbox and passwords, nothing runs
+        problem = live_identity.env_problem(os.environ) if args.pipeline else \
+            "--test-identity goes with --pipeline. Nothing was run."
+        if problem:
+            print(problem, file=sys.stderr)
+            return 2
     args.out.mkdir(parents=True, exist_ok=True)
+    if args.test_identity:
+        start_test_identity(announce=not args.shard)
     use_role(args.role)
-    if args.lists:  # as a person's own companies.yaml names them, in this run's own home
+    if args.lists and not TEST_IDENTITY:  # as a person's own companies.yaml names them, in this run's own home
         (_HOME / "companies.yaml").write_text(yaml.safe_dump({"lists": [n.strip() for n in args.lists.split(",")
                                                                         if n.strip()]}))
     if args.parallel > 1 and not args.shard:
         return await parallel_main(args)
     wanted = [n.strip().lower() for n in args.companies.split(",") if n.strip()]
-    companies = [c for c in load_companies() if not wanted or any(w in c["name"].lower() for w in wanted)]
+    pool = load_companies()
+    if TEST_IDENTITY:  # its employers only, in its file's order
+        by_name = {c["name"]: c for c in pool}
+        for name in [n for n in ROLE_AT if n not in by_name]:
+            print(f"{live_identity.EMPLOYERS_FILE.name}: no employer named {name!r} in the plugin's lists", flush=True)
+        pool = [by_name[n] for n in ROLE_AT if n in by_name]
+    companies = [c for c in pool if not wanted or any(w in c["name"].lower() for w in wanted)]
     if args.shard:
         i, n = (int(x) for x in args.shard.split("/"))
         companies = companies[i::n]
     if args.pipeline:
-        if args.fake_passwords:
+        if args.fake_passwords and not TEST_IDENTITY:  # (the test identity's own passwords are in place)
             from job_apply.pipeline import DESK_PASSWORDS
             for name in DESK_PASSWORDS:  # this run's environment only; never written anywhere
                 os.environ[f"JOB_APPLY_SECRET_{name.upper()}"] = f"Throwaway-{secrets.token_urlsafe(12)}-1!"
@@ -830,7 +913,7 @@ async def main() -> int:
         print("LIVE_HTTP " + json.dumps(probe, default=str), flush=True)
 
     await server.close_browser()
-    (args.out / "report.json").write_text(json.dumps(records, indent=2, default=str))
+    _save(args.out / "report.json", json.dumps(records, indent=2, default=str))
     lines = ["| Company | AZ matches | Posting | Form fields | Autofilled | Failed | Notes |", "|---|---|---|---|---|---|---|"]
     for r in records:
         s = r.get("search_az") or {}
@@ -844,7 +927,7 @@ async def main() -> int:
             len((r.get("autofill") or {}).get("failed", [])) if "autofill" in r else "–",
             (r.get("crash") or (r.get("browser") or {}).get("error") or (r.get("page") or {}).get("title", ""))[:60],
         ))))
-    (args.out / "report.md").write_text("\n".join(lines) + "\n")
+    _save(args.out / "report.md", "\n".join(lines) + "\n")
     print("\n".join(lines))
     return 0
 
@@ -1104,7 +1187,7 @@ async def check_pipeline(company: dict[str, Any], out: Path, rec: dict[str, Any]
     run = None
     try:
         run = applier.enqueue(job["id"])
-        for _ in range(3):
+        for _ in range(3 + (MAIL_ROUNDS if TEST_IDENTITY else 0)):
             start = time.monotonic()
             while run.status in ("queued", "running"):
                 if time.monotonic() - start > PIPELINE_WAIT:
@@ -1125,6 +1208,8 @@ async def check_pipeline(company: dict[str, Any], out: Path, rec: dict[str, Any]
                     run.once[question_key(q.get("label") or "")] = fake_answer(q)
                 applier.enqueue(job["id"], front=True)
                 continue
+            if TEST_IDENTITY and await wait_for_mail(applier, run):
+                continue  # the desk read the emailed code or link, and went on by itself
             break
     finally:
         await applier.stop()
@@ -1136,6 +1221,8 @@ async def check_pipeline(company: dict[str, Any], out: Path, rec: dict[str, Any]
             snap = await server.debug_snapshot(note=f"live pipeline: {company['name']}")
             dest = out / "pipeline" / slug(company["name"])
             shutil.copytree(snap["saved_to"], dest, dirs_exist_ok=True)
+            if TEST_IDENTITY:  # (password boxes are saved empty; the email is masked too)
+                live_identity.mask_files(dest, _mask)
             if fixtures and (rec.get("rounds") or [{}])[-1].get("need") in ("questions", "stuck"):
                 # the page it stopped on, as a test fixture (the fake applicant's details only)
                 fixture_dir = Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "live"
@@ -1146,13 +1233,30 @@ async def check_pipeline(company: dict[str, Any], out: Path, rec: dict[str, Any]
         await server.close_browser()
 
 
+async def wait_for_mail(applier: Any, run: Any) -> bool:
+    """The test identity's inbox is watched: a run paused for an emailed code or password-reset
+    link is carried on by the desk itself once the email comes (no one presses Resume). True once
+    it has moved on, within MAIL_WAIT."""
+    if not (run.status == "needs_you" and run.need == "email_code" and applier.mail_login() is not None):
+        return False
+    deadline = time.monotonic() + MAIL_WAIT
+    while time.monotonic() < deadline:
+        if (run.status, run.need) != ("needs_you", "email_code"):
+            return True
+        await asyncio.sleep(1)
+    return False
+
+
 async def pipeline_main(companies: list[dict[str, Any]], out: Path, fixtures: bool = False) -> int:
     records = []
+    wait = 3 * PIPELINE_WAIT + 60 + (MAIL_ROUNDS * MAIL_WAIT if TEST_IDENTITY else 0)
     for company in [c for c in companies if c.get("search")]:
         started = time.time()
         rec: dict[str, Any] = {"company": company["name"]}
+        if TEST_IDENTITY:  # each of its employers with its own role: its jobs, and a background to match
+            use_role(ROLE_AT.get(company["name"], "technician"))
         try:
-            await asyncio.wait_for(check_pipeline(company, out, rec, fixtures), 3 * PIPELINE_WAIT + 60)
+            await asyncio.wait_for(check_pipeline(company, out, rec, fixtures), wait)
         except Exception as e:  # noqa: BLE001
             rec["crash"] = f"{type(e).__name__}: {str(e)[:300]}"
             rec["trace"] = traceback.format_exc()[-1500:]
@@ -1160,7 +1264,7 @@ async def pipeline_main(companies: list[dict[str, Any]], out: Path, fixtures: bo
         rec["seconds"] = round(time.time() - started, 1)
         records.append(rec)
         print("\nLIVE_PIPELINE " + json.dumps(rec, default=str), flush=True)  # (on a line of its own, always)
-    (out / "pipeline.json").write_text(json.dumps(records, indent=2, default=str))
+    _save(out / "pipeline.json", json.dumps(records, indent=2, default=str))
     _pipeline_report(records, out)
     return 0
 
@@ -1175,7 +1279,7 @@ def _pipeline_report(records: list[dict[str, Any]], out: Path) -> None:
             r.get("crash", "")[:50] or last.get("status", "–"), last.get("need", ""),
             len(last.get("log") or []), sum(len(x.get("questions") or []) for x in rounds[:-1]),
         ))))
-    (out / "report.md").write_text("\n".join(lines) + "\n")
+    _save(out / "report.md", "\n".join(lines) + "\n")
     print("\n".join(lines))
 
 
@@ -1185,7 +1289,9 @@ async def parallel_main(args: argparse.Namespace) -> int:
     run stopped part way (the nightly check's time limit) keeps the employers it reached."""
     n = args.parallel
     passed = [*(["--companies", args.companies] if args.companies else []), *(["--fixtures"] if args.fixtures else []),
-              *(["--pipeline"] if args.pipeline else []), *(["--fake-passwords"] if args.fake_passwords else []),
+              *(["--pipeline"] if args.pipeline else []),
+              *(["--fake-passwords"] if args.fake_passwords and not args.test_identity else []),
+              *(["--test-identity"] if args.test_identity else []),  # (its inbox and passwords: in the environment)
               *(["--lists", args.lists] if args.lists else []), "--role", args.role]
     children = [await asyncio.create_subprocess_exec(
         sys.executable, __file__, *passed, "--shard", f"{i}/{n}", "--out", str(args.out / f"shard-{i}"),
@@ -1203,7 +1309,7 @@ async def parallel_main(args: argparse.Namespace) -> int:
         for i in range(n):
             with contextlib.suppress(OSError, ValueError):
                 records += json.loads((args.out / f"shard-{i}" / "pipeline.json").read_text())
-        (args.out / "pipeline.json").write_text(json.dumps(records, indent=2, default=str))
+        _save(args.out / "pipeline.json", json.dumps(records, indent=2, default=str))
         _pipeline_report(records, args.out)
     return max((c.returncode or 0) for c in children)
 
