@@ -663,7 +663,7 @@ class BrowserSession:
             except (PlaywrightError, PlaywrightTimeout):
                 pass
         await loc.focus(timeout=FOCUS_TIMEOUT)
-        await loc.press("ArrowDown")
+        await loc.press("ArrowDown", timeout=FOCUS_TIMEOUT)
 
     async def _field_options(self, page: Page, field_id: str, loc: Locator, wait_ms: int) -> list[str]:
         """This field's menu options, polling while the menu renders."""
@@ -1269,9 +1269,9 @@ class BrowserSession:
                     covered = True
             if covered:
                 await loc.focus(timeout=FOCUS_TIMEOUT)
-            await loc.fill("")
-            await loc.press_sequentially(text, delay=40)
-            await loc.evaluate("el => el.blur()")
+            await loc.fill("", timeout=FOCUS_TIMEOUT)  # (nor Playwright's 30 s for a part drawn again since)
+            await loc.press_sequentially(text, delay=40, timeout=FOCUS_TIMEOUT)
+            await loc.evaluate("el => el.blur()", timeout=FOCUS_TIMEOUT)
             return "typed"
         await loc.fill(text)
         await loc.evaluate("el => el.blur()")

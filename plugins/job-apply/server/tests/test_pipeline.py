@@ -1399,6 +1399,11 @@ _FIRST_STEP = [{"kind": "text", "label": "First name*", "required": True, "value
      "Thank you for your application. Please continue to the questions. Continue", True),
     ({"fields": [], "actions": [], "headings": ["Application Questions"]},
      "Application Questions\n\nThank you for your application. Please complete the below questions.", True),
+    # but going on to more jobs, or to something optional, is what a page says once the application went
+    ({"fields": [], "actions": [], "headings": ["Thank you"]},
+     "Thank you for applying! Please continue to browse our open positions.", False),
+    ({"fields": [], "actions": [], "headings": ["Thank you"]},
+     "Your application has been submitted. Please complete the following optional survey.", False),
 ])
 def test_what_says_a_page_is_partway_through_the_form(data, text, mid):
     assert pipeline._mid_application(data, text) is mid
@@ -4419,16 +4424,18 @@ def test_a_job_sent_to_a_maintenance_page_is_said_down_for_maintenance(srv, monk
     assert "https://www.acme-fab.example/en/maintenance" in r.reason
 
 
-@pytest.mark.parametrize("tab_url, gone", [
-    ("https://careers.example-corp.example/careers?pid=123&domain=example-corp.com", False),  # the posting
-    ("https://careers.example-corp.example/careers/apply?pid=123", False),  # its application, where it was left
-    ("https://careers.example-corp.example/careers?pid=999&domain=example-corp.com", True),  # another job's posting
-    ("https://careers.example-corp.example/careers/apply?pid=999", True),  # another job's application
-    ("https://careers.example-corp.example/careers?query=technician", True),  # the careers home's search
+@pytest.mark.parametrize("tab_url, boxes, gone", [
+    ("https://careers.example-corp.example/careers?pid=123&domain=example-corp.com", 0, False),  # the posting
+    ("https://careers.example-corp.example/careers/apply?pid=123", 5, False),  # its application, where it was left
+    ("https://careers.example-corp.example/careers?pid=999&domain=example-corp.com", 0, True),  # another job's posting
+    ("https://careers.example-corp.example/careers/apply?pid=999", 5, True),  # another job's application
+    ("https://careers.example-corp.example/careers?query=technician", 1, True),  # the careers home's search
     # its application, the site's script having rewritten its address without the query (a single-page site)
-    ("https://careers.example-corp.example/careers/apply", False),
+    ("https://careers.example-corp.example/careers/apply", 5, False),
+    # the careers home, its logo pressed: the posting's address without its id, and no application on it
+    ("https://careers.example-corp.example/careers", 1, True),
 ])
-def test_a_tab_on_another_job_named_in_the_query_isnt_carried_on_with(srv, monkeypatch, tab_url, gone):
+def test_a_tab_on_another_job_named_in_the_query_isnt_carried_on_with(srv, monkeypatch, tab_url, boxes, gone):
     """An Eightfold site names the job in its address's query (/careers?pid=123). A paused job's
     tab taken to ?pid=999 is another job's posting, and /careers with no id its careers home:
     compared without their queries, both read as this job's own page, and the desk would have
@@ -4441,7 +4448,7 @@ def test_a_tab_on_another_job_named_in_the_query_isnt_carried_on_with(srv, monke
     left = Run(job["id"], url="https://careers.example-corp.example/careers/apply?pid=123")
 
     async def peek(tab):
-        return {}, "Careers at Example Corp"
+        return {"fields": [{"label": f"Box {n}", "kind": "text"} for n in range(boxes)]}, "Careers at Example Corp"
 
     monkeypatch.setattr(srv.browser, "peek", peek)
     assert run(applier._gone_home(left, SimpleNamespace(url=tab_url))) is gone
