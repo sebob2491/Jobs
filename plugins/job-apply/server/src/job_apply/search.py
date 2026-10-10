@@ -385,6 +385,18 @@ def _workday_location_facets(facets: Any, terms: list[str]) -> dict[str, list[st
     return {best: [i for i, _ in found[best]]}
 
 
+def _facet_count(facets: Any, chosen: dict[str, list[str]]) -> int:
+    """How many openings a site's facets count under the chosen values."""
+    ids = {i for values in chosen.values() for i in values}
+    total = 0
+    for item in facets or []:
+        if isinstance(item, dict):
+            if str(item.get("id")) in ids:
+                total += int(item.get("count") or 0)
+            total += _facet_count(item.get("values"), chosen)
+    return total
+
+
 async def _workday(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, terms: list[str]) -> list[Listing]:
     if isinstance(cfg, list):  # an employer with more than one site (PwC's experienced and entry-level ones)
         found: list[Listing] = []  # (keep_listings caps them all at the limit)
@@ -423,7 +435,8 @@ async def _workday(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, 
             filtered = await page(0, match)
             # Brooks Automation's (Oct 2026) counts an opening at "Remote - Arizona" but finds none
             # there, its first place being "Remote - US": then read them all and check here
-            if int(filtered.get("total") or 0) or filtered.get("jobPostings"):
+            if (int(filtered.get("total") or 0) or filtered.get("jobPostings")
+                    or not _facet_count(first["facets"], match)):
                 applied, first = match, filtered
         # The filter lists every place these results are in. If none is in the area,
         # neither is any "3 Locations" job.
@@ -743,7 +756,7 @@ async def icims_search(frames_html: Callable[[str], Awaitable[list[str]]], cfg: 
                 raise
             break  # a later page that won't load ends the reading; what's found stands
         for doc in docs:
-            found.extend(parse_icims(doc, base))
+            found.extend(parse_icims(doc, base, state))
             last = max(last, _icims_last_page(doc))
 
 
@@ -761,32 +774,35 @@ def _icims_detail_place(row: Any) -> str:
     return ""
 
 
-_ICIMS_IMPRESSIONS = re.compile(r"\bvar\s+jobImpressions\s*=\s*(\[.*?\])\s*;", re.S)
+_ICIMS_IMPRESSIONS = re.compile(r"\bvar\s+jobImpressions\s*=\s*(?=\[)")
 
 
 def _icims_impression_places(page: str) -> dict[str, str]:
     """The places a portal's page lists for its own counting ("var jobImpressions = [...]"),
-    by job number: Fujifilm's rows show no place, but this says "Mesa, AZ" (Oct 2026)."""
+    by job number: Fujifilm's rows show no place, but this says "Mesa, AZ" (Oct 2026). Only
+    an opening's first place: parse_icims adds the state the portal's filter found it in."""
     m = _ICIMS_IMPRESSIONS.search(page)
     try:
-        items = json.loads(m.group(1)) if m else []
+        items, _ = json.JSONDecoder().raw_decode(page, m.end()) if m else ([], 0)
     except ValueError:
         return {}
     places: dict[str, str] = {}
     for item in items if isinstance(items, list) else []:
         where = item.get("location") if isinstance(item, dict) else None
         if isinstance(where, dict) and item.get("idRaw"):
-            place = ", ".join(str(where[k]).strip() for k in ("city", "state") if str(where.get(k) or "").strip())
-            if place:
-                places[str(item["idRaw"])] = place
+            parts = [str(where.get(k) or "").strip() for k in ("city", "state")]
+            if any(parts):
+                places[str(item["idRaw"])] = ", ".join(x for x in parts if x)
     return places
 
 
-def parse_icims(html: str, base: str) -> list[Listing]:
+def parse_icims(html: str, base: str, state: str | None = None) -> list[Listing]:
+    """The openings on a portal's results page. `state`: the one the portal's own filter was
+    asked for, which a row placed only by the page's counting is in, whatever its first place."""
     soup = BeautifulSoup(html, "html.parser")
     out: list[Listing] = []
     seen: set[str] = set()
-    counted = _icims_impression_places(html)
+    counted: dict[str, str] | None = None  # read when a row shows no place
     for a in soup.select('a[href*="/jobs/"]'):
         m = re.search(r"/jobs/(\d+)/[^/?#]+/job", str(a.get("href") or ""))
         if not m:
@@ -812,8 +828,13 @@ def parse_icims(html: str, base: str) -> list[Listing]:
             if when is not None:
                 d = re.match(r"(\d{1,2})/(\d{1,2})/(\d{4})", str(when["title"]))
                 posted = f"{d.group(3)}-{int(d.group(1)):02d}-{int(d.group(2)):02d}" if d else ""
-        out.append(Listing(company="", title=title, url=url, location=location.strip() or counted.get(m.group(1), ""),
-                           posted=posted, external_id=m.group(1), ats="icims"))
+        if not location.strip():
+            counted = _icims_impression_places(html) if counted is None else counted
+            location = counted.get(m.group(1), "")
+            if state and location_matches(location, location_terms(state)) is not True:
+                location = f"{location}; {state}" if location else ""  # its first place only
+        out.append(Listing(company="", title=title, url=url, location=location.strip(), posted=posted,
+                           external_id=m.group(1), ats="icims"))
     return out
 
 
