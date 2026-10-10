@@ -903,9 +903,14 @@ def test_a_new_account_is_signed_in_with_and_only_its_own_form_is_sent(srv, monk
                 while r.status in ("queued", "running"):
                     if r.page is not None and "create-account-signin" in r.page.url:
                         try:
-                            seen.update(await r.page.evaluate("() => ({talent: window.talent, contact: window.contact})"))
+                            got = await r.page.evaluate("() => ({talent: window.talent, contact: window.contact})")
                         except Exception:
-                            pass
+                            got = {}
+                        # (a look while the page is being left finds neither set: only what it did set counts)
+                        if got.get("talent") is not None:
+                            seen["talent"] = max(seen.get("talent", 0), got["talent"])
+                        if got.get("contact") is not None:
+                            seen["contact"] = got["contact"]
                     await asyncio.sleep(0.05)
 
             await asyncio.gather(watch(), until(lambda: r.status not in ("queued", "running"), about=state(r)))
@@ -916,7 +921,7 @@ def test_a_new_account_is_signed_in_with_and_only_its_own_form_is_sent(srv, monk
     r = run(go())
     assert r.seen_form and "reset" not in " ".join(r.log), (r.reason, r.log)
     assert sum(line.startswith("pressed \u201cSign In\u201d") for line in r.log) == 2, r.log
-    assert seen.get("talent") == 0 and seen.get("contact") is not True, seen
+    assert seen.get("talent") == 0 and seen.get("contact") is not True, seen  # (the page was seen: talent is 0 there)
 
 
 def test_a_new_account_the_site_turns_down_is_not_taken_for_an_existing_one(srv, monkeypatch, job_apply_home):
