@@ -128,6 +128,7 @@ _OLD_PASSWORD = re.compile(r"\b(?:current|old|existing|temporary)\b", re.I)
 _RESET_SENT = re.compile(r"\b(?:sent|emailed)\b.{0,80}\b(?:link|e-?mail|instructions)|check your (?:e-?mail|inbox)", re.I)
 # A reset's page saying there's no account for the email ("There is no user with that username or email")
 _NO_ACCOUNT = re.compile(r"\bno (?:user|account|record|match)\b|\b(?:not|isn'?t|wasn'?t) (?:found|registered|recogni[sz]ed)|"
+                         r"\b(?:don'?t|do not|didn'?t|did not) recogni[sz]e (?:this|that|your|the) e-?mail|"
                          r"does(?:n'?t| not) (?:exist|have an account|match (?:any|an) account)|"
                          r"\b(?:unknown|unrecogni[sz]ed) (?:user|e-?mail|account)|could(?:n'?t| not) find (?:an? |your )?"
                          r"(?:account|user)", re.I)
@@ -1386,6 +1387,18 @@ class Applier:
                     if any(_ROBOT.search(p) for p in problems):  # Randstad's "verify that you are not a robot"
                         await self._bring_forward(run)
                         return self._pause(run, "bot_check", _BOT_CHECK_SAYS)
+                    if told := next((e for e in clicked.get("errors") or [] if _NO_ACCOUNT.search(e)), ""):
+                        # an email-first sign-in with no account for the email (an Eightfold site: "We don't
+                        # recognize this email. Create a new account"): the person's account to make
+                        now = (await self._look())[0]
+                        create = next((a for a in now.get("actions") or [] if not a.get("disabled")
+                                       and _CREATE_ACCOUNT.match(final_text(a["text"]))), None)
+                        if create is not None:
+                            await self._bring_forward(run)
+                            return self._pause(run, "sign_in", f"{_site(run, now)} has no account for your email yet "
+                                               f"(it says \u201c{told[:160].rstrip(' .')}\u201d). Create one in the browser "
+                                               f"window (its \u201c{create['text'].strip()}\u201d), or sign in with the "
+                                               "email you use there; the desk carries on by itself after that.", seen=now)
                     errors = "; ".join(problems)[:300].rstrip(" .")
                     return self._pause(run, "stuck", "The page didn't move on" + (f": {errors}." if errors else ".")
                                        + " Fix it in the browser, then press Resume.")

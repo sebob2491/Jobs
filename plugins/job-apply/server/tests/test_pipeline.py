@@ -4170,3 +4170,28 @@ def test_a_tab_another_job_still_has_is_never_closed_with_a_finished_job(srv, mo
 
     shared_closed, waiting_closed, done_page = run(go())
     assert not shared_closed and not waiting_closed and done_page is None
+
+
+def test_an_email_the_site_has_no_account_for_is_said_so_with_its_way_to_make_one(srv, monkeypatch):
+    """An Eightfold site's sign-in takes the email first. With no account for it, it says "We
+    don't recognize this email. Create a new account" and stays put: the desk stopped with
+    "“Email” is marked invalid. Fix it" (live, Oct 2026). It's the person's account to make
+    (the desk holds no password for that system), and the card says so, naming the button."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    job = srv.add_job(url=fixture_url("site/email-first-signin.html"), title="HR Generalist",
+                      company="Example Corp")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert (r.status, r.need) == ("needs_you", "sign_in"), (r.status, r.need, r.reason, r.log)
+    assert "no account for your email" in r.reason and "“Create an account”" in r.reason, r.reason
+    assert "We don't recognize this email" in r.reason and "marked invalid" not in r.reason

@@ -1,0 +1,29 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Apply</title></head>
+<body>
+<!-- An Eightfold site's sign-in step (live, Oct 2026): the email first, then Continue. An email
+     it has no account for gets "We don't recognize this email. Create a new account" and the page
+     stays as it was, with "Create an account" beside it. -->
+<h1>Careers</h1>
+<div role="dialog" aria-modal="true" aria-labelledby="t">
+  <h2 id="t">Sign in</h2>
+  <button type="button" aria-label="Close candidate authentication modal">x</button>
+  <label for="em">Email</label>
+  <input id="em" type="email" autocomplete="email">
+  <button type="button" aria-label="Clear email">x</button>
+  <div id="err" role="alert"></div>
+  <button type="button" id="go">Continue</button>
+  <button type="button">Sign in using Google</button>
+  <button type="button" id="create">Create an account</button>
+</div>
+<script>
+  document.getElementById('go').addEventListener('click', () => {
+    const box = document.getElementById('em');
+    if (!box.value) return;
+    box.setAttribute('aria-invalid', 'true');
+    document.getElementById('err').textContent = "We don't recognize this email. Create a new account";
+  });
+</script>
+</body>
+</html>
