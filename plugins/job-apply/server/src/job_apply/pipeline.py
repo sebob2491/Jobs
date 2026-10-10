@@ -2406,7 +2406,7 @@ def _secret(name: str) -> str | None:
 
 
 def _empty_required(data: dict[str, Any]) -> list[dict[str, Any]]:
-    return [f for f in data.get("fields") or [] if f.get("required") and not f.get("disabled")
+    return [f for f in data.get("fields") or [] if f.get("required") and not f.get("disabled") and not f.get("aside")
             and f.get("kind") != "password" and is_empty_value(f.get("value"))]
 
 

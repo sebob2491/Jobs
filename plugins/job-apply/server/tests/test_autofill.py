@@ -766,6 +766,44 @@ def test_placeholder_text_is_no_answer():
     assert plan_autofill([field], _person())["to_fill"][0]["value"] == "No"
 
 
+def test_a_phone_written_with_its_code_or_a_code_read_as_a_number():
+    """A profile's number written with its dial code ("+1 480-555-0100", "1-480-555-0100"), or a
+    dial code YAML read as a number (phone_country_code: +1 is 1), still goes in as asked."""
+    import yaml
+    from job_apply import config
+
+    path = config.profile_path()
+    data = yaml.safe_load(path.read_text())
+
+    def with_phone(phone, code=None):
+        personal = {**data["personal"], "phone": phone}
+        if code is not None:
+            personal["phone_country_code"] = code
+        path.write_text(yaml.safe_dump({**data, "personal": personal}))
+        return Profile.load()
+
+    emd = 'Phone Number [must include your location code using the "+", (e.g. +1##########), with no spaces or dashes]*'
+    assert _answer(emd, with_phone("480-555-0100", 1)) == "+14805550100"
+    plus = with_phone("+1 480-555-0100")
+    assert _answer("Phone number, digits only, no spaces or dashes", plus) == "4805550100"
+    assert _answer(emd, plus) == "+14805550100"
+    assert _answer("Phone Number (do not include country code)", plus) == "4805550100"
+    one = with_phone("1-480-555-0100")
+    assert _answer("Phone Number (including country code)", one) == "+1 480-555-0100"
+    assert _answer(emd, one) == "+14805550100"
+
+
+def test_a_sign_ups_boxes_are_never_filled_nor_asked():
+    """Boxes the form reader marks aside (a talent community's email and consent beside the
+    application) are neither filled nor put to the person."""
+    p = _person()
+    plan = plan_autofill([{"id": "e", "label": "Email", "kind": "text", "value": "", "aside": True},
+                          {"id": "c", "label": "I agree to join the Talent Community", "kind": "checkbox", "value": False,
+                           "required": True, "aside": True},
+                          {"id": "f", "label": "First Name", "kind": "text", "value": ""}], p, {"company": "Acme"})
+    assert [f["id"] for f in plan["to_fill"]] == ["f"] and plan["needs_input"] == []
+
+
 def test_boxes_for_someone_elses_details_or_another_date_or_document():
     p = _person()
     for label, section in (("Employer Phone Number", None), ("Company Phone", None), ("School Zip Code", None),
@@ -783,6 +821,10 @@ def test_boxes_for_someone_elses_details_or_another_date_or_document():
     assert _answer(emd, p) == "+14805550100"
     assert _answer("Phone number, digits only, no spaces or dashes", p) == "4805550100"
     assert _answer("Phone Number (with country code, no spaces)", p) == "+14805550100"
+    assert _answer("Phone number including international dialing code, e.g. +44 7700 900123, no spaces", p) == \
+        "+14805550100"
+    assert _answer("Phone Number (do not include country code)", p) == "480-555-0100"
+    assert _answer("Phone number, no spaces or dashes, do not include country code", p) == "4805550100"
     assert _answer("Phone", p) == "480-555-0100"
     for label in ("Upload a copy of your degree or diploma", "Unofficial transcript"):
         assert resolve_field({"id": "1", "label": label, "kind": "file"}, p, {"company": "Acme"}) is None, label

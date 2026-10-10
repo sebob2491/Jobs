@@ -2310,6 +2310,22 @@ def test_an_answer_from_phenom_that_isnt_its_job_list_is_said():
     assert asyncio.run(go())["errors"] == {"EMD": "SearchError: No job list from https://careers.example.com/widgets"}
 
 
+def test_a_phenom_error_inside_its_answer_is_said_and_one_place_written_alone_is_read():
+    answers = [{"refineSearch": {"status": 400, "totalHits": 0}},
+               {"refineSearch": {"status": 200, "totalHits": 1, "data": {"jobs": [
+                   {"jobId": "1", "title": "Technician", "multi_location": "Tempe, Arizona, United States"}]}}}]
+
+    def search():
+        async def go():
+            async with httpx.AsyncClient(transport=httpx.MockTransport(
+                    lambda request: httpx.Response(200, json=answers.pop(0)))) as client:
+                return await search_companies("technician", location="AZ", client=client, companies=[
+                    {"name": "EMD", "search": {"phenom": {"host": "careers.example.com"}}}])
+        return asyncio.run(go())
+    assert search()["errors"] == {"EMD": "SearchError: No job list from https://careers.example.com/widgets (status 400)"}
+    assert [r["location"] for r in search()["results"]] == ["Tempe, Arizona, United States"]
+
+
 DELOITTE = {"name": "Deloitte", "search": {"avature": {
     "url": "https://apply.deloitte.com/en_US/careers/SearchJobs", "state_field": 9336, "states": {"AZ": 690346}}}}
 DELOITTE_SEARCH = "https://apply.deloitte.com/en_US/careers/SearchJobs/"

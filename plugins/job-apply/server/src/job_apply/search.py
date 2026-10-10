@@ -1542,8 +1542,11 @@ async def _phenom(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, t
         try:
             found = r.json()["refineSearch"]
             jobs, total = list((found.get("data") or {}).get("jobs") or []), int(found.get("totalHits") or 0)
+            refused = int(found.get("status") or 200) >= 400  # an error said inside a 200 answer
         except (ValueError, KeyError, TypeError, AttributeError) as e:
             raise SearchError(f"No job list from {api}") from e
+        if refused:
+            raise SearchError(f"No job list from {api} (status {found.get('status')})")
         out += parse_phenom(jobs, f"https://{host}/{country}/{lang.split('_')[0]}")
         if not jobs or (page + 1) * size >= total or len(out) >= want:
             break
@@ -1559,7 +1562,8 @@ def parse_phenom(jobs: list[Any], base: str) -> list[Listing]:
         title, jid = str(job.get("title") or "").strip(), str(job.get("jobId") or "").strip()
         if not title or not jid:
             continue
-        places = [str(p).strip() for p in job.get("multi_location") or [] if str(p).strip()]
+        listed = job.get("multi_location")
+        places = [str(p).strip() for p in (listed if isinstance(listed, list) else [listed]) if p and str(p).strip()]
         out.append(Listing(company="", title=title, url=f"{base}/job/{quote(jid)}", ats="phenom",
                            location="; ".join(dict.fromkeys(places)) or str(job.get("location") or "").strip(),
                            posted=str(job.get("postedDate") or "")[:10], external_id=str(job.get("reqId") or jid)))

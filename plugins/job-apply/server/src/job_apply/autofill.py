@@ -966,27 +966,35 @@ def _travel(prof: Profile, job: dict, label: str = "") -> Any:
     return v
 
 
+_CODE_WORDS = r"(the |your )?((country|location|international|area) )?(dial(ing)?|calling|country|location) code"
+
+
 def _phone(prof: Profile, job: dict, label: str = "") -> Any:
     """The phone number; with its dial code where the box asks for it ("including country code",
-    "must include your location code"), and as bare digits where it says so ("no spaces or
-    dashes": EMD Electronics' "+1##########", Oct 2026)."""
+    "must include your location code"), not where it says not to, and as bare digits where it
+    says so ("no spaces or dashes": EMD Electronics' "+1##########", Oct 2026)."""
     phone = prof.get("personal.phone")
     if not phone:
         return phone
     asked = norm(label)
-    code = str(prof.get("personal.phone_country_code", "+1"))
-    with_code = re.search(r"(including|incl|include|with) (the |your )?(country|location|dial(ing)?|international) code",
-                          asked)
+    code = "+" + re.sub(r"\D", "", str(prof.get("personal.phone_country_code", "+1")))  # (YAML reads +1 as 1)
+    if code == "+":
+        code = "+1"
+    without = re.search(rf"\b(do not|don t|dont|without|no|exclude|excluding) (include |including |incl |add |the )?"
+                        rf"{_CODE_WORDS}", asked)
+    with_code = not without and re.search(rf"\b(including|incl|include|with|plus) {_CODE_WORDS}", asked)
     written = str(phone).strip()
+    digits = re.sub(r"\D", "", written)
+    # the number without its dial code, when it's written with it ("+1 480-555-0100", "1-480-555-0100")
+    national = digits[len(code) - 1:] if (written.startswith("+") and digits.startswith(code[1:])
+                                          or code == "+1" and len(digits) == 11 and digits.startswith("1")) else digits
     if re.search(r"\bno (spaces|dashes)|without (spaces|dashes)|digits only|numbers only", asked):
-        digits = re.sub(r"\D", "", written)
-        if written.startswith("+"):
-            return "+" + digits
-        if code == "+1" and len(digits) == 11 and digits.startswith("1"):
-            digits = digits[1:]  # (written with its 1 already)
-        return f"{code}{digits}" if with_code else digits
+        return f"{code}{national}" if with_code else national
     if with_code and not written.startswith("+"):
-        return f"{code} {phone}"
+        bare = re.sub(r"^\s*1[\s.-]*", "", written) if national != digits else written
+        return f"{code} {bare}"
+    if without and national != digits:
+        return national
     return phone
 
 
@@ -1908,8 +1916,9 @@ def _with_context(fields: list[dict]) -> list[dict]:
 
 
 def plan_autofill(fields: list[dict], prof: Profile, job: dict | None = None, overwrite: bool = False) -> dict[str, Any]:
-    """Split fields into ones we can fill and ones that need a decision."""
-    fields = _with_context(fields)
+    """Split fields into ones we can fill and ones that need a decision. Not a sign-up's boxes
+    beside the application (a talent community's email and consent: the form reader's aside)."""
+    fields = _with_context([f for f in fields if not f.get("aside")])
     file_inputs = sum(1 for f in fields if f.get("kind") == "file")
     to_fill: list[dict] = []
     needs_input: list[dict] = []

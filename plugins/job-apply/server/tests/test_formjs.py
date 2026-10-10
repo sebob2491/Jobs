@@ -44,6 +44,32 @@ def test_a_hidden_file_box_is_named_by_its_own_upload_button(srv, tmp_path):
                                    '<div><h4>Cover Letter</h4><div><input type="file" style="display: none;">'
                                    '<button type="button">Upload</button></div></div>')
     assert [(f["kind"], f["label"]) for f in got] == [("file", "Upload Resume/CV"), ("file", "Cover Letter")]
+    # only the upload button right after its own hidden box, and only one that says what it takes
+    got = fields_of(srv, tmp_path, '<div><h4>Documents</h4><input type="file" aria-label="Upload" hidden>'
+                                   '<button type="button">Upload Resume</button><input type="file" aria-label="Upload" hidden>'
+                                   '<button type="button">Upload Cover Letter</button></div>'
+                                   '<h4>Transcript</h4><div><input type="file" aria-label="Attach" hidden>'
+                                   '<button type="button">Clear selection</button><button type="button">Attach</button></div>'
+                                   '<form><h3>Portfolio</h3><label for="r">Attach</label><input type="file" id="r">'
+                                   '<button type="submit">Submit application</button></form>')
+    assert [f["label"] for f in got] == ["Upload Resume", "Upload Cover Letter", "Transcript", "Portfolio"]
+
+
+def test_a_sign_ups_boxes_are_marked_aside_but_not_an_applications_own(srv, tmp_path):
+    """A box to join a talent community or get job alerts beside the application (its email,
+    its consent, a choice of interests) is marked aside, as its Submit is; a short form whose
+    own button goes on with the application isn't, whatever its words say of job alerts."""
+    got = fields_of(srv, tmp_path, '<form id="tc"><h3>Join our Talent Community</h3><label for="e">Email</label>'
+                                   '<input id="e" type="email"><label><input type="checkbox" id="ok"> I agree to join the '
+                                   'Talent Community</label><button type="submit">Submit</button></form>'
+                                   '<footer><p>Get job alerts</p><label><input type="radio" name="i" value="a"> Engineering'
+                                   '</label><label><input type="radio" name="i" value="b"> Operations</label></footer>'
+                                   '<form><p>Enter your email to start your application. We will also send you job alerts.</p>'
+                                   '<label for="s">Email to start application</label><input id="s" type="email">'
+                                   '<button type="submit">Apply</button></form>')
+    assert [(f["label"], bool(f.get("aside"))) for f in got] == [  # (ticks and choices after the boxes)
+        ("Email", True), ("Email to start application", False), ("I agree to join the Talent Community", True),
+        ("Get job alerts", True)]
 
 
 def test_blocks_with_their_headings_beside_them(srv, tmp_path):

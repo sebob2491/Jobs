@@ -283,6 +283,7 @@ EXTRACT_JS = r"""
   const GENERIC_FILE = /^(attach|upload|choose (a )?file|browse|select files?|add (a )?file|drop (your )?files? here|or|enter manually)$/i;
   const HONEYPOT = /for robots|robots only|if you('| a)?re (a )?human|not (be )?(filled|entered) by humans|honey ?pot|leave this field (blank|empty)/i;
   const fields = [];
+  const fieldEls = new Map();  // each field's element (a group's first member), for the aside pass
   const blockIds = new Map();  // a field's blockId, where its box has one
   const passwordBoxes = [];
   const seen = new Set();
@@ -358,11 +359,12 @@ EXTRACT_JS = r"""
     if (form && [form.getAttribute('action'), form.id, form.getAttribute('class')].some(isSearchName)) continue;
     let label = labelFor(el);
     // Upload widgets often label the input with its button ("Attach"); use the field's heading,
-    // or the button beside a hidden one that opens it ("Upload Resume/CV": EMD's, Oct 2026).
-    if (kind === 'file' && GENERIC_FILE.test(label) && el.parentElement) {
-      const own = Array.from(el.parentElement.querySelectorAll(':scope > button, :scope > [role="button"]'))
-        .map(txt).find((t) => t && t.length < 80 && !GENERIC_FILE.test(t));
-      if (own) label = own;
+    // or for a hidden one the upload button right after it, which opens it and names what it takes
+    // ("Upload Resume/CV": EMD's, Oct 2026)
+    if (kind === 'file' && GENERIC_FILE.test(label) && el.getClientRects().length === 0) {
+      const next = el.nextElementSibling;
+      const t = next && next.matches('button, [role="button"]') ? txt(next) : '';
+      if (t && t.length < 80 && /^(upload|attach|add|choose|select|browse)\b/i.test(t) && !GENERIC_FILE.test(t)) label = t;
     }
     if (kind === 'file' && GENERIC_FILE.test(label)) {
       for (let node = el.parentElement, d = 0; node && d < 5; node = node.parentElement, d++) {
@@ -407,6 +409,7 @@ EXTRACT_JS = r"""
     if (el.getAttribute('aria-invalid') === 'true') f.invalid = true;
     if (el.maxLength > 0 && el.maxLength < 100000) f.max_length = el.maxLength;
     fields.push(f);
+    fieldEls.set(f, el);
     const ofBlock = blockId(el);
     if (ofBlock) blockIds.set(f, ofBlock);
     if (kind === 'password') passwordBoxes.push(el);
@@ -430,6 +433,7 @@ EXTRACT_JS = r"""
       const section = sectionOf(first);
       if (section && section !== label) single.section = section;
       fields.push(single);
+      fieldEls.set(single, first);
       const ofBlock = blockId(first);
       if (ofBlock) blockIds.set(single, ofBlock);
       continue;
@@ -452,6 +456,7 @@ EXTRACT_JS = r"""
     const section = sectionOf(g.container || first);
     if (section && section !== label) group.section = section;
     fields.push(group);
+    fieldEls.set(group, first);
   }
   // A box whose block wasn't found above takes the one its neighbours with the same block id are in
   const blockOf = new Map();
@@ -551,10 +556,19 @@ EXTRACT_JS = r"""
     actions.push(a);
   }
   // A box in such a sign-up (a talent community's email and consent beside a posting) isn't the
-  // application's either
+  // application's either: not one in a form whose own button goes on with an application
+  // ("Enter your email to start your application ... job alerts" and Apply)
+  const APPLYISH = /^(apply|next|continue|start|begin|review|save and continue)/i;
+  const formAside = new Map();
   for (const f of fields) {
-    const el = document.querySelector(`[data-ja-id="${CSS.escape(f.id)}"]`);
-    if (el && sideBox(el)) f.aside = true;
+    const el = fieldEls.get(f);
+    if (!el) continue;
+    const form = el.form || null;
+    if (form && !formAside.has(form)) {
+      const own = [...form.querySelectorAll('button, input[type="submit"], [role="button"]')].map((b) => b.value || txt(b));
+      formAside.set(form, !own.some((t) => APPLYISH.test(t.trim())) && sideBox(el));
+    }
+    if (form ? formAside.get(form) : sideBox(el)) f.aside = true;
   }
 
   const errors = [];
