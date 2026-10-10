@@ -248,6 +248,9 @@ def test_the_banner_names_the_job_waited_on_and_the_profile_gaps_are_in_words(sr
                 banner = await page.inner_text("#notices .waiting")
                 assert "Field Service Engineer (Example Fab)" in banner and "Sign in on Workday" not in banner, banner
                 assert "Sign in on Workday in the browser window." in await page.inner_text("#needs")
+                # Resume beside Later: the card may ask for Resume after a password reset by hand
+                buttons = await page.locator("#needs button").all_inner_texts()
+                assert "Resume" in buttons and "Later" in buttons, buttons
                 notice = await page.inner_text("#notices .notice")
                 assert "still needs: your resume file and whether you need visa sponsorship." in notice, notice
                 assert "documents.resume" not in notice
