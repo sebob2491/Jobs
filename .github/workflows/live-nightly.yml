@@ -1,22 +1,26 @@
 name: live-nightly
 
-# Every night, the read-only live check of plugins/job-apply/server/scripts/live_smoke.py
-# (a fake profile, submitting disabled), compared with the night before by
-# scripts/live_compare.py:
+# Every night, the live check of plugins/job-apply/server/scripts/live_smoke.py (a fake
+# profile, submitting disabled), compared with the night before by scripts/live_compare.py:
 #   - the Job Desk pipeline on one posting per employer of the default semiconductor list:
 #     where it ended ("ready", "needs_you sign_in", "needs_you stuck", ...);
 #   - the same for HR jobs on the phoenix-metro list, as an applicant with an HR background,
 #     and for finance jobs there, as an applicant with a finance background;
 #   - the search check on the phoenix-metro list: whether each employer's search works
-#     (how many openings it finds changes daily, and is never compared).
+#     (how many openings it finds changes daily, and is never compared);
+#   - the accounts check: the pipeline as the test identity (a clearly fake applicant with an
+#     inbox of its own; the owner's call, Oct 10) at one or two employers per job system
+#     (scripts/test_identity_employers.yaml): it makes their accounts and reads their emailed
+#     codes, and never submits. It runs only once the repository has the test identity's three
+#     secrets (scripts/TEST_IDENTITY.md); until then it says "not set up" and stays green.
 # The issue titled "Nightly live check" (label live-check) holds the last results in its body.
 # It gets a comment only when an employer's result changes; on a quiet night only its body's
 # "Last checked" line and tables are rewritten, which notifies no one. A run whose check
 # didn't finish fails (employers it didn't reach keep their last result).
 # Only runs of the default branch write to the issue: a manual run from another branch shows
 # its comparison in the job summary only.
-# The four checks run at once, each on a machine of its own (about a quarter of the time they
-# took one after another); the compare job then reads their logs.
+# The five checks run at once, each on a machine of its own (a fraction of the time they took
+# one after another); the compare job then reads their logs.
 
 on:
   schedule:
@@ -52,6 +56,9 @@ jobs:
           - check: search  # whether each phoenix-metro employer's search works
             args: --lists phoenix-metro --parallel 4
             minutes: 30
+          - check: accounts  # the test identity, its accounts made, at one or two employers per job system
+            args: --pipeline --test-identity --parallel 2
+            minutes: 40
     defaults:
       run:
         working-directory: plugins/job-apply/server
@@ -59,20 +66,44 @@ jobs:
       JOB_APPLY_NEVER_SUBMIT: "1"
     steps:
       - uses: actions/checkout@v4
+      - name: Is it set up
+        id: setup
+        env:
+          CHECK: ${{ matrix.check }}
+          # whether the test identity's secrets are there, never what they are
+          HAS_SECRETS: ${{ secrets.LIVE_TEST_EMAIL != '' && secrets.LIVE_TEST_EMAIL_PASSWORD != '' && secrets.LIVE_TEST_SITE_PASSWORD != '' }}
+        run: |
+          if [ "$CHECK" = accounts ] && [ "$HAS_SECRETS" != true ]; then
+            said="The accounts check is not set up: the repository has no LIVE_TEST_EMAIL, LIVE_TEST_EMAIL_PASSWORD and LIVE_TEST_SITE_PASSWORD secrets yet (see plugins/job-apply/server/scripts/TEST_IDENTITY.md)."
+            echo "::notice::$said"
+            echo "$said" >> "$GITHUB_STEP_SUMMARY"
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
       - uses: astral-sh/setup-uv@v6
+        if: steps.setup.outputs.ready == 'true'
         with:
           python-version: "3.13"
           enable-cache: true
           cache-dependency-glob: plugins/job-apply/server/uv.lock
-      - run: uv sync --frozen
-      - run: uv run --frozen playwright install --with-deps chromium
+      - if: steps.setup.outputs.ready == 'true'
+        run: uv sync --frozen
+      - if: steps.setup.outputs.ready == 'true'
+        run: uv run --frozen playwright install --with-deps chromium
       - name: Run the check
         id: run
+        if: steps.setup.outputs.ready == 'true'
         continue-on-error: true
         timeout-minutes: ${{ matrix.minutes }}
         env:
           CHECK: ${{ matrix.check }}
           ARGS: ${{ matrix.args }}
+          # the test identity's inbox and passwords, for the accounts check only: live_smoke.py masks
+          # them in everything it prints and writes (and GitHub masks secrets in the log too)
+          LIVE_TEST_EMAIL: ${{ matrix.check == 'accounts' && secrets.LIVE_TEST_EMAIL || '' }}
+          LIVE_TEST_EMAIL_PASSWORD: ${{ matrix.check == 'accounts' && secrets.LIVE_TEST_EMAIL_PASSWORD || '' }}
+          LIVE_TEST_SITE_PASSWORD: ${{ matrix.check == 'accounts' && secrets.LIVE_TEST_SITE_PASSWORD || '' }}
         run: |
           set -o pipefail
           mkdir -p "live-$CHECK"
@@ -82,8 +113,12 @@ jobs:
         if: always()
         env:
           CHECK: ${{ matrix.check }}
+          READY: ${{ steps.setup.outputs.ready }}
           OUTCOME: ${{ steps.run.outcome }}
-        run: mkdir -p "live-$CHECK" && echo "$OUTCOME" > "live-$CHECK/outcome"
+        run: |
+          mkdir -p "live-$CHECK"
+          # not_set_up: the accounts check without its secrets, which the compare job leaves out
+          if [ "$READY" = false ]; then echo not_set_up; else echo "$OUTCOME"; fi > "live-$CHECK/outcome"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -128,10 +163,15 @@ jobs:
                 --body-out live-compare/body.md --comment-out live-compare/comment.md
                 --github-output "$GITHUB_OUTPUT")
           unfinished=()
-          for check in pipeline hr finance search; do
+          for check in pipeline hr finance search accounts; do
+            outcome="$(cat "live-$check/outcome" 2>/dev/null)"
+            if [ "$outcome" = not_set_up ]; then  # the accounts check, before the owner adds its secrets
+              echo "$check: not set up, so not compared"
+              continue
+            fi
             args+=(--log "$check=live-$check/run.log")
             # a check that didn't finish (or whose machine never reported) keeps its employers' last results
-            if [ "$(cat "live-$check/outcome" 2>/dev/null)" != success ]; then
+            if [ "$outcome" != success ]; then
               args+=(--partial "$check"); unfinished+=("$check")
             fi
           done

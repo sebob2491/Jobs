@@ -165,6 +165,22 @@ def never_submit() -> bool:
     return os.environ.get("JOB_APPLY_NEVER_SUBMIT") == "1"
 
 
+# The nightly live check's test identity (scripts/live_smoke.py --test-identity; the owner's call,
+# Oct 10): a clearly fake applicant with an inbox of its own, which makes accounts and agrees to
+# notices in practice mode, at one or two employers per job system, and never submits
+LIVE_TEST_IDENTITY_ENV = "JOB_APPLY_LIVE_TEST_IDENTITY"
+LIVE_TEST_EMAIL_ENV = "LIVE_TEST_EMAIL"
+
+
+def live_test_identity(email: Any) -> bool:
+    """Is this profile the live check's test identity? Only with JOB_APPLY_LIVE_TEST_IDENTITY=1
+    and the hard switch JOB_APPLY_NEVER_SUBMIT=1 in the environment, and the profile's email
+    being the environment's LIVE_TEST_EMAIL: a person's own profile never turns it on."""
+    wanted = os.environ.get(LIVE_TEST_EMAIL_ENV, "").strip().lower()
+    return (os.environ.get(LIVE_TEST_IDENTITY_ENV) == "1" and never_submit() and "@" in wanted
+            and isinstance(email, str) and email.strip().lower() == wanted)
+
+
 # Account handling's default, where a profile doesn't say (settings.manage_accounts)
 MANAGE_ACCOUNTS_DEFAULT = True
 # And agreeing to notices about AI screening, privacy notices and terms, and attestations (settings.accept_notices)
@@ -198,10 +214,13 @@ class Settings:
     # application's attestation that its information is true (on unless the profile turns it off:
     # the owner's choice; setup tells each person)
     accept_notices: bool = ACCEPT_NOTICES_DEFAULT
+    # the live check's test identity (live_test_identity): accounts and notices in practice mode too
+    test_identity: bool = False
     warnings: list[str] = field(default_factory=list)
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any] | None) -> "Settings":
+    def from_dict(cls, d: dict[str, Any] | None, email: Any = None) -> "Settings":
+        """`email`: the profile's, which says whether it's the live check's test identity."""
         malformed = d is not None and not isinstance(d, dict)  # "settings: review": nothing in it can be read
         d = d if isinstance(d, dict) else {}
         mode, warnings = _submit_mode(d.get("submit_mode"))
@@ -226,6 +245,7 @@ class Settings:
             s.headless = True
         if never_submit():
             s.submit_mode = "dry_run"
+        s.test_identity = live_test_identity(email)
         return s
 
     @property
@@ -234,13 +254,15 @@ class Settings:
 
     @property
     def may_manage_accounts(self) -> bool:
-        """Making an account sends the person's details: never in practice mode, which sends nothing."""
-        return self.manage_accounts and not self.dry_run
+        """Making an account sends the person's details: never in practice mode, which sends nothing,
+        except as the live check's test identity (a fake applicant, whose Submit stays refused)."""
+        return self.manage_accounts and (not self.dry_run or self.test_identity)
 
     @property
     def may_accept_notices(self) -> bool:
-        """Agreeing for the person is never part of practice mode, as making an account isn't."""
-        return self.accept_notices and not self.dry_run
+        """Agreeing for the person is never part of practice mode, as making an account isn't
+        (the live check's test identity aside)."""
+        return self.accept_notices and (not self.dry_run or self.test_identity)
 
     def may_auto_submit(self, ats: str) -> bool:
         if ats in HUMAN_SUBMIT_ONLY or self.dry_run:
@@ -300,7 +322,7 @@ class Profile:
 
     @property
     def settings(self) -> Settings:
-        return Settings.from_dict(self.data.get("settings"))
+        return Settings.from_dict(self.data.get("settings"), email=self.get("personal.email"))
 
     @property
     def full_name(self) -> str:
