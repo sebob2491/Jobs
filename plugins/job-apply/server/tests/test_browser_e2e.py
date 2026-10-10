@@ -1137,6 +1137,26 @@ def test_answers_a_page_loses_in_a_quick_run_of_fills_are_put_in_again(srv):
     assert run(cleared())["Phone"] == times["Phone"]
 
 
+def test_nothing_is_filled_behind_a_dialog_open_over_the_page(srv):
+    """Eightfold's notice about its AI screening sat open over the form while the boxes behind it
+    were filled: its Country of Residence timed out and came back as a question (live, Oct 2026).
+    Nothing is filled behind an open dialog; once it's answered, everything is, and the resume the
+    page already holds isn't sent again."""
+    run(srv.open_application(url=fixture_url("site/ai-notice-form.html") + "?notice=1"))
+    page = run(srv.browser.page())
+    out = run(srv.autofill())
+    assert not out["filled"] and {f["label"] for f in out["failed"]} >= {"First name", "Country of Residence"}, out
+    assert all(f["error"].startswith("DialogOpen: “Notice Related to Example Corp's Use of the Eightfold AI")
+               for f in out["failed"]), out["failed"]
+    assert run(page.input_value("#first")) == "" and run(page.input_value("#input-13")) == ""
+    run(page.click("#cancelUploadResume"))  # the person answers it
+    out = run(srv.autofill())
+    assert not out["failed"], out["failed"]
+    filled = {f["label"]: f["value"] for f in out["filled"]}
+    assert filled["First name"] == "Sam" and filled["Country of Residence"] == "United States", filled
+    assert run(page.evaluate("() => window.uploads")) == 0
+
+
 def test_a_long_requirement_row_is_its_questions_label_not_its_number(srv):
     """Phoenix Children's qualifications (live, Oct 2026) are a table of rows "5. | <the
     requirement> | Yes / No". A requirement too long to read as a label left its question

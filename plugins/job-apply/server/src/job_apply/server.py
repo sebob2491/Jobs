@@ -228,7 +228,7 @@ def setup_status() -> dict[str, Any]:
                      "browser_channel": s.browser_channel, "headless": s.headless,
                      "email_codes": s.email_codes, "email_tracking": s.email_tracking,
                      "accept_cookies": s.accept_cookies, "manage_accounts": s.manage_accounts,
-                     "manage_accounts_chosen": s.manage_accounts_chosen},
+                     "manage_accounts_chosen": s.manage_accounts_chosen, "accept_notices": s.accept_notices},
         "chrome_detected": has_chrome,
         "browser_note": "The desk uses Google Chrome, or Microsoft Edge without it. If neither starts, install Chrome or run "
                         f"`uv run --project \"{config.PLUGIN_ROOT / 'server'}\" playwright install chromium` "
@@ -632,8 +632,9 @@ async def inspect_form(include_dropdown_options: bool = True) -> dict[str, Any]:
     kind (text, textarea, select, listbox, combobox, radio_group, checkbox_group, checkbox,
     file, password), label, required flag, options and current value. Buttons are listed
     under `actions`; is_submit marks the final submit button. A CAPTCHA on show is said
-    under `captcha` (its own frame isn't listed): it's the user's to solve. Ids stay valid
-    until the page changes; call this again after navigating."""
+    under `captcha` (its own frame isn't listed): it's the user's to solve. A dialog open over
+    the page (a notice to answer first) is listed under `dialogs` with its buttons; nothing is
+    filled behind one. Ids stay valid until the page changes; call this again after navigating."""
     data = await browser.inspect(include_dropdown_options)
     data["ats"] = detect_ats(data["url"])
     return data

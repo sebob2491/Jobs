@@ -137,6 +137,13 @@ opens a page on your computer (served by the plugin on `127.0.0.1`):
      fills the same question, worded the same way. An answer about one employer
      ("Why do you want to work here?", "Have you worked for us before?") isn't reused
      for another.
+   - A dialog open over a form. You answer it in the browser and press **Resume**, and the
+     desk fills the form in behind it. It agrees for you to an employer's notice about AI
+     screening of your application (Eightfold's employers show one as your resume goes up),
+     and picks an application's attestation that its information is true and complete, or
+     your consent to the background check that comes with applying, noting each in the job's
+     log. To answer those yourself, set `accept_notices: false` under `settings:` in your
+     profile. Practice mode never agrees to them.
    - Sign-ins, bot checks, CAPTCHAs and emailed codes. You deal with those in the
      browser window, and the desk carries on by itself. A link a site emails you to
      confirm your address opens in your usual browser, so reload that job's tab in the
@@ -234,6 +241,7 @@ Settings in `profile.yaml`:
 | `submit_mode` | `review` | Set to `auto` to let Claude submit complete applications without asking, for the ATSs in `auto_submit_ats`. `dry_run` fills everything and never submits, which is good for a first practice run. |
 | `email_codes` | `false` | Claude may read the sign-in codes and verification links that career sites email you (needs the Gmail connector) |
 | `email_tracking` | `false` | Claude may search your email for replies to your applications (needs the Gmail connector) |
+| `accept_notices` | `true` | The Job Desk agrees for you to an employer's notice about AI screening of your application, and picks an application's attestation that its information is true (or your consent to its background check), noting each in the job's log. Never in practice mode. `false` leaves them to you. |
 
 ## What's inside
 

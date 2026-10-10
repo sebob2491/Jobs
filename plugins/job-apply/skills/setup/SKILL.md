@@ -97,6 +97,14 @@ through its `missing` and `profile_gaps` together.
      email needs the email app password on the desk; without it, they finish the reset from
      the email). Ask whether that's all right, and write `settings.manage_accounts: true` or
      `false` as they say (`false`: the desk fills in Create Account for them to finish).
+   - Notices and attestations: tell them the desk agrees, in their name, to an employer's
+     notice about AI screening of their application (Eightfold's employers show one as the
+     resume goes up), and picks an application's attestation that its information is true and
+     complete (or their consent to the background check that comes with applying), noting each
+     in the job's log. It's true because every answer comes from their profile or from them.
+     Any other dialog over a form waits for them, and practice mode never agrees. Ask whether
+     that's all right, and write `settings.accept_notices: true` or `false` as they say
+     (`false`: the desk stops at the notice, and asks the attestation as a question).
    - Email, only if the Gmail connector is connected: may Claude read the
      verification codes and links career sites email them (`settings.email_codes`)?
      May it check their email for replies to applications (`settings.email_tracking`)?

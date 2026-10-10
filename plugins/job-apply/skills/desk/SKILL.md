@@ -20,7 +20,16 @@ The desk is a local web page served by this plugin. It does what the `find-jobs`
     remembered in `~/.job-apply/answers.yaml` unless the user unticks "remember".
     A remembered answer fills only the same question, worded the same, and one about
     an employer ("Why do you want to work here?") isn't reused for another company.
-    Consent questions default to not remembered;
+    Consent questions default to not remembered. A box the page wouldn't let the desk fill
+    (it timed out) isn't a question: the card says "I couldn't fill …";
+  - a dialog open over a form, which the user answers in the browser before pressing
+    Resume (the boxes behind it are filled after that). With `settings.accept_notices` (on
+    unless the user turns it off; never in practice mode) the desk agrees for the user to an
+    employer's notice about AI screening of the application (Eightfold's opens as the resume
+    goes up), and picks an application's attestation that its information is true and
+    complete (or consent to the background check that comes with applying), noting each in
+    the job's log. Any other dialog over a form still stops for the user, and cookie banners
+    keep their own rule;
   - sign-ins, bot checks, CAPTCHAs and emailed codes. The user deals with these in the
     browser window, and the desk carries on by itself once the page moves past them. A
     link a site emails to confirm the address opens in the user's usual browser, which

@@ -780,6 +780,176 @@ def test_a_cookie_banner_after_a_long_posting_is_still_declined(srv, monkeypatch
     assert r.log[1:3] == ["declined cookies (“Reject All”)", "clicked “Apply now”"], r.log
 
 
+NOTICE = "Notice Related to Example Corp's Use of the Eightfold AI Recruiting Software"
+
+
+def notice_settings(job_apply_home, **settings):
+    import yaml
+
+    path = job_apply_home / "profile.yaml"
+    profile = yaml.safe_load(path.read_text())
+    profile["settings"].update(settings)
+    path.write_text(yaml.safe_dump(profile))
+
+
+async def notice_page(r):
+    """What the Eightfold-like form shows: its uploads and answers to the notice, and its boxes."""
+    return await r.page.evaluate("() => ({uploads: window.uploads, agreed: window.agreed, "
+                                 "first: document.getElementById('first').value, "
+                                 "country: document.getElementById('input-13').value, "
+                                 "terms: document.getElementById('input-65').value})")
+
+
+@pytest.mark.parametrize("settings", [{"accept_notices": False}, {"submit_mode": "dry_run"}], ids=["off", "practice"])
+def test_a_notice_over_the_form_is_the_persons_and_the_form_is_filled_after_it(srv, monkeypatch, job_apply_home, settings):
+    """Eightfold's notice about its AI screening was open over the one-page form (live, Oct 2026).
+    The desk left it alone but never said so, and went on filling the boxes behind it: Country of
+    Residence timed out and came back as a question the profile doesn't answer. Without
+    settings.accept_notices (and always in practice mode) the notice is the person's: the desk
+    stops, naming it. Once they've answered it, the form is filled behind it, the resume the page
+    already holds isn't sent again (each upload brings the notice back), and the attestation is
+    asked."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    notice_settings(job_apply_home, **settings)
+    job = srv.add_job(url=fixture_url("site/ai-notice-form.html") + "?notice=1", title="Equipment Technician",
+                      company="Example Corp")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            first = (r.status, r.need, r.reason, await notice_page(r))
+            await r.page.click("#cancelUploadResume")  # the person answers it
+            stopped = r.paused_at
+            applier.enqueue(job["id"])  # and presses Resume
+            await until(lambda: r.paused_at > stopped and r.status not in ("queued", "running"), about=state(r))
+            return r, first, await notice_page(r)
+        finally:
+            await applier.stop()
+
+    r, (status, need, reason, before), after = run(go())
+    assert (status, need) == ("needs_you", "stuck") and f"“{NOTICE}”" in reason, reason
+    assert "press its button in the browser window, then press Resume" in reason and "accept_notices: true" in reason
+    assert before == {"uploads": 0, "agreed": 0, "first": "", "country": "", "terms": ""}  # nothing done behind it
+    assert (r.status, r.need) == ("needs_you", "questions"), (r.status, r.reason, r.log)
+    assert [q["label"][:20] for q in r.questions] == ["Terms and Conditions"], r.questions
+    assert after == {"uploads": 0, "agreed": 0, "first": "Sam", "country": "United States", "terms": ""}
+
+
+def test_with_accept_notices_the_desk_agrees_to_an_ai_notice_and_an_attestation(srv, monkeypatch):
+    """The owner's choice: settings.accept_notices (on unless turned off) agrees for the person to
+    an employer's notice about AI screening (Eightfold's, which opens as the resume goes up), and
+    picks an application's attestation that its information is true (its Terms and Conditions
+    dropdown, with one choice), saying each in the log. The resume goes up once, the boxes behind
+    the notice are filled once it's answered, and the form is ready to submit."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    job = srv.add_job(url=fixture_url("site/ai-notice-form.html"), title="Equipment Technician",
+                      company="Example Corp")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r, await notice_page(r)
+        finally:
+            await applier.stop()
+
+    r, shown = run(go())
+    assert r.status == "ready", (r.status, r.reason, r.log)
+    assert shown == {"uploads": 1, "agreed": 1, "first": "Sam", "country": "United States", "terms": "I Agree"}
+    assert f"agreed to Example Corp's notice “{NOTICE}” for you (settings.accept_notices)" in r.log, r.log
+    assert any(line.startswith("picked “I Agree” for “Terms and Conditions")
+               and line.endswith("for you (settings.accept_notices)") for line in r.log), r.log
+
+
+def test_another_dialog_over_the_form_is_the_persons_even_with_accept_notices(srv, monkeypatch):
+    """settings.accept_notices agrees only to notices about AI screening: any other dialog over the
+    form (a privacy policy with Cancel and Ok) stops the desk for the person."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    job = srv.add_job(url=fixture_url("site/ai-notice-form.html") + "?notice=privacy", title="Equipment Technician",
+                      company="Example Corp")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r, await notice_page(r)
+        finally:
+            await applier.stop()
+
+    r, shown = run(go())
+    assert (r.status, r.need) == ("needs_you", "stuck"), (r.status, r.reason, r.log)
+    assert "“Privacy Policy of Example Corp”" in r.reason and "accept_notices" not in r.reason, r.reason
+    assert shown["agreed"] == 0 and shown["first"] == "", shown
+
+
+def test_a_box_that_wouldnt_fill_is_said_as_that_not_asked(srv, monkeypatch):
+    """A fill that failed with an error is no question the profile doesn't answer: Eightfold's
+    Country of Residence came back as one, "TimeoutError: Locator.evaluate: Timeout 15000ms
+    exceeded." on the card (live, Oct 2026). It's said as a fill that failed."""
+    from playwright.async_api import TimeoutError as PlaywrightTimeout
+
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    fill_one = srv.browser._fill_one
+
+    async def times_out(page, field, value):
+        if field.get("label") == "Country of Residence":
+            raise PlaywrightTimeout("Locator.evaluate: Timeout 15000ms exceeded.")
+        return await fill_one(page, field, value)
+
+    monkeypatch.setattr(srv.browser, "_fill_one", times_out)
+    job = srv.add_job(url=fixture_url("site/ai-notice-form.html") + "?uploaded=1", title="Equipment Technician",
+                      company="Example Corp")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert (r.status, r.need, r.questions) == ("needs_you", "stuck", []), (r.status, r.reason, r.questions)
+    assert r.reason.startswith("I couldn't fill “Country of Residence” (the page didn't respond in time). "
+                               "Fill it in the browser, then press Resume"), r.reason
+    assert "TimeoutError" not in r.reason and "question" not in r.reason
+
+
+def test_what_attests_to_an_application_and_what_doesnt():
+    """An application's attestation (its information true and complete, or consent to the background
+    check that comes with applying) is picked only where it's required and has one choice that
+    agrees, or is a check box; a yes/no question, a newsletter or a fact about the person isn't one."""
+    certify = ("Terms and Conditions Please read carefully. I certify that the information contained in the "
+               "application is correct and complete.")
+    attestation = pipeline._attestation
+    assert attestation({"kind": "combobox", "label": certify, "required": True, "options": ["I Agree"]}) == "I Agree"
+    assert attestation({"kind": "select", "label": certify, "required": True, "options": ["Select...", "Yes"]}) == "Yes"
+    assert attestation({"kind": "checkbox", "label": "I authorize Example Corp to conduct a background check as part "
+                                                     "of my application *", "required": True}) is True
+    for q in ({"kind": "select", "label": certify, "required": True, "options": ["Yes", "No"]},  # a choice to make
+              {"kind": "select", "label": certify, "required": True, "options": ["I do not agree"]},
+              {"kind": "combobox", "label": certify, "required": False, "options": ["I Agree"]},
+              {"kind": "combobox", "label": certify, "required": True, "options": []},  # choices unknown
+              {"kind": "checkbox", "label": "I certify that I am at least 18 years old", "required": True},
+              {"kind": "checkbox", "label": "I agree to the terms of use", "required": True},
+              {"kind": "checkbox", "label": "I certify my information is true, and send me job alerts", "required": True},
+              {"kind": "text", "label": "Type your name to certify that your answers are true", "required": True}):
+        assert attestation(q) is None, q
+    # notices about AI screening, as the desk tells them from others
+    assert pipeline._AI_NOTICE.search("Example Corp uses an artificial intelligence (\"AI\") recruiting software")
+    assert pipeline._AI_NOTICE.search("We use automated employment decision tools to screen applications")
+    assert not pipeline._AI_NOTICE.search("Example Corp protects the personal data you give it. Said in Spain.")
+
+
 def test_create_account_is_filled_but_left_for_the_person(srv, monkeypatch):
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
     saved_password(monkeypatch)

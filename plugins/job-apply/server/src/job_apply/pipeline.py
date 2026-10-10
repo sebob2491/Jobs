@@ -33,7 +33,7 @@ from urllib.parse import urlparse
 from . import config, mailbox, report
 from .ats import ATS_NAMES, detect_ats, shared_system
 from .autofill import (clean_label, entry_of, is_empty_value, no_choice_for_no_degree, norm, plan_autofill,
-                       tailored_document)
+                       polarity, tailored_document)
 from .browser import (TabClosed, _accepts_cookies, _cookie_setting, confirmations, declines_cookies, final_text,
                       may_accept_cookies)
 
@@ -70,6 +70,7 @@ ACCOUNT_WAIT = 15
 # A site locks an account after a few refused sign-ins: a job's sign-in is pressed with the same saved
 # password this many times at most (once more after a password reset)
 SIGN_IN_TRIES = 2
+NOTICE_WAIT = 5  # seconds for a notice agreed to for the person to go (one may fade out)
 SHARED_LOOK_BACK = 30  # seconds looked back for a job's code while an earlier job waits on the same sender
 FINISHED = {"applied", "interviewing", "offer", "rejected", "withdrawn"}  # tracker statuses never applied to again
 
@@ -153,6 +154,26 @@ _AGREEMENT = re.compile(r"^(?:i )?(?:acknowledge|agree|accept|consent)\b.*\b(?:n
 _EXPERIENCE_PAGE = re.compile(r"my experience|work experience|employment history", re.I)
 # A note laid over the page (Nikon's UKG board: "Accessibility Note") with nothing else to press.
 _DISMISS_NOTE = re.compile(r"^(dismiss(?: (?:note|notice|message))?|close (?:note|notice|message))$", re.I)
+# With settings.accept_notices: an employer's notice about AI or automated screening of applications
+# (Eightfold's: "… uses an artificial intelligence ("AI") recruiting software …"), and its button that
+# agrees to it
+_AI_NOTICE = re.compile(r"\bartificial intelligence\b|\b(?-i:AI)\b|\bmachine learning\b|\bautomated (?:employment )?"
+                        r"decision|\bautomated (?:screening|assessment|evaluation|processing|tools?|systems?)\b", re.I)
+_ABOUT_APPLYING = re.compile(r"recruit|applica|candidate|hiring|resume|screening", re.I)
+_AGREES = re.compile(r"^(?:yes,? )?(?:i )?(?:agree|accept|consent|acknowledge)(?: (?:and|&) (?:continue|proceed))?$|"
+                     r"^i understand$", re.I)
+# and an application's attestation: that its information is true and complete ("I certify that the
+# information contained in the application … is correct"), or consent to the background check that
+# comes with applying. Never a newsletter's, job alerts' or marketing's
+_ATTESTS = re.compile(r"\b(?:certif(?:y|ies)|attest|affirm|declare|acknowledge|confirm)\b.{0,200}?\b(?:information|answers?|"
+                      r"statements?|responses?|facts)\b.{0,200}?\b(?:true|correct|complete|accurate)\b|"
+                      r"\b(?:consent|authori[sz]e|agree)\b.{0,120}?\bbackground (?:check|screening|investigation)", re.I | re.S)
+_NOT_ATTESTED = re.compile(r"newsletter|marketing|job alerts?|text messages?|\bsms\b|promotion|subscribe|"
+                           r"talent (?:community|network)", re.I)
+_ATTEST_KINDS = {"select", "listbox", "combobox", "checkbox"}
+# A fill the page never let happen (it timed out, its script failed, a dialog stood over the box):
+# the profile has the answer, so it's no question for the person
+_FILL_BROKE = re.compile(r"^(?:TimeoutError|Error|TargetClosedError|DialogOpen)\b")
 
 
 @dataclass
@@ -945,6 +966,7 @@ class Applier:
         sign_ins: dict[str, int] = {}  # what the saved password was used for on this pass
         pressed: list[tuple[Any, ...]] = []  # (page, button) for each button pressed on this pass
         pressed_on: list[str] = []  # and where, in words
+        agreed: set[str] = set()  # notices agreed to for the person on this pass (settings.accept_notices)
         for _ in range(MAX_STEPS):
             if run.status in ("skipped", "submitted"):  # Skip, or "I submitted it", pressed while it ran
                 return
@@ -1125,6 +1147,12 @@ class Applier:
                                    "reload this job's tab in the desk's browser window: the link opens in your usual "
                                    "browser, so the tab doesn't change by itself. The desk carries on after that."
                                    + watching, seen=data)
+            if (notice := _notice(data)) is not None:  # the boxes behind it are filled once it's answered
+                said = await self._answer_notice(run, data, notice, agreed, over_form=kind == "form")
+                if said == "agreed":
+                    continue
+                if said == "paused":
+                    return
             if kind == "form":
                 run.seen_form = True
                 once_failed = await self._fill_once(run, data)
@@ -1140,9 +1168,16 @@ class Applier:
                     self._log(run, f"filled {len(result['filled'])} field(s) on {_where(data)}")
                 pending, missing_files = _pending(result, once_failed)
                 self._note_skipped(run, result)
+                pending = await self._attest(run, pending)
                 before, page_key = data, (data.get("url"), tuple(data.get("headings") or []))
                 data, text = await self._look()  # filling can add or enable things (State after Country, Submit)
                 run.page_info = _page_info(data)  # what the person sees on the desk: the page as filled
+                if (notice := _notice(data)) is not None:  # one the fills brought up (Eightfold's, as the resume went up)
+                    said = await self._answer_notice(run, data, notice, agreed, over_form=True)
+                    if said == "agreed":
+                        continue
+                    if said == "paused":
+                        return
                 # a question the site has since answered itself (Oracle fills County from the ZIP
                 # picked); one whose answer was turned down (it has an error) is still asked
                 now = {f["id"]: f for f in data.get("fields") or []}
@@ -1165,18 +1200,24 @@ class Applier:
                     refilled.add(page_key)  # answers drew new questions ("If yes, explain"): fill those too
                     continue
                 gaps, pending = self._entry_gaps(run, data, pending)
+                unfilled, pending = _unfilled(pending)
+                couldnt = f" {_couldnt_fill(unfilled)}" if unfilled else ""
                 if missing_files:  # questions come along, so they can be answered meanwhile
                     return self._pause(run, "stuck", "The form needs a file the profile doesn't point to (set "
                                        "documents.resume in profile.yaml): " + ", ".join(f["label"] for f in missing_files)
                                        + "." + (f" {gaps}" if gaps else "")
                                        + (f" It also has {len(pending)} question(s) your profile doesn't answer."
-                                          if pending else ""), pending)
+                                          if pending else "") + couldnt, pending)
                 if gaps:
                     return self._pause(run, "stuck", gaps + (f" It also has {len(pending)} other question(s), here."
-                                                             if pending else ""), pending)
+                                                             if pending else "") + couldnt, pending)
                 if pending:
                     return self._pause(run, "questions", f"{len(pending)} question(s) your profile doesn't answer. "
-                                       "Answer them here and the desk fills them in (and remembers them).", pending)
+                                       "Answer them here and the desk fills them in (and remembers them)." + couldnt,
+                                       pending)
+                if unfilled:
+                    return self._pause(run, "stuck", f"{couldnt.strip()} Fill {'it' if len(unfilled) == 1 else 'them'} in "
+                                       "the browser, then press Resume (or press Resume for the desk to try again).")
                 actions = data.get("actions") or []
                 entry_here = any(_ENTRY.match(final_text(a["text"])) and not a.get("disabled") for a in actions)
             # a step button beside a Submit (a footer "Submit" on step 1 of 4) means there's more to
@@ -1761,6 +1802,68 @@ class Applier:
         run.cookies_asked.add(host)
         return False
 
+    async def _answer_notice(self, run: Run, data: dict[str, Any], notice: dict[str, Any], agreed: set[str],
+                             over_form: bool) -> str | None:
+        """A dialog open over the page that nothing else answers (_notice). An employer's notice about
+        AI screening of the application is agreed to for the person where they allow it
+        (settings.accept_notices; never in practice mode), once a pass, and said in the log: "agreed".
+        Any other one over a form is theirs, as the boxes behind it don't fill: "paused". None:
+        nothing done (on a page with nothing to fill, its buttons are the way on as before)."""
+        heading = _notice_name(notice)
+        said = f"{heading} {notice.get('text') or ''}"
+        ai = bool(_AI_NOTICE.search(said) and _ABOUT_APPLYING.search(said))
+        agree = next((b for b in notice.get("buttons") or [] if not b.get("disabled")
+                      and _AGREES.match(final_text(b.get("text") or ""))), None)
+        allowed = ai and agree is not None and _may_accept_notices()
+        if allowed and agree is not None and heading not in agreed:
+            try:
+                clicked = await self.srv.click(agree["id"])
+            except Exception:  # gone, or it won't take a click: the person's, as without the setting
+                clicked = {"clicked": False}
+            if clicked.get("clicked"):
+                agreed.add(heading)
+                whose = f"{run.company}'s" if run.company else "the site's"
+                self._log(run, f"agreed to {whose} notice “{_short(heading)}” for you (settings.accept_notices)")
+                await self._notice_closed(heading)
+                return "agreed"
+        if not over_form:
+            return None
+        await self._bring_forward(run)
+        self._pause(run, "stuck", f"{_site(run, data)} shows a notice over the form that only you can answer: "
+                    f"“{_short(heading)}”. Read it and press its button in the browser window, then press "
+                    "Resume; the desk fills the form in after that." + (
+                        " (The desk agrees to an employer's notice about AI screening for you with accept_notices: true "
+                        "under settings: in profile.yaml, outside practice mode.)" if ai and agree is not None
+                        and not allowed else ""))
+        return "paused"
+
+    async def _notice_closed(self, heading: str) -> None:
+        """After a notice's agree button: until the notice has gone. One fading out is read a
+        moment longer, and looked at that soon, it would be taken for one that stayed."""
+        deadline = time.monotonic() + NOTICE_WAIT
+        while time.monotonic() < deadline:
+            data = await self.srv.inspect_form(include_dropdown_options=False)
+            if not any(_notice_name(d) == heading for d in data.get("dialogs") or []):
+                return
+            await asyncio.sleep(0.5)
+
+    async def _attest(self, run: Run, pending: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """settings.accept_notices: an application's attestation that its information is true and
+        complete, or its consent to the background check that comes with applying (_attestation),
+        is picked for the person and said in the log. Its answers come only from the profile and
+        the person, so it is true; questions still open are theirs to answer before it's sent.
+        Returns the questions left."""
+        attest = {q["id"]: value for q in pending if (value := _attestation(q)) is not None}
+        if not attest or not _may_accept_notices():
+            return pending
+        out = await self.srv.fill_form([{"id": fid, "value": value} for fid, value in attest.items()])
+        done = {r["id"] for r in out.get("results") or [] if r.get("ok")}
+        for q in pending:
+            if q["id"] in done:
+                what = "ticked" if attest[q["id"]] is True else f"picked “{attest[q['id']]}” for"
+                self._log(run, f"{what} “{_short(q.get('label') or '')}” for you (settings.accept_notices)")
+        return [q for q in pending if q["id"] not in done]
+
     async def _sign_in(self, run: Run, data: dict[str, Any], tried: dict[str, int], details: bool = True,
                        reset_first: bool = False) -> str | None:
         """With the profile email and a stored <ats>_password (if the person saved one):
@@ -1879,19 +1982,25 @@ class Applier:
             self._log(run, f"filled {len(result['filled'])} field(s) on {_where(data)}")
         pending, missing_files = _pending(result, once_failed)
         self._note_skipped(run, result)
+        pending = await self._attest(run, pending)
         data, _ = await self._look()
         run.page_info = _page_info(data)  # the page as filled
         gaps, pending = self._entry_gaps(run, data, pending)
+        unfilled, pending = _unfilled(pending)
+        couldnt = f" {_couldnt_fill(unfilled)}" if unfilled else ""
         if missing_files:
             return self._pause(run, "stuck", "The form needs a file the profile doesn't point to (set documents.resume "
                                "in profile.yaml): " + ", ".join(f["label"] for f in missing_files)
-                               + (f". {gaps}" if gaps else ""), pending)
+                               + (f". {gaps}" if gaps else "") + couldnt, pending)
         if gaps:
             return self._pause(run, "stuck", gaps + (f" It also has {len(pending)} other question(s), here."
-                                                     if pending else ""), pending)
+                                                     if pending else "") + couldnt, pending)
         if pending:
             return self._pause(run, "questions", f"{len(pending)} question(s) your profile doesn't answer. Answer them "
-                               "here and the desk fills them in (and remembers them).", pending)
+                               "here and the desk fills them in (and remembers them)." + couldnt, pending)
+        if unfilled:
+            return self._pause(run, "stuck", f"{couldnt.strip()} Fill {'it' if len(unfilled) == 1 else 'them'} in the "
+                               "browser, then press Resume (or press Resume for the desk to try again).")
         saved = await self._sign_in(run, data, {}, details=False) == "prefilled"  # filled in above
         if saved:  # the record of the page shows its password boxes filled, too
             run.page_info = _page_info((await self._look())[0])
@@ -2053,6 +2162,55 @@ def _pending(result: dict[str, Any], once_failed: dict[str, dict[str, Any]]) -> 
     return pending, missing_files
 
 
+def _unfilled(pending: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """The boxes the page never let the desk fill (_FILL_BROKE), whose answer the profile or the
+    person gave, and the questions left for the person."""
+    broke = [q for q in pending if _FILL_BROKE.match(str(q.get("error") or ""))]
+    return broke, [q for q in pending if not _FILL_BROKE.match(str(q.get("error") or ""))]
+
+
+def _couldnt_fill(unfilled: list[dict[str, Any]]) -> str:
+    """Boxes the page didn't let the desk fill, said as that: not questions the profile doesn't
+    answer (Eightfold's Country of Residence timed out behind a dialog, its error on the card)."""
+    names = ", ".join(f"“{_short(q.get('label') or 'a box')}”" for q in unfilled[:3])
+    late = all(str(q.get("error") or "").startswith("TimeoutError") for q in unfilled)
+    return (f"I couldn't fill {names}{' and more' if len(unfilled) > 3 else ''}"
+            + (" (the page didn't respond in time)." if late else "."))
+
+
+def _notice(data: dict[str, Any]) -> dict[str, Any] | None:
+    """A dialog open over the page (formjs' openDialogs) that the desk answers no other way: not a
+    cookie banner (declined, or the person's, by its own rule and setting), nor one whose buttons
+    are a way on the desk knows (Workday's "Start Your Application" with its Apply Manually, its
+    "Sign in with email", a note's Dismiss)."""
+    for d in data.get("dialogs") or []:
+        texts = [final_text(b.get("text") or "") for b in d.get("buttons") or [] if not b.get("disabled")]
+        if not d.get("cookie") and not any(_ENTRY.match(t) or _DISMISS_NOTE.match(t) or re.match(r"^sign in with ", t, re.I)
+                                           for t in texts):
+            return d
+    return None
+
+
+def _notice_name(notice: dict[str, Any]) -> str:
+    """A dialog's heading, or its first words."""
+    return notice.get("heading") or _short(notice.get("text") or "") or "a dialog"
+
+
+def _attestation(q: dict[str, Any]) -> Any:
+    """What attests to an application's attestation, a required box whose label certifies its
+    information true and complete, or consents to the background check that comes with applying
+    (Eightfold's "Terms and Conditions" dropdown, its one choice certifying the application is
+    correct): a tick, or its one real choice where that agrees. None for any other box."""
+    label = q.get("label") or ""
+    if (not q.get("required") or q.get("error") or q.get("kind") not in _ATTEST_KINDS
+            or not _ATTESTS.search(label) or _NOT_ATTESTED.search(label)):
+        return None
+    if q["kind"] == "checkbox":
+        return True
+    choices = [o for o in q.get("options") or [] if not is_empty_value(o)]
+    return choices[0] if len(choices) == 1 and polarity(choices[0]) is not False else None
+
+
 def _pressed_before(job: dict[str, Any]) -> bool:
     """Was Submit pressed for this job with no confirmation showing? submit_application keeps
     a record of each press in the job's folder, so this outlasts a restart of the desk."""
@@ -2137,6 +2295,13 @@ def _password_tip(url: str) -> str:
 def _may_manage_accounts() -> bool:
     try:
         return config.Profile.load().settings.may_manage_accounts
+    except ValueError:  # a profile with a typo allows nothing
+        return False
+
+
+def _may_accept_notices() -> bool:
+    try:
+        return config.Profile.load().settings.may_accept_notices
     except ValueError:  # a profile with a typo allows nothing
         return False
 

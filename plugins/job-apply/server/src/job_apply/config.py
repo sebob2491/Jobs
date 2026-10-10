@@ -167,15 +167,17 @@ def never_submit() -> bool:
 
 # Account handling's default, where a profile doesn't say (settings.manage_accounts)
 MANAGE_ACCOUNTS_DEFAULT = True
+# And agreeing to notices about AI screening and to attestations (settings.accept_notices)
+ACCEPT_NOTICES_DEFAULT = True
 
 
-def _manage_accounts(raw: Any, malformed: bool) -> bool:
-    """On where the profile doesn't say; off for false, no or off, and for any other answer or a
-    settings section that can't be read (it acts in the person's name: unclear is no)."""
+def _on_unless_off(raw: Any, malformed: bool, default: bool) -> bool:
+    """`default` where the profile doesn't say; off for false, no or off, and for any other answer
+    or a settings section that can't be read (it acts in the person's name: unclear is no)."""
     if malformed:
         return False
     if raw is None:
-        return MANAGE_ACCOUNTS_DEFAULT
+        return default
     return raw is True or isinstance(raw, str) and raw.strip().lower() in ("true", "yes", "on")
 
 
@@ -192,6 +194,10 @@ class Settings:
     # (on unless the profile turns it off: the owner's choice; setup and the desk page tell each person)
     manage_accounts: bool = MANAGE_ACCOUNTS_DEFAULT
     manage_accounts_chosen: bool = False  # the profile says, either way (until then the desk page says it's on)
+    # may the desk agree to an employer's notice about AI screening of the application, and pick an
+    # application's attestation that its information is true (on unless the profile turns it off:
+    # the owner's choice; setup tells each person)
+    accept_notices: bool = ACCEPT_NOTICES_DEFAULT
     warnings: list[str] = field(default_factory=list)
 
     @classmethod
@@ -212,8 +218,9 @@ class Settings:
             email_codes=d.get("email_codes") is True,
             email_tracking=d.get("email_tracking") is True,
             accept_cookies=d.get("accept_cookies") is True,
-            manage_accounts=_manage_accounts(d.get("manage_accounts"), malformed),
+            manage_accounts=_on_unless_off(d.get("manage_accounts"), malformed, MANAGE_ACCOUNTS_DEFAULT),
             manage_accounts_chosen=d.get("manage_accounts") is not None,
+            accept_notices=_on_unless_off(d.get("accept_notices"), malformed, ACCEPT_NOTICES_DEFAULT),
         )
         if os.environ.get("JOB_APPLY_HEADLESS") == "1":
             s.headless = True
@@ -229,6 +236,11 @@ class Settings:
     def may_manage_accounts(self) -> bool:
         """Making an account sends the person's details: never in practice mode, which sends nothing."""
         return self.manage_accounts and not self.dry_run
+
+    @property
+    def may_accept_notices(self) -> bool:
+        """Agreeing for the person is never part of practice mode, as making an account isn't."""
+        return self.accept_notices and not self.dry_run
 
     def may_auto_submit(self, ats: str) -> bool:
         if ats in HUMAN_SUBMIT_ONLY or self.dry_run:

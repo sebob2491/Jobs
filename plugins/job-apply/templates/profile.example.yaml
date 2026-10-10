@@ -172,3 +172,10 @@ settings:
   # codes stay yours. Set this to false to have the desk fill in Create Account and leave the rest
   # to you.
   manage_accounts: true
+  # Notices and attestations: the desk agrees for you to an employer's notice about AI screening
+  # of your application (Eightfold's "Notice Related to … Use of the Eightfold AI Recruiting
+  # Software"), and picks an application's attestation that its information is true and complete
+  # (or your consent to the background check that comes with applying), saying each in the job's
+  # log. Never in practice mode. Any other dialog over a form waits for you. Set this to false to
+  # answer them yourself.
+  accept_notices: true

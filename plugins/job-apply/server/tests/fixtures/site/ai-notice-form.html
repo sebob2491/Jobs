@@ -1,0 +1,137 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Apply - Example Corp</title>
+<style>
+  .backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.4); display: flex; align-items: center; justify-content: center; }
+  .backdrop[hidden] { display: none; }
+  .box { background: #fff; padding: 20px; max-width: 600px; }
+  .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+</style>
+</head>
+<body>
+<!-- like Eightfold's one-page application (live, Oct 2026). Putting the resume up opens the
+     employer's notice about its AI recruiting software: a modal dialog with Cancel / I Agree over
+     the whole form, whose boxes don't take a click while it's open. After the upload the resume's
+     own box is empty again, beside the file's buttons under "File upload completed successfully".
+     The Terms and Conditions dropdown's one choice certifies the application.
+     ?uploaded=1: the resume is up already. ?notice=1: and the notice is open over the form, as
+     an upload left it. ?notice=privacy: the notice is a privacy policy's, about no AI. -->
+<h2>Equipment Technician</h2>
+<form id="app" novalidate>
+  <fieldset>
+    <legend>Resume</legend>
+    <div><label for="Resume_resume" id="Resume_resume_label"><span>Upload your resume</span></label></div>
+    <div>
+      <span id="accepted-file-format">Accepted file format: .pdf, .doc or .docx</span>
+      <div aria-atomic="true" aria-live="assertive" role="status" id="upload-status"></div>
+      <div><span><input accept=".pdf,.doc,.docx" type="file" id="resume-file">
+        <div id="drop"><div>Drag &amp; drop file</div>
+          <button type="button" aria-label="Select file - Upload resume">Select file</button></div>
+        <div id="card" hidden>
+          <button type="button" id="replace">Replace</button>
+          <button type="button" id="delete" aria-label="Delete file"><svg width="16" height="16"><path d="M3 3L13 13" stroke="black"/></svg></button>
+          <button type="button" id="preview" aria-label="Preview file:"><svg width="16" height="16"><path d="M3 8H13" stroke="black"/></svg></button>
+        </div>
+      </span></div>
+    </div>
+  </fieldset>
+  <fieldset>
+    <legend>Contact Information</legend>
+    <label for="first">First name</label><input id="first" aria-required="true">
+    <label for="last">Last name</label><input id="last" aria-required="true">
+    <label for="email">Email</label><input id="email" aria-required="true">
+  </fieldset>
+  <fieldset>
+    <legend>Application questions</legend>
+    <label for="Application_questions_Q___AUTO___COUNTRY" id="Application_questions_Q___AUTO___COUNTRY_label"><span>Country of Residence</span></label>
+    <div data-test-id="Application_questions_Q___AUTO___COUNTRY" id="Application_questions_Q___AUTO___COUNTRY">
+      <div aria-atomic="true" aria-live="polite" role="status" class="sr-only">3 matches found.</div>
+      <input aria-controls="list-11" aria-expanded="false" aria-labelledby="Application_questions_Q___AUTO___COUNTRY_label"
+             aria-required="true" id="input-13" placeholder="Select" role="combobox" type="text" autocomplete="off">
+      <ul id="list-11" role="listbox" hidden><li role="option">Canada</li><li role="option">Mexico</li><li role="option">United States</li></ul>
+    </div>
+    <label for="Terms_and_Conditions_terms_and_conditions" id="Terms_and_Conditions_terms_and_conditions_label">
+      <span><h1>Terms and Conditions</h1><p>Please read carefully.</p><p>I certify that the information contained in
+        the application and resume is correct and complete to the best of my knowledge, and I understand that false or
+        missing information may disqualify me. I authorize Example Corp to verify it.</p></span>
+    </label>
+    <div data-test-id="Terms_and_Conditions_terms_and_conditions" id="Terms_and_Conditions_terms_and_conditions">
+      <div aria-atomic="true" aria-live="polite" role="status" class="sr-only">1 match found.</div>
+      <div id="dropdown-63reference"><input aria-controls="list-63" aria-expanded="false" id="input-65"
+        aria-labelledby="Terms_and_Conditions_terms_and_conditions_label" aria-required="true" placeholder="Select"
+        role="combobox" type="text" autocomplete="off"></div>
+      <ul id="list-63" role="listbox" hidden><li role="option">I Agree</li></ul>
+    </div>
+    <div id="Terms_and_Conditions_terms_and_conditions_error"><div aria-atomic="true" role="alert" id="terms-error">Error: Select a value.</div></div>
+  </fieldset>
+  <button type="submit">Submit application</button>
+</form>
+<div aria-labelledby="dialog-label-4" aria-modal="true" role="dialog" class="backdrop" id="notice" hidden>
+  <div class="box">
+    <span aria-level="2" id="dialog-label-4" role="heading">Notice Related to Example Corp's Use of the Eightfold AI Recruiting Software</span>
+    <button type="button" aria-label="Close" id="close"><svg width="20" height="20"><path d="M5 5L15 15M15 5L5 15" stroke="black"/></svg></button>
+    <p id="notice-text">Example Corp uses an artificial intelligence ("AI") recruiting software provided by Eightfold AI to assist
+      with and support its recruiting efforts. Before submitting your application, please review this notice.</p>
+    <p>If you do not wish to have your application reviewed with it, press Cancel: your resume will be forwarded to the
+      appropriate recruiter for review without the use of the Eightfold AI recruiting software.</p>
+    <button type="button" data-test-id="cancel-upload-resume" id="cancelUploadResume"><span>Cancel</span></button>
+    <button type="button" data-test-id="confirm-upload-resume" id="confirmUploadResume"><span>I Agree</span></button>
+  </div>
+</div>
+<script>
+  window.uploads = 0; window.agreed = 0; window.cancelled = 0;
+  const params = new URLSearchParams(location.search);
+  const notice = document.getElementById('notice');
+  if (params.get('notice') === 'privacy') {
+    document.getElementById('dialog-label-4').textContent = 'Privacy Policy of Example Corp';
+    document.getElementById('notice-text').textContent = 'Example Corp protects the personal data you give it, as its '
+      + 'privacy policy says.';
+    notice.querySelectorAll('p')[1].remove();
+    document.querySelector('#confirmUploadResume span').textContent = 'Ok';
+  }
+  const shown = (name) => {
+    document.getElementById('upload-status').textContent = 'File upload completed successfully';
+    document.getElementById('drop').hidden = true;
+    document.getElementById('card').hidden = false;
+    document.getElementById('delete').setAttribute('aria-label', 'Delete file ' + name);
+    document.getElementById('preview').setAttribute('aria-label', 'Preview file: ' + name);
+  };
+  const file = document.getElementById('resume-file');
+  file.addEventListener('change', () => {
+    if (!file.files.length) return;
+    window.uploads += 1;
+    shown(file.files[0].name);
+    file.value = '';  // the box itself is empty again
+    notice.hidden = false;  // the notice comes with each upload
+  });
+  for (const [id, count] of [['confirmUploadResume', 'agreed'], ['cancelUploadResume', 'cancelled'], ['close', '']]) {
+    document.getElementById(id).addEventListener('click', () => { if (count) window[count] += 1; notice.hidden = true; });
+  }
+  if (params.get('uploaded') || params.get('notice')) shown('resume.pdf');
+  if (params.get('notice')) notice.hidden = false;
+
+  // Eightfold's pickers: open on a click, narrow as typed, and take a click on a choice
+  for (const box of document.querySelectorAll('input[role="combobox"]')) {
+    const list = document.getElementById(box.getAttribute('aria-controls'));
+    const open = () => { list.hidden = false; box.setAttribute('aria-expanded', 'true'); };
+    box.addEventListener('click', open);
+    box.addEventListener('keydown', (e) => { if (e.key === 'ArrowDown') open(); });
+    box.addEventListener('input', () => {
+      open();
+      for (const o of list.children) o.hidden = !o.textContent.toLowerCase().includes(box.value.toLowerCase());
+    });
+    list.addEventListener('click', (e) => {
+      box.value = e.target.textContent;
+      list.hidden = true;
+      box.setAttribute('aria-expanded', 'false');
+      if (box.id === 'input-65') document.getElementById('terms-error').textContent = '';
+    });
+    document.addEventListener('mousedown', (e) => { if (!list.contains(e.target) && e.target !== box) list.hidden = true; });
+  }
+  document.getElementById('app').addEventListener('submit', (e) => {
+    e.preventDefault();
+    document.body.innerHTML = '<h1>Thanks for applying!</h1>';
+  });
+</script>
+</body>
+</html>

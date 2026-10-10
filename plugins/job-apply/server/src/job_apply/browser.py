@@ -32,8 +32,8 @@ from . import config
 from .ats import detect_ats
 from .autofill import choose_option, choose_place, is_empty_value, norm, polarity
 from .formjs import (CHALLENGE_JS, CLICK_CHOICE_JS, COVERED_JS, ELEMENT_INFO_JS, ENTRIES_JS, EXTRACT_JS, FIELD_OPTIONS_JS,
-                     LOST_BOXES_JS, MARK_OPTIONS_JS, OPEN_MENU_JS, OUTSIDE_CLICK_JS, QUIET_JS, SHOWN_VALUE_JS, VISIBLE_TEXT_JS,
-                     WORKDAY_CHOSEN_JS, WORKDAY_PROMPT_JS)
+                     LOST_BOXES_JS, MARK_OPTIONS_JS, NOTICE_OVER_JS, OPEN_MENU_JS, OUTSIDE_CLICK_JS, QUIET_JS, SHOWN_VALUE_JS,
+                     VISIBLE_TEXT_JS, WORKDAY_CHOSEN_JS, WORKDAY_PROMPT_JS)
 
 SUBMIT_RE = re.compile(r"\bsubmit\b|send (my )?application|finish (my )?application|complete (my )?application", re.I)
 # A form's own submit button with one of these labels is the final step too ("Apply", "Send").
@@ -285,6 +285,10 @@ class PickedAGroup(ValueError):
     def __init__(self, group: str, entries: list[str]) -> None:
         super().__init__(f"{group!r} is a group; pick one of its entries: {entries[:30]}")
         self.entries = entries
+
+
+class DialogOpen(Exception):
+    """A dialog is open over the page (a notice to answer first): nothing is filled behind it."""
 
 
 class TabClosed(Exception):
@@ -585,7 +589,7 @@ class BrowserSession:
         raise KeyError(f"The frame holding {element_id} is gone; call inspect_form again")
 
     async def _extract(self, page: Page) -> dict[str, Any]:
-        result: dict[str, Any] = {"fields": [], "actions": [], "errors": [], "headings": []}
+        result: dict[str, Any] = {"fields": [], "actions": [], "errors": [], "headings": [], "dialogs": []}
         for frame in page.frames:
             if frame.is_detached():
                 continue
@@ -599,7 +603,7 @@ class BrowserSession:
                 data = await frame.evaluate(EXTRACT_JS, self._frame_prefix(frame, page))
             except PlaywrightError:
                 continue  # cross-origin frame that refused, or navigated mid-read
-            for key in ("fields", "actions", "errors", "headings"):
+            for key in ("fields", "actions", "errors", "headings", "dialogs"):
                 result[key].extend(data.get(key, []))
         self._fields = {f["id"]: f for f in result["fields"]}
         self._actions = {a["id"]: a for a in result["actions"]}
@@ -1074,6 +1078,7 @@ class BrowserSession:
                         if await self._holds(page, field, item.get("value")):
                             results.append({"id": fid, "label": field.get("label", ""), "ok": True, "result": "already set"})
                             continue
+                        await self._clear_of_dialogs(page, field)
                         outcome = await self._fill_one(page, field, item.get("value"))
                         results.append({"id": fid, "label": field.get("label", ""), "ok": True, "result": outcome})
                         if outcome in ("filled", "typed"):
@@ -1089,6 +1094,17 @@ class BrowserSession:
             finally:
                 await self._close_menus(page)  # none left open over the buttons, or over its own field
             return results
+
+    async def _clear_of_dialogs(self, page: Page, field: dict) -> None:
+        """Nothing is filled behind a dialog open over the page: the boxes under it time out or
+        lose what's put in them, and the dialog is answered first (Eightfold opens its notice about
+        its AI screening as the resume goes up, part-way through a page's fills)."""
+        try:
+            over = await self._frame_for(page, field["id"]).evaluate(NOTICE_OVER_JS, field["id"])
+        except PlaywrightError:  # a frame mid-way through loading: the fill says what's wrong, if anything
+            return
+        if over:
+            raise DialogOpen(f"“{over[:160]}” is open over the page; it's answered first, then this is filled")
 
     async def _fill_lost(self, page: Page) -> None:
         """Type again what a text box shows when it's something the desk typed on this page and
