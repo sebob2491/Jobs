@@ -8,13 +8,16 @@ on:
   pull_request:
 
 jobs:
-  server:
-    name: server (Python ${{ matrix.python }})
+  tests:
+    # the suite in two parts on separate machines (tests/conftest.py splits it by test id),
+    # about two minutes each instead of four or five on one
+    name: tests (Python ${{ matrix.python }}, part ${{ matrix.part }}/2)
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         python: ["3.10", "3.13"]
+        part: [1, 2]
     defaults:
       run:
         working-directory: plugins/job-apply/server
@@ -27,11 +30,29 @@ jobs:
           cache-dependency-glob: plugins/job-apply/server/uv.lock
       - run: uv sync --frozen --extra dev
       - name: Lint (ruff)
+        if: matrix.part == 1
         run: uv run --frozen ruff check --output-format=github .
       - name: Type check (mypy)
+        if: matrix.part == 1
         run: uv run --frozen mypy src/job_apply
       - run: uv run --frozen playwright install --with-deps chromium
       - run: uv run --frozen pytest -q -n auto
+        env:
+          JOB_APPLY_TEST_SHARD: ${{ matrix.part }}/2
+
+  server:
+    # The checks main's ruleset requires, by these names: green only when every part passed.
+    # (Run always: a skipped required check would count as passed.)
+    name: server (Python ${{ matrix.python }})
+    needs: tests
+    if: always()
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ["3.10", "3.13"]
+    steps:
+      - name: Every part of the suite passed
+        run: test "${{ needs.tests.result }}" = success
 
   plugin:
     name: plugin manifests
