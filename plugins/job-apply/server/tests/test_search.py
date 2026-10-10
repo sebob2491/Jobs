@@ -2034,3 +2034,40 @@ def test_a_career_pages_site_is_read_page_by_page(monkeypatch):
     with pytest.raises(search_module.SearchError, match="bot check"):
         search("analyst")
     assert len(asked) == 1
+
+
+@pytest.mark.parametrize("down", ["https://community.workday.com/maintenance-page",
+                                  "https://www.myworkday.com/wday/drs/outage?t=adco&s=External"])
+def test_a_job_site_down_for_maintenance_is_said_so(down):
+    """During Workday's weekend maintenance (live, Oct 2026) every search is sent on to its
+    maintenance page, and the search read that page as a broken answer: "no postings found",
+    or a JSONDecodeError. It's said as the site being down for maintenance."""
+    def answer(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "adco.wd1.myworkdayjobs.com":
+            return httpx.Response(303, headers={"Location": down})
+        return httpx.Response(200, html="<html><body>We'll be back soon.</body></html>")
+
+    async def go():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(answer), follow_redirects=True) as client:
+            return await search_module._workday(client, "https://adco.wd1.myworkdayjobs.com/External", "field service",
+                                                20, [])
+    with pytest.raises(search_module.SearchError, match="adco.wd1.myworkdayjobs.com is down for maintenance"):
+        asyncio.run(go())
+
+
+@pytest.mark.parametrize("to", ["https://adco.wd1.myworkdayjobs.com/External/search/maintenance",
+                                "https://jobs.example.com/job/Maintenance-Technician",
+                                "https://jobs.example.com/careers/maintenance-planner"])
+def test_a_redirect_to_maintenance_work_isnt_taken_for_a_site_down(to):
+    """Searches for technicians meet "maintenance" in job addresses: only a maintenance page of
+    its own, on another host, is a site down."""
+    def answer(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/jobs") and request.url.host == "adco.wd1.myworkdayjobs.com":
+            return httpx.Response(303, headers={"Location": to})
+        return httpx.Response(200, json={"total": 0, "jobPostings": []})
+
+    async def go():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(answer), follow_redirects=True) as client:
+            return await search_module._workday(client, "https://adco.wd1.myworkdayjobs.com/External", "maintenance",
+                                                20, [])
+    assert asyncio.run(go()) == []

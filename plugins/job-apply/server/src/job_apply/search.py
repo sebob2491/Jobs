@@ -1907,7 +1907,18 @@ async def _send(client: httpx.AsyncClient, method: str, url: str, **kw: Any) -> 
     raise AssertionError("unreachable")
 
 
+# Where a site sends every request while it's down: Workday's community.workday.com/maintenance-page
+# and www.myworkday.com/wday/drs/outage (its weekend maintenance, live, Oct 2026). The page's own
+# name, on another host: never a posting's address ("/job/Maintenance-Technician") or a search
+# for maintenance work on the site itself
+_DOWN = re.compile(r"maintenance(?:-page)?|outage", re.I)
+
+
 def _raise_for(r: httpx.Response, url: str) -> None:
+    asked = httpx.URL(url).host
+    if r.history and r.url.host != asked and _DOWN.fullmatch(r.url.path.rstrip("/").rsplit("/", 1)[-1]):
+        raise SearchError(f"{asked} is down for maintenance (it sends searches to "
+                          f"{r.url.host}{r.url.path}); try again in a few hours")
     if r.status_code >= 400:
         raise SearchError(f"HTTP {r.status_code} from {url.split('?')[0]}")
 
