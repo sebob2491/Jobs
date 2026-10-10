@@ -1881,6 +1881,34 @@ def test_an_m_cloud_search_is_read_for_its_places():
     assert not out["errors"]
 
 
+def test_an_m_cloud_search_leaves_out_staff_only_copies():
+    """Edward Jones lists most openings twice (Oct 2026): a copy for its staff ("is_internal":
+    "Internal", Apply on its staff BrassRing site) and one for the public ("External"). Some are
+    for staff only, and the public site says those have "expired or the position has already been
+    filled" (the nightly live check, Oct 10). The public copy is kept, whichever comes first."""
+    def job(n: int, title: str, ref: str, side: str) -> dict:
+        site = "5377" if side == "Internal" else "5374"
+        return {"job": {"title": title, "url": f"https://careers.example.com/job/{n}/", "ref": ref,
+                        "is_internal": side, "primary_city": "Tempe", "primary_state": "AZ",
+                        "seo_url": f"https://sjobs.brassring.com/?partnerid=26235&siteid={site}&jobid={n}"}}
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"totalHits": 4, "searchResults": [
+            job(1, "Digital Content Developer, HR", "119566BR", "Internal"),
+            job(2, "Leadership Development Consultant", "119500BR", "Internal"),
+            job(3, "Leadership Development Consultant", "119500BR", "External"),
+            job(4, "HR Generalist", "119501BR", "External")]})
+
+    async def go():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(answer)) as client:
+            return await search_companies("hr | leadership development", location="AZ", client=client, companies=[
+                {"name": "Example Investments", "search": {"mcloud": {"company": "companies/abc"}}}])
+    out = asyncio.run(go())
+    assert sorted((r["title"], r["url"]) for r in out["results"]) == [
+        ("HR Generalist", "https://careers.example.com/job/4/"),
+        ("Leadership Development Consultant", "https://careers.example.com/job/3/")]
+
+
 def kpmg_item(job_id: int, title: str, line: str) -> str:
     """An opening as KPMG's job list draws it (Oct 2026): a grid view that says only how many
     places, and a list view with its title, its practice and its places."""

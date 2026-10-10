@@ -1213,11 +1213,14 @@ async def _mcloud(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, t
 
 
 def parse_mcloud(data: dict[str, Any]) -> list[Listing]:
+    """Its openings, without the copies for the employer's own staff ("is_internal": "Internal"):
+    Edward Jones' Apply on those goes to its staff site, and the public site says a staff-only
+    one has expired (Oct 2026). An opening open to the public has a copy of its own."""
     found: list[Listing] = []
     for hit in data.get("searchResults") or []:
         job = hit.get("job") or {}
         title, url = str(job.get("title") or "").strip(), str(job.get("url") or "")
-        if not title or not url:
+        if not title or not url or str(job.get("is_internal") or "").lower() == "internal":
             continue
         places = [", ".join(str(x) for x in (job.get("primary_city"), job.get("primary_state")) if x)]
         places += [", ".join(str(x) for x in (p.get("addtnl_city"), p.get("addtnl_state")) if x)
