@@ -34,7 +34,7 @@ def _github(monkeypatch, respond):
     return seen
 
 
-def test_a_newer_published_version_is_said_with_how_to_get_it(monkeypatch):
+def test_a_newer_published_version_is_said_with_how_to_get_it(monkeypatch, loop):
     seen = _github(monkeypatch, lambda r: httpx.Response(200, json={"name": "job-apply", "version": "0.3.71"}))
     check = updates.UpdateCheck()
     run(check.refresh())
@@ -47,14 +47,14 @@ def test_a_newer_published_version_is_said_with_how_to_get_it(monkeypatch):
                                      lambda r: httpx.Response(200, json={"version": "0.3.69"}),
                                      lambda r: httpx.Response(503, text="unavailable"),
                                      lambda r: httpx.Response(200, text="<html>not a manifest</html>")])
-def test_nothing_is_said_for_the_same_or_an_older_version_or_a_failed_look(monkeypatch, respond):
+def test_nothing_is_said_for_the_same_or_an_older_version_or_a_failed_look(monkeypatch, respond, loop):
     _github(monkeypatch, respond)
     check = updates.UpdateCheck()
     run(check.refresh())
     assert check.notice() is None
 
 
-def test_no_look_at_all_when_turned_off(monkeypatch):
+def test_no_look_at_all_when_turned_off(monkeypatch, loop):
     seen = _github(monkeypatch, lambda r: httpx.Response(200, json={"version": "0.3.71"}))
     monkeypatch.setenv("JOB_APPLY_NO_UPDATE_CHECK", "1")
     check = updates.UpdateCheck()
