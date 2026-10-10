@@ -55,6 +55,25 @@ def test_a_hidden_file_box_is_named_by_its_own_upload_button(srv, tmp_path):
     assert [f["label"] for f in got] == ["Upload Resume", "Upload Cover Letter", "Transcript", "Portfolio"]
 
 
+def test_a_loading_indicator_on_show_is_said(srv, tmp_path):
+    """Workday's loading dots where a step's questions go (KLA's, live, Oct 2026), or a spinner marked
+    busy, are said; a hidden one, or a step's progress bar with its value, isn't a page loading."""
+    def busy(body: str) -> bool:
+        page = tmp_path / "busy.html"
+        page.write_text(f"<!doctype html><html><body><h2>Application Questions</h2>{body}</body></html>",
+                        encoding="utf-8")
+        run(srv.browser.goto(page.resolve().as_uri()))
+        return bool(run(srv.browser.inspect(include_dropdown_options=False)).get("busy"))
+
+    dots = '<div data-automation-id="loading" style="width: 80px; height: 20px"><span>.</span></div>'
+    assert busy(dots)
+    assert busy('<div aria-busy="true" style="height: 20px">Loading</div>')
+    assert busy('<div role="progressbar" aria-label="Loading" style="height: 20px"></div>')
+    assert not busy(dots.replace('style="', 'style="display: none; '))
+    assert not busy('<div role="progressbar" aria-valuenow="3" aria-valuemax="6" style="height: 20px">step 3 of 6</div>')
+    assert not busy('<label for="a">First Name</label><input id="a"><button>Next</button>')
+
+
 def test_a_sign_ups_boxes_are_marked_aside_but_not_an_applications_own(srv, tmp_path):
     """A box to join a talent community or get job alerts beside the application (its email,
     its consent, a choice of interests) is marked aside, as its Submit is; a short form whose
@@ -136,6 +155,25 @@ def test_an_unlabelled_box_doesnt_take_the_label_before_it(srv, tmp_path):
     got = fields_of(srv, tmp_path, '<div><span>Phone Number *</span><input name="phone"></div>'
                                    '<div><input name="ext"></div>')
     assert {f["label"]: f["required"] for f in got} == {"Phone Number *": True, "ext": False}
+
+
+def test_a_check_box_with_no_label_is_named_by_the_words_beside_it(srv, tmp_path):
+    """UKG Pro's Create Account (Nikon Precision, live, Oct 2026): its consent box's words sit in a
+    span beside it, not in a label, and the box was read with an empty label (and not required, its
+    star unseen), so the desk never knew it for the site's terms. The words beside a box are its label,
+    within its own wrapper: not words shared with another box."""
+    got = fields_of(srv, tmp_path,
+                    '<div class="consent"><input id="a" type="checkbox" value=""><span>By checking this box, I have '
+                    'read and agree to the <a href="#p">Consent and Privacy Policy</a>*</span></div>'
+                    '<div><input id="b" type="checkbox"> <span>Remember this device</span></div>'
+                    '<div><div role="checkbox" aria-checked="false" tabindex="0" style="width:12px;height:12px">'
+                    '</div><span>Keep me signed in</span></div>'
+                    '<div><input id="c" type="checkbox" value=""><input id="d" type="checkbox" value="">'
+                    '<span>Words for two boxes</span></div>')
+    assert [(f["kind"], f["label"], f["required"]) for f in got] == [
+        ("checkbox", "By checking this box, I have read and agree to the Consent and Privacy Policy*", True),
+        ("checkbox", "Remember this device", False), ("checkbox", "Keep me signed in", False),
+        ("checkbox", "", False), ("checkbox", "", False)]
 
 
 def test_placeholder_choices_count_as_empty():

@@ -1,0 +1,83 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>New User Registration</title></head>
+<body>
+<!-- like an Oracle Taleo career section's New User Registration (Kforce's, live, Oct 2026, from its
+     Login page's "New User"): a User Name, the password twice, and "Register", a plain button whose
+     script sends the form; no email box, terms box or picture code. The site signs the new account in
+     and goes on to the application. ?questions=1: a security question and its answer too, as some
+     Taleo sites ask (required). Served by the tests at Kforce's own address (routed). -->
+<form id="dialogTemplate-dialogForm" name="dialogTemplate-dialogForm" method="post" action="login.jsf">
+  <span class="mainsection">
+    <span class="page-header">
+      <h1 class="page-heading-header-title"><span>New User Registration</span></h1>
+      <span class="page-header-text">Please take a few moments to register. You will need this information to access
+        your account in the future.</span>
+    </span>
+    <span class="entity-mandatory-field" title="This field is mandatory">Mandatory fields are marked with an asterisk.</span>
+    <span id="err" class="errorMessage" role="alert"></span>
+    <span class="squared-border-linkedin-content">
+      <span class="subtitle">Create an account</span>
+      <table cellpadding="0" cellspacing="0" id="dialogTemplate-dialogForm:newusertable" width="100%">
+        <tbody>
+        <tr><td class="dialog-columns-linkedin">
+          <span class="dialog-section">
+            <label class="entity-label" for="dialogTemplate-dialogForm-userName" title="The field User Name is mandatory.">
+              <img alt="" class="iam-entity-label-mandatory" src="data:,">User Name<span class="hidden-audible">.</span><span class="hidden-audible">Required</span>
+            </label>
+            <input autocomplete="off" id="dialogTemplate-dialogForm-userName" maxlength="255" name="dialogTemplate-dialogForm-userName" type="text">
+          </span>
+          <label class="entity-label" for="dialogTemplate-dialogForm-password" title="The field Password is mandatory.">
+            <img alt="" class="iam-entity-label-mandatory" src="data:,">Password<span class="hidden-audible">.</span><span class="hidden-audible">Required</span>
+          </label>
+          <input autocomplete="off" id="dialogTemplate-dialogForm-password" maxlength="60" name="dialogTemplate-dialogForm-password" type="password" value="">
+          <label class="entity-label" for="dialogTemplate-dialogForm-passwordConfirm" title="The field Re-enter Password is mandatory.">
+            <img alt="" class="iam-entity-label-mandatory" src="data:,">Re-enter Password<span class="hidden-audible">.</span><span class="hidden-audible">Required</span>
+          </label>
+          <input autocomplete="off" id="dialogTemplate-dialogForm-passwordConfirm" maxlength="60" name="dialogTemplate-dialogForm-passwordConfirm" type="password" value="">
+          <span id="questions" hidden>
+            <label class="entity-label" for="dialogTemplate-dialogForm-question1">
+              <img alt="" class="iam-entity-label-mandatory" src="data:,">Security Question 1<span class="hidden-audible">.</span><span class="hidden-audible">Required</span>
+            </label>
+            <select id="dialogTemplate-dialogForm-question1" name="dialogTemplate-dialogForm-question1">
+              <option value="">Select a question</option>
+              <option>What was the name of your first school?</option>
+              <option>In what city were you born?</option>
+            </select>
+            <label class="entity-label" for="dialogTemplate-dialogForm-answer1">
+              <img alt="" class="iam-entity-label-mandatory" src="data:,">Answer 1<span class="hidden-audible">.</span><span class="hidden-audible">Required</span>
+            </label>
+            <input autocomplete="off" id="dialogTemplate-dialogForm-answer1" name="dialogTemplate-dialogForm-answer1" type="text">
+          </span>
+        </td></tr>
+        <tr><td class="dialog-columns-linkedin">
+          <span class="button-group-left-bottom">
+            <input class="nav-btn" id="dialogTemplate-dialogForm-defaultCmd" onclick="register(); return false;" title="Create an account" type="button" value="Register">
+          </span>
+        </td></tr>
+        </tbody>
+      </table>
+    </span>
+    <span class="block-main-border-fix-responsive-linkedin">
+      <input class="nav-btn" id="dialogTemplate-dialogForm-cancel" onclick="location.href = 'login.jsf' + location.search; return false;" title="Cancel the registration" type="button" value="Cancel">
+    </span>
+  </span>
+</form>
+<script>
+  const asks = new URLSearchParams(location.search).get('questions');
+  const box = (name) => document.getElementById('dialogTemplate-dialogForm-' + name);
+  if (asks) document.getElementById('questions').hidden = false;
+  function register() {
+    sessionStorage.setItem('registers', String(Number(sessionStorage.getItem('registers') || 0) + 1));
+    const same = box('password').value.length > 0 && box('password').value === box('passwordConfirm').value;
+    const answered = !asks || (box('question1').value && box('answer1').value);
+    if (box('userName').value && same && answered) {
+      sessionStorage.setItem('registered', box('userName').value);
+      location.href = '/careersection/application.jss';
+    } else {
+      document.getElementById('err').textContent = 'Please complete all mandatory fields.';
+    }
+  }
+</script>
+</body>
+</html>

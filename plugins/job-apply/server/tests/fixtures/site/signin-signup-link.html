@@ -12,6 +12,8 @@
 <p>Don't have an account? <a href="signup.html">Sign up</a></p>
 <div id="err" role="alert"></div>
 <script>
+  // ?register: on to the sign-up whose Continue goes on to the Register page (ukg-register.html)
+  for (const a of document.querySelectorAll('a[href="signup.html"]')) a.href = 'signup.html' + location.search;
   // No account exists for anyone here: every sign-in fails, as at an employer applied to for the first time.
   document.getElementById('signin').addEventListener('submit', (e) => {
     e.preventDefault();

@@ -41,6 +41,7 @@ COMPANY_HOSTS = {
     # data/lists/phoenix-metro.yaml
     "careers.aps.com": "successfactors", "careers.srpnet.com": "successfactors",
     "jobs.northropgrumman.com": "eightfold", "careers.insight.com": "eightfold",
+    "myhiring.kforce.com": "taleo",
 }
 
 

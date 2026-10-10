@@ -650,7 +650,8 @@ async def inspect_form(include_dropdown_options: bool = True) -> dict[str, Any]:
     under `actions`; is_submit marks the final submit button. A CAPTCHA on show is said
     under `captcha` (its own frame isn't listed): it's the user's to solve. A dialog open over
     the page (a notice to answer first) is listed under `dialogs` with its buttons; nothing is
-    filled behind one. Ids stay valid until the page changes; call this again after navigating."""
+    filled behind one. `busy` says a loading indicator is on show (the step isn't drawn yet: look
+    again in a moment). Ids stay valid until the page changes; call this again after navigating."""
     data = await browser.inspect(include_dropdown_options)
     data["ats"] = detect_ats(data["url"])
     return data

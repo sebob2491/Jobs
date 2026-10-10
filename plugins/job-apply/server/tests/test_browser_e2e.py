@@ -290,6 +290,28 @@ def test_iframe_form_and_linkedin_policy(srv, monkeypatch):
     assert srv.get_job(job["id"])["job"]["status"] == "ready_to_submit"
 
 
+def test_icims_privacy_gate_is_read_with_its_frames_headings_and_its_phone(srv):
+    """Charles Schwab's iCIMS (live, Oct 10): its sign-in gate sits in a frame inside the careers page,
+    which has a talent network sign-up of its own. Each frame's headings are said apart (by the
+    prefix of its ids), the Phone Country Code's "— Make a Selection —" is no answer, so its
+    countries are read, and its Number says it's the phone's (autocomplete). Autofill answers all
+    three from the profile."""
+    job = srv.add_job(url=fixture_url("site/icims-privacy-gate.html"), title="Analyst", company="Example Financial")["job"]
+    run(srv.open_application(job_id=job["id"]))
+    form = run(srv.inspect_form())
+    gate = next(a for a in form["actions"] if a["text"] == "I Acknowledge the Privacy Notice")
+    frame = gate["id"].split("-")[0] + "-"
+    assert form["frame_headings"][frame] == ["Privacy Notice and Sign-In"], form["frame_headings"]
+    assert "Join our talent network" in form["frame_headings"][""], form["frame_headings"]
+    code = by_label(form["fields"], "country code")
+    assert code["kind"] == "listbox" and "(+1) United States" in code["options"], code
+    assert by_label(form["fields"], "number")["autocomplete"] == "tel-national"
+    result = run(srv.autofill())
+    filled = {f["label"]: f["value"] for f in result["filled"]}
+    assert filled == {"Email": "sam.rivera@example.com", "Country Code — Make a Selection —": "(+1) United States",
+                      "Number": "480-555-0123"}, (filled, result["failed"])
+
+
 def test_auto_mode_refuses_incomplete_form(srv, job_apply_home):
     import yaml
 

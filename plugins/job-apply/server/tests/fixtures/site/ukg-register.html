@@ -1,0 +1,48 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Example Fab Master Company | Register</title></head>
+<body>
+<!-- like UKG Pro's second Create Account step (Nikon Precision, live, Oct 2026): after the sign-up's
+     email, password and Continue, its own Register page asks for a name and phone. The consent box's
+     words sit beside it, not in a label, and "Create account" is greyed out until it's ticked. A box
+     for text messages about jobs (never ticked for the person) sits beside it here too. -->
+<div class="note">
+  <h3>Accessibility Note:</h3>
+  <p>If you need an accommodation to apply, see Accessibility Accommodation for Applicants.</p>
+  <button type="button" onclick="this.parentElement.remove()">Dismiss Note</button>
+</div>
+<div class="card">
+  <div class="card-title">Almost there!</div>
+  <p>Please provide your name to set up your account</p>
+  <form id="register" novalidate>
+    <div><label for="fn">First name *</label><input id="fn" type="text"></div>
+    <div><label for="ln">Last name *</label><input id="ln" type="text"></div>
+    <div><label for="ph">Phone number *</label><input id="ph" type="tel"></div>
+    <div class="consent">
+      <input id="consent" type="checkbox" value="">
+      <span>By checking this box, I have read and agree to the <a href="#policy">Consent and Privacy Policy</a>*</span>
+    </div>
+    <div><label><input id="texts" type="checkbox"> I agree to receive text messages (SMS) about jobs like this one</label></div>
+    <button type="submit" id="create" disabled>Create account</button>
+  </form>
+</div>
+<div id="err" role="alert"></div>
+<script>
+  const did = (k, v) => sessionStorage.setItem('ukg.' + k, JSON.stringify(v));
+  const consent = document.getElementById('consent');
+  consent.addEventListener('change', () => { document.getElementById('create').disabled = !consent.checked; });
+  document.getElementById('register').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const missing = ['fn', 'ln', 'ph'].filter((id) => !document.getElementById(id).value);
+    did('presses', JSON.parse(sessionStorage.getItem('ukg.presses') || '0') + 1);
+    did('texts', document.getElementById('texts').checked);
+    if (missing.length || !consent.checked) {
+      document.getElementById('err').textContent = 'Please complete every field';
+      return;
+    }
+    did('created', true);
+    location.href = 'step1.html';
+  });
+</script>
+</body>
+</html>

@@ -193,6 +193,7 @@ footer { max-width: 1240px; margin: 0 auto; padding: 0 16px 24px; color: var(--m
             <option value="applicantstack">ApplicantStack: SCREEN</option>
             <option value="ukg">UKG Pro: Nikon Precision</option>
             <option value="infor">Infor: Benchmark</option>
+            <option value="taleo">Taleo</option>
             <option value="email">Your email: an app password, to read sign-up codes and password resets</option>
           </select>
         </div>
@@ -545,7 +546,7 @@ function renderHeader() {
   $("plugin-version").textContent = state.version ? `job-apply ${state.version}` : "";
   $("tailor-hint").textContent = s.tailor_resumes ? "On: each job waits for Claude to write a resume for it." : "Off: your usual resume goes with every application.";
   const systems = {workday: "Workday", successfactors: "SuccessFactors", icims: "iCIMS", applicantstack: "ApplicantStack",
-                   ukg: "UKG Pro", infor: "Infor", email: "Email"};
+                   ukg: "UKG Pro", infor: "Infor", taleo: "Taleo", email: "Email"};
   // the systems named with the employers on the person's own lists (the page's own list until then)
   const pick = $("pw-site");
   const named = (state.password_systems || []).map((o) => `${o.value}\u0000${o.label}`).join("\n");

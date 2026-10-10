@@ -7,6 +7,7 @@ import contextlib
 import json
 import time
 from pathlib import Path
+from urllib.parse import urlparse
 
 import pytest
 from conftest import browser_available, fixture_url, run
@@ -1071,6 +1072,14 @@ def test_what_attests_to_an_application_and_what_doesnt():
     assert not gate({"text": "I Accept"}, {"headings": ["Before you continue"]})  # its words: a talent community
     assert not gate({"text": "I Accept and Apply"}, {"headings": ["Privacy Agreement"]})
     assert not gate({"text": "I Accept"}, {"headings": ["Join our Talent Community", "Privacy"]})
+    # a framed gate by its own frame's headings: not the careers page's around it (Schwab's iCIMS, Oct 10)
+    schwab = {"headings": ["Join our talent network", "Returning candidate?", "Privacy Notice and Sign-In"],
+              "frame_headings": {"": ["Join our talent network", "Returning candidate?"],
+                                 "f2-": ["Privacy Notice and Sign-In"]}, "title": "Login"}
+    assert gate({"id": "f2-qxi4", "text": "I Acknowledge the Privacy Notice"}, schwab)
+    assert not gate({"id": "qxi4", "text": "I Acknowledge the Privacy Notice"}, schwab)  # one beside the sign-up
+    assert not gate({"id": "f2-qxi4", "text": "I Acknowledge the Privacy Notice"},
+                    {**schwab, "frame_headings": {"f2-": ["Join our Talent Community"]}})
     notice = pipeline._terms_notice
     assert notice("Privacy Policy of Example Corp", "Example Corp protects the personal data you give it.") == (True, True)
     assert notice("Before you apply", "Please read and accept our privacy notice.") == (True, False)
@@ -1311,6 +1320,55 @@ def test_the_test_identity_agrees_with_a_forms_button_in_practice_mode(srv, monk
     else:
         assert shown["agreed"] == 1 and shown["first"] == "Sam", shown
     assert r.status != "submitted", (r.status, r.reason)
+
+
+@pytest.mark.parametrize("who", ["on", "test-identity", "off", "practice"])
+def test_icims_privacy_gate_in_its_frame_takes_the_email_and_phone_and_is_acknowledged(srv, monkeypatch, job_apply_home,
+                                                                                         who):
+    """Charles Schwab's iCIMS (live, Oct 10): "Privacy Notice and Sign-In" in iCIMS's frame takes an
+    email, a required Phone Country Code ("— Make a Selection —", read as an answer) and a Number,
+    and its way on is "I Acknowledge the Privacy Notice", which sends them. The careers page around
+    the frame has a "Join our talent network" sign-up of its own, whose heading made the gate look
+    like one: the desk filled the email and left the press to the person. With accept_notices (and
+    as the live check's test identity, in practice mode) it fills the email, the country code and
+    the number from the profile's phone, presses it, and carries on to the sign-in step; with it
+    off, or in any other profile's practice mode, the press stays the person's."""
+    from urllib.parse import parse_qs, urlparse
+
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 1)
+    if who == "test-identity":
+        as_test_identity(monkeypatch, job_apply_home)
+    elif who == "practice":
+        notice_settings(job_apply_home, submit_mode="dry_run")
+    elif who == "off":
+        notice_settings(job_apply_home, accept_notices=False)
+    job = srv.add_job(url=fixture_url("site/icims-privacy-gate.html"), title="Analyst", company="Example Financial")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            [frame] = [f for f in r.page.frames if "in_iframe=1" in f.url]
+            return r, frame.url
+        finally:
+            await applier.stop()
+
+    r, frame_url = run(go())
+    sent = {k: v[0] for k, v in parse_qs(urlparse(frame_url).query).items()}
+    if who in ("off", "practice"):
+        assert (r.status, r.need) == ("needs_you", "stuck"), (r.status, r.reason, r.log)
+        assert "“I Acknowledge the Privacy Notice”" in r.reason, r.reason
+        assert "step" not in sent and not any(line.startswith("agreed") for line in r.log), (sent, r.log)
+        return
+    assert r.log[1:3] == ["filled 3 field(s) on “Privacy Notice and Sign-In”", "agreed to Example Financial's “I "
+                          "Acknowledge the Privacy Notice” for you (settings.accept_notices)"], (r.reason, r.log)
+    assert sent.get("step") == "email", (frame_url, r.reason, r.log)
+    assert (sent.get("css_loginName"), sent.get("countryCodeSelect"), sent.get("css_phoneNumber")) == (
+        "sam.rivera@example.com", "US", "480-555-0123"), sent
+    assert (r.status, r.need) == ("needs_you", "sign_in"), (r.status, r.reason, r.log)
 
 
 def test_with_manage_accounts_a_refused_saved_password_is_reset(srv, monkeypatch, job_apply_home):
@@ -1595,6 +1653,32 @@ def test_a_form_page_that_thanks_the_person_isnt_taken_for_a_confirmation(srv, m
     assert srv.tracker().get(job["id"])["status"] != "applied"
 
 
+def test_a_step_still_loading_its_questions_is_waited_for(srv, monkeypatch):
+    """KLA's Workday (live, Oct 2026): past My Experience, its Application Questions step showed its
+    loading dots where the questions go and a greyed-out Save and Continue the form reader found no
+    button for, beside the previous step's resume box, and the desk stopped at once: "I couldn't find
+    the button that moves this application on." A step still loading is waited for."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 1)
+    job = srv.add_job(url=fixture_url("site/workday-questions-loading.html"), title="Customer Service Engineer",
+                      company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        r = applier.enqueue(job["id"])
+        r.seen_form = True  # (filled My Information and My Experience)
+        applier.start()
+        try:
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert r.status == "ready", (r.status, r.need, r.reason, r.log)
+    assert any("clicked “Save and Continue”" in line for line in r.log), r.log
+
+
 def test_a_first_step_that_thanks_the_person_isnt_taken_for_a_confirmation(srv, monkeypatch):
     """A careers site's first step thanks the person ("Thanks for applying to Acme!") over its required
     First Name and Email and their Next, and its footer asks them to join its talent community. Back on
@@ -1826,6 +1910,135 @@ def test_a_sign_in_page_good_for_one_visit_is_reached_again_through_the_posting(
     assert "so I went back to make an account there instead" in log, log
     assert "sign-in page couldn't be opened again, so I opened the job again" in log, log
     assert "created your account" in log and r.seen_form, (r.reason, r.log)
+
+
+# Kforce's Taleo career section, on Kforce's own address (data/lists/phoenix-metro.yaml)
+TALEO_LOGIN = "https://myhiring.kforce.com/careersection/iam/accessmanagement/login.jsf"
+
+
+async def _taleo_site(srv) -> None:
+    """Kforce's Taleo career section from the hand-written pages (site/taleo-*.html) at its own
+    address, so its saved password is Taleo's as it is live; routed: nothing reaches the real site.
+    Its application is a plain form."""
+    site = Path(__file__).parent / "fixtures" / "site"
+    pages = {"/careersection/iam/accessmanagement/login.jsf": (site / "taleo-login.html").read_text(encoding="utf-8"),
+             "/careersection/iam/accessmanagement/register.jsf": (site / "taleo-register.html").read_text(encoding="utf-8"),
+             "/careersection/application.jss": _form("Kforce")}
+
+    async def handler(route):
+        page = pages.get(urlparse(route.request.url).path)
+        await route.fulfill(status=200 if page else 404, content_type="text/html",
+                            body=page or "<html><body>not found</body></html>")
+
+    await srv.browser.page()
+    await srv.browser._ctx.route("https://myhiring.kforce.com/**", handler)
+
+
+def test_taleos_saved_password_goes_on_its_career_sections_only():
+    """Kforce's Taleo career section is on Kforce's own address: the saved Taleo password goes there
+    (as on taleo.net), and on nothing that only looks like it."""
+    assert pipeline.password_for(TALEO_LOGIN + "?lang=en") == "taleo_password"
+    assert pipeline.password_for("https://acme.taleo.net/careersection/2/jobapply.ftl") == "taleo_password"
+    for url in ("http://myhiring.kforce.com/careersection/iam/accessmanagement/login.jsf",
+                "https://myhiring.kforce.com.evil.example/careersection/", "https://evil.example/myhiring.kforce.com/",
+                "https://www.kforce.com/careers/"):
+        assert pipeline.password_for(url) is None, url
+    assert pipeline._CREATE_ACCOUNT.match("New User")  # Taleo's way to a new account
+    assert "Save a Taleo password" in pipeline._password_tip(TALEO_LOGIN)  # (none saved in the test's home)
+
+
+def test_taleo_signs_in_with_its_saved_password_and_the_email_as_user_name(srv, monkeypatch, job_apply_home):
+    """Kforce's Taleo Login (live, Oct 10) asks for a "User Name", and is on Kforce's own address: the
+    desk didn't take it for Taleo's and stopped at once ("Sign in (or create your account)"), the saved
+    Taleo password untried. It signs in there with that password, the profile email as the user name
+    (the one the desk makes an account with), and goes on to the application."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setenv("JOB_APPLY_SECRET_TALEO_PASSWORD", "not-a-real-password")
+    job = srv.add_job(url=TALEO_LOGIN + "?user=sam.rivera%40example.com&pw=not-a-real-password", title="Recruiter",
+                      company="Kforce")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        await _taleo_site(srv)
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r, await r.page.evaluate("() => [sessionStorage.getItem('signedIn'), sessionStorage.getItem('logins')]")
+        finally:
+            await applier.stop()
+
+    r, (signed_in, logins) = run(go())
+    assert (signed_in, logins) == ("sam.rivera@example.com", "1"), (signed_in, logins, r.reason, r.log)
+    assert "pressed “Login” with your saved password and your email as the user name" in r.log, r.log
+    assert r.seen_form and not any("account" in line for line in r.log), (r.status, r.reason, r.log)
+
+
+def test_with_manage_accounts_taleo_makes_the_account_through_new_user(srv, monkeypatch, job_apply_home):
+    """The live check's test identity has no account at Kforce's Taleo. The saved Taleo password
+    doesn't sign in, and Taleo's reset ("Need a Password?") asks for the user name and emails an
+    access code, which the desk can't do, so even with the inbox watched it makes the account: Taleo's
+    "New User", the profile email as the user name (said in the log) and the saved password twice,
+    then "Register"."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setenv("JOB_APPLY_SECRET_TALEO_PASSWORD", "not-a-real-password")
+    manage_accounts(job_apply_home)
+    watched_inbox(monkeypatch)
+    job = srv.add_job(url=TALEO_LOGIN + "?lang=en", title="Recruiter", company="Kforce")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        await _taleo_site(srv)
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r, await r.page.evaluate(
+                "() => [sessionStorage.getItem('registered'), sessionStorage.getItem('logins'),"
+                " sessionStorage.getItem('registers')]")
+        finally:
+            await applier.stop()
+
+    r, (registered, logins, registers) = run(go())
+    assert (registered, logins, registers) == ("sam.rivera@example.com", "1", "1"), (registered, logins, r.reason, r.log)
+    log = "\n".join(r.log)
+    assert "your saved password didn't sign in, so I opened Create Account" in log, log
+    assert "filled the Create Account form with your details and saved password (your email as its user name)" in log
+    assert "pressed “Register” to create your account on Oracle Taleo with your email as its user name" in log
+    assert any(line.startswith("created your account on Oracle Taleo with your email as its user name")
+               for line in r.log), log
+    assert "password reset" not in log and r.seen_form, (r.status, r.reason, log)
+
+
+def test_taleos_security_questions_are_left_to_the_person(srv, monkeypatch, job_apply_home):
+    """A Taleo New User form that asks for a security question and its answer: the desk fills in the
+    user name (the email) and the password, never makes up the questions' answers, and so leaves the
+    form to the person (Register unpressed) with what it wants."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setenv("JOB_APPLY_SECRET_TALEO_PASSWORD", "not-a-real-password")
+    manage_accounts(job_apply_home)
+    job = srv.add_job(url=TALEO_LOGIN + "?questions=1", title="Recruiter", company="Kforce")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        await _taleo_site(srv)
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r, await r.page.evaluate(
+                "() => [document.getElementById('dialogTemplate-dialogForm-userName').value,"
+                " document.getElementById('dialogTemplate-dialogForm-question1').value,"
+                " document.getElementById('dialogTemplate-dialogForm-answer1').value,"
+                " sessionStorage.getItem('registers')]")
+        finally:
+            await applier.stop()
+
+    r, shown = run(go())
+    assert shown == ["sam.rivera@example.com", "", "", None], (shown, r.reason, r.log)
+    assert r.need == "sign_in" and "security questions" in r.reason and "never makes up answers" in r.reason, r.reason
+    assert "your email as its user name" in r.reason, r.reason
+    assert not any(line.startswith(("pressed “Register", "created your account")) for line in r.log), r.log
 
 
 @pytest.mark.parametrize("mode", ["workday", "workday-late"])
@@ -2171,6 +2384,85 @@ def test_a_sign_up_form_with_one_password_box_is_filled_in(srv, monkeypatch, pag
     r = run(go())
     assert r.log.count("pressed “Sign in” with your saved password") == 1  # not tried again
     assert "filled the Create Account form with your details and saved password" in r.log
+
+
+async def ukg_did(page):
+    """What the UKG-like Register page (site/ukg-register.html) has seen in this tab."""
+    return await page.evaluate("() => Object.fromEntries(Object.entries(sessionStorage).filter(([k]) => "
+                               "k.startsWith('ukg.')).map(([k, v]) => [k.slice(4), JSON.parse(v)]))")
+
+
+def test_with_manage_accounts_ukg_pros_second_account_step_is_finished(srv, monkeypatch, job_apply_home):
+    """UKG Pro (Nikon Precision, live, Oct 2026, the test identity): after the sign-up's email,
+    password and Continue, its Register page asks for a name and phone, a consent box ("By checking
+    this box, I have read and agree to the Consent and Privacy Policy*", its words beside it, not in a
+    label) and "Create account", greyed out until the box is ticked. The desk said the account was made
+    as that page came up, filled it as an application, and stopped: it couldn't find the button. It
+    finishes the account now (the consent ticked, never the text messages box), and says it's made
+    only once the site goes on to the application."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    saved_password(monkeypatch)
+    manage_accounts(job_apply_home)
+    job = srv.add_job(url=fixture_url("site/signin-signup-link.html") + "?register", title="FSE",
+                      company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r, await ukg_did(r.page)
+        finally:
+            await applier.stop()
+
+    r, did = run(go())
+    assert did == {"presses": 1, "texts": False, "created": True}, (did, r.log)
+    first = next(i for i, line in enumerate(r.log) if line.startswith("pressed “Continue” to create your account"))
+    second = [i for i, line in enumerate(r.log) if line.startswith("pressed “Create account” to finish creating your "
+                                                                    "account")]
+    made = [i for i, line in enumerate(r.log) if line.startswith("created your account on")]
+    assert len(second) == 1 and "after ticking “By checking this box, I have read and agree to the Consent and " \
+        "Privacy Policy”" in r.log[second[0]], r.log
+    assert len(made) == 1 and first < second[0] < made[0] and "agreed to its terms" in r.log[made[0]], r.log
+    assert r.seen_form and r.need != "sign_in" and "couldn't find the button" not in r.reason, (r.reason, r.log)
+    assert any("“My Information”" in line for line in r.log), r.log  # on to the application
+
+
+def test_without_manage_accounts_ukg_pros_second_account_step_is_the_persons(srv, monkeypatch):
+    """The same Register page, with settings.manage_accounts off: the person pressed Continue on the
+    sign-up the desk filled in, and the desk, carrying on, filled the next page as an application and
+    stopped, saying it couldn't find the button. It fills in the name and phone and leaves the consent
+    and "Create account" to the person, then carries on once they've pressed it."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    saved_password(monkeypatch)
+    job = srv.add_job(url=fixture_url("site/signin-signup-link.html") + "?register", title="FSE",
+                      company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status == "needs_you", about=state(r))
+            assert r.need == "sign_in" and "Create Account form" in r.reason, (r.reason, r.log)
+            await r.page.click("button:has-text('Continue')")  # the person creates the account
+            await until(lambda: "few more details" in r.reason, about=state(r))
+            assert r.need == "sign_in" and "“Create account”" in r.reason, (r.reason, r.log)
+            page = r.page
+            filled = await page.evaluate("() => [fn.value, ln.value, ph.value.length > 0, consent.checked, texts.checked]")
+            assert filled == ["Sam", "Rivera", True, False, False], filled  # the boxes, never the consent
+            assert (await ukg_did(page)).get("presses") is None  # nor its button
+            await page.check("#consent")  # the person agrees and creates the account
+            await page.click("button:has-text('Create account')")
+            await until(lambda: r.need == "questions" or r.status == "ready", about=state(r))  # carried on by itself
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert not any("created your account" in line or "pressed “Create account”" in line for line in r.log), r.log
+    assert r.seen_form, (r.reason, r.log)
 
 
 @pytest.mark.parametrize("mode", ["", "?slow=3500"])
@@ -2623,7 +2915,9 @@ def test_a_create_account_form_is_filled_from_the_profile(srv, monkeypatch, page
             await applier.stop()
 
     r = run(go())
-    assert "filled the Create Account form with your details and saved password" in r.log
+    # (SCREEN's asks for a user name too, and is told it's the email)
+    user = " (your email as its user name)" if "username" in page else ""
+    assert "filled the Create Account form with your details and saved password" + user in r.log, r.log
     assert srv.tracker().get(job["id"])["status"] != "ready"
 
 
@@ -3401,7 +3695,8 @@ def test_a_sign_in_by_hand_mentions_the_password_the_desk_could_save(monkeypatch
     assert "Save an Infor password" in pipeline._password_tip("https://css-benchmark-prd.inforcloudsuite.com/sso/SSOServlet")
     assert "Save an ApplicantStack password" in pipeline._password_tip("https://seus.applicantstack.com/x/login")
     assert "Save a UKG Pro password" in pipeline._password_tip("https://signin-us.ultipro.com/u/login")
-    assert pipeline._password_tip("https://www.taleo.net/careersection/login") == ""  # not offered on the page
+    assert "Save a Taleo password" in pipeline._password_tip("https://acme.taleo.net/careersection/iam/login.jsf")
+    assert pipeline._password_tip("https://sjobs.brassring.com/TGnewUI/Home") == ""  # not offered on the page
     assert pipeline._password_tip("https://example.com/careers/login") == ""
     monkeypatch.setattr(pipeline, "_secret", lambda name: "saved")
     assert pipeline._password_tip("https://career8.successfactors.com/career?x=1") == ""
@@ -4938,6 +5233,147 @@ def test_an_email_the_site_has_no_account_for_is_said_so_with_its_way_to_make_on
     assert (r.status, r.need) == ("needs_you", "sign_in"), (r.status, r.need, r.reason, r.log)
     assert "no account for your email" in r.reason and "“Create an account”" in r.reason, r.reason
     assert "We don't recognize this email" in r.reason and "marked invalid" not in r.reason
+
+
+EIGHTFOLD = "site/eightfold-create-account.html"
+
+
+def inbox_with_code(monkeypatch, codes=None):
+    """An email app password saved, and an inbox whose sign-up code is 123456 (`codes`: each
+    kind asked for, in turn)."""
+    monkeypatch.setattr(pipeline, "MAIL_POLL_SECONDS", 0)
+    monkeypatch.setenv("JOB_APPLY_SECRET_EMAIL_PASSWORD", "an-app-password")
+    monkeypatch.setattr(pipeline.mailbox, "imap_host", lambda address: "imap.example.com")
+
+    def inbox(address, password, since, senders, want, allowed_link, before=None, look_back=None):
+        if codes is not None:
+            codes.append(want)
+        return pipeline.mailbox.Found("code", "123456", "careers.example.com", time.time()) if want == "code" else None
+
+    monkeypatch.setattr(pipeline.mailbox, "search", inbox)
+
+
+@pytest.mark.parametrize("identity", [False, True], ids=["manage_accounts", "test-identity"])
+def test_with_manage_accounts_an_email_first_site_makes_the_account_with_the_emailed_code(srv, monkeypatch,
+                                                                                        job_apply_home, identity):
+    """Northrop Grumman's Eightfold site (the live check's test identity, Oct 2026): its sign-in said
+    "We don't recognize this email. Create a new account", and the desk stopped for the person to make
+    the account, manage_accounts on. Now it makes it: "Create an account", the Privacy Policy box
+    (the site's terms: nothing else is ticked) and its Submit, the email again and Continue, then the
+    emailed code from the inbox and the code step's Submit, and it carries on with the application.
+    No password goes on the site (Eightfold's asks none)."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    if identity:
+        as_test_identity(monkeypatch, job_apply_home)
+    else:
+        manage_accounts(job_apply_home)
+    asked: list[str] = []
+    inbox_with_code(monkeypatch, asked)
+    job = srv.add_job(url=fixture_url(EIGHTFOLD), title="Financial Analyst", company="Example Corp")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.need == "questions" or r.status == "ready", about=state(r))  # nobody touched it
+            return r, await r.page.evaluate("() => sessionStorage.getItem('account')")
+        finally:
+            await applier.stop()
+
+    r, account = run(go())
+    assert account == "sam.rivera@example.com" and "/site/" in r.url and "eightfold" not in r.url, (account, r.url, r.log)
+    log = "\n".join(r.log)
+    assert "has no account for your email, so I pressed “Create an account” to make one" in log, log
+    assert "ticked “I have read and agree to the Privacy Policy” to make your account" in log, log
+    assert "your email for the new account and pressed “Continue”" in log, log
+    assert "entered the code from your email (sent from careers.example.com)" in log and "pressed “Submit”" in log, log
+    assert any(line.startswith("created your account on") and "the code it emailed you" in line for line in r.log), log
+    assert any(line.startswith("filled") for line in r.log) and asked and set(asked) == {"code"}, (asked, log)
+    assert r.status != "submitted", (r.status, r.reason)
+
+
+def test_with_manage_accounts_a_choice_to_be_considered_for_other_jobs_stays_the_persons(srv, monkeypatch,
+                                                                                        job_apply_home):
+    """Northrop Grumman's agreement step also asks for its required "Contact Consent": "I understand that
+    I may be considered for other open positions in my country". Being considered for other jobs is
+    never chosen for the person (as a talent community isn't): the desk ticks the Privacy Policy box,
+    stops for them naming the choice, and once they've chosen it and pressed Submit, makes the account
+    with the email and the emailed code by itself, and carries on."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    manage_accounts(job_apply_home)
+    inbox_with_code(monkeypatch)
+    job = srv.add_job(url=fixture_url(EIGHTFOLD) + "?contact=required", title="Financial Analyst",
+                      company="Example Corp")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            first = (r.status, r.need, r.reason)
+            boxes = await r.page.evaluate("() => [document.getElementById('consent-checkbox').checked, "
+                                          "document.getElementById('contact-consent-choice-0').checked]")
+            await r.page.check("#contact-consent-choice-0")  # the person chooses it, and presses Submit
+            await r.page.click("#agree")
+            await until(lambda: r.need == "questions" or r.status == "ready", about=state(r))
+            return r, first, boxes, await r.page.evaluate("() => sessionStorage.getItem('account')")
+        finally:
+            await applier.stop()
+
+    r, (status, need, reason), boxes, account = run(go())
+    assert (status, need) == ("needs_you", "sign_in"), (status, need, reason)
+    assert boxes == [True, False], boxes  # the Privacy Policy ticked; the other choice left to the person
+    assert "“Contact Consent: I understand that I may be considered for other open positions" in reason, reason
+    assert "the desk never chooses for you" in reason and "You must select one option" in reason, reason
+    assert account == "sam.rivera@example.com" and "/site/" in r.url and "eightfold" not in r.url, (account, r.url, r.log)
+    assert any(line.startswith("created your account on") for line in r.log), r.log
+
+
+def test_without_manage_accounts_an_email_first_sites_account_steps_stay_the_persons(srv, monkeypatch):
+    """manage_accounts off: the desk stops at "We don't recognize this email", and the account's
+    steps after it (the agreement, the email again, the code) are the person's: none is read as the
+    application (its agreement's Submit taken for the review page's), nor is anything pressed in
+    them. The desk carries on once the application shows."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    job = srv.add_job(url=fixture_url(EIGHTFOLD), title="Financial Analyst", company="Example Corp")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            first = (r.status, r.need, r.reason)
+            page = r.page
+            await page.click("#switch")  # the person: Create an account
+            await asyncio.sleep(2)  # (several of the desk's looks)
+            on_consent = (r.status, r.need, await page.evaluate("() => document.getElementById('consent-checkbox')"
+                                                                 ".checked"))
+            await page.check("#consent-checkbox")
+            await page.click("#agree")
+            await asyncio.sleep(2)
+            on_email = (r.status, r.need, await page.locator("#head").inner_text())
+            await page.click("#go")
+            await page.wait_for_selector(".digit")
+            await asyncio.sleep(2)
+            on_code = (r.status, r.need)
+            await page.fill(".digit >> nth=0", "123456")
+            await page.click("#confirm")
+            await until(lambda: r.need == "questions" or r.status == "ready", about=state(r))
+            return r, first, on_consent, on_email, on_code
+        finally:
+            await applier.stop()
+
+    r, first, on_consent, on_email, on_code = run(go())
+    assert first[:2] == ("needs_you", "sign_in") and "no account for your email" in first[2], first
+    assert "“Create an account”" in first[2] and "We don't recognize this email" in first[2], first
+    assert on_consent == ("needs_you", "sign_in", False), on_consent  # not ticked, nor its Submit pressed
+    assert on_email == ("needs_you", "sign_in", "Create an account"), on_email  # nor its Continue
+    assert on_code == ("needs_you", "sign_in"), on_code
+    assert "eightfold" not in r.url and any("“My Information”" in line for line in r.log), (r.url, r.log)
+    assert not any(line.startswith("created your account") for line in r.log), r.log
 
 
 def test_a_job_sent_to_a_maintenance_page_is_said_down_for_maintenance(srv, monkeypatch):
