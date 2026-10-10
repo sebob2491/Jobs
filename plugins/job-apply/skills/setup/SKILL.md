@@ -18,6 +18,12 @@ All of the user's data lives in `~/.job-apply/`, outside the plugin:
 
 ## Steps
 
+Ask everything the Job Desk would otherwise stop an application for here, in one sitting:
+the person answers once, and the desk fills it in on every application after that. When the
+user asks for that later ("ask me everything the desk needs", "the desk's background
+questions"), or the desk's "Fewer stops" notice lists something, run `setup_status` and go
+through its `missing` and `profile_gaps` together.
+
 1. Run `setup_status`. On first run it creates `~/.job-apply/profile.yaml` from the
    template, and it lists the missing fields.
 
@@ -31,14 +37,13 @@ All of the user's data lives in `~/.job-apply/`, outside the plugin:
    `documents.resume` to the path it returns. Read it, then fill `personal`, `experience`, `education`,
    `history.previous_employers`, `work_history` (every job, with start/end month)
    and `education_history` from it. Use only what the resume says; if a date or
-   location is missing, ask rather than guess. Where the user has worked for an
-   employer they may apply to again, they can give their ID there for
-   `history.employee_ids` (`{Employer: "ID"}`): it goes only on that employer's forms.
+   location is missing, ask rather than guess.
 
    **Confirm every degree before writing it.** A resume, an Indeed one especially,
    can list a degree that was never finished. Ask "Did you complete the <degree>?"
    for each one. If it wasn't completed, record that school in `education_history`
-   with `degree: ""` and the classes as the major or a note, and set
+   with `degree: Some college (no degree)` (Workday's Degree box asks; a list's "Some
+   College, No Degree" is picked for it) and the classes as the major or a note, and set
    `education.highest_degree` to the highest one completed (a GED or high school
    diploma, say, or "Some college" when there is none). Add each degree confirmed
    finished, a high school diploma or GED included, to `education.degrees_earned`
@@ -61,10 +66,18 @@ All of the user's data lives in `~/.job-apply/`, outside the plugin:
    - Voluntary self-identification (gender, Hispanic/Latino, race, veteran,
      disability): explain that these are optional, and record their answer or a
      decline option such as "Decline to self-identify". Don't push for an answer.
+   - Background (`background:`), the yes/no questions many employers ask: a relative or
+     close friend working at the company applied to, a government employee (federal, state
+     or local) now or in the last 5 years, military service, the US Department of Defense, a
+     non-compete or similar agreement, owning patents, trademarks or copyrights, keeping
+     another job or a business, a seat on a board. Write `true` or `false` for each. A
+     `false` answers any wording of them, whatever time it covers; a `true` leaves each one
+     to the person on the desk, since its dates or details differ.
+   - An employer the user has worked for and may apply to again: their ID there, for
+     `history.employee_ids` (`{Employer: "ID"}`; only that employer's forms get it).
    - Recurring screening questions in the `answers:` list: cleanroom work, lifting
-     50 lbs, background check or drug screen, relatives at the company, non-compete.
-     For finance work, also a credit check, licenses held (CPA, FINRA registrations) and
-     government employment in the last few years (banks and accounting firms ask).
+     50 lbs, background check or drug screen. For finance work, also a credit check and
+     licenses held (CPA, FINRA registrations).
      For hospitals and health systems (Banner Health, HonorHealth, Mayo Clinic…), also
      whether a government agency has ever excluded them from Medicare, Medicaid or other
      government programs.
@@ -104,7 +117,10 @@ All of the user's data lives in `~/.job-apply/`, outside the plugin:
    those jobs lack a start or end month (Workday asks both for every job): take them from
    the resume as `start: 2021-03` and `end: 2023-06` (or `end: present`), and ask the user
    for any the resume gives only as years or not at all. They needn't remember an old
-   job's months; leave those as they are rather than guess. Then show the user a short summary of their
+   job's months; leave those as they are rather than guess. `education_history degree: <schools>`:
+   those schools have no degree written; confirm with the user what they finished there
+   (`Some college (no degree)` for classes without one). `background: <keys>`: ask those
+   questions, all at once with AskUserQuestion. Then show the user a short summary of their
    answers to confirm, with sensitive values (EEO choices) summarized rather than
    echoed.
 

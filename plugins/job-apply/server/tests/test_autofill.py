@@ -207,10 +207,27 @@ def test_jobs_without_their_months_are_named_as_missing_from_the_profile():
         {"title": "Line Cook", "company": "Example Diner"},
         {"title": "Assistant", "company": "Example Lab", "start": "Jun 2016", "end": "Jan 2018"}]})
     assert undated_jobs(p) == ["Safety Technician at Example Steel", "Line Cook at Example Diner"]
-    assert p.profile_gaps() == ["work_history dates: Safety Technician at Example Steel; Line Cook at Example Diner"]
+    assert p.profile_gaps()[0] == "work_history dates: Safety Technician at Example Steel; Line Cook at Example Diner"
     # a gap, not a requirement: an old job's months can be forgotten, and most sites never ask
     assert not [m for m in p.missing_required() if m.startswith("work_history")]
-    assert prof().profile_gaps() == []  # the test profile's jobs are dated
+    assert not [g for g in prof().profile_gaps() if g.startswith("work_history")]  # the test profile's jobs are dated
+
+
+def test_the_gaps_name_schools_without_a_degree_and_the_background_left_unanswered():
+    """Fewer stops: a school with no degree written stopped Workday's Degree box (classes without
+    a degree are "Some college (no degree)"), and each unanswered background question stops the
+    desk where it's asked. Setup asks them all at once; the desk's notice lists what's left."""
+    from job_apply.config import BACKGROUND_KEYS, Profile
+
+    p = Profile({"education_history": [{"school": "Example Community College", "degree": ""},
+                                       {"school": "Example High School", "degree": "High School Diploma"}],
+                 "background": {"military": False, "board_member": True}})
+    gaps = p.profile_gaps()
+    assert "education_history degree: Example Community College" in gaps, gaps
+    background = next(g for g in gaps if g.startswith("background: "))
+    assert "military" not in background and "board_member" not in background and "relatives_at_employer" in background
+    answered = Profile({"background": {k: False for k in BACKGROUND_KEYS}})
+    assert not [g for g in answered.profile_gaps() if g.startswith("background")]
 
 
 def test_a_boxes_in_a_jobs_block_that_the_profile_doesnt_hold():
@@ -1131,6 +1148,57 @@ def test_an_employee_id_goes_only_on_its_own_employers_forms():
     assert resolve_field(f("Employee ID (if applicable)"), prof(), {"company": "Example Fab"}) is None
     for asked in ("Referring Employee ID", "Your manager's employee number"):  # someone else's
         assert resolve_field(f(asked), person, {"company": "Example Fab"}) is None, asked
+
+
+def test_recurring_background_questions_are_answered_from_a_no_in_the_profile():
+    """An employer's Application Questions (live, Oct 2026) asked about government and Defense
+    employment, agreements, intellectual property, plans to keep another job or sit on a board,
+    and relatives there: each stopped the desk. A "no" in the profile's background answers any
+    wording or time span of them; a "yes", or nothing said, leaves them to the person; a question
+    about another organization, or another question that shares the words, isn't answered."""
+    from job_apply.config import Profile
+
+    no = {"defense_department": False, "government_employee": False, "military": False, "restrictive_agreement": False,
+          "intellectual_property": False, "outside_work": False, "board_member": False, "relatives_at_employer": False}
+    person, job, yn = Profile({"background": no}), {"company": "Example Fab"}, ["Yes", "No"]
+
+    def answer(label, who=person, **kw):
+        got = resolve_field(f(label, kw.pop("kind", "radio_group"), options=kw.pop("options", yn)), who, job)
+        return got.value if got else None
+
+    for asked in (
+            "Are you a current employee of the US Department of Defense (DOD) or were you an employee of the US "
+            "Department of Defense (DOD) on or after January 28, 2008?",
+            "Are you a current Federal, State or Local Government employee; including military (other than the DOD) or "
+            "have you at any time in the past 5 years been an employee of one of these entities?",
+            "To the best of your knowledge and belief, are you aware of a contract or agreement with your current "
+            "employer (or other company), such as a non-competition, non-disclosure, or non-solicitation agreement, that "
+            "impact or interfere with your ability to work for the Company?",
+            "Do you own, control, or have an economic interest in any intellectual property rights (patents, trademarks, "
+            "or copyrights)?",
+            "Do you have any friends/relatives presently employed by Example Fab?",
+            "Are you currently serving on the board of directors of any for-profit company?"):
+        assert answer(asked) == "No", asked
+    plans = f("If hired, do you intend to (select all that apply):", "checkbox_group", options=[
+        "Maintain any secondary non-company employment or engage in a non-company business activity?",
+        "Sit on the board of directors or similar governing body of a non-company entity?", "Neither"])
+    assert resolve_field(plans, person, job).value == ["Neither"]
+    # theirs: another organization, another question with the same words, or a "yes"
+    assert answer("Are you an immediate family member (parent, child, sibling, spouse/partner) of a partner at "
+                  "Ernst & Young who is based out of the San Jose office?") is None
+    assert answer("Are you willing to sign a non-compete agreement?") is None
+    yes = Profile({"background": {**no, "government_employee": True, "outside_work": True}})
+    assert answer("Have you been employed by the U.S. Government in the last two years?", yes) is None
+    assert resolve_field(plans, yes, job) is None
+    unsaid = Profile({"background": {**no, "military": None}})
+    assert answer("Are you a current Federal, State or Local Government employee; including military?", unsaid) is None
+    assert answer("Do you own any patents?", Profile({})) is None
+    # the export-control question names the U.S. Government and an employee, and is its own
+    export = resolve_field(f("Are you a U.S. citizen or national, lawful permanent resident, or have been approved for "
+                             "refugee or asylee status by the U.S. Government? (This assists in determining whether we "
+                             "must apply for an export license on behalf of an employee.)", "radio_group", options=yn),
+                           person, job)
+    assert export is None or export.rule != "government_employee", export
 
 
 def test_an_expected_graduation_date_is_never_a_past_year():
