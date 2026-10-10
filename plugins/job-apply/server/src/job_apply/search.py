@@ -420,8 +420,11 @@ async def _workday(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, 
         # otherwise scan unfiltered results and filter them afterwards.
         match = _workday_location_facets(first["facets"], terms)
         if match:
-            applied = match
-            first = await page(0, applied)
+            filtered = await page(0, match)
+            # Brooks Automation's (Oct 2026) counts an opening at "Remote - Arizona" but finds none
+            # there, its first place being "Remote - US": then read them all and check here
+            if int(filtered.get("total") or 0) or filtered.get("jobPostings"):
+                applied, first = match, filtered
         # The filter lists every place these results are in. If none is in the area,
         # neither is any "3 Locations" job.
         nowhere_near = match == {}
@@ -758,10 +761,32 @@ def _icims_detail_place(row: Any) -> str:
     return ""
 
 
+_ICIMS_IMPRESSIONS = re.compile(r"\bvar\s+jobImpressions\s*=\s*(\[.*?\])\s*;", re.S)
+
+
+def _icims_impression_places(page: str) -> dict[str, str]:
+    """The places a portal's page lists for its own counting ("var jobImpressions = [...]"),
+    by job number: Fujifilm's rows show no place, but this says "Mesa, AZ" (Oct 2026)."""
+    m = _ICIMS_IMPRESSIONS.search(page)
+    try:
+        items = json.loads(m.group(1)) if m else []
+    except ValueError:
+        return {}
+    places: dict[str, str] = {}
+    for item in items if isinstance(items, list) else []:
+        where = item.get("location") if isinstance(item, dict) else None
+        if isinstance(where, dict) and item.get("idRaw"):
+            place = ", ".join(str(where[k]).strip() for k in ("city", "state") if str(where.get(k) or "").strip())
+            if place:
+                places[str(item["idRaw"])] = place
+    return places
+
+
 def parse_icims(html: str, base: str) -> list[Listing]:
     soup = BeautifulSoup(html, "html.parser")
     out: list[Listing] = []
     seen: set[str] = set()
+    counted = _icims_impression_places(html)
     for a in soup.select('a[href*="/jobs/"]'):
         m = re.search(r"/jobs/(\d+)/[^/?#]+/job", str(a.get("href") or ""))
         if not m:
@@ -787,8 +812,8 @@ def parse_icims(html: str, base: str) -> list[Listing]:
             if when is not None:
                 d = re.match(r"(\d{1,2})/(\d{1,2})/(\d{4})", str(when["title"]))
                 posted = f"{d.group(3)}-{int(d.group(1)):02d}-{int(d.group(2)):02d}" if d else ""
-        out.append(Listing(company="", title=title, url=url, location=location.strip(), posted=posted,
-                           external_id=m.group(1), ats="icims"))
+        out.append(Listing(company="", title=title, url=url, location=location.strip() or counted.get(m.group(1), ""),
+                           posted=posted, external_id=m.group(1), ats="icims"))
     return out
 
 

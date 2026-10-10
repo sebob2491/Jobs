@@ -30,9 +30,9 @@ NXP, TEL, ADI, Onto Innovation, Axcelis, Thermo Fisher), Eightfold (Lam Research
 SuccessFactors (Edwards, TSMC Arizona, Amkor, Qorvo), Oracle (onsemi, TI), Greenhouse (ASM),
 ApplicantStack (SCREEN), iCIMS (Daifuku), Paycom (Ebara), UKG Pro (Nikon Precision), Infor
 CloudSuite (Benchmark) and Lever.
-`plugins/job-apply/data/companies.yaml` lists 28 semiconductor employers with
+`plugins/job-apply/data/companies.yaml` lists 36 semiconductor employers with
 Arizona sites, including equipment makers whose field service engineers work at
-Arizona fabs.
+Arizona fabs, and the suppliers whose technicians run the fabs' gases and chemicals.
 
 Looking for other work, or somewhere else? Copy
 [`templates/companies.example.yaml`](plugins/job-apply/templates/companies.example.yaml)
