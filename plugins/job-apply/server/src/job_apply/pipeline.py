@@ -703,25 +703,28 @@ class Applier:
         job = self.srv.tracker().get(run.job_id, with_description=False) or {}
         own = [u for u in (run.url, job.get("url"), job.get("apply_url")) if u]
         # a site that names the job in its address's query (an Eightfold site's /careers?pid=123):
-        # ?pid=999 there is another job, and /careers?query=... with no id its careers home. One with
-        # no query at all is the job's own page, its address rewritten by the site's script
-        # (/careers/job?gh_jid=123 to /careers/job, the application still open)
+        # ?pid=999 there is another job, and /careers?query=... with no id its careers home. With no
+        # query at all it's either: the careers home (the site's logo pressed), or the job's own page
+        # with its address rewritten by the site's script (/careers/job?gh_jid=123 to /careers/job, the
+        # application still open). The page tells: an application's boxes, or not
         mine: dict[str, set[str]] = {}
         for u in own:
             for key, value in _job_ids(u).items():
                 mine.setdefault(key, set()).add(value)
         theirs = _job_ids(tab.url)
+        rewritten = False
         if not any(k in mine and v not in mine[k] for k, v in theirs.items()):  # (not another job's)
             if any(_bare(tab.url) == _bare(u) for u in own):
-                if not mine or any(k in theirs for k in mine) or not urlparse(tab.url).query:
+                if not mine or any(k in theirs for k in mine):
                     return False  # the posting, its application, or the page it was left on
+                rewritten = not urlparse(tab.url).query
             elif not any(_above(tab.url, u) for u in own):
                 return False
         try:
-            _, text = await self.srv.browser.peek(tab)
+            data, text = await self.srv.browser.peek(tab)
         except Exception:  # a tab mid-way through loading: carried on with, as before
             return False
-        return not confirmations(text)
+        return not confirmations(text) and not (rewritten and _application_like(data))
 
     def _own_hosts(self, run: Run) -> set[str]:
         job = self.srv.tracker().get(run.job_id, with_description=False) or {}
@@ -2428,12 +2431,23 @@ def _step_beside(data: dict[str, Any]) -> bool:
     return any(_FORWARD.match(final_text(a.get("text") or "")) and (f or not own) for a, f in zip(actions, framed))
 
 
+# What a page that has the application asks a person to go on to after it: more jobs ("Please continue
+# to browse our open positions"). Not "optional" or "voluntary" questions, nor a survey: an application's
+# own steps say those before its Submit ("Please complete the voluntary self-identification questions below")
+_AFTER_SENT = re.compile(r"\b(?:browse|explore|search|look at|view (?:our|all|other|more))\b|"
+                         r"\b(?:open|other|more|similar) (?:positions|jobs|roles|opportunities)\b", re.I)
+
+
 def _goes_on(text: str) -> bool:
-    """Does a page thank the person for applying and then ask them to go on, in the same sentence or
-    the next ("Thank you for your application. Please complete the below questions.")?"""
+    """Does a page thank the person for applying and then ask them to go on with it, in the same
+    sentence or the next ("Thank you for your application. Please complete the below questions.")?
+    Not on to more jobs, as a page says once the application has gone."""
     flat = re.sub(r"\s+", " ", (text or "").replace("\u2019", "'").replace("\xa0", " "))
-    return any(_GO_ON.search(" ".join(re.split(r"(?<=[.!?]) ", flat[m.end():], maxsplit=2)[:2]))
-               for m in CONFIRMATION_RE.finditer(flat))
+    for m in CONFIRMATION_RE.finditer(flat):
+        after = " ".join(re.split(r"(?<=[.!?]) ", flat[m.end():], maxsplit=2)[:2])
+        if (go := _GO_ON.search(after)) and not _AFTER_SENT.search(after[go.start():go.start() + 80]):
+            return True
+    return False
 
 
 def _mid_application(data: dict[str, Any], text: str) -> bool:
