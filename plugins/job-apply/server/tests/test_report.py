@@ -164,6 +164,79 @@ def test_an_employee_id_is_taken_out_of_a_report(job_apply_home):
     assert "88812345" not in text and "filled Employee ID with" in text
 
 
+def test_a_report_or_note_takes_a_value_out_only_as_a_whole_word(job_apply_home):
+    """A value was taken out even where it was only part of an everyday word: a first name "Rob"
+    left "PREDACTEDlem" for "Problem", garbled and easy to guess. Only whole words go, wherever
+    one is: in an email, a file name, run into the next name."""
+    person = Profile({"personal": {"first_name": "Rob", "last_name": "Hall", "email": "rob.hall77@example.org",
+                                   "address": {"city": "Ware"}}})
+    said = ("Problem on the Robotics page: you shall answer the Challenge about software, Rob Hall from Ware "
+            "(rob.hall77@example.org, RobHall.pdf, Rob_Hall_Resume.pdf)")
+    job = {"id": 15, "title": "Technician", "company": "Example Corp", "ats": "workday", "url": "https://example.com/j"}
+    r = Run(15, "Technician", "Example Corp", status="needs_you", need="stuck", reason=said, log=[said])
+    whole = ("Problem on the Robotics page: you shall answer the Challenge about software, REDACTED from REDACTED "
+             "(REDACTED, REDACTED.pdf, REDACTED_Resume.pdf)")
+    assert f"**What the desk said:** {whole}" in report.build(job, r, person)["preview"]
+    assert f"**What the desk said:** {whole}" in report.note(job, r, person)
+
+
+def _saved_job_page(folder: Path) -> None:
+    snap = folder / "debug" / "20261010-090000-000-stop"
+    snap.mkdir(parents=True)
+    posting = "https://acme.wd1.myworkdayjobs.com/External/job/Phoenix-AZ/Field-Service-Engineer_R12345"
+    (snap / "page.html").write_text(
+        f"<html><head><title>Field Service Engineer - Acme Semi Careers</title></head><body><h1>My Experience</h1>"
+        f"<p>Field Service Engineer (R12345) at Acme Semi</p><a href='{posting}'>Back to the posting</a>"
+        "<a href='https://careers.acme-semi.example/benefits'>Benefits at careers.acme-semi.example</a>"
+        "<img alt='Acme Semi logo'><label for=a>Company</label><input id=a></body></html>")
+    (snap / "snapshot.json").write_text(json.dumps({
+        "url": posting + "/apply?sid=SESS123", "title": "Field Service Engineer - Acme Semi Careers",
+        "note": "stopped: stuck", "frames": [{"file": "page.html", "url": posting + "/apply"}],
+        "fields": [{"label": "Company", "kind": "text", "required": True, "value": ""}]}))
+
+
+def test_an_anonymous_report_says_only_the_job_system_and_the_step(job_apply_home, tmp_path):
+    """The issue a report drafts named the job: the employer in its title, the job's title and its
+    address (with its requisition number) in its text. Anonymous, it says the job system and the
+    step only, in the issue and in the saved pages."""
+    folder = tmp_path / "0016-acme-semi-field-service-engineer"
+    _saved_job_page(folder)
+    posting = "https://acme.wd1.myworkdayjobs.com/External/job/Phoenix-AZ/Field-Service-Engineer_R12345"
+    job = {"id": 16, "title": "Field Service Engineer", "company": "Acme Semi", "ats": "workday",
+           "external_id": "R12345", "url": posting, "apply_url": posting + "/apply", "folder": str(folder)}
+    r = Run(16, "Field Service Engineer", "Acme Semi", status="needs_you", need="stuck", url=posting + "/apply",
+            reason="I couldn't find the button that moves this application on, on Acme Semi's site.",
+            log=[f"opened {posting}/apply?source=LinkedIn", "clicked “Apply” for Field Service Engineer (R12345)",
+                 "careers.acme-semi.example took too long to respond"],
+            page_info={"url": posting + "/apply", "title": "Field Service Engineer - Acme Semi Careers",
+                       "headings": ["My Experience", "Field-Service-Engineer"], "actions": ["Save and Continue"],
+                       "fields": [{"label": "Why Acme Semi?", "kind": "textarea", "required": True, "empty": True}]})
+    out = report.build(job, r, PERSON, anonymous=True)
+    text = out["preview"]
+    assert parse_qs(urlsplit(out["issue_url"]).query)["title"] == ["Report: a Workday employer, stuck"]
+    assert "**Job:** a Workday employer" in text and "**Job system:** workday" in text and "**Address:**" not in text
+    assert "**Desk status:** needs_you stuck" in text and "on the employer's site" in text
+    assert "1. opened (a Workday address)" in text and "2. clicked “Apply” for the job (REDACTED)" in text
+    assert "(a Workday address) (the job - the employer Careers)" in text and "- Why the employer? (textarea" in text
+    assert "### Page saved 20261010-090000-000-stop: the job - the employer Careers" in text
+    assert "employer, the job's title, its addresses and its requisition number are left out" in text
+    with zipfile.ZipFile(out["zip"]) as z:
+        page = z.read("pages/20261010-090000-000-stop.html").decode("utf-8")
+        everything = "".join(z.read(n).decode("utf-8") for n in z.namelist())
+    assert "My Experience" in page and "Phoenix-AZ" in page
+    for named in ("Acme", "acme", "Field Service Engineer", "Field-Service-Engineer", "R12345", "SESS123"):
+        assert named not in everything and named not in out["issue_url"], named
+    assert "Acme Semi" in report.build(job, r, PERSON)["preview"]  # unless asked, the report says which job
+
+
+def test_claude_can_make_the_report_anonymous_too(srv):
+    job = srv.add_job(url="https://acme.wd1.myworkdayjobs.com/External/job/x", title="Technician",
+                      company="Example Litho")["job"]
+    out = run(srv.report_problem(job_id=job["id"], anonymous=True))
+    assert "**Job:** a Workday employer" in out["preview"]
+    assert not any(named in out["issue_url"] for named in ("Litho", "Technician", "acme"))
+
+
 def test_a_note_holds_the_stop_but_not_the_person_their_answers_or_the_employer(job_apply_home):
     """Notes are filed many at once in one public issue: each is scrubbed as a report is, holds
     no field's value and none of the person's answers (a fill's error quotes them), and names

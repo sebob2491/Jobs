@@ -551,19 +551,25 @@ async def tailoring_queue() -> dict[str, Any]:  # async: it reads the desk's run
 
 
 @tool()
-async def report_problem(job_id: int) -> dict[str, Any]:
+async def report_problem(job_id: int, anonymous: bool = False) -> dict[str, Any]:
     """Write a problem report for a job that went wrong: what the Job Desk did and the fields
-    of the pages it saved, with the person's details taken out (no screenshots). Show the user
-    `preview`, all of it, before anything else, and say the issue will be public and shows
-    which job they applied for. Only with their OK, give them `issue_url` to open (a new issue
-    on the plugin's public GitHub repository with that text). Never file it without their OK.
-    `zip` also holds the saved pages, scrubbed but possibly still showing their answers: it
-    stays on their computer, and never goes on the public issue."""
+    of the pages it saved (the page it stopped on among them), with the person's details taken
+    out (no screenshots). Show the user `preview`, all of it, before anything else, and say the
+    issue will be public and shows which job they applied for, unless it's anonymous. Only with
+    their OK, give them `issue_url` to open (a new issue on the plugin's public GitHub repository
+    with that text). Never file it without their OK. `zip` also holds the saved pages, scrubbed
+    but possibly still showing their answers: it stays on their computer, and never goes on the
+    public issue.
+
+    anonymous=True says the job by its job system alone ("a Workday employer") and the step it
+    stopped at: the employer, the job's title, its addresses and its requisition number are left
+    out of the issue's title, its text and the saved pages. Offer it when the user would rather
+    not show which job they applied for."""
     from . import desk, report
 
     job = _job(job_id)
     run = desk._desk.applier.runs.get(job["id"]) if desk._desk is not None else None
-    return await asyncio.to_thread(report.build, job, run)
+    return await asyncio.to_thread(report.build, job, run, anonymous=anonymous)
 
 
 @tool()

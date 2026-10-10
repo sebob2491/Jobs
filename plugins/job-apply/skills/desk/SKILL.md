@@ -42,7 +42,11 @@ The desk is a local web page served by this plugin. It does what the `find-jobs`
   user files them all at once: **File on GitHub** opens one issue with them, **Copy all**
   copies the whole text, and **Clear** removes them once filed. A note holds no answers and
   says the employer by its job system rather than its name. **Report a problem** on a job's
-  card stays for one job: a fuller report, with the employer and the pages the desk saved.
+  card stays for one job: a fuller report, with the employer and the pages the desk saved
+  (the page the job stopped on among them). Its box **Don't say which job it was** (for
+  Claude, `report_problem(job_id, anonymous=True)`) makes it again with only the job system
+  and where it stopped: no employer, job title, address or requisition number in the issue
+  or the saved pages. Offer it when the user would rather not show which job they applied for.
 - **Site passwords** stores one password per job system: Workday, SuccessFactors, iCIMS,
   ApplicantStack, UKG Pro or Infor. The page names, by each system, the employers on the
   user's own lists that use it (on the semiconductor list, Workday has 12 of them; on the

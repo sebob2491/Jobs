@@ -21,9 +21,11 @@ import hashlib
 import json
 import logging
 import re
+import shutil
 import time
 from collections import deque
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -53,6 +55,7 @@ HANDS_ON_TIMEOUT = 45 * 60  # the longest it holds the queue, even for someone a
 # own Submit, a tailored resume and a question the profile doesn't answer are the person's by design.
 # Practice mode notes them too: practice runs are where they're looked for
 NOTED = {"stuck", "sign_in", "submit_failed", "check_submit"}
+STOP = "stop"  # the page a job stopped on, saved for a problem report: its folder's debug/<time>-stop
 POLL_SECONDS = 3.0
 # With an email app password saved, a job waiting on an emailed code or link has the inbox
 # looked at this often, for this long after it began waiting
@@ -530,6 +533,7 @@ class Applier:
         held = self._hold_tools(job_id)
         try:
             await self._strict(self._submit(run) if kind == "submit" else self._drive(run))
+            await self._strict(self._save_stop(run))
         except TabClosed:
             if run.status != "skipped":
                 run.status, run.need, run.blocking = "failed", "", False
@@ -842,6 +846,25 @@ class Applier:
             report.take_note(job, run)
         except Exception:
             logging.getLogger(__name__).warning("couldn't take a note on job %s's stop", run.job_id, exc_info=True)
+
+    async def _save_stop(self, run: Run) -> None:
+        """Save the page a job stopped on for the person in its folder's debug/, beside the pages a
+        failed fill saves, so a problem report holds it (scrubbed) among its pages. The newest few
+        stops are kept (as many as a report holds). Whatever goes wrong saving it, the job still
+        waits on the person."""
+        if run.status != "needs_you" or run.need == "tailor" or run.page is None or run.page.is_closed():
+            return  # (waiting for a tailored resume is before its tab opens)
+        try:
+            job = self.srv.tracker().get(run.job_id, with_description=False) or {}
+            if not job.get("folder") or not self.srv.browser.use_tab(run.page):
+                return
+            debug = Path(job["folder"]) / "debug"
+            stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")[:-3]
+            await self.srv.browser.snapshot(debug / f"{stamp}-{STOP}", note=f"stopped: {run.need}")
+            for old in sorted(debug.glob(f"*-{STOP}"))[:-report.PAGES]:
+                shutil.rmtree(old, ignore_errors=True)
+        except Exception:
+            logging.getLogger(__name__).warning("couldn't save the page job %s stopped on", run.job_id, exc_info=True)
 
     async def _look(self) -> tuple[dict[str, Any], str]:
         data = await self.srv.inspect_form(include_dropdown_options=False)

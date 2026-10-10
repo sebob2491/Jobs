@@ -207,7 +207,9 @@ footer { max-width: 1240px; margin: 0 auto; padding: 0 16px 24px; color: var(--m
 <dialog id="report" aria-labelledby="report-h">
   <h2 id="report-h">Report a problem</h2>
   <p>This is everything the issue will hold, with your details taken out. GitHub issues are public:
-    anyone can read this one, and see which job you applied for. Read it over first.</p>
+    anyone can read this one, and see which job you applied for unless you tick the box below. Read it over first.</p>
+  <label class="small"><input type="checkbox" id="report-anonymous"> Don't say which job it was: only its job system
+    (Workday, iCIMS…) and where it stopped, without the employer, the job's title, its addresses or its number</label>
   <pre id="report-text"></pre>
   <p class="small" id="report-where"></p>
   <div class="actions">
@@ -694,6 +696,30 @@ function selectable(url) {
   return !!r && !DONE.has(r.status) && !(r.run && UNDER_WAY.has(r.run.status));
 }
 
+// A problem report for a job, shown in a dialog with a link: the person's own click opens GitHub,
+// which a pop-up opened after the wait would not (browsers block those). Made again for the same
+// job when its "Don't say which job it was" box is ticked or cleared.
+let reportJob = null;
+function makeReport(job) {
+  if (reporting) return;  // one at a time: a double click makes one report
+  reporting = true;
+  $("report-anonymous").disabled = true;
+  act(async () => {
+    try {
+      const out = await api(`/api/job/${job}/report`, {anonymous: $("report-anonymous").checked});
+      reportJob = job;
+      $("report-text").textContent = out.preview;
+      $("report-where").textContent = `It's saved in ${out.folder}, with report.zip: that also holds the pages the`
+        + " desk saved. They can still show your answers, so they stay on your computer and aren't in the issue.";
+      $("report-open").href = out.issue_url;
+      if (!$("report").open) $("report").showModal();
+    } finally {
+      reporting = false;
+      $("report-anonymous").disabled = false;
+    }
+  }, false);
+}
+
 document.addEventListener("click", (e) => {
   const t = e.target.closest("button");
   if (!t) return;
@@ -760,22 +786,7 @@ document.addEventListener("click", (e) => {
     if (!answers.length) { alert("Answer at least one question first."); return; }
     act(async () => { const out = await api("/api/answer", {job_id: Number(job), answers}); if (out.note) alert(out.note); });
   } else if (jobAct === "report") {
-    if (reporting) return;  // one at a time: a double click makes one report
-    reporting = true;
-    act(async () => {
-      try {
-        const out = await api(`/api/job/${job}/report`, {});
-        // shown in a dialog with a link: the person's own click opens GitHub, which a pop-up
-        // opened after the wait would not (browsers block those)
-        $("report-text").textContent = out.preview;
-        $("report-where").textContent = `It's saved in ${out.folder}, with report.zip: that also holds the pages the`
-          + " desk saved. They can still show your answers, so they stay on your computer and aren't in the issue.";
-        $("report-open").href = out.issue_url;
-        $("report").showModal();
-      } finally {
-        reporting = false;
-      }
-    }, false);
+    makeReport(job);
   } else if (jobAct === "submit") {
     if (confirm("Submit this application now?")) act(() => api(`/api/job/${job}/submit`, {}));
   } else if (jobAct) {
@@ -822,6 +833,7 @@ document.addEventListener("change", (e) => {
     act(() => api("/api/settings", {auto_submit: t.checked}));
   }
   if (t.id === "tailor") act(() => api("/api/settings", {tailor_resumes: t.checked}));
+  if (t.id === "report-anonymous" && reportJob !== null) makeReport(reportJob);
 });
 
 $("report-open").addEventListener("click", () => $("report").close());  // the link opens GitHub in a new tab

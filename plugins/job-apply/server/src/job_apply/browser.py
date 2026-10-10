@@ -69,6 +69,20 @@ _DECLINES = re.compile(r"reject|decline|necessary|essential|required only|only r
                        r"preferences|customi[sz]e|without", re.I)
 
 
+# An <input> tag as Chrome writes a page out (each attribute's value in double quotes), and in it a
+# password box's type and value
+_INPUT_TAG = re.compile(r'<input\b(?:[^>"]|"[^"]*")*>', re.I)
+_PASSWORD_TYPE = re.compile(r'\stype="password"', re.I)
+_VALUE_ATTR = re.compile(r'\svalue="[^"]*"', re.I)
+
+
+def _without_passwords(html: str) -> str:
+    """A page's HTML with nothing in its password boxes: a site that writes what's typed into its
+    HTML (React keeps a box's value attribute in step) would leave a password in a saved page."""
+    return _INPUT_TAG.sub(lambda m: _VALUE_ATTR.sub("", m.group()) if _PASSWORD_TYPE.search(m.group())
+                          else m.group(), html)
+
+
 CAPTCHA_SAYS = ("A CAPTCHA (a bot check: an \"I'm not a robot\" box or pictures) is on this page. It's for the "
                 "user to solve; ask them to, and never try it yourself.")
 # A CAPTCHA's own frames: never read as part of the form. iCIMS's sign-in pages carry a hidden
@@ -970,8 +984,8 @@ class BrowserSession:
         return False
 
     async def snapshot(self, dest: Path, note: str = "", details: Any = None) -> Path:
-        """Save what's needed to debug a page later: HTML of every frame, a screenshot
-        and the extracted fields. Stays on the user's machine."""
+        """Save what's needed to debug a page later: HTML of every frame (never what's in a
+        password box), a screenshot and the extracted fields. Stays on the user's machine."""
         async with self._lock:
             page = await self.page()
             dest.mkdir(parents=True, exist_ok=True)
@@ -980,7 +994,7 @@ class BrowserSession:
             for i, frame in enumerate(f for f in page.frames if not f.is_detached()):
                 name = "page.html" if frame is page.main_frame else f"frame-{i}.html"
                 try:
-                    (dest / name).write_text(await frame.content(), encoding="utf-8")
+                    (dest / name).write_text(_without_passwords(await frame.content()), encoding="utf-8")
                     frames.append({"file": name, "url": frame.url})
                 except PlaywrightError:
                     continue

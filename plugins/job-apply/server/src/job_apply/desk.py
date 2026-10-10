@@ -289,7 +289,10 @@ class Desk:
                 job = self.srv.tracker().get(job_id)
                 if job is None:
                     raise KeyError(f"No job with id {job_id}")
-                return JSONResponse(await asyncio.to_thread(report.build, job, a.runs.get(job_id)))
+                anonymous = False  # (the page's box for a report that doesn't say which job it was)
+                with contextlib.suppress(ValueError):
+                    anonymous = (await self._body(request)).get("anonymous") is True
+                return JSONResponse(await asyncio.to_thread(report.build, job, a.runs.get(job_id), anonymous=anonymous))
             else:
                 return JSONResponse({"error": f"unknown action {action!r}"}, status_code=404)
         except (KeyError, ValueError) as e:

@@ -4,6 +4,7 @@ review -> submit)."""
 
 import asyncio
 import contextlib
+import json
 import time
 from pathlib import Path
 
@@ -2955,7 +2956,9 @@ def test_an_emailed_code_put_in_between_jobs_gives_the_tools_back(srv, monkeypat
             claude_tab = await srv.browser.new_tab()  # Claude's own
             await srv.open_application(job_id=other["id"])
             sent["yet"] = True
-            await until(lambda: r.need == "questions" or r.status == "ready", about=state(r))
+            # (the step ends once the page it stopped on is saved: then the tools are given back)
+            await until(lambda: (r.need == "questions" or r.status == "ready") and applier.current is None,
+                        about=state(r))
             return r, srv.browser.current_tab is claude_tab, srv.browser.current_job_id
         finally:
             await applier.stop()
@@ -3264,6 +3267,74 @@ def test_a_page_that_doesnt_move_on_says_its_next_is_greyed_out(srv, monkeypatch
     r = run(go())
     assert r.need == "stuck" and "“Next” is greyed out" in r.reason, (r.reason, r.log)
     assert not any("Apply!" in line for line in r.log), r.log  # a link to the form already on show: not pressed
+
+
+def test_the_page_a_job_stops_on_is_saved_for_its_report_scrubbed(srv, monkeypatch, job_apply_home):
+    """A job stuck on a Workday form page made a report with no pages ("pages": []): only a failed
+    fill saved one. The page a job stops on is now saved in its folder's debug/, and its report
+    holds it, without the person's details or what was filled in (a React site writes that into
+    its HTML)."""
+    from job_apply import report
+
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 1)
+    job = srv.add_job(url=fixture_url("site/stuck-filled.html"), title="Technician", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            # (the step ends once the page it stopped on is saved: then the tools are given back)
+            await until(lambda: r.status not in ("queued", "running") and applier.current is None, about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert r.need == "stuck" and "“Next” is greyed out" in r.reason, (r.reason, r.log)
+    out = report.build(srv.tracker().get(job["id"]), r)
+    assert out["pages"], "the report holds no page"
+    [stop] = (Path(job["folder"]) / "debug").glob("*-stop")
+    assert 'value="sam.rivera@example.com"' in (stop / "page.html").read_text()  # what the site wrote in
+    assert json.loads((stop / "snapshot.json").read_text())["note"] == "stopped: stuck"
+    assert out["pages"] == [f"pages/{stop.name}.expect.json", f"pages/{stop.name}.html"]
+    page = (Path(out["folder"]) / out["pages"][1]).read_text()
+    assert "My Information" in page and f"### Page saved {stop.name}" in out["preview"]
+    for private in ("Sam", "Rivera", "sam.rivera", "value="):
+        assert private not in page, private
+
+
+def test_the_newest_few_stops_are_kept_and_one_that_cant_be_saved_still_waits(srv, monkeypatch, job_apply_home):
+    """Each stop saves its page: only as many as a report holds are kept. A tailored resume is
+    waited for before the job's tab opens, so there's no page to save; and whatever goes wrong
+    saving one, the job still waits on the person."""
+    job = srv.add_job(url=fixture_url("site/stuck-filled.html"), title="Technician", company="Example Fab")["job"]
+    run(srv.open_application(job_id=job["id"]))
+    applier = Applier(srv)
+    r = Run(job["id"], "Technician", "Example Fab", status="running", page=srv.browser.current_tab)
+    applier.runs[job["id"]] = r
+    debug = Path(job["folder"]) / "debug"
+
+    def stops():
+        return sorted(p.name for p in debug.glob(f"*-{pipeline.STOP}")) if debug.is_dir() else []
+
+    applier._pause(r, "tailor", "Waiting for a resume written for this job.")
+    run(applier._save_stop(r))
+    assert stops() == []
+    for _ in range(4):
+        applier._pause(r, "stuck", "The page didn't move on.")
+        run(applier._save_stop(r))
+    assert len(stops()) == pipeline.report.PAGES == 3
+    newest = stops()
+
+    async def broken(*args, **kw):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(srv.browser, "snapshot", broken)
+    applier._pause(r, "sign_in", "Sign in.")
+    run(applier._save_stop(r))
+    assert (r.status, r.need) == ("needs_you", "sign_in") and stops() == newest
 
 
 def test_a_page_whose_only_way_on_makes_an_account_is_left_to_the_person(srv, monkeypatch):

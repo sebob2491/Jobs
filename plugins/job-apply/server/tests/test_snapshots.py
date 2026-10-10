@@ -40,6 +40,20 @@ def test_failed_fill_saves_snapshot_and_converts_to_fixture(srv, tmp_path):
     assert run(check_fixture_extraction(srv, tmp_path / "generic-test.html", expect)) == []
 
 
+def test_a_saved_page_never_keeps_whats_in_a_password_box(srv):
+    """The desk now saves the page each job stops on, a sign-in among them. A React site writes
+    what's typed into a box's value attribute, so a password typed there stayed in page.html."""
+    run(srv.open_application(url=fixture_url("site/signin.html")))
+    run(srv.browser.current_tab.evaluate("""() => {
+        const pw = document.querySelector('#pw');
+        pw.setAttribute('value', 'not-a-real-password"&<>');
+        pw.insertAdjacentHTML('afterend', '<input type=hidden title="a > b" value=kept>');
+    }"""))
+    snap = run(srv.debug_snapshot(note="sign-in"))
+    html = (Path(snap["saved_to"]) / "page.html").read_text()
+    assert "not-a-real-password" not in html and 'id="pw"' in html and 'value="kept"' in html
+
+
 def test_iframe_snapshot_keeps_frame(srv, tmp_path):
     run(srv.open_application(url=fixture_url("iframe_host.html")))
     snap = run(srv.debug_snapshot(note="iframe"))
