@@ -165,6 +165,20 @@ def never_submit() -> bool:
     return os.environ.get("JOB_APPLY_NEVER_SUBMIT") == "1"
 
 
+# Account handling's default, where a profile doesn't say (settings.manage_accounts)
+MANAGE_ACCOUNTS_DEFAULT = True
+
+
+def _manage_accounts(raw: Any, malformed: bool) -> bool:
+    """On where the profile doesn't say; off for false, no or off, and for any other answer or a
+    settings section that can't be read (it acts in the person's name: unclear is no)."""
+    if malformed:
+        return False
+    if raw is None:
+        return MANAGE_ACCOUNTS_DEFAULT
+    return raw is True or isinstance(raw, str) and raw.strip().lower() in ("true", "yes", "on")
+
+
 @dataclass
 class Settings:
     submit_mode: str = "review"  # "review" | "auto" | "dry_run" (fill everything, never submit)
@@ -175,11 +189,14 @@ class Settings:
     email_tracking: bool = False  # may Claude scan email for replies to applications
     accept_cookies: bool = False  # may the desk accept a cookie banner that offers no way to decline
     # may the desk make the person's accounts on job sites, and reset a saved password a site refuses
-    manage_accounts: bool = False
+    # (on unless the profile turns it off: the owner's choice; setup and the desk page tell each person)
+    manage_accounts: bool = MANAGE_ACCOUNTS_DEFAULT
+    manage_accounts_chosen: bool = False  # the profile says, either way (until then the desk page says it's on)
     warnings: list[str] = field(default_factory=list)
 
     @classmethod
     def from_dict(cls, d: dict[str, Any] | None) -> "Settings":
+        malformed = d is not None and not isinstance(d, dict)  # "settings: review": nothing in it can be read
         d = d if isinstance(d, dict) else {}
         mode, warnings = _submit_mode(d.get("submit_mode"))
         ats = d.get("auto_submit_ats") or []
@@ -195,7 +212,8 @@ class Settings:
             email_codes=d.get("email_codes") is True,
             email_tracking=d.get("email_tracking") is True,
             accept_cookies=d.get("accept_cookies") is True,
-            manage_accounts=d.get("manage_accounts") is True,
+            manage_accounts=_manage_accounts(d.get("manage_accounts"), malformed),
+            manage_accounts_chosen=d.get("manage_accounts") is not None,
         )
         if os.environ.get("JOB_APPLY_HEADLESS") == "1":
             s.headless = True

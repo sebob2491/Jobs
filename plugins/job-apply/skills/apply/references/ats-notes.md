@@ -11,9 +11,10 @@ the page URL. Use this file for the parts of each flow that `autofill` can't do.
   Alternatively, if they stored a password in `~/.job-apply/secrets.yaml` (for
   example `workday_password: ...`), fill the email with `fill_form` and the
   password with `fill_secret(field_id, "workday_password")`.
-- **New accounts:** creating one is the user's decision. Ask first. Then use the
-  profile email and `fill_secret` for both password fields. The user must accept
-  any terms checkbox. Workday then emails a "verify your account" link. Open it
+- **New accounts:** working through the tools with Claude, creating one is the user's
+  decision: ask first (the Job Desk creates them itself unless the profile says
+  `settings.manage_accounts: false`). Then use the profile email and `fill_secret` for
+  both password fields. The user must accept any terms checkbox. Workday then emails a "verify your account" link. Open it
   yourself if `settings.email_codes` is on, otherwise the user clicks it.
 - If you see a CAPTCHA or a "verify you are human" check, ask the user to solve it.
 - **Cookie banners** can cover the form, and then clicks fail or no fields show up.

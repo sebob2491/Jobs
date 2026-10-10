@@ -37,7 +37,9 @@ PROFILE = {
         {"school": "Arizona State University", "degree": "BS Electrical Engineering", "major": "Electrical Engineering",
          "gpa": 3.4, "start": 2016, "end": 2020},
     ],
-    "settings": {"submit_mode": "review", "browser_channel": "chromium", "headless": True},
+    # (account handling off: the tests of the desk leaving Create Account to the person; the
+    # manage_accounts tests turn it on)
+    "settings": {"submit_mode": "review", "browser_channel": "chromium", "headless": True, "manage_accounts": False},
 }
 
 

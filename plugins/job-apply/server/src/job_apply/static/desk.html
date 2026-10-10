@@ -176,9 +176,11 @@ footer { max-width: 1240px; margin: 0 auto; padding: 0 16px 24px; color: var(--m
       <div class="card-head"><h2 id="pw-h">Site passwords</h2></div>
       <form class="pw" id="pw-form" autocomplete="off">
         <p class="small">Each employer has its own account on its job site. Save one password for a job system and the
-          desk fills in that system's Create Account forms and signs you in, on that system's own sites only. It stays on
-          this computer, in <code>~/.job-apply/secrets.yaml</code>, and Claude never sees it. Use passwords you don't use
-          anywhere else.</p>
+          desk creates your account at each of that system's employers (agreeing to its terms for you) and signs you in,
+          on that system's own sites only; when a site turns the password down, it resets that account's password to this
+          one through the site's "Forgot password" email (unless your profile says <code>manage_accounts: false</code>).
+          It stays on this computer, in <code>~/.job-apply/secrets.yaml</code>, and Claude never sees it. Use passwords you
+          don't use anywhere else.</p>
         <div class="pw-row">
           <select id="pw-site" aria-label="Job system">
             <option value="workday">Workday: Intel, Applied, KLA and 10 more</option>
@@ -187,7 +189,7 @@ footer { max-width: 1240px; margin: 0 auto; padding: 0 16px 24px; color: var(--m
             <option value="applicantstack">ApplicantStack: SCREEN</option>
             <option value="ukg">UKG Pro: Nikon Precision</option>
             <option value="infor">Infor: Benchmark</option>
-            <option value="email">Your email: an app password, to read sign-up codes</option>
+            <option value="email">Your email: an app password, to read sign-up codes and password resets</option>
           </select>
         </div>
         <p class="small">Your email: with an app password for the address in your profile (for Gmail, make one at
@@ -530,6 +532,12 @@ function renderHeader() {
     <span>In Claude Code, say \u201ctailor my resumes\u201d. Each job carries on as soon as its resume is ready.</span>`});
   if (p.missing && p.missing.length) notes.push({cls: "notice", html: `Your profile still needs: ${esc(inWords(p.missing.map(profileField)))}. Run <code>/job-apply:setup</code> in Claude Code, or edit <code>${esc(p.path)}</code>.`});
   if (p.gaps && p.gaps.length) notes.push({cls: "notice", html: `Fewer stops: your profile could also hold ${esc(inWords(p.gaps.map(profileField)))}.`});
+  // on by default since 0.3.67: said until the profile says either way
+  if (s.manage_accounts && !s.manage_accounts_chosen) notes.push({cls: "notice", html: `The desk now handles your job-site
+    accounts: with a password saved below, it creates the account at each employer (agreeing to its terms for you) and, when
+    a site turns your saved password down, resets it to that one through the site's "Forgot password" email. To keep doing
+    these yourself, add <code>manage_accounts: false</code> under <code>settings:</code> in <code>${esc(p.path)}</code>;
+    <code>manage_accounts: true</code> keeps them and hides this note.`});
   if (state.profile_problem) notes.push({cls: "notice", html: `Your profile can't be read: ${esc(state.profile_problem)} Fix it and the desk picks it up again by itself.`});
   if (state.mail_problem) notes.push({cls: "notice", html: esc(state.mail_problem)});
   if (state.answers_problem) notes.push({cls: "notice", html: `Your saved answers aren't being used: ${esc(state.answers_problem)}.`});

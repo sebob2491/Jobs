@@ -76,10 +76,12 @@ All of the user's data lives in `~/.job-apply/`, outside the plugin:
    - Cookie banners: the desk declines them, and one with no way to decline (TI's "Agree and
      Proceed") waits for them. Ask whether the desk may accept those for them
      (`settings.accept_cookies: true`); leave it off unless they say yes.
-   - Accounts on job sites: the desk fills in Create Account and leaves it to them. Ask
-     whether it may create those accounts itself and reset a saved password a site refuses
-     (`settings.manage_accounts: true`; resets need the email app password on the desk);
-     leave it off unless they say yes.
+   - Accounts on job sites: tell them the desk creates their accounts itself (agreeing to each
+     site's terms in their name) and, when a site refuses their saved password, asks that
+     site for a password reset and sets the saved password as the new one (reading the reset
+     email needs the email app password on the desk; without it, they finish the reset from
+     the email). Ask whether that's all right, and write `settings.manage_accounts: true` or
+     `false` as they say (`false`: the desk fills in Create Account for them to finish).
    - Email, only if the Gmail connector is connected: may Claude read the
      verification codes and links career sites email them (`settings.email_codes`)?
      May it check their email for replies to applications (`settings.email_tracking`)?
