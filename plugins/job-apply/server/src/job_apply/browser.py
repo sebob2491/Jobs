@@ -169,6 +169,32 @@ UNAVAILABLE_HELP = (
 )
 
 
+def quiet_password_manager(profile: Path) -> None:
+    """Turn off the browser's own "Save password?" offer in the desk's profile, before it starts:
+    the desk keeps the passwords (on its page) and types them in itself, and the bubble popped
+    up over the page after every sign-in. The profile's other settings are kept, and one that
+    can't be read is left as it is."""
+    prefs = profile / "Default" / "Preferences"
+    try:
+        data = json.loads(prefs.read_text(encoding="utf-8")) if prefs.exists() else {}
+    except (OSError, ValueError):
+        return
+    if not isinstance(data, dict):
+        return
+    found = data.get("profile")
+    profile_prefs: dict[str, Any] = found if isinstance(found, dict) else {}
+    if (data.get("credentials_enable_service") is False and data.get("credentials_enable_autosignin") is False
+            and profile_prefs.get("password_manager_enabled") is False):
+        return
+    data.update(credentials_enable_service=False, credentials_enable_autosignin=False,
+                profile={**profile_prefs, "password_manager_enabled": False})
+    try:
+        prefs.parent.mkdir(parents=True, exist_ok=True)
+        prefs.write_text(json.dumps(data), encoding="utf-8")
+    except OSError:
+        pass
+
+
 def profile_dir(usual: Path, attempt: dict[str, Any], settings: config.Settings) -> Path:
     """The browser profile for a launch attempt. Edge standing in for Chrome keeps one of its
     own: each keeps its sign-ins in a form the other can't read."""
@@ -311,6 +337,7 @@ class BrowserSession:
         errors = []
         for extra in launch_attempts(settings):
             kwargs["user_data_dir"] = str(profile_dir(user_dir, extra, settings))
+            quiet_password_manager(Path(kwargs["user_data_dir"]))
             try:
                 self._ctx = await self._pw.chromium.launch_persistent_context(**kwargs, **extra)
                 break
