@@ -3237,6 +3237,20 @@ def test_a_job_picked_up_again_carries_on_with_the_form_in_its_tab(srv, monkeypa
             assert tab.is_closed()  # (a crashed tab's "Aw, Snap!" is closed for the new one)
 
 
+def test_a_crashed_tab_closed_since_is_still_said_to_have_crashed(srv):
+    """A job's tab that crashed and was closed after it (by Chrome, or the desk) crashed: a picked-up
+    job said "its tab was closed" for one (a full test run under load, Oct 10)."""
+    async def go():
+        tab = await srv.browser.page()
+        await tab.goto(fixture_url("generic_form.html"))
+        await _crash(tab)
+        crashed = srv.browser.lost(tab)
+        await tab.close()
+        return crashed, srv.browser.lost(tab)
+
+    assert run(go()) == ("crashed", "crashed")
+
+
 def test_a_tab_that_crashes_while_its_job_runs_is_opened_again_on_resume(srv, monkeypatch):
     """A tab whose page crashes while the desk fills it is no use to the desk again, even
     reloaded: the job says so, and Resume opens it in a new tab. (Each Resume failed again in
