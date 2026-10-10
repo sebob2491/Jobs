@@ -26,9 +26,11 @@ The desk is a local web page served by this plugin. It does what the `find-jobs`
     Resume (the boxes behind it are filled after that). With `settings.accept_notices` (on
     unless the user turns it off; never in practice mode) the desk agrees for the user to an
     employer's notice about AI screening of the application (Eightfold's opens as the resume
-    goes up), and picks an application's attestation that its information is true and
-    complete (or consent to the background check that comes with applying), noting each in
-    the job's log. Any other dialog over a form still stops for the user, and cookie banners
+    goes up) and to its privacy notice and terms of use (a privacy agreement's "I Accept"
+    before the application, a privacy dialog's Ok, a required "I agree to the Privacy notice
+    and Terms of use" box), and picks an application's attestation that its information is
+    true and complete (or consent to the background check that comes with applying), noting
+    each in the job's log. Never a newsletter, job alerts or a talent community. Any other dialog over a form still stops for the user, and cookie banners
     keep their own rule;
   - sign-ins, bot checks, CAPTCHAs and emailed codes. The user deals with these in the
     browser window, and the desk carries on by itself once the page moves past them. A

@@ -1,0 +1,19 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Privacy Agreement</title></head>
+<body>
+<!-- like Kforce's Taleo career section (live, Oct 2026): before the application, a privacy
+     agreement whose only ways on are "I Accept" and "I Decline" -->
+<h1>Privacy Agreement</h1>
+<div class="agreement">
+  <p>Example Staffing collects the personal information you give in your application to consider you for
+     employment. Read how we use and protect it in our privacy notice before you continue.</p>
+</div>
+<button type="button" id="accept">I Accept</button>
+<button type="button" id="decline">I Decline</button>
+<script>
+  document.getElementById('accept').addEventListener('click', () => { location.href = '../generic_form.html'; });
+  document.getElementById('decline').addEventListener('click', () => { document.body.textContent = 'You declined.'; });
+</script>
+</body>
+</html>

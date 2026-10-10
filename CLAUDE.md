@@ -70,9 +70,12 @@ the scrubber (`python -m job_apply.fixtures`) before they become test fixtures.
   is accepted for them.
 - **Notices and attestations:** with `settings.accept_notices` (on unless the person turns it
   off, as the owner chose; never in practice mode) the desk agrees to an employer's notice about
-  AI screening and picks an application's attestation that its information is true (or consent
-  to the background check that comes with applying), logging each; with it off they're the
-  person's. Any other dialog over the form stops the desk for the person.
+  AI screening and to its privacy notice and terms of use (a gate's "I Accept", a dialog's agree
+  or Ok, a required box: the owner's call, Oct 10), and picks an application's attestation that
+  its information is true (or consent to the background check that comes with applying), logging
+  each; with it off they're the person's. Never a newsletter, job alerts, a talent community or
+  marketing, and cookie banners keep their own rule. Any other dialog over the form stops the
+  desk for the person.
 - **Accounts:** with `settings.manage_accounts` (on unless the person turns it off, as the owner
   chose; setup tells each person; never in practice mode) the desk creates an account with that
   system's saved password, ticking only the site's terms (never a newsletter), and resets a saved

@@ -185,7 +185,53 @@ _ATTESTS = re.compile(r"\b(?:certif(?:y|ies)|attest|affirm|declare|acknowledge|c
                       r"\b(?:consent|authori[sz]e|agree)\b.{0,120}?\bbackground (?:check|screening|investigation)", re.I | re.S)
 _NOT_ATTESTED = re.compile(r"newsletter|marketing|job alerts?|text messages?|\bsms\b|promotion|subscribe|"
                            r"talent (?:community|network)", re.I)
-_ATTEST_KINDS = {"select", "listbox", "combobox", "checkbox"}
+_ATTEST_KINDS = {"select", "listbox", "combobox", "checkbox", "checkbox_group"}
+# and, the owner's call (Oct 10), an employer's privacy notice and terms of use: a gate's "I Accept"
+# (Kforce's Taleo privacy agreement), "I Acknowledge the Privacy Notice" (Schwab's iCIMS), a dialog,
+# or a required box ("I have read and agree to the Privacy notice and Terms of use": ASM's;
+# "Terms of Use & Data Privacy Statement: Please accept ...": EMD's)
+_TERMS = re.compile(r"\bprivacy\b|\bdata protection\b|\bterms (?:of (?:use|service)|and conditions|& conditions)\b|"
+                    r"\b(?:candidate|applicant) (?:notice|statement|agreement)\b|\bpersonal (?:data|information)\b|"
+                    r"\b(?:gdpr|ccpa)\b", re.I)
+_ACCEPTS = re.compile(r"\b(?:agree|accept|acknowledge|consent|have read|understand)\b", re.I)
+_TAKES_IN = re.compile(r"^(?:ok|okay|got it|continue|proceed)$", re.I)
+# Never agreed to for the person, wherever it's asked: what _NOT_TERMS keeps out of account forms
+# (newsletters, marketing, job alerts, a talent community, being contacted, other roles), a talent pool,
+# keeping their profile for later, cookies (their own rule), and legal waivers (arbitration, a jury trial)
+_NEVER_AGREED = re.compile(_NOT_TERMS.pattern + r"|talent pool|future (?:job |career )?(?:opportunities|openings|roles|"
+                           r"positions)|keep (?:my|your) (?:profile|information|data|resume)|retain (?:my|your)|campaigns?|"
+                           r"cookie|arbitration|waive|jury|non-?compete|non-?solicit", re.I)
+# A box that also says something about the person ("... and confirm I am authorized to work in the US"):
+# theirs, as the profile answers those
+_CLAIMS = re.compile(r"\b(?:authori[sz]ed|sponsor\w*|eligib\w*|citizen\w*|years? (?:old|of age)|at least \d+|"
+                     r"over (?:the age|\d+)|or older|licen[cs]e|degree|convict\w*|felon\w*|criminal|drug|relocat\w*|"
+                     r"willing|veteran|disabilit\w*|cdl|i am|i have (?:a|an|been|never|not))\b", re.I)
+# and a question about something else beside the agreement ("Have you ever been convicted ...? I certify ...")
+_OTHER_QUESTION = re.compile(r"\b(?:have|do|are|will|can|did|were|would|has|is) you\b(?! (?:agree|accept|acknowledge|"
+                             r"consent|certify|understand|have read|read|confirm)\b)", re.I)
+# A dialog that mentions personal data but isn't a notice to take in ("could not be saved", "overwrite?")
+_NOT_A_NOTICE = re.compile(r"\berror\b|could ?n[o']t|failed|signed? (?:you )?out|overwrite|existing (?:profile|account)|"
+                           r"\bdelete|\bremove|withdraw|expired?\b", re.I)
+# A gate's button that also sends the application ("I Accept and Apply"): the person's
+_SENDS_TOO = re.compile(r"\b(?:apply|submit|send|finish|complete)\b", re.I)
+
+
+def _agrees_to_terms(text: str) -> bool:
+    """Words that accept an employer's privacy notice or terms of use, and nothing more: not a
+    newsletter's or the like (_NEVER_AGREED), not a fact about the person, not another question."""
+    return bool(_TERMS.search(text) and _ACCEPTS.search(text) and not _NEVER_AGREED.search(text)
+                and not _CLAIMS.search(text) and not _OTHER_QUESTION.search(text))
+
+
+def _terms_notice(heading: str, text: str) -> tuple[bool, bool]:
+    """Is a dialog the employer's privacy notice or terms to take in, and may its Ok do it? Named so
+    in its heading ("Privacy Policy of Example Corp": its Ok too), or asking in its words to accept
+    them; never one about an error, a profile to overwrite or the like, nor what's never agreed to."""
+    said = f"{heading} {text}"
+    if _NEVER_AGREED.search(said) or _NOT_A_NOTICE.search(said):
+        return False, False
+    named = bool(_TERMS.search(heading))
+    return named or bool(_TERMS.search(text) and _ACCEPTS.search(text)), named
 # A fill the page never let happen (it timed out, its script failed, a dialog stood over the box):
 # the profile has the answer, so it's no question for the person
 _FILL_BROKE = re.compile(r"^(?:TimeoutError|Error|TargetClosedError|DialogOpen)\b")
@@ -1321,7 +1367,10 @@ class Applier:
                 continue
             sign_in_step = bool(_SIGN_IN_STEP.search(" ".join(data.get("headings") or [])))
             blank = not (data.get("fields") or data.get("actions") or data.get("headings")) and len(text.strip()) < 40
-            if action is None and kind == "page" and not waited:
+            gate_now = action is None and (button := _agreement_button(data)) is not None \
+                and f"{_page_key(data)} {button['text'].strip()}" not in agreed and _terms_gate(button, data) \
+                and _may_accept_notices()
+            if action is None and kind == "page" and not waited and not gate_now:
                 waited = True  # slow pages (Intel's Workday, Eightfold forms) draw their buttons late
                 wait = SIGN_IN_STEP_WAIT if sign_in_step else BLANK_PAGE_WAIT if blank else LATE_BUTTONS_WAIT
                 if await self._wait_for_progress(wait):
@@ -1355,11 +1404,27 @@ class Applier:
                 if blank:
                     return self._pause(run, "stuck", "The page stayed blank: the site may be slow or down. Reload it "
                                        "in the browser, then press Resume.")
-                agree = next((a for a in data.get("actions") or [] if _AGREEMENT.search(a["text"].strip())
-                              and not a.get("cookie") and "cookie" not in a["text"].lower()
-                              and not a.get("disabled")), None)
+                agree = _agreement_button(data)
                 if agree is not None:
-                    return self._pause(run, "stuck", f"The way on is \u201c{agree['text'].strip()}\u201d, which agrees to "
+                    said = agree["text"].strip()
+                    gate = f"{_page_key(data)} {said}"
+                    if gate in agreed:  # pressed for them on this pass, and the page stayed
+                        return self._pause(run, "stuck", f"I pressed \u201c{said}\u201d for you (settings.accept_notices), "
+                                           "but the page stayed: it may want a box filled or a check passed first. "
+                                           "Look at it in the browser window, then press Resume.")
+                    if _terms_gate(agree, data) and _may_accept_notices():
+                        try:
+                            clicked = await srv.click(agree["id"])
+                        except KeyError:  # the page changed between looking and clicking: look again
+                            continue
+                        except Exception:  # it won't take a click: the person's, as without the setting
+                            clicked = {"clicked": False}
+                        if clicked.get("clicked"):
+                            agreed.add(gate)  # (once a pass: a page that stays is the person's after all)
+                            whose = f"{run.company}'s" if run.company else "the site's"
+                            self._log(run, f"agreed to {whose} \u201c{_short(said)}\u201d for you (settings.accept_notices)")
+                            continue
+                    return self._pause(run, "stuck", f"The way on is \u201c{said}\u201d, which agrees to "
                                        "something in your name, so it's yours to press. Read it and press it in the "
                                        "browser window if you're happy to, then press Resume.")
                 if _account_step(data):
@@ -1907,9 +1972,13 @@ class Applier:
         nothing done (on a page with nothing to fill, its buttons are the way on as before)."""
         heading = _notice_name(notice)
         said = f"{heading} {notice.get('text') or ''}"
-        ai = bool(_AI_NOTICE.search(said) and _ABOUT_APPLYING.search(said))
+        # about AI screening of applications, or the employer's privacy notice or terms of use (whose
+        # "Ok" takes it in, beside a Cancel, where its heading names it)
+        terms, takes_ok = _terms_notice(heading, notice.get("text") or "")
+        ai = bool(_AI_NOTICE.search(said) and _ABOUT_APPLYING.search(said)) or terms
         agree = next((b for b in notice.get("buttons") or [] if not b.get("disabled")
-                      and _AGREES.match(final_text(b.get("text") or ""))), None)
+                      and (_AGREES.match(final_text(b.get("text") or ""))
+                           or takes_ok and _TAKES_IN.match(final_text(b.get("text") or "")))), None)
         allowed = ai and agree is not None and _may_accept_notices()
         if allowed and agree is not None and heading not in agreed:
             try:
@@ -1928,8 +1997,9 @@ class Applier:
         self._pause(run, "stuck", f"{_site(run, data)} shows a notice over the form that only you can answer: "
                     f"“{_short(heading)}”. Read it and press its button in the browser window, then press "
                     "Resume; the desk fills the form in after that." + (
-                        " (The desk agrees to an employer's notice about AI screening for you with accept_notices: true "
-                        "under settings: in profile.yaml, outside practice mode.)" if ai and agree is not None
+                        " (The desk agrees to an employer's notice about AI screening, its privacy notice or terms for "
+                        "you with accept_notices: true under settings: in profile.yaml, outside practice mode.)"
+                        if ai and agree is not None
                         and not allowed else ""))
         return "paused"
 
@@ -1956,7 +2026,8 @@ class Applier:
         done = {r["id"] for r in out.get("results") or [] if r.get("ok")}
         for q in pending:
             if q["id"] in done:
-                what = "ticked" if attest[q["id"]] is True else f"picked “{attest[q['id']]}” for"
+                what = "ticked" if attest[q["id"]] is True or isinstance(attest[q["id"]], list) \
+                    else f"picked “{attest[q['id']]}” for"
                 self._log(run, f"{what} “{_short(q.get('label') or '')}” for you (settings.accept_notices)")
         return [q for q in pending if q["id"] not in done]
 
@@ -2282,17 +2353,48 @@ def _notice_name(notice: dict[str, Any]) -> str:
 
 def _attestation(q: dict[str, Any]) -> Any:
     """What attests to an application's attestation, a required box whose label certifies its
-    information true and complete, or consents to the background check that comes with applying
+    information true and complete, consents to the background check that comes with applying
     (Eightfold's "Terms and Conditions" dropdown, its one choice certifying the application is
-    correct): a tick, or its one real choice where that agrees. None for any other box."""
+    correct), or accepts the employer's privacy notice or terms of use: a tick, its one real choice
+    where that agrees, or its one Yes. A group of one tick whose own words accept them (EMD's)
+    is ticked. None for any other box."""
     label = q.get("label") or ""
-    if (not q.get("required") or q.get("error") or q.get("kind") not in _ATTEST_KINDS
-            or not _ATTESTS.search(label) or _NOT_ATTESTED.search(label)):
+    if not q.get("required") or q.get("error") or q.get("kind") not in _ATTEST_KINDS:
+        return None
+    choices = [str(o) for o in q.get("options") or [] if not is_empty_value(o)]
+    if q["kind"] == "checkbox_group":
+        # its ticks that accept the terms, and only those: EMD's required pair is its Terms of Use &
+        # Data Privacy Statement and its "Email Communications" (marketing, left unticked)
+        agreed = [o for o in choices if _agrees_to_terms(o)]
+        return agreed or None
+    if not (_ATTESTS.search(label) and not _NOT_ATTESTED.search(label) or _agrees_to_terms(label)):
         return None
     if q["kind"] == "checkbox":
         return True
-    choices = [o for o in q.get("options") or [] if not is_empty_value(o)]
-    return choices[0] if len(choices) == 1 and polarity(choices[0]) is not False else None
+    if len(choices) == 1:
+        return choices[0] if polarity(choices[0]) is not False else None
+    if _CLAIMS.search(label) or _OTHER_QUESTION.search(label):
+        return None  # a Yes there would answer something else too ("Have you ever been convicted ...?")
+    yes = [o for o in choices if polarity(o) is True]
+    return yes[0] if len(yes) == 1 else None
+
+
+def _terms_gate(button: dict[str, Any], data: dict[str, Any]) -> bool:
+    """A page whose way on accepts the employer's privacy notice or terms ("I Acknowledge the
+    Privacy Notice"; "I Accept" under a "Privacy Agreement" heading): its button, headings or title
+    say so, not a privacy link in its footer. Never one that also sends the application ("I Accept
+    and Apply"), nor one about what's never agreed to (a talent community, an arbitration agreement)."""
+    said = button.get("text") or ""
+    about = " ".join([*(data.get("headings") or []), str(data.get("title") or "")])
+    if _SENDS_TOO.search(said) or _NEVER_AGREED.search(f"{said} {about}"):
+        return False
+    return bool(_TERMS.search(said) or _TERMS.search(about))
+
+
+def _agreement_button(data: dict[str, Any]) -> dict[str, Any] | None:
+    """A page's button that agrees to something ("I Acknowledge the Privacy Notice", "I Accept")."""
+    return next((a for a in data.get("actions") or [] if _AGREEMENT.search(a["text"].strip())
+                 and not a.get("cookie") and "cookie" not in a["text"].lower() and not a.get("disabled")), None)
 
 
 def _pressed_before(job: dict[str, Any]) -> bool:

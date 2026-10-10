@@ -15,7 +15,8 @@
      own box is empty again, beside the file's buttons under "File upload completed successfully".
      The Terms and Conditions dropdown's one choice certifies the application.
      ?uploaded=1: the resume is up already. ?notice=1: and the notice is open over the form, as
-     an upload left it. ?notice=privacy: the notice is a privacy policy's, about no AI. -->
+     an upload left it. ?notice=privacy: the notice is a privacy policy's, about no AI; ?notice=other: about
+     neither. -->
 <h2>Equipment Technician</h2>
 <form id="app" novalidate>
   <fieldset>
@@ -86,6 +87,12 @@
     document.getElementById('dialog-label-4').textContent = 'Privacy Policy of Example Corp';
     document.getElementById('notice-text').textContent = 'Example Corp protects the personal data you give it, as its '
       + 'privacy policy says.';
+    notice.querySelectorAll('p')[1].remove();
+    document.querySelector('#confirmUploadResume span').textContent = 'Ok';
+  }
+  if (params.get('notice') === 'other') {  // about neither AI nor privacy
+    document.getElementById('dialog-label-4').textContent = 'Before you continue';
+    document.getElementById('notice-text').textContent = 'Example Corp will call you about the next steps.';
     notice.querySelectorAll('p')[1].remove();
     document.querySelector('#confirmUploadResume span').textContent = 'Ok';
   }

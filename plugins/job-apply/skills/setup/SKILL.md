@@ -99,9 +99,11 @@ through its `missing` and `profile_gaps` together.
      `false` as they say (`false`: the desk fills in Create Account for them to finish).
    - Notices and attestations: tell them the desk agrees, in their name, to an employer's
      notice about AI screening of their application (Eightfold's employers show one as the
-     resume goes up), and picks an application's attestation that its information is true and
-     complete (or their consent to the background check that comes with applying), noting each
-     in the job's log. It's true because every answer comes from their profile or from them.
+     resume goes up) and to its privacy notice and terms of use (Kforce's privacy agreement,
+     Schwab's "I Acknowledge the Privacy Notice", a terms box), and picks an application's
+     attestation that its information is true and complete (or their consent to the background
+     check that comes with applying), noting each in the job's log. Never a newsletter, job
+     alerts or a talent community. It's true because every answer comes from their profile or from them.
      Any other dialog over a form waits for them, and practice mode never agrees. Ask whether
      that's all right, and write `settings.accept_notices: true` or `false` as they say
      (`false`: the desk stops at the notice, and asks the attestation as a question).
