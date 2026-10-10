@@ -1,0 +1,19 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Senior Associate, Tax</title></head>
+<body>
+<!-- A careers site's posting (KPMG's, live, Oct 2026) whose "Apply Now" is a link with no href: its
+     address is in data-href, and the site's script goes there on a click (through a click counter,
+     on to the application system). -->
+<h1>Senior Associate, Tax</h1>
+<p>Tax | Phoenix, AZ; Tempe, AZ</p>
+<p>Prepare and review returns for clients across the region.</p>
+<a data-href="step1.html" class="btn icon --light-blue mb-0">Apply Now</a>
+<script>
+  document.querySelectorAll('a[data-href]').forEach((a) => a.addEventListener('click', (e) => {
+    e.preventDefault();
+    location.href = a.dataset.href;
+  }));
+</script>
+</body>
+</html>

@@ -4361,3 +4361,26 @@ def test_a_tab_on_another_job_named_in_the_query_isnt_carried_on_with(srv, monke
 
     monkeypatch.setattr(srv.browser, "peek", peek)
     assert run(applier._gone_home(left, SimpleNamespace(url=tab_url))) is gone
+
+
+def test_an_apply_link_with_its_address_in_data_href_is_pressed(srv, monkeypatch):
+    """A careers site's "Apply Now" (KPMG's, live, Oct 2026) is a link with no href: its address is
+    in data-href, and the site's script goes there on a click. The form reader only counted links
+    with an href, so the desk found no way into the application."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    job = srv.add_job(url=fixture_url("site/data-href-posting.html"), title="Senior Associate, Tax",
+                      company="Example Corp")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert "clicked “Apply Now”" in r.log, (r.status, r.need, r.reason, r.log)
+    assert any(line.startswith("filled") for line in r.log), r.log
