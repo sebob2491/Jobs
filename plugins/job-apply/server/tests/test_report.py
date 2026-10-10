@@ -152,3 +152,13 @@ def test_a_report_shows_the_page_the_job_stopped_on_and_where_its_questions_sit(
     assert "- Company (text, required, filled)" in text
     assert "- From (text) [Work Experience / Year]" in text and "- Degree (listbox, 2 choices) [Education 1]" in text
     assert "SESS123" not in text and "Jordan" not in text and "Quill" not in text
+
+
+def test_an_employee_id_is_taken_out_of_a_report(job_apply_home):
+    """The person's ID at an employer (history.employee_ids) is theirs: a report never shows it."""
+    person = Profile({"personal": {"first_name": "Jordan", "last_name": "Quill"},
+                      "history": {"employee_ids": {"Acme Semi": "88812345"}}})
+    job = {"id": 11, "title": "Technician", "company": "Acme Semi", "ats": "workday", "url": "https://acme.example/x"}
+    r = Run(11, "Technician", "Acme Semi", status="needs_you", need="stuck", log=["filled Employee ID with 88812345"])
+    text = report.build(job, r, person)["preview"]
+    assert "88812345" not in text and "filled Employee ID with" in text

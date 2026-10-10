@@ -1047,6 +1047,31 @@ def test_an_apply_that_would_send_the_application_is_never_pressed(srv, monkeypa
     assert "\u201cApply\u201d, so it's yours to press" in r.reason
 
 
+def test_an_application_the_person_submitted_on_the_site_is_marked_applied(srv, monkeypatch):
+    """The desk filled a Workday application; the person pressed the site's own Submit, landed on
+    its Candidate Home ("Application Submitted") and pressed Resume. The desk said the site had
+    emailed a link to confirm the email (the page tells how to change it, with "Send Link"). A job
+    the desk has filled that comes back on a page saying it went in is marked applied."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    job = srv.add_job(url=fixture_url("site/workday-candidate-home.html"), title="Equipment Technician",
+                      company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        r = applier.enqueue(job["id"])
+        r.seen_form = True  # (filled before: the person pressed Resume)
+        applier.start()
+        try:
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert r.status == "submitted" and "application submitted" in r.reason, (r.status, r.need, r.reason, r.log)
+    assert srv.tracker().get(job["id"])["status"] == "applied"
+
+
 def watched_inbox(monkeypatch, reset_link=None):
     """An email app password on the desk, and an inbox that holds `reset_link` (or nothing)."""
     monkeypatch.setattr(pipeline, "MAIL_POLL_SECONDS", 0)
@@ -2249,6 +2274,33 @@ def test_a_profile_answer_that_doesnt_go_in_is_asked_only_where_required():
          "error": "nothing in its list matched", "kind": "combobox", "required": False, "options": ["Yes", "No"]}]}
     pending, _ = pipeline._pending(result, {})
     assert [(q["label"], q["kind"], q["options"]) for q in pending] == [("Country", "combobox", ["No Selection", "Afghanistan"])]
+
+
+def test_a_self_identification_answer_a_list_doesnt_have_is_said_not_left_silently():
+    """Qorvo's optional veteran list has no "I don't wish to answer": the desk left it empty and
+    said nothing, as if it had filled it. Left empty (no other choice is the person's), and the
+    log says so, once; a required one is asked with the reason."""
+    vevraa = "U.S. Protected Veteran Self-Identification. " + "This employer is a Government contractor. " * 10
+    result = {"filled": [], "failed": [], "needs_input": [
+        {"id": "31", "label": "Pre-Offer : Are you a Protected Veteran?", "kind": "combobox", "required": False,
+         "options": ["No Selection", "No, I am not a Protected Veteran", "Yes, I am a Protected Veteran"],
+         "unmatched": "I don't wish to answer"},
+        {"id": "32", "label": vevraa, "kind": "combobox", "required": False, "options": ["Yes", "No"],
+         "unmatched": "I don't wish to answer"},
+        {"id": "29", "label": "Gender", "kind": "combobox", "required": True, "options": ["Female", "Male"],
+         "unmatched": "Decline to self-identify"},
+        {"id": "40", "label": "Preferred Locale/Language", "kind": "combobox", "required": False, "options": ["English"]}]}
+    pending, _ = pipeline._pending(result, {})
+    assert [(q["label"], q["error"]) for q in pending] == [
+        ("Gender", "your profile's answer “Decline to self-identify” isn't one of its choices")]
+    r = Run(1)
+    applier = Applier(None)
+    applier._note_skipped(r, result)
+    applier._note_skipped(r, result)  # the same page filled again
+    assert r.log == ["left 2 optional question(s) empty, as none of their choices is your profile's answer: "
+                     "“Pre-Offer : Are you a Protected Veteran” (yours: “I don't wish to answer”), "
+                     "“U.S. Protected Veteran Self-Identification. This employer is a Government…” "
+                     "(yours: “I don't wish to answer”)"], r.log
 
 
 

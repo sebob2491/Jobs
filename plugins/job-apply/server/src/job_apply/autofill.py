@@ -58,13 +58,35 @@ _FILLER = {"yes", "no", "y", "n", "i", "am", "a", "an", "the", "to", "for", "of"
            "this", "it", "up"}
 PAGED_LIST_PAGE = 100  # entries SuccessFactors' paginated select lists at a time
 PLACE_LIST_SLICE = 20  # a list of more places than this shows only some of them (a lookup's first page)
-_DECLINE = re.compile(r"decline|not (wish|want) to|prefer not|choose not|do not want|don'?t wish|not to (answer|disclose|self)|rather not", re.I)
+# Declining to answer, as each site and person words it ("Decline to self-identify", "I don't
+# wish to answer", "I don't want to answer", "I choose not to disclose", "Prefer not to say",
+# "Not specified"), on norm()'s text. Only a refusal to answer: "I do not wish to relocate" is
+# an answer.
+_ANSWERING = (r"(answer|respond|reply|disclose|say|state|specify|share|declare|indicate|identify|self identify|"
+              r"provide (this|that|it|my|an answer|a response|th[ie]se?)\b)")
+_DECLINE = re.compile(
+    r"\bdeclin(e|ed|es|ing)\b"
+    rf"|\b(not|don t|dont) (wish|want|care|like) to (be )?{_ANSWERING}"
+    rf"|\b(prefer|preferred|choose|chose|elect|opt|wish|rather) not (to )?{_ANSWERING}"
+    r"|^(not specified|unspecified|not disclosed|undisclosed|not declared|undeclared|no answer|no response)$")
 
 
 def norm(s: Any) -> str:
     s = str(s or "").lower().replace("&", " and ")
     s = re.sub(r"[^a-z0-9+ ]+", " ", s)
     return re.sub(r"\s+", " ", s).strip()
+
+
+def is_decline(text: Any) -> bool:
+    """A refusal to answer: a self-identification form's "I don't wish to answer", worded
+    another way on every site."""
+    return bool(_DECLINE.search(norm(text)))
+
+
+def _only_declines(option: str) -> bool:
+    """A choice that does nothing but decline: not onsemi's "I do not wish to Identify or I am
+    not a Veteran", which is also the answer of someone who isn't a veteran."""
+    return all(is_decline(part) for part in re.split(r"\bor\b", norm(option)) if part.strip())
 
 
 def clean_label(label: str) -> str:
@@ -282,9 +304,12 @@ def choose_option(desired: Any, options: list[str], exact_only: bool = False, na
         return _containing(want, normed)
     # never the opposite of the answer, when its own wording isn't among the choices: "Not
     # Hispanic or Latino" isn't "Hispanic/Latino", nor "I am not a protected veteran" "Protected Veteran"
-    # (a decline's "not" is no denial: declines are matched as such below)
-    if not _DECLINE.search(str(desired)):
-        normed = [(o, n) for o, n in normed if not _contradicts(desired, o)]
+    # (a decline's "not" is no denial: declines are matched as such below). Nor a refusal to
+    # answer for someone who answered: "I do not want to answer" reads as a "no", and took
+    # a plain "No" away from "No, I do not have a disability"
+    declining = is_decline(desired)
+    if not declining:
+        normed = [(o, n) for o, n in normed if not _contradicts(desired, o) and not _only_declines(o)]
         opts = [o for o, _ in normed]
     if degree_key(want) or _partial_study(want):
         # schooling as it is, never more nor less: "High School Diploma" isn't "Some High
@@ -303,9 +328,10 @@ def choose_option(desired: Any, options: list[str], exact_only: bool = False, na
     if ranged is not None:
         return ranged
 
-    # 2. declines ("Decline to self-identify", "I don't wish to answer", ...)
-    if _DECLINE.search(str(desired)):
-        hits = [o for o, _ in normed if _DECLINE.search(o)]
+    # 2. declines ("Decline to self-identify", "I don't wish to answer", ...): only ever another
+    # decline, never a "No" ("I don't want to answer" isn't "I am not a protected veteran")
+    if declining:
+        hits = sorted((o for o, _ in normed if is_decline(o)), key=lambda o: not _only_declines(o))
         return hits[0] if hits else None
 
     # 3. yes / no questions
@@ -487,6 +513,12 @@ def _previously_employed(prof: Profile, job: dict, label: str = "") -> str | Non
                          rf"|\bhired\b.{{0,60}}? (by|with|at) (the )?{first}\b", asked)
     if not (names_it or re.search(r"(employed|worked|hired) (by|for|at|with) (us|this|our|the company)\b|former employee", asked)):
         return None
+    # A question naming another organization ("Are you a current or former employee of <an accounting
+    # firm>?" on an employer's own form) isn't about working for this one: it's the person's to answer
+    other = re.search(r"\b(employee|employed|employment|worked|work|intern|contractor)s? (\w+ )?(of|by|for|at|with) "
+                      r"(?!(us|this|our|the (company|organization|firm|business)|any|an?|one)\b)\w", asked)
+    if not names_it and other:
+        return None
     if re.search(rf"\b{first}( \w+){{0,2}} (tools?|systems?|equipment|products?|software|technolog\w*|machines?|platforms?|"
                  r"scanners?|metrology|etch|deposition|parts)\b", asked):
         return None  # "worked with KLA metrology systems": the employer's products, not working for it
@@ -499,6 +531,17 @@ def _previously_employed(prof: Profile, job: dict, label: str = "") -> str | Non
     now = [norm(e.get("company")) for e in entries if is_present(entry_dates(e)[1]) or e.get("current") is True]
     now.append(norm(prof.get("experience.current_company")))
     return "Yes, currently" if any(_same_employer(c, company) for c in now if c) else "Yes, previously"
+
+
+def _employee_id(prof: Profile, job: dict) -> str | None:
+    """The person's ID at the employer applied to (history.employee_ids, by employer), for its
+    "Employee ID (if applicable)" or "please provide your WWID": never another employer's."""
+    company = norm(job.get("company"))
+    ids = prof.get("history.employee_ids")
+    if not company or not isinstance(ids, dict):
+        return None
+    return next((str(value).strip() for name, value in ids.items()
+                 if value not in (None, "") and _same_employer(norm(str(name)), company)), None)
 
 
 _UNFINISHED = re.compile(r"^(none|n ?a|no|not applicable)$|\b(no degree|not (completed|finished)|incomplete|"
@@ -976,7 +1019,8 @@ RULES: list[tuple[str, str, Getter, int | None, set[str] | None]] = [
     # "Do you currently live in Arizona?" / "...in the Phoenix area?": the profile's address
     ("lives_in", r"^(do|are) you (currently |presently )?(live|living|reside|residing|located|based) in ", _lives_in, 100, None),
     ("travel", r"travel", _travel, None, None),
-    ("shift", r"shift work|rotating shift|nights and weekends|work (nights|weekends)|on ?call", _yn("preferences.flexible_schedule"), None, None),
+    # (whole words: "for more information, call ..." in a veteran notice isn't "on call")
+    ("shift", r"shift work|rotating shift|nights and weekends|work (nights|weekends)|\bon ?call\b", _yn("preferences.flexible_schedule"), None, None),
     # "Do you have a valid driver's license?" alone: not its record ("...been revoked or suspended"),
     # a commercial one, or one asked with something else ("...and reliable transportation")
     ("drivers_license", r"^(do you (currently )?(have|hold|possess)|are you in possession of) (a |an )?"
@@ -995,6 +1039,7 @@ RULES: list[tuple[str, str, Getter, int | None, set[str] | None]] = [
                    # to start work, not for an interview
                    r"when (would|could|will) you be available( to (start|begin)| for (work|employment)| if .{0,10}offer\b.*)?$|"
                    r"soonest .{0,30}(start|begin)\b", _p("preferences.earliest_start"), None, None),
+    ("employee_id", r"\b(employee|worker|associate|staff|badge) ?(id|number|no\b|#)|\bwwid\b", _employee_id, 160, {"text"}),
     ("previous_employee", r"(previously|ever|formerly) (been )?(employed|worked)|former employee|have you (ever )?worked (for|at)|worked .{0,40} before|"
      r"have you (ever )?been hired\b",
      _previously_employed, None, None),  # (only about this employer: see _previously_employed)
@@ -1319,7 +1364,10 @@ def _without_notes(label: str) -> str:
     return " ".join(kept) if len(kept) < len([p for p in parts if p.strip()]) else label
 
 
-def resolve_field(field: dict, prof: Profile, job: dict | None = None, file_inputs_on_page: int = 1) -> Answer | None:
+def resolve_field(field: dict, prof: Profile, job: dict | None = None, file_inputs_on_page: int = 1,
+                  unmatched: list[Answer] | None = None) -> Answer | None:
+    """The answer for a field, or None. A self-identification answer the profile gives but the
+    field's choices don't have is added to `unmatched`, so it can be said rather than skipped."""
     job = job or {}
     kind = field.get("kind", "text")
     raw_label = _without_notes(field.get("label") or field.get("name") or "")
@@ -1375,16 +1423,18 @@ def resolve_field(field: dict, prof: Profile, job: dict | None = None, file_inpu
     someone_else = _SOMEONE_ELSE.search(f"{label} {section}") or _OTHER_PARTY_LABEL.search(label) \
         or _OTHER_PARTY_SECTION.search(section)
     if ans is None:
-        for name, pattern, getter, max_len, kinds in RULES:
-            if someone_else and name in _CONTACT_RULES:
-                continue  # a reference's or an emergency contact's name, phone or email
+        # a self-identification question is its own topic's, whatever else its notice's words match
+        own = _self_identification(label, field)
+        for name, pattern, getter, max_len, kinds in ([own] if own else RULES):
+            if someone_else and (name in _CONTACT_RULES or name == "employee_id"):
+                continue  # a reference's or an emergency contact's name, phone or email; a referrer's ID
             if name in _EEO_RULES and _FAMILY.search(label):
                 continue  # "Are you the spouse of a veteran?", "Gender of your spouse": not the person's own
             if max_len is not None and len(label) > max_len:
                 continue
             if kinds is not None and kind not in kinds:
                 continue
-            if re.search(pattern, label):
+            if own or re.search(pattern, label):
                 if name in _WORK_RULES and (_OTHER_COUNTRIES.search(label) or _OTHER_THAN.search(label)):
                     return None  # another country's question: the profile's facts are the United States'
                 value = getter(prof, job, raw_label) if getter in _READS_QUESTION else getter(prof, job)  # type: ignore[call-arg]  # these take the question too
@@ -1438,9 +1488,14 @@ def resolve_field(field: dict, prof: Profile, job: dict | None = None, file_inpu
         # its search flag unset) is a slice of them too: the fill searches it
         searched = (field.get("search") or field.get("paged") and len(options) >= PAGED_LIST_PAGE
                     or ans.rule in _PLACE_RULES and len(options) > PLACE_LIST_SLICE)
-        if chosen is None and searched and not isinstance(ans.value, (list, dict)):
+        # but a self-identification list is short and all there on opening, in the site's own
+        # words: typing the profile's ("Decline to self-identify" into onsemi's Gender, whose
+        # Oracle list is Female and Male) finds nothing and fails
+        if chosen is None and searched and ans.rule not in _EEO_RULES and not isinstance(ans.value, (list, dict)):
             return ans
         if chosen is None:
+            if ans.rule in _EEO_RULES and unmatched is not None:
+                unmatched.append(ans)  # the profile answers it, but none of the choices is its answer
             return None
         return Answer(chosen, ans.rule)
     if kind == "combobox" and ans.rule in _NEEDS_OPTIONS:
@@ -1458,6 +1513,28 @@ _INSTRUCTION_ONLY = re.compile(
     r"^(?:please )?(?:check|select|choose|tick|mark|pick)(?: (?:one|any|all|only|of|the|a|an|following|box|"
     r"boxes|option|options|answer|answers|response|below|that|which|apply|applies|appropriate))*$")
 _POINTS_AT_CHOICES = re.compile(r"\b(?:box|boxes|below|following)\b")
+
+
+_TOPIC_WORDS = {"veteran": re.compile(r"\bveteran"), "disability": re.compile(r"\bdisabilit")}
+_SELF_ID = re.compile(r"\bself ?identif")
+
+
+def _self_identification(label: str, field: dict) -> tuple[str, str, Getter, int | None, set[str] | None] | None:
+    """The rule of a veteran or disability self-identification question, told by its words and
+    its choices together. Micron's veteran question carries the whole VEVRAA notice in its
+    label, where "for more information, call ..." read as an on-call question ahead of the
+    veteran one. A question about something else that mentions the topic ("Do you need an
+    accommodation for a disability?") has no self-identification wording and no way to decline."""
+    options = field.get("options") or []
+    if field.get("kind") not in _CHOICE_KINDS or not options or _FAMILY.search(label):
+        return None
+    for rule in RULES:
+        name, pattern = rule[0], rule[1]
+        if name in _OPTION_TOPICS and _TOPIC_WORDS[name].search(label) \
+                and sum(bool(re.search(pattern, norm(o))) for o in options) >= 2 \
+                and (_SELF_ID.search(label) or any(is_decline(o) for o in options)):
+            return rule
+    return None
 
 
 def _topic_from_options(options: list[str], prof: Profile, job: dict) -> Answer | None:
@@ -1579,6 +1656,12 @@ def is_name_rule(rule: str) -> bool:
     return bool(re.search(r"\.(school|company|employer)$|^(school|current_company)$", rule or ""))
 
 
+def is_eeo_rule(rule: str) -> bool:
+    """Self-identification answers (gender, race, veteran, disability, ...): one of the list's
+    own choices, picked from it, never typed in to search for it."""
+    return rule in _EEO_RULES
+
+
 _WEBSITE = re.compile(r"\b(web ?site|careers? (site|page|portal)|company site)\b", re.I)
 
 
@@ -1631,17 +1714,24 @@ _EDU_FIELD = re.compile(r"^(school|university|college|institution|degree|discipl
 # (not "Position Applied For", the job being applied to)
 _JOB_FIELD = re.compile(r"^(company|employer|job title|title|position)\b(?! (applied|you are applying|of interest|desired|sought))")
 _DATE_PART = re.compile(r"^(start|end|from|to)( date)?( (year|month))?$")
+# The other boxes of a job's or school's block, which come between its name and its dates
+_IN_BLOCK = re.compile(r"^(location|city|state|country|description|role description|responsibilit\w*|summary|"
+                       r"gpa|grade|overall result|i currently|current(ly)?)\b")
 
 
 def _with_context(fields: list[dict]) -> list[dict]:
     """Greenhouse-style forms put School, Degree, Discipline and "Start date year" together
     with no section heading: they're one school's, the first in the profile's education
-    history, so its school is never given another school's degree. Unsectioned dates after
-    a job's boxes are that job's."""
+    history, so its school is never given another school's degree. Unsectioned dates right
+    after a job's boxes are that job's: a box of a block of its own, or another question
+    between (an availability "Start Date" further down), ends the guess."""
     out, block, school = [], None, False
     for f in fields:
         label = norm(clean_label(f.get("label") or ""))
-        if not f.get("section"):
+        if f.get("section") or not (_EDU_START.match(label) or _EDU_FIELD.match(label) or _JOB_FIELD.match(label)
+                                    or _DATE_PART.match(label) or _IN_BLOCK.match(label)):
+            block, school = None, False
+        else:
             if _EDU_START.match(label):
                 block, school = "Education 1", True
                 f = {**f, "section": block}
@@ -1675,13 +1765,16 @@ def plan_autofill(fields: list[dict], prof: Profile, job: dict | None = None, ov
         if has_value and not overwrite:
             already.append(f["id"])
             continue
-        ans = resolve_field(f, prof, job, file_inputs)
+        missed: list[Answer] = []
+        ans = resolve_field(f, prof, job, file_inputs, unmatched=missed)
         if ans is not None and ans.value == SKIP:
             continue
         if ans is not None:
             to_fill.append({"id": f["id"], "label": f.get("label", ""), "value": ans.value, "rule": ans.rule})
         elif f.get("kind") != "password":
-            needs_input.append(_asked(f))
+            # with the profile's answer the choices don't have (Qorvo's veteran list has no "I
+            # don't wish to answer"), so the desk can say why it's empty
+            needs_input.append({**_asked(f), **({"unmatched": str(missed[0].value)} if missed else {})})
     _graduation_of_the_school_given(fields, to_fill, needs_input, prof, job, file_inputs)
     needs_input.sort(key=lambda f: not f.get("required"))
     return {"to_fill": to_fill, "needs_input": needs_input, "already_filled": already}

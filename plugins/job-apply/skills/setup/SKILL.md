@@ -31,7 +31,9 @@ All of the user's data lives in `~/.job-apply/`, outside the plugin:
    `documents.resume` to the path it returns. Read it, then fill `personal`, `experience`, `education`,
    `history.previous_employers`, `work_history` (every job, with start/end month)
    and `education_history` from it. Use only what the resume says; if a date or
-   location is missing, ask rather than guess.
+   location is missing, ask rather than guess. Where the user has worked for an
+   employer they may apply to again, they can give their ID there for
+   `history.employee_ids` (`{Employer: "ID"}`): it goes only on that employer's forms.
 
    **Confirm every degree before writing it.** A resume, an Indeed one especially,
    can list a degree that was never finished. Ask "Did you complete the <degree>?"

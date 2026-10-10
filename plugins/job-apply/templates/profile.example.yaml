@@ -57,6 +57,8 @@ education:
 
 history:
   previous_employers: []      # companies you've worked for; answers "have you worked for X before?"
+  employee_ids: {}            # your ID at an employer you've worked for, e.g. {Example Fab: "123456"}:
+                              # filled only on that employer's forms ("Employee ID", "WWID")
 
 # Jobs, most recent first. Fills Workday's "Work Experience 1, 2, ..." blocks (and
 # similar repeated sections elsewhere). Dates: "2021-03", "03/2021" or "Mar 2021";

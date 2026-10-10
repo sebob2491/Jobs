@@ -29,7 +29,8 @@ from urllib.parse import urlparse
 from . import config, mailbox
 from .ats import ATS_NAMES, detect_ats, shared_system
 from .autofill import clean_label, entry_of, is_empty_value, norm, plan_autofill, tailored_document
-from .browser import TabClosed, _accepts_cookies, _cookie_setting, declines_cookies, final_text, may_accept_cookies
+from .browser import (TabClosed, _accepts_cookies, _cookie_setting, confirmations, declines_cookies, final_text,
+                      may_accept_cookies)
 
 NEW_TAB_WAIT = 4  # seconds to wait for a tab opened late by a click before calling it a stall
 ONCE_SETTLE = 1.0  # seconds after filling the person's answers before checking they stayed in
@@ -862,6 +863,15 @@ class Applier:
             run.page_info = _page_info(data)
             run.url = data["url"]
             run.page = srv.browser.current_tab or run.page
+            if run.seen_form and not pressed and (gone := sorted(confirmations(text))):
+                # Back on a job the desk filled in, before it has pressed anything: the person pressed the
+                # site's own Submit and then Resume (Workday's Candidate Home shows "Application Submitted").
+                # It went, so it's marked applied and never filled in again
+                srv.tracker().update(run.job_id, status="applied", note="submitted on the site")
+                run.status, run.need, run.blocking, run.left = "submitted", "", False, False
+                run.reason = f"Submitted: {_site(run, data)} says \u201c{gone[0]}\u201d."
+                self._log(run, run.reason)
+                return
             cookies = await self._decline_cookies(run, data, text)
             if cookies is False:
                 await self._bring_forward(run)
@@ -1291,11 +1301,22 @@ class Applier:
         return failed
 
     def _note_skipped(self, run: Run, result: dict[str, Any]) -> None:
-        """Optional fields that wouldn't take the profile's answer are skipped, and said so."""
+        """Optional fields that wouldn't take the profile's answer are skipped, and said so. So
+        are optional ones whose choices don't have it (Qorvo's veteran list has no "I don't
+        wish to answer"): left empty, since no other choice is the person's. Each said once."""
+        said = []
         skipped = [f.get("label") or "a field" for f in result["failed"] if f.get("required") is False]
         if skipped:
-            self._log(run, f"skipped {len(skipped)} optional field(s) that wouldn't take your profile's answer: "
-                      + ", ".join(f"\u201c{label}\u201d" for label in skipped[:3]))
+            said.append(f"skipped {len(skipped)} optional field(s) that wouldn't take your profile's answer: "
+                        + ", ".join(f"\u201c{_short(label)}\u201d" for label in skipped[:3]))
+        unoffered = [f for f in result.get("needs_input") or [] if f.get("unmatched") and not f.get("required")]
+        if unoffered:
+            said.append(f"left {len(unoffered)} optional question(s) empty, as none of their choices is your profile's "
+                        "answer: " + ", ".join(f"\u201c{_short(f.get('label') or 'a field')}\u201d (yours: "
+                                               f"\u201c{f['unmatched']}\u201d)" for f in unoffered[:3]))
+        for line in said:
+            if line not in run.log:
+                self._log(run, line)
 
     def _entry_gaps(self, run: Run, data: dict[str, Any],
                     pending: list[dict[str, Any]]) -> tuple[str, list[dict[str, Any]]]:
@@ -1858,7 +1879,12 @@ def _pending(result: dict[str, Any], once_failed: dict[str, dict[str, Any]]) -> 
     def turned_down(f: dict[str, Any]) -> dict[str, Any]:  # an answer of theirs for the box, or its label
         return once_failed.get(placed_key(f)) or once_failed.get(question_key(f.get("label") or "")) or {}
 
-    pending = [{**f, **turned_down(f)} for f in result["needs_input"] if f.get("required") and f.get("kind") != "file"]
+    def unoffered(f: dict[str, Any]) -> dict[str, Any]:  # why the profile's answer didn't go in
+        return {"error": f"your profile's answer “{f['unmatched']}” isn't one of its choices"} \
+            if f.get("unmatched") else {}
+
+    pending = [{**f, **unoffered(f), **turned_down(f)} for f in result["needs_input"]
+               if f.get("required") and f.get("kind") != "file"]
     # the profile's answers that didn't go in, where the site requires one (an optional field
     # is skipped: Qorvo's optional veteran question has no "don't wish to answer")
     pending += [{"id": f["id"], "label": f.get("label") or "", "kind": f.get("kind") or ("combobox" if f.get("options") else "text"),
@@ -2071,3 +2097,10 @@ def _page_said(data: dict[str, Any]) -> str:
 def _where(data: dict[str, Any]) -> str:
     headings = [h for h in data.get("headings") or [] if h and not re.match(r"current step", h, re.I)]
     return f"“{headings[-1][:60]}”" if headings else "this page"
+
+
+def _short(label: str) -> str:
+    """A question in a few words for the log: Micron's veteran question carries the whole
+    VEVRAA notice in its label."""
+    text = clean_label(label)
+    return text if len(text) <= 80 else text[:78].rsplit(" ", 1)[0].rstrip(" ,.;:") + "…"
