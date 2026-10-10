@@ -1039,6 +1039,73 @@ def test_the_report_box_goes_back_when_the_report_cant_be_made_again(srv, job_ap
     assert len(alerts) == 2 and links == [None, None, None]
 
 
+def test_a_report_that_cant_be_made_doesnt_bring_back_another_jobs(srv, job_apply_home, monkeypatch):
+    """The dialog went back to the report it showed last when one couldn't be made, but that was
+    kept for the page, not the job: when job B's report failed, the dialog took back job A's, with
+    its box and its link, and Open would file a public issue about A. A job's report starts with
+    nothing of another's; one that can't be made leaves no link, the box unticked and no text."""
+    from playwright.async_api import async_playwright
+
+    from job_apply import report
+    from job_apply.pipeline import Run
+
+    build = report.build
+    desk = Desk(srv)
+    a = srv.add_job(url="https://acme.wd1.myworkdayjobs.com/External/job/a", title="Technician",
+                    company="Example Litho")["job"]
+    b = srv.add_job(url="https://example.com/jobs/b", title="Operator", company="Example Corp")["job"]
+
+    def failing(job, run=None, profile=None, anonymous=False):
+        if job["id"] == b["id"]:
+            raise OSError("No space left on device")
+        return build(job, run, profile, anonymous)
+
+    monkeypatch.setattr(report, "build", failing)
+    for job in (a, b):
+        desk.applier.runs[job["id"]] = Run(job["id"], job["title"], job["company"], status="failed",
+                                           reason="Something went wrong.")
+    desk.applier.start = lambda: None
+    desk.search.update(status="done", at=time.time())
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with async_playwright() as pw:
+                browser = await pw.chromium.launch(**launch_options())
+                page = await browser.new_page()
+                alerts = []
+
+                async def dismiss(dialog):
+                    alerts.append(dialog.message)
+                    await dialog.dismiss()
+                page.on("dialog", dismiss)
+                await page.goto(desk.url)
+                ready = "() => !document.querySelector('#report-anonymous').disabled"
+                await page.click(f"button[data-job='{a['id']}'][data-job-act='report']")
+                await page.wait_for_selector("#report[open]")
+                async with page.expect_response(lambda r: r.url.endswith(f"/api/job/{a['id']}/report")):
+                    await page.check("#report-anonymous")  # A's report, leaving the job out
+                await page.wait_for_function(ready)
+                a_link = await page.locator("#report-open").get_attribute("href")
+                await page.click("[data-act=report-close]")
+                async with page.expect_response(lambda r: r.url.endswith(f"/api/job/{b['id']}/report")):
+                    await page.click(f"button[data-job='{b['id']}'][data-job-act='report']")
+                await page.wait_for_function(ready)
+                after = (await page.locator("#report[open]").count(), await page.is_checked("#report-anonymous"),
+                         await page.locator("#report-open").get_attribute("href"),
+                         await page.locator("#report-text").text_content(),
+                         await page.locator("#report-where").text_content())
+                await browser.close()
+                return a_link, after, alerts
+        finally:
+            await desk.stop()
+
+    a_link, after, alerts = run(go())
+    assert a_link and a_link.startswith("https://github.com/")
+    assert len(alerts) == 1  # (that it couldn't be made)
+    assert after == (0, False, None, "", "")  # nothing of A's, nor a link to file it
+
+
 def test_the_desk_reads_an_icims_posting_in_its_browser(srv, monkeypatch):
     """iCIMS postings turn away plain requests: Find jobs reads one in a background tab, from
     the frame its posting is drawn in (in_iframe=1). Other sites' postings aren't read that way."""
