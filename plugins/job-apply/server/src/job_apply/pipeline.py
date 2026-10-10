@@ -80,9 +80,10 @@ FINISHED = {"applied", "interviewing", "offer", "rejected", "withdrawn"}  # trac
 
 _BOT_TITLE = re.compile(r"just a moment|attention required|access denied|pardon our interruption|security check|"
                         r"are you a robot|bot (?:check|detection)", re.I)
-# A bare "403 Forbidden" (Valleywise Health's postings, to the desk's browser): the site turns the
-# browser away. There's nothing to solve, so it holds nothing up: the person applies elsewhere
-_TURNED_AWAY = re.compile(r"^\s*(?:403\s*)?forbidden\s*$", re.I)
+# A bare "403 Forbidden" (Valleywise Health's postings, to the desk's browser) or "406 Not Acceptable"
+# (Deloitte's sign-in, to a headless browser): the site turns the browser away. There's nothing to
+# solve, so it holds nothing up: the person applies elsewhere
+_TURNED_AWAY = re.compile(r"^\s*(?:403\s*)?forbidden\s*$|^\s*(?:406\s*)?not acceptable\s*$", re.I)
 # A posting that has closed: "The job posting you are looking for has expired or the position has
 # already been filled" (Edward Jones' BrassRing), "This job is no longer available"
 _CLOSED = re.compile(
@@ -1087,7 +1088,8 @@ class Applier:
                                    "didn't load. Press Resume to try again, or open the posting in your own browser to "
                                    "apply there.")
             if kind == "page" and not data.get("fields") and _TURNED_AWAY.search(data.get("title") or ""):
-                return self._pause(run, "stuck", f"{_site(run, data)} turned the desk's browser away (403 Forbidden). "
+                refusal = re.sub(r"\s+", " ", str(data.get("title"))).strip()
+                return self._pause(run, "stuck", f"{_site(run, data)} turned the desk's browser away ({refusal}). "
                                    "Open the posting in your own browser to apply there.")
             if kind == "bot_check":
                 await self._bring_forward(run)
