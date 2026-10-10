@@ -1,0 +1,44 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Create Account</title></head>
+<body>
+<!-- a talent community's own Sign Up box in the header, above the Create Account form; an
+     optional "contact me" box beside the required terms one; and, where ?policy is asked for,
+     a password the site turns down. "Already have an account? Sign In" as on most such pages -->
+<header>
+  <form id="talent" novalidate>
+    <label for="tc">Join our talent community: email</label><input id="tc" type="email">
+    <button type="submit">Sign Up</button>
+  </form>
+</header>
+<h2>Create Account</h2>
+<form id="create" novalidate>
+  <label for="em">Email Address*</label><input id="em" type="email" required>
+  <label for="pw">Password*</label><input id="pw" type="password" required>
+  <label for="pw2">Verify New Password*</label><input id="pw2" type="password" required>
+  <label><input id="terms" type="checkbox" required> I agree to the Terms of Use*</label>
+  <label><input id="contact" type="checkbox"> I consent to be contacted about other opportunities</label>
+  <button type="submit">Create Account</button>
+</form>
+<div id="err" role="alert"></div>
+<p>Already have an account? <button type="button" id="back">Sign In</button></p>
+<script>
+  window.talent = 0;
+  window.created = 0;
+  document.getElementById('talent').addEventListener('submit', (e) => { e.preventDefault(); window.talent += 1; });
+  document.getElementById('create').addEventListener('submit', (e) => {
+    e.preventDefault();
+    window.created += 1;
+    window.contact = document.getElementById('contact').checked;
+    if (!document.getElementById('terms').checked) {
+      document.getElementById('err').textContent = 'Error: accept the terms';
+    } else if (location.search.includes('policy')) {
+      document.getElementById('err').textContent = 'Your password must contain at least one symbol.';
+    } else {
+      location.href = 'signin-new-account.html?created=1';
+    }
+  });
+  document.getElementById('back').addEventListener('click', () => { location.href = 'signin-new-account.html'; });
+</script>
+</body>
+</html>
