@@ -2053,3 +2053,21 @@ def test_a_job_site_down_for_maintenance_is_said_so(down):
                                                 20, [])
     with pytest.raises(search_module.SearchError, match="adco.wd1.myworkdayjobs.com is down for maintenance"):
         asyncio.run(go())
+
+
+@pytest.mark.parametrize("to", ["https://adco.wd1.myworkdayjobs.com/External/search/maintenance",
+                                "https://jobs.example.com/job/Maintenance-Technician",
+                                "https://jobs.example.com/careers/maintenance-planner"])
+def test_a_redirect_to_maintenance_work_isnt_taken_for_a_site_down(to):
+    """Searches for technicians meet "maintenance" in job addresses: only a maintenance page of
+    its own, on another host, is a site down."""
+    def answer(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/jobs") and request.url.host == "adco.wd1.myworkdayjobs.com":
+            return httpx.Response(303, headers={"Location": to})
+        return httpx.Response(200, json={"total": 0, "jobPostings": []})
+
+    async def go():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(answer), follow_redirects=True) as client:
+            return await search_module._workday(client, "https://adco.wd1.myworkdayjobs.com/External", "maintenance",
+                                                20, [])
+    assert asyncio.run(go()) == []
