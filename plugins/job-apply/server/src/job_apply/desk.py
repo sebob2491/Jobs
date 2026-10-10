@@ -496,6 +496,8 @@ class Desk:
             "profile": {"name": prof.full_name, "missing": prof.missing_required(), "gaps": prof.profile_gaps(),
                         "titles": prof.get("preferences.titles") or [], "path": str(config.profile_path())},
             "settings": {"submit_mode": settings.submit_mode, "dry_run": settings.dry_run,
+                         "manage_accounts": settings.may_manage_accounts,
+                         "manage_accounts_chosen": settings.manage_accounts_chosen,
                          "auto_submit": self.applier.auto_submit, "tailor_resumes": self.applier.tailor},
             "tailoring": len(self.applier.tailoring()),
             # saved or not, never the value

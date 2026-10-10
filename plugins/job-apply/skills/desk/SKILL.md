@@ -38,11 +38,15 @@ The desk is a local web page served by this plugin. It does what the `find-jobs`
 - **Site passwords** stores one password per job system: Workday, SuccessFactors, iCIMS,
   ApplicantStack, UKG Pro or Infor. The page names, by each system, the employers on the
   user's own lists that use it (on the semiconductor list, Workday has 12 of them; on the
-  Phoenix list, 24). Each employer has its own account. With a password saved, the desk signs in by itself and fills in Create Account
-  forms (email, password, name and country from the profile), leaving the terms box, any
-  picture code and the button to the user. If the password doesn't sign in (usually a
-  first application there), the desk opens that employer's Create Account form ("Create
-  an account", "Register", "Sign up") and fills it in. A password is only typed into its
+  Phoenix list, 24). Each employer has its own account. With a password saved, the desk signs in by itself and creates
+  the account from Create Account forms (email, password, name and country from the
+  profile; it ticks the site's terms, never a newsletter, and presses the button; a picture
+  code stays the user's). If the password doesn't sign in (usually a first application
+  there), the desk opens that employer's Create Account form ("Create an account",
+  "Register", "Sign up") and creates the account; where the email already has one, it
+  resets that account's password to the saved one through the site's "Forgot password"
+  email. `settings.manage_accounts: false` leaves all of this to the user (the desk fills
+  in Create Account for them to finish); practice mode never creates an account. A password is only typed into its
   own system's addresses. The user types it into the desk page; never ask for it in the
   conversation.
 - **Submit** sends one application. **Submit for me** sends every application that

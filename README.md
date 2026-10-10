@@ -154,12 +154,17 @@ opens a page on your computer (served by the plugin on `127.0.0.1`):
 Each employer has its own account on its job site. In the desk's **Site passwords**
 card, save one password for a job system: Workday (13 of the employers), SuccessFactors
 (Edwards, Qorvo, Amkor), iCIMS (Daifuku), ApplicantStack (SCREEN), UKG Pro (Nikon
-Precision) or Infor (Benchmark). The desk then fills in that system's Create Account forms
-(your email, the password, and your name and country from the profile; you tick their
-terms, fill in any picture code and press the button) and signs you in after that. When it
-doesn't sign in at an employer, usually because it's your first application there, the
-desk tries it once and then opens that employer's Create Account form ("Create an
-account", "Register", "Sign up") and fills it in instead. On Qorvo's one-page application
+Precision) or Infor (Benchmark). The desk then creates your account at each of that system's
+employers (your email, the password, and your name and country from the profile; it ticks
+their terms, never a newsletter, and presses the button; a picture code stays yours) and
+signs you in after that. When it doesn't sign in at an employer, usually because it's your
+first application there, the desk tries it once and then opens that employer's Create
+Account form ("Create an account", "Register", "Sign up") and creates the account. When the
+site says the email already has an account, the desk resets that account's password to the
+saved one through the site's own "Forgot password" email (it reads that email with the
+email app password below; without one it asks you to). To do these steps yourself, set
+`manage_accounts: false` under `settings:` in your profile: the desk then fills in Create
+Account for you to finish. Practice mode never creates an account. On Qorvo's one-page application
 it puts the password in both boxes. The password goes from the page straight into
 `~/.job-apply/secrets.yaml` on your computer, and is only ever typed into that system's
 own addresses (for Workday, `*.myworkdayjobs.com` and `*.myworkday.com`). Claude never sees
@@ -179,7 +184,8 @@ an emailed code or confirmation link gets it from your inbox:
 If the app password is turned down, the desk page says so and stops trying until you
 save it again (a new one, or the same one if the mail service was only having trouble).
 A link is only opened when its address is the job's own site. The app password is only
-ever used to read those emails: Claude can't have it typed into any page.
+ever used to read those emails, and the password-reset email a site was just asked for:
+Claude can't have it typed into any page.
 
 The desk works in each job's own browser tab and follows only the tabs an application
 opens itself, so a tab you open (to check your email, say) is left alone. Jobs already

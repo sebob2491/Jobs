@@ -1326,8 +1326,8 @@ class Applier:
             await srv.browser.click(button["id"], allow_submit=True)  # (the form's own button: it creates the account)
         except Exception:
             return False
-        self._log(run, f"created your account on {_site(run, data)} with your saved password, as your settings allow"
-                  + (" (and agreed to its terms)" if boxes else ""))
+        self._log(run, f"created your account on {_site(run, data)} with your saved password"
+                  + (" and agreed to its terms" if boxes else "") + " (manage_accounts: false in profile.yaml leaves this to you)")
         return True
 
     async def _ask_for_reset(self, run: Run, data: dict[str, Any], tried: dict[str, int]) -> bool:
@@ -1401,8 +1401,8 @@ class Applier:
         if data.get("errors") and not _RESET_SENT.search(text):  # "No account found for this email"
             return await stop(f"asked for a password reset, and it says \u201c{data['errors'][0][:160]}\u201d", data)
         run.resetting = True
-        self._log(run, f"your saved password didn't sign in on {site}, so I asked it to email a password reset, as your "
-                  "settings allow")
+        self._log(run, f"your saved password didn't sign in on {site}, so I asked it to email a password reset "
+                  "(manage_accounts: false in profile.yaml leaves this to you)")
         await self._await_reset_email(run, data)
         return True
 

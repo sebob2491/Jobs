@@ -520,6 +520,24 @@ def test_answers_that_cant_be_remembered_still_go_into_the_application(srv, job_
 
 
 
+def test_the_desk_page_says_account_handling_is_on_until_the_profile_says(srv, job_apply_home):
+    """On by default since 0.3.67: the desk page tells a person whose profile doesn't say (an
+    install from before), until their profile says either way."""
+    from pathlib import Path
+
+    import yaml
+
+    path = job_apply_home / "profile.yaml"
+    profile = yaml.safe_load(path.read_text())
+    assert Desk(srv).state()["settings"]["manage_accounts_chosen"] is True  # the tests' profile turns it off
+    profile["settings"].pop("manage_accounts")
+    path.write_text(yaml.safe_dump(profile))
+    settings = Desk(srv).state()["settings"]
+    assert (settings["manage_accounts"], settings["manage_accounts_chosen"]) == (True, False)
+    page = (Path(srv.__file__).parent / "static" / "desk.html").read_text()
+    assert "s.manage_accounts && !s.manage_accounts_chosen" in page and "manage_accounts: false" in page
+
+
 def test_two_boxes_with_one_label_keep_their_own_answers(srv, job_apply_home):
     """Workday's Month and Year boxes are both "Date": the card sends each box's own answer
     ("section | label | sub-label"), which is used for this application only, never remembered

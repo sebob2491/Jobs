@@ -226,7 +226,9 @@ def setup_status() -> dict[str, Any]:
         "settings_warnings": s.warnings,
         "settings": {"submit_mode": s.submit_mode, "auto_submit_ats": s.auto_submit_ats,
                      "browser_channel": s.browser_channel, "headless": s.headless,
-                     "email_codes": s.email_codes, "email_tracking": s.email_tracking},
+                     "email_codes": s.email_codes, "email_tracking": s.email_tracking,
+                     "accept_cookies": s.accept_cookies, "manage_accounts": s.manage_accounts,
+                     "manage_accounts_chosen": s.manage_accounts_chosen},
         "chrome_detected": has_chrome,
         "browser_note": "The desk uses Google Chrome, or Microsoft Edge without it. If neither starts, install Chrome or run "
                         f"`uv run --project \"{config.PLUGIN_ROOT / 'server'}\" playwright install chromium` "

@@ -23,14 +23,26 @@ def test_accepting_cookies_is_the_persons_choice():
     assert config.Settings.from_dict({"accept_cookies": True}).accept_cookies is True
 
 
-def test_managing_accounts_is_on_unless_turned_off_and_never_in_practice_mode():
-    """On unless the profile turns it off (the owner's choice; setup tells each person); practice
-    mode, which sends nothing, never makes an account or resets a password."""
-    assert config.Settings.from_dict({}).may_manage_accounts is True
-    assert config.Settings.from_dict({"manage_accounts": True}).may_manage_accounts is True
-    for off in (False, "false", "no", "off"):
-        assert config.Settings.from_dict({"manage_accounts": off}).may_manage_accounts is False, off
-    assert config.Settings.from_dict({"submit_mode": "dry_run"}).may_manage_accounts is False
+def test_managing_accounts_is_on_unless_turned_off_and_never_in_practice_mode(monkeypatch):
+    """On where the profile doesn't say (the owner's choice; setup and the desk page tell each
+    person); off for false, no or off, and for an answer it can't read or a settings section that
+    isn't one, since it acts in the person's name. Practice mode, which sends nothing, never makes
+    an account or resets a password, even with it set to true."""
+    def manage(settings):
+        return config.Settings.from_dict(settings).may_manage_accounts
+
+    assert manage({}) is True and manage(None) is True and manage({"manage_accounts": None}) is True
+    assert manage({"manage_accounts": True}) is True and manage({"manage_accounts": "yes"}) is True
+    for off in (False, "false", "no", "off", "maybe"):
+        assert manage({"manage_accounts": off}) is False, off
+    assert config.Settings.from_dict("review").may_manage_accounts is False  # a settings: line that isn't a section
+    assert manage({"submit_mode": "dry_run"}) is False
+    assert manage({"manage_accounts": True, "submit_mode": "dry_run"}) is False
+    monkeypatch.setenv("JOB_APPLY_NEVER_SUBMIT", "1")
+    assert manage({"manage_accounts": True}) is False
+    monkeypatch.delenv("JOB_APPLY_NEVER_SUBMIT")
+    assert config.Settings.from_dict({}).manage_accounts_chosen is False
+    assert config.Settings.from_dict({"manage_accounts": True}).manage_accounts_chosen is True
 
 
 def test_submit_mode_spellings():
