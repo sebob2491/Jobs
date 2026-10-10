@@ -1,7 +1,7 @@
 import json
 
 from job_apply.config import Profile
-from job_apply.fixtures import clean_html, convert, personal_strings
+from job_apply.fixtures import clean_html, convert, personal_strings, redact
 
 
 def test_personal_data_is_redacted(tmp_path):
@@ -113,6 +113,30 @@ def test_a_value_is_taken_out_as_a_whole_word_and_wherever_its_one():
         assert kept in out, kept
     for leaked in ("Rob ", "Hall", "robhall", "hall77", "Evergreen"):
         assert leaked not in out, leaked
+
+
+def test_a_surname_after_an_initial_is_taken_out_of_a_user_name_a_file_name_or_a_link():
+    """Taken out as a whole word only, a last name "Doe" stayed in "jdoe1987", "JDoe_Resume.pdf", an
+    email and a link, which a problem report would show. In the name of something (no spaces, its
+    words joined by a digit, "_", "@", "/" or ".") a value goes wherever it is, with the letters it
+    runs on into, so no half-word is left to guess it by. Prose keeps its words whole, and a ZIP
+    code inside a longer number is still another number."""
+    secrets = personal_strings(Profile({"personal": {"first_name": "Jane", "last_name": "Doe",
+                                                     "address": {"postal_code": "85201"}}}))
+    for named in ("jdoe1987", "JDoe_Resume.pdf", "jdoe@example.com", "https://x.example/u/jdoe"):
+        assert "doe" not in redact(named, secrets).lower(), named
+    said = redact("Signed in as jdoe1987 (JDoe_Resume.pdf), order-1852011.pdf, https://x.example/u/jdoe", secrets)
+    assert said == "Signed in as REDACTED1987 (REDACTED_Resume.pdf), order-1852011.pdf, https://x.example/u/REDACTED"
+    page = clean_html('<p>Signed in as jdoe1987</p><a href="https://x.example/u/jdoe" data-file="JDoe_CV.pdf">me</a>',
+                      secrets)
+    assert "doe" not in page.lower(), page
+    secrets = personal_strings(Profile({"personal": {"first_name": "Rob", "last_name": "Lee", "middle_name": "Ray",
+                                                     "preferred_name": "Ash"}}))
+    prose = "Problem? Don't flee the gray washing. Robotics, Leeway, Raymond and Ashes."
+    assert redact(prose, secrets) == prose
+    assert redact("https://example.com/careers/dashboard", secrets) == "https://example.com/careers/REDACTED"
+    secrets = personal_strings(Profile({"personal": {"first_name": "Ted", "last_name": "Hall"}}))
+    assert redact("Ted_Hall_Resume.pdf", secrets) == "REDACTED_Resume.pdf"  # not "Ted" again in the REDACTED
 
 
 def test_expectations_keep_accented_names_findable_and_drop_query_strings(tmp_path):

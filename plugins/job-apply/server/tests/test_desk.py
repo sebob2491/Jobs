@@ -958,6 +958,84 @@ def test_report_a_problem_can_leave_out_which_job_it_was(srv, job_apply_home):
     assert not any(word in anonymous for word in ("Technician", "Example Litho", "acme"))
 
 
+def test_the_report_box_goes_back_when_the_report_cant_be_made_again(srv, job_apply_home, monkeypatch):
+    """Ticking "Don't say which job it was" makes the report again. When that failed, the box stayed
+    ticked over the report that names the job, with its link to file it: the person would file a
+    public issue naming the job, thinking it didn't. The box goes back to say what the report shown
+    does, with that report's link, whether it was ticked or cleared. While one is being made, there's
+    no link."""
+    import threading
+
+    from playwright.async_api import async_playwright
+
+    from job_apply import report
+    from job_apply.pipeline import Run
+
+    build, failing, looked = report.build, set(), threading.Event()
+    looked.set()
+
+    def flaky(job, run=None, profile=None, anonymous=False):
+        looked.wait(10)  # (until the page has been looked at while the report is made)
+        if anonymous in failing:
+            raise OSError("No space left on device")
+        return build(job, run, profile, anonymous)
+
+    monkeypatch.setattr(report, "build", flaky)
+    desk = Desk(srv)
+    job = srv.add_job(url="https://acme.wd1.myworkdayjobs.com/External/job/x", title="Technician",
+                      company="Example Litho")["job"]
+    desk.applier.runs[job["id"]] = Run(job["id"], "Technician", "Example Litho", status="failed",
+                                       reason="Something went wrong on Example Litho's site.")
+    desk.applier.start = lambda: None
+    desk.search.update(status="done", at=time.time())
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with async_playwright() as pw:
+                browser = await pw.chromium.launch(**launch_options())
+                page = await browser.new_page()
+                alerts, links = [], []
+
+                async def dismiss(dialog):
+                    alerts.append(dialog.message)
+                    await dialog.dismiss()
+                page.on("dialog", dismiss)
+                await page.goto(desk.url)
+                await page.click(f"button[data-job='{job['id']}'][data-job-act='report']")
+                await page.wait_for_selector("#report[open]")
+
+                async def toggle():  # tick or clear the box, and wait for the report it asks for
+                    looked.clear()
+                    async with page.expect_response(lambda r: r.url.endswith(f"/api/job/{job['id']}/report")):
+                        await page.click("#report-anonymous")
+                        links.append(await page.locator("#report-open").get_attribute("href"))
+                        looked.set()
+                    await page.wait_for_function("() => !document.querySelector('#report-anonymous').disabled")
+                    return (await page.is_checked("#report-anonymous"),
+                            await page.locator("#report-open").get_attribute("href"),
+                            await page.locator("#report-text").inner_text())
+
+                named = await page.locator("#report-open").get_attribute("href")
+                failing.add(True)
+                seen = [await toggle()]  # can't leave the job out
+                failing.clear()
+                seen.append(await toggle())  # leaves it out
+                failing.add(False)
+                seen.append(await toggle())  # can't name it again
+                await browser.close()
+                return named, seen, alerts, links
+        finally:
+            await desk.stop()
+
+    named, seen, alerts, links = run(go())
+    (ticked, href, text), (anonymous, left_out, _), (still, href_after, text_after) = seen
+    assert not ticked and href == named and "Example Litho" in text  # the box says the report names the job
+    assert anonymous and "Litho" not in left_out
+    assert still and href_after == left_out and "Litho" not in href_after + text_after
+    assert len(alerts) == 2 and links == [None, None, None]
+
+
 def test_the_desk_reads_an_icims_posting_in_its_browser(srv, monkeypatch):
     """iCIMS postings turn away plain requests: Find jobs reads one in a background tab, from
     the frame its posting is drawn in (in_iframe=1). Other sites' postings aren't read that way."""

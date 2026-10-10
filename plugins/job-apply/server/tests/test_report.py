@@ -180,6 +180,52 @@ def test_a_report_or_note_takes_a_value_out_only_as_a_whole_word(job_apply_home)
     assert f"**What the desk said:** {whole}" in report.note(job, r, person)
 
 
+def test_a_report_or_note_takes_a_surname_out_of_a_user_name_or_a_file_name(job_apply_home):
+    """Taken out as whole words only, a surname after an initial stayed in a user name, a file name,
+    an email or a link ("jquill1987", "JQuill_Resume.pdf"), and so in the public issue. There a
+    value goes wherever it is, from a report, an anonymous one (with the employer's name) and a note,
+    while "Problem" and "Robotics" stay whole."""
+    said = ("Problem on the Robotics page: signed in as jquill1987, JQuill_Resume.pdf, jquill@example.com, "
+            "https://example.com/u/jquill, from noreply@mailexamplelitho.com")
+    job = {"id": 18, "title": "Technician", "company": "Example Litho", "ats": "workday", "url": "https://example.com/j"}
+    r = Run(18, "Technician", "Example Litho", status="needs_you", need="stuck", reason=said, log=[said])
+    anonymous = report.build(job, r, PERSON, anonymous=True)["preview"]
+    for text in (report.build(job, r, PERSON)["preview"], anonymous, report.note(job, r, PERSON)):
+        assert "quill" not in text.lower() and "Problem on the Robotics page: signed in as REDACTED1987" in text
+    assert "litho" not in anonymous.lower()
+
+
+def _stop_and_fill_pages(folder: Path, names: list[str]) -> None:
+    for name in names:
+        snap = folder / "debug" / name
+        snap.mkdir(parents=True)
+        note = "stopped: questions" if name.endswith("-stop") else "autofill failures"
+        (snap / "page.html").write_text(f"<html><body><h1>{note}</h1><label for=a>City</label><input id=a></body></html>")
+        (snap / "snapshot.json").write_text(json.dumps({
+            "url": "https://example.com/apply", "title": note, "note": note,
+            "frames": [{"file": "page.html", "url": "https://example.com/apply"}],
+            "fields": [{"label": "City", "kind": "text", "required": True, "value": ""}]}))
+
+
+def test_the_page_a_fill_broke_on_stays_in_the_report_after_the_jobs_stops(job_apply_home, tmp_path):
+    """Each stop saves its page (debug/<time>-stop), and a report held the newest three pages of any
+    kind: after a failed fill and three stops, only stop pages, without the one where the fill broke,
+    which a report most needs. It's kept, with the newest stops, and a report still holds three."""
+    folder = tmp_path / "0019-example-corp-technician"
+    _stop_and_fill_pages(folder, ["20261010-090000-000", "20261010-090100-000-stop", "20261010-090200-000-stop",
+                                  "20261010-090300-000-stop"])
+    job = {"id": 19, "title": "Technician", "company": "Example Corp", "ats": "company_site",
+           "url": "https://example.com/j", "folder": str(folder)}
+    out = report.build(job, Run(19, "Technician", "Example Corp", status="needs_you", need="questions"), PERSON)
+    assert [p for p in out["pages"] if p.endswith(".html")] == [
+        "pages/20261010-090000-000.html", "pages/20261010-090200-000-stop.html", "pages/20261010-090300-000-stop.html"]
+    assert "### Page saved 20261010-090000-000: autofill failures" in out["preview"]
+    # a failed fill among the newest pages is just one of them
+    _stop_and_fill_pages(folder, ["20261010-090400-000", "20261010-090500-000-stop"])
+    assert [p.name for p in report._snapshots(folder)] == [
+        "20261010-090300-000-stop", "20261010-090400-000", "20261010-090500-000-stop"]
+
+
 def _saved_job_page(folder: Path) -> None:
     snap = folder / "debug" / "20261010-090000-000-stop"
     snap.mkdir(parents=True)

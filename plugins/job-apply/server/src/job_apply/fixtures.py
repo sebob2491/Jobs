@@ -11,6 +11,7 @@ output for other personal data before committing it.
 from __future__ import annotations
 
 import argparse
+import functools
 import json
 import re
 import sys
@@ -78,28 +79,37 @@ def personal_strings(prof: Profile) -> list[str]:
 
 _LETTER = r"[^\W\d_]"
 _HUMP = r"(?-i:(?<=[a-z])(?=[A-Z]))"  # a small letter, then a capital: where "JaneDoe" turns to its next word
+# A run of text without spaces, quotes, brackets or commas that joins its words with a digit, "_", "@",
+# "%", "/", ".", "=" or "+" names something (a user name, an email, a file name, a link, an id) rather
+# than being a word of prose: "jdoe1987", "JDoe_Resume.pdf", "jdoe@example.com", "x.example/u/jdoe"
+_RUN = re.compile(r"[^\s\"'()<>\[\]{},;|]+")
+_JOINED = re.compile(r"\d|[^\W_][_@%/.=+][^\W_]")
 
 
-def _edge(c: str, ahead: bool, humps: bool) -> str:
+def _edge(c: str, ahead: bool, humps: bool, inside: bool = False) -> str:
     """What mustn't be beside a value's first character (or, `ahead`, its last) for it to be a
     whole word: a digit beside a digit, or a letter beside a letter, unless the case turns
     there ("JaneDoe": `humps`). Anything else is the end of a word, an underscore too
-    ("Jane_Doe_Resume.pdf"), so a value in an email, an address or a file name is still found."""
+    ("Jane_Doe_Resume.pdf"), so a value in an email, an address or a file name is still found.
+    `inside` the name of something (`_RUN`), a letter may run on into it: "jdoe1987"."""
     if c.isdecimal():
         return r"(?!\d)" if ahead else r"(?<!\d)"
-    if not c.isalpha():
+    if not c.isalpha() or inside:
         return ""  # "(480)", "Jr.": nothing to run on into
     plain = rf"(?!{_LETTER})" if ahead else rf"(?<!{_LETTER})"
     return rf"(?:{plain}|{_HUMP})" if humps else plain
 
 
-def _pattern(secret: str) -> str:
+@functools.lru_cache(maxsize=1024)  # asked for each value in every text and attribute of a page
+def _pattern(secret: str, inside: bool = False) -> str:
     """A value as a pattern that finds it as a whole word only (never "Ash" in "washing", nor a
     ZIP code in a longer number), and written another way too: a phone number with any
     separators ("(480) 555-0142", "+1 480.555.0142", "020 7946 0958"); words with any spacing,
     dots, dashes or underscores between them, or none ("742 W. Evergreen Ter.", "Jane_Doe",
     "janedoe"). Several words may run on at the end, as an address written out does
-    ("742 W Evergreen Terrace")."""
+    ("742 W Evergreen Terrace"). `inside`: for the name of something (`_RUN`), where a surname
+    often follows an initial ("jdoe1987"), the value with the letters it runs on into, so none are
+    left to guess it by (not "dREDACTEDboard" for "Ash"); only a digit beside a digit keeps it apart."""
     if secret.isdigit() and len(secret) >= 7:  # its country code (or the US one), or a 0 before it, may be left off
         apart = r"[\s.\-()]*"
         return (rf"(?<!\d)(?:\+?{apart.join(secret[:-10] or '1')}[\s.\-]*|0[\s.\-]*)?{apart.join(secret[-10:])}"
@@ -107,14 +117,28 @@ def _pattern(secret: str) -> str:
     words = [w.rstrip(".,") for w in secret.split()] if len(secret.split()) > 1 else [secret]
     words = [w for w in words if w] or [secret]
     humps = len(secret) >= 3  # a two-letter name only as a word of its own: not "Do" in "toDo"
-    return (_edge(words[0][0], False, humps) + r"[\s.,_\u00a0-]*".join(map(re.escape, words))
-            + (_edge(words[-1][-1], True, humps) if len(words) == 1 else ""))
+    body = (_edge(words[0][0], False, humps, inside) + r"[\s.,_\u00a0-]*".join(map(re.escape, words))
+            + (_edge(words[-1][-1], True, humps, inside) if len(words) == 1 else ""))
+    return rf"(?<!{_LETTER}){_LETTER}*?(?:{body}){_LETTER}*" if inside else body
+
+
+def _in_names(text: str, find: re.Pattern[str]) -> str:
+    """`text` with what `find` finds taken out of each name of something in it (`_RUN`), not its prose."""
+    return _RUN.sub(lambda m: find.sub(REDACTED, m[0]) if _JOINED.search(m[0]) else m[0], text)
 
 
 def redact(text: str, secrets: list[str]) -> str:
+    """`text` with each of `secrets` taken out as a whole word (`_pattern`), and also where it runs
+    into other letters in the name of something (`_RUN`), with those letters: "jdoe1987" and
+    "JDoe_Resume.pdf" become "REDACTED1987" and "REDACTED_Resume.pdf" for a surname "Doe", while
+    "Problem" keeps a name "Rob"."""
     for s in secrets:
         # a two-letter name only as written ("Al", "Do"): not "all", nor "do" in a question
         text = re.sub(_pattern(s), REDACTED, text, flags=0 if len(s) < 3 else re.I)
+        inside = _pattern(s, inside=True)
+        if len(s) >= 3 and re.search(_LETTER, s) and re.search(inside, text, flags=re.I):
+            # what's taken out already stays as it is: not "Ted" in "REDACTED_Resume.pdf"
+            text = _in_names(text, re.compile(rf"{REDACTED}|{inside}", re.I))
     return text
 
 
