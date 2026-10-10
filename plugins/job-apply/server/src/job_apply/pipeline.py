@@ -29,7 +29,7 @@ from urllib.parse import urlparse
 from . import config, mailbox
 from .ats import ATS_NAMES, detect_ats, shared_system
 from .autofill import clean_label, is_empty_value, norm, plan_autofill, tailored_document
-from .browser import TabClosed, _accepts_cookies, final_text
+from .browser import TabClosed, _accepts_cookies, _cookie_setting, declines_cookies, final_text, may_accept_cookies
 
 NEW_TAB_WAIT = 4  # seconds to wait for a tab opened late by a click before calling it a stall
 ONCE_SETTLE = 1.0  # seconds after filling the person's answers before checking they stayed in
@@ -98,11 +98,6 @@ _AGREEMENT = re.compile(r"^(?:i )?(?:acknowledge|agree|accept|consent)\b.*\b(?:n
 _EXPERIENCE_PAGE = re.compile(r"my experience|work experience|employment history", re.I)
 # A note laid over the page (Nikon's UKG board: "Accessibility Note") with nothing else to press.
 _DISMISS_NOTE = re.compile(r"^(dismiss(?: (?:note|notice|message))?|close (?:note|notice|message))$", re.I)
-# Cookie banners: only ever the privacy-preserving choice, and only when the site offers one.
-_DECLINE_COOKIES = re.compile(r"^(reject(?: all)?(?: cookies)?|decline(?: all)?(?: cookies)?|only (?:strictly )?necessary"
-                              r"|necessary (?:cookies )?only|use necessary cookies only|accept (?:only )?necessary"
-                              r"(?: cookies)?|reject optional(?: cookies)?|(?:reject|decline) non-?essential(?: cookies)?)$",
-                              re.I)
 
 
 @dataclass
@@ -128,7 +123,7 @@ class Run:
     usual_resume: bool = False  # the person chose to go ahead without a tailored resume
     once: dict[str, Any] = field(default_factory=dict)  # answers for this application only, by question
     seen_form: bool = False  # got into the application itself (so a page with only Submit is its review page)
-    cookies_asked: bool = False  # paused once on a cookie banner that has no way to decline
+    cookies_asked: set[str] = field(default_factory=set)  # sites paused on once for a cookie banner
     try_later: bool = False  # left on a "Try Again Later" page: only the person's Resume goes on from it
     active_at: float = 0.0  # when its paused tab last changed: someone at work in it
     tab_mark: int = 0  # what its paused tab looked like then (address and box values)
@@ -146,7 +141,7 @@ class Run:
     updated: float = field(default_factory=time.time)
 
     def public(self) -> dict[str, Any]:
-        return {k: v for k, v in self.__dict__.items() if k not in ("page", "tab_mark")}
+        return {k: v for k, v in self.__dict__.items() if k not in ("page", "tab_mark", "cookies_asked")}
 
 
 def classify(data: dict[str, Any], text: str) -> str:
@@ -811,12 +806,12 @@ class Applier:
             run.url = data["url"]
             run.page = srv.browser.current_tab or run.page
             cookies = await self._decline_cookies(run, data, text)
-            if cookies is not None and not cookies:
+            if cookies is False:
                 await self._bring_forward(run)
-                return self._pause(run, "stuck", f"{_site(run, data)} shows a cookie banner with no way to decline it, and "
-                                   "the desk never accepts cookies for you. Choose in the banner in the browser window, "
-                                   "then press Resume. (To let the desk accept banners like this one for you, set "
-                                   "accept_cookies: true under settings: in profile.yaml.)")
+                return self._pause(run, "stuck", f"{_site(run, data)} shows a cookie banner over the page that the desk "
+                                   "can't decline for you. Choose in the banner in the browser window, then press "
+                                   "Resume." + ("" if _cookie_setting() else " (To let the desk accept banners with no "
+                                   "way to decline for you, set accept_cookies: true under settings: in profile.yaml.)"))
             if cookies:
                 data, text = await self._look()
                 run.page_info = _page_info(data)
@@ -952,10 +947,7 @@ class Applier:
                 if _sign_up_box(data, submits):
                     # the State of Arizona's "Apply Now": its button sends the name and email on, and the
                     # application is after it. A sending button is the person's to press
-                    return self._pause(run, "stuck", f"{_site(run, data)} asks for your name and email first, and its "
-                                       f"\u201c{submits[0]['text'].strip()}\u201d sends them before the application "
-                                       "itself, so it's yours to press: press it in the browser window if you're happy "
-                                       "to, then press Resume.")
+                    return await self._sign_up_pause(run, data, submits[0])
                 return await self._finish(run, data, text)
             action = pick_next(data.get("actions") or [], in_form=kind == "form")
             note = next((a for a in data.get("actions") or [] if _DISMISS_NOTE.match(a.get("text", "").strip())
@@ -1022,6 +1014,9 @@ class Applier:
                                        "There's nothing to apply to, so skip this job.")
                 return self._pause(run, "stuck", "I couldn't find the button that moves this application on. "
                                    "Take it a step further in the browser, then press Resume.")
+            if (kind == "form" and action.get("form_fields") == len(data.get("fields") or [])
+                    and _sign_up_box(data, [action])):
+                return await self._sign_up_pause(run, data, action)  # the same box, sent by a plain button
             key = (data.get("url"), tuple(data.get("headings") or []), action["text"].strip().lower())
             if key in pressed and pressed[-1] != key:
                 # Round in a circle (Oracle sent its sites back to the posting from "Continue"):
@@ -1177,16 +1172,23 @@ class Applier:
             self._log(run, f"skipped {len(skipped)} optional field(s) that wouldn't take your profile's answer: "
                       + ", ".join(f"\u201c{label}\u201d" for label in skipped[:3]))
 
+    async def _sign_up_pause(self, run: Run, data: dict[str, Any], button: dict[str, Any]) -> None:
+        await self._bring_forward(run)
+        self._pause(run, "stuck", f"{_site(run, data)} asks for your name and email first, and its "
+                    f"\u201c{button['text'].strip()}\u201d sends them before the application itself, so it's yours "
+                    "to press: press it in the browser window if you're happy to, then press Resume.")
+
     async def _decline_cookies(self, run: Run, data: dict[str, Any], text: str) -> bool | None:
         """Press Reject / Decline / Necessary on a cookie banner. Banners cover forms and catch
         clicks. One with no way to decline (TI's "Manage Preferences" or "Agree and Proceed") is
-        accepted only where the person set settings.accept_cookies; otherwise it's theirs, and
-        False says so (once a job). True: the banner was answered. None: nothing to do.
+        accepted only where the person set settings.accept_cookies; otherwise, where it covers the
+        page, it's theirs, and False says so (once a site). True: the banner was answered. None:
+        nothing to do (a bar along the edge is left be).
         A banner is known by its text, or by its buttons sitting in a cookie/consent box: on
         a long page the banner comes after the part of the text that's read."""
         mentioned = "cookie" in text.lower()
         actions = [a for a in data.get("actions") or [] if not a.get("disabled")]
-        button = next((a for a in actions if _DECLINE_COOKIES.match(a.get("text", "").strip())
+        button = next((a for a in actions if declines_cookies(a.get("text", ""), bool(a.get("cookie")))
                        and (mentioned or a.get("cookie"))), None)
         if button is not None:
             result = await self.srv.click(button["id"])
@@ -1197,16 +1199,20 @@ class Applier:
         accept = next((a for a in actions if a.get("cookie") and _accepts_cookies(a["text"], a["text"].strip(), True)), None)
         if accept is None:
             return None
-        if config.Profile.load().settings.accept_cookies:
-            result = await self.srv.click(accept["id"])
+        banner = await self.srv.browser.element_info(accept["id"])
+        if not banner or not banner.get("cookie"):  # gone, or an application's own consent box
+            return None
+        if may_accept_cookies(banner):
+            result = await self.srv.click(accept["id"])  # (its guard checks the banner again)
             if result.get("clicked"):
                 self._log(run, f"accepted cookies (\u201c{accept['text'].strip()}\u201d), as your settings allow: "
                                "the banner had no way to decline")
                 return True
             return None
-        if run.cookies_asked:
-            return None  # asked once; the person pressed Resume with it still there
-        run.cookies_asked = True
+        host = urlparse(data.get("url") or "").hostname or ""
+        if not banner.get("cookieBlocking") or host in run.cookies_asked:
+            return None  # out of the way, or asked once and the person pressed Resume with it there
+        run.cookies_asked.add(host)
         return False
 
     async def _sign_in(self, run: Run, data: dict[str, Any], tried: dict[str, int], details: bool = True) -> str | None:

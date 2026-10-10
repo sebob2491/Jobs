@@ -387,6 +387,10 @@ EXTRACT_JS = r"""
     if (box && box !== document.body && box !== document.documentElement) a.cookie = true;
     if (formSubmit) a.form_submit = true;
     if (isSubmit) a.is_submit = true;
+    // how many boxes the form around a plain button shows: a page's script can send a
+    // name-and-email box from its "Apply" too
+    const around = !formSubmit && (el.form || el.closest('form'));
+    if (around && boxesIn(around).length) a.form_fields = boxesIn(around).length;
     if (isSubmit && sideBox(el)) a.aside = true;
     // A button after a password box: a sign-in form's own "Sign In", not the one in the
     // site's header (Workday's opens a sign-in pop-up, and sends nothing)
@@ -481,24 +485,39 @@ ENTRIES_JS = r"""
 
 # Facts click() needs about an element before deciding whether it may press it.
 ELEMENT_INFO_JS = r"""
-(el) => ({
-  label: [el.innerText || el.textContent || el.value || '', el.getAttribute('aria-label') || ''].join(' ').replace(/\s+/g, ' ').trim(),
-  // its words as the page script reads them: an icon-only button's are its aria-label
-  text: (el.innerText || el.textContent || el.value || el.getAttribute('aria-label') || '').replace(/\s+/g, ' ').trim(),
-  formSubmit: el.type === 'submit' && !!el.form,
-  // in a cookie banner (OneTrust, Cookiebot, TrustArc and the like): a "consent" box only when it
-  // speaks of cookies, not an application's own consent step
-  cookie: (() => {
-    const box = el.closest('[id*="cookie" i], [class*="cookie" i], [aria-label*="cookie" i], [id*="consent" i], '
-      + '[class*="consent" i], [id*="onetrust" i], [class*="onetrust" i], [id*="cybot" i], [id*="gdpr" i], [id*="truste" i]');
-    if (!box) return false;
-    const names = `${box.id || ''} ${typeof box.className === 'string' ? box.className : ''} ${box.getAttribute('aria-label') || ''}`;
-    return /cookie|onetrust|cybot|truste|gdpr/i.test(names) || /cookie/i.test(box.innerText || '');
-  })(),
-  // what its form has to fill in, where it can be seen
-  formFields: el.form ? [...el.form.elements].filter((e) => /^(INPUT|SELECT|TEXTAREA)$/.test(e.tagName)
-    && !/^(hidden|submit|button|image|reset)$/i.test(e.type || '') && e.getClientRects().length > 0).length : 0,
-})
+(el) => {
+  const BOX = '[id*="cookie" i], [class*="cookie" i], [aria-label*="cookie" i], [id*="consent" i], '
+    + '[class*="consent" i], [id*="onetrust" i], [class*="onetrust" i], [id*="cybot" i], [id*="gdpr" i], [id*="truste" i]';
+  const names = (n) => `${n.id || ''} ${typeof n.className === 'string' ? n.className : ''} ${n.getAttribute('aria-label') || ''}`;
+  const named = (n) => /cookie|onetrust|cybot|truste|gdpr/i.test(names(n));
+  const words = (n) => (n.innerText || n.textContent || n.value || n.getAttribute('aria-label') || '').replace(/\s+/g, ' ').trim();
+  const page = (n) => n === document.body || n === document.documentElement;
+  // the whole banner: the outermost cookie/consent box around it (OneTrust's accept button is
+  // a box of its own by its id, inside the banner holding its "Reject All")
+  const near = el.closest(BOX);
+  let banner = null;
+  for (let n = near; n && !page(n); n = n.parentElement && n.parentElement.closest(BOX)) banner = n;
+  // a "consent" box only when it speaks of cookies, not an application's own consent step
+  const cookie = !!banner && (named(near) || /cookie/i.test(near.innerText || '') || named(banner));
+  const shown = (n) => n.getClientRects().length > 0 && getComputedStyle(n).visibility !== 'hidden';
+  const top = cookie ? document.elementFromPoint(innerWidth / 2, innerHeight / 2) : null;
+  const over = top && top.closest(BOX);
+  return {
+    label: [el.innerText || el.textContent || el.value || '', el.getAttribute('aria-label') || ''].join(' ').replace(/\s+/g, ' ').trim(),
+    // its words as the page script reads them: an icon-only button's are its aria-label
+    text: words(el),
+    formSubmit: el.type === 'submit' && !!el.form,
+    // in a cookie banner (OneTrust, Cookiebot, TrustArc and the like)
+    cookie,
+    // the banner's buttons (is there a way to decline?), and whether it covers the page's middle
+    cookieButtons: cookie ? [...banner.querySelectorAll('button, [role="button"], input[type="submit"], input[type="button"], a[href]')]
+      .filter(shown).map(words).filter((t) => t && t.length <= 60).slice(0, 20) : [],
+    cookieBlocking: !!top && (banner.contains(top) || (!!over && !page(over) && named(over))),
+    // what its form has to fill in, where it can be seen
+    formFields: el.form ? [...el.form.elements].filter((e) => /^(INPUT|SELECT|TEXTAREA)$/.test(e.tagName)
+      && !/^(hidden|submit|button|image|reset)$/i.test(e.type || '') && e.getClientRects().length > 0).length : 0,
+  };
+}
 """
 
 # Is something else drawn on top of this element's centre?

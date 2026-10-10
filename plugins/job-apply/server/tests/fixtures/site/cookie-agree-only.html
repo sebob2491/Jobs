@@ -8,7 +8,7 @@
 </head>
 <body>
 <!-- like Texas Instruments' Tealium consent prompt over its Oracle application (live, Oct 2026):
-     "Manage Preferences" or "Agree and Proceed", and no way to decline on the banner itself -->
+     "Manage Preferences" or "Agree and Proceed" (links, as on TI's), and no way to decline on the banner itself -->
 <h1>Application Form</h1>
 <form id="app" onsubmit="event.preventDefault(); document.body.innerHTML = '<h1>Thank you for applying!</h1>';">
   <label for="fn">First Name *</label><input id="fn" required>
@@ -21,9 +21,10 @@
   <div class="privacy_prompt">
     <p>Our websites use cookies to optimize site functionality and improve your experience. Click Agree and Proceed to
        accept cookies and enter the site.</p>
-    <button type="button" id="pref_center" onclick="window.prefs = (window.prefs || 0) + 1;">MANAGE PREFERENCES</button>
-    <button type="button" id="consent_prompt_submit"
-            onclick="window.accepted = (window.accepted || 0) + 1; document.getElementById('__tealiumGDPRecModal').remove();">AGREE AND PROCEED</button>
+    <a href="javascript:void(0)" class="button mod-primary" id="pref_center"
+       onclick="window.prefs = (window.prefs || 0) + 1;">MANAGE PREFERENCES</a>
+    <a href="javascript:void(0)" class="button mod-primary" id="consent_prompt_submit"
+       onclick="window.accepted = (window.accepted || 0) + 1; document.getElementById('__tealiumGDPRecModal').remove();">AGREE AND PROCEED</a>
   </div>
 </div>
 </body>
