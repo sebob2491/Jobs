@@ -47,6 +47,40 @@ Desk then search those instead of the default list. Set your target titles
 (`preferences.titles`, such as "HR Generalist" or "Recruiter") and places
 (`preferences.locations`) in `profile.yaml` to match.
 
+## Install in one step
+
+On Windows, open PowerShell (Start menu, type PowerShell) and paste:
+
+```
+irm https://raw.githubusercontent.com/sebob2491/Jobs/main/plugins/job-apply/setup/install.ps1 | iex
+```
+
+On a Mac or Linux, open Terminal and paste:
+
+```
+curl -fsSL https://raw.githubusercontent.com/sebob2491/Jobs/main/plugins/job-apply/setup/install.sh | bash
+```
+
+It installs what's missing (Git, Claude Code, uv), adds this plugin to Claude Code (or updates
+it), gets a browser ready, makes your `~/.job-apply` folder, offers to copy your resume into
+it, and runs the plugin's doctor to check it all. It asks before installing Claude Code or Git, never
+asks for a password, and is safe to run again; running it again is also how to update. Then
+open the Claude app (or run `claude`) and say **"set up job-apply"**: Claude reads your resume
+and asks the few questions it can't answer.
+
+To hand it your resume, or to see what it would do without changing anything (`-DryRun`,
+`--dry-run`):
+
+```
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/sebob2491/Jobs/main/plugins/job-apply/setup/install.ps1))) -Resume "$HOME\Documents\resume.pdf"
+curl -fsSL https://raw.githubusercontent.com/sebob2491/Jobs/main/plugins/job-apply/setup/install.sh | bash -s -- --resume ~/Documents/resume.pdf
+```
+
+Something not working? Ask Claude to "run the job-apply doctor", or run
+`uv run --project <plugin>/server job-apply-doctor` in a terminal. It checks Python, uv, the
+plugin's version (and whether a newer one is out), the browser, your profile and resume, and
+says what to do about anything that isn't right. It changes nothing.
+
 ## How submitting works
 
 | Where the application is | What Claude does |
@@ -59,13 +93,15 @@ Anything that isn't in your profile or resume is a question for you. CAPTCHAs,
 email verification codes and sign-ins also stay with you. Passwords can be typed
 from a local secrets file without passing through the chat.
 
-## Install
+## Install by hand
 
-You need:
+The [one-step installer](#install-in-one-step) does all of this. To do it yourself, you need:
 
 - [Claude Code](https://claude.com/claude-code)
 - [`uv`](https://docs.astral.sh/uv/getting-started/installation/). It runs the
-  plugin's Python server and installs its dependencies on first launch.
+  plugin's Python server and installs its dependencies on first launch. On Windows, set
+  the user environment variable `UV_PYTHON_INSTALL_DIR` to a folder outside AppData (such
+  as `%USERPROFILE%\.uv-python`): the Claude app can't always find a Python uv keeps in AppData.
 - Google Chrome, or Microsoft Edge without it (every Windows computer has Edge). If
   neither starts, run the `playwright install chromium` command that `setup_status`
   shows.
@@ -268,6 +304,7 @@ plugins/job-apply/
     desk/         open the Job Desk page (recommended jobs, one-button applying)
   data/companies.yaml                semiconductor employers in Arizona, careers URL + ATS
   templates/profile.example.yaml
+  setup/install.ps1, install.sh      the one-step installers (Windows; macOS and Linux)
   server/                            Python MCP server (Playwright browser automation)
 ```
 
@@ -276,6 +313,7 @@ plugins/job-apply/
 | Tool | Purpose |
 |---|---|
 | `setup_status`, `get_profile` | Check what's missing and read the profile |
+| `doctor` | Check this computer's setup (Python, uv, the plugin's version, the browser, the profile and resume) and say what to fix; the same as the `job-apply-doctor` command |
 | `search_company_jobs` | Search employers' own job boards (Workday, Greenhouse, Lever, Eightfold, SmartRecruiters, Oracle, and ASML's site) by keyword and location; sites that refuse direct requests are read through a background browser tab |
 | `ingest_job`, `add_job` | Save a posting. Parses Workday, Greenhouse, Lever and SmartRecruiters APIs, schema.org JobPosting data, or page text. |
 | `list_jobs`, `get_job`, `update_job`, `export_jobs_csv` | Application tracker |
