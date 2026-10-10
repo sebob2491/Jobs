@@ -1469,6 +1469,16 @@ class Applier:
                 return self._pause(run, "stuck", f"I pressed \u201c{action['text'].strip()}\u201d three times on "
                                    f"{_where(data)} and no application opened. Have a look in the browser, then press "
                                    "Resume.")
+            if kind == "form" and pressed[-3:] == [key] * 3:
+                # the same step button pressed three times on the same step: Cornerstone's (Matheson's,
+                # under load, Oct 10) redraws its page a little after each press, so no single press
+                # looked like a stall, and the desk pressed Next fifteen times
+                problems = _flagged(data) or [
+                    f"\u201c{a['text'].strip()}\u201d is greyed out, so the site still wants something (a file, say, "
+                    "or a box to tick)" for a in _greyed_step(data)[:1]]
+                errors = "; ".join(problems)[:300].rstrip(" .")
+                return self._pause(run, "stuck", "The page didn't move on" + (f": {errors}." if errors else ".")
+                                   + " Fix it in the browser, then press Resume.")
             pressed.append(key)
             pressed_on.append(f"\u201c{action['text'].strip()}\u201d on {_page_said(data)}")
             looked = _fingerprint(data)

@@ -1,0 +1,25 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Apply</title></head>
+<body>
+<!-- like Matheson's Cornerstone application under load (live, Oct 10): its Next doesn't move on
+     (the step still wants something), and the page redraws a little after each press, so no two
+     looks at it are quite the same -->
+<h1>Apply</h1>
+<h2>Additional Attachments</h2>
+<form id="f" novalidate>
+  <label for="fn">First Name</label><input id="fn" required>
+  <div id="err" role="alert"></div>
+  <div id="extra"></div>
+  <button type="button" id="next">Next</button>
+</form>
+<script>
+  window.presses = 0;
+  document.getElementById('next').addEventListener('click', () => {
+    window.presses += 1;
+    document.getElementById('err').textContent = '* Resume/CV is required';
+    document.getElementById('extra').innerHTML = `<button type="button">Help ${window.presses}</button>`;
+  });
+</script>
+</body>
+</html>

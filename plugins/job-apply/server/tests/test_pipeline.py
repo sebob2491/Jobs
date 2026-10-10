@@ -3237,6 +3237,30 @@ def test_a_job_picked_up_again_carries_on_with_the_form_in_its_tab(srv, monkeypa
             assert tab.is_closed()  # (a crashed tab's "Aw, Snap!" is closed for the new one)
 
 
+def test_a_step_that_redraws_but_doesnt_move_on_stops_after_three_presses(srv, monkeypatch):
+    """Matheson's Cornerstone application, in a live run under load (Oct 10): its Next didn't move
+    on (the step wanted a resume), but the page redrew a little after each press, so no press looked
+    like a stall and the desk pressed Next fifteen times, then said the application had more steps
+    than expected. The same button on the same step three times is a page that isn't moving on."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    job = srv.add_job(url=fixture_url("site/next-redraws.html"), title="Technician", company="Example Gases")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r, await r.page.evaluate("() => window.presses")
+        finally:
+            await applier.stop()
+
+    r, presses = run(go())
+    assert (r.status, r.need) == ("needs_you", "stuck"), (r.status, r.reason, r.log)
+    assert r.reason.startswith("The page didn't move on: * Resume/CV is required."), r.reason
+    assert presses == 3, (presses, r.log)
+
+
 def test_a_crashed_tab_closed_since_is_still_said_to_have_crashed(srv):
     """A job's tab that crashed and was closed after it (by Chrome, or the desk) crashed: a picked-up
     job said "its tab was closed" for one (a full test run under load, Oct 10)."""
