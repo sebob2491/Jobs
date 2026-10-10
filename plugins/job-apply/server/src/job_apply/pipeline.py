@@ -41,6 +41,7 @@ NEW_TAB_WAIT = 4  # seconds to wait for a tab opened late by a click before call
 ONCE_SETTLE = 1.0  # seconds after filling the person's answers before checking they stayed in
 MAX_STEPS = 15
 LATE_BUTTONS_WAIT = 10  # seconds for a page's buttons to be drawn
+STEP_LOAD_WAIT = 30  # for a step still loading its questions, its loading dots on show (KLA's Workday)
 BLANK_PAGE_WAIT = 30  # for a page with nothing on it yet to draw (Infineon's application, now and then)
 SIGN_IN_STEP_WAIT = 25  # Workday's sign-in step can take longer to draw its buttons (Applied's)
 ACCOUNT_DRAW_WAIT = 4  # for the application below a Create Account form to be drawn (Qorvo's)
@@ -1496,11 +1497,14 @@ class Applier:
                 if await self._wait_for_progress(wait):
                     continue
             drawn = (_page_key(data), _boxes(data))  # a page that has drawn more since is waited on again
-            if action is None and kind == "form" and drawn not in step_waited and _greyed_step(data):
+            loading = bool(data.get("busy")) and not gate_now
+            if action is None and drawn not in step_waited and (loading or kind == "form" and _greyed_step(data)):
                 # a form still being drawn: Oracle's Personal Info shows its upload boxes and a greyed-out
-                # Next first, then its name, email and phone boxes and an enabled Next
+                # Next first, then its name, email and phone boxes and an enabled Next. Or a step still
+                # loading: KLA's Workday showed its loading dots where its Application Questions go, and a
+                # greyed-out Save and Continue, for a while (live, Oct 2026)
                 step_waited.add(drawn)
-                if await self._wait_for_step(LATE_BUTTONS_WAIT, data):
+                if await self._wait_for_step(STEP_LOAD_WAIT if loading else LATE_BUTTONS_WAIT, data):
                     continue
             if action is None and sign_in_step:
                 # Workday's sign-in step whose sign-in buttons never drew (Applied's, now and then):
@@ -1688,13 +1692,15 @@ class Applier:
                 return
 
     async def _wait_for_step(self, seconds: float, before: dict[str, Any]) -> bool:
-        """Wait for a form still being drawn: its step button enabled, or more boxes to fill."""
+        """Wait for a form still being drawn: its step button enabled, or more boxes to fill, or
+        (a page showing a loading indicator) the indicator gone."""
         had = _boxes(before)
         deadline = time.monotonic() + seconds
         while time.monotonic() < deadline:
             await asyncio.sleep(1)
             data = await self.srv.inspect_form(include_dropdown_options=False)
-            if pick_next(data.get("actions") or [], in_form=True) or _boxes(data) > had:
+            if (pick_next(data.get("actions") or [], in_form=True) or _boxes(data) > had
+                    or before.get("busy") and not data.get("busy")):
                 return True
         return False
 

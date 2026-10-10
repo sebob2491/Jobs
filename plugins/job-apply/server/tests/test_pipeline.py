@@ -1596,6 +1596,32 @@ def test_a_form_page_that_thanks_the_person_isnt_taken_for_a_confirmation(srv, m
     assert srv.tracker().get(job["id"])["status"] != "applied"
 
 
+def test_a_step_still_loading_its_questions_is_waited_for(srv, monkeypatch):
+    """KLA's Workday (live, Oct 2026): past My Experience, its Application Questions step showed its
+    loading dots where the questions go and a greyed-out Save and Continue the form reader found no
+    button for, beside the previous step's resume box, and the desk stopped at once: "I couldn't find
+    the button that moves this application on." A step still loading is waited for."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 1)
+    job = srv.add_job(url=fixture_url("site/workday-questions-loading.html"), title="Customer Service Engineer",
+                      company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        r = applier.enqueue(job["id"])
+        r.seen_form = True  # (filled My Information and My Experience)
+        applier.start()
+        try:
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert r.status == "ready", (r.status, r.need, r.reason, r.log)
+    assert any("clicked “Save and Continue”" in line for line in r.log), r.log
+
+
 def test_a_first_step_that_thanks_the_person_isnt_taken_for_a_confirmation(srv, monkeypatch):
     """A careers site's first step thanks the person ("Thanks for applying to Acme!") over its required
     First Name and Email and their Next, and its footer asks them to join its talent community. Back on

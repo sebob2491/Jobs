@@ -1,0 +1,48 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Apply</title></head>
+<body>
+<!-- A Workday site's Application Questions step still loading its questions (KLA's, live, Oct 2026):
+     its heading, Workday's loading dots ([data-automation-id="loading"], the apply flow's own) where
+     the questions go, and a Save and Continue drawn greyed that the form reader found no button for,
+     beside the previous step's resume box. The questions and the button come a few seconds later. -->
+<ol aria-label="Application Progress">
+  <li>My Information</li><li>My Experience</li>
+  <li data-automation-id="progressBarActiveStep">current step 3 of 6 Application Questions 1 of 2</li>
+  <li>Application Questions 2 of 2</li><li>Voluntary Disclosures</li><li>Review</li>
+</ol>
+<h2>Customer Service Engineer</h2>
+<h2>Application Questions 1 of 2</h2>
+<p>* Indicates a required field</p>
+<section aria-label="Resume/CV">
+  <h3>Resume/CV</h3>
+  <label for="cv">Upload a file (5MB max)</label><input id="cv" type="file">
+</section>
+<form id="questions" onsubmit="return false">
+  <div data-automation-id="loading" style="margin: 40px auto; width: 80px; height: 20px">
+    <span style="display: inline-block; width: 8px; height: 8px; border-radius: 4px; background: #999"></span>
+    <span style="display: inline-block; width: 8px; height: 8px; border-radius: 4px; background: #999"></span>
+  </div>
+</form>
+<div id="footer">
+  <button type="button">Back</button>
+  <span id="next" style="color: #bbb">Save and Continue</span>
+</div>
+<script>
+  setTimeout(() => {
+    document.getElementById('questions').innerHTML =
+      '<label for="q1">1) As of today\'s date, are you 18 years of age or older?*</label>'
+      + '<select id="q1" required><option value="">Select One</option><option>Yes</option><option>No</option></select>';
+    const next = document.createElement('button');
+    next.type = 'button';
+    next.textContent = 'Save and Continue';
+    next.onclick = () => {
+      if (!document.getElementById('q1').value) return;
+      document.body.innerHTML = '<div>current step 4 of 6</div><h2>Review</h2>'
+        + '<form onsubmit="return false"><button type="submit">Submit</button></form>';
+    };
+    document.getElementById('next').replaceWith(next);
+  }, 4000);
+</script>
+</body>
+</html>

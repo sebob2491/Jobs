@@ -604,7 +604,15 @@ EXTRACT_JS = r"""
       return t && t.length <= 60 ? { id: idOf(b), text: t, ...(off ? { disabled: true } : {}) } : null;
     }).filter(Boolean),
   }));
-  return { fields, actions, errors, headings, dialogs };
+  // A loading indicator on show: Workday's dots where a step's questions go while it loads them
+  // ([data-automation-id="loading"], KLA's, live, Oct 2026), its dots for a file going up, Workday's
+  // Canvas dots elsewhere, or a part of the page marked busy (aria-busy, a progress bar with no value,
+  // which a step's "2 of 6" bar has)
+  const LOADING = '[data-automation-id="loading"], [data-automation-id*="loadingSpinner" i], '
+    + '[data-automation-id*="loading-dots" i], [data-automation-id*="loadingDots" i], [data-part="loading-animation-dot"], '
+    + '[aria-busy="true"], [role="progressbar"]:not([aria-valuenow])';
+  const busy = [...document.querySelectorAll(LOADING)].some(visible);
+  return { fields, actions, errors, headings, dialogs, ...(busy ? { busy: true } : {}) };
 }
 """.replace("/*SIGN_IN_FORM*/", SIGN_IN_FORM_JS).replace("/*OPEN_DIALOGS*/", OPEN_DIALOGS_JS)
 

@@ -623,6 +623,8 @@ class BrowserSession:
                 continue  # cross-origin frame that refused, or navigated mid-read
             for key in ("fields", "actions", "errors", "headings", "dialogs"):
                 result[key].extend(data.get(key, []))
+            if data.get("busy"):  # a loading indicator on show (Workday's dots while a step loads)
+                result["busy"] = True
         self._fields = {f["id"]: f for f in result["fields"]}
         self._actions = {a["id"]: a for a in result["actions"]}
         return result
