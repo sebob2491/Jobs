@@ -127,7 +127,8 @@ EXTRACT_JS = r"""
     return clean(el.getAttribute('aria-label') || labelledBy(el) || el.value || txt(el));
   };
   // The repeated block a field sits in, e.g. "Work Experience 2" or "Education 1". Not the field's
-  // own group: Workday's date is a group labelled by the date's label ("From"), inside the block.
+  // own group: Workday's date is a group labelled by the date's label ("From"), inside the block,
+  // and (live, Oct 2026) a fieldset whose legend is that label.
   const HEADING = ':scope > h2, :scope > h3, :scope > h4, :scope > h5, :scope > legend, :scope > [role="heading"], :scope > div:first-child > h3, :scope > div:first-child > h4';
   const bare = (t) => clean(t).replace(/[\s*:]+$/, '').toLowerCase();
   const sectionOf = (el, own) => {
@@ -136,16 +137,25 @@ EXTRACT_JS = r"""
       const role = (node.getAttribute('role') || '').toLowerCase();
       const container = role === 'group' || role === 'region' || node.tagName === 'FIELDSET' || node.tagName === 'SECTION';
       let t = container ? labelledBy(node) : '';
-      if (t && own && bare(t) === bare(own)) continue;  // the field's own group
       if (!t) {
         // the last heading before the field: "Work Experience 2" sits beside block 2, after block 1
         const hs = Array.from(node.querySelectorAll(HEADING)).filter((h) => h.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING);
         t = hs.length ? txt(hs[hs.length - 1]) : '';
       }
-      if (!t || t.length > 80) continue;
+      if (!t || t.length > 80 || (own && bare(t) === bare(own))) continue;  // (the field's own group)
       if (container || /\b\d+\s*$/.test(t)) return t;
     }
     return '';
+  };
+  // The block Workday's ids name ("workExperience-16--location", data-fkit-id
+  // "workExperience-16--startDate"): what ties a box to the block of its neighbours
+  const BLOCK_ID = /^(.+?-\d+)--/;
+  const blockId = (el) => {
+    const own = BLOCK_ID.exec(el.id || '');
+    if (own) return own[1];
+    const kit = el.closest('[data-fkit-id]');
+    const m = kit && BLOCK_ID.exec(kit.getAttribute('data-fkit-id') || '');
+    return m ? m[1] : '';
   };
   // Files an upload box has already sent: Workday's box empties after each upload and lists the
   // file below it ("resume.pdf  Successfully Uploaded!"), so an empty box isn't one still to fill.
@@ -211,6 +221,7 @@ EXTRACT_JS = r"""
   const GENERIC_FILE = /^(attach|upload|choose (a )?file|browse|select files?|add (a )?file|drop (your )?files? here|or|enter manually)$/i;
   const HONEYPOT = /for robots|robots only|if you('| a)?re (a )?human|not (be )?(filled|entered) by humans|honey ?pot|leave this field (blank|empty)/i;
   const fields = [];
+  const blockIds = new Map();  // a field's blockId, where its box has one
   const passwordBoxes = [];
   const seen = new Set();
   const groups = new Map();
@@ -328,6 +339,8 @@ EXTRACT_JS = r"""
     if (el.getAttribute('aria-invalid') === 'true') f.invalid = true;
     if (el.maxLength > 0 && el.maxLength < 100000) f.max_length = el.maxLength;
     fields.push(f);
+    const ofBlock = blockId(el);
+    if (ofBlock) blockIds.set(f, ofBlock);
     if (kind === 'password') passwordBoxes.push(el);
   }
 
@@ -349,6 +362,8 @@ EXTRACT_JS = r"""
       const section = sectionOf(first);
       if (section && section !== label) single.section = section;
       fields.push(single);
+      const ofBlock = blockId(first);
+      if (ofBlock) blockIds.set(single, ofBlock);
       continue;
     }
     const gid = ownGid(first, 'data-ja-gid-member');
@@ -369,6 +384,12 @@ EXTRACT_JS = r"""
     const section = sectionOf(g.container || first);
     if (section && section !== label) group.section = section;
     fields.push(group);
+  }
+  // A box whose block wasn't found above takes the one its neighbours with the same block id are in
+  const blockOf = new Map();
+  for (const [f, b] of blockIds) if (f.section && !blockOf.has(b)) blockOf.set(b, f.section);
+  for (const [f, b] of blockIds) {
+    if (!f.section && blockOf.has(b) && blockOf.get(b) !== f.label) f.section = blockOf.get(b);
   }
 
   const SUBMIT = /\bsubmit\b|send (my )?application|finish (my )?application|complete (my )?application/i;
@@ -494,16 +515,27 @@ VISIBLE_TEXT_JS = r"""
 () => (document.body ? document.body.innerText : '').replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim()
 """
 
-# Numbered entry headings ("Work Experience 2") and the Add buttons that create more.
+# Numbered entry headings ("Work Experience 2"), how many of those have no boxes drawn yet, and
+# the Add buttons that create more.
 ENTRIES_JS = r"""
 (kindPattern) => {
   const kind = new RegExp(kindPattern, 'i');
   const clean = (s) => (s || '').replace(/\s+/g, ' ').trim();
   const txt = (el) => clean(el ? (el.innerText || el.textContent || '') : '');
   const visible = (el) => !!el && el.getClientRects().length > 0 && getComputedStyle(el).visibility !== 'hidden';
-  const headings = Array.from(document.querySelectorAll('h1, h2, h3, h4, h5, h6, legend, [role="heading"]'))
-    .filter(visible).map(txt);
-  const entries = headings.filter((t) => kind.test(t) && /\b\d+\s*$/.test(t)).length;
+  const numbered = Array.from(document.querySelectorAll('h1, h2, h3, h4, h5, h6, legend, [role="heading"]'))
+    .filter((h) => visible(h) && kind.test(txt(h)) && /\b\d+\s*$/.test(txt(h)));
+  const entries = numbered.length;
+  // Workday draws a new block's heading first and its boxes a moment later: a block's boxes are
+  // the ones after its heading, before the next heading
+  const follows = (a, b) => !!(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
+  const marks = Array.from(document.querySelectorAll('h1, h2, h3, h4, h5, h6, [role="heading"]')).filter(visible);
+  const boxes = Array.from(document.querySelectorAll('input:not([type="hidden"]), select, textarea, [role="combobox"], '
+    + 'button[aria-haspopup="listbox"]')).filter(visible);
+  const empty = numbered.filter((h) => {
+    const next = marks.find((m) => m !== h && !h.contains(m) && follows(h, m));
+    return !boxes.some((b) => follows(h, b) && !(next && follows(next, b)));
+  }).length;
   const buttons = [];
   for (const b of document.querySelectorAll('button, [role="button"]')) {
     if (!visible(b)) continue;
@@ -525,7 +557,7 @@ ENTRIES_JS = r"""
       buttons.push({ id: b.getAttribute('data-ja-id'), text: txt(b) });
     }
   }
-  return { entries, buttons };
+  return { entries, empty, buttons };
 }
 """
 

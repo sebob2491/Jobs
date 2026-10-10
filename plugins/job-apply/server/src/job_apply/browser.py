@@ -128,6 +128,7 @@ FRAME_WAIT = 8  # seconds for a job board's frame (iCIMS's openings) to load its
 SETTLE_WAIT = 8  # seconds for a job board's page to stop loading things, at most
 LOST_FILL_WAIT = 0.5  # seconds after filling for a page to mark the boxes whose answers it lost
 LOST_FILL_TRIES = 3  # times a box is typed again on a page, at most (one the page refuses stays marked)
+BLOCK_DRAW_WAIT = 6000  # ms for blocks just added (Workday's Education 2) to draw their boxes, at most
 # How long a click may wait for its button to become clickable, in ms.
 CLICK_TIMEOUT = 8000
 # What a page says once an application has gone ("Thanks for applying!", Oracle's "Thank you for
@@ -1200,11 +1201,16 @@ class BrowserSession:
             text = "Yes" if value else "No"
         if field.get("role") == "spinbutton":
             # Date parts (Workday's MM / YYYY) react to keystrokes, not a pasted value. Where the
-            # date's "MM/DD/YYYY" hint is drawn over its boxes (Workday's Self Identify), a click
-            # never reaches them: focus takes the keys just the same.
-            try:
-                await loc.click(timeout=2000)
-            except PlaywrightTimeout:
+            # date's "MM/DD/YYYY" hint is drawn over its boxes (Workday's Self Identify), or each
+            # part's own "MM" (My Experience, live, Oct 2026), a click never reaches them: focus
+            # takes the keys just the same. Checked first, so no click timeout is waited out.
+            covered = await loc.evaluate(COVERED_JS)
+            if not covered:
+                try:
+                    await loc.click(timeout=2000)
+                except PlaywrightTimeout:
+                    covered = True
+            if covered:
                 await loc.focus()
             await loc.fill("")
             await loc.press_sequentially(text, delay=40)
@@ -1512,6 +1518,15 @@ class BrowserSession:
                         state = new
                         break
                 state = new
+            # Workday draws a new block's heading first and its boxes a moment later: the page is read
+            # next (autofill) once they're there, or the new block isn't filled
+            waited = 0
+            while clicks and state.get("empty") and waited < BLOCK_DRAW_WAIT:
+                await page.wait_for_timeout(250)
+                waited += 250
+                state = await frame.evaluate(ENTRIES_JS, kind_pattern)
+            if waited:
+                await self._settle(page, timeout=2000)  # the rest of their boxes
             return {"before": before, "after": state["entries"], "clicks": clicks,
                     "add_button_found": bool(state["buttons"]) or clicks > 0}
 

@@ -1,0 +1,141 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Workday-style My Experience (blocks as drawn live, Oct 2026)</title>
+<style>
+  ul[role=listbox] { position: absolute; z-index: 10; background: #fff; border: 1px solid #999; list-style: none; padding: 0; margin: 0; }
+  ul[role=listbox][hidden], .hidden { display: none; }
+  fieldset { border: 0; margin: 0; padding: 0; }
+  /* each date part's "MM" / "YYYY" is drawn over its input, and takes a click meant for it */
+  .part { position: relative; display: inline-block; }
+  .part input { width: 4em; }
+  .part [aria-hidden="true"] { position: absolute; inset: 0; background: #fff; }
+</style>
+</head>
+<body>
+<div data-automation-id="progressBarActiveStep">My Experience</div>
+<h2>My Experience</h2>
+
+<div data-automation-id="workExperienceSection">
+  <h3>Work Experience</h3>
+  <div id="we-panels"></div>
+  <button type="button" data-automation-id="add-button" id="we-add" aria-label="Add Work Experience">Add</button>
+</div>
+
+<div data-automation-id="educationSection">
+  <h3>Education</h3>
+  <div id="ed-panels"></div>
+  <button type="button" data-automation-id="add-button" id="ed-add" aria-label="Add Education">Add</button>
+</div>
+
+<ul role="listbox" id="popup" hidden></ul>
+<button type="button" data-automation-id="pageFooterNextButton">Save and Continue</button>
+
+<script>
+  // like Workday's (live, Oct 2026): each box's id starts with its block's ("workExperience-16--"),
+  // and each date is a fieldset of its own, its legend the date's label
+  let block = 15, label = 120;
+  const text = (id, name, title, required) => `
+    <div data-automation-id="formField-${name}" data-fkit-id="${id}--${name}">
+      <label for="${id}--${name}">${title}${required ? '<abbr aria-hidden="true">*</abbr>' : ''}</label>
+      <div><div><input type="text" id="${id}--${name}" name="${name}" aria-required="${required}" value=""></div></div>
+    </div>`;
+  const part = (id, name, kind, hint, max) => `
+    <div id="${id}--${name}-dateSection${kind}" class="part" tabindex="-1">
+      <div aria-hidden="true" data-automation-id="dateSection${kind}-display">${hint}</div>
+      <input role="spinbutton" aria-label="${kind}" aria-valuemin="1" aria-valuemax="${max}" aria-valuetext="${hint}"
+             id="${id}--${name}-dateSection${kind}-input" data-automation-id="dateSection${kind}-input" value="">
+    </div>`;
+  const date = (id, name, title, withMonth) => { label += 1; return `
+    <div data-automation-id="formField-${name}" data-fkit-id="${id}--${name}">
+      <fieldset><legend><label id="label${label}"><span>${title}<abbr aria-hidden="true">*</abbr></span></label></legend>
+        <div id="${id}--${name}" role="group" data-automation-id="dateInputWrapper" aria-labelledby="hiddenDateValueId-${id}--${name}">
+          ${withMonth ? part(id, name, 'Month', 'MM', 12) + '<div>/</div>' : ''}
+          ${part(id, name, 'Year', 'YYYY', 9999)}
+          <div aria-label="Calendar" data-automation-id="dateIcon" role="button" tabindex="0"></div>
+        </div>
+      </fieldset>
+    </div>`; };
+  const panel = (kind, n) => {
+    const p = document.createElement('div');
+    p.setAttribute('role', 'group');
+    p.setAttribute('aria-labelledby', `${kind}-${n}-panel`);
+    p.innerHTML = `<div><h3 id="${kind}-${n}-panel">${kind.replace('-', ' ')} ${n}</h3>
+      <button type="button" aria-label="Delete ${kind.replace('-', ' ')} ${n}">Delete</button></div><div class="body"></div>`;
+    return p;
+  };
+
+  let we = 0;
+  document.getElementById('we-add').addEventListener('click', (e) => {
+    we += 1;
+    block += 1;
+    const id = 'workExperience-' + block;
+    const p = panel('Work-Experience', we);
+    p.querySelector('.body').innerHTML = text(id, 'jobTitle', 'Job Title', true) + text(id, 'companyName', 'Company', true)
+      + text(id, 'location', 'Location', false)
+      + `<div data-automation-id="formField-currentlyWorkHere" data-fkit-id="${id}--currentlyWorkHere">
+           <input type="checkbox" id="${id}--currentlyWorkHere" name="currentlyWorkHere">
+           <label for="${id}--currentlyWorkHere">I currently work here</label></div>`
+      + date(id, 'startDate', 'From', true) + `<div class="to">${date(id, 'endDate', 'To', true)}</div>`
+      + `<div data-automation-id="formField-roleDescription" data-fkit-id="${id}--roleDescription">
+           <label for="${id}--roleDescription">Role Description</label>
+           <textarea id="${id}--roleDescription" name="roleDescription"></textarea></div>`;
+    document.getElementById('we-panels').appendChild(p);
+    p.querySelector('[name="currentlyWorkHere"]').addEventListener('change', (ev) => {
+      p.querySelector('.to').classList.toggle('hidden', ev.target.checked);
+    });
+    e.target.textContent = 'Add Another';
+  });
+
+  const degrees = ['High School', 'GED', 'Associates', 'Bachelors', 'Masters', 'Doctorate', 'PH.D'];
+  const popup = document.getElementById('popup');
+  function show(items, onPick, anchor) {
+    popup.innerHTML = '';
+    for (const it of items) {
+      const li = document.createElement('li');
+      li.setAttribute('role', 'option');
+      li.textContent = it;
+      li.addEventListener('click', () => { onPick(it); popup.hidden = true; });
+      popup.appendChild(li);
+    }
+    // a menu drawn on a layer of its own, just below the box
+    const r = anchor.getBoundingClientRect();
+    popup.style.left = (r.left + scrollX) + 'px';
+    popup.style.top = (r.bottom + scrollY) + 'px';
+    popup.hidden = false;
+  }
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') popup.hidden = true; });
+
+  let ed = 0;
+  document.getElementById('ed-add').addEventListener('click', (e) => {
+    ed += 1;
+    block += 1;
+    const id = 'education-' + block;
+    const p = panel('Education', ed);
+    document.getElementById('ed-panels').appendChild(p);
+    e.target.textContent = 'Add Another';
+    // like Workday's (live, Oct 2026): a new block's heading shows at once, its boxes a moment later
+    setTimeout(() => {
+      p.querySelector('.body').innerHTML = text(id, 'school', 'School or University', true)
+        + `<div data-automation-id="formField-degree" data-fkit-id="${id}--degree">
+             <label for="${id}--degree">Degree<abbr aria-hidden="true">*</abbr></label>
+             <button type="button" aria-haspopup="listbox" id="${id}--degree" name="degree">Select One</button></div>`
+        + text(id, 'fieldOfStudy', 'Field of Study', false) + text(id, 'gradeAverage', 'Overall Result (GPA)', false)
+        + date(id, 'firstYearAttended', 'From', false) + date(id, 'lastYearAttended', 'To (Actual or Expected)', false);
+      const dg = p.querySelector('[name="degree"]');
+      dg.addEventListener('click', () => setTimeout(() => show(degrees, (v) => { dg.textContent = v; }, dg), 120));
+    }, 2000);
+  });
+
+  // spinbuttons take digits only, and show them in place of their "MM" / "YYYY", like Workday's
+  document.addEventListener('input', (e) => {
+    if (e.target.getAttribute('role') !== 'spinbutton') return;
+    e.target.value = e.target.value.replace(/\D/g, '');
+    e.target.previousElementSibling.textContent = e.target.value || e.target.getAttribute('aria-valuetext');
+  });
+</script>
+<script>
+  // the page opens with a Work Experience block to fill
+  document.getElementById('we-add').click();
+</script>
+</body>
+</html>

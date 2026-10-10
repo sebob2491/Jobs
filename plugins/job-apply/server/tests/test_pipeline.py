@@ -3231,7 +3231,8 @@ def test_a_school_the_sites_list_refuses_is_not_called_missing_from_the_profile(
                {"id": "b", "label": "From", "sublabel": "Month", "section": "Work Experience 3", "required": True},
                {"id": "c", "label": "Are you 18 or older?", "required": True, "kind": "text"}]
     said, rest = applier._entry_gaps(r, {"url": "https://example.wd1.myworkdayjobs.com/x"}, pending)
-    assert "didn't take your profile's answer for: Arizona State University (School or University)" in said
+    assert "didn't take your profile's answer for: Arizona State University in Education 1 (School or University)" \
+        in said
     assert "more blocks than your profile has entries: Work Experience 3 (your profile has no job 3) (From)" in said
     assert "your profile doesn't have" not in said, said
     assert [q["id"] for q in rest] == ["c"]
@@ -3252,7 +3253,8 @@ def test_what_a_jobs_or_schools_block_lacks_is_said_for_its_own_list(srv):
                {"id": "b", "label": "Reason for Leaving", "section": "Work Experience 1", "required": True},
                {"id": "c", "label": "From", "sublabel": "Day", "section": "Work Experience 2", "required": True}]
     said, rest = applier._entry_gaps(r, {"url": "https://example.wd1.myworkdayjobs.com/x"}, pending)
-    assert "your schools, and your profile doesn't have this for them: Arizona State University (From)" in said
+    assert "your schools, and your profile doesn't have this for them: Arizona State University in Education 1 (From)" \
+        in said
     assert "education_history" in said and "work_history" not in said, said
     assert [q["id"] for q in rest] == ["b", "c"]
 
@@ -3271,10 +3273,85 @@ def test_a_schools_missing_degree_is_asked_for_as_a_degree_never_as_dates(srv):
     r = Run(1, "Technician", "Example Litho")
     pending = [{"id": "a", "label": "Degree*", "section": "Education 1", "required": True, "kind": "listbox"}]
     said, rest = applier._entry_gaps(r, {"url": "https://example.wd1.myworkdayjobs.com/x"}, pending)
-    assert "Arizona State University (Degree)" in said, said
+    assert "Arizona State University in Education 1 (Degree)" in said, said
     assert "Some college (no degree)" in said and "never a degree you didn't finish" in said, said
     assert "years as start" not in said, said
     assert rest == []
+
+
+WORKDAY_DEGREES = ["High School", "GED", "Associates", "Bachelors", "Masters", "Doctorate", "PH.D"]
+
+
+def test_a_degree_list_with_nothing_for_classes_leaves_the_pick_to_the_person(srv):
+    """A Workday site's Degree list holds High School, GED, Associates and up, and nothing for
+    classes without a degree (live, Oct 2026). For a second block of one school, where the person
+    took classes, the desk named only the school and said to add "Some college (no degree)" to the
+    profile, which can't go in there. It names the block and leaves that pick to the person."""
+    import yaml
+
+    path = config.profile_path()
+    profile = yaml.safe_load(path.read_text())
+    school = profile["education_history"][0]["school"]
+    profile["education_history"].append({"school": school, "degree": "", "start": 2021, "end": 2022})
+    path.write_text(yaml.safe_dump(profile))
+    applier = Applier(srv)
+    r = Run(1, "Technician", "Example Litho")
+    site = {"url": "https://example.wd1.myworkdayjobs.com/x"}
+    degree = {"id": "a", "label": "Degree*", "section": "Education 2", "required": True, "kind": "listbox",
+              "options": WORKDAY_DEGREES}
+    said, rest = applier._entry_gaps(r, site, [degree])
+    assert f"The Degree list for {school} in Education 2 has no choice for classes without a degree" in said, said
+    assert "choose in the browser" in said and "Some college" not in said, said
+    assert rest == []
+
+    # a list that has such a choice: the profile can say it
+    said, _ = applier._entry_gaps(r, site, [{**degree, "options": [*WORKDAY_DEGREES, "Some College, No Degree"]}])
+    assert f"{school} in Education 2 (Degree)" in said and "Some college (no degree)" in said, said
+
+    # written as setup writes it, and turned down by the list: still the person's pick, never "the closest"
+    profile["education_history"][1]["degree"] = "Some college (no degree)"
+    path.write_text(yaml.safe_dump(profile))
+    said, _ = applier._entry_gaps(r, site, [{**degree, "error": "ValueError: doesn't match any option"}])
+    assert "no choice for classes without a degree" in said and "closest choice" not in said, said
+
+
+def test_a_workday_experience_page_is_filled_block_by_block(srv, monkeypatch, job_apply_home):
+    """A Workday site's My Experience page as drawn live (Oct 2026): each date a fieldset of its
+    own, and an Education block's boxes drawn a moment after its heading. Every job's and
+    school's dates go in, the second block of one school is filled once drawn, and its Degree
+    (classes, no degree, in a list without such a choice) is named with its block as the person's."""
+    import yaml
+
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 1)
+    path = job_apply_home / "profile.yaml"
+    profile = yaml.safe_load(path.read_text())
+    school = profile["education_history"][0]["school"]
+    profile["education_history"].append({"school": school, "degree": "", "major": "Physics", "start": 2021,
+                                         "end": 2022})
+    path.write_text(yaml.safe_dump(profile))
+    job = srv.add_job(url=fixture_url("site/workday-experience-blocks.html"), title="Equipment Technician",
+                      company="Example Litho")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r, await r.page.evaluate(
+                "() => [...document.querySelectorAll('[role=spinbutton], [name=school], [name=degree]')]"
+                ".filter((e) => e.getClientRects().length).map((e) => e.value || e.textContent)")
+        finally:
+            await applier.stop()
+
+    r, shown = run(go())
+    assert (r.status, r.need) == ("needs_you", "stuck"), (r.status, r.reason, r.log)
+    assert f"The Degree list for {school} in Education 2 has no choice for classes without a degree" in r.reason, \
+        r.reason
+    assert not r.questions, r.questions
+    assert shown == ["03", "2021", "06", "2018", "02", "2021", school, "Bachelors", "2016", "2020",
+                     school, "Select One", "2021", "2022"], shown
 
 
 def test_a_posting_that_has_closed_says_so(srv, monkeypatch):

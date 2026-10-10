@@ -29,7 +29,8 @@ from urllib.parse import urlparse
 
 from . import config, mailbox, report
 from .ats import ATS_NAMES, detect_ats, shared_system
-from .autofill import clean_label, entry_of, is_empty_value, norm, plan_autofill, tailored_document
+from .autofill import (clean_label, entry_of, is_empty_value, no_choice_for_no_degree, norm, plan_autofill,
+                       tailored_document)
 from .browser import (TabClosed, _accepts_cookies, _cookie_setting, confirmations, declines_cookies, final_text,
                       may_accept_cookies)
 
@@ -1343,10 +1344,12 @@ class Applier:
         lives in the profile's work_history or education_history are never asked one by one:
         twenty bare "From" and "To" boxes on the desk couldn't say whose they were, and an answer
         typed there would go in every one. What's said instead (which entries lack what, or
-        which of the profile's answers the site didn't take), and the questions left to ask."""
+        which of the profile's answers the site didn't take), and the questions left to ask.
+        A school is named with its block on the page ("Education 2"): one school can have two."""
         prof = config.Profile.load()
         missing: dict[str, dict[str, list[str]]] = {"work": {}, "education": {}, "extra": {}}
         refused: dict[str, list[str]] = {}  # the profile has it; the page didn't take it
+        no_choice: list[str] = []  # Degree lists with nothing for classes without a degree
         rest = []
         for q in pending:
             found = entry_of(q, prof)
@@ -1354,6 +1357,13 @@ class Applier:
                 rest.append(q)
                 continue
             name, kind = found
+            block = str(q.get("section") or "")
+            if kind == "education" and block and block != name:
+                name = f"{name} in {block}"
+            if no_choice_for_no_degree(q, prof):
+                if name not in no_choice:
+                    no_choice.append(name)
+                continue
             what = clean_label(q.get("label") or "").strip() or "a box"
             into = refused if q.get("error") else missing[kind]
             if what not in into.setdefault(name, []):
@@ -1392,6 +1402,13 @@ class Applier:
         if refused:
             said.append(f"{site} didn't take your profile's answer for: {listed(refused)}. Fill those in the browser "
                         "(in a list, the closest choice), then press Resume.")
+        if no_choice:
+            # "Some college (no degree)" in the profile can't go there, and coursework is never a degree
+            said.append(f"The Degree list for {'; '.join(no_choice)} has no choice for classes without a degree, so "
+                        "that box is yours (the desk never picks a degree you didn't earn): choose in the browser, "
+                        "then press Resume. If you did finish a degree there, add it to that school under "
+                        "education_history in profile.yaml (degree: the one you earned), and the desk fills it in "
+                        "from then on.")
         return " ".join(said), rest
 
     @staticmethod

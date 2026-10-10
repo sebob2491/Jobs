@@ -404,6 +404,56 @@ def test_each_jobs_currently_work_here_box_is_its_own(srv):
         == [True, False]
 
 
+def test_each_jobs_dates_go_in_its_own_block(srv):
+    """A Workday site's dates are each a fieldset of their own, with each part's "MM" or "YYYY"
+    drawn over its box: the desk filled every job's title, company and description and left all
+    its From and To boxes empty, asked bare with no job named (live, Oct 2026)."""
+    run(srv.browser.goto(fixture_url("site/workday-experience-blocks.html")))
+    run(srv.add_entries("work"))
+    fields = run(srv.inspect_form(include_dropdown_options=False))["fields"]
+    dates = [f for f in fields if f.get("role") == "spinbutton"]
+    assert [f.get("section") for f in dates] == ["Work Experience 1"] * 4 + ["Work Experience 2"] * 4, dates
+
+    result = run(srv.autofill())
+    assert not result["failed"], result["failed"]
+    assert not [f for f in result["needs_input"] if f.get("section", "").startswith("Work")], result["needs_input"]
+    got = {(f.get("section"), f["label"].rstrip("*"), f.get("sublabel")): f["value"]
+           for f in run(srv.inspect_form(include_dropdown_options=False))["fields"]}
+    assert (got[("Work Experience 1", "From", "Month")], got[("Work Experience 1", "From", "Year")]) == ("03", "2021")
+    assert ("Work Experience 1", "To", "Month") not in got  # it's the job held now
+    assert [got[("Work Experience 2", d, p)] for d in ("From", "To") for p in ("Month", "Year")] == \
+        ["06", "2018", "02", "2021"]
+
+
+def test_blocks_drawn_after_their_heading_are_read_and_filled(srv, job_apply_home):
+    """A Workday site draws a new Education block's heading at once and its boxes a moment later:
+    the desk added two blocks and read the page before their boxes were there, so the second was
+    never filled (live, Oct 2026). Its Degree list has nothing for classes without a degree, so
+    that box stays the person's: never High School, GED or Associates for coursework."""
+    import yaml
+
+    path = job_apply_home / "profile.yaml"
+    profile = yaml.safe_load(path.read_text())
+    school = profile["education_history"][0]["school"]
+    profile["education_history"].append({"school": school, "degree": "", "major": "Physics", "start": 2021,
+                                         "end": 2022})
+    path.write_text(yaml.safe_dump(profile))
+    run(srv.browser.goto(fixture_url("site/workday-experience-blocks.html")))
+    assert run(srv.add_entries("education"))["after"] == 2
+
+    result = run(srv.autofill())
+    assert not result["failed"], result["failed"]
+    got = {(f.get("section"), f["label"].rstrip("*"), f.get("sublabel")): f["value"]
+           for f in run(srv.inspect_form(include_dropdown_options=False))["fields"]}
+    assert got[("Education 1", "Degree", None)] == "Bachelors"
+    boxes = (("School or University", None), ("Field of Study", None), ("From", "Year"),
+             ("To (Actual or Expected)", "Year"))
+    assert [got[("Education 2", label, sub)] for label, sub in boxes] == [school, "Physics", "2021", "2022"]
+    assert got[("Education 2", "Degree", None)] == "Select One"
+    degree = next(f for f in result["needs_input"] if f["label"] == "Degree*")
+    assert degree["section"] == "Education 2" and "Associates" in degree["options"], degree
+
+
 def test_final_apply_button_honeypot_and_enter(srv, monkeypatch):
     job = srv.add_job(url=fixture_url("apply_button_form.html"), title="Tech", company="Example Fab")["job"]
     run(srv.open_application(job_id=job["id"]))
