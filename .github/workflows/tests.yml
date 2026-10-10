@@ -1,7 +1,10 @@
 name: tests
 
+# Once per change: on pull requests (whose checks main's ruleset requires) and on main itself.
+# A push to a branch with a pull request open ran the same jobs a second time.
 on:
   push:
+    branches: [main]
   pull_request:
 
 jobs:
