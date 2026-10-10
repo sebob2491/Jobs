@@ -4229,3 +4229,29 @@ def test_a_job_sent_to_a_maintenance_page_is_said_down_for_maintenance(srv, monk
     r = run(go())
     assert r.need == "stuck" and "down for maintenance" in r.reason, (r.status, r.need, r.reason, r.log)
     assert "https://www.acme-fab.example/en/maintenance" in r.reason
+
+
+@pytest.mark.parametrize("tab_url, gone", [
+    ("https://careers.example-corp.example/careers?pid=123&domain=example-corp.com", False),  # the posting
+    ("https://careers.example-corp.example/careers/apply?pid=123", False),  # its application, where it was left
+    ("https://careers.example-corp.example/careers?pid=999&domain=example-corp.com", True),  # another job's posting
+    ("https://careers.example-corp.example/careers/apply?pid=999", True),  # another job's application
+    ("https://careers.example-corp.example/careers?query=technician", True),  # the careers home's search
+])
+def test_a_tab_on_another_job_named_in_the_query_isnt_carried_on_with(srv, monkeypatch, tab_url, gone):
+    """An Eightfold site names the job in its address's query (/careers?pid=123). A paused job's
+    tab taken to ?pid=999 is another job's posting, and /careers with no id its careers home:
+    compared without their queries, both read as this job's own page, and the desk would have
+    applied to job 999 as job 123."""
+    from types import SimpleNamespace
+
+    job = srv.add_job(url="https://careers.example-corp.example/careers?pid=123&domain=example-corp.com",
+                      title="Field Service Engineer", company="Example Corp")["job"]
+    applier = Applier(srv)
+    left = Run(job["id"], url="https://careers.example-corp.example/careers/apply?pid=123")
+
+    async def peek(tab):
+        return {}, "Careers at Example Corp"
+
+    monkeypatch.setattr(srv.browser, "peek", peek)
+    assert run(applier._gone_home(left, SimpleNamespace(url=tab_url))) is gone

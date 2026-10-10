@@ -28,7 +28,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import parse_qsl, urlparse
 
 from . import config, mailbox, report
 from .ats import ATS_NAMES, detect_ats, shared_system
@@ -680,8 +680,19 @@ class Applier:
         says the application went (a site may go home after its own Submit): those carry on."""
         job = self.srv.tracker().get(run.job_id, with_description=False) or {}
         own = [u for u in (run.url, job.get("url"), job.get("apply_url")) if u]
-        if any(_bare(tab.url) == _bare(u) for u in own) or not any(_above(tab.url, u) for u in own):
-            return False
+        # a site that names the job in its address's query (an Eightfold site's /careers?pid=123):
+        # ?pid=999 there is another job, and /careers?query=... with no id its careers home
+        mine: dict[str, set[str]] = {}
+        for u in own:
+            for key, value in _job_ids(u).items():
+                mine.setdefault(key, set()).add(value)
+        theirs = _job_ids(tab.url)
+        if not any(k in mine and v not in mine[k] for k, v in theirs.items()):  # (not another job's)
+            if any(_bare(tab.url) == _bare(u) for u in own):
+                if not mine or any(k in theirs for k in mine):
+                    return False  # the posting, its application, or the page it was left on
+            elif not any(_above(tab.url, u) for u in own):
+                return False
         try:
             _, text = await self.srv.browser.peek(tab)
         except Exception:  # a tab mid-way through loading: carried on with, as before
@@ -2378,6 +2389,16 @@ def _new_required(before: dict[str, Any], after: dict[str, Any]) -> bool:
 def _bare(url: str) -> str:
     """An address without its query and fragment."""
     return urlparse(url)._replace(query="", fragment="").geturl()
+
+
+# The query keys that name a job in an address: Eightfold's pid, Taleo's job, SuccessFactors'
+# career_job_req_id, Greenhouse's gh_jid, and the usual jobId / reqId
+_JOB_ID_KEY = re.compile(r"pid|job|jid|gh_jid|job_?id|req_?id|job_?req_?id|requisition_?id|career_job_req_id", re.I)
+
+
+def _job_ids(url: str) -> dict[str, str]:
+    """The job ids an address carries in its query, by key (lower case)."""
+    return {k.lower(): v for k, v in parse_qsl(urlparse(url).query) if _JOB_ID_KEY.fullmatch(k) and v}
 
 
 def _above(url: str, below: str) -> bool:

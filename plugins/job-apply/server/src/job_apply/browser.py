@@ -164,6 +164,16 @@ _FORM_ERROR = re.compile(r"required|invalid|error|must be|can'?t be blank|missin
                          r"please (enter|select|provide|fix|correct|complete|review)", re.I)
 
 
+async def _covered(loc: Locator) -> bool:
+    """Is something drawn over this box, so a click can't reach it? Asked for 2 s at most, as a
+    click would be: a box Workday is drawing again (after a menu pick) isn't waited on for the
+    default 30 s, and counts as covered (focus takes the keys)."""
+    try:
+        return bool(await loc.evaluate(COVERED_JS, timeout=2000))
+    except (PlaywrightError, PlaywrightTimeout):
+        return True
+
+
 def confirmations(text: str) -> set[str]:
     """The confirmations a page's text gives, however its spaces, lines and apostrophes come."""
     flat = re.sub(r"\s+", " ", (text or "").replace("\u2019", "'").replace("\xa0", " "))
@@ -642,7 +652,7 @@ class BrowserSession:
     async def _activate(self, loc: Locator) -> None:
         """Click a dropdown, or focus it when an overlay covers it (react-select puts its
         placeholder on top of the input). Checking first avoids waiting out a click timeout."""
-        covered = await loc.evaluate(COVERED_JS)
+        covered = await _covered(loc)
         if not covered:
             try:
                 await loc.click(timeout=2500)
@@ -1248,7 +1258,7 @@ class BrowserSession:
             # date's "MM/DD/YYYY" hint is drawn over its boxes (Workday's Self Identify), or each
             # part's own "MM" (My Experience, live, Oct 2026), a click never reaches them: focus
             # takes the keys just the same. Checked first, so no click timeout is waited out.
-            covered = await loc.evaluate(COVERED_JS)
+            covered = await _covered(loc)
             if not covered:
                 try:
                     await loc.click(timeout=2000)

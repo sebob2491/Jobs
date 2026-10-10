@@ -1207,3 +1207,20 @@ def test_a_jobs_own_tab_closed_is_still_said_closed(srv):
             srv.browser.strict_tabs = False
 
     run(go())
+
+
+def test_a_box_being_drawn_again_isnt_waited_on_before_typing(srv):
+    """A date part Workday is drawing again (after a menu pick) matches nothing for a moment: the
+    check for an overlay waited Playwright's default 30 s per part before falling back to focus.
+    It asks for 2 s at most, as the click it stands in for would."""
+    import time
+
+    async def go():
+        page = await srv.browser.page()
+        await page.goto(fixture_url("site/step1.html"))
+        began = time.monotonic()
+        covered = await browser_module._covered(page.locator("#not-drawn-yet"))
+        return covered, time.monotonic() - began
+
+    covered, took = run(go())
+    assert covered and took < 5, took
