@@ -1696,6 +1696,70 @@ def test_no_reset_email_in_a_few_minutes_makes_an_account_and_the_queue_goes_on(
     assert sum(line.startswith("pressed \u201cSubmit\u201d") for line in r.log) == 1, r.log  # not tried again
 
 
+def test_a_reset_the_desk_cant_fill_in_makes_an_account_instead(srv, monkeypatch, job_apply_home):
+    """The saved password didn't sign in, and the site's password reset isn't one the desk can fill
+    in (it asks a security question: the person's). UKG Pro's, SuccessFactors' and Infor's stopped the
+    test identity, which had no account at any of them (live, Oct 2026). With no reset to be had, the
+    desk goes back to the sign-in page and makes an account (a site that has one for the email says
+    so, and that's the person's)."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    saved_password(monkeypatch)
+    manage_accounts(job_apply_home)
+    watched_inbox(monkeypatch)
+    job = srv.add_job(url=fixture_url("site/signin-submit.html") + "?reset=odd", title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    log = "\n".join(r.log)
+    assert "asked it to email a password reset" not in log, log
+    assert "isn't one I can fill in, so I went back to make an account" in log, log
+    assert "created your account" in log and r.seen_form, (r.reason, r.log)
+
+
+@pytest.mark.parametrize("mode", ["workday", "workday-late"])
+def test_a_workday_reset_that_says_if_an_account_exists_waits_then_makes_one(srv, monkeypatch, job_apply_home, mode):
+    """Workday's password reset stays on its form and says "You will receive an email with
+    instructions to reset your password if an account exists for this email address." (live, Oct
+    2026, the test identity's first run). Said at once (Banner Health's), the desk took it for a
+    refusal and stopped; said a moment later (KLA's), it waited for the email, and when none came
+    it signed in on the reset's own form and stopped. Either way: wait for the email, then, with
+    none, back to the sign-in page to make an account."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "RESET_MAIL_WAIT", 4)
+    saved_password(monkeypatch)
+    manage_accounts(job_apply_home)
+    watched_inbox(monkeypatch)
+    job = srv.add_job(url=fixture_url("site/signin-submit.html") + f"?reset={mode}", title="FSE",
+                      company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status == "needs_you", about=state(r))
+            assert r.need == "email_code" and "makes one instead" in r.reason, (r.reason, r.log)
+            await until(lambda: r.status not in ("queued", "running") and r.need != "email_code", timeout=60,
+                        about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    log = "\n".join(r.log)
+    assert "asked it to email a password reset" in log and "no password reset email came" in log, log
+    assert "created your account" in log and r.seen_form, (r.reason, r.log)
+
+
 def test_a_new_account_the_site_takes_a_moment_over_is_signed_in_to(srv, monkeypatch, job_apply_home):
     """A Workday site goes on to its Sign In page a few seconds after Create Account: the desk
     waits for that, rather than filling the same form in again and stopping, then signs in."""

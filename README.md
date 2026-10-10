@@ -174,7 +174,8 @@ signs you in after that (pressing the sign-in form's own button, even one that r
 with the email app password below saved, resets that employer's password to the saved one
 through the site's own "Forgot password" email, which it reads itself. When the site says it
 has no account for your email, or no reset email comes in 3 minutes (most likely your first
-application there; the other jobs carry on meanwhile), it opens that employer's Create
+application there; the other jobs carry on meanwhile), or its reset isn't one the desk can do
+(a security question, say: those stay yours), it opens that employer's Create
 Account form ("Create an account", "Register", "Don't have an account yet?") and creates the
 account. Without the email app password it tries Create Account first, and asks you to
 open the reset email where the site says the email already has an account. To do these steps yourself, set

@@ -68,7 +68,8 @@ The desk is a local web page served by this plugin. It does what the `find-jobs`
   picture code stays the user's). If the password doesn't sign in, then with the email app
   password saved the desk first resets that employer's password to the saved one through
   the site's "Forgot password" email; when the site says it has no account for the email,
-  or no reset email comes in 3 minutes (the other jobs carry on meanwhile), it opens the
+  or no reset email comes in 3 minutes (the other jobs carry on meanwhile), or the reset isn't
+  one the desk can do (a security question stays the user's), it opens the
   site's Create Account form ("Create an account", "Register", "Don't have an account
   yet?") and creates the account. Without the inbox it tries Create Account first, and
   asks for the reset (the user opens the emailed link) where the site says the email already

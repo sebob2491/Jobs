@@ -128,7 +128,10 @@ _RESET_SET = re.compile(r"\b(?:reset|update|change|save|set|submit|continue|conf
 _NOT_A_STEP = re.compile(r"\b(?:back|cancel|sign in|log ?in|return)\b", re.I)
 _NEW_PASSWORD = re.compile(r"\bnew\b|confirm|verify|re-?enter|re-?type|again", re.I)
 _OLD_PASSWORD = re.compile(r"\b(?:current|old|existing|temporary)\b", re.I)
-_RESET_SENT = re.compile(r"\b(?:sent|emailed)\b.{0,80}\b(?:link|e-?mail|instructions)|check your (?:e-?mail|inbox)", re.I)
+# A reset's page saying its email is on the way: "We have sent a link", "Check your inbox", and Workday's
+# "You will receive an email with instructions ... if an account exists for this email address"
+_RESET_SENT = re.compile(r"\b(?:sent|emailed)\b.{0,80}\b(?:link|e-?mail|instructions)|check your (?:e-?mail|inbox)|"
+                         r"\byou(?:'ll| will) (?:receive|get) an? e-?mail\b|\bif an account exists\b", re.I)
 # A reset's page saying there's no account for the email ("There is no user with that username or email")
 _NO_ACCOUNT = re.compile(r"\bno (?:user|account|record|match)\b|\b(?:not|isn'?t|wasn'?t) (?:found|registered|recogni[sz]ed)|"
                          r"\b(?:don'?t|do not|didn'?t|did not) recogni[sz]e (?:this|that|your|the) e-?mail|"
@@ -1225,10 +1228,11 @@ class Applier:
             if kind == "sign_in" and _account_and_application(data):
                 return await self._apply_with_account(run, data)
             manage = (kind in ("sign_in", "page", "email_code") or run.resetting) and _may_manage_accounts()
-            if kind == "form":
-                run.resetting = False  # past the sign-in, however the password was set
-                run.sign_in_tries = 0  # (and none of its sign-ins was refused)
-            if manage and run.resetting and kind in ("page", "email_code") and _RESET_SENT.search(text):
+            # On the reset's "email sent" page, or back from waiting on an email that didn't come, on whatever
+            # page the site left (Workday's reset form stays, filled, with its "if an account exists" note,
+            # which can read as a form: so before a form's "past the sign-in" below)
+            sent_page = kind in ("page", "email_code") and bool(_RESET_SENT.search(text))
+            if manage and run.resetting and (sent_page or run.reset_no_mail):
                 if not run.reset_waited:
                     return await self._await_reset_email(run, data)
                 # Resume pressed on it: the person set the password from the email themselves (or the
@@ -1245,6 +1249,9 @@ class Applier:
                     else:  # the saved password is the site's now, as the person was asked: one more sign-in
                         run.sign_in_tries = min(run.sign_in_tries, SIGN_IN_TRIES - 1)
                     continue
+            if kind == "form":
+                run.resetting = False  # past the sign-in, however the password was set
+                run.sign_in_tries = 0  # (and none of its sign-ins was refused)
             if kind == "sign_in" and manage and run.resetting:
                 done_reset = await self._set_new_password(run, data, text)
                 if done_reset == "set":
@@ -1847,6 +1854,18 @@ class Applier:
                         "you saved on the desk, then press Resume: the desk signs in with it.", seen=page)
             return "paused"
 
+        async def instead(why: str, page: dict[str, Any]) -> str:
+            # No reset the desk can do there: back to the sign-in page, for its way to a new account. With
+            # no account for the email (a first application there, the test identity's), that's the way
+            # on; a site that has one says so when it's asked to make another, and that's the person's (as
+            # it is once a Create Account here was told the email has one).
+            if not run.reset_from or run.page is None or tried.get("made"):
+                return await stop(why, page)
+            self._log(run, f"your saved password didn't sign in on {site}, and I {why}, so I went back to make an "
+                      "account there instead")
+            await run.page.goto(run.reset_from, wait_until="domcontentloaded", timeout=45000)
+            return "no_account"
+
         async def press(action: dict[str, Any], allow_submit: bool = False) -> bool:
             try:
                 out = await (srv.browser.click(action["id"], allow_submit=True) if allow_submit else srv.click(action["id"]))
@@ -1871,16 +1890,16 @@ class Applier:
                 return await stop("couldn't find its way to a password reset", data)
         run.reset_from = data.get("url") or ""
         if not await press(forgot):
-            return await stop("couldn't open its password reset", data)
+            return await instead("couldn't open its password reset", data)
         data, text = await self._look()
         address = config.Profile.load().get("personal.email")
         boxes = [f for f in data.get("fields") or [] if f.get("kind") in ("text", "email")
                  and re.search(r"e-?mail|user ?name|login", f.get("label") or "", re.I)]
         if (not _RESET_PAGE.search(" ".join([text[:2000], *(data.get("headings") or [])])) or not boxes or not address
                 or any(f.get("kind") == "password" for f in data.get("fields") or [])):
-            return await stop("opened its password reset, which isn't one I can fill in", data)
+            return await instead("opened its password reset, which isn't one I can fill in", data)
         if not (await srv.fill_form([{"id": boxes[0]["id"], "value": address}])).get("ok"):
-            return await stop("opened its password reset, which didn't take your email", data)
+            return await instead("opened its password reset, which didn't take your email", data)
         if data.get("captcha") or data.get("challenge"):
             run.resetting = True
             await self._bring_forward(run)
@@ -1890,7 +1909,7 @@ class Applier:
             return "paused"
         button = self._account_button(data.get("actions") or [], _RESET_ASK, full=False)
         if button is None or not await press(button, allow_submit=True):  # (asks for the email: sends no application)
-            return await stop("filled in your email on its password reset, but couldn't press its button", data)
+            return await instead("filled in your email on its password reset, but couldn't press its button", data)
         data, text = await self._look()
         if data.get("errors") and not _RESET_SENT.search(text):  # "No account found for this email"
             if _NO_ACCOUNT.search(" ".join(data["errors"])) and run.reset_from and run.page is not None:
