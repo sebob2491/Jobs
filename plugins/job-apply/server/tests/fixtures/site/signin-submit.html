@@ -5,7 +5,7 @@
 <!-- SuccessFactors' sign-in (SAP's Gigya): the whole page sits in one big form, and the sign-in's
      own button reads "Submit". ?pw=<password> is the account's password; ?extra puts a phone box
      beside the sign-in; ?unknown: the site has no account for the email; ?reset=<mode>: the
-     password reset's ?<mode> (forgot-password.html) -->
+     password reset's ?<mode> (forgot-password.html); ?s=<token>: good for one visit (sf-posting.html) -->
 <form id="careerform" onsubmit="return false;">
   <input type="hidden" name="career_company" value="example">
   <h2>Sign In</h2>
@@ -26,6 +26,14 @@
 </form>
 <script>
   const q = new URLSearchParams(location.search);
+  // ?s=<token> (from sf-posting.html): SuccessFactors' sign-in page, good for one visit
+  const used = JSON.parse(sessionStorage.getItem('sf.used') || '[]');
+  if (q.get('s') && used.includes(q.get('s'))) {
+    document.body.innerHTML = '<a href="#">SuccessFactors</a><p><b>An error occurred while processing your ' +
+      'request. Please go back to your original page and check the URL. Then try your request again.</b></p>';
+    throw new Error('sign-in page opened again');
+  }
+  if (q.get('s')) sessionStorage.setItem('sf.used', JSON.stringify([...used, q.get('s')]));
   window.signInTries = 0;
   if (q.has('extra')) {
     document.getElementById('extra').innerHTML = '<label for="ph">Phone</label><input id="ph" type="tel" name="phone">';

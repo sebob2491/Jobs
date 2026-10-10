@@ -138,6 +138,9 @@ _NO_ACCOUNT = re.compile(r"\bno (?:user|account|record|match)\b|\b(?:not|isn'?t|
                          r"does(?:n'?t| not) (?:exist|have an account|match (?:any|an) account)|"
                          r"\b(?:unknown|unrecogni[sz]ed) (?:user|e-?mail|account)|could(?:n'?t| not) find (?:an? |your )?"
                          r"(?:account|user)", re.I)
+# A page that can't be opened again: SuccessFactors' sign-in page (career?_s.crb=...), good for one visit
+_SPENT_PAGE = re.compile(r"an error occurred while processing your request|please go back to your original page|"
+                         r"\b(?:session|page|link) (?:has )?expired\b", re.I)
 # A page about making an account ("Create an account", amazon.jobs after an email it doesn't know)
 _ACCOUNT_PAGE = re.compile(r"\b(create (?:an |your |a new )?account|sign up|register)\b", re.I)
 _ACCOUNT_KINDS = {"text", "email", "tel", "select", "combobox", "listbox"}  # not check boxes or files
@@ -1237,7 +1240,7 @@ class Applier:
                 # No email in RESET_MAIL_WAIT: most likely no account there, so the way to a new one instead.
                 run.resetting = False
                 if run.reset_from and run.page is not None:
-                    await run.page.goto(run.reset_from, wait_until="domcontentloaded", timeout=45000)
+                    await self._back_to_sign_in(run)
                     sign_ins.clear()
                     if run.reset_no_mail:
                         self._log(run, f"no password reset email came from {_site(run, data)} in "
@@ -1862,7 +1865,7 @@ class Applier:
                 return await stop(why, page)
             self._log(run, f"your saved password didn't sign in on {site}, and I {why}, so I went back to make an "
                       "account there instead")
-            await run.page.goto(run.reset_from, wait_until="domcontentloaded", timeout=45000)
+            await self._back_to_sign_in(run)
             return "no_account"
 
         async def press(action: dict[str, Any], allow_submit: bool = False) -> bool:
@@ -1914,7 +1917,7 @@ class Applier:
             if _NO_ACCOUNT.search(" ".join(data["errors"])) and run.reset_from and run.page is not None:
                 # nothing to reset: back to the sign-in page, for its way to a new account
                 self._log(run, f"{site} has no account for your email, so I went back to make one there")
-                await run.page.goto(run.reset_from, wait_until="domcontentloaded", timeout=45000)
+                await self._back_to_sign_in(run)
                 return "no_account"
             return await stop(f"asked for a password reset, and it says \u201c{data['errors'][0][:160]}\u201d", data)
         run.resetting = True
@@ -1922,6 +1925,18 @@ class Applier:
                   "(manage_accounts: false in profile.yaml leaves this to you)")
         await self._await_reset_email(run, data)
         return "paused"
+
+    async def _back_to_sign_in(self, run: Run) -> None:
+        """Back to the sign-in page a password reset was asked from (run.reset_from). Where that page
+        was good for one visit (SuccessFactors' career?_s.crb=..., Arizona Public Service's for the test
+        identity, live Oct 2026: "An error occurred while processing your request"), the job's posting
+        is opened again in its tab instead: its Apply leads to a fresh sign-in page."""
+        assert run.page is not None
+        await run.page.goto(run.reset_from, wait_until="domcontentloaded", timeout=45000)
+        data, text = await self._look()
+        if not data.get("fields") and _SPENT_PAGE.search(text[:3000]):
+            self._log(run, f"{_site(run, data)}'s sign-in page couldn't be opened again, so I opened the job again")
+            await self.srv.open_application(job_id=run.job_id)
 
     async def _await_reset_email(self, run: Run, data: dict[str, Any]) -> None:
         watched = self.mail_login() is not None
