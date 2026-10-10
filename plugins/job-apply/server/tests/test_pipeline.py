@@ -2276,6 +2276,33 @@ def test_a_profile_answer_that_doesnt_go_in_is_asked_only_where_required():
     assert [(q["label"], q["kind"], q["options"]) for q in pending] == [("Country", "combobox", ["No Selection", "Afghanistan"])]
 
 
+def test_a_self_identification_answer_a_list_doesnt_have_is_said_not_left_silently():
+    """Qorvo's optional veteran list has no "I don't wish to answer": the desk left it empty and
+    said nothing, as if it had filled it. Left empty (no other choice is the person's), and the
+    log says so, once; a required one is asked with the reason."""
+    vevraa = "U.S. Protected Veteran Self-Identification. " + "This employer is a Government contractor. " * 10
+    result = {"filled": [], "failed": [], "needs_input": [
+        {"id": "31", "label": "Pre-Offer : Are you a Protected Veteran?", "kind": "combobox", "required": False,
+         "options": ["No Selection", "No, I am not a Protected Veteran", "Yes, I am a Protected Veteran"],
+         "unmatched": "I don't wish to answer"},
+        {"id": "32", "label": vevraa, "kind": "combobox", "required": False, "options": ["Yes", "No"],
+         "unmatched": "I don't wish to answer"},
+        {"id": "29", "label": "Gender", "kind": "combobox", "required": True, "options": ["Female", "Male"],
+         "unmatched": "Decline to self-identify"},
+        {"id": "40", "label": "Preferred Locale/Language", "kind": "combobox", "required": False, "options": ["English"]}]}
+    pending, _ = pipeline._pending(result, {})
+    assert [(q["label"], q["error"]) for q in pending] == [
+        ("Gender", "your profile's answer “Decline to self-identify” isn't one of its choices")]
+    r = Run(1)
+    applier = Applier(None)
+    applier._note_skipped(r, result)
+    applier._note_skipped(r, result)  # the same page filled again
+    assert r.log == ["left 2 optional question(s) empty, as none of their choices is your profile's answer: "
+                     "“Pre-Offer : Are you a Protected Veteran” (yours: “I don't wish to answer”), "
+                     "“U.S. Protected Veteran Self-Identification. This employer is a Government…” "
+                     "(yours: “I don't wish to answer”)"], r.log
+
+
 
 def test_an_older_successfactors_posting_is_applied_to_through_its_apply(srv, monkeypatch):
     """Amkor, live (Oct 2026): its posting's "Apply" is a form's submit button, which the desk

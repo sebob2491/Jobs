@@ -1,0 +1,118 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Voluntary Self-Identification</title>
+<style>
+  .row { margin-bottom: 12px; position: relative; }
+  .menu { position: absolute; z-index: 10; background: #fff; border: 1px solid #999; margin: 0; padding: 0;
+          list-style: none; width: 360px; }
+  .menu [role="option"], .menu [role="gridcell"] { display: block; padding: 4px; cursor: pointer; }
+  .notice { font-size: 12px; max-width: 600px; }
+</style>
+</head>
+<body>
+<!-- Self-identification dropdowns as three application systems draw them (Oct 2026). Each
+     takes a value only when an entry in its list is clicked: words typed into it only filter
+     the list, and are recorded in data-typed.
+     - Gender: like Oracle's searchable lists (onsemi's), entries as a grid's cells. onsemi's
+       Gender lists only Female and Male.
+     - Pre-Offer : Disability, Pre-Offer : Are you a Protected Veteran?: like SuccessFactors'
+       paginated selects (Qorvo's), "No Selection" first. Its veteran list has no way to decline.
+     - The veteran question carrying the VEVRAA notice in its label: like Eightfold's (Micron's
+       US postings), a box left without a pick is emptied. Its entries come from the server each
+       time it opens, so they show a moment later, after any words typed meanwhile. -->
+<h1>Voluntary Self-Identification</h1>
+<form id="apply" novalidate>
+  <div class="row">
+    <label for="gender">Gender</label>
+    <input id="gender" name="ORA_GENDER" type="text" role="combobox" aria-autocomplete="list" aria-haspopup="grid"
+           aria-controls="gender-listbox" aria-expanded="false" autocomplete="none">
+    <div id="gender-listbox" role="grid" class="menu" hidden></div>
+  </div>
+  <div class="row">
+    <input aria-label="Pre-Offer : Disability" autocomplete="off" type="text" placeholder="No Selection" role="combobox"
+           aria-owns="54:_listSelect" aria-expanded="false" id="53:_input" class="rcmpaginatedselectinput">
+    <div id="54:_listSelect" role="listbox" class="menu" hidden></div>
+  </div>
+  <div class="row">
+    <input aria-label="Pre-Offer : Are you a Protected Veteran?" autocomplete="off" type="text" placeholder="No Selection"
+           role="combobox" aria-owns="50:_listSelect" aria-expanded="false" id="49:_input" class="rcmpaginatedselectinput">
+    <div id="50:_listSelect" role="listbox" class="menu" hidden></div>
+  </div>
+  <div class="row">
+    <div id="vevraa_label" class="notice">U.S. &ndash; Protected Veteran Self-Identification. This employer is a
+      Government contractor subject to the Vietnam Era Veterans' Readjustment Assistance Act of 1974, as amended
+      (VEVRAA), which requires Government contractors to take affirmative action to employ and advance in employment
+      protected veterans. For more information, call the U.S. Department of Labor's Veterans' Employment and Training
+      Service (VETS). If you believe you belong to any of the categories of protected veterans, please indicate by
+      selecting the appropriate value below. Submission of this information is voluntary.</div>
+    <input id="input-17" type="text" role="combobox" aria-controls="list-15" aria-labelledby="vevraa_label"
+           aria-expanded="false" placeholder="Select" class="select-module_select-input">
+    <ul id="list-15" role="listbox" class="menu" hidden></ul>
+  </div>
+  <button type="submit">Submit application</button>
+</form>
+<script>
+  function picker(box, list, entries, {cells = false, fetchMs = 0, emptyWhenLeft = false} = {}) {
+    let filter = '', fetching = null;
+    const draw = () => {
+      list.innerHTML = '';
+      for (const name of entries.filter((n) => !filter || n.toLowerCase().includes(filter.toLowerCase()))) {
+        const row = document.createElement(cells ? 'div' : 'li');
+        const item = cells ? document.createElement('div') : row;
+        if (cells) { row.setAttribute('role', 'row'); row.append(item); }
+        item.setAttribute('role', cells ? 'gridcell' : 'option');
+        item.textContent = name;
+        item.addEventListener('mousedown', (e) => e.preventDefault());  // keeps the box focused
+        item.addEventListener('click', () => {
+          box.value = name === 'No Selection' ? '' : name;
+          box.dataset.picked = name;
+          close();
+        });
+        list.append(row);
+      }
+      list.hidden = false;
+      box.setAttribute('aria-expanded', 'true');
+    };
+    const open = () => {
+      if (!fetchMs) return draw();
+      clearTimeout(fetching);
+      fetching = setTimeout(draw, fetchMs);
+    };
+    const close = () => {
+      clearTimeout(fetching);
+      list.hidden = true;
+      box.setAttribute('aria-expanded', 'false');
+      filter = '';
+    };
+    box.addEventListener('click', open);
+    box.addEventListener('keydown', (e) => {
+      if (e.key === 'ArrowDown') open();
+      if (e.key === 'Escape') close();
+    });
+    box.addEventListener('input', () => {
+      box.dataset.typed = (box.dataset.typed || '') + box.value;
+      filter = box.value;
+      if (!list.hidden) draw();
+    });
+    box.addEventListener('blur', () => {
+      close();
+      if (emptyWhenLeft && !entries.includes(box.value)) box.value = '';
+    });
+  }
+  picker(document.getElementById('gender'), document.getElementById('gender-listbox'), ['Female', 'Male'], {cells: true});
+  picker(document.getElementById('53:_input'), document.getElementById('54:_listSelect'),
+         ['No Selection', 'No, I do not have a disability and have not had one in the past',
+          'Yes, I have a disability, or have had one in the past', 'I do not want to answer']);
+  picker(document.getElementById('49:_input'), document.getElementById('50:_listSelect'),
+         ['No Selection', 'No, I am not a Protected Veteran', 'Yes, I am a Protected Veteran']);
+  picker(document.getElementById('input-17'), document.getElementById('list-15'),
+         ['I IDENTIFY AS ONE OR MORE OF THE CLASSIFICATIONS OF PROTECTED VETERANS LISTED BELOW',
+          'I DO NOT WISH TO SELF-IDENTIFY', 'I AM NOT A VETERAN', 'I IDENTIFY AS A VETERAN, JUST NOT A PROTECTED VETERAN'],
+         {fetchMs: 1200, emptyWhenLeft: true});
+  document.getElementById('apply').addEventListener('submit', (e) => {
+    e.preventDefault();
+    document.body.innerHTML = '<h1>Thank you for applying!</h1>';
+  });
+</script>
+</body>
+</html>

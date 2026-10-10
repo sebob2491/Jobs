@@ -294,6 +294,37 @@ def _search_words(text: str) -> str:
     return re.sub(r"\s+", " ", words).strip() or text
 
 
+# A bar fixed to the window (Workday's "Save and Continue" footer) over a menu entry: the menu
+# of a dropdown at the end of the page opens under it, where no scrolling can bring it out. The
+# bar lets clicks through while the entry is clicked (a real click: Workday ignores a script's).
+# Only a bar outside the entry's own menu, and only the bars on top of it; how many it lifted.
+_THROUGH_BARS_JS = r"""
+(el) => {
+  const r = el.getBoundingClientRect();
+  const x = r.left + r.width / 2, y = r.top + r.height / 2;
+  let lifted = 0;
+  for (let top = document.elementFromPoint(x, y); top && top !== el && !el.contains(top) && lifted < 3;
+       top = document.elementFromPoint(x, y)) {
+    let bar = null;
+    for (let n = top; n && n !== document.body; n = n.parentElement) {
+      if (['fixed', 'sticky'].includes(getComputedStyle(n).position)) bar = n;
+    }
+    if (!bar || bar.contains(el) || bar.hasAttribute('data-ja-through')) break;
+    bar.setAttribute('data-ja-through', bar.style.pointerEvents || '');
+    bar.style.pointerEvents = 'none';
+    lifted++;
+  }
+  return lifted;
+}
+"""
+_BARS_BACK_JS = r"""
+() => { for (const bar of document.querySelectorAll('[data-ja-through]')) {
+  bar.style.pointerEvents = bar.getAttribute('data-ja-through');
+  bar.removeAttribute('data-ja-through');
+} }
+"""
+
+
 class BrowserSession:
     def __init__(self) -> None:
         self._pw: Playwright | None = None
@@ -1012,6 +1043,8 @@ class BrowserSession:
                             field = {**field, "names": True}
                         if item.get("near"):  # an address part: the rest of the address, for a place lookup
                             field = {**field, "near": item["near"]}
+                        if item.get("pick_only"):  # a self-identification answer: picked from the list, never typed
+                            field = {**field, "pick_only": True}
                         if await self._holds(page, field, item.get("value")):
                             results.append({"id": fid, "label": field.get("label", ""), "ok": True, "result": "already set"})
                             continue
@@ -1202,6 +1235,10 @@ class BrowserSession:
             exact = opt.filter(has_text=re.compile(rf"^\s*{re.escape(text)}\s*$"))
             target = exact.first if await exact.count() else opt.first
         try:
+            lifted = await target.evaluate(_THROUGH_BARS_JS)
+        except PlaywrightError:
+            lifted = 0
+        try:
             await target.click(timeout=3000)
         except PlaywrightTimeout:
             # Something sits over the menu; send the events to the option itself.
@@ -1209,28 +1246,42 @@ class BrowserSession:
                 "el => ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click'].forEach("
                 "t => el.dispatchEvent(new MouseEvent(t, {bubbles: true, cancelable: true, view: window})))"
             )
+        finally:
+            if lifted:
+                try:
+                    await frame.evaluate(_BARS_BACK_JS)
+                except PlaywrightError:
+                    pass
 
     async def _pick_from_listbox(self, page: Page, loc: Locator, field: dict, value: Any) -> str:
         names = bool(field.get("names"))
-        await self._open(page, field["id"], loc)
-        options = await self._field_options(page, field["id"], loc, 2500)
-        if not options:  # its menu didn't open (Onto's Phone Device Type, once): close up and try again
-            await self._close_menus(page)
+        for attempt in range(2):
             await self._open(page, field["id"], loc)
-            options = await self._field_options(page, field["id"], loc, 3000)
-        choice = choose_option(value, options, names=names)
-        if choice is None:
-            # Long lists are virtualized; typing jumps to the entry.
-            await page.keyboard.type(str(value), delay=40)
-            await page.wait_for_timeout(400)
-            options = await self._field_options(page, field["id"], loc, 1500)
+            options = await self._field_options(page, field["id"], loc, 2500)
+            if not options:  # its menu didn't open (Onto's Phone Device Type, once): close up and try again
+                await self._close_menus(page)
+                await self._open(page, field["id"], loc)
+                options = await self._field_options(page, field["id"], loc, 3000)
             choice = choose_option(value, options, names=names)
-        if choice is None:
-            await page.keyboard.press("Escape")
-            raise ValueError(f"{value!r} doesn't match any option: {options[:30]}")
-        await self._click_option(page, field["id"], choice)
-        await self._confirm_choice(page, loc, choice)
-        return f"selected {choice}"
+            if choice is None and not field.get("pick_only"):
+                # Long lists are virtualized; typing jumps to the entry.
+                await page.keyboard.type(str(value), delay=40)
+                await page.wait_for_timeout(400)
+                options = await self._field_options(page, field["id"], loc, 1500)
+                choice = choose_option(value, options, names=names)
+            if choice is None:
+                await page.keyboard.press("Escape")
+                raise ValueError(f"{value!r} doesn't match any option: {options[:30]}")
+            await self._click_option(page, field["id"], choice)
+            try:
+                await self._confirm_choice(page, loc, choice)
+            except ValueError:
+                if attempt:
+                    raise
+                await self._close_menus(page)  # a pick that didn't land: once more, from a menu opened afresh
+                continue
+            return f"selected {choice}"
+        raise AssertionError("unreachable")
 
     async def _confirm_choice(self, page: Page, loc: Locator, choice: str) -> None:
         """After picking from a menu, the field must show that choice (else the click
@@ -1273,9 +1324,19 @@ class BrowserSession:
         # the exact entry in a long one. Typing is only for search pickers and long lists,
         # and typed keys can land in another field (Micron's ended up with "ona", the end
         # of "Arizona", in the question below the State).
-        options = await self._field_options(page, field["id"], loc, 900)
-        choice = _choose(text, options, field, exact_only=len(options) > SHORT_MENU) if options else None
+        pick_only = bool(field.get("pick_only"))
+        # (a self-identification list shows every choice on opening, a moment later on some sites)
+        options = await self._field_options(page, field["id"], loc, 2500 if pick_only else 900)
+        choice = (_choose(text, options, field, exact_only=len(options) > SHORT_MENU and not pick_only)
+                  if options else None)
         query = _search_words(text)
+        if choice is None and pick_only:
+            # Its answer in the site's words or not at all: the profile's own words typed in
+            # ("Decline to self-identify") find nothing in "Female" / "Male", nor in a list whose
+            # decline is worded another way, and the box is left with them or empty
+            await self._close_menus(page)
+            raise ValueError(f"{text!r} doesn't match any option: {options[:30]}" if options
+                             else "its list showed no choices")
         if choice is None:
             opened = options
             await loc.fill("")

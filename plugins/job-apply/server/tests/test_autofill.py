@@ -965,6 +965,112 @@ def test_never_the_opposite_of_the_answer():
         "I do not want to answer"
 
 
+# Self-identification lists as sites word them (the U.S. disability and veteran forms, Workday's,
+# SuccessFactors' at Qorvo, Oracle's at onsemi)
+DISABILITY = ["Yes, I have a disability, or have had one in the past",
+              "No, I do not have a disability and have not had one in the past", "I do not want to answer"]
+VETERAN = ["I am not a protected veteran", "I identify as one or more of the classifications of protected veteran",
+           "I don't wish to answer"]
+VETERAN_STATUS = ["I am not a veteran", "I identify as one or more of the classifications of protected veteran",
+                  "I am a veteran but not a protected veteran", "I do not wish to self-identify"]
+
+
+def test_a_decline_finds_the_lists_own_way_to_decline_and_is_never_a_no():
+    """Every site words "I'd rather not say" its own way, and so do people. "I don't want to
+    answer" wasn't taken for a decline: its "don't" made it a "No", and it went to "I am not a
+    protected veteran", a status the person never gave. A list with no way to decline gets
+    nothing (Qorvo's veteran list is only "No, I am not ..." and "Yes, I am ...")."""
+    declines = ("I don't wish to answer", "I don't want to answer", "I do not want to answer", "Decline to self-identify",
+                "I choose not to self-identify", "Prefer not to say", "I'd rather not say", "I wish not to answer",
+                "Not specified")
+    for said in declines:
+        assert choose_option(said, DISABILITY) == "I do not want to answer", said
+        assert choose_option(said, VETERAN) == "I don't wish to answer", said
+        assert choose_option(said, VETERAN_STATUS) == "I do not wish to self-identify", said
+        assert choose_option(said, ["Yes", "No", "Decline to self-identify"]) == "Decline to self-identify", said
+        assert choose_option(said, ["Male", "Female", "Not Specified"]) == "Not Specified", said
+        assert choose_option(said, ["Man", "Woman", "Non-binary", "I prefer not to answer"]) == "I prefer not to answer"
+        assert choose_option(said, ["No Selection", "No, I am not a Protected Veteran", "Yes, I am a Protected Veteran"]) \
+            is None, said
+        assert choose_option(said, ["Female", "Male"]) is None, said
+    # a "no" about something else than answering is an answer, not a decline
+    assert choose_option("No", ["Yes, I am willing to relocate", "I do not wish to relocate"]) == "I do not wish to relocate"
+
+
+def test_an_answer_is_never_a_refusal_to_answer():
+    """A list's decline ("I do not want to answer") reads as a "No" by its "I do not": a plain
+    "No" couldn't choose between it and "No, I do not have a disability", and "I am not a
+    protected veteran" went to Workday's "I do not wish to self-identify". A person who
+    answered gets their answer or is asked, never a decline they didn't give."""
+    assert choose_option("No", DISABILITY) == "No, I do not have a disability and have not had one in the past"
+    assert choose_option("No", VETERAN) == "I am not a protected veteran"
+    assert choose_option("Yes", DISABILITY) == "Yes, I have a disability, or have had one in the past"
+    # not a veteran at all, or a veteran who isn't a protected one: the profile doesn't say which
+    assert choose_option("I am not a protected veteran", VETERAN_STATUS) is None
+    assert choose_option("I am not a protected veteran", VETERAN) == "I am not a protected veteran"
+    # a choice that declines and answers too (onsemi's) is still that answer, and a decline's
+    # second best after a plain decline
+    combined = ["I am a Protected Veteran", "I am a Veteran", "I do not wish to Identify or I am not a Veteran"]
+    assert choose_option("No", combined) == "I do not wish to Identify or I am not a Veteran"
+    assert choose_option("I don't wish to answer", combined) == "I do not wish to Identify or I am not a Veteran"
+    assert choose_option("I don't wish to answer", combined + ["Decline to answer"]) == "Decline to answer"
+
+
+def test_a_self_identification_question_with_the_law_in_its_label_is_that_question(job_apply_home):
+    """Micron's veteran question (its U.S. postings, Oct 2026) carries the whole VEVRAA notice
+    in its label. "For more information, call the U.S. Department of Labor" in it read as an
+    on-call question, so the profile's shift answer went to it ("Yes" there is "Yes, I am a
+    protected veteran"). The disability form's notice speaks of accommodations, which shut out
+    the disability rule. A self-identification question is told by its words and its choices."""
+    import yaml
+
+    data = yaml.safe_load((job_apply_home / "profile.yaml").read_text())
+    data["preferences"]["flexible_schedule"] = True
+    data["eeo"]["disability"] = "No"
+    (job_apply_home / "profile.yaml").write_text(yaml.safe_dump(data))
+    vevraa = ("U.S. – Protected Veteran Self-Identification This employer is a Government contractor subject to the "
+              "Vietnam Era Veterans' Readjustment Assistance Act of 1974, as amended (VEVRAA). For more information, call "
+              "the U.S. Department of Labor's Veterans' Employment and Training Service (VETS). If you believe you belong "
+              "to any of the categories of protected veterans, please indicate by selecting the appropriate value below.")
+    micron = ["I IDENTIFY AS ONE OR MORE OF THE CLASSIFICATIONS OF PROTECTED VETERANS LISTED BELOW",
+              "I DO NOT WISH TO SELF-IDENTIFY", "I AM NOT A VETERAN", "I IDENTIFY AS A VETERAN, JUST NOT A PROTECTED VETERAN"]
+    ans = resolve_field(f(vevraa, "combobox", options=micron), prof())
+    assert (ans.rule, ans.value) == ("veteran", "I DO NOT WISH TO SELF-IDENTIFY")
+    yes_no = ["Yes, I am a protected veteran", "No, I am not a protected veteran", "I don't wish to answer"]
+    assert resolve_field(f(vevraa, "select", options=yes_no), prof()).value == "I don't wish to answer"
+    # its list not read yet: the notice's words alone still don't make it an on-call question
+    assert resolve_field(f(vevraa, "combobox"), prof()).rule == "veteran"
+    cc305 = ("Voluntary Self-Identification of Disability. Why are you being asked to complete this form? We are a federal "
+             "contractor required to provide equal employment opportunity to qualified people with disabilities. "
+             "Federal law requires employers to provide reasonable accommodations to qualified applicants. Please check "
+             "one of the boxes below")
+    ans = resolve_field(f(cc305, "radio_group", options=DISABILITY), prof())
+    assert (ans.rule, ans.value) == ("disability", "No, I do not have a disability and have not had one in the past")
+    # a question that only mentions a disability is still not the self-identification one
+    accommodation = ["Yes, I need an accommodation due to a disability", "No, I do not need an accommodation for a disability"]
+    assert resolve_field(f("Do you need an accommodation for a disability to interview?", "radio_group",
+                           options=accommodation), prof()) is None
+
+
+def test_a_self_identification_answer_is_picked_from_the_list_or_said_never_searched_for():
+    """onsemi's Oracle form (Oct 2026): its Gender lists Female and Male, and since Oracle's
+    lists are searched, the profile's "Decline to self-identify" went on to be typed into it,
+    found nothing, and was skipped. A self-identification list is all there on opening: its own
+    way of declining is picked, and with none, the question is the person's, with the
+    profile's answer said (Qorvo's optional veteran list was left empty without a word)."""
+    gender = f("Gender", "combobox", search=True, options=["Female", "Male"])
+    assert resolve_field(gender, prof()) is None
+    assert resolve_field({**gender, "options": ["Female", "Male", "I do not wish to disclose"]}, prof()).value == \
+        "I do not wish to disclose"
+    veteran = {**f("Pre-Offer : Are you a Protected Veteran?", "combobox", paged=True,
+                   options=["No Selection", "No, I am not a Protected Veteran", "Yes, I am a Protected Veteran"]), "id": "2"}
+    country = {**f("Country", "combobox", search=True, options=["Canada", "Mexico"]), "id": "3"}
+    plan = plan_autofill([gender, veteran, country], prof())
+    assert [(q["label"], q.get("unmatched")) for q in plan["needs_input"]] == [
+        ("Gender", "Decline to self-identify"), ("Pre-Offer : Are you a Protected Veteran?", "I don't wish to answer")]
+    assert [(x["label"], x["value"]) for x in plan["to_fill"]] == [("Country", "United States")]  # (searched for)
+
+
 def test_a_short_list_of_places_is_read_with_the_rest_of_the_address():
     """A City list short enough to be read whole ("Chandler, Henderson, TX", "Chandler, Lincoln,
     OK", "Chandler, Maricopa, AZ") gave the first Chandler: the fill picks the one the rest of

@@ -89,6 +89,33 @@ def test_workday_style_widgets(srv):
     assert run(srv.click("Submit"))["clicked"] is False
 
 
+def test_a_dropdown_just_above_a_sticky_footer_is_picked_with_a_real_click(srv):
+    """A Workday "Application Questions" page (live, Oct 2026): ten Yes/No dropdowns took their
+    answers, but the last, a long sponsorship question with a note, sat just above the sticky
+    "Save and Continue" bar. Its menu opened under the bar, the click on "No" landed on the bar,
+    the script's click that followed was ignored, and it failed with "Picked 'No' but the field
+    shows 'Select One'" (the person's own answer from the desk too). A dropdown is brought to
+    the middle of the window before its menu is opened."""
+    run(srv.browser.goto(fixture_url("site/workday-footer-listbox.html")))
+    result = run(srv.autofill())
+    assert not result["failed"], result["failed"]
+    page = run(srv.browser.page())
+    assert run(page.evaluate("() => ['q1', 'q2'].map((id) => document.getElementById(id).dataset.picked)")) == \
+        ["Yes", "No"]
+    assert {f["label"]: f["value"] for f in run(srv.inspect_form(include_dropdown_options=False))["fields"]
+            if f["kind"] == "listbox"} == {
+        "Are you legally authorized to work in the United States?*": "Yes",
+        "Will you now or in the future require sponsorship for employment visa status (e.g., H-1B visa status)?*": "No"}
+    # the bar takes clicks again
+    assert run(page.evaluate("() => [getComputedStyle(document.querySelector('footer')).pointerEvents, "
+                             "document.querySelectorAll('[data-ja-through]').length]")) == ["auto", 0]
+    # the person's own answer, from the desk, goes in the same way
+    run(srv.browser.goto(fixture_url("site/workday-footer-listbox.html")))
+    sponsorship = by_label(run(srv.inspect_form(include_dropdown_options=False))["fields"], "sponsorship")
+    assert run(srv.fill_form([{"id": sponsorship["id"], "value": "Yes"}]))["ok"]
+    assert run(page.evaluate("() => document.getElementById('q2').dataset.picked")) == "Yes"
+
+
 def test_workday_2026_search_prompt_is_picked_not_typed(srv):
     """Onto's Workday (Oct 2026): the prompt is a plain search input; typed text that isn't
     picked from its list vanishes, and the pick shows as a pill beside the input."""
@@ -116,6 +143,41 @@ def test_workday_2026_search_prompt_is_picked_not_typed(srv):
     assert by_label(after, "how did you hear")["value"] == "LinkedIn"
     assert by_label(after, "country phone code")["value"] == "United States of America (+1)"
 
+
+
+def test_self_identification_dropdowns_are_picked_from_their_lists_never_typed_into(srv, job_apply_home):
+    """Reported in use (Oct 2026): the desk typed self-identification answers into dropdowns,
+    which didn't work. In the live check, onsemi's Oracle Gender lists only Female and Male, and
+    because Oracle's lists are searched, "Decline to self-identify" was typed in, found nothing,
+    and the box stayed empty. Qorvo's disability list's "I do not want to answer" read as a
+    "No", so a plain "No" picked nothing. Micron's veteran question carries the VEVRAA notice in
+    its label, whose "for more information, call" read as an on-call question. Each answer is
+    now the list's own entry for it, clicked; an answer a list doesn't have is said, with the
+    profile's answer, and nothing is typed."""
+    import yaml
+
+    data = yaml.safe_load((job_apply_home / "profile.yaml").read_text())
+    data["eeo"]["disability"] = "No"  # (gender "Decline to self-identify", veteran "I don't wish to answer")
+    (job_apply_home / "profile.yaml").write_text(yaml.safe_dump(data))
+    run(srv.browser.goto(fixture_url("site/eeo-dropdowns.html")))
+    result = run(srv.autofill())
+    filled = {f["label"]: f["value"] for f in result["filled"]}
+    assert filled["Pre-Offer : Disability"] == "No, I do not have a disability and have not had one in the past"
+    # (its list shows only once fetched: the profile's answer went to the fill, which picked the list's own)
+    assert by_label(result["filled"], "VEVRAA")["from"] == "veteran"
+    assert not result["failed"], result["failed"]
+    unoffered = {f["label"]: f.get("unmatched") for f in result["needs_input"]}
+    assert unoffered == {"Gender": "Decline to self-identify",
+                         "Pre-Offer : Are you a Protected Veteran?": "I don't wish to answer"}
+
+    page = run(srv.browser.page())
+    boxes = run(page.evaluate("() => [...document.querySelectorAll('input[role=combobox]')].map((b) => "
+                              "[b.value, b.dataset.picked || null, b.dataset.typed || null])"))
+    assert boxes == [["", None, None],
+                     ["No, I do not have a disability and have not had one in the past",
+                      "No, I do not have a disability and have not had one in the past", None],
+                     ["", None, None],
+                     ["I DO NOT WISH TO SELF-IDENTIFY", "I DO NOT WISH TO SELF-IDENTIFY", None]]
 
 
 def test_a_successfactors_list_is_searched_and_a_search_that_picks_nothing_is_emptied(srv, job_apply_home):

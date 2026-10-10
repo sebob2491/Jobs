@@ -1,0 +1,75 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Application Questions</title>
+<style>
+  body { margin: 0; font: 14px sans-serif; }
+  main { padding: 16px 24px; }
+  .q { margin-bottom: 16px; }
+  .note { max-width: 720px; }
+  button[aria-haspopup] { min-width: 200px; height: 30px; text-align: left; }
+  #popup { position: fixed; z-index: 5; background: #fff; border: 1px solid #999; list-style: none; margin: 0;
+           padding: 0; width: 200px; }
+  #popup[hidden] { display: none; }
+  #popup li { height: 30px; line-height: 30px; padding: 0 6px; }
+  footer { position: fixed; left: 0; right: 0; bottom: 0; height: 160px; z-index: 10; background: #eef;
+           border-top: 1px solid #99c; }
+  .rest { height: 160px; }  /* the room the page keeps under its last question for the bar */
+</style>
+</head>
+<body>
+<!-- Like a Workday "Application Questions" page (Oct 2026): Yes/No dropdowns are buttons whose
+     menu opens just below them in a layer of its own (it doesn't move when the page scrolls), and
+     a sticky footer bar ("Save and Continue") covers the bottom of the window. The last question,
+     a long one with a note, sits just above the bar, so its menu opens under the bar. An entry
+     takes only a real click (a script's event is ignored); the button shows "Select One" until one
+     is picked. -->
+<main>
+  <div data-automation-id="progressBarActiveStep">Application Questions</div>
+  <h2>Application Questions</h2>
+  <div class="q" data-automation-id="formField-q1">
+    <label>Are you legally authorized to work in the United States?<abbr title="required">*</abbr></label>
+    <button type="button" id="q1" aria-haspopup="listbox">Select One</button>
+  </div>
+  <div style="height: 490px"></div>
+  <div class="q" data-automation-id="formField-q2">
+    <label>Will you now or in the future require sponsorship for employment visa status (e.g., H-1B visa
+      status)?<abbr title="required">*</abbr></label>
+    <p class="note">NOTE: Please answer "Yes" if you will need the company to file a petition or application for
+      you to work in the United States now or at any time in the future.</p>
+    <button type="button" id="q2" aria-haspopup="listbox">Select One</button>
+  </div>
+  <div class="rest"></div>
+</main>
+<ul role="listbox" id="popup" hidden></ul>
+<footer><button type="button" data-automation-id="pageFooterNextButton" id="next">Save and Continue</button></footer>
+<script>
+  const popup = document.getElementById('popup');
+  function open(btn) {
+    popup.innerHTML = '';
+    for (const answer of ['Yes', 'No']) {
+      const li = document.createElement('li');
+      li.setAttribute('role', 'option');
+      li.textContent = answer;
+      li.addEventListener('click', (e) => {
+        if (!e.isTrusted) return;  // a script's click isn't the person's
+        btn.textContent = answer;
+        btn.dataset.picked = answer;
+        popup.hidden = true;
+      });
+      popup.append(li);
+    }
+    const r = btn.getBoundingClientRect();  // below the button, where it is now
+    popup.style.top = `${r.bottom + 2}px`;
+    popup.style.left = `${r.left}px`;
+    popup.hidden = false;
+  }
+  for (const btn of document.querySelectorAll('button[aria-haspopup]')) {
+    btn.addEventListener('click', () => setTimeout(() => open(btn), 150));  // drawn a moment later, like Workday's
+  }
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') popup.hidden = true; });
+  document.addEventListener('click', (e) => {
+    if (!popup.contains(e.target) && !e.target.matches('button[aria-haspopup]')) popup.hidden = true;
+  });
+</script>
+</body>
+</html>
