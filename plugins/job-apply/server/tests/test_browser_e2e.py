@@ -1183,8 +1183,8 @@ def test_a_sign_in_window_that_closes_itself_hands_back_to_the_tab_that_opened_i
                 await tab.evaluate("u => { window.open(u) }", fixture_url("site/signin.html"))
             popup = await opened.value
             assert srv.browser.use_tab(popup)  # (followed, as a click of the desk's would be)
-            await popup.evaluate("() => window.close()")
-            await popup.wait_for_event("close")
+            async with popup.expect_event("close"):  # (listened for first: the close can beat a wait begun after it)
+                await popup.evaluate("() => { setTimeout(() => window.close(), 50) }")
             return tab, await srv.browser.page()
         finally:
             srv.browser.strict_tabs = False
