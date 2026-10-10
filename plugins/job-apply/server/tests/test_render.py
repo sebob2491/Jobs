@@ -34,7 +34,7 @@ def test_render_document_into_job_folder(srv):
     pdf = Path(out["path"])
     assert pdf.name == "Sam_Rivera_Resume.pdf" and pdf.read_bytes().startswith(b"%PDF")
     assert out["pages"] == 1 and "warning" not in out
-    assert Path(out["source"]).read_text() == RESUME
+    assert Path(out["source"]).read_text(encoding="utf-8") == RESUME
 
     letter = run(srv.render_document("cover_letter", "# Sam Rivera\n\n" + "Dear team,\n\n" + "Long paragraph. " * 900,
                                      job_id=job["id"]))

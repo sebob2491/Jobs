@@ -422,7 +422,9 @@ def save_site_password(name: str, value: str) -> None:
     # always in double quotes, which YAML escapes everything awkward in (U+2028, a leading
     # no-break space, quotes, backslashes), and which read_secrets reads back exactly
     entry = f"{name}: " + yaml.safe_dump(value, default_style='"', allow_unicode=True, width=10**6).strip()
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    # O_BINARY: os.open makes a text-mode file on Windows, which turned the "\r\n" written there
+    # into "\r\r\n" (a blank line after each); the "w" below still writes Windows' own line ends
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_BINARY", 0), 0o600)
     with os.fdopen(fd, "w", encoding="utf-8") as f:
         f.write("\n".join([*kept, entry]) + "\n")
     path.chmod(0o600)

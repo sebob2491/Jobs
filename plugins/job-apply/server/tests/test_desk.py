@@ -537,7 +537,7 @@ def test_the_desk_page_says_account_handling_is_on_until_the_profile_says(srv, j
     path.write_text(yaml.safe_dump(profile))
     settings = Desk(srv).state()["settings"]
     assert (settings["manage_accounts"], settings["manage_accounts_chosen"]) == (True, False)
-    page = (Path(srv.__file__).parent / "static" / "desk.html").read_text()
+    page = (Path(srv.__file__).parent / "static" / "desk.html").read_text(encoding="utf-8")
     assert "s.manage_accounts && !s.manage_accounts_chosen" in page and "manage_accounts: false" in page
 
 

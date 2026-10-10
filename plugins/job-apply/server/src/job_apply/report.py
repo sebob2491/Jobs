@@ -263,7 +263,8 @@ def build(job: dict[str, Any], run: Any = None, profile: config.Profile | None =
     text = "\n".join(lines) + f"\n\n_Personal details found in the profile are shown as {REDACTED}. " \
                               f"{left_out if anonymous else ''}No screenshots or saved pages are included._\n"
     (out_dir / "report.md").write_text(text, encoding="utf-8")
-    pages = sorted(str(p.relative_to(out_dir)) for p in pages_dir.iterdir() if p.is_file())
+    # named as in the zip ("pages/x.html"), on Windows too
+    pages = sorted(p.relative_to(out_dir).as_posix() for p in pages_dir.iterdir() if p.is_file())
     zip_path = out_dir / "report.zip"
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as z:
         z.write(out_dir / "report.md", "report.md")

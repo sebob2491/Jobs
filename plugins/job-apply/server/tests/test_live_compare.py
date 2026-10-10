@@ -223,7 +223,8 @@ def _run(tmp_path, issues, pipeline_records, search_records=(), partial=(), hr_r
     assert lc.main(argv) == 0
     outputs = dict(line.split("=", 1) for line in out.read_text().splitlines())
     comment = tmp_path / "comment.md"
-    return (tmp_path / "body.md").read_text(), comment.read_text() if comment.exists() else None, outputs
+    return ((tmp_path / "body.md").read_text(encoding="utf-8"),
+            comment.read_text(encoding="utf-8") if comment.exists() else None, outputs)
 
 
 def test_main_first_night_then_a_change_then_a_quiet_night(tmp_path):

@@ -446,8 +446,7 @@ class BrowserSession:
             tab._ja_watched = True  # type: ignore[attr-defined]
             tab.on("popup", lambda popup: self._on_popup(tab, popup))
             tab.on("close", lambda _: self._closed(tab))
-            tab.on("crash", lambda _: self._crashed.add(tab))
-            tab.on("close", lambda _: self._crashed.discard(tab))
+            tab.on("crash", lambda _: self._crashed.add(tab))  # (kept once closed: it crashed first)
 
     def _closed(self, tab: Page) -> None:
         opener = self._openers.pop(tab, None)
@@ -508,7 +507,8 @@ class BrowserSession:
         reload brings the tab back to the tools). "" while it's there to use."""
         if tab.context is not self._ctx:
             return "browser"
-        return "closed" if tab.is_closed() else "crashed" if tab in self._crashed else ""
+        # a crashed tab that was closed since (by Chrome, or the desk) crashed first: that's what's said
+        return "crashed" if tab in self._crashed else "closed" if tab.is_closed() else ""
 
     def lineage(self, tab: Page | None) -> list[Page]:
         """This tab and the tabs that opened it, nearest first: one job's tabs."""
