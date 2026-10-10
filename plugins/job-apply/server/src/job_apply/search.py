@@ -19,6 +19,7 @@ Each company in data/companies.yaml may carry a `search` block naming one of:
     amazon:          {loc_query: "Phoenix, AZ, USA", latitude: .., longitude: .., radius: 50km}  (amazon.jobs)
     randstad:        https://www.randstadusa.com/jobs/internal  (Randstad's own jobs)
     mcloud:          {company: companies/<id>}  (a Google Cloud Talent search at jobsapi-google.m-cloud.io: Edward Jones)
+    kpmg:            ["Phoenix, AZ", ...]  (KPMG's own job search: its place filter's values)
     icims:           <portal name>          (read in the browser)
     paycom:          <career portal key>    (read in the browser)
     ukg:             <job board address>    (UKG Pro / UltiPro; read in the browser)
@@ -61,7 +62,7 @@ MAX_ALTERNATIVES = 4
 FETCH_WHEN_FILTERING = 60  # results to scan per search when filtering by location ourselves
 EMPLOYERS_AT_ONCE = 8  # employers searched at the same time (each its own site; ~50 s for the Phoenix list, not ~100)
 CLIENT_SIDE = {"greenhouse", "lever", "applicantstack", "paycom", "ukg", "sfclassic", "infor", "phoenixchildrens",
-               "jobvite", "randstad"}  # whole board at once; titles filtered here
+               "jobvite", "randstad", "kpmg"}  # whole board at once; titles filtered here
 # Searches that take the whole query and pace its wordings themselves (the State of Arizona's
 # site, whose bot check a quick run of requests sets off)
 OWN_WORDINGS = {"careerpages"}
@@ -1206,6 +1207,61 @@ def parse_mcloud(data: dict[str, Any]) -> list[Listing]:
     return found
 
 
+# ----------------------------------------------------------------- KPMG's own job search (kpmguscareers.com)
+# What its search page calls: the theme's address (the page's hidden #template-url) and
+# page-templates/google/get-jobs.php, as the theme's script builds it (live, Oct 2026)
+KPMG_API = "https://www.kpmguscareers.com/wp-content/themes/understrap-child-main/page-templates/google/get-jobs.php"
+KPMG_PAGES = 20  # pages read, at most; 12 openings a page (Phoenix's and Tempe's: 135, Oct 2026)
+
+
+async def _kpmg(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, terms: list[str]) -> list[Listing]:
+    """KPMG's careers site (WordPress over a Google Cloud Talent search) answers its search page's
+    own call with JSON holding the openings as HTML, 12 a page. Its place filter takes the site's
+    own place names (`kpmg: ["Phoenix, AZ", "Tempe, AZ"]`), but not with words: a keyword search
+    ignores it (Montvale and McLean analysts for Phoenix, Oct 2026). So the places' openings are
+    read whole and their titles matched here. An opening in more than about 50 places comes as
+    several, each with some of them, under one job number."""
+    places = [cfg] if isinstance(cfg, str) else list(cfg)
+    # "Phoenix, AZ|Tempe, AZ|", as the page sends it
+    params = {"ajax": 1, "location-filter": "".join(f"{p}|" for p in places)}
+    found: dict[str, Listing] = {}
+    read = 0
+    for page in range(1, KPMG_PAGES + 1):
+        r = await _send(client, "GET", KPMG_API, params={**params, "spage": page})
+        _raise_for(r, KPMG_API)
+        try:
+            postings = r.json()["postings"]
+            jobs, total = str(postings["jobs"]), int(postings["size"])
+        except (ValueError, KeyError, TypeError) as e:
+            raise SearchError(f"No job list from {KPMG_API}") from e
+        listings = parse_kpmg(jobs)
+        for listing in listings:
+            first = found.setdefault(listing.external_id, listing)
+            if first is not listing:
+                first.location = _merge_places([*first.location.split("; "), *listing.location.split("; ")])
+        read += len(listings)
+        if not listings or read >= total:
+            break
+    return _titled(list(found.values()), query)
+
+
+def parse_kpmg(page: str) -> list[Listing]:
+    """A page's openings: each one's link (/jobdetail/?jobId=…), and in its list view its title
+    and its practice and places ("Advisory | Phoenix, AZ; Tempe, AZ"); the grid view says only
+    "29 Locations". Apply goes to KPMG's Avature portal."""
+    out: list[Listing] = []
+    for item in BeautifulSoup(page, "html.parser").select("div.search--item"):
+        link, title = item.select_one('a[href*="jobId="]'), item.select_one(".list-view .h5")
+        m = re.search(r"jobId=(\d+)", str(link["href"])) if link is not None else None
+        if m is None or title is None or not title.get_text(strip=True):
+            continue
+        line = item.select_one(".list-view .text-xs")
+        where = re.split(r"\s*\|\s*", " ".join(line.get_text(" ", strip=True).split()))[-1] if line is not None else ""
+        out.append(Listing(company="", title=title.get_text(" ", strip=True), location=where, ats="avature",
+                           url=f"https://www.kpmguscareers.com/jobdetail/?jobId={m.group(1)}", external_id=m.group(1)))
+    return out
+
+
 # ----------------------------------------------------------------- amazon.jobs
 AMAZON_PAGE = 100  # openings a search reads: its first page, nearest the place first
 
@@ -1881,6 +1937,7 @@ SEARCHERS: dict[str, Callable[[httpx.AsyncClient, Any, str, int, list[str]], Awa
     "amazon": _amazon,
     "randstad": _randstad,
     "mcloud": _mcloud,
+    "kpmg": _kpmg,
 }
 
 
