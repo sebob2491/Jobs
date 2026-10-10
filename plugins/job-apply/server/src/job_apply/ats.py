@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 # Each job system's own domains: an address is the system's when its host is one of them
 # or under one ("amat.wd1.myworkdayjobs.com"), never because one appears elsewhere in it
@@ -28,6 +28,7 @@ _DOMAINS: list[tuple[str, tuple[str, ...]]] = [
     ("paycom", ("paycomonline.net", "paycomonline.com")),
     ("ukg", ("ultipro.com", "ukg.net")),
     ("infor", ("inforcloudsuite.com",)),
+    ("csod", ("csod.com",)),  # Cornerstone OnDemand: <company>.csod.com
 ]
 # Oracle's recruiting sites: a pod's own host, or a company's own address for its Oracle
 # site (careers.ti.com), known by its path
@@ -82,6 +83,7 @@ ATS_NAMES = {
     "paycom": "Paycom",
     "ukg": "UKG Pro",
     "infor": "Infor",
+    "csod": "Cornerstone",
     "company_site": "Company careers site",
 }
 
@@ -169,6 +171,22 @@ def oracle_parts(url: str) -> dict[str, str] | None:
     if m:
         return {"host": m.group(1), "site": m.group(2), "job_id": m.group(3)}
     return None
+
+
+def csod_parts(url: str) -> dict[str, str] | None:
+    """A Cornerstone OnDemand career site's parts, from its address or a posting's:
+    https://linde.csod.com/ux/ats/careersite/23/home/requisition/33794?c=linde
+      -> {host: linde.csod.com, site: 23, corp: linde, requisition: 33794}
+    (requisition is "" for the site's own address)."""
+    if shared_system(url) != "csod":
+        return None
+    parsed = urlparse(url)
+    m = re.search(r"/careersite/(\d+)(?:/home)?(?:/requisition/(\d+))?", parsed.path, re.I)
+    if not m:
+        return None
+    host = (parsed.hostname or "").lower()
+    corp = (parse_qs(parsed.query).get("c") or [""])[0] or host.split(".")[0]
+    return {"host": host, "site": m.group(1), "corp": corp, "requisition": m.group(2) or ""}
 
 
 def linkedin_job_id(url: str) -> str | None:

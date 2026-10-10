@@ -1,7 +1,7 @@
 """Fetch a job posting and turn it into a normalized record.
 
 Strategy, most reliable first:
-  1. The ATS's public JSON endpoint (Workday, Greenhouse, Lever).
+  1. The ATS's public JSON endpoint (Workday, Greenhouse, Lever, SmartRecruiters, Oracle, Cornerstone).
   2. schema.org JobPosting JSON-LD, which most career sites embed for Google Jobs.
   3. Page title + main text as a last resort.
 """
@@ -19,8 +19,8 @@ from urllib.parse import urljoin
 import httpx
 from bs4 import BeautifulSoup
 
-from .ats import (detect_ats, greenhouse_parts, lever_parts, linkedin_job_id, oracle_parts, smartrecruiters_parts,
-                  workday_parts)
+from .ats import (csod_parts, detect_ats, greenhouse_parts, lever_parts, linkedin_job_id, oracle_parts,
+                  smartrecruiters_parts, workday_parts)
 from .autofill import US_STATES
 
 USER_AGENT = (
@@ -455,6 +455,66 @@ async def _fetch_oracle(client: httpx.AsyncClient, url: str) -> Posting | None:
     )
 
 
+_CSOD_CONTEXT = re.compile(r"csod\.context\s*=\s*(?=\{)")
+
+
+def csod_context(page: str) -> dict[str, Any]:
+    """What a Cornerstone OnDemand career page sets up for its script (`csod.context={...}`):
+    the anonymous token its search and posting calls carry, and its region's API address
+    (endpoints.cloud). {} for a page without one."""
+    found: dict[str, Any] = {}
+    for m in _CSOD_CONTEXT.finditer(page or ""):  # the one with a token: not a placeholder set up before it
+        try:
+            ctx, _ = json.JSONDecoder().raw_decode(page, m.end())
+        except ValueError:
+            continue
+        if isinstance(ctx, dict) and ctx.get("token"):
+            return ctx
+        found = found or (ctx if isinstance(ctx, dict) else {})
+    return found
+
+
+def csod_place(loc: Any) -> str:
+    """A Cornerstone place ({"city": "Phoenix", "state": "AZ", "country": "US"}) as "Phoenix, AZ";
+    not its country, as Canada's "CA" would read as California."""
+    if not isinstance(loc, dict):
+        return ""
+    return ", ".join(str(loc[k]).strip() for k in ("city", "state") if str(loc.get(k) or "").strip())
+
+
+async def _fetch_csod(client: httpx.AsyncClient, url: str) -> Posting | None:
+    """A Cornerstone posting's page is drawn by its script: the page itself holds only the title
+    and the start of the text (og:description, empty on Matheson's, Oct 2026). The script reads
+    the posting from the site's job-requisition service, with the page's anonymous token."""
+    parts = csod_parts(url)
+    if not parts or not parts["requisition"]:
+        return None
+    ctx = csod_context((await _get(client, url, headers={"Accept": "text/html"})).text)
+    if not ctx.get("token"):
+        return None
+    api = (f"https://{parts['host']}/services/x/job-requisition/v2/requisitions/{parts['requisition']}"
+           f"/jobDetails?cultureId={ctx.get('cultureID') or 1}")
+    r = await _get(client, api, headers={"Accept": "application/json", "Authorization": f"Bearer {ctx['token']}"})
+    data = r.json().get("data") or {}
+    if not data.get("displayTitle"):
+        return None
+    places = [csod_place(p) for p in [data.get("primaryLocation"), *(data.get("additionalLocations") or [])]]
+    posting = Posting(
+        url=url,
+        title=str(data["displayTitle"]),
+        company=parts["corp"],  # (the site's own name for the employer: "linde"; its pages give no other)
+        location="; ".join(dict.fromkeys(p for p in places if p)),
+        description=html_to_text(str(data.get("externalDescription") or ""))[:MAX_DESCRIPTION],
+        apply_url=url,
+        external_id=parts["requisition"],
+        posted_at=str(data.get("openDate") or "")[:10],
+        parse_method="csod-api",
+    )
+    if str(data.get("allowApply")).lower() == "false":
+        posting.warnings.append("Cornerstone says this posting takes no applications now.")
+    return posting
+
+
 async def fetch_posting(url: str, timeout: float = 20.0, client: httpx.AsyncClient | None = None) -> Posting:
     """Fetch and parse a posting over plain HTTP. Raises FetchError when the
     site refuses (LinkedIn and Indeed usually do); callers can then read the
@@ -472,7 +532,7 @@ async def _fetch_with(client: httpx.AsyncClient, url: str) -> Posting:
     posting: Posting | None = None
     api_error = ""
     fetcher = {"workday": _fetch_workday, "greenhouse": _fetch_greenhouse, "lever": _fetch_lever,
-               "smartrecruiters": _fetch_smartrecruiters, "oracle_hcm": _fetch_oracle}.get(ats)
+               "smartrecruiters": _fetch_smartrecruiters, "oracle_hcm": _fetch_oracle, "csod": _fetch_csod}.get(ats)
     if fetcher:
         try:
             posting = await fetcher(client, url)

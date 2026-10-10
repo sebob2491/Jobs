@@ -2,7 +2,8 @@ import json
 
 from conftest import FIXTURES
 
-from job_apply.ats import detect_ats, greenhouse_form_url, greenhouse_parts, lever_parts, linkedin_job_id, workday_parts
+from job_apply.ats import (csod_parts, detect_ats, greenhouse_form_url, greenhouse_parts, lever_parts, linkedin_job_id,
+                           workday_parts)
 from job_apply.postings import finalize, html_to_text, parse_html, place_in_text, public_apply_url
 
 
@@ -24,6 +25,7 @@ def test_detect_ats():
         "https://recruiting2.ultipro.com/NIK1001NIKON/JobBoard/f11a0b52/OpportunityDetail?opportunityId=532a7dc9": "ukg",
         "https://css-benchmark-prd.inforcloudsuite.com/hcm/Jobs/navigation/JobPosting%5BJobPostingSet%5D%281%2C12460%2C1%29"
         ".JobPostingDisplayNav": "infor",
+        "https://linde.csod.com/ux/ats/careersite/23/home/requisition/33907?c=linde": "csod",
         "https://www.example-semi.com/careers/find-your-job/field-service-engineer-j00012345": "company_site",
         None: "company_site",
     }
@@ -40,6 +42,11 @@ def test_url_parts():
     assert lever_parts("https://jobs.lever.co/acme/0b1c2d3e-0000-1111-2222-333344445555/apply")["company"] == "acme"
     assert linkedin_job_id("https://www.linkedin.com/jobs/view/3900000001/?trk=abc") == "3900000001"
     assert linkedin_job_id("https://www.linkedin.com/jobs/search/?currentJobId=3900000002&f_TPR=r86400") == "3900000002"
+    assert csod_parts("https://linde.csod.com/ux/ats/careersite/23/home?c=linde") == {
+        "host": "linde.csod.com", "site": "23", "corp": "linde", "requisition": ""}
+    assert csod_parts("https://MathesonGas.csod.com/ux/ats/careersite/1/home/requisition/9402?c=mathesongas") == {
+        "host": "mathesongas.csod.com", "site": "1", "corp": "mathesongas", "requisition": "9402"}
+    assert csod_parts("https://evil.example/linde.csod.com/ux/ats/careersite/23/home") is None
 
 
 def test_greenhouse_postings_open_at_greenhouses_own_form():
