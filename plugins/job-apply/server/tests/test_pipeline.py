@@ -892,12 +892,16 @@ def test_with_accept_notices_the_desk_agrees_to_an_ai_notice_and_an_attestation(
                and line.endswith("for you (settings.accept_notices)") for line in r.log), r.log
 
 
-@pytest.mark.parametrize("notice", ["privacy", "other"])
-def test_a_privacy_dialog_over_the_form_is_agreed_and_another_is_the_persons(srv, monkeypatch, notice):
+@pytest.mark.parametrize("notice, settings", [("privacy", {}), ("other", {}), ("privacy", {"accept_notices": False})],
+                         ids=["privacy", "other", "privacy-off"])
+def test_a_privacy_dialog_over_the_form_is_agreed_and_another_is_the_persons(srv, monkeypatch, job_apply_home, notice,
+                                                                              settings):
     """settings.accept_notices agrees to the employer's privacy notice too, the owner's call (Oct
     10): a privacy policy over the form, with Cancel and Ok, is taken in with its Ok. Any other
-    dialog over the form (about neither AI screening nor privacy) stops the desk for the person."""
+    dialog over the form (about neither AI screening nor privacy), or any with the setting off,
+    stops the desk for the person."""
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    notice_settings(job_apply_home, **settings)
     job = srv.add_job(url=fixture_url("site/ai-notice-form.html") + f"?notice={notice}", title="Equipment Technician",
                       company="Example Corp")["job"]
     applier = Applier(srv)
@@ -912,14 +916,17 @@ def test_a_privacy_dialog_over_the_form_is_agreed_and_another_is_the_persons(srv
             await applier.stop()
 
     r, shown = run(go())
-    if notice == "privacy":
+    if notice == "privacy" and not settings:
         assert "agreed to Example Corp's notice “Privacy Policy of Example Corp” for you (settings.accept_notices)" \
             in r.log, r.log
         assert shown["agreed"] == 1 and shown["first"] == "Sam", shown
         return
     assert (r.status, r.need) == ("needs_you", "stuck"), (r.status, r.reason, r.log)
-    assert "“Before you continue”" in r.reason and "accept_notices" not in r.reason, r.reason
     assert shown["agreed"] == 0 and shown["first"] == "", shown
+    if notice == "other":
+        assert "“Before you continue”" in r.reason and "accept_notices" not in r.reason, r.reason
+    else:
+        assert "“Privacy Policy of Example Corp”" in r.reason and "accept_notices: true" in r.reason, r.reason
 
 
 @pytest.mark.parametrize("settings", [{}, {"accept_notices": False}], ids=["on", "off"])
@@ -1006,10 +1013,21 @@ def test_what_attests_to_an_application_and_what_doesnt():
     assert attestation({"kind": "checkbox", "label": "I have read and agree to the Privacy notice and Terms of use.*",
                         "required": True}) is True
     assert attestation({"kind": "checkbox", "label": "I agree to the terms of use", "required": True}) is True
+    # EMD's required pair (live, Oct 2026): its terms ticked, its marketing email left
     emd = ("Terms of Use & Data Privacy Statement: Please accept our Terms of Use and Data Privacy Statement. For "
-           "Chinese residents: I agree to the transfer of my personal data")
+           "Chinese Residents: In addition to the above statement, you also agree to the international transfer of "
+           "your personal data.")
+    mail = ("Email Communications: By checking this box, you wish to receive email campaigns, which may include event "
+            "invites. You may withdraw your consent at any time by clicking the unsubscribe link. Detailed information "
+            "is available in our Privacy Statement.")
     assert attestation({"kind": "checkbox_group", "label": "You are applying for", "required": True,
-                        "options": [emd]}) == [emd]
+                        "options": [emd, mail]}) == [emd]
+    assert attestation({"kind": "checkbox_group", "label": "Consents", "required": True,
+                        "options": ["I accept the privacy notice", "Send me job alerts"]}) == ["I accept the privacy notice"]
+    # an attestation is one whatever else it says of its use
+    assert attestation({"kind": "checkbox", "label": "I certify that the information in this application is true and "
+                        "complete, and understand false statements may disqualify me from future opportunities",
+                        "required": True}) is True
     assert attestation({"kind": "radio_group", "label": "Do you accept our applicant privacy notice?", "required": True,
                         "options": ["Yes", "No"]}) is None  # (a radio group isn't one of the kinds it picks in)
     assert attestation({"kind": "select", "label": "Do you accept our applicant privacy notice?", "required": True,
@@ -1030,9 +1048,38 @@ def test_what_attests_to_an_application_and_what_doesnt():
                "required": True},
               {"kind": "checkbox", "label": "I accept the cookie and privacy policy", "required": True},
               {"kind": "checkbox_group", "label": "Consents", "required": True,
-               "options": ["I accept the privacy notice", "Send me job alerts"]},  # more than one
+               "options": ["Send me job alerts", "Keep my profile for future opportunities (privacy notice)"]},
+              # a box that also says something of the person, or a question beside the agreement
+              {"kind": "checkbox", "label": "I have read the Privacy Notice and confirm I am legally authorized to work "
+                                            "in the US without sponsorship", "required": True},
+              {"kind": "checkbox", "label": "I agree to the terms of use and confirm I am 18 or older", "required": True},
+              {"kind": "select", "label": "Have you ever been convicted of a felony? I certify that my answers are true "
+                                          "and complete.", "required": True, "options": ["Select...", "Yes", "No"]},
+              {"kind": "select", "label": "Have you read our privacy notice, and do you hold a CDL?", "required": True,
+               "options": ["Yes", "No"]},
+              {"kind": "checkbox", "label": "I consent to Example Corp retaining my personal data to consider me for other "
+                                            "positions with its affiliates", "required": True},
+              {"kind": "checkbox", "label": "I agree to the Arbitration Agreement and the privacy notice", "required": True},
               {"kind": "text", "label": "Type your name to certify that your answers are true", "required": True}):
         assert attestation(q) is None, q
+    # gates: by their own button, headings or title; never one that also sends, or about what's never agreed to
+    gate = pipeline._terms_gate
+    assert gate({"text": "I Accept"}, {"headings": ["Privacy Agreement"]})
+    assert gate({"text": "I Acknowledge the Privacy Notice"}, {"headings": ["Login"]})
+    assert gate({"text": "I Agree"}, {"headings": [], "title": "Candidate Privacy Notice"})
+    assert not gate({"text": "I Agree"}, {"headings": ["Arbitration Agreement"]})  # a privacy link in its footer
+    assert not gate({"text": "I Accept"}, {"headings": ["Before you continue"]})  # its words: a talent community
+    assert not gate({"text": "I Accept and Apply"}, {"headings": ["Privacy Agreement"]})
+    assert not gate({"text": "I Accept"}, {"headings": ["Join our Talent Community", "Privacy"]})
+    notice = pipeline._terms_notice
+    assert notice("Privacy Policy of Example Corp", "Example Corp protects the personal data you give it.") == (True, True)
+    assert notice("Before you apply", "Please read and accept our privacy notice.") == (True, False)
+    for heading, text in (("Error", "Your personal information could not be saved."),
+                          ("", "We found an existing profile with your personal information. Continue to overwrite it?"),
+                          ("Session", "For your privacy you'll be signed out."),
+                          ("Privacy preferences", "We use cookies. Accept them?"),
+                          ("Before you continue", "Example Corp will call you about the next steps.")):
+        assert notice(heading, text) == (False, False), (heading, text)
     # notices about AI screening, as the desk tells them from others
     assert pipeline._AI_NOTICE.search("Example Corp uses an artificial intelligence (\"AI\") recruiting software")
     assert pipeline._AI_NOTICE.search("We use automated employment decision tools to screen applications")
