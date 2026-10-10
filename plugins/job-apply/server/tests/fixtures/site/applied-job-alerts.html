@@ -1,0 +1,21 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Application Submitted</title></head>
+<body>
+<!-- A careers site's page after the person pressed its own Submit: it thanks them, offers a voluntary
+     survey (Continue) and job alerts by email, whose Email box is required and whose button is its own
+     Subscribe. Nothing on it is the application's. -->
+<h1>Thank you for applying!</h1>
+<p>We have your application for Equipment Technician at Example Corp. Our recruiters will be in touch.</p>
+<p>Help us improve: tell us how applying went in a two-minute voluntary survey.</p>
+<button type="button" onclick="location.hash = 'survey'">Continue</button>
+<div class="alerts">
+  <h2>Get job alerts</h2>
+  <p>Hear about new jobs like this one as soon as they're posted.</p>
+  <form onsubmit="return false">
+    <label for="alert-email">Email*</label><input id="alert-email" type="email" required>
+    <button type="submit">Subscribe</button>
+  </form>
+</div>
+</body>
+</html>

@@ -28,7 +28,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import parse_qsl, urlparse
 
 from . import config, mailbox, report
 from .ats import ATS_NAMES, detect_ats, shared_system
@@ -68,7 +68,8 @@ RESET_MAIL_WAIT = 3 * 60
 # to its Sign In page a few seconds after Create Account is pressed)
 ACCOUNT_WAIT = 15
 # A site locks an account after a few refused sign-ins: a job's sign-in is pressed with the same saved
-# password this many times at most (once more after a password reset)
+# password this many times at most (once more after a password reset or an account the desk made, and
+# after each Resume the person presses)
 SIGN_IN_TRIES = 2
 NOTICE_WAIT = 5  # seconds for a notice agreed to for the person to go (one may fade out)
 # A job that went in keeps its tab (its confirmation, for the person to see) while it's among the newest
@@ -141,6 +142,10 @@ _STEP = re.compile(r"^(save (?:and|&) continue|continue|next|next step|review|re
 _FORWARD = re.compile(r"^(save (?:and|&) continue|continue|next|next step|review|review application|proceed|"
                       r"go to next step)$", re.I)
 _STEP_OF = re.compile(r"\bstep (\d+) of (\d+)\b", re.I)  # a progress bar's place: "current step 3 of 6"
+# A sign-up for job alerts, a newsletter or a talent community (the form reader's SIDE_BOX), beside an
+# application or on the page that thanks the person for one: its boxes and button are never the application's
+_SIDE_BOX = re.compile(r"job alerts?|alerts? by e-?mail|e-?mail alerts?|newsletter|\bsubscribe\b|talent (?:community|"
+                       r"network|pool)|notify me|similar (?:jobs|openings|roles)|stay (?:connected|in touch)", re.I)
 _SIGN_IN_STEP = re.compile(r"create account\s*/\s*sign in|sign in\s*/\s*create account", re.I)  # Workday's step name
 _ENTRY = re.compile(r"^(apply manually|apply now|apply online|apply|easy apply|quick apply|"
                     r"apply for (?:this|the) (?:job|position|role)(?: online)?|"
@@ -380,6 +385,15 @@ class Applier:
         self._cancel(job_id)
         (self.tasks.appendleft if front else self.tasks.append)(("apply", job_id))
         self._wake.set()
+        return run
+
+    def resume(self, job_id: int) -> Run:
+        """The person pressed Resume. A saved password the site refused gets one more press: they may
+        have reset the password to it by hand, as the card asks. One for each Resume, and none when the
+        queue carries on with the job by itself."""
+        run = self.runs.get(job_id)
+        run = self.enqueue(job_id, submit=bool(run and run.submit), front=True)
+        run.sign_in_tries = min(run.sign_in_tries, SIGN_IN_TRIES - 1)
         return run
 
     def submit_now(self, job_id: int) -> Run:
@@ -680,8 +694,19 @@ class Applier:
         says the application went (a site may go home after its own Submit): those carry on."""
         job = self.srv.tracker().get(run.job_id, with_description=False) or {}
         own = [u for u in (run.url, job.get("url"), job.get("apply_url")) if u]
-        if any(_bare(tab.url) == _bare(u) for u in own) or not any(_above(tab.url, u) for u in own):
-            return False
+        # a site that names the job in its address's query (an Eightfold site's /careers?pid=123):
+        # ?pid=999 there is another job, and /careers?query=... with no id its careers home
+        mine: dict[str, set[str]] = {}
+        for u in own:
+            for key, value in _job_ids(u).items():
+                mine.setdefault(key, set()).add(value)
+        theirs = _job_ids(tab.url)
+        if not any(k in mine and v not in mine[k] for k, v in theirs.items()):  # (not another job's)
+            if any(_bare(tab.url) == _bare(u) for u in own):
+                if not mine or any(k in theirs for k in mine):
+                    return False  # the posting, its application, or the page it was left on
+            elif not any(_above(tab.url, u) for u in own):
+                return False
         try:
             _, text = await self.srv.browser.peek(tab)
         except Exception:  # a tab mid-way through loading: carried on with, as before
@@ -1123,9 +1148,11 @@ class Applier:
                 if done == "prefilled" and _account_and_application(data):
                     return await self._apply_with_account(run, data)  # its application was drawn after all
                 if done == "prefilled" and manage and not run.accounts_tried and await self._make_account(run, data):
-                    # a new account: its sign-in (where the site asks for one) is tried afresh
+                    # a new account: its sign-in (where the site asks for one) is tried afresh, once more
+                    # however many the refused password had
                     sign_ins.pop("submitted", None), sign_ins.pop("create_account", None)
                     sign_ins["made"] = 1
+                    run.sign_in_tries = min(run.sign_in_tries, SIGN_IN_TRIES - 1)
                     continue
                 if done == "prefilled" and run.accounts_tried:
                     # pressed for this job already, and it didn't go through: never pressed again
@@ -1152,10 +1179,10 @@ class Applier:
                                        + (", before or after I pressed its Create Account" if run.accounts_tried else "")
                                        + (f" (it says \u201c{told[:160].rstrip(' .')}\u201d)" if told else "") + "."
                                        + (" So that your account there isn't locked, the desk won't try it again for "
-                                          "this job." if run.sign_in_tries >= SIGN_IN_TRIES else "")
-                                       + " Sign in in the browser window (or reset the password through its \u201cForgot "
-                                       "password\u201d to the one you saved on the desk); the desk carries on by itself "
-                                       "after that.", seen=data)
+                                          "this job unless you press Resume." if run.sign_in_tries >= SIGN_IN_TRIES else "")
+                                       + " Sign in in the browser window and the desk carries on by itself after that; or "
+                                       "reset the password through its \u201cForgot password\u201d to the one you saved on "
+                                       "the desk, then press Resume: the desk signs in with it.", seen=data)
                 tip = _password_tip(data["url"])
                 failed = " Your saved password didn't sign in there." if sign_ins.get("submitted") else ""
                 return self._pause(run, "sign_in", f"Sign in (or create your account) on {_site(run, data)} in "
@@ -1664,9 +1691,9 @@ class Applier:
         async def stop(why: str, page: dict[str, Any]) -> str:
             run.resetting = False
             await self._bring_forward(run)
-            self._pause(run, "sign_in", f"Your saved password didn't sign in on {site}, and I {why}. Finish it in the "
-                        "browser window (reset the password to the one you saved on the desk, or sign in); the desk "
-                        "carries on after that.", seen=page)
+            self._pause(run, "sign_in", f"Your saved password didn't sign in on {site}, and I {why}. Sign in in the "
+                        "browser window and the desk carries on after that; or finish the reset there, to the password "
+                        "you saved on the desk, then press Resume: the desk signs in with it.", seen=page)
             return "paused"
 
         async def press(action: dict[str, Any], allow_submit: bool = False) -> bool:
@@ -1923,7 +1950,8 @@ class Applier:
 
         None when there's nothing (more) to do. `tried` counts what this pass already did, and the
         run what the whole job did (Run.sign_in_tries: never more than SIGN_IN_TRIES with one saved
-        password); `details=False` leaves a Create Account form's other boxes as they are."""
+        password, but for one more after a reset, a new account or a Resume); `details=False` leaves a
+        Create Account form's other boxes as they are."""
         srv = self.srv
         secret = password_for(data["url"])
         saved = _secret(secret) if secret is not None else None
@@ -2360,13 +2388,31 @@ def _empty_required(data: dict[str, Any]) -> list[dict[str, Any]]:
             and f.get("kind") != "password" and is_empty_value(f.get("value"))]
 
 
+def _application_boxes(data: dict[str, Any]) -> list[dict[str, Any]]:
+    """A page's boxes but a sign-up's for job alerts, a newsletter or a talent community: those whose
+    own words say so, and the one or two name and email boxes of a page whose headings or buttons are
+    about one ("Get job alerts": Email, Subscribe), as the form reader tells such a box's Submit."""
+    boxes = [f for f in data.get("fields") or [] if not f.get("disabled")
+             and not _SIDE_BOX.search(" ".join(str(f.get(k) or "") for k in ("label", "section", "sublabel")))]
+    about = any(_SIDE_BOX.search(h) for h in data.get("headings") or []) or any(
+        a.get("aside") or _SIDE_BOX.search(a.get("text") or "") for a in data.get("actions") or [])
+    if about and len(boxes) <= 2 and all(_CONTACT_FIELD.match(norm(clean_label(f.get("label") or ""))) for f in boxes):
+        return []
+    return boxes
+
+
 def _mid_application(data: dict[str, Any]) -> bool:
-    """A page partway through the form, whatever its words: a required box still empty, a button on
-    to the next step, or a progress bar short of its last step (Workday's "current step 3 of 6")."""
-    if _empty_required(data) or any(_FORWARD.match(final_text(a.get("text") or "")) and not a.get("disabled")
-                                    for a in data.get("actions") or []):
+    """A page partway through the form, whatever its words: a progress bar short of its last step
+    (Workday's "current step 3 of 6"), a required box of the application's still empty, or a button on
+    to the next step beside its boxes (Save and Continue even with none: nothing is saved once it's
+    sent). Not a page that thanks the person and offers job alerts (a required Email, its Subscribe)
+    or a bare Continue (to a voluntary survey, or back to the careers site)."""
+    if any(int(m[1]) < int(m[2]) for h in data.get("headings") or [] for m in _STEP_OF.finditer(h)):
         return True
-    return any(int(m[1]) < int(m[2]) for h in data.get("headings") or [] for m in _STEP_OF.finditer(h))
+    boxes = _application_boxes(data)
+    steps = [final_text(a.get("text") or "") for a in data.get("actions") or [] if not a.get("disabled")]
+    return bool(_empty_required({"fields": boxes})) or any(
+        _FORWARD.match(t) and (boxes or t.lower().startswith("save")) for t in steps)
 
 
 def _new_required(before: dict[str, Any], after: dict[str, Any]) -> bool:
@@ -2378,6 +2424,16 @@ def _new_required(before: dict[str, Any], after: dict[str, Any]) -> bool:
 def _bare(url: str) -> str:
     """An address without its query and fragment."""
     return urlparse(url)._replace(query="", fragment="").geturl()
+
+
+# The query keys that name a job in an address: Eightfold's pid, Taleo's job, SuccessFactors'
+# career_job_req_id, Greenhouse's gh_jid, and the usual jobId / reqId
+_JOB_ID_KEY = re.compile(r"pid|job|jid|gh_jid|job_?id|req_?id|job_?req_?id|requisition_?id|career_job_req_id", re.I)
+
+
+def _job_ids(url: str) -> dict[str, str]:
+    """The job ids an address carries in its query, by key (lower case)."""
+    return {k.lower(): v for k, v in parse_qsl(urlparse(url).query) if _JOB_ID_KEY.fullmatch(k) and v}
 
 
 def _above(url: str, below: str) -> bool:

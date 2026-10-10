@@ -68,9 +68,13 @@ def report_strings(prof: config.Profile) -> list[str]:
 
 
 def _snapshots(folder: Path) -> list[Path]:
+    """The newest PAGES pages saved for a job, oldest first. The newest one a failed fill saved (or
+    Claude, debug/<time>) is always among them: it's where the fill broke, and the pages of the job's
+    stops since (debug/<time>-stop, pipeline.STOP) mustn't push it out."""
     debug = folder / "debug"
     found = [p for p in debug.iterdir() if p.is_dir() and (p / "snapshot.json").exists()] if debug.is_dir() else []
-    return sorted(found)[-PAGES:]
+    newest, failed = sorted(found)[-PAGES:], max((p for p in found if not p.name.endswith("-stop")), default=None)
+    return newest if failed is None or failed in newest else [failed, *newest[1:]]
 
 
 def _fields(meta: dict[str, Any]) -> list[str]:

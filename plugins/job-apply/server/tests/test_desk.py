@@ -248,6 +248,9 @@ def test_the_banner_names_the_job_waited_on_and_the_profile_gaps_are_in_words(sr
                 banner = await page.inner_text("#notices .waiting")
                 assert "Field Service Engineer (Example Fab)" in banner and "Sign in on Workday" not in banner, banner
                 assert "Sign in on Workday in the browser window." in await page.inner_text("#needs")
+                # Resume beside Later: the card may ask for Resume after a password reset by hand
+                buttons = await page.locator("#needs button").all_inner_texts()
+                assert "Resume" in buttons and "Later" in buttons, buttons
                 notice = await page.inner_text("#notices .notice")
                 assert "still needs: your resume file and whether you need visa sponsorship." in notice, notice
                 assert "documents.resume" not in notice
@@ -812,6 +815,31 @@ def test_ill_typed_requests_are_turned_away_and_change_nothing(srv, job_apply_ho
     assert config.saved_answers() == []  # nothing remembered for a job that wasn't asking
 
 
+def test_resume_on_the_desk_tries_a_refused_password_once_more(srv, job_apply_home):
+    """The desk's Resume is the person's: a job that stopped pressing a refused saved password gets
+    one more press with it (they may have reset the password to it by hand). The queue carrying on
+    with the job by itself gets none."""
+    from job_apply.pipeline import SIGN_IN_TRIES, Run
+
+    desk = Desk(srv)
+    desk.applier.start = lambda: None  # (nothing is driven: only what Resume sets up is looked at)
+    job = srv.add_job(url="https://example.com/a", title="FSE", company="Example Corp")["job"]
+    paused = Run(job["id"], "FSE", "Example Corp", status="needs_you", need="sign_in", sign_in_tries=SIGN_IN_TRIES + 1)
+    desk.applier.runs[job["id"]] = paused
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with _client(desk) as c:
+                r = await c.post(f"/api/job/{job['id']}/resume", headers={"x-desk-token": desk.token})
+                assert r.json() == {"ok": True}
+        finally:
+            await desk.stop()
+
+    run(go())
+    assert (paused.status, paused.sign_in_tries) == ("queued", SIGN_IN_TRIES - 1)
+
+
 def test_a_password_saved_on_the_desk_is_the_one_used(srv, monkeypatch):
     """One set in the environment wins over the file, so saving there is refused, saying why;
     the same email app password saved again after a refusal is tried again."""
@@ -931,6 +959,84 @@ def test_report_a_problem_can_leave_out_which_job_it_was(srv, job_apply_home):
     assert "**Job:** a Workday employer" in anonymous and title == ["Report: a Workday employer, failed"]
     assert "Something went wrong on the employer's site." in anonymous
     assert not any(word in anonymous for word in ("Technician", "Example Litho", "acme"))
+
+
+def test_the_report_box_goes_back_when_the_report_cant_be_made_again(srv, job_apply_home, monkeypatch):
+    """Ticking "Don't say which job it was" makes the report again. When that failed, the box stayed
+    ticked over the report that names the job, with its link to file it: the person would file a
+    public issue naming the job, thinking it didn't. The box goes back to say what the report shown
+    does, with that report's link, whether it was ticked or cleared. While one is being made, there's
+    no link."""
+    import threading
+
+    from playwright.async_api import async_playwright
+
+    from job_apply import report
+    from job_apply.pipeline import Run
+
+    build, failing, looked = report.build, set(), threading.Event()
+    looked.set()
+
+    def flaky(job, run=None, profile=None, anonymous=False):
+        looked.wait(10)  # (until the page has been looked at while the report is made)
+        if anonymous in failing:
+            raise OSError("No space left on device")
+        return build(job, run, profile, anonymous)
+
+    monkeypatch.setattr(report, "build", flaky)
+    desk = Desk(srv)
+    job = srv.add_job(url="https://acme.wd1.myworkdayjobs.com/External/job/x", title="Technician",
+                      company="Example Litho")["job"]
+    desk.applier.runs[job["id"]] = Run(job["id"], "Technician", "Example Litho", status="failed",
+                                       reason="Something went wrong on Example Litho's site.")
+    desk.applier.start = lambda: None
+    desk.search.update(status="done", at=time.time())
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with async_playwright() as pw:
+                browser = await pw.chromium.launch(**launch_options())
+                page = await browser.new_page()
+                alerts, links = [], []
+
+                async def dismiss(dialog):
+                    alerts.append(dialog.message)
+                    await dialog.dismiss()
+                page.on("dialog", dismiss)
+                await page.goto(desk.url)
+                await page.click(f"button[data-job='{job['id']}'][data-job-act='report']")
+                await page.wait_for_selector("#report[open]")
+
+                async def toggle():  # tick or clear the box, and wait for the report it asks for
+                    looked.clear()
+                    async with page.expect_response(lambda r: r.url.endswith(f"/api/job/{job['id']}/report")):
+                        await page.click("#report-anonymous")
+                        links.append(await page.locator("#report-open").get_attribute("href"))
+                        looked.set()
+                    await page.wait_for_function("() => !document.querySelector('#report-anonymous').disabled")
+                    return (await page.is_checked("#report-anonymous"),
+                            await page.locator("#report-open").get_attribute("href"),
+                            await page.locator("#report-text").inner_text())
+
+                named = await page.locator("#report-open").get_attribute("href")
+                failing.add(True)
+                seen = [await toggle()]  # can't leave the job out
+                failing.clear()
+                seen.append(await toggle())  # leaves it out
+                failing.add(False)
+                seen.append(await toggle())  # can't name it again
+                await browser.close()
+                return named, seen, alerts, links
+        finally:
+            await desk.stop()
+
+    named, seen, alerts, links = run(go())
+    (ticked, href, text), (anonymous, left_out, _), (still, href_after, text_after) = seen
+    assert not ticked and href == named and "Example Litho" in text  # the box says the report names the job
+    assert anonymous and "Litho" not in left_out
+    assert still and href_after == left_out and "Litho" not in href_after + text_after
+    assert len(alerts) == 2 and links == [None, None, None]
 
 
 def test_the_desk_reads_an_icims_posting_in_its_browser(srv, monkeypatch):

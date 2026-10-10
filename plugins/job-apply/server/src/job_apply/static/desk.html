@@ -35,6 +35,7 @@ button.primary:disabled { opacity: .5; cursor: default; }
 button.link { border: 0; background: none; color: var(--accent); padding: 0; }
 a.button { display: inline-block; border-radius: 8px; padding: 7px 12px; text-decoration: none; }
 a.button.primary { background: var(--accent); color: var(--accent-text); font-weight: 600; }
+a.button:not([href]) { opacity: .5; cursor: default; }
 dialog { max-width: min(760px, calc(100vw - 32px)); border: 1px solid var(--line); border-radius: 10px;
   background: var(--surface); color: var(--text); padding: 16px; }
 dialog::backdrop { background: rgba(0,0,0,.4); }
@@ -479,7 +480,10 @@ function renderSide() {
     const form = qs.length ? `<form data-answer="${r.job_id}">${qs.map((q, i) => question(r.job_id, q, i, repeated.has(q.label))).join("")}</form>` : "";
     // questions (with Resume, for answers typed into the page itself), or a missing file plus questions
     if (form || r.need === "questions") body = form + jobButtons(r, ["fill", "show", "resume", "skip"]);
-    else if (["sign_in", "bot_check", "email_code"].includes(r.need)) body = jobButtons(r, ["show", r.blocking ? "later" : "resume", "skip"]);
+    // a sign-in holding the queue keeps Resume beside Later: its card may ask for Resume after a
+    // password reset by hand (the desk then presses its sign-in once more)
+    else if (["sign_in", "bot_check", "email_code"].includes(r.need))
+      body = jobButtons(r, ["show", ...(r.blocking ? (r.need === "sign_in" ? ["resume", "later"] : ["later"]) : ["resume"]), "skip"]);
     else if (r.need === "captcha") body = jobButtons(r, ["show", "submit", "skip"]);
     else if (r.need === "your_submit" || r.need === "check_submit") body = jobButtons(r, ["show", "applied", "skip"]);
     else if (r.need === "submit_failed") body = jobButtons(r, ["show", "submit", "applied", "skip"]);
@@ -700,22 +704,28 @@ function selectable(url) {
 // which a pop-up opened after the wait would not (browsers block those). Made again for the same
 // job when its "Don't say which job it was" box is ticked or cleared.
 let reportJob = null;
+let reportShown = null;  // the report in the dialog: whether it leaves the job out, and its issue link
 function makeReport(job) {
   if (reporting) return;  // one at a time: a double click makes one report
   reporting = true;
-  $("report-anonymous").disabled = true;
+  const box = $("report-anonymous"), open = $("report-open");
+  box.disabled = true;
+  open.removeAttribute("href");  // no link while the box may not say what the report shown does
   act(async () => {
     try {
-      const out = await api(`/api/job/${job}/report`, {anonymous: $("report-anonymous").checked});
+      const out = await api(`/api/job/${job}/report`, {anonymous: box.checked});
       reportJob = job;
+      reportShown = {anonymous: box.checked, url: out.issue_url};
       $("report-text").textContent = out.preview;
       $("report-where").textContent = `It's saved in ${out.folder}, with report.zip: that also holds the pages the`
         + " desk saved. They can still show your answers, so they stay on your computer and aren't in the issue.";
-      $("report-open").href = out.issue_url;
       if (!$("report").open) $("report").showModal();
     } finally {
+      // the box and the link go with the report shown: one that couldn't be made again without the
+      // job mustn't leave the box ticked over the report that names it
+      if (reportShown) { box.checked = reportShown.anonymous; open.href = reportShown.url; }
       reporting = false;
-      $("report-anonymous").disabled = false;
+      box.disabled = false;
     }
   }, false);
 }
@@ -836,7 +846,8 @@ document.addEventListener("change", (e) => {
   if (t.id === "report-anonymous" && reportJob !== null) makeReport(reportJob);
 });
 
-$("report-open").addEventListener("click", () => $("report").close());  // the link opens GitHub in a new tab
+// the link opens GitHub in a new tab; without one (a report being made) it does nothing
+$("report-open").addEventListener("click", (e) => { if (e.currentTarget.href) $("report").close(); });
 
 (async function poll() {
   await refresh();
