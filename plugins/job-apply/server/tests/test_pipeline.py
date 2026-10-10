@@ -5073,6 +5073,147 @@ def test_an_email_the_site_has_no_account_for_is_said_so_with_its_way_to_make_on
     assert "We don't recognize this email" in r.reason and "marked invalid" not in r.reason
 
 
+EIGHTFOLD = "site/eightfold-create-account.html"
+
+
+def inbox_with_code(monkeypatch, codes=None):
+    """An email app password saved, and an inbox whose sign-up code is 123456 (`codes`: each
+    kind asked for, in turn)."""
+    monkeypatch.setattr(pipeline, "MAIL_POLL_SECONDS", 0)
+    monkeypatch.setenv("JOB_APPLY_SECRET_EMAIL_PASSWORD", "an-app-password")
+    monkeypatch.setattr(pipeline.mailbox, "imap_host", lambda address: "imap.example.com")
+
+    def inbox(address, password, since, senders, want, allowed_link, before=None, look_back=None):
+        if codes is not None:
+            codes.append(want)
+        return pipeline.mailbox.Found("code", "123456", "careers.example.com", time.time()) if want == "code" else None
+
+    monkeypatch.setattr(pipeline.mailbox, "search", inbox)
+
+
+@pytest.mark.parametrize("identity", [False, True], ids=["manage_accounts", "test-identity"])
+def test_with_manage_accounts_an_email_first_site_makes_the_account_with_the_emailed_code(srv, monkeypatch,
+                                                                                        job_apply_home, identity):
+    """Northrop Grumman's Eightfold site (the live check's test identity, Oct 2026): its sign-in said
+    "We don't recognize this email. Create a new account", and the desk stopped for the person to make
+    the account, manage_accounts on. Now it makes it: "Create an account", the Privacy Policy box
+    (the site's terms: nothing else is ticked) and its Submit, the email again and Continue, then the
+    emailed code from the inbox and the code step's Submit, and it carries on with the application.
+    No password goes on the site (Eightfold's asks none)."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    if identity:
+        as_test_identity(monkeypatch, job_apply_home)
+    else:
+        manage_accounts(job_apply_home)
+    asked: list[str] = []
+    inbox_with_code(monkeypatch, asked)
+    job = srv.add_job(url=fixture_url(EIGHTFOLD), title="Financial Analyst", company="Example Corp")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.need == "questions" or r.status == "ready", about=state(r))  # nobody touched it
+            return r, await r.page.evaluate("() => sessionStorage.getItem('account')")
+        finally:
+            await applier.stop()
+
+    r, account = run(go())
+    assert account == "sam.rivera@example.com" and "/site/" in r.url and "eightfold" not in r.url, (account, r.url, r.log)
+    log = "\n".join(r.log)
+    assert "has no account for your email, so I pressed “Create an account” to make one" in log, log
+    assert "ticked “I have read and agree to the Privacy Policy” to make your account" in log, log
+    assert "your email for the new account and pressed “Continue”" in log, log
+    assert "entered the code from your email (sent from careers.example.com)" in log and "pressed “Submit”" in log, log
+    assert any(line.startswith("created your account on") and "the code it emailed you" in line for line in r.log), log
+    assert any(line.startswith("filled") for line in r.log) and asked and set(asked) == {"code"}, (asked, log)
+    assert r.status != "submitted", (r.status, r.reason)
+
+
+def test_with_manage_accounts_a_choice_to_be_considered_for_other_jobs_stays_the_persons(srv, monkeypatch,
+                                                                                        job_apply_home):
+    """Northrop Grumman's agreement step also asks for its required "Contact Consent": "I understand that
+    I may be considered for other open positions in my country". Being considered for other jobs is
+    never chosen for the person (as a talent community isn't): the desk ticks the Privacy Policy box,
+    stops for them naming the choice, and once they've chosen it and pressed Submit, makes the account
+    with the email and the emailed code by itself, and carries on."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    manage_accounts(job_apply_home)
+    inbox_with_code(monkeypatch)
+    job = srv.add_job(url=fixture_url(EIGHTFOLD) + "?contact=required", title="Financial Analyst",
+                      company="Example Corp")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            first = (r.status, r.need, r.reason)
+            boxes = await r.page.evaluate("() => [document.getElementById('consent-checkbox').checked, "
+                                          "document.getElementById('contact-consent-choice-0').checked]")
+            await r.page.check("#contact-consent-choice-0")  # the person chooses it, and presses Submit
+            await r.page.click("#agree")
+            await until(lambda: r.need == "questions" or r.status == "ready", about=state(r))
+            return r, first, boxes, await r.page.evaluate("() => sessionStorage.getItem('account')")
+        finally:
+            await applier.stop()
+
+    r, (status, need, reason), boxes, account = run(go())
+    assert (status, need) == ("needs_you", "sign_in"), (status, need, reason)
+    assert boxes == [True, False], boxes  # the Privacy Policy ticked; the other choice left to the person
+    assert "“Contact Consent: I understand that I may be considered for other open positions" in reason, reason
+    assert "the desk never chooses for you" in reason and "You must select one option" in reason, reason
+    assert account == "sam.rivera@example.com" and "/site/" in r.url and "eightfold" not in r.url, (account, r.url, r.log)
+    assert any(line.startswith("created your account on") for line in r.log), r.log
+
+
+def test_without_manage_accounts_an_email_first_sites_account_steps_stay_the_persons(srv, monkeypatch):
+    """manage_accounts off: the desk stops at "We don't recognize this email", and the account's
+    steps after it (the agreement, the email again, the code) are the person's: none is read as the
+    application (its agreement's Submit taken for the review page's), nor is anything pressed in
+    them. The desk carries on once the application shows."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    job = srv.add_job(url=fixture_url(EIGHTFOLD), title="Financial Analyst", company="Example Corp")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            first = (r.status, r.need, r.reason)
+            page = r.page
+            await page.click("#switch")  # the person: Create an account
+            await asyncio.sleep(2)  # (several of the desk's looks)
+            on_consent = (r.status, r.need, await page.evaluate("() => document.getElementById('consent-checkbox')"
+                                                                 ".checked"))
+            await page.check("#consent-checkbox")
+            await page.click("#agree")
+            await asyncio.sleep(2)
+            on_email = (r.status, r.need, await page.locator("#head").inner_text())
+            await page.click("#go")
+            await page.wait_for_selector(".digit")
+            await asyncio.sleep(2)
+            on_code = (r.status, r.need)
+            await page.fill(".digit >> nth=0", "123456")
+            await page.click("#confirm")
+            await until(lambda: r.need == "questions" or r.status == "ready", about=state(r))
+            return r, first, on_consent, on_email, on_code
+        finally:
+            await applier.stop()
+
+    r, first, on_consent, on_email, on_code = run(go())
+    assert first[:2] == ("needs_you", "sign_in") and "no account for your email" in first[2], first
+    assert "“Create an account”" in first[2] and "We don't recognize this email" in first[2], first
+    assert on_consent == ("needs_you", "sign_in", False), on_consent  # not ticked, nor its Submit pressed
+    assert on_email == ("needs_you", "sign_in", "Create an account"), on_email  # nor its Continue
+    assert on_code == ("needs_you", "sign_in"), on_code
+    assert "eightfold" not in r.url and any("“My Information”" in line for line in r.log), (r.url, r.log)
+    assert not any(line.startswith("created your account") for line in r.log), r.log
+
+
 def test_a_job_sent_to_a_maintenance_page_is_said_down_for_maintenance(srv, monkeypatch):
     """A careers site down for its maintenance sends every job to its maintenance page ("We'll
     be back.", live, Oct 2026): the desk said it couldn't find the button that moves the
