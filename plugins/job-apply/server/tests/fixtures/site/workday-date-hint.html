@@ -1,0 +1,28 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Self Identify</title>
+<style>
+  .date { position: relative; display: inline-block; }
+  .date input { width: 3em; }
+  /* the date's hint, drawn over its boxes until one of them has the focus (Workday's Self Identify) */
+  .hint { position: absolute; inset: 0; background: #fff; }
+  .date:focus-within .hint { display: none; }
+</style>
+</head>
+<body>
+<h2>Self Identify</h2>
+<div data-automation-id="formField-dateSignedOn"><label id="dl">Date<abbr title="required">*</abbr></label>
+  <div class="date" data-automation-id="dateInputWrapper" role="group" aria-labelledby="dl">
+    <input type="text" role="spinbutton" data-automation-id="dateSectionMonth-input" aria-label="Month" maxlength="2">
+    <input type="text" role="spinbutton" data-automation-id="dateSectionDay-input" aria-label="Day" maxlength="2">
+    <input type="text" role="spinbutton" data-automation-id="dateSectionYear-input" aria-label="Year" maxlength="4">
+    <div class="hint">MM/DD/YYYY</div>
+  </div>
+</div>
+<script>
+  document.addEventListener('input', (e) => {
+    if (e.target.getAttribute('role') === 'spinbutton') e.target.value = e.target.value.replace(/\D/g, '');
+  });
+</script>
+</body>
+</html>

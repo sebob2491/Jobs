@@ -66,6 +66,9 @@ def personal_strings(prof: Profile) -> list[str]:
     phone = re.sub(r"\D", "", str(prof.get("personal.phone") or ""))
     if len(phone) >= 7:
         values.append(phone)
+    ids = prof.get("history.employee_ids")  # an employer's ID for the person
+    if isinstance(ids, dict):
+        values += [str(v).strip() for v in ids.values() if v not in (None, "") and len(str(v).strip()) >= 3]
     spelled = {w for v in values for w in _spellings(v)}
     # names of two letters ("Al Wu") are kept too: they're matched as whole words only
     names = {str(prof.get(k)) for k in NAME_KEYS if prof.get(k)}

@@ -315,6 +315,33 @@ def test_a_sign_in_forms_submit_may_be_clicked_and_no_other(srv, monkeypatch):
     assert run(run(srv.browser.page()).evaluate("() => window.signInTries")) == 1
 
 
+def test_a_date_whose_hint_covers_its_boxes_is_typed_in(srv):
+    """Workday's Self Identify draws its date's "MM/DD/YYYY" hint over the Month, Day and Year
+    boxes: a click on them timed out (live, Oct 2026), and the date was asked of the person."""
+    run(srv.browser.goto(fixture_url("site/workday-date-hint.html")))
+    boxes = {f["sublabel"]: f for f in run(srv.inspect_form())["fields"]}
+    out = run(srv.fill_form([{"id": boxes["Month"]["id"], "value": "10"}, {"id": boxes["Day"]["id"], "value": "09"},
+                             {"id": boxes["Year"]["id"], "value": "2026"}]))
+    assert out["ok"] and not out.get("failed"), out
+    got = {f["sublabel"]: f["value"] for f in run(srv.inspect_form())["fields"]}
+    assert got == {"Month": "10", "Day": "09", "Year": "2026"}, got
+
+
+def test_each_jobs_currently_work_here_box_is_its_own(srv):
+    """Workday names every job's "I currently work here" box alike: the form reader took them for
+    one group across the blocks (a report listed "Work Experience 1 (checkbox_group)"), and the
+    current job's box was never ticked, which Workday won't save without (live, Oct 2026)."""
+    run(srv.browser.goto(fixture_url("site/workday-my-experience.html")))
+    run(srv.add_entries("work"))
+    boxes = [f for f in run(srv.inspect_form())["fields"] if "currently work" in (f.get("label") or "").lower()]
+    assert [(f["kind"], f.get("section")) for f in boxes] == [("checkbox", "Work Experience 1"),
+                                                              ("checkbox", "Work Experience 2")], boxes
+    run(srv.autofill())
+    page = run(srv.browser.page())
+    assert run(page.evaluate("() => [document.getElementById('cw-1').checked, document.getElementById('cw-2').checked]")) \
+        == [True, False]
+
+
 def test_final_apply_button_honeypot_and_enter(srv, monkeypatch):
     job = srv.add_job(url=fixture_url("apply_button_form.html"), title="Tech", company="Example Fab")["job"]
     run(srv.open_application(job_id=job["id"]))

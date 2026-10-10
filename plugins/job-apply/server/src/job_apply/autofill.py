@@ -487,6 +487,12 @@ def _previously_employed(prof: Profile, job: dict, label: str = "") -> str | Non
                          rf"|\bhired\b.{{0,60}}? (by|with|at) (the )?{first}\b", asked)
     if not (names_it or re.search(r"(employed|worked|hired) (by|for|at|with) (us|this|our|the company)\b|former employee", asked)):
         return None
+    # A question naming another organization ("Are you a current or former employee of <an accounting
+    # firm>?" on an employer's own form) isn't about working for this one: it's the person's to answer
+    other = re.search(r"\b(employee|employed|employment|worked|work|intern|contractor)s? (\w+ )?(of|by|for|at|with) "
+                      r"(?!(us|this|our|the (company|organization|firm|business)|any|an?|one)\b)\w", asked)
+    if not names_it and other:
+        return None
     if re.search(rf"\b{first}( \w+){{0,2}} (tools?|systems?|equipment|products?|software|technolog\w*|machines?|platforms?|"
                  r"scanners?|metrology|etch|deposition|parts)\b", asked):
         return None  # "worked with KLA metrology systems": the employer's products, not working for it
@@ -499,6 +505,17 @@ def _previously_employed(prof: Profile, job: dict, label: str = "") -> str | Non
     now = [norm(e.get("company")) for e in entries if is_present(entry_dates(e)[1]) or e.get("current") is True]
     now.append(norm(prof.get("experience.current_company")))
     return "Yes, currently" if any(_same_employer(c, company) for c in now if c) else "Yes, previously"
+
+
+def _employee_id(prof: Profile, job: dict) -> str | None:
+    """The person's ID at the employer applied to (history.employee_ids, by employer), for its
+    "Employee ID (if applicable)" or "please provide your WWID": never another employer's."""
+    company = norm(job.get("company"))
+    ids = prof.get("history.employee_ids")
+    if not company or not isinstance(ids, dict):
+        return None
+    return next((str(value).strip() for name, value in ids.items()
+                 if value not in (None, "") and _same_employer(norm(str(name)), company)), None)
 
 
 _UNFINISHED = re.compile(r"^(none|n ?a|no|not applicable)$|\b(no degree|not (completed|finished)|incomplete|"
@@ -995,6 +1012,7 @@ RULES: list[tuple[str, str, Getter, int | None, set[str] | None]] = [
                    # to start work, not for an interview
                    r"when (would|could|will) you be available( to (start|begin)| for (work|employment)| if .{0,10}offer\b.*)?$|"
                    r"soonest .{0,30}(start|begin)\b", _p("preferences.earliest_start"), None, None),
+    ("employee_id", r"\b(employee|worker|associate|staff|badge) ?(id|number|no\b|#)|\bwwid\b", _employee_id, 160, {"text"}),
     ("previous_employee", r"(previously|ever|formerly) (been )?(employed|worked)|former employee|have you (ever )?worked (for|at)|worked .{0,40} before|"
      r"have you (ever )?been hired\b",
      _previously_employed, None, None),  # (only about this employer: see _previously_employed)
@@ -1376,8 +1394,8 @@ def resolve_field(field: dict, prof: Profile, job: dict | None = None, file_inpu
         or _OTHER_PARTY_SECTION.search(section)
     if ans is None:
         for name, pattern, getter, max_len, kinds in RULES:
-            if someone_else and name in _CONTACT_RULES:
-                continue  # a reference's or an emergency contact's name, phone or email
+            if someone_else and (name in _CONTACT_RULES or name == "employee_id"):
+                continue  # a reference's or an emergency contact's name, phone or email; a referrer's ID
             if name in _EEO_RULES and _FAMILY.search(label):
                 continue  # "Are you the spouse of a veteran?", "Gender of your spouse": not the person's own
             if max_len is not None and len(label) > max_len:
@@ -1631,17 +1649,24 @@ _EDU_FIELD = re.compile(r"^(school|university|college|institution|degree|discipl
 # (not "Position Applied For", the job being applied to)
 _JOB_FIELD = re.compile(r"^(company|employer|job title|title|position)\b(?! (applied|you are applying|of interest|desired|sought))")
 _DATE_PART = re.compile(r"^(start|end|from|to)( date)?( (year|month))?$")
+# The other boxes of a job's or school's block, which come between its name and its dates
+_IN_BLOCK = re.compile(r"^(location|city|state|country|description|role description|responsibilit\w*|summary|"
+                       r"gpa|grade|overall result|i currently|current(ly)?)\b")
 
 
 def _with_context(fields: list[dict]) -> list[dict]:
     """Greenhouse-style forms put School, Degree, Discipline and "Start date year" together
     with no section heading: they're one school's, the first in the profile's education
-    history, so its school is never given another school's degree. Unsectioned dates after
-    a job's boxes are that job's."""
+    history, so its school is never given another school's degree. Unsectioned dates right
+    after a job's boxes are that job's: a box of a block of its own, or another question
+    between (an availability "Start Date" further down), ends the guess."""
     out, block, school = [], None, False
     for f in fields:
         label = norm(clean_label(f.get("label") or ""))
-        if not f.get("section"):
+        if f.get("section") or not (_EDU_START.match(label) or _EDU_FIELD.match(label) or _JOB_FIELD.match(label)
+                                    or _DATE_PART.match(label) or _IN_BLOCK.match(label)):
+            block, school = None, False
+        else:
             if _EDU_START.match(label):
                 block, school = "Education 1", True
                 f = {**f, "section": block}

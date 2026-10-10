@@ -1047,6 +1047,31 @@ def test_an_apply_that_would_send_the_application_is_never_pressed(srv, monkeypa
     assert "\u201cApply\u201d, so it's yours to press" in r.reason
 
 
+def test_an_application_the_person_submitted_on_the_site_is_marked_applied(srv, monkeypatch):
+    """The desk filled a Workday application; the person pressed the site's own Submit, landed on
+    its Candidate Home ("Application Submitted") and pressed Resume. The desk said the site had
+    emailed a link to confirm the email (the page tells how to change it, with "Send Link"). A job
+    the desk has filled that comes back on a page saying it went in is marked applied."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    job = srv.add_job(url=fixture_url("site/workday-candidate-home.html"), title="Equipment Technician",
+                      company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        r = applier.enqueue(job["id"])
+        r.seen_form = True  # (filled before: the person pressed Resume)
+        applier.start()
+        try:
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert r.status == "submitted" and "application submitted" in r.reason, (r.status, r.need, r.reason, r.log)
+    assert srv.tracker().get(job["id"])["status"] == "applied"
+
+
 def watched_inbox(monkeypatch, reset_link=None):
     """An email app password on the desk, and an inbox that holds `reset_link` (or nothing)."""
     monkeypatch.setattr(pipeline, "MAIL_POLL_SECONDS", 0)

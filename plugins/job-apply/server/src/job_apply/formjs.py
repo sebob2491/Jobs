@@ -244,7 +244,10 @@ EXTRACT_JS = r"""
           if (n.querySelectorAll('[role="radio"], input[type="radio"]').length > 1) container = n;
         }
       }
-      const key = (isRadio ? 'r:' : 'c:') + (el.name ? 'n:' + el.name : container ? 'g:' + ownGid(container, 'data-ja-gid') : 'e:' + idOf(el));
+      // Same-named check boxes in different blocks are each block's own (Workday names every job's
+      // "I currently work here" alike): one group per block, never one across them
+      const block = !isRadio && el.name ? '@' + sectionOf(el, '') : '';
+      const key = (isRadio ? 'r:' : 'c:') + (el.name ? 'n:' + el.name + block : container ? 'g:' + ownGid(container, 'data-ja-gid') : 'e:' + idOf(el));
       if (!groups.has(key)) groups.set(key, { isRadio, container, members: [] });
       groups.get(key).members.push(el);
       continue;

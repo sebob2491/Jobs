@@ -29,7 +29,8 @@ from urllib.parse import urlparse
 from . import config, mailbox
 from .ats import ATS_NAMES, detect_ats, shared_system
 from .autofill import clean_label, entry_of, is_empty_value, norm, plan_autofill, tailored_document
-from .browser import TabClosed, _accepts_cookies, _cookie_setting, declines_cookies, final_text, may_accept_cookies
+from .browser import (TabClosed, _accepts_cookies, _cookie_setting, confirmations, declines_cookies, final_text,
+                      may_accept_cookies)
 
 NEW_TAB_WAIT = 4  # seconds to wait for a tab opened late by a click before calling it a stall
 ONCE_SETTLE = 1.0  # seconds after filling the person's answers before checking they stayed in
@@ -862,6 +863,15 @@ class Applier:
             run.page_info = _page_info(data)
             run.url = data["url"]
             run.page = srv.browser.current_tab or run.page
+            if run.seen_form and not pressed and (gone := sorted(confirmations(text))):
+                # Back on a job the desk filled in, before it has pressed anything: the person pressed the
+                # site's own Submit and then Resume (Workday's Candidate Home shows "Application Submitted").
+                # It went, so it's marked applied and never filled in again
+                srv.tracker().update(run.job_id, status="applied", note="submitted on the site")
+                run.status, run.need, run.blocking, run.left = "submitted", "", False, False
+                run.reason = f"Submitted: {_site(run, data)} says \u201c{gone[0]}\u201d."
+                self._log(run, run.reason)
+                return
             cookies = await self._decline_cookies(run, data, text)
             if cookies is False:
                 await self._bring_forward(run)

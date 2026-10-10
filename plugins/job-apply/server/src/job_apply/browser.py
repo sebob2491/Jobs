@@ -1166,8 +1166,13 @@ class BrowserSession:
         if isinstance(value, bool):
             text = "Yes" if value else "No"
         if field.get("role") == "spinbutton":
-            # Date parts (Workday's MM / YYYY) react to keystrokes, not a pasted value.
-            await loc.click(timeout=5000)
+            # Date parts (Workday's MM / YYYY) react to keystrokes, not a pasted value. Where the
+            # date's "MM/DD/YYYY" hint is drawn over its boxes (Workday's Self Identify), a click
+            # never reaches them: focus takes the keys just the same.
+            try:
+                await loc.click(timeout=2000)
+            except PlaywrightTimeout:
+                await loc.focus()
             await loc.fill("")
             await loc.press_sequentially(text, delay=40)
             await loc.evaluate("el => el.blur()")

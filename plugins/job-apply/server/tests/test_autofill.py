@@ -256,6 +256,25 @@ def test_unsectioned_education_dates_follow_school_fields():
     assert "5" not in plan  # a start date in another section is not an education date
 
 
+def test_a_start_date_after_other_questions_is_not_the_last_jobs():
+    """Unsectioned dates right after a job's boxes are that job's; a "Start Date" further down,
+    after other questions (when the person can start), took the job's start date."""
+    fields = [{"id": "c", "kind": "text", "label": "Company*", "value": ""},
+              {"id": "t", "kind": "text", "label": "Job Title*", "value": ""},
+              {"id": "l", "kind": "text", "label": "Location", "value": ""},
+              {"id": "s", "kind": "text", "label": "Start date", "value": ""},
+              {"id": "q", "kind": "radio_group", "label": "Are you 18 years of age or older?", "value": "",
+               "options": ["Yes", "No"]},
+              {"id": "a", "kind": "text", "label": "Start Date", "value": ""}]
+    from job_apply.autofill import _with_context
+
+    sections = {f["id"]: f.get("section") for f in _with_context(fields)}
+    assert sections["s"] == "Work Experience 1" and sections["a"] is None, sections
+    plan = {f["id"]: f for f in plan_autofill(fields, prof())["to_fill"]}
+    assert plan["s"]["rule"].startswith("work_history[1]"), plan["s"]
+    assert "a" not in plan or not plan["a"]["rule"].startswith("work_history"), plan.get("a")
+
+
 def test_a_citizen_holds_no_nonimmigrant_visa():
     """Texas Instruments (live, Oct 2026) asks whether you hold an H, L, E, J or F visa."""
     q = f("U.S. Immigration Form: Do you currently hold an H, L, E, J, or F nonimmigrant visa (examples: H-1B, "
@@ -976,6 +995,36 @@ def test_previously_employed_by_any_of_the_employers_companies():
     assert resolve_field(asked, prof(), {"company": "Micron"}).value == "No"
     assert resolve_field(f("Have you ever worked for an Intel company?", "radio_group", options=yes_no), prof(),
                          {"company": "Intel Corporation"}).value == "Yes"
+
+
+def test_a_former_employee_question_naming_another_company_is_never_answered_from_this_ones():
+    """An employer's form (live, Oct 2026) asked "Are you a current or former employee of Ernst &
+    Young?": the desk took it for a question about working for the employer applied to, which
+    the profile lists, and answered Yes. A question naming another organization is the person's."""
+    yes_no = ["Yes", "No"]
+    job = {"company": "Intel Corporation"}  # among the test profile's employers
+    for asked in ("Are you a current or former employee of Ernst & Young?",
+                  "Have you ever been employed by Example Audit LLP?", "Have you previously worked for a Big Four firm?"):
+        assert resolve_field(f(asked, "radio_group", options=yes_no), prof(), job) is None, asked
+    for asked in ("Are you a current or former employee?", "Have you ever been employed by this company?",
+                  "Have you previously worked for us?", "Are you a former employee of Intel or any of its subsidiaries?"):
+        assert resolve_field(f(asked, "radio_group", options=yes_no), prof(), job).value == "Yes", asked
+
+
+def test_an_employee_id_goes_only_on_its_own_employers_forms():
+    """A person who has worked for an employer has an ID there, which its forms ask for
+    ("Employee ID (if applicable)", "please provide your WWID"). It's never put on another's."""
+    from job_apply.config import Profile
+
+    person = Profile({"history": {"employee_ids": {"Example Fab": "E1234567"}}})
+    for asked in ("Employee ID (if applicable)", "If you have previously worked for Example Fab in any capacity, "
+                  "please provide your WWID", "Employee Number"):
+        got = resolve_field(f(asked), person, {"company": "Example Fab Corporation"})
+        assert got is not None and got.value == "E1234567", asked
+        assert resolve_field(f(asked), person, {"company": "Other Semi"}) is None, asked
+    assert resolve_field(f("Employee ID (if applicable)"), prof(), {"company": "Example Fab"}) is None
+    for asked in ("Referring Employee ID", "Your manager's employee number"):  # someone else's
+        assert resolve_field(f(asked), person, {"company": "Example Fab"}) is None, asked
 
 
 def test_an_expected_graduation_date_is_never_a_past_year():
