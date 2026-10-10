@@ -276,6 +276,43 @@ def test_workday_experience_entries(srv):
     assert got[("Education 1", "To (Actual or Expected)", "Year")] == "2020"
 
 
+async def _dates_shown(srv):
+    """What each date part's display shows, and how many digit keys the page was given."""
+    page = await srv.browser.page()
+    return await page.evaluate("() => [[...document.querySelectorAll('.display')].map((d) => d.textContent), window.keys]")
+
+
+def test_a_date_part_drawn_over_is_typed_into(srv):
+    """Workday draws a date part's "MM" over its input (Intel, live, Oct 2026): the click
+    before typing waited for it to move, and timed out, so no From or To went in, even filled
+    by id. The input is focused instead, and the keys still go in one at a time."""
+    run(srv.browser.goto(fixture_url("workday_covered_dates.html")))
+    parts = [f for f in run(srv.inspect_form(include_dropdown_options=False))["fields"] if f.get("role") == "spinbutton"]
+    assert [(f["label"], f["sublabel"]) for f in parts[:4]] == [("From*", "Month"), ("From*", "Year"),
+                                                                ("To*", "Month"), ("To*", "Year")]
+    out = run(srv.fill_form([{"id": parts[0]["id"], "value": "03"}, {"id": parts[1]["id"], "value": "2021"}]))
+    assert out["ok"], out
+    assert [r["result"] for r in out["results"]] == ["typed", "typed"]
+    shown, keys = run(_dates_shown(srv))
+    assert shown[:3] == ["03", "2021", "MM"] and keys == 6  # the page took them as keys
+
+
+def test_workday_dates_read_with_no_section_are_filled_for_their_own_job(srv):
+    """The same page through autofill: each job's From and To, read with no section, go in
+    from that job's own dates, and a job still held keeps its To empty."""
+    job = srv.add_job(url=fixture_url("workday_covered_dates.html"), title="Equipment Technician",
+                      company="Example Litho")["job"]
+    run(srv.open_application(job_id=job["id"]))
+    fields = run(srv.inspect_form(include_dropdown_options=False))["fields"]
+    assert not [f for f in fields if f.get("role") == "spinbutton" and f.get("section")]  # as on Intel's page
+    result = run(srv.autofill())
+    assert not result["failed"], result["failed"]
+    assert not [f for f in result["needs_input"] if f.get("sublabel")], result["needs_input"]
+    shown, _ = run(_dates_shown(srv))
+    # the test profile: Intel from 2021-03 to present; Example Fab Services from Jun 2018 to 02/2021
+    assert shown == ["03", "2021", "MM", "YYYY", "06", "2018", "02", "2021"]
+
+
 def test_dry_run_never_submits(srv, monkeypatch):
     from job_apply.browser import SubmitBlocked
 

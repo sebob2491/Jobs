@@ -1,0 +1,70 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Workday-style My Experience (dates covered by their display)</title>
+<style>
+  .date { position: relative; display: inline-block; width: 4em; height: 1.8em; vertical-align: middle; }
+  .date input { position: absolute; inset: 0; width: 100%; box-sizing: border-box; }
+  /* like Workday's: the "MM" shown sits over the input and takes the clicks */
+  .date .display { position: absolute; inset: 0; z-index: 1; background: #fff; border: 1px solid #999; padding: 2px; }
+</style>
+</head>
+<body>
+<div data-automation-id="progressBarActiveStep">My Experience</div>
+<h2>My Experience</h2>
+<div id="we-panels"></div>
+<button type="button" data-automation-id="pageFooterNextButton">Save and Continue</button>
+
+<script>
+  // Like Intel's Workday (live, Oct 2026): each date part is a spinbutton under a display div,
+  // inside a group labelled by the date's own label, so the form reader gives it no section.
+  const part = (id, which, max, empty) => `
+    <div class="date" id="${id}-dateSection${which}" tabindex="-1">
+      <div class="display" aria-hidden="true" data-automation-id="dateSection${which}-display">${empty}</div>
+      <input type="text" role="spinbutton" aria-label="${which}" aria-valuetext="${empty}" maxlength="${max}"
+             id="${id}-dateSection${which}-input" data-automation-id="dateSection${which}-input" value="">
+    </div>`;
+  const date = (id, label) => `
+    <div data-automation-id="formField-${id}"><label id="${id}-label">${label}<abbr title="required">*</abbr></label>
+      <div data-automation-id="dateInputWrapper" role="group" aria-labelledby="${id}-label">
+        ${part(id, 'Month', 2, 'MM')}<div style="display: inline">/</div>${part(id, 'Year', 4, 'YYYY')}
+      </div>
+    </div>`;
+  for (const n of [1, 2]) {
+    const panel = document.createElement('div');
+    panel.setAttribute('role', 'group');
+    panel.setAttribute('aria-labelledby', 'we-' + n);
+    panel.innerHTML = `
+      <h4 id="we-${n}">Work Experience ${n}</h4>
+      <div data-automation-id="formField-jobTitle"><label for="jt-${n}">Job Title<abbr title="required">*</abbr></label><input id="jt-${n}"></div>
+      <div data-automation-id="formField-companyName"><label for="co-${n}">Company<abbr title="required">*</abbr></label><input id="co-${n}"></div>
+      <div data-automation-id="formField-location"><label for="lo-${n}">Location</label><input id="lo-${n}"></div>
+      <div data-automation-id="formField-currentlyWorkHere"><input type="checkbox" id="cw-${n}"><label for="cw-${n}">I currently work here</label></div>
+      ${date(`workExperience-${n}--startDate`, 'From')}
+      ${date(`workExperience-${n}--endDate`, 'To')}
+      <div data-automation-id="formField-roleDescription"><label for="rd-${n}">Role Description</label><textarea id="rd-${n}"></textarea></div>`;
+    document.getElementById('we-panels').appendChild(panel);
+  }
+
+  // Like Workday, a date part takes keys, not a value set on it: each digit key adds to it, and
+  // the display over the input shows it. window.keys counts the digit keys it was given.
+  window.keys = 0;
+  for (const input of document.querySelectorAll('input[role=spinbutton]')) {
+    const display = input.parentElement.querySelector('.display');
+    const empty = display.textContent;
+    input.addEventListener('keydown', (e) => {
+      if (/^\d$/.test(e.key)) {
+        window.keys += 1;
+        input.value = (input.value + e.key).slice(-input.maxLength);
+      } else if (e.key === 'Backspace') {
+        input.value = '';
+      } else {
+        return;
+      }
+      e.preventDefault();
+      display.textContent = input.value || empty;
+      input.setAttribute('aria-valuetext', input.value || empty);
+    });
+  }
+</script>
+</body>
+</html>

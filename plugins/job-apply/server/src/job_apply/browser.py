@@ -575,18 +575,23 @@ class BrowserSession:
             **({"captcha": data["captcha"]} if data.get("captcha") else {}),
         }
 
-    async def _activate(self, loc: Locator) -> None:
-        """Click a dropdown, or focus it when an overlay covers it (react-select puts its
-        placeholder on top of the input). Checking first avoids waiting out a click timeout."""
-        covered = await loc.evaluate(COVERED_JS)
-        if not covered:
+    async def _click_or_focus(self, loc: Locator) -> bool:
+        """Click a box, or focus it when something drawn over it would take the click
+        (react-select's placeholder, Workday's "MM" over a date's input). Checking first avoids
+        waiting out a click timeout. True when it was clicked."""
+        if not await loc.evaluate(COVERED_JS):
             try:
                 await loc.click(timeout=2500)
-                return
+                return True
             except (PlaywrightError, PlaywrightTimeout):
                 pass
         await loc.focus()
-        await loc.press("ArrowDown")
+        return False
+
+    async def _activate(self, loc: Locator) -> None:
+        """Click a dropdown, or focus it and open its menu by key when an overlay covers it."""
+        if not await self._click_or_focus(loc):
+            await loc.press("ArrowDown")
 
     async def _field_options(self, page: Page, field_id: str, loc: Locator, wait_ms: int) -> list[str]:
         """This field's menu options, polling while the menu renders."""
@@ -1166,8 +1171,10 @@ class BrowserSession:
         if isinstance(value, bool):
             text = "Yes" if value else "No"
         if field.get("role") == "spinbutton":
-            # Date parts (Workday's MM / YYYY) react to keystrokes, not a pasted value.
-            await loc.click(timeout=5000)
+            # Date parts (Workday's MM / YYYY) react to keystrokes, not a pasted value. Workday
+            # draws its "MM" over the input (Intel, live, Oct 2026), and that took the click
+            # until it timed out: a covered input is focused instead, and typed into the same.
+            await self._click_or_focus(loc)
             await loc.fill("")
             await loc.press_sequentially(text, delay=40)
             await loc.evaluate("el => el.blur()")
