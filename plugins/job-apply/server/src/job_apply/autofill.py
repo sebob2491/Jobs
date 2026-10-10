@@ -43,11 +43,12 @@ _COUNTRY_ALIASES = [
     {"south korea", "korea republic of", "republic of korea", "korea"},
     {"taiwan", "taiwan province of china", "chinese taipei"},
 ]
-_PLACEHOLDER_VALUES = re.compile(  # "-- Please Select --" may have a value of its own ("0")
-    r"^(-+\s*)?((please )?(select|choose|pick)( one| an? (option|item|value|answer|response|state|country|year|month))?"
-    r"( (state|country|year|month|from (the )?list|below))?( \.\.\.|\.\.\.|…)?|"
-    r"|make a selection|none selected|no selection)(\s*-+)?$|"
-    r"^(-+|mm/dd/yyyy|mm/yyyy)$",  # "No Selection": SuccessFactors' empty dropdowns
+# "-- Please Select --" may have a value of its own ("0"); iCIMS's dashes are long ("— Make a Selection —")
+_PLACEHOLDER_VALUES = re.compile(
+    r"^([-\u2013\u2014]+\s*)?((please )?(select|choose|pick)( one| an? (option|item|value|answer|response|state|country|"
+    r"year|month))?( (state|country|year|month|from (the )?list|below))?( \.\.\.|\.\.\.|…)?|"
+    r"|make a selection|none selected|no selection)(\s*[-\u2013\u2014]+)?$|"
+    r"^([-\u2013\u2014]+|mm/dd/yyyy|mm/yyyy)$",  # "No Selection": SuccessFactors' empty dropdowns
     re.I,
 )
 # whole words: "Yuma, AZ", "Yearly" and "Yesterday" aren't a yes
@@ -967,6 +968,8 @@ def _travel(prof: Profile, job: dict, label: str = "") -> Any:
 
 
 _CODE_WORDS = r"(the |your )?((country|location|international|area) )?(dial(ing)?|calling|country|location) code"
+# a box's label that names no more than a number (iCIMS's "Number"): its autocomplete says whose
+_BARE_NUMBER = re.compile(r"(number|no)?")
 
 
 def _phone(prof: Profile, job: dict, label: str = "") -> Any:
@@ -1611,6 +1614,11 @@ def resolve_field(field: dict, prof: Profile, job: dict | None = None, file_inpu
     if ans is None and kind in _CHOICE_KINDS and field.get("options") and _INSTRUCTION_ONLY.match(label) \
             and _POINTS_AT_CHOICES.search(label):
         ans = _topic_from_options(field["options"], prof, job)
+    if ans is None and kind == "text" and field.get("autocomplete") and not someone_else and _BARE_NUMBER.fullmatch(label):
+        # a box the site marks as a phone's that says no more than "Number" (iCIMS's, beside its Phone
+        # Country Code): the profile's phone, without its dial code where the site asks for the national number
+        national = field["autocomplete"] != "tel"
+        ans = Answer(_phone(prof, job, "phone number without country code" if national else "phone number"), "phone")
     if ans is None or ans.value is None or ans.value == "":
         return None
 

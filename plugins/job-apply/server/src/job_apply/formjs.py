@@ -381,6 +381,9 @@ EXTRACT_JS = r"""
       id: idOf(el), kind, label, required: isRequired(el, label), value: kind === 'password' ? value : clean(String(value || '')),
     };
     if (tagName === 'input' && type && type !== 'text') f.input_type = type;
+    // a box the site marks as a phone's (iCIMS's "Number" beside its Phone Country Code: tel-national)
+    const autocomplete = (el.getAttribute('autocomplete') || '').trim().toLowerCase().split(/\s+/).pop();
+    if (tagName === 'input' && /^tel(-national|-local)?$/.test(autocomplete)) f.autocomplete = autocomplete;
     const section = sectionOf(el, label);
     if (section && section !== label) f.section = section;
     if (kind === 'text') {

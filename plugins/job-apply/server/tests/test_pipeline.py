@@ -1072,6 +1072,14 @@ def test_what_attests_to_an_application_and_what_doesnt():
     assert not gate({"text": "I Accept"}, {"headings": ["Before you continue"]})  # its words: a talent community
     assert not gate({"text": "I Accept and Apply"}, {"headings": ["Privacy Agreement"]})
     assert not gate({"text": "I Accept"}, {"headings": ["Join our Talent Community", "Privacy"]})
+    # a framed gate by its own frame's headings: not the careers page's around it (Schwab's iCIMS, Oct 10)
+    schwab = {"headings": ["Join our talent network", "Returning candidate?", "Privacy Notice and Sign-In"],
+              "frame_headings": {"": ["Join our talent network", "Returning candidate?"],
+                                 "f2-": ["Privacy Notice and Sign-In"]}, "title": "Login"}
+    assert gate({"id": "f2-qxi4", "text": "I Acknowledge the Privacy Notice"}, schwab)
+    assert not gate({"id": "qxi4", "text": "I Acknowledge the Privacy Notice"}, schwab)  # one beside the sign-up
+    assert not gate({"id": "f2-qxi4", "text": "I Acknowledge the Privacy Notice"},
+                    {**schwab, "frame_headings": {"f2-": ["Join our Talent Community"]}})
     notice = pipeline._terms_notice
     assert notice("Privacy Policy of Example Corp", "Example Corp protects the personal data you give it.") == (True, True)
     assert notice("Before you apply", "Please read and accept our privacy notice.") == (True, False)
@@ -1312,6 +1320,55 @@ def test_the_test_identity_agrees_with_a_forms_button_in_practice_mode(srv, monk
     else:
         assert shown["agreed"] == 1 and shown["first"] == "Sam", shown
     assert r.status != "submitted", (r.status, r.reason)
+
+
+@pytest.mark.parametrize("who", ["on", "test-identity", "off", "practice"])
+def test_icims_privacy_gate_in_its_frame_takes_the_email_and_phone_and_is_acknowledged(srv, monkeypatch, job_apply_home,
+                                                                                         who):
+    """Charles Schwab's iCIMS (live, Oct 10): "Privacy Notice and Sign-In" in iCIMS's frame takes an
+    email, a required Phone Country Code ("— Make a Selection —", read as an answer) and a Number,
+    and its way on is "I Acknowledge the Privacy Notice", which sends them. The careers page around
+    the frame has a "Join our talent network" sign-up of its own, whose heading made the gate look
+    like one: the desk filled the email and left the press to the person. With accept_notices (and
+    as the live check's test identity, in practice mode) it fills the email, the country code and
+    the number from the profile's phone, presses it, and carries on to the sign-in step; with it
+    off, or in any other profile's practice mode, the press stays the person's."""
+    from urllib.parse import parse_qs, urlparse
+
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 1)
+    if who == "test-identity":
+        as_test_identity(monkeypatch, job_apply_home)
+    elif who == "practice":
+        notice_settings(job_apply_home, submit_mode="dry_run")
+    elif who == "off":
+        notice_settings(job_apply_home, accept_notices=False)
+    job = srv.add_job(url=fixture_url("site/icims-privacy-gate.html"), title="Analyst", company="Example Financial")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            [frame] = [f for f in r.page.frames if "in_iframe=1" in f.url]
+            return r, frame.url
+        finally:
+            await applier.stop()
+
+    r, frame_url = run(go())
+    sent = {k: v[0] for k, v in parse_qs(urlparse(frame_url).query).items()}
+    if who in ("off", "practice"):
+        assert (r.status, r.need) == ("needs_you", "stuck"), (r.status, r.reason, r.log)
+        assert "“I Acknowledge the Privacy Notice”" in r.reason, r.reason
+        assert "step" not in sent and not any(line.startswith("agreed") for line in r.log), (sent, r.log)
+        return
+    assert r.log[1:3] == ["filled 3 field(s) on “Privacy Notice and Sign-In”", "agreed to Example Financial's “I "
+                          "Acknowledge the Privacy Notice” for you (settings.accept_notices)"], (r.reason, r.log)
+    assert sent.get("step") == "email", (frame_url, r.reason, r.log)
+    assert (sent.get("css_loginName"), sent.get("countryCodeSelect"), sent.get("css_phoneNumber")) == (
+        "sam.rivera@example.com", "US", "480-555-0123"), sent
+    assert (r.status, r.need) == ("needs_you", "sign_in"), (r.status, r.reason, r.log)
 
 
 def test_with_manage_accounts_a_refused_saved_password_is_reset(srv, monkeypatch, job_apply_home):

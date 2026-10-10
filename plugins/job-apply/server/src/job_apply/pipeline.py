@@ -2698,9 +2698,14 @@ def _terms_gate(button: dict[str, Any], data: dict[str, Any]) -> bool:
     """A page whose way on accepts the employer's privacy notice or terms ("I Acknowledge the
     Privacy Notice"; "I Accept" under a "Privacy Agreement" heading): its button, headings or title
     say so, not a privacy link in its footer. Never one that also sends the application ("I Accept
-    and Apply"), nor one about what's never agreed to (a talent community, an arbitration agreement)."""
+    and Apply"), nor one about what's never agreed to (a talent community, an arbitration agreement).
+    Its headings are those of its own frame: Charles Schwab's careers page around its iCIMS frame
+    has a "Join our talent network" sign-up of its own beside the gate (live, Oct 10)."""
     said = button.get("text") or ""
-    about = " ".join([*(data.get("headings") or []), str(data.get("title") or "")])
+    framed = data.get("frame_headings")
+    frame = re.match(r"f\d+-", str(button.get("id") or ""))
+    own = framed.get(frame.group(0) if frame else "") if isinstance(framed, dict) else None
+    about = " ".join([*(own if own is not None else data.get("headings") or []), str(data.get("title") or "")])
     if _SENDS_TOO.search(said) or _NEVER_AGREED.search(f"{said} {about}"):
         return False
     return bool(_TERMS.search(said) or _TERMS.search(about))

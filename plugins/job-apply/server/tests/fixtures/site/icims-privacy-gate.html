@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Login</title>
+<style>
+  .hidden { display: none; }
+  .dropdown-results { list-style: none; padding: 0; max-height: 200px; overflow-y: auto; }
+  .dropdown-result { cursor: pointer; padding: 2px 4px; }
+</style>
+</head>
+<body>
+<!-- like Charles Schwab's iCIMS (live, Oct 10, 2026): the employer's careers page around an iCIMS frame
+     (?in_iframe=1). The careers page has a talent network sign-up of its own beside the frame. In the
+     frame, "Privacy Notice and Sign-In" takes an email and a phone: a Phone Country Code picker that's
+     required (an iCIMS dropdown: a link with role=combobox showing "— Make a Selection —", a hidden list
+     of countries) and a Number (autocomplete=tel-national). Its way on, the form's own submit, is
+     "I Acknowledge the Privacy Notice", which sends them on to the sign-in step (?step=email here, as a
+     GET, so what was sent is in the frame's address) -->
+<div id="outer" hidden>
+  <nav><a href="#">Search jobs</a> <a href="#">Saved Jobs(0)</a> <a href="#">Returning candidate login</a></nav>
+  <h1>Example Financial</h1>
+  <h2>We can help you find your fit.</h2>
+  <iframe id="icims_content_iframe" title="iCIMS Content iFrame" width="900" height="760"></iframe>
+  <div class="side">
+    <h2>Join our talent network</h2>
+    <a href="#">Sign up</a>
+    <h2>Returning candidate?</h2>
+    <a href="#">Log in</a>
+  </div>
+  <footer><a href="#">Candidate Privacy Notice</a> <a href="#">Cookie Management</a></footer>
+</div>
+
+<div id="gate" hidden>
+  <h1 class="iCIMS_Header">Privacy Notice and Sign-In</h1>
+  <p>In order to proceed with any application, we ask that you please read and acknowledge our
+     <a href="#" target="_blank">Candidate Privacy Notice</a>.</p>
+  <p><strong>Please enter your email below to proceed.</strong></p>
+  <div id="error" role="alert"></div>
+  <form id="enterEmailForm" class="iCIMS_SignIn" method="get">
+    <input type="hidden" name="in_iframe" value="1"><input type="hidden" name="step" value="email">
+    <label for="email">Email</label>
+    <input type="email" autocomplete="email" id="email" name="css_loginName" value="">
+    <div class="country-phone-group">
+      <div class="country-code">
+        <label for="countryCode">Phone Country Code</label>
+        <input type="text" id="selectedCountryCode" name="countryCodeSelect" value="" tabindex="-1" aria-hidden="true"
+               style="display: none;">
+        <a id="dropdown" class="dropdown-select" tabindex="0" aria-expanded="false"
+           aria-label="Country Code — Make a Selection —" aria-required="true" role="combobox"
+           aria-controls="dropdownOptions">
+          <span class="dropdown-text"><span class="dropdown-placeholder">— Make a Selection —</span></span>
+        </a>
+        <div class="dropdown-container hidden" id="dropdownOptions">
+          <input type="text" class="dropdown-search" id="countryCode" name="countryCodeSearch"
+                 placeholder="— Type to Search —">
+          <ul class="dropdown-results" id="dropdownResults" role="listbox">
+            <li class="dropdown-result" role="option" value="-1" aria-label="— Make a Selection —">— Make a Selection —</li>
+            <li class="dropdown-result" role="option" value="AF" aria-label="(+93) Afghanistan">(+93) Afghanistan</li>
+            <li class="dropdown-result" role="option" value="CA" aria-label="(+1) Canada">(+1) Canada</li>
+            <li class="dropdown-result" role="option" value="DO" aria-label="(+1) Dominican Republic">(+1) Dominican Republic</li>
+            <li class="dropdown-result" role="option" value="MX" aria-label="(+52) Mexico">(+52) Mexico</li>
+            <li class="dropdown-result" role="option" value="PR" aria-label="(+1) Puerto Rico">(+1) Puerto Rico</li>
+            <li class="dropdown-result" role="option" value="AE" aria-label="(+971) United Arab Emirates">(+971) United Arab Emirates</li>
+            <li class="dropdown-result" role="option" value="GB" aria-label="(+44) United Kingdom">(+44) United Kingdom</li>
+            <li class="dropdown-result" role="option" value="UM" aria-label="(+1) United States Minor Outlying Islands">(+1) United States Minor Outlying Islands</li>
+            <li class="dropdown-result" role="option" value="US" aria-label="(+1) United States">(+1) United States</li>
+            <li class="dropdown-result" role="option" value="UY" aria-label="(+598) Uruguay">(+598) Uruguay</li>
+          </ul>
+        </div>
+      </div>
+      <div class="phone-number">
+        <label for="phoneNumber">Number</label>
+        <input type="text" autocomplete="tel-national" id="phoneNumber" name="css_phoneNumber" value="">
+      </div>
+    </div>
+    <input id="enterEmailSubmitButton" type="submit" class="iCIMS_PrimaryButton" value="I Acknowledge the Privacy Notice">
+  </form>
+  <div id="hCaptcha-attribution">
+    <span role="button" tabindex="0" aria-label="Close hCaptcha attribution notice">&#x2715;</span>
+    <div>Protected by hCaptcha <a href="#">Privacy</a> | <a href="#">Terms</a></div>
+  </div>
+</div>
+
+<div id="signin" hidden>
+  <h1>Sign In</h1>
+  <form id="password" onsubmit="return false">
+    <label for="pw">Password</label><input type="password" id="pw">
+    <button type="submit">Log In</button>
+  </form>
+</div>
+
+<script>
+  const query = new URLSearchParams(location.search);
+  if (!query.get('in_iframe')) {
+    document.getElementById('outer').hidden = false;
+    document.getElementById('icims_content_iframe').src = location.href.split(/[?#]/)[0] + '?in_iframe=1';
+  } else if (query.get('step') === 'email') {
+    document.getElementById('signin').hidden = false;
+  } else {
+    document.getElementById('gate').hidden = false;
+  }
+  const options = document.getElementById('dropdownOptions');
+  const trigger = document.getElementById('dropdown');
+  function toggleDropdown() {
+    const open = !options.classList.contains('hidden');
+    options.classList.toggle('hidden', open);
+    trigger.setAttribute('aria-expanded', String(!open));
+    if (!open) document.getElementById('countryCode').focus();
+  }
+  trigger.addEventListener('click', toggleDropdown);
+  trigger.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleDropdown(); } });
+  document.getElementById('countryCode').addEventListener('input', (e) => {
+    const typed = e.target.value.toUpperCase();
+    for (const li of document.querySelectorAll('.dropdown-result')) {
+      li.style.display = li.textContent.toUpperCase().includes(typed) ? '' : 'none';
+    }
+  });
+  for (const li of document.querySelectorAll('.dropdown-result')) {
+    li.addEventListener('click', () => {
+      document.querySelector('.dropdown-text').textContent = li.textContent;
+      document.getElementById('selectedCountryCode').value = li.getAttribute('value');
+      toggleDropdown();
+    });
+  }
+  document.addEventListener('click', (e) => {
+    if (!document.querySelector('.country-code').contains(e.target) && !options.classList.contains('hidden')) {
+      options.classList.add('hidden');
+      trigger.setAttribute('aria-expanded', 'false');
+    }
+  });
+  // the site's own check: an email, and the phone's country code
+  document.getElementById('enterEmailForm').addEventListener('submit', (e) => {
+    const code = document.getElementById('selectedCountryCode').value;
+    const missing = !document.getElementById('email').value ? 'Email' : !code || code === '-1' ? 'Phone Country Code' : '';
+    if (missing) {
+      e.preventDefault();
+      document.getElementById('error').textContent = `"${missing}" is required`;
+    }
+  });
+</script>
+</body>
+</html>

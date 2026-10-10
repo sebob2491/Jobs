@@ -607,7 +607,11 @@ class BrowserSession:
         raise KeyError(f"The frame holding {element_id} is gone; call inspect_form again")
 
     async def _extract(self, page: Page) -> dict[str, Any]:
-        result: dict[str, Any] = {"fields": [], "actions": [], "errors": [], "headings": [], "dialogs": []}
+        """Every frame's fields, buttons, errors, headings and dialogs, together; and each frame's own
+        headings under `frame_headings`, by the prefix of its ids ("" for the page itself, "f2-"):
+        what heads a button is in its own frame, not in the careers page around an iCIMS frame."""
+        result: dict[str, Any] = {"fields": [], "actions": [], "errors": [], "headings": [], "dialogs": [],
+                                  "frame_headings": {}}
         for frame in page.frames:
             if frame.is_detached():
                 continue
@@ -617,14 +621,16 @@ class BrowserSession:
                 continue
             if frame is not page.main_frame and (not frame.url or frame.url == "about:blank"):
                 continue
+            prefix = self._frame_prefix(frame, page)
             try:
-                data = await frame.evaluate(EXTRACT_JS, self._frame_prefix(frame, page))
+                data = await frame.evaluate(EXTRACT_JS, prefix)
             except PlaywrightError:
                 continue  # cross-origin frame that refused, or navigated mid-read
             for key in ("fields", "actions", "errors", "headings", "dialogs"):
                 result[key].extend(data.get(key, []))
             if data.get("busy"):  # a loading indicator on show (Workday's dots while a step loads)
                 result["busy"] = True
+            result["frame_headings"][prefix] = list(data.get("headings", []))
         self._fields = {f["id"]: f for f in result["fields"]}
         self._actions = {a["id"]: a for a in result["actions"]}
         return result
@@ -730,20 +736,25 @@ class BrowserSession:
         box is cleared for searching while the menu shows). Focus moves off first; Escape
         follows only if a menu is still open, since it can also close a dialog such as
         Easy Apply; a menu that ignores both (Eightfold's country lists) closes on a click
-        on the page itself."""
-        try:
-            if not await page.evaluate(OPEN_MENU_JS):
-                return
-            await page.evaluate("() => { const a = document.activeElement; if (a && a !== document.body) a.blur(); }")
-            await page.wait_for_timeout(150)
-            if not await page.evaluate(OPEN_MENU_JS):
-                return
-            await page.keyboard.press("Escape")
-            await page.wait_for_timeout(150)
-            if await page.evaluate(OPEN_MENU_JS):
-                await page.evaluate(OUTSIDE_CLICK_JS)
-        except PlaywrightError:
-            pass
+        on the page itself. A framed form's too (iCIMS's Phone Country Code, whose open list
+        shows its search box, which reads as another field)."""
+        for frame in page.frames:
+            if frame is not page.main_frame and (frame.is_detached() or not frame.url or frame.url == "about:blank"
+                                                 or _CAPTCHA_FRAME.match(frame.url)):
+                continue
+            try:
+                if not await frame.evaluate(OPEN_MENU_JS):
+                    continue
+                await frame.evaluate("() => { const a = document.activeElement; if (a && a !== document.body) a.blur(); }")
+                await page.wait_for_timeout(150)
+                if not await frame.evaluate(OPEN_MENU_JS):
+                    continue
+                await page.keyboard.press("Escape")
+                await page.wait_for_timeout(150)
+                if await frame.evaluate(OPEN_MENU_JS):
+                    await frame.evaluate(OUTSIDE_CLICK_JS)
+            except PlaywrightError:
+                continue
 
     async def inspect(self, include_dropdown_options: bool = True) -> dict[str, Any]:
         async with self._lock:

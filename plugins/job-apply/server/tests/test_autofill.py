@@ -766,6 +766,28 @@ def test_placeholder_text_is_no_answer():
     assert plan_autofill([field], _person())["to_fill"][0]["value"] == "No"
 
 
+def test_icims_phone_country_code_and_number_are_answered_from_the_profiles_phone():
+    """Charles Schwab's iCIMS sign-in (live, Oct 10): its Phone Country Code shows "— Make a
+    Selection —" (long dashes), which was read as an answer, so it was never picked; its Number
+    says no more than that, and its autocomplete (tel-national) says it's the phone's. Both come
+    from the profile's phone, the number without its dial code. With no phone in the profile, the
+    Number has no answer; nor has a bare "Number" the site doesn't mark as a phone's."""
+    for shown in ("— Make a Selection —", "– Select –", "—"):
+        assert is_empty_value(shown), shown
+    codes = ["— Make a Selection —", "(+1) Canada", "(+1) United States Minor Outlying Islands", "(+1) United States",
+             "(+44) United Kingdom"]
+    code = f("Country Code — Make a Selection —", "listbox", value="— Make a Selection —", options=codes, required=True)
+    number = f("Number", autocomplete="tel-national")
+    filled = {x["label"]: x["value"] for x in plan_autofill([code, {**number, "id": "2"}], _person())["to_fill"]}
+    assert filled == {"Country Code — Make a Selection —": "(+1) United States", "Number": "480-555-0100"}, filled
+    written_with_code = _person(personal={"first_name": "Sam", "phone": "+1 480-555-0100", "phone_country_code": "+1"})
+    assert resolve_field(number, written_with_code).value == "4805550100"
+    assert resolve_field(f("Number", autocomplete="tel"), written_with_code).value == "+1 480-555-0100"
+    assert resolve_field(number, _person(personal={"first_name": "Sam"})) is None
+    assert resolve_field(f("Number"), _person()) is None
+    assert resolve_field({**number, "section": "Emergency Contact"}, _person()) is None
+
+
 def test_a_phone_written_with_its_code_or_a_code_read_as_a_number():
     """A profile's number written with its dial code ("+1 480-555-0100", "1-480-555-0100"), or a
     dial code YAML read as a number (phone_country_code: +1 is 1), still goes in as asked."""
