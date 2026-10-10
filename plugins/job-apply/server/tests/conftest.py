@@ -1,5 +1,6 @@
 import asyncio
 import os
+import zlib
 from pathlib import Path
 
 import pytest
@@ -112,3 +113,15 @@ async def check_fixture_extraction(server, html: Path, expect: dict) -> list[str
         elif "required" in want and not any(bool(f.get("required")) == want["required"] for f in same):
             problems.append(f"required flag changed for {want['label']!r}")
     return problems
+
+
+def pytest_collection_modifyitems(config, items):
+    """JOB_APPLY_TEST_SHARD=1/2 runs only that part of the suite (CI runs the parts on separate
+    machines). A test's part comes from its id, so every machine and xdist worker agrees."""
+    shard = os.environ.get("JOB_APPLY_TEST_SHARD")
+    if not shard:
+        return
+    part, parts = (int(x) for x in shard.split("/"))
+    mine = [zlib.crc32(item.nodeid.encode()) % parts == part - 1 for item in items]
+    config.hook.pytest_deselected(items=[item for item, keep in zip(items, mine) if not keep])
+    items[:] = [item for item, keep in zip(items, mine) if keep]
