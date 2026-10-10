@@ -26,13 +26,14 @@ picked job waits until Claude has written its resume, then carries on.
 
 It works with any careers site, plus specific handling for the systems common
 at semiconductor companies: Workday (Applied Materials, KLA, Intel, Microchip,
-NXP, TEL, ADI, Onto Innovation, Axcelis, Thermo Fisher), Eightfold (Lam Research, Micron, Infineon),
-SuccessFactors (Edwards, TSMC Arizona, Amkor, Qorvo), Oracle (onsemi, TI), Greenhouse (ASM),
-ApplicantStack (SCREEN), iCIMS (Daifuku), Paycom (Ebara), UKG Pro (Nikon Precision), Infor
+NXP, TEL, ADI, Onto Innovation, Axcelis, Thermo Fisher, Air Liquide, Air Products, Brooks),
+Eightfold (Lam Research, Micron, Infineon), SuccessFactors (Edwards, TSMC Arizona, Amkor, Qorvo,
+Rogers, Pfeiffer Vacuum), Oracle (onsemi, TI), Greenhouse (ASM, Marketech), ApplicantStack
+(SCREEN), iCIMS (Daifuku, Fujifilm), Paycom (Ebara), UKG Pro (Nikon Precision, UCT), Infor
 CloudSuite (Benchmark) and Lever.
-`plugins/job-apply/data/companies.yaml` lists 28 semiconductor employers with
+`plugins/job-apply/data/companies.yaml` lists 36 semiconductor employers with
 Arizona sites, including equipment makers whose field service engineers work at
-Arizona fabs.
+Arizona fabs, and the suppliers whose technicians run the fabs' gases and chemicals.
 
 Looking for other work, or somewhere else? Copy
 [`templates/companies.example.yaml`](plugins/job-apply/templates/companies.example.yaml)

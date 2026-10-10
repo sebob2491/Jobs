@@ -271,6 +271,46 @@ def test_workday_location_filter_outcomes():
     assert _workday_location_facets(no_places, tx) is None  # can't tell, so "N Locations" jobs stay
 
 
+def test_a_workday_place_filter_that_finds_nothing_it_counted_is_read_around():
+    """Brooks Automation's Workday (Oct 2026) counts one opening at "Remote - Arizona" in its own
+    place filter, but asked for that place it answers none: the opening's first place is
+    "Remote - US". Then the openings are read without the filter, and their places checked here."""
+    calls = []
+    base = "https://rbco.wd1.myworkdayjobs.com/wday/cxs/rbco/External"
+    facets = [{"facetParameter": "locationMainGroup", "values": [{"facetParameter": "locations", "values": [
+        {"descriptor": "Remote - Arizona", "id": "loc-az", "count": 1},
+        {"descriptor": "Fremont", "id": "loc-fremont", "count": 2}]}]}]
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        url = str(request.url)
+        if url.endswith("/jobs"):
+            body = json.loads(request.content)
+            calls.append(body["appliedFacets"])
+            if body["appliedFacets"]:
+                return httpx.Response(200, json={"total": 0, "jobPostings": [], "facets": facets})
+            return httpx.Response(200, json={"total": 3, "facets": facets, "jobPostings": [
+                {"title": "Senior Field Service Engineer (Phoenix, AZ Metro)", "externalPath": "/job/Remote---US/SFSE_R7270",
+                 "locationsText": "2 Locations", "bulletFields": ["R7270"]},
+                {"title": "Field Service Engineer", "externalPath": "/job/Fremont/FSE_R1", "locationsText": "Fremont"},
+                {"title": "Field Service Engineer", "externalPath": "/job/Fremont/FSE_R2", "locationsText": "Fremont"}]})
+        calls.append(url)  # (asserted below: an error here is taken for an unreadable posting)
+        return httpx.Response(200, json={"jobPostingInfo": {"location": "Remote - US",
+                                                            "additionalLocations": ["Remote - Arizona"]}})
+
+    async def go():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(answer)) as client:
+            return await search_companies("field service", location="AZ", client=client, companies=[
+                {"name": "RB Co", "search": {"workday": "https://rbco.wd1.myworkdayjobs.com/External"}}])
+    out = asyncio.run(go())
+    assert [(r["title"], r["location"]) for r in out["results"]] == [
+        ("Senior Field Service Engineer (Phoenix, AZ Metro)", "Remote - Arizona; Remote - US")]
+    assert calls == [{}, {"locations": ["loc-az"]}, f"{base}/job/Remote---US/SFSE_R7270"]
+    # a place the filter counts nothing at finds nothing there: no reading around it
+    facets[0]["values"][0]["values"][0]["count"] = 0
+    calls.clear()
+    assert asyncio.run(go())["results"] == [] and calls == [{}, {"locations": ["loc-az"]}]
+
+
 def test_company_filter_and_anywhere():
     out = run_search(query="field service", names=["lever co"], location=None)
     assert {r["company"] for r in out["results"]} == {"Lever Co"}
@@ -1445,6 +1485,47 @@ def test_an_icims_rows_location_type_is_not_its_place():
         '<dd class="iCIMS_JobHeaderData"><span>No</span></dd></div>'
         '<div class="iCIMS_JobHeaderTag"><dt class="iCIMS_JobHeaderField">Category</dt>')
     assert [r.location for r in parse_icims(page, "https://careers-x.icims.com")] == ["US-AZ-Phoenix"]
+
+
+def test_an_icims_row_with_no_place_takes_the_one_the_page_counts():
+    """Fujifilm's portal (Oct 2026) shows no place in its rows, but the page lists each opening
+    for its own counting, with its city and state ("var jobImpressions = [...]")."""
+    from job_apply.search import parse_icims
+
+    page = _icims_results([("Senior Maintenance Technician", "")], 0, 0).replace(
+        "/jobs/00/", "/jobs/37884/").replace("<body>", """<body><script type="text/javascript">
+var jobImpressions = [{"positionType":"Example Materials","location":{"zip":"85212","country":"USA","city":"Mesa",
+"state":"AZ"},"company":"AZ Mesa Office","idRaw":37884,"position":1,"title":"Senior Maintenance Technician"},
+{"location":{"city":"","state":""},"idRaw":5}];
+</script>""")
+    assert [(r.title, r.location) for r in parse_icims(page, "https://careers-x.icims.com")] == [
+        ("Senior Maintenance Technician", "Mesa, AZ")]
+    broken = page.replace('"idRaw":37884', '"idRaw":37884,,')  # unreadable: no place, as before
+    assert [r.location for r in parse_icims(broken, "https://careers-x.icims.com")] == [""]
+    # read as JSON, whatever comes after it or inside its strings
+    for shape in (page.replace('"Senior Maintenance Technician"}', '"Tech [Shift 2];B"}'),
+                  page.replace("}];", "}]</script><script>var x = [1];")):
+        assert [r.location for r in parse_icims(shape, "https://careers-x.icims.com")] == ["Mesa, AZ"]
+
+
+def test_an_icims_search_in_a_state_keeps_what_its_filter_found_there():
+    """A page lists only an opening's first place for its counting; asked for Arizona, the
+    portal's own filter found it there, so an opening first placed in San Jose isn't dropped.
+    A place the row shows itself stays as it is."""
+    from job_apply.search import icims_search
+
+    counting = """<body><script>var jobImpressions = [{"location":{"city":"San Jose","state":"CA"},"idRaw":1},
+{"location":{"city":"Mesa","state":"AZ"},"idRaw":2}];</script>"""
+
+    async def frames_html(url):
+        assert "searchLocation=" in url
+        page = _icims_results([("Field Service Technician", ""), ("Technician", ""), ("Engineer", "US-MI-Novi"),
+                               ("Operator", "")], 0, 0)
+        return [page.replace("/jobs/00/", "/jobs/1/").replace("/jobs/01/", "/jobs/2/").replace("<body>", counting)]
+
+    found = []
+    asyncio.run(icims_search(frames_html, "careers-x", "technician", found, "AZ"))
+    assert [r.location for r in found] == ["San Jose, CA; AZ", "Mesa, AZ", "US-MI-Novi", ""]
 
 
 def test_an_icims_later_page_that_wont_load_keeps_what_was_found():

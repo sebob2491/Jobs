@@ -58,7 +58,7 @@ The desk is a local web page served by this plugin. It does what the `find-jobs`
   or the saved pages. Offer it when the user would rather not show which job they applied for.
 - **Site passwords** stores one password per job system: Workday, SuccessFactors, iCIMS,
   ApplicantStack, UKG Pro or Infor. The page names, by each system, the employers on the
-  user's own lists that use it (on the semiconductor list, Workday has 12 of them; on the
+  user's own lists that use it (on the semiconductor list, Workday has 15 of them; on the
   Phoenix list, 24). Each employer has its own account. With a password saved, the desk signs in by itself
   (pressing the sign-in form's own button, whatever it reads: SuccessFactors' says "Submit")
   and creates the account from Create Account forms (email, password, name and country from

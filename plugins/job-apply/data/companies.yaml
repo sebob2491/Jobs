@@ -186,3 +186,53 @@ companies:
     az_sites: Chandler, Phoenix (lithography field service at Intel's fabs)
     confidence: high          # live check, Oct 2026: a Field Service Engineer opening in Chandler and Phoenix
     search: {ukg: https://recruiting2.ultipro.com/NIK1001NIKON/JobBoard/f11a0b52-5153-4c12-ad2c-b7f3b0a74112/}
+  # Suppliers working inside or beside the fabs: their technicians run the fabs' gases,
+  # chemicals and cleanroom parts, and their equipment makers send field service to them.
+  - name: Marketech International
+    careers_url: https://job-boards.greenhouse.io/marketechinternationalcorporationusa
+    ats: greenhouse           # Marketech runs chemical and gas systems at TSMC's Phoenix fabs
+    az_sites: Phoenix (TSMC site)
+    confidence: high          # live check, Oct 2026: 79 of its 81 openings in Arizona, technicians and trades
+    search: {greenhouse: marketechinternationalcorporationusa}
+  - name: Ultra Clean Holdings (UCT)
+    careers_url: https://www.uct.com/careers
+    ats: ukg
+    az_sites: Phoenix (fab onsite cleaning and chemical-line technicians)
+    confidence: high          # live check, Oct 2026: 49 Phoenix openings, "FAB Onsite Tech" among them
+    search: {ukg: https://recruiting2.ultipro.com/ULT1005UCH/JobBoard/93be8725-1d6c-4162-aba5-e796cf8ea1b5/}
+  - name: Fujifilm
+    careers_url: https://uscareers-fujifilm.icims.com/jobs/search?ss=1
+    ats: icims                # one portal for all of Fujifilm's US companies
+    az_sites: Mesa (Electronic Materials, process chemicals for the fabs), Phoenix (its other companies' field service)
+    confidence: medium        # live check, Oct 2026: manufacturing and maintenance technicians in Mesa
+    search: {icims: uscareers-fujifilm}
+  - name: Rogers Corporation
+    careers_url: https://careers.rogerscorp.com
+    ats: successfactors
+    az_sites: Chandler
+    confidence: high          # live check, Oct 2026: 28 openings, all in Chandler (maintenance technicians among them)
+    search: {successfactors: https://careers.rogerscorp.com}
+  - name: Air Liquide
+    careers_url: https://airliquidehr.wd3.myworkdayjobs.com/AirLiquideExternalCareer
+    ats: workday
+    az_sites: Phoenix (gas plants at TSMC's fabs)
+    confidence: high          # live check, Oct 2026: I&E and gas plant technicians in Phoenix
+    search: {workday: https://airliquidehr.wd3.myworkdayjobs.com/AirLiquideExternalCareer}
+  - name: Air Products
+    careers_url: https://airproducts.wd5.myworkdayjobs.com/AP0001
+    ats: workday
+    az_sites: Chandler (the gas plant at Intel's Ocotillo campus)
+    confidence: high          # live check, Oct 2026: UHP and operations technicians in Chandler
+    search: {workday: https://airproducts.wd5.myworkdayjobs.com/AP0001}
+  - name: Pfeiffer Vacuum
+    careers_url: https://careers.pfeiffer-vacuum.com
+    ats: successfactors
+    az_sites: Tempe (vacuum pump service)
+    confidence: medium        # live check, Oct 2026: a Service Technician in Tempe, a field service engineer based in Arizona
+    search: {successfactors: https://careers.pfeiffer-vacuum.com}
+  - name: Brooks Automation
+    careers_url: https://brooksauto.wd1.myworkdayjobs.com/Brooks_External_Site
+    ats: workday
+    az_sites: Phoenix (field service for wafer-handling robots)
+    confidence: medium        # live check, Oct 2026: a Senior Field Service Engineer for the Phoenix area
+    search: {workday: https://brooksauto.wd1.myworkdayjobs.com/Brooks_External_Site}
