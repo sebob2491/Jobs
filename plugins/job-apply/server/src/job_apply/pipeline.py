@@ -249,6 +249,8 @@ _CLAIMS = re.compile(r"\b(?:authori[sz]ed|sponsor\w*|eligib\w*|citizen\w*|years?
 # and a question about something else beside the agreement ("Have you ever been convicted ...? I certify ...")
 _OTHER_QUESTION = re.compile(r"\b(?:have|do|are|will|can|did|were|would|has|is) you\b(?! (?:agree|accept|acknowledge|"
                              r"consent|certify|understand|have read|read|confirm)\b)", re.I)
+# A bot check's badge on a page ("Protected by hCaptcha", reCAPTCHA's): a press it holds is the person's
+_BOT_BADGE = re.compile(r"\bh ?captcha\b|\brecaptcha\b", re.I)
 # A dialog that mentions personal data but isn't a notice to take in ("could not be saved", "overwrite?")
 _NOT_A_NOTICE = re.compile(r"\berror\b|could ?n[o']t|failed|signed? (?:you )?out|overwrite|existing (?:profile|account)|"
                            r"\bdelete|\bremove|withdraw|expired?\b", re.I)
@@ -1593,6 +1595,18 @@ class Applier:
                     return self._pause(run, "stuck", f"{_site(run, data)} is down for maintenance (it sent the job to "
                                        f"{_bare(data.get('url') or '')}). Try again in a few hours: press Resume once "
                                        "it's back.")
+                here = f"{_page_key(data)} "
+                held = next((g[len(here):] for g in agreed if g.startswith(here)), "")
+                if held:  # an agreement pressed for them on this pass, its button greyed out since
+                    if _BOT_BADGE.search(text) or any(_BOT_BADGE.search(a.get("text") or "") for a in data.get("actions") or []):
+                        # Charles Schwab's iCIMS (live check, Oct 2026): its hCaptcha held the press
+                        return self._pause(run, "stuck", f"I pressed \u201c{held}\u201d for you "
+                                           "(settings.accept_notices), and the page stayed with it greyed out. The page "
+                                           "is protected by a bot check (hCaptcha), which may want you to show you're "
+                                           "not a robot: that's yours. Look at it in the browser window, then press Resume.")
+                    return self._pause(run, "stuck", f"I pressed \u201c{held}\u201d for you (settings.accept_notices), "
+                                       "but the page stayed: it may want a box filled or a check passed first. "
+                                       "Look at it in the browser window, then press Resume.")
                 return self._pause(run, "stuck", "I couldn't find the button that moves this application on. "
                                    "Take it a step further in the browser, then press Resume.")
             if (kind == "form" and action.get("form_fields") == len(data.get("fields") or [])

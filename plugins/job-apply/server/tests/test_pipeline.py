@@ -1371,6 +1371,32 @@ def test_icims_privacy_gate_in_its_frame_takes_the_email_and_phone_and_is_acknow
     assert (r.status, r.need) == ("needs_you", "sign_in"), (r.status, r.reason, r.log)
 
 
+def test_an_agreement_a_bot_check_holds_is_said_to_be_the_persons(srv, monkeypatch, job_apply_home):
+    """Charles Schwab's iCIMS in the live check (Oct 2026): "I Acknowledge the Privacy Notice" was pressed
+    for the person, then went blank and greyed out behind the page's hCaptcha, and the desk said it
+    couldn't find the button. It says what it pressed, and that the bot check is theirs."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 1)
+    job = srv.add_job(url=fixture_url("site/icims-privacy-gate.html") + "?bot", title="Analyst",
+                      company="Example Financial")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert any(line.startswith("agreed to Example Financial's “I Acknowledge the Privacy Notice”") for line in r.log), r.log
+    assert (r.status, r.need) == ("needs_you", "stuck"), (r.status, r.reason, r.log)
+    assert "I pressed “I Acknowledge the Privacy Notice” for you" in r.reason and "(hCaptcha)" in r.reason, r.reason
+    assert "couldn't find the button" not in r.reason
+
+
 def test_with_manage_accounts_a_refused_saved_password_is_reset(srv, monkeypatch, job_apply_home):
     """The email has an account there, and the saved password isn't its password. With the
     inbox watched, the desk asks for a password reset before trying a new account (the owner's
