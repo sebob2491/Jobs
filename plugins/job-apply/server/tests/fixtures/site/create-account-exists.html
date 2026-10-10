@@ -1,0 +1,28 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Create Account</title></head>
+<body>
+<h2>Create Account</h2>
+<form id="create" novalidate>
+  <label for="em">Email Address*</label><input id="em" type="email" required>
+  <label for="pw">Password*</label><input id="pw" type="password" required>
+  <label for="pw2">Verify New Password*</label><input id="pw2" type="password" required>
+  <label><input id="terms" type="checkbox" required> Yes, I have read and consent to the terms and conditions</label>
+  <label><input id="news" type="checkbox"> Send me job alerts and our newsletter</label>
+  <button type="submit">Create Account</button>
+</form>
+<div id="err" role="alert"></div>
+<p>Already have an account? <button type="button" id="back">Sign In</button></p>
+<script>
+  window.created = 0;
+  document.getElementById('create').addEventListener('submit', (e) => {
+    e.preventDefault();
+    window.created += 1;
+    window.news = document.getElementById('news').checked;
+    document.getElementById('err').textContent = document.getElementById('terms').checked
+      ? 'An account with this email address already exists.' : 'Error: accept the terms';
+  });
+  document.getElementById('back').addEventListener('click', () => { location.href = 'signin-forgot.html'; });
+</script>
+</body>
+</html>

@@ -23,6 +23,15 @@ def test_accepting_cookies_is_the_persons_choice():
     assert config.Settings.from_dict({"accept_cookies": True}).accept_cookies is True
 
 
+def test_managing_accounts_is_the_persons_choice_and_never_in_practice_mode():
+    """Off unless set to true, as written; and practice mode, which sends nothing, never makes an
+    account or resets a password."""
+    assert config.Settings.from_dict({}).may_manage_accounts is False
+    assert config.Settings.from_dict({"manage_accounts": "yes"}).may_manage_accounts is False
+    assert config.Settings.from_dict({"manage_accounts": True}).may_manage_accounts is True
+    assert config.Settings.from_dict({"manage_accounts": True, "submit_mode": "dry_run"}).may_manage_accounts is False
+
+
 def test_submit_mode_spellings():
     from job_apply.config import Settings
 

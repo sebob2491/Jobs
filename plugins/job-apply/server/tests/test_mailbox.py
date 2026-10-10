@@ -65,6 +65,17 @@ def test_a_confirmation_link_back_to_the_job_site():
     assert find_link("Nothing to click", ["https://amat.wd1.myworkdayjobs.com/External/jobs"], own) is None
 
 
+def test_a_password_resets_link_is_found_only_when_one_was_asked_for():
+    """settings.manage_accounts asks a site for a password reset: its email's link is the reset
+    page's, never a sign-up confirmation's, and a confirmation search never opens a reset link."""
+    own = lambda url: "myworkdayjobs" in url  # noqa: E731
+    reset = "https://amat.wd1.myworkdayjobs.com/External/passwordReset?token=abc"
+    links = ["https://amat.wd1.myworkdayjobs.com/External/jobs", reset]
+    assert find_link("Reset your password with the link below", links, own, mailbox._RESET_WORDS) == reset
+    assert find_link("Reset your password with the link below", links, own) is None
+    assert find_link("", ["https://evil.example.net/resetPassword?t=1"], own, mailbox._RESET_WORDS) is None
+
+
 def _message(sender: str, subject: str, body: str, html: bool = False) -> bytes:
     kind = "text/html" if html else "text/plain"
     return (f"From: {sender}\r\nTo: sam@gmail.com\r\nSubject: {subject}\r\n"

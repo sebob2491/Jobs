@@ -76,6 +76,28 @@ _TRY_LATER = re.compile(r"\btoo many\b.{0,30}\b(?:attempts|requests|tries)\b|\bt
                         re.I)
 _CREATE_ACCOUNT = re.compile(r"^(?:proceed to |continue to )?(create (?:an |your |a new )?account|sign up|register)"
                              r"(?: now)?[.!]?$", re.I)
+# With settings.manage_accounts: a Create Account form's own button, the boxes on it that agree to
+# the site's terms (required ones, or its terms or privacy policy: never a newsletter's, job alerts'
+# or being contacted), the site saying the email already has an account (said of the account or
+# email, not "Already have an account? Sign in"), the way to a password reset (not a username
+# reminder), the buttons of a reset's pages, and its "we've emailed you a link"
+_MAKE_ACCOUNT = re.compile(r"^(create(?: an| my| your| a new)? account|register|sign ?up|create|submit|continue)$", re.I)
+_TERMS_ONLY = re.compile(r"terms|conditions|privacy (?:policy|notice|statement)", re.I)
+_TERMS_BOX = re.compile(r"terms|conditions|privacy|consent|agree|acknowledge|policy|notice", re.I)
+_NOT_TERMS = re.compile(r"newsletter|marketing|job alerts?|text messages?|\bsms\b|promotion|offers|subscribe|similar jobs|"
+                        r"talent (?:community|network)|keep me|send me|contact(?:ed)? me|be contacted|share my|other (?:roles|"
+                        r"positions|jobs|opportunities)|affiliat", re.I)
+_ACCOUNT_EXISTS = re.compile(r"\b(?:account|e-?mail(?: address)?|user ?name|login)\b[^.?!]{0,40}\balready\b\s*(?:exists|"
+                             r"registered|in use|associated|taken|been (?:registered|used|taken))", re.I)
+_FORGOT = re.compile(r"\b(?:forgot|reset|recover)\b[^.?!]{0,20}\bpassword|trouble (?:signing|logging) in|"
+                     r"can'?t (?:sign|log) in", re.I)
+_RESET_PAGE = re.compile(r"forgot|reset|recover|new password|change (?:your )?password|set (?:a |your )?(?:new )?password", re.I)
+_RESET_ASK = re.compile(r"\b(?:send|reset|request|submit|continue|next|e-?mail me)\b", re.I)
+_RESET_SET = re.compile(r"\b(?:reset|update|change|save|set|submit|continue|confirm)\b", re.I)
+_NOT_A_STEP = re.compile(r"\b(?:back|cancel|sign in|log ?in|return)\b", re.I)
+_NEW_PASSWORD = re.compile(r"\bnew\b|confirm|verify|re-?enter|re-?type|again", re.I)
+_OLD_PASSWORD = re.compile(r"\b(?:current|old|existing|temporary)\b", re.I)
+_RESET_SENT = re.compile(r"\b(?:sent|emailed)\b.{0,80}\b(?:link|e-?mail|instructions)|check your (?:e-?mail|inbox)", re.I)
 # A page about making an account ("Create an account", amazon.jobs after an email it doesn't know)
 _ACCOUNT_PAGE = re.compile(r"\b(create (?:an |your |a new )?account|sign up|register)\b", re.I)
 _ACCOUNT_KINDS = {"text", "email", "tel", "select", "combobox", "listbox"}  # not check boxes or files
@@ -124,6 +146,10 @@ class Run:
     once: dict[str, Any] = field(default_factory=dict)  # answers for this application only, by question
     seen_form: bool = False  # got into the application itself (so a page with only Submit is its review page)
     cookies_asked: set[str] = field(default_factory=set)  # sites paused on once for a cookie banner
+    resetting: bool = False  # asked the site for a password reset (settings.manage_accounts): its link is awaited
+    reset_asked: bool = False  # (once a job: a reset that didn't get in isn't asked for again)
+    reset_from: str = ""  # the sign-in page a reset was asked from: back there once it's done elsewhere
+    reset_waited: bool = False  # paused for the reset email (a Resume after that means it's done)
     try_later: bool = False  # left on a "Try Again Later" page: only the person's Resume goes on from it
     active_at: float = 0.0  # when its paused tab last changed: someone at work in it
     tab_mark: int = 0  # what its paused tab looked like then (address and box values)
@@ -141,7 +167,8 @@ class Run:
     updated: float = field(default_factory=time.time)
 
     def public(self) -> dict[str, Any]:
-        return {k: v for k, v in self.__dict__.items() if k not in ("page", "tab_mark", "cookies_asked")}
+        return {k: v for k, v in self.__dict__.items() if k not in ("page", "tab_mark", "cookies_asked", "resetting",
+                                                                     "reset_asked", "reset_from", "reset_waited")}
 
 
 def classify(data: dict[str, Any], text: str) -> str:
@@ -641,9 +668,9 @@ class Applier:
         # the desk notices and pauses)
         look_back = SHARED_LOOK_BACK if any(t <= run.paused_at for t in others) else mailbox.LOOK_BACK
         try:
-            found = await asyncio.to_thread(mailbox.search, *login, run.paused_at, senders,
-                                            "code" if boxes else "link", own_link, min(later) if later else None,
-                                            look_back)
+            want = "code" if boxes else "reset" if run.resetting else "link"
+            found = await asyncio.to_thread(mailbox.search, *login, run.paused_at, senders, want, own_link,
+                                            min(later) if later else None, look_back)
         except mailbox.MailboxError as e:
             if "app password" in str(e):
                 self._mail_refused = login[1]  # not tried again until a new one is saved
@@ -668,6 +695,12 @@ class Applier:
                     run.mail_done = await self._strict(self._enter_code(run, found))
                 finally:
                     self._give_back_tools(held)
+            elif found.kind == "reset":  # its page sets the new password: opened in the job's own tab
+                if run.page is None or run.page.is_closed():
+                    return
+                await run.page.goto(found.value, wait_until="domcontentloaded", timeout=45000)
+                run.mail_done = True
+                self._log(run, f"opened the password reset link from your email (sent from {found.sender})")
             else:
                 await self.srv.browser.visit(found.value)
                 run.mail_done = True
@@ -850,17 +883,54 @@ class Applier:
                 continue
             if kind == "sign_in" and _account_and_application(data):
                 return await self._apply_with_account(run, data)
+            manage = (kind in ("sign_in", "page", "email_code") or run.resetting) and _may_manage_accounts()
+            if kind == "form":
+                run.resetting = False  # past the sign-in, however the password was set
+            if manage and run.resetting and kind in ("page", "email_code") and _RESET_SENT.search(text):
+                if not run.reset_waited:
+                    return await self._await_reset_email(run, data)
+                # Resume pressed on it: the person set the password from the email themselves (or the
+                # inbox wait ran out), so back to the sign-in page, where the saved password is tried again
+                run.resetting = False
+                if run.reset_from and run.page is not None:
+                    await run.page.goto(run.reset_from, wait_until="domcontentloaded", timeout=45000)
+                    sign_ins.clear()
+                    continue
+            if kind == "sign_in" and manage and run.resetting:
+                done_reset = await self._set_new_password(run, data, text)
+                if done_reset == "set":
+                    sign_ins.clear()  # the saved password is the site's now: signed in with afresh
+                    continue
+                if done_reset == "paused":
+                    return
+            said_exists = " ".join([*(data.get("errors") or []), text[:3000]])
+            if kind == "sign_in" and manage and sign_ins.get("made") and _ACCOUNT_EXISTS.search(said_exists):
+                # the email has an account there already, and the saved password didn't sign in to it
+                if await self._ask_for_reset(run, data, sign_ins):
+                    return
             if kind == "sign_in":
                 done = await self._sign_in(run, data, sign_ins)
                 if done in ("email_step", "submitted", "create_account"):
                     sign_ins[done] = sign_ins.get(done, 0) + 1
                     continue
+                if done == "refused" and manage and await self._ask_for_reset(run, data, sign_ins):
+                    return
                 await self._bring_forward(run)
                 if done in ("prefilled", "filled"):
                     data, _ = await self._look()
                     run.page_info = _page_info(data)  # the page as filled
                 if done == "prefilled" and _account_and_application(data):
                     return await self._apply_with_account(run, data)  # its application was drawn after all
+                if done == "prefilled" and manage and not sign_ins.get("made") and await self._make_account(run, data):
+                    # a new account: its sign-in (where the site asks for one) is tried afresh
+                    sign_ins.pop("submitted", None), sign_ins.pop("create_account", None)
+                    sign_ins["made"] = 1
+                    continue
+                if done == "prefilled" and sign_ins.get("made"):
+                    return self._pause(run, "sign_in", f"I pressed {_site(run, data)}'s Create Account with your details "
+                                       "and saved password, and it wants something more: see the page in the browser "
+                                       "window (a picture code, or a password it doesn't accept). Finish it there; the "
+                                       "desk carries on after that.", seen=data)
                 if done == "prefilled":
                     first = (" Your saved password didn't sign in there, so this is probably your first application "
                              "with them; if you do have an account, sign in instead." if sign_ins.get("create_account") else "")
@@ -1006,11 +1076,12 @@ class Applier:
                                        "something in your name, so it's yours to press. Read it and press it in the "
                                        "browser window if you're happy to, then press Resume.")
                 if _account_step(data):
-                    # the person's to do (the desk never makes an account), and theirs until they're off the
-                    # account site: its next steps (name, email code) read as forms, but aren't the application
+                    # the person's to do (an account site's steps aren't a Create Account form the desk knows,
+                    # even with settings.manage_accounts), and theirs until they're off the account site: its
+                    # next steps (name, email code) read as forms, but aren't the application
                     await self._bring_forward(run)
-                    self._pause(run, "sign_in", f"{_site(run, data)} wants an account for this email, and the desk "
-                                "never makes one: create it (or sign in with the email you use there) in the browser "
+                    self._pause(run, "sign_in", f"{_site(run, data)} wants an account for this email, and its account "
+                                "steps are yours: create it (or sign in with the email you use there) in the browser "
                                 "window; the desk carries on by itself after that.", seen=data)
                     run.hold_host = run.paused_host
                     return
@@ -1226,6 +1297,168 @@ class Applier:
                         "(in a list, the closest choice), then press Resume.")
         return " ".join(said), rest
 
+    @staticmethod
+    def _account_button(actions: list[dict[str, Any]], pattern: re.Pattern[str], full: bool = True) -> dict[str, Any] | None:
+        """A page's own button for an account step: not a cookie banner's, a footer box's, or a
+        sign-in with another site's account."""
+        return next((a for a in actions if not a.get("disabled") and not a.get("cookie") and not a.get("aside")
+                     and not _SOCIAL.search(a["text"]) and (pattern.match if full else pattern.search)(final_text(a["text"]).strip())
+                     and not (not full and _NOT_A_STEP.search(a["text"]))), None)
+
+    async def _make_account(self, run: Run, data: dict[str, Any]) -> bool:
+        """settings.manage_accounts: tick a filled Create Account form's terms boxes (the required
+        ones, or its terms or privacy policy: never a newsletter's or job alerts') and press the
+        form's own button, after its password boxes. Not with a CAPTCHA on the page: that's the
+        person's. True when it was pressed."""
+        if data.get("captcha") or data.get("challenge"):
+            return False
+        srv = self.srv
+        boxes = [f for f in data.get("fields") or [] if f.get("kind") == "checkbox" and is_empty_value(f.get("value"))
+                 and _TERMS_BOX.search(f.get("label") or "") and not _NOT_TERMS.search(f.get("label") or "")
+                 and (f.get("required") or _TERMS_ONLY.search(f.get("label") or ""))]
+        own = [a for a in data.get("actions") or [] if a.get("account_form") or a.get("form_submit") and a.get("after_password")]
+        button = self._account_button(own, _MAKE_ACCOUNT)
+        if button is None:
+            return False
+        if boxes and not (await srv.fill_form([{"id": f["id"], "value": True} for f in boxes])).get("ok"):
+            return False
+        try:
+            await srv.browser.click(button["id"], allow_submit=True)  # (the form's own button: it creates the account)
+        except Exception:
+            return False
+        self._log(run, f"created your account on {_site(run, data)} with your saved password, as your settings allow"
+                  + (" (and agreed to its terms)" if boxes else ""))
+        return True
+
+    async def _ask_for_reset(self, run: Run, data: dict[str, Any], tried: dict[str, int]) -> bool:
+        """settings.manage_accounts: the saved password didn't sign in to an account there, so ask
+        the site to email a password reset (its "Forgot password?", the profile's email), and wait
+        for the email: its link is opened in the job's tab, and the saved password set as the new
+        one (_set_new_password). Once a job. True when it paused: once it has gone anywhere, it
+        always does (with what it got to), so the page is never driven as an application."""
+        if run.reset_asked:
+            return False
+        run.reset_asked = True
+        srv = self.srv
+        site = _site(run, data)
+
+        def forgot_in(page: dict[str, Any]) -> dict[str, Any] | None:
+            return next((a for a in page.get("actions") or [] if not a.get("disabled") and not a.get("cookie")
+                         and _FORGOT.search(a["text"])), None)
+
+        async def stop(why: str, page: dict[str, Any]) -> bool:
+            run.resetting = False
+            await self._bring_forward(run)
+            self._pause(run, "sign_in", f"Your saved password didn't sign in on {site}, and I {why}. Finish it in the "
+                        "browser window (reset the password to the one you saved on the desk, or sign in); the desk "
+                        "carries on after that.", seen=page)
+            return True
+
+        async def press(action: dict[str, Any], allow_submit: bool = False) -> bool:
+            try:
+                out = await (srv.browser.click(action["id"], allow_submit=True) if allow_submit else srv.click(action["id"]))
+            except Exception:  # gone (a page drawn again after the failed sign-in) or won't take a click
+                return False
+            return out.get("clicked") is not False
+
+        forgot = forgot_in(data)
+        if forgot is None:  # on the Create Account form: back to the sign-in page, which has the way to a reset
+            # (its "Sign In" there is a link or a plain button: the form's own button creates the account)
+            back = next((a for a in data.get("actions") or [] if not a.get("disabled") and not a.get("form_submit")
+                         and not a.get("account_form") and not a.get("cookie")
+                         and _SIGN_IN_ACTION.match(final_text(a["text"]).strip())), None)
+            if back is None:
+                return False
+            if not await press(back):
+                return False
+            data, _ = await self._look()
+            forgot = forgot_in(data)
+            if forgot is None:
+                return await stop("couldn't find its way to a password reset", data)
+        run.reset_from = data.get("url") or ""
+        if not await press(forgot):
+            return await stop("couldn't open its password reset", data)
+        data, text = await self._look()
+        address = config.Profile.load().get("personal.email")
+        boxes = [f for f in data.get("fields") or [] if f.get("kind") in ("text", "email")
+                 and re.search(r"e-?mail|user ?name|login", f.get("label") or "", re.I)]
+        if (not _RESET_PAGE.search(" ".join([text[:2000], *(data.get("headings") or [])])) or not boxes or not address
+                or any(f.get("kind") == "password" for f in data.get("fields") or [])):
+            return await stop("opened its password reset, which isn't one I can fill in", data)
+        if not (await srv.fill_form([{"id": boxes[0]["id"], "value": address}])).get("ok"):
+            return await stop("opened its password reset, which didn't take your email", data)
+        if data.get("captcha") or data.get("challenge"):
+            run.resetting = True
+            await self._bring_forward(run)
+            self._pause(run, "bot_check", f"I opened {site}'s password reset for your saved password, which didn't sign "
+                        "in, and filled in your email. Solve its picture code and press its button; the desk watches your "
+                        "inbox for the reset email and sets your saved password as the new one.", seen=data)
+            return True
+        button = self._account_button(data.get("actions") or [], _RESET_ASK, full=False)
+        if button is None or not await press(button, allow_submit=True):  # (asks for the email: sends no application)
+            return await stop("filled in your email on its password reset, but couldn't press its button", data)
+        data, text = await self._look()
+        if data.get("errors") and not _RESET_SENT.search(text):  # "No account found for this email"
+            return await stop(f"asked for a password reset, and it says \u201c{data['errors'][0][:160]}\u201d", data)
+        run.resetting = True
+        self._log(run, f"your saved password didn't sign in on {site}, so I asked it to email a password reset, as your "
+                  "settings allow")
+        await self._await_reset_email(run, data)
+        return True
+
+    async def _await_reset_email(self, run: Run, data: dict[str, Any]) -> None:
+        await self._bring_forward(run)
+        watching = (" The desk is watching your inbox for it, and sets your saved password as the new one."
+                    if self.mail_login() else " Open the link in the email, set the password you saved on the desk as "
+                    "the new one, then press Resume: the desk signs in with it (an email app password saved on the desk "
+                    "lets it do all this itself).")
+        run.reset_waited = True
+        self._pause(run, "email_code", f"{_site(run, data)} is emailing you a password reset: your saved password didn't "
+                    "sign in there." + watching, seen=data)
+
+    async def _set_new_password(self, run: Run, data: dict[str, Any], text: str) -> str | None:
+        """A password reset's page (opened from its email): the saved password in its new-password
+        boxes, and its button pressed. "set" when the site took it, "paused" when it's the
+        person's (a picture code, or a password the site turned down); None for any other page."""
+        srv = self.srv
+        fields = [f for f in data.get("fields") or [] if not re.match(r"f\d+-", str(f.get("id")))]
+        passwords = [f for f in fields if f.get("kind") == "password"]
+        named = [f for f in fields if f.get("kind") in ("text", "email")
+                 and re.search(r"e-?mail|user ?name|login", f.get("label") or "", re.I)]
+        new = len(passwords) >= 2 or any(_NEW_PASSWORD.search(f.get("label") or "") for f in passwords)
+        if (not passwords or named or not new or any(_OLD_PASSWORD.search(f.get("label") or "") for f in passwords)
+                or not _RESET_PAGE.search(" ".join([text[:2000], *(data.get("headings") or [])]))):
+            return None  # not a reset's page (a Create Account form asks for the email; a change asks the old one)
+        secret = password_for(data["url"])
+        if secret is None or _secret(secret) is None:
+            return None
+        for box in passwords:
+            if not (await srv.fill_secret(box["id"], secret)).get("ok"):
+                return None
+        site = _site(run, data)
+        if data.get("captcha") or data.get("challenge"):
+            await self._bring_forward(run)
+            self._pause(run, "bot_check", f"I put your saved password in {site}'s new-password boxes. Solve its picture "
+                        "code and press its button; the desk carries on after that.", seen=data)
+            return "paused"
+        button = self._account_button(data.get("actions") or [], _RESET_SET, full=False)
+        try:
+            pressed = button is not None and (await srv.browser.click(button["id"], allow_submit=True)).get("clicked") is not False
+        except Exception:
+            pressed = False
+        after, after_text = await self._look()
+        still = [f for f in after.get("fields") or [] if f.get("kind") == "password" and not named]
+        if not pressed or (len(still) >= 2 and _RESET_PAGE.search(after_text[:2000]) and after.get("errors")):
+            await self._bring_forward(run)
+            said = f" It says \u201c{after['errors'][0][:160]}\u201d." if after.get("errors") else ""
+            self._pause(run, "sign_in", f"I put your saved password in {site}'s new-password boxes, and it didn't take it "
+                        f"as the new one.{said} Set it there (or another, and save that one on the desk), then sign in; "
+                        "the desk carries on after that.", seen=after)
+            return "paused"
+        run.resetting = False
+        self._log(run, f"set your saved password as {site}'s new one")
+        return "set"
+
     async def _sign_up_pause(self, run: Run, data: dict[str, Any], button: dict[str, Any]) -> None:
         await self._bring_forward(run)
         self._pause(run, "stuck", f"{_site(run, data)} asks for your name and email first, and its "
@@ -1277,8 +1510,9 @@ class Applier:
         - "create_account": that didn't get in, most likely because there's no account
           there yet, so it opened the site's Create Account form;
         - "prefilled": filled in a Create Account form, leaving its terms and button to
-          the person;
-        - "filled": filled in a sign-in form whose button it doesn't recognise.
+          the person (or to _make_account, with settings.manage_accounts);
+        - "filled": filled in a sign-in form whose button it doesn't recognise;
+        - "refused": the saved password didn't sign in, and there's no Create Account to try.
 
         None when there's nothing (more) to do. `tried` counts what this pass already did;
         `details=False` leaves a Create Account form's other boxes as they are."""
@@ -1310,7 +1544,7 @@ class Applier:
             # way there gets a second press: Amkor's sign-in page reloads after a failed sign-in,
             # and a click on its "Create an account" made before that has finished is lost.
             if create is None or tried.get("create_account", 0) >= 2:
-                return None
+                return "refused"
             try:
                 await srv.click(create["id"])
             except KeyError:
@@ -1335,7 +1569,7 @@ class Applier:
         for box in passwords:
             if not (await srv.fill_secret(box["id"], secret)).get("ok"):
                 return None  # it didn't go in: say nothing about a saved password
-        if new_account:  # accepting the site's terms, and creating the account, are the person's call
+        if new_account:  # its terms and button: the person's, unless they let the desk (_make_account)
             self._log(run, "filled the Create Account form with your details and saved password")
             return "prefilled"
         # The form's own button, after its password box: a "Sign In" in the site's header opens
@@ -1614,6 +1848,13 @@ def _password_tip(url: str) -> str:
     system = DESK_PASSWORDS[name]
     article = "an" if system[0].lower() in "aeio" else "a"  # an iCIMS, an Infor; a UKG Pro, a Workday
     return f" Save {article} {system} password on the desk and it fills these in for you next time."
+
+
+def _may_manage_accounts() -> bool:
+    try:
+        return config.Profile.load().settings.may_manage_accounts
+    except ValueError:  # a profile with a typo allows nothing
+        return False
 
 
 def _secret(name: str) -> str | None:
