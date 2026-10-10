@@ -1399,11 +1399,16 @@ _FIRST_STEP = [{"kind": "text", "label": "First name*", "required": True, "value
      "Thank you for your application. Please continue to the questions. Continue", True),
     ({"fields": [], "actions": [], "headings": ["Application Questions"]},
      "Application Questions\n\nThank you for your application. Please complete the below questions.", True),
-    # but going on to more jobs, or to something optional, is what a page says once the application went
+    # but going on to more jobs is what a page says once the application went
     ({"fields": [], "actions": [], "headings": ["Thank you"]},
      "Thank you for applying! Please continue to browse our open positions.", False),
     ({"fields": [], "actions": [], "headings": ["Thank you"]},
-     "Your application has been submitted. Please complete the following optional survey.", False),
+     "Your application has been submitted. Please continue to explore other opportunities with us.", False),
+    # and an application's own voluntary or optional steps are still the application
+    ({"fields": [], "actions": [], "headings": ["Voluntary Disclosures"]},
+     "Thank you for your application. Please complete the voluntary self-identification questions below.", True),
+    ({"fields": [], "actions": [], "headings": ["Additional Questions"]},
+     "Thank you for your application. Please complete the optional questions below.", True),
 ])
 def test_what_says_a_page_is_partway_through_the_form(data, text, mid):
     assert pipeline._mid_application(data, text) is mid

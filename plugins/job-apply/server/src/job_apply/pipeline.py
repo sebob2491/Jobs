@@ -2431,16 +2431,17 @@ def _step_beside(data: dict[str, Any]) -> bool:
     return any(_FORWARD.match(final_text(a.get("text") or "")) and (f or not own) for a, f in zip(actions, framed))
 
 
-# What a page that has the application asks a person to go on to after it: more jobs, or something
-# optional ("Please continue to browse our open positions", "Please complete the following optional survey")
-_AFTER_SENT = re.compile(r"\b(?:browse|explore|search|view|see|look at|optional|survey|feedback|voluntary|"
-                         r"(?:open|other|more|similar) (?:positions|jobs|roles|opportunities))\b", re.I)
+# What a page that has the application asks a person to go on to after it: more jobs ("Please continue
+# to browse our open positions"). Not "optional" or "voluntary" questions, nor a survey: an application's
+# own steps say those before its Submit ("Please complete the voluntary self-identification questions below")
+_AFTER_SENT = re.compile(r"\b(?:browse|explore|search|look at|view (?:our|all|other|more))\b|"
+                         r"\b(?:open|other|more|similar) (?:positions|jobs|roles|opportunities)\b", re.I)
 
 
 def _goes_on(text: str) -> bool:
     """Does a page thank the person for applying and then ask them to go on with it, in the same
     sentence or the next ("Thank you for your application. Please complete the below questions.")?
-    Not on to more jobs or something optional, as a page says once the application has gone."""
+    Not on to more jobs, as a page says once the application has gone."""
     flat = re.sub(r"\s+", " ", (text or "").replace("\u2019", "'").replace("\xa0", " "))
     for m in CONFIRMATION_RE.finditer(flat):
         after = " ".join(re.split(r"(?<=[.!?]) ", flat[m.end():], maxsplit=2)[:2])
