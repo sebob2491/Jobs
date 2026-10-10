@@ -966,7 +966,9 @@ _CONTACT_RULES = {"email", "first_name", "middle_name", "last_name", "preferred_
                   "county", "state", "country"}
 
 # Getters that read the question itself, not only the profile
-_YES_NO_KINDS = {"select", "listbox", "combobox", "radio_group", "text"}
+# A background question's answer is a choice: a text box with its words is a follow-up ("If yes,
+# list the names of relatives employed here", "Branch of military service"), never "No"
+_YES_NO_KINDS = {"select", "listbox", "combobox", "radio_group"}
 
 
 def _reads_question(getter: Getter) -> bool:

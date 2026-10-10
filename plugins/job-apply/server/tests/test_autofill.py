@@ -1187,6 +1187,8 @@ def test_recurring_background_questions_are_answered_from_a_no_in_the_profile():
     assert answer("Are you an immediate family member (parent, child, sibling, spouse/partner) of a partner at "
                   "Ernst & Young who is based out of the San Jose office?") is None
     assert answer("Are you willing to sign a non-compete agreement?") is None
+    for follow_up in ("If yes, list the names of relatives employed here", "Branch of military service"):
+        assert answer(follow_up, kind="text", options=None) is None, follow_up
     yes = Profile({"background": {**no, "government_employee": True, "outside_work": True}})
     assert answer("Have you been employed by the U.S. Government in the last two years?", yes) is None
     assert resolve_field(plans, yes, job) is None
