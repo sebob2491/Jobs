@@ -126,6 +126,7 @@ _STEP = re.compile(r"^(save (?:and|&) continue|continue|next|next step|review|re
                    r"review application|proceed|go to next step|start)$", re.I)
 _FORWARD = re.compile(r"^(save (?:and|&) continue|continue|next|next step|review|review application|proceed|"
                       r"go to next step)$", re.I)
+_STEP_OF = re.compile(r"\bstep (\d+) of (\d+)\b", re.I)  # a progress bar's place: "current step 3 of 6"
 _SIGN_IN_STEP = re.compile(r"create account\s*/\s*sign in|sign in\s*/\s*create account", re.I)  # Workday's step name
 _ENTRY = re.compile(r"^(apply manually|apply now|apply online|apply|easy apply|quick apply|"
                     r"apply for (?:this|the) (?:job|position|role)(?: online)?|"
@@ -880,10 +881,11 @@ class Applier:
             run.page_info = _page_info(data)
             run.url = data["url"]
             run.page = srv.browser.current_tab or run.page
-            if run.seen_form and not pressed and (gone := sorted(confirmations(text))):
+            if run.seen_form and not pressed and (gone := sorted(confirmations(text))) and not _mid_application(data):
                 # Back on a job the desk filled in, before it has pressed anything: the person pressed the
                 # site's own Submit and then Resume (Workday's Candidate Home shows "Application Submitted").
-                # It went, so it's marked applied and never filled in again
+                # It went, so it's marked applied and never filled in again. (Not a step of the form that
+                # thanks them: "Thank you for your application. Please complete the below questions.")
                 srv.tracker().update(run.job_id, status="applied", note="submitted on the site")
                 run.status, run.need, run.blocking, run.left = "submitted", "", False, False
                 run.reason = f"Submitted: {_site(run, data)} says \u201c{gone[0]}\u201d."
@@ -2017,6 +2019,15 @@ def _secret(name: str) -> str | None:
 def _empty_required(data: dict[str, Any]) -> list[dict[str, Any]]:
     return [f for f in data.get("fields") or [] if f.get("required") and not f.get("disabled")
             and f.get("kind") != "password" and is_empty_value(f.get("value"))]
+
+
+def _mid_application(data: dict[str, Any]) -> bool:
+    """A page partway through the form, whatever its words: a required box still empty, a button on
+    to the next step, or a progress bar short of its last step (Workday's "current step 3 of 6")."""
+    if _empty_required(data) or any(_FORWARD.match(final_text(a.get("text") or "")) and not a.get("disabled")
+                                    for a in data.get("actions") or []):
+        return True
+    return any(int(m[1]) < int(m[2]) for h in data.get("headings") or [] for m in _STEP_OF.finditer(h))
 
 
 def _new_required(before: dict[str, Any], after: dict[str, Any]) -> bool:

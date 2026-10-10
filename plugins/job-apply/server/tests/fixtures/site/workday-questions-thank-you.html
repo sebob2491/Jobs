@@ -1,0 +1,23 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Apply</title></head>
+<body>
+<!-- A Workday site's Application Questions step (live, Oct 2026): its intro opens with "Thank you
+     for your application", three steps before the review page. Nothing has been sent. -->
+<ol aria-label="progress">
+  <li>My Information</li><li>My Experience</li>
+  <li data-automation-id="progressBarActiveStep">current step 3 of 6 Application Questions</li>
+  <li>Voluntary Disclosures</li><li>Self Identify</li><li>Review</li>
+</ol>
+<h2>Application Questions</h2>
+<p>Thank you for your application. Please complete the below questions.</p>
+<form onsubmit="return false">
+  <label for="q1">1) As of today's date, are you 18 years of age or older?*</label>
+  <select id="q1" required><option value="">Select One</option><option>Yes</option><option>No</option></select>
+  <label for="q2">2) Have you ever held a security clearance with a foreign government?*</label>
+  <select id="q2" required><option value="">Select One</option><option>Yes</option><option>No</option></select>
+  <button type="button">Back</button>
+  <button type="button">Save and Continue</button>
+</form>
+</body>
+</html>

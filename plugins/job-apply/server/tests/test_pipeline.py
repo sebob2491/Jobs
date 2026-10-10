@@ -1072,6 +1072,45 @@ def test_an_application_the_person_submitted_on_the_site_is_marked_applied(srv, 
     assert srv.tracker().get(job["id"])["status"] == "applied"
 
 
+def test_a_form_page_that_thanks_the_person_isnt_taken_for_a_confirmation(srv, monkeypatch):
+    """A Workday site's Application Questions step (step 3 of 6) opens with "Thank you for your
+    application. Please complete the below questions." The desk, back on the job after the person
+    moved on in the browser, marked it Submitted (live, Oct 2026). A page with required boxes still
+    empty, a button on to the next step, or a progress bar short of its last step is still the form."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    job = srv.add_job(url=fixture_url("site/workday-questions-thank-you.html"), title="Equipment Technician",
+                      company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        r = applier.enqueue(job["id"])
+        r.seen_form = True  # (filled earlier steps: the person pressed Resume)
+        applier.start()
+        try:
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert r.status != "submitted" and r.need == "questions", (r.status, r.need, r.reason, r.log)
+    assert [q["label"] for q in r.questions] == ["2) Have you ever held a security clearance with a foreign government?*"], \
+        r.questions
+    assert srv.tracker().get(job["id"])["status"] != "applied"
+
+
+@pytest.mark.parametrize("data, mid", [
+    ({"fields": [{"kind": "select", "label": "Q", "required": True, "value": ""}], "actions": []}, True),
+    ({"fields": [], "actions": [{"text": "Save and Continue"}]}, True),
+    ({"fields": [], "actions": [], "headings": ["current step 3 of 6 Application Questions"]}, True),
+    ({"fields": [], "actions": [], "headings": ["current step 6 of 6 Review"]}, False),
+    ({"fields": [], "actions": [{"text": "Search for More Jobs"}, {"text": "Return to Home"}],
+      "headings": ["Application Submitted"]}, False),
+])
+def test_what_says_a_page_is_partway_through_the_form(data, mid):
+    assert pipeline._mid_application(data) is mid
+
+
 def watched_inbox(monkeypatch, reset_link=None):
     """An email app password on the desk, and an inbox that holds `reset_link` (or nothing)."""
     monkeypatch.setattr(pipeline, "MAIL_POLL_SECONDS", 0)
