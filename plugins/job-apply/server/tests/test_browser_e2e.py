@@ -293,6 +293,28 @@ def test_dry_run_never_submits(srv, monkeypatch):
     assert "Thank you" not in run(srv.page_text())
 
 
+def test_a_sign_in_forms_submit_may_be_clicked_and_no_other(srv, monkeypatch):
+    """SuccessFactors' sign-in button reads "Submit": in a form holding only the email and
+    password it sends the sign-in, so it may be clicked, practice mode included. A "Submit"
+    with any other box beside the password stays refused."""
+    from job_apply.browser import SubmitBlocked
+
+    monkeypatch.setenv("JOB_APPLY_NEVER_SUBMIT", "1")
+    run(srv.browser.goto(fixture_url("site/signin-submit.html") + "?extra"))
+    form = run(srv.inspect_form())
+    submit = next(a for a in form["actions"] if a["text"] == "Submit")
+    assert not submit.get("sign_in_form")
+    with pytest.raises(SubmitBlocked):
+        run(srv.browser.click(submit["id"]))
+    assert run(run(srv.browser.page()).evaluate("() => window.signInTries")) == 0
+    run(srv.browser.goto(fixture_url("site/signin-submit.html")))
+    form = run(srv.inspect_form())
+    submit = next(a for a in form["actions"] if a["text"] == "Submit")
+    assert submit.get("sign_in_form") and submit.get("is_submit")
+    run(srv.browser.click(submit["id"]))
+    assert run(run(srv.browser.page()).evaluate("() => window.signInTries")) == 1
+
+
 def test_final_apply_button_honeypot_and_enter(srv, monkeypatch):
     job = srv.add_job(url=fixture_url("apply_button_form.html"), title="Tech", company="Example Fab")["job"]
     run(srv.open_application(job_id=job["id"]))

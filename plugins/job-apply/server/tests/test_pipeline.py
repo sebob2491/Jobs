@@ -843,10 +843,10 @@ def test_in_practice_mode_the_desk_never_creates_an_account(srv, monkeypatch, jo
 
 
 def test_with_manage_accounts_a_refused_saved_password_is_reset(srv, monkeypatch, job_apply_home):
-    """The email has an account there, and the saved password isn't its password: the desk's
-    new account is refused ("already exists"), so it asks for a password reset, opens the
-    emailed link in the job's tab, sets the saved password as the new one, and signs in. A
-    newsletter box on the account form is left unticked."""
+    """The email has an account there, and the saved password isn't its password. With the
+    inbox watched, the desk asks for a password reset before trying a new account (the owner's
+    choice), opens the emailed link in the job's tab, sets the saved password as the new one,
+    and signs in."""
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
     monkeypatch.setattr(pipeline, "MAIL_POLL_SECONDS", 0)
     saved_password(monkeypatch)
@@ -881,6 +881,7 @@ def test_with_manage_accounts_a_refused_saved_password_is_reset(srv, monkeypatch
     assert "set your saved password as" in log, r.log
     assert r.seen_form and not any(w in r.url for w in ("signin", "reset", "forgot")), (r.url, r.reason, r.log)
     assert "reset" in wanted
+    assert "opened Create Account" not in log and "created your account" not in log, log
 
 
 def test_a_new_account_is_signed_in_with_and_only_its_own_form_is_sent(srv, monkeypatch, job_apply_home):
@@ -973,6 +974,175 @@ def test_without_the_inbox_resume_after_a_reset_signs_in_again(srv, monkeypatch,
     r = run(go())
     assert sum(line.startswith("pressed \u201cSign In\u201d") for line in r.log) == 2, r.log
     assert r.log.count(next(line for line in r.log if "is emailing you a password reset" in line)) == 1, r.log
+
+
+def test_a_sign_in_forms_submit_is_pressed(srv, monkeypatch):
+    """SuccessFactors' sign-in (SAP's Gigya) calls its button "Submit": in a form that holds
+    only the email and password, it's pressed like a "Sign In", and the application opens."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    saved_password(monkeypatch)
+    job = srv.add_job(url=fixture_url("site/signin-submit.html") + "?pw=not-a-real-password", title="FSE",
+                      company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert r.log.count("pressed \u201cSubmit\u201d with your saved password") == 1, r.log
+    assert r.seen_form and "signin" not in r.url, (r.url, r.reason, r.log)
+
+
+def test_a_submit_beside_more_than_the_sign_in_is_left_to_the_person(srv, monkeypatch):
+    """A "Submit" whose form asks for more than the email and password (a phone number) may
+    send more than a sign-in: it's never pressed. The boxes are filled in for the person."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    saved_password(monkeypatch)
+    job = srv.add_job(url=fixture_url("site/signin-submit.html") + "?extra&pw=not-a-real-password", title="FSE",
+                      company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r, await r.page.evaluate("() => window.signInTries")
+        finally:
+            await applier.stop()
+
+    r, tries = run(go())
+    assert (r.need, tries) == ("sign_in", 0) and "Press its sign-in button" in r.reason, (r.reason, r.log)
+
+
+@pytest.mark.parametrize("query", ["", "?questions"])
+def test_an_apply_that_would_send_the_application_is_never_pressed(srv, monkeypatch, query):
+    """A SuccessFactors application for someone signed in (live, Oct 2026): the profile shows greyed
+    out, the job's questions below, and the button that sends it all is a plain "Apply". The desk
+    pressed it three times, taking it for the way in. "Apply" after the desk has filled the page in,
+    or on a page that holds an application, is the person's to press."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 1)
+    job = srv.add_job(url=fixture_url("site/sf-application-signed-in.html") + query, title="FSE",
+                      company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r, await r.page.evaluate("() => window.applied")
+        finally:
+            await applier.stop()
+
+    r, applied = run(go())
+    assert (r.need, applied) == ("your_submit", 0), (r.status, r.need, r.reason, r.log)
+    assert "\u201cApply\u201d, so it's yours to press" in r.reason
+
+
+def watched_inbox(monkeypatch, reset_link=None):
+    """An email app password on the desk, and an inbox that holds `reset_link` (or nothing)."""
+    monkeypatch.setattr(pipeline, "MAIL_POLL_SECONDS", 0)
+    monkeypatch.setenv("JOB_APPLY_SECRET_EMAIL_PASSWORD", "an-app-password")
+    monkeypatch.setattr(pipeline.mailbox, "imap_host", lambda address: "imap.example.com")
+
+    def inbox(address, password, since, senders, want, allowed_link, before=None, look_back=None):
+        if want == "reset" and reset_link:
+            return pipeline.mailbox.Found(want, reset_link, "careers.example.com", time.time())
+        return None
+
+    monkeypatch.setattr(pipeline.mailbox, "search", inbox)
+
+
+def test_a_reset_the_site_has_no_account_for_makes_one_instead(srv, monkeypatch, job_apply_home):
+    """The password reset says there's no account for the email: back on the sign-in page, the
+    desk takes its way to a new account ("Don't have an account yet?", SuccessFactors') and
+    makes one with the saved password."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    saved_password(monkeypatch)
+    manage_accounts(job_apply_home)
+    watched_inbox(monkeypatch)
+    job = srv.add_job(url=fixture_url("site/signin-submit.html") + "?unknown", title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    log = "\n".join(r.log)
+    assert "asked it to email a password reset" not in log and "has no account for your email" in log, log
+    assert "created your account" in log and r.seen_form, (r.reason, r.log)
+
+
+def test_no_reset_email_in_a_few_minutes_makes_an_account_and_the_queue_goes_on(srv, monkeypatch, job_apply_home):
+    """The site says it emailed a reset (most say so whether or not the email has an account),
+    and nothing comes: the other jobs go ahead meanwhile, and after RESET_MAIL_WAIT the desk goes
+    back to the sign-in page and makes an account."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "RESET_MAIL_WAIT", 4)
+    saved_password(monkeypatch)
+    manage_accounts(job_apply_home)
+    watched_inbox(monkeypatch)
+    job = srv.add_job(url=fixture_url("site/signin-submit.html"), title="FSE", company="Example Fab")["job"]
+    other = srv.add_job(url=fixture_url("generic_form.html"), title="Tech", company="Example Litho")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status == "needs_you", about=state(r))
+            assert r.need == "email_code" and "makes one instead" in r.reason and not r.blocking, (r.reason, r.log)
+            r2 = applier.enqueue(other["id"])
+            await until(lambda: r2.status not in ("queued", "running"), about=state(r2))  # not held by the wait
+            await until(lambda: r.status not in ("queued", "running") and r.need != "email_code", timeout=60,
+                        about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    log = "\n".join(r.log)
+    assert "asked it to email a password reset" in log and "no password reset email came" in log, log
+    assert "created your account" in log and r.seen_form, (r.reason, r.log)
+    assert sum(line.startswith("pressed \u201cSubmit\u201d") for line in r.log) == 1, r.log  # not tried again
+
+
+def test_a_new_account_the_site_takes_a_moment_over_is_signed_in_to(srv, monkeypatch, job_apply_home):
+    """A Workday site goes on to its Sign In page a few seconds after Create Account: the desk
+    waits for that, rather than filling the same form in again and stopping, then signs in."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    saved_password(monkeypatch)
+    manage_accounts(job_apply_home)
+    job = srv.add_job(url=fixture_url("site/create-account.html") + "?slow", title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert "wants something more" not in r.reason, (r.reason, r.log)
+    assert r.log.count("filled the Create Account form with your details and saved password") == 1, r.log
+    assert any(line.startswith("pressed \u201cSign In\u201d") for line in r.log) and r.seen_form, (r.reason, r.log)
 
 
 @pytest.mark.parametrize("page", ["signin-no-account.html", "signin-no-account-link.html",
@@ -1399,7 +1569,8 @@ def test_the_sign_in_forms_own_button_is_pressed_not_the_headers(srv, monkeypatc
 
 def test_a_headers_sign_in_isnt_pressed_for_a_form_whose_button_reads_otherwise(srv, monkeypatch):
     """Nothing after the password box reads "Sign In" (the form's button says Continue): the
-    header's "Sign In" isn't pressed in its place. The form is filled in for the person to send."""
+    header's "Sign In" isn't pressed in its place. The form holds only the sign-in, so its own
+    Continue is pressed; that doesn't get in (no account there), so Create Account is opened."""
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
     saved_password(monkeypatch)
     job = srv.add_job(url=fixture_url("site/signin-header-popup.html") + "?button=Continue", title="FSE",
@@ -1411,14 +1582,15 @@ def test_a_headers_sign_in_isnt_pressed_for_a_form_whose_button_reads_otherwise(
         try:
             r = applier.enqueue(job["id"])
             await until(lambda: r.status == "needs_you")
-            assert r.need == "sign_in" and "Press its sign-in button" in r.reason, (r.reason, r.log)
-            state = await r.page.evaluate("() => [window.popupOpened, window.signInTries, em.value, pw.value.length > 0]")
-            assert state == [False, 0, "sam.rivera@example.com", True]
+            assert r.need == "sign_in" and "Create Account form" in r.reason, (r.reason, r.log)
+            state = await r.page.evaluate("() => [window.popupOpened, window.signInTries, window.created]")
+            assert state == [False, 1, False]
             return r
         finally:
             await applier.stop()
 
-    run(go())
+    r = run(go())
+    assert r.log.count("pressed \u201cContinue\u201d with your saved password") == 1, r.log
 
 
 def test_a_create_account_forms_own_button_is_never_the_way_to_it(srv, monkeypatch):
@@ -2923,6 +3095,40 @@ def test_a_jobs_missing_dates_are_named_not_asked_box_by_box(srv, monkeypatch, j
     assert not [q for q in r.questions if q.get("section", "").startswith("Work Experience")], r.questions
 
 
+def test_a_resume_workday_already_lists_isnt_uploaded_again(srv, monkeypatch, job_apply_home):
+    """Workday's resume box empties after each upload and lists the file below it: on Resume the
+    desk filled the page again and uploaded the resume a second time (live, Oct 2026). A file the
+    box lists as uploaded is its value, so it goes up once."""
+    import yaml
+
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 1)
+    path = job_apply_home / "profile.yaml"
+    profile = yaml.safe_load(path.read_text())
+    for entry in profile["work_history"]:
+        entry.pop("start"), entry.pop("end")  # so the page stops, and Resume fills it again
+    path.write_text(yaml.safe_dump(profile))
+    job = srv.add_job(url=fixture_url("site/workday-my-experience.html"), title="Equipment Technician",
+                      company="Example Litho")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            first = r.paused_at
+            applier.enqueue(job["id"])  # Resume
+            await until(lambda: r.paused_at > first and r.status not in ("queued", "running"), about=state(r))
+            return r, await r.page.evaluate(
+                "() => document.querySelectorAll('[data-automation-id=\"file-upload-item\"]').length")
+        finally:
+            await applier.stop()
+
+    r, uploads = run(go())
+    assert (r.status, r.need) == ("needs_you", "stuck") and uploads == 1, (uploads, r.reason, r.log)
+
+
 def test_a_school_the_sites_list_refuses_is_not_called_missing_from_the_profile(srv):
     """Where even "Other" isn't in a site's school list, the profile isn't missing the school:
     the site's list won't take it, which is said as that."""
@@ -2958,6 +3164,26 @@ def test_what_a_jobs_or_schools_block_lacks_is_said_for_its_own_list(srv):
     assert "your schools, and your profile doesn't have this for them: Arizona State University (From)" in said
     assert "education_history" in said and "work_history" not in said, said
     assert [q["id"] for q in rest] == ["b", "c"]
+
+
+def test_a_schools_missing_degree_is_asked_for_as_a_degree_never_as_dates(srv):
+    """A Workday page asked for the Degree of a school the profile lists without one (classes,
+    no degree): the desk said to add years and to ask Claude to add it from the resume. A Degree
+    box is said as a degree, with the way to write a school not finished; never dates."""
+    import yaml
+
+    path = config.profile_path()
+    profile = yaml.safe_load(path.read_text())
+    profile["education_history"][0].pop("degree", None)
+    path.write_text(yaml.safe_dump(profile))
+    applier = Applier(srv)
+    r = Run(1, "Technician", "Example Litho")
+    pending = [{"id": "a", "label": "Degree*", "section": "Education 1", "required": True, "kind": "listbox"}]
+    said, rest = applier._entry_gaps(r, {"url": "https://example.wd1.myworkdayjobs.com/x"}, pending)
+    assert "Arizona State University (Degree)" in said, said
+    assert "Some college (no degree)" in said and "never a degree you didn't finish" in said, said
+    assert "years as start" not in said, said
+    assert rest == []
 
 
 def test_a_posting_that_has_closed_says_so(srv, monkeypatch):

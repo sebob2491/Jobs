@@ -127,3 +127,28 @@ def test_the_desk_builds_a_report_for_a_job_and_only_for_one_it_has(srv, job_app
     ok, missing = run(go())
     assert "FSE at Example Fab" in ok["preview"] and Path(ok["zip"]).is_file() and missing == 400
     assert Path(ok["folder"]).parent == job_apply_home / "reports"
+
+
+def test_a_report_shows_the_page_the_job_stopped_on_and_where_its_questions_sit(job_apply_home, tmp_path):
+    """No page saved in the job's folder (a stop at a sign-in, say): the report still shows the
+    page the desk stopped on, as it read it, and each question with the block it sits in, so a
+    box asked one by one ("From", "Month") can be told apart. Never a value."""
+    job = {"id": 9, "title": "Equipment Technician", "company": "Acme Semi", "ats": "workday",
+           "url": "https://acme.wd1.myworkdayjobs.com/External/job/x"}
+    r = Run(9, "Equipment Technician", "Acme Semi", status="needs_you", need="stuck", reason="Workday asks...",
+            page_info={"url": "https://acme.wd1.myworkdayjobs.com/External/job/x/apply?sid=SESS123",
+                       "title": "My Experience - Jordan Quill", "headings": ["My Experience", "Work Experience 1"],
+                       "actions": ["Add", "Save and Continue"], "errors": ["Enter a valid date"],
+                       "fields": [{"label": "From", "kind": "text", "required": True, "section": "Work Experience 1",
+                                   "sublabel": "Month", "empty": True},
+                                  {"label": "Company", "kind": "text", "required": True, "empty": False}]},
+            questions=[{"id": "a", "label": "From", "sublabel": "Year", "section": "Work Experience", "kind": "text"},
+                       {"id": "b", "label": "Degree", "section": "Education 1", "kind": "listbox",
+                        "options": ["High School Diploma", "Some College"]}])
+    text = report.build(job, r, PERSON)["preview"]
+    assert "### The page it stopped on" in text and "Headings: My Experience | Work Experience 1" in text
+    assert "Buttons: Add | Save and Continue" in text and "Errors: Enter a valid date" in text
+    assert "- From (text, required, empty) [Work Experience 1 / Month]" in text
+    assert "- Company (text, required, filled)" in text
+    assert "- From (text) [Work Experience / Year]" in text and "- Degree (listbox, 2 choices) [Education 1]" in text
+    assert "SESS123" not in text and "Jordan" not in text and "Quill" not in text

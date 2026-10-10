@@ -18,7 +18,11 @@
     const pw = document.getElementById('pw').value;
     const ok = document.getElementById('em').value && pw && pw === document.getElementById('pw2').value
       && document.getElementById('terms').checked;
-    if (ok) { window.created += 1; location.href = 'step1.html'; }
+    // ?slow: like a Workday site (live), the new account's Sign In page comes a few seconds later
+    if (ok && location.search.includes('slow')) {
+      window.created += 1;
+      setTimeout(() => { location.href = 'signin-forgot.html?pw=' + encodeURIComponent(pw); }, 2500);
+    } else if (ok) { window.created += 1; location.href = 'step1.html'; }
     else document.getElementById('err').textContent = 'Error: complete every field and accept the terms';
   });
 </script>

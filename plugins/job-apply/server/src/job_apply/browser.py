@@ -1392,6 +1392,8 @@ class BrowserSession:
                 f"Cookie and privacy banners aren't accepted for the user: {label!r} would accept one. Decline it if "
                 "the banner offers that, or leave the choice to the user in the browser window. (Only where they set "
                 "accept_cookies: true under settings: in profile.yaml is a banner with no way to decline accepted.)")
+        if info.get("signInForm"):
+            return  # a sign-in form's own button, though it reads "Submit" (SuccessFactors'): it only signs in
         # a posting's own Apply on SuccessFactors' older sites: an empty form, so nothing is sent
         opens = bool(info.get("formSubmit") and POSTING_PAGE_RE.search(url) and re.match(r"^apply( now)?$", text, re.I)
                      and not info.get("formFields"))

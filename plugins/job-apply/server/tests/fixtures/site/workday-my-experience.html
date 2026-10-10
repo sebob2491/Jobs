@@ -23,17 +23,32 @@
   <button type="button" data-automation-id="Add" id="ed-add" aria-label="Add Education">Add</button>
 </div>
 
+<!-- like Workday's (live, Oct 2026): the box empties after each upload, and the file is listed below it -->
+<div data-automation-id="resumeSection" role="group" aria-labelledby="rs-title">
+  <h3 id="rs-title">Resume/CV</h3>
+  <div data-automation-id="formField-resume">
+    <label id="rs-label">Upload a file (5MB max)<abbr title="required">*</abbr></label>
+    <div data-automation-id="file-upload-drop-zone">Drop files here or
+      <button type="button" data-automation-id="select-files">Select files</button>
+      <input type="file" data-automation-id="file-upload-input-ref" id="rs-input" aria-labelledby="rs-label">
+    </div>
+    <div id="rs-files"></div>
+  </div>
+</div>
+
 <ul role="listbox" id="popup" hidden></ul>
 <button type="button" data-automation-id="pageFooterNextButton">Save and Continue</button>
 
 <script>
-  const date = (name, label, parts) => `
-    <div data-automation-id="formField-${name}"><label>${label}<abbr title="required">*</abbr></label>
-      <div data-automation-id="dateInputWrapper">
+  // like Workday's (live, Oct 2026): each date is a group of its own, labelled by the date's label
+  let dates = 0;
+  const date = (name, label, parts) => { dates += 1; return `
+    <div data-automation-id="formField-${name}"><label id="dl-${dates}">${label}<abbr title="required">*</abbr></label>
+      <div data-automation-id="dateInputWrapper" role="group" aria-labelledby="dl-${dates}">
         ${parts.includes('M') ? '<input type="text" role="spinbutton" data-automation-id="dateSectionMonth-input" aria-label="Month" maxlength="2">' : ''}
         <input type="text" role="spinbutton" data-automation-id="dateSectionYear-input" aria-label="Year" maxlength="4">
       </div>
-    </div>`;
+    </div>`; };
   let we = 0, ed = 0;
   document.getElementById('we-add').addEventListener('click', (e) => {
     we += 1;
@@ -106,6 +121,17 @@
       }, fs.parentElement), 120);
     });
     e.target.textContent = 'Add Another';
+  });
+
+  document.getElementById('rs-input').addEventListener('change', (e) => {
+    for (const f of e.target.files) {
+      const item = document.createElement('div');
+      item.setAttribute('data-automation-id', 'file-upload-item');
+      item.innerHTML = `<div data-automation-id="file-upload-item-name">${f.name}</div><div>${(f.size / 1024).toFixed(2)} KB</div>`
+        + `<div>Successfully Uploaded!</div><button type="button" aria-label="Delete ${f.name}">Delete</button>`;
+      document.getElementById('rs-files').appendChild(item);
+    }
+    e.target.value = '';
   });
 
   // spinbuttons accept digits only, like Workday's date sections

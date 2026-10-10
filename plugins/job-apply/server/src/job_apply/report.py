@@ -67,6 +67,40 @@ def _fields(meta: dict[str, Any]) -> list[str]:
     return out
 
 
+def _where_in_page(f: dict[str, Any]) -> str:
+    """The block and sub-box a field sits in ("Work Experience 2", "Month"), when it says."""
+    where = " / ".join(str(f.get(k)) for k in ("section", "sublabel") if f.get(k))
+    return f" [{where}]" if where else ""
+
+
+def _paused_page(info: dict[str, Any], questions: list[dict[str, Any]]) -> list[str]:
+    """The page the job stopped on, as the desk read it (headings, buttons, boxes: never what's
+    in them), and the questions it asked there with where each sits on the page."""
+    if not info and not questions:
+        return []
+    out = ["", "### The page it stopped on"]
+    if info:
+        out.append(f"{info.get('url') or ''} ({info.get('title') or ''})")
+        if info.get("headings"):
+            out.append("Headings: " + " | ".join(map(str, info["headings"])))
+        if info.get("actions"):
+            out.append("Buttons: " + " | ".join(map(str, info["actions"])))
+        if info.get("errors"):
+            out.append("Errors: " + " | ".join(map(str, info["errors"])))
+        for f in info.get("fields") or []:
+            if isinstance(f, dict) and f.get("label"):
+                out.append(f"- {f['label']} ({f.get('kind', '?')}{', required' if f.get('required') else ''}, "
+                           f"{'empty' if f.get('empty') else 'filled'}){_where_in_page(f)}")
+    if questions:
+        out += ["", "### Questions it asked"]
+        for q in questions[:40]:
+            if isinstance(q, dict):
+                options = q.get("options") or []
+                out.append(f"- {q.get('label') or '?'} ({q.get('kind', '?')}"
+                           + (f", {len(options)} choices" if options else "") + f"){_where_in_page(q)}")
+    return out
+
+
 def _folder(job_id: int) -> Path:
     """A new folder for this report: two reports in the same second (a double click, or the
     desk and Claude at once) each get their own."""
@@ -120,6 +154,7 @@ def build(job: dict[str, Any], run: Any = None, profile: config.Profile | None =
         steps = [scrub(s) for s in (getattr(run, "log", None) or [])][-40:]
         if steps:
             lines += ["", "### What the desk did", *[f"{i}. {s}" for i, s in enumerate(steps, 1)]]
+        lines += map(scrub, _paused_page(getattr(run, "page_info", None) or {}, getattr(run, "questions", None) or []))
     for snap in _snapshots(Path(job["folder"])) if job.get("folder") else []:
         try:
             meta = json.loads((snap / "snapshot.json").read_text(encoding="utf-8"))
