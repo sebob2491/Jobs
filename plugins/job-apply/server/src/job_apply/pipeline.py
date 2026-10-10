@@ -315,12 +315,14 @@ def _flagged(data: dict[str, Any]) -> list[str]:
 
 
 def _page_info(data: dict[str, Any]) -> dict[str, Any]:
-    """Enough to see why a job paused, without any of the values typed into the page."""
+    """Enough to see why a job paused, without any of the values typed into the page. Room for
+    a whole Workday My Experience page (four jobs and two schools: 70 boxes and more): a
+    report that stops at its 40th box shows the last blocks as never read."""
     return {
         "url": data.get("url"), "title": data.get("title"), "headings": (data.get("headings") or [])[:8],
-        "actions": [a.get("text", "") + (" (disabled)" if a.get("disabled") else "") for a in data.get("actions") or []][:30],
+        "actions": [a.get("text", "") + (" (disabled)" if a.get("disabled") else "") for a in data.get("actions") or []][:60],
         "fields": [{**{k: f.get(k) for k in ("label", "kind", "required", "section", "sublabel") if f.get(k) is not None},
-                    "empty": is_empty_value(f.get("value"))} for f in data.get("fields") or []][:40],
+                    "empty": is_empty_value(f.get("value"))} for f in data.get("fields") or []][:150],
         "errors": (data.get("errors") or [])[:5],
     }
 

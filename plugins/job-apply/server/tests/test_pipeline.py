@@ -4138,3 +4138,14 @@ def test_a_paused_jobs_tab_that_crashes_doesnt_hold_the_queue(srv, monkeypatch):
 
     r = run(go())
     assert r.need == "sign_in" and not srv.browser.lost(r.page), (r.status, r.reason, r.log)
+
+
+def test_a_stops_page_info_holds_a_whole_workday_experience_page():
+    """Four jobs and two schools on a Workday site's My Experience page come to 70 boxes and
+    more: a report that kept only the first 40 showed the last blocks as never read."""
+    fields = [{"label": f"Box {n}", "kind": "text", "section": f"Work Experience {n // 11 + 1}", "value": ""}
+              for n in range(80)]
+    actions = [{"text": f"Delete {n}"} for n in range(45)]
+    info = pipeline._page_info({"url": "https://x.example", "fields": fields, "actions": actions})
+    assert len(info["fields"]) == 80 and info["fields"][-1]["section"] == "Work Experience 8"
+    assert len(info["actions"]) == 45
