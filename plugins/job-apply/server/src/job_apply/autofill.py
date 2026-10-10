@@ -760,12 +760,16 @@ def _studied_level(text: Any) -> int | None:
     return next((rank for rank, pattern in _SOME_STUDY if re.fullmatch(pattern, n)), None)
 
 
-# A question asking for nothing but a level of education, maybe "or higher": a field ("in
+# A question asking for nothing but a level of education, maybe "or higher" (with examples of
+# what's higher to end it: "(Master's degree, Ph.D., etc.)", Carvana's, Oct 2026): a field ("in
 # Finance"), a kind of degree ("Bachelor of Science") or anything more ("from an accredited
 # university") isn't one the profile can settle
+_HIGHER_DEGREE = r"(?:an? )?(?:bachelor s|bachelors|master s|masters|mba|ph d|phd|doctorate|doctoral|md|jd)(?: degrees?)?"
 _DEGREE_ONLY = (r"^(?:do you (?:have|hold|possess) |have you (?:earned|completed|received) )?(?:an? |the )?"
                 r"(?P<deg>high school diploma(?: or (?:a )?ged)?|ged|(?:associate|bachelor|master)(?: s|s)? degree|"
-                r"doctorate(?: degree)?)(?P<higher> or (?:higher|above|greater))?(?: (?:required|preferred))*$")
+                r"doctorate(?: degree)?)(?P<higher> or (?:higher|above|greater)"
+                rf"(?:(?: e g| eg| such as| including)?(?: {_HIGHER_DEGREE}(?: or| and)?)+(?: etc)?$)?)?"
+                r"(?: (?:required|preferred))*$")
 # A field that says the degree isn't done ("Finance coursework", "Finance (expected 2027)", "ABD"), or
 # isn't that degree ("Welding Certificate", "Juris Doctor", a diploma's equivalent: GED, HiSET, TASC, HSED)
 _NOT_DONE_FIELD = re.compile(r"\b(expected|anticipated|pending|progress|ongoing|current\w*|pursuing|enrolled|incomplete|"
