@@ -182,8 +182,8 @@ def _aliases(n: str) -> set[str]:
 
 
 _DEGREES = [
-    ("doctorate", r"\b(ph ?d|doctor(ate)?|d ?phil|ed ?d)\b"),
-    ("master", r"\b(master s?|masters|ms|m s|ma|m a|msc|meng|m eng|mba|mfa)\b"),
+    ("doctorate", r"\b(ph ?d|doctor(ate|al)?|d ?phil|ed ?d)\b"),
+    ("master", r"\b(master s?|masters|ms|m s|ma|m a|msc|meng|m eng|mba|m b a|mfa)\b"),
     ("bachelor", r"\b(bachelor s?|bachelors|bs|b s|ba|b a|bsc|beng|b eng|bse|bsee|bsme)\b"),
     ("associate", r"\b(associate s?|associates|aas|a a s)\b"),
     ("high_school", r"\b(high school|ged)\b"),
@@ -760,12 +760,37 @@ def _studied_level(text: Any) -> int | None:
     return next((rank for rank, pattern in _SOME_STUDY if re.fullmatch(pattern, n)), None)
 
 
-# A question asking for nothing but a level of education, maybe "or higher": a field ("in
-# Finance"), a kind of degree ("Bachelor of Science") or anything more ("from an accredited
-# university") isn't one the profile can settle
+# A question asking for nothing but a level of education, maybe "or higher" (with degrees named
+# after it: "(Master's degree, Ph.D., etc.)", Carvana's, Oct 2026, which _higher_examples reads):
+# a field ("in Finance"), a kind of degree ("Bachelor of Science") or anything more ("from an
+# accredited university") isn't one the profile can settle
+_DEGREE_WORDS = "|".join(pattern[len(r"\b("):-len(r")\b")] for _, pattern in _DEGREES)
+_DEGREE_NAME = rf"(?:an? )?(?:{_DEGREE_WORDS})(?: ?degrees?)?"  # ("master s?" takes a trailing space)
 _DEGREE_ONLY = (r"^(?:do you (?:have|hold|possess) |have you (?:earned|completed|received) )?(?:an? |the )?"
                 r"(?P<deg>high school diploma(?: or (?:a )?ged)?|ged|(?:associate|bachelor|master)(?: s|s)? degree|"
-                r"doctorate(?: degree)?)(?P<higher> or (?:higher|above|greater))?(?: (?:required|preferred))*$")
+                r"doctorate(?: degree)?)(?P<higher> or (?:higher|above|greater)"
+                rf"(?: (?:{_DEGREE_NAME}|e g|eg|i e|such as|including|etc|or|and))*)?(?: (?:required|preferred))*$")
+_EXAMPLES_SPLIT = re.compile(r"[,/;()]|\b(?:or|and|e\.?\s?g|i\.?\s?e|such as|including|etc)\b\.?", re.I)
+
+
+def _higher_examples(label: str, rank: int) -> bool:
+    """The degrees a question names after "or higher" ("(Master's degree, Ph.D., etc.)") are
+    examples of what's higher, so the question is the same without them, only when each is a
+    degree above the level asked: "Master's or higher (MBA)" or "(Bachelor's)" asks something
+    else, and so does one that isn't a degree at all ("(Bachelor's preferred)")."""
+    m = re.search(r"\bor\s+(?:higher|above|greater)\b(.*)$", label, re.I | re.S)
+    tail = m.group(1) if m else ""
+    marker = re.search(r"\s*\b(?:required|preferred)\W*$", tail, re.I)
+    if marker and tail[:marker.start()].count("(") == tail[:marker.start()].count(")"):
+        tail = tail[:marker.start()]  # the question's own "required", not one inside the brackets
+    for item in _EXAMPLES_SPLIT.split(tail):
+        named = norm(item)
+        if not named:
+            continue
+        key = degree_key(named)
+        if not re.fullmatch(_DEGREE_NAME, named) or key is None or _LEVELS.index(key) <= rank:
+            return False
+    return True
 # A field that says the degree isn't done ("Finance coursework", "Finance (expected 2027)", "ABD"), or
 # isn't that degree ("Welding Certificate", "Juris Doctor", a diploma's equivalent: GED, HiSET, TASC, HSED)
 _NOT_DONE_FIELD = re.compile(r"\b(expected|anticipated|pending|progress|ongoing|current\w*|pursuing|enrolled|incomplete|"
@@ -821,11 +846,14 @@ def _has_degree(prof: Profile, job: dict, label: str = "") -> Any:
     "Associate's Degree") and those degrees, is below the level asked, and no school it lists
     names a degree that isn't. Else the person's to say: free-text education can't tell a
     degree earned from one under way, and a field or condition is theirs to judge."""
-    shape = re.match(_DEGREE_ONLY, norm(label))
+    asked = clean_label(label)  # as the rule read it: without "(Required)" or "(Yes/No)"
+    shape = re.match(_DEGREE_ONLY, norm(asked))
     level = degree_key(shape.group("deg")) if shape else None
     if not shape or level is None:
         return None
     rank = _LEVELS.index(level)
+    if shape.group("higher") and not _higher_examples(asked, rank):
+        return None
     earned, unread = _degrees_earned(prof)
     higher = bool(shape.group("higher"))
     # a high school diploma isn't a GED, nor a GED a diploma; "a high school diploma or GED" is either

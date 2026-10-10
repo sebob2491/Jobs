@@ -1366,6 +1366,7 @@ def test_a_degree_the_person_lacks_is_answered_no():
 
     some_college = with_education("Some college", [{"school": "Example Community College", "degree": "", "end": 2019}])
     assert answer("Do you have a Bachelor's degree?", some_college) == "No"
+    assert answer("Do you have a Bachelor's degree or higher (Master\u2019s degree, Ph.D., etc.)? *", some_college) == "No"
     assert answer("Do you have an Associate's degree or higher?", some_college) == "No"
     assert answer("Master's degree preferred", some_college) == "No"
     assert answer("Do you have a high school diploma or GED?", some_college) is None  # not said
@@ -1427,6 +1428,23 @@ def test_a_confirmed_degree_answers_yes():
     assert answer("Bachelor's degree required", finance) == "Yes"
     assert answer("Do you have an Associate's degree or higher?", finance) == "Yes"
     assert answer("Do you have an Associate's degree?", finance) is None  # not "or higher"
+    # "or higher" with examples of what's higher (Carvana, Oct 2026) is the same question
+    assert answer("Do you have a Bachelor's degree or higher (Master\u2019s degree, Ph.D., etc.)? *", finance) == "Yes"
+    assert answer("Do you have a Bachelor's degree or higher (Master's degree, Ph.D., etc.)? (Required)", finance) == "Yes"
+    assert answer("Do you have an Associate's degree or higher (e.g., Bachelor's, Master's)?", finance) == "Yes"
+    assert answer("Do you have an Associate's degree or higher (i.e. Bachelor degree or M.B.A.)?", finance) == "Yes"
+    assert answer("Do you have a Master's degree or higher (Ph.D., Ed.D., Doctoral degree, etc.)?", finance) == "No"
+    # ...but not when what's named isn't a degree above the one asked: then it asks something else
+    for asked in ("Do you have a Bachelor's degree or higher (in Finance or Accounting)?",
+                  "Do you have an Associate's degree or higher (Bachelor's preferred)?",
+                  "Do you have a Master's degree or higher (Bachelor's)?",
+                  "Do you have a Master's degree or higher (Bachelor's and Master's)?",
+                  "Do you have a Master's degree or higher (MD, JD)?"):
+        assert answer(asked, finance) is None, asked
+    engineer = with_degrees([{"level": "master", "field": "Engineering"}], "Master's Degree")
+    for asked in ("Do you have a Master's degree or higher (MBA)?", "Do you have a Master's degree or higher (M.B.A.)?"):
+        assert answer(asked, engineer) is None, asked
+    assert answer("Do you have a Bachelor's degree or higher (MBA, Ph.D.)?", engineer) == "Yes"
     assert answer("Do you have a Master's degree?", finance) == "No"  # the most finished is a bachelor's
     for asked in ("Bachelor's Degree in Accounting or Finance Required", "Bachelor's degree in Finance",
                   "Bachelor's degree in Nursing, CCRN, or CNOR", "Do you have a Bachelor's degree with honors?",

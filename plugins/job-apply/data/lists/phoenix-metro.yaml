@@ -360,9 +360,11 @@ companies:
     search: {greenhouse: godaddy}
   - name: Carvana
     careers_url: https://www.carvana.com/careers
-    ats: unknown              # carvana.com answered with a Cloudflare challenge (403) from here; system not seen
-    az_sites: Tempe (HQ), Phoenix
-    confidence: low           # careers page not seen (Cloudflare, Oct 2026)
+    ats: greenhouse           # carvana.com answers with a Cloudflare challenge, but its postings are on this Greenhouse board,
+                              # and Greenhouse's own form (embed/job_app) opens without it
+    az_sites: Tempe (HQ), Chandler, Tolleson, Phoenix
+    confidence: high          # live check, Oct 2026: 1,801 openings, Tempe the most of any place
+    search: {greenhouse: carvana}
   - name: Axon
     careers_url: https://www.axon.com/careers/all
     ats: greenhouse           # axon.com/careers lists jobs from a "greenhouse-jobs-index"; the axon board has 88 Scottsdale openings

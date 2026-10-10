@@ -51,9 +51,9 @@ The goal is a short, deduplicated list of real openings saved to the tracker
      box with `fill_form` and `click`, and read the results with `page_text`. WebSearch
      with `site:` on the careers domain also works.
    - `browser_only` lists employers with no search the plugin can use: TSMC Arizona in the
-     default list, and with the `phoenix-metro` list five more (a system it can't
+     default list, and with the `phoenix-metro` list four more (a system it can't
      search, such as PeopleSoft's City of Phoenix site, or a site that refuses automated browsers, such as
-     TSMC's and Carvana's Cloudflare checks). Nothing tries to get around those. Don't open
+     ADP's and Maricopa Community Colleges' Cloudflare checks). Nothing tries to get around those. Don't open
      them in the automation browser: give the user their careers links, a short list, to
      search in their own browser, or look for their postings on Indeed.
    - `ingest_job(url)` each posting worth saving. It stores the full description.
