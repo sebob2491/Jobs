@@ -430,7 +430,7 @@ async def _workday(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, 
         for p in postings:
             if not p.get("externalPath") or not p.get("title"):
                 continue  # not a posting (Analog Devices' answer had one with neither)
-            where = str(p.get("locationsText") or "")
+            where = str(p.get("locationsText") or "") or _workday_path_place(p.get("externalPath") or "")
             if nowhere_near and _SITE_COUNT.fullmatch(where.strip()):
                 continue  # "3 Locations", none of them in the area (a "Remote - US" job could be done from it)
             out.append(Listing(
@@ -448,6 +448,21 @@ async def _workday(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, 
 
 
 WORKDAY_PLACE_PAGES = 20  # multi-site postings read for their places, per search
+
+
+def _workday_path_place(path: str) -> str:
+    """A posting's place from its address, for a site whose search gives none (HonorHealth's,
+    live, Oct 2026: "/job/Deer-Valley---19829-N-27th-Ave-Phoenix-AZ-85027/Technician-II_JR12190"
+    is "Deer Valley - 19829 N 27th Ave Phoenix, AZ 85027"). Only an address with a place part:
+    "/job/Engineering-Technician_REQ-13292" has none."""
+    parts = path.strip("/").split("/")
+    if len(parts) != 3 or parts[0] != "job":
+        return ""
+    place = re.sub(r"-{2,}", "\0", parts[1]).replace("-", " ").replace("\0", " - ")  # "---" parts a name from its address
+    place = re.sub(r"\s+", " ", place).strip()
+    return re.sub(r" ([A-Z]{2})( \d{5})?$", r", \1\2", place)
+
+
 _SITE_COUNT = re.compile(r"\d+ locations?", re.I)  # how Workday lists a multi-site posting
 
 

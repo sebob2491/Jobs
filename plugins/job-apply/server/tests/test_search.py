@@ -2149,3 +2149,31 @@ def test_a_redirect_to_maintenance_work_isnt_taken_for_a_site_down(to):
             return await search_module._workday(client, "https://adco.wd1.myworkdayjobs.com/External", "maintenance",
                                                 20, [])
     assert asyncio.run(go()) == []
+
+
+def test_a_workday_posting_with_no_place_in_the_search_takes_it_from_its_address():
+    """HonorHealth's Workday search (live, Oct 2026) gives no place for any posting. Each was
+    read for its place, but only the first WORKDAY_PLACE_PAGES, so 20 of 80 stayed "location
+    not given" and the location filter couldn't keep them. A posting's address names its place."""
+    looked = []
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":  # a posting's own call: what was read without the address
+            looked.append(request.url.path)
+            return httpx.Response(200, json={"jobPostingInfo": {"location": "Tempe, AZ"}})
+        return httpx.Response(200, json={"total": 3, "jobPostings": [
+            {"title": "Technician II", "externalPath": "/job/Deer-Valley---19829-N-27th-Ave-Phoenix-AZ-85027/Technician-II_JR1",
+             "postedOn": "Posted Today", "bulletFields": ["JR1"]},
+            {"title": "Patient Care Tech", "externalPath": "/job/Various-Locations--Phoenix-AZ/Patient-Care-Tech_JR2",
+             "postedOn": "Posted Today", "bulletFields": ["JR2"]},
+            {"title": "Engineering Technician", "externalPath": "/job/Engineering-Technician_JR3",
+             "postedOn": "Posted Today", "bulletFields": ["JR3"]}]})
+
+    async def go():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(answer)) as client:
+            return await search_module._workday(client, "https://hhco.wd12.myworkdayjobs.com/Careers", "technician",
+                                                20, [])
+    found = asyncio.run(go())
+    assert [x.location for x in found] == ["Deer Valley - 19829 N 27th Ave Phoenix, AZ 85027",
+                                           "Various Locations - Phoenix, AZ", "Tempe, AZ"]
+    assert looked == ["/wday/cxs/hhco/Careers/job/Engineering-Technician_JR3"]  # only the one its address doesn't place
