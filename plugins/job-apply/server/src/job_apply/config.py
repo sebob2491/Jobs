@@ -288,6 +288,15 @@ class Profile:
             missing.append(f"documents.resume (file not found: {resume})")
         return missing
 
+    def profile_gaps(self) -> list[str]:
+        """What the profile could hold for fewer stops, short of what's required: the jobs
+        without a start or end month, which Workday asks for every job (someone who doesn't
+        remember an old job's months can still apply where they aren't asked)."""
+        from .autofill import undated_jobs  # (autofill reads profiles: imported when asked)
+
+        undated = undated_jobs(self)
+        return ["work_history dates: " + "; ".join(undated)] if undated else []
+
 
 def get_secret(name: str) -> str | None:
     """Look up a secret by name without ever returning it to the model.

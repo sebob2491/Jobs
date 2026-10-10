@@ -442,7 +442,7 @@ class Desk:
             label, value = str(a.get("label") or ""), a.get("value")
             if not label or value in (None, ""):
                 continue
-            if a.get("remember", True):
+            if a.get("remember", True) and " | " not in label:  # (one box's own answer is never remembered)
                 try:
                     config.save_answer(label, value, run.company)
                     run.once.pop(question_key(label), None)  # an earlier answer for this application only
@@ -493,7 +493,7 @@ class Desk:
                 others.append({"job_id": jid, "title": job.get("title") or run["title"], "company": job.get("company"),
                                "url": job.get("url"), "status": job.get("status"), "run": run})
         return {
-            "profile": {"name": prof.full_name, "missing": prof.missing_required(),
+            "profile": {"name": prof.full_name, "missing": prof.missing_required(), "gaps": prof.profile_gaps(),
                         "titles": prof.get("preferences.titles") or [], "path": str(config.profile_path())},
             "settings": {"submit_mode": settings.submit_mode, "dry_run": settings.dry_run,
                          "auto_submit": self.applier.auto_submit, "tailor_resumes": self.applier.tailor},

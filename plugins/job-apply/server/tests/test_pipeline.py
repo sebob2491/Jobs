@@ -2702,6 +2702,78 @@ def test_a_name_and_email_box_sent_by_a_plain_button_is_the_persons_too(srv, mon
     assert "name and email" in r.reason and "\u201cAPPLY\u201d" in r.reason, r.reason
 
 
+def test_a_jobs_missing_dates_are_named_not_asked_box_by_box(srv, monkeypatch, job_apply_home):
+    """A Workday "My Experience" page (live, Oct 2026) with a profile whose jobs have no dates:
+    the desk listed 21 bare "From" and "To" boxes, each with "Remember", and an answer typed
+    there couldn't go in (those boxes come from the profile alone). It names the jobs whose
+    months are missing and how to add them, with Resume; the other questions stay asked."""
+    import yaml
+
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 1)
+    path = job_apply_home / "profile.yaml"
+    profile = yaml.safe_load(path.read_text())
+    for entry in profile["work_history"]:
+        entry.pop("start"), entry.pop("end")
+    path.write_text(yaml.safe_dump(profile))
+    job = srv.add_job(url=fixture_url("site/workday-my-experience.html"), title="Equipment Technician",
+                      company="Example Litho")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert (r.status, r.need) == ("needs_you", "stuck"), (r.status, r.reason, r.log)
+    assert "Equipment Technician at Intel (From, To)" in r.reason, r.reason
+    assert "Maintenance Technician at Example Fab Services (From, To)" in r.reason, r.reason
+    assert "add the start and end months of my jobs from my resume" in r.reason, r.reason
+    assert not [q for q in r.questions if q.get("section", "").startswith("Work Experience")], r.questions
+
+
+def test_a_school_the_sites_list_refuses_is_not_called_missing_from_the_profile(srv):
+    """Where even "Other" isn't in a site's school list, the profile isn't missing the school:
+    the site's list won't take it, which is said as that."""
+    applier = Applier(srv)
+    r = Run(1, "Technician", "Example Litho")
+    applier.runs[1] = r
+    pending = [{"id": "a", "label": "School or University*", "section": "Education 1", "required": True,
+                "error": "nothing in its list matched"},
+               {"id": "b", "label": "From", "sublabel": "Month", "section": "Work Experience 3", "required": True},
+               {"id": "c", "label": "Are you 18 or older?", "required": True, "kind": "text"}]
+    said, rest = applier._entry_gaps(r, {"url": "https://example.wd1.myworkdayjobs.com/x"}, pending)
+    assert "didn't take your profile's answer for: Arizona State University (School or University)" in said
+    assert "more blocks than your profile has entries: Work Experience 3 (your profile has no job 3) (From)" in said
+    assert "your profile doesn't have" not in said, said
+    assert [q["id"] for q in rest] == ["c"]
+
+
+def test_what_a_jobs_or_schools_block_lacks_is_said_for_its_own_list(srv):
+    """A school's missing year is education_history's, not work_history's; a block's "Reason
+    for leaving" or "Day" box isn't the profile's to hold, so it stays a question."""
+    import yaml
+
+    path = config.profile_path()
+    profile = yaml.safe_load(path.read_text())
+    profile["education_history"][0].pop("start")
+    path.write_text(yaml.safe_dump(profile))
+    applier = Applier(srv)
+    r = Run(1, "Technician", "Example Litho")
+    pending = [{"id": "a", "label": "From", "sublabel": "Year", "section": "Education 1", "required": True},
+               {"id": "b", "label": "Reason for Leaving", "section": "Work Experience 1", "required": True},
+               {"id": "c", "label": "From", "sublabel": "Day", "section": "Work Experience 2", "required": True}]
+    said, rest = applier._entry_gaps(r, {"url": "https://example.wd1.myworkdayjobs.com/x"}, pending)
+    assert "your schools, and your profile doesn't have this for them: Arizona State University (From)" in said
+    assert "education_history" in said and "work_history" not in said, said
+    assert [q["id"] for q in rest] == ["b", "c"]
+
+
 def test_a_posting_that_has_closed_says_so(srv, monkeypatch):
     """Edward Jones' BrassRing page for an expired posting (live, Oct 2026) says "The job posting
     you are looking for has expired or the position has already been filled", and the desk said

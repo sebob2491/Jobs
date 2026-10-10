@@ -17,7 +17,7 @@ from datetime import date
 from typing import Any, Awaitable, Callable
 from urllib.parse import urlparse
 
-from .autofill import degree_key, norm
+from .autofill import degree_key, entry_dates, norm
 from .config import Profile
 from .postings import QUESTIONS_HEADING, Posting, fetch_posting
 from .search import MAX_ALTERNATIVES, US_STATES, location_matches, location_terms, title_matches, title_words
@@ -231,8 +231,9 @@ def applicant_years(prof: Profile, today: date | None = None) -> float | None:
     for job in prof.get("work_history") or []:
         if not isinstance(job, dict):
             continue
-        start = _month(job.get("start"), today)
-        end = _month(job.get("end") or "present", today)
+        written = entry_dates(job)
+        start = _month(written[0], today)
+        end = _month(written[1] or "present", today)
         if start and end:
             months += max(0, (end[0] - start[0]) * 12 + end[1] - start[1])
     return round(months / 12, 1) if months else None

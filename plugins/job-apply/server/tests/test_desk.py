@@ -520,6 +520,23 @@ def test_answers_that_cant_be_remembered_still_go_into_the_application(srv, job_
 
 
 
+def test_two_boxes_with_one_label_keep_their_own_answers(srv, job_apply_home):
+    """Workday's Month and Year boxes are both "Date": the card sends each box's own answer
+    ("section | label | sub-label"), which is used for this application only, never remembered
+    (by its label alone, one answer would go in both boxes, and in every "Date" after)."""
+    from job_apply.pipeline import Run, placed_key
+
+    job = srv.add_job(url="https://example.com/a", title="FSE", company="Example Fab")["job"]
+    desk = Desk(srv)
+    desk.applier.runs[job["id"]] = Run(job["id"], "FSE", "Example Fab", status="needs_you", need="questions")
+    assert desk.answer(job["id"], [{"label": "Signature | Date* | Month", "value": "03", "remember": True},
+                                   {"label": "Signature | Date* | Year", "value": "2026", "remember": True}]) is None
+    month = {"label": "Date*", "section": "Signature", "sublabel": "Month"}
+    year = {"label": "Date*", "section": "Signature", "sublabel": "Year"}
+    assert desk.applier.runs[job["id"]].once == {placed_key(month): "03", placed_key(year): "2026"}
+    assert config.saved_answers() == []
+
+
 def test_a_remembered_answer_replaces_one_given_for_this_application_only(srv, job_apply_home):
     """The page turned down an answer given for this application only, and the person answers
     again, remembering it: the earlier answer isn't tried again ahead of it."""

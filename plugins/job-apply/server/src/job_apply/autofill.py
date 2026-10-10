@@ -496,7 +496,7 @@ def _previously_employed(prof: Profile, job: dict, label: str = "") -> str | Non
     if not any(_same_employer(c, company) for c in past if c):
         # "...or any of its subsidiaries or affiliates": the profile can't say it's none of those
         return None if re.search(r"\b(subsidiar|affiliat)", asked) else "No"
-    now = [norm(e.get("company")) for e in entries if is_present(e.get("end")) or e.get("current") is True]
+    now = [norm(e.get("company")) for e in entries if is_present(entry_dates(e)[1]) or e.get("current") is True]
     now.append(norm(prof.get("experience.current_company")))
     return "Yes, currently" if any(_same_employer(c, company) for c in now if c) else "Yes, previously"
 
@@ -768,7 +768,7 @@ def _employed_now(prof: Profile, job: dict) -> Any:
     entries = [e for e in _listed(prof.get("work_history")) if isinstance(e, dict)]
     if not entries:
         return None
-    return "Yes" if any(is_present(e.get("end")) or e.get("current") is True for e in entries) else "No"
+    return "Yes" if any(is_present(entry_dates(e)[1]) or e.get("current") is True for e in entries) else "No"
 
 
 def _lives_in(prof: Profile, job: dict, label: str = "") -> Any:
@@ -1087,7 +1087,7 @@ _ENTRY_SECTIONS = [
     ("work_history", r"experience|employment|work history|position|job"),
 ]
 _WORK_FIELDS = [
-    (r"phone|e ?mail|fax|address|zip|postal|supervisor|manager|reference|salary|wage|pay\b|reason", "skip"),
+    (r"phone|e ?mail|fax|address|zip|postal|supervisor|manager|reference|salary|wage|pay\b|reason|contact", "skip"),
     (r"currently work|current(ly)? (employed|job|position|role)|i work here|present (job|position|employer)", "current"),
     (r"title|^position|^role$", "title"),
     (r"company|employer|organi[sz]ation", "company"),
@@ -1148,6 +1148,67 @@ def _date_value(field: dict, value: Any) -> str | None:
     return f"{month}/{year}" if month else year
 
 
+# Other ways a job's dates get written: start_date / end_date, from / to, or one span
+_START_KEYS = ("start", "start_date", "from", "started")
+_END_KEYS = ("end", "end_date", "to", "ended")
+_SPAN = re.compile(r"\s+(?:-|to|until)\s+|\s*[\u2013\u2014]\s*", re.I)
+
+
+def _split_span(span: str) -> list[str]:
+    """"Mar 2019 - Jun 2021" or "Mar 2019-Jun 2021" in two; ISO "2019-03" stays one date."""
+    parts = _SPAN.split(span, maxsplit=1)
+    if len(parts) == 2:
+        return [p.strip() for p in parts]
+    for m in re.finditer(r"-", span):
+        left, right = span[:m.start()].strip(), span[m.end():].strip()
+        if parse_month_year(left)[1] and (parse_month_year(right)[1] or is_present(right)):
+            return [left, right]
+    return [span]
+
+
+def _from_parts(entry: dict, which: str) -> Any:
+    """start_year with start_month (03, "Mar"), as one date."""
+    year, month = entry.get(f"{which}_year"), entry.get(f"{which}_month")
+    if year in (None, ""):
+        return None
+    if month in (None, ""):
+        return str(year)
+    return f"{year}-{int(month):02d}" if str(month).strip().isdigit() else f"{month} {year}"
+
+
+def entry_dates(entry: dict) -> tuple[Any, Any]:
+    """A job's (or school's) start and end as written: `start` and `end`, else start_date /
+    end_date or from / to, else a `dates` span ("Mar 2019 - Jun 2021", "2019 \u2013 Present")."""
+    start = next((entry[k] for k in _START_KEYS if entry.get(k) not in (None, "")), None)
+    end = next((entry[k] for k in _END_KEYS if entry.get(k) not in (None, "")), None)
+    start = start if start is not None else _from_parts(entry, "start")
+    end = end if end is not None else _from_parts(entry, "end")
+    span = next((entry[k] for k in ("dates", "date", "period", "years") if isinstance(entry.get(k), str)), "").strip()
+    if span and (start is None or end is None):
+        parts = _split_span(span)
+        if len(parts) == 2:
+            start = start if start is not None else parts[0]
+            end = end if end is not None else parts[1]
+    return start, end
+
+
+def _entry_name(entry: dict) -> str:
+    title, company = str(entry.get("title") or "").strip(), str(entry.get("company") or "").strip()
+    return f"{title} at {company}" if title and company else title or company or "a job with no title"
+
+
+def undated_jobs(prof: Profile) -> list[str]:
+    """The jobs in work_history without a start month and year, or (unless they're still held)
+    an end month and year: Workday asks for both, for every job."""
+    out = []
+    for entry in profile_entries(prof, "work_history"):
+        start, end = entry_dates(entry)
+        current = is_present(end) or entry.get("current") is True
+        if not all(parse_month_year(start)) or not current and not all(parse_month_year(end)):
+            out.append(_entry_name(entry))
+    return out
+
+
 def profile_entries(prof: Profile, key: str) -> list[dict]:
     entries = [e for e in _listed(prof.get(key)) if isinstance(e, dict)]
     if not entries and key == "education_history" and prof.get("education.school"):
@@ -1159,40 +1220,69 @@ def profile_entries(prof: Profile, key: str) -> list[dict]:
     return entries
 
 
-def _resolve_entry(field: dict, prof: Profile) -> tuple[bool, Answer | None]:
-    """(handled, answer) for fields inside a numbered block like "Work Experience 2"."""
+def _entry_slot(field: dict, prof: Profile) -> tuple[str, int, list[dict], str | None] | None:
+    """For a field inside a numbered block like "Work Experience 2": the profile list it's from
+    (work_history, education_history), the block's number, that list's entries, and the entry's
+    attribute it asks for (None when it's none of them: "Hours per week")."""
     section = norm(field.get("section"))
     m = re.search(r"(\d+)$", section)
     if not m:
-        return False, None
+        return None
     for key, pattern in _ENTRY_SECTIONS:
         if re.search(pattern, section):
             break
     else:
+        return None
+    label = norm(clean_label(field.get("label") or ""))
+    attr = next((a for pattern, a in (_WORK_FIELDS if key == "work_history" else _EDUCATION_FIELDS)
+                 if re.search(pattern, label)), None)
+    return key, int(m.group(1)), profile_entries(prof, key), attr
+
+
+def entry_of(field: dict, prof: Profile) -> tuple[str, str] | None:
+    """For a box in a job's or school's block that the profile is where its answer lives (a job's
+    title or dates, a school's degree): that entry in words ("Safety Technician at Example Fab")
+    and which list it's from ("work", "education"; "extra" for a block past the profile's
+    entries). None for any other box, a block's "Reason for leaving" or "Day" among them."""
+    slot = _entry_slot(field, prof)
+    if slot is None or slot[3] in (None, "skip"):
+        return None
+    key, n, entries, attr = slot
+    if attr in ("start", "end") and norm(field.get("sublabel")) == "day":
+        return None
+    if not 0 < n <= len(entries):
+        thing = "job" if key == "work_history" else "school"
+        return f"{field.get('section')} (your profile has no {thing} {n})", "extra"
+    if key == "work_history":
+        return _entry_name(entries[n - 1]), "work"
+    return str(entries[n - 1].get("school") or "").strip() or str(field.get("section")), "education"
+
+
+def _resolve_entry(field: dict, prof: Profile) -> tuple[bool, Answer | None]:
+    """(handled, answer) for fields inside a numbered block like "Work Experience 2"."""
+    slot = _entry_slot(field, prof)
+    if slot is None:
         return False, None
-    n = int(m.group(1))
-    entries = profile_entries(prof, key)
+    key, n, entries, attr = slot
     if not 0 < n <= len(entries):
         return True, None
     entry = entries[n - 1]
-    label = norm(clean_label(field.get("label") or ""))
-    for pattern, attr in _WORK_FIELDS if key == "work_history" else _EDUCATION_FIELDS:
-        if re.search(pattern, label):
-            break
-    else:
-        return True, None  # e.g. "Supervisor phone": not the applicant's own details
+    if attr is None:
+        return True, None  # e.g. "Hours per week": not something the profile holds
     rule = f"{key}[{n}].{attr}"
-    current = is_present(entry.get("end")) or entry.get("current") is True
+    dates = dict(zip(("start", "end"), entry_dates(entry)))
+    current = is_present(dates["end"]) or entry.get("current") is True
     if attr == "skip":
         return True, None  # e.g. "Employer Phone": not something the profile holds
     if attr == "current":
         return True, Answer(current, rule)
-    if attr == "end" and key == "education_history" and "graduat" in label and not finished_degree(entry.get("degree")):
+    if (attr == "end" and key == "education_history" and "graduat" in norm(clean_label(field.get("label") or ""))
+            and not finished_degree(entry.get("degree"))):
         return True, None  # a school not finished: no graduation date to give
     if attr == "end" and current:
         return True, Answer(SKIP, rule)
     if attr in ("start", "end"):
-        value = _date_value(field, entry.get(attr))
+        value = _date_value(field, dates[attr])
         return True, (Answer(value, rule) if value else None)
     value = entry.get(attr)
     return True, (Answer(str(value).strip(), rule) if value not in (None, "") else None)
@@ -1603,6 +1693,11 @@ def _asked(f: dict) -> dict:
 
 
 _SCHOOL_FROM_ENTRY = re.compile(r"education_history\[(\d+)\]\.school")
+
+
+def is_school_rule(rule: str) -> bool:
+    """A School box filled from the profile: an education entry's, or the one school's."""
+    return bool(_SCHOOL_FROM_ENTRY.fullmatch(rule or "")) or rule == "school"
 # a box about another credential than the school given: its own year, education.graduation_year
 _OTHER_CREDENTIAL = re.compile(r"\b(high school|ged|diploma|secondary)\b")
 

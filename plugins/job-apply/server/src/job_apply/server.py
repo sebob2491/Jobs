@@ -21,7 +21,8 @@ from mcp.server.mcpserver.exceptions import ToolError
 
 from . import config
 from .ats import ATS_NAMES, detect_ats, greenhouse_form_url
-from .autofill import is_empty_value, is_name_rule, place_words, plan_autofill, profile_entries, resolve_field
+from .autofill import (is_empty_value, is_name_rule, is_school_rule, place_words, plan_autofill, profile_entries,
+                       resolve_field)
 from .browser import BrowserSession, BrowserUnavailable, SiteDown, SubmitBlocked
 from .postings import FetchError, Posting, fetch_posting, finalize, parse_html
 from .render import KINDS, render_pdf, to_html
@@ -221,6 +222,7 @@ def setup_status() -> dict[str, Any]:
         "profile_path": str(config.profile_path()),
         "profile_complete": not missing,
         "missing_profile_fields": missing,
+        "profile_gaps": prof.profile_gaps(),  # not required, but each one is a stop on some sites
         "settings_warnings": s.warnings,
         "settings": {"submit_mode": s.submit_mode, "auto_submit_ats": s.auto_submit_ats,
                      "browser_channel": s.browser_channel, "headless": s.headless,
@@ -629,6 +631,11 @@ async def inspect_form(include_dropdown_options: bool = True) -> dict[str, Any]:
     return data
 
 
+# What a site's list calls a school it doesn't have, and the fill's words for "not in its list"
+SCHOOL_NOT_LISTED = ("Other", "Not Listed")
+_NOT_IN_LIST = re.compile(r"doesn't match any (suggestion|option)|nothing in its list matched")
+
+
 @tool(drives=True)
 async def autofill(job_id: int | None = None, overwrite: bool = False) -> dict[str, Any]:
     """Fill every field on the current page that the profile answers with confidence
@@ -656,6 +663,17 @@ async def autofill(job_id: int | None = None, overwrite: bool = False) -> dict[s
         retried = {x["id"]: x for x in await browser.fill([{"id": fid, "value": v} for fid, v in regrouped.items()])}
         results = [retried.get(r["id"], r) for r in results]
         by_id.update({fid: {**by_id[fid], "value": v} for fid, v in regrouped.items() if retried.get(fid, {}).get("ok")})
+    # a school a site's list doesn't have (a small community college): its "Other" entry, the
+    # true answer there (a box for the school's name, where one then shows, is filled after)
+    for i, r in enumerate(results):
+        if (not r["ok"] and is_school_rule(by_id.get(r["id"], {}).get("rule") or "")
+                and _NOT_IN_LIST.search(str(r.get("error") or ""))):  # not a slow list or a missed click
+            for other in SCHOOL_NOT_LISTED:
+                tried = (await browser.fill([{"id": r["id"], "value": other}]))[0]
+                if tried.get("ok"):
+                    results[i] = tried
+                    by_id[r["id"]] = {**by_id[r["id"]], "value": other}
+                    break
     filled, failed = [], []
     for r in results:
         src = by_id.get(r["id"], {})
@@ -668,7 +686,8 @@ async def autofill(job_id: int | None = None, overwrite: bool = False) -> dict[s
             field = fields.get(r["id"], {})
             options = r.get("options") or field.get("options")
             failed.append({**entry, "error": r["error"], "kind": field.get("kind"),
-                           "required": bool(field.get("required", True)), **({"options": options} if options else {})})
+                           "required": bool(field.get("required", True)), **({"options": options} if options else {}),
+                           **{k: field[k] for k in ("section", "sublabel") if field.get(k)}})
     after = await browser.inspect(include_dropdown_options=False)
     snapshot = await _auto_snapshot("autofill failures", failed) if failed else None
     return {

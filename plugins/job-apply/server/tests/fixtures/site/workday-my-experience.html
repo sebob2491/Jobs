@@ -1,0 +1,121 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Workday-style My Experience (one block open)</title>
+<style>
+  ul[role=listbox] { border: 1px solid #999; list-style: none; padding: 0; margin: 0; }
+  ul[role=listbox][hidden], .hidden { display: none; }
+  input[role=spinbutton] { width: 4em; }
+</style>
+</head>
+<body>
+<div data-automation-id="progressBarActiveStep">My Experience</div>
+<h2>My Experience</h2>
+
+<div data-automation-id="workExperienceSection" role="group" aria-labelledby="we-title">
+  <h3 id="we-title">Work Experience</h3>
+  <div id="we-panels"></div>
+  <button type="button" data-automation-id="Add" id="we-add" aria-label="Add Work Experience">Add</button>
+</div>
+
+<div data-automation-id="educationSection" role="group" aria-labelledby="ed-title">
+  <h3 id="ed-title">Education</h3>
+  <div id="ed-panels"></div>
+  <button type="button" data-automation-id="Add" id="ed-add" aria-label="Add Education">Add</button>
+</div>
+
+<ul role="listbox" id="popup" hidden></ul>
+<button type="button" data-automation-id="pageFooterNextButton">Save and Continue</button>
+
+<script>
+  const date = (name, label, parts) => `
+    <div data-automation-id="formField-${name}"><label>${label}<abbr title="required">*</abbr></label>
+      <div data-automation-id="dateInputWrapper">
+        ${parts.includes('M') ? '<input type="text" role="spinbutton" data-automation-id="dateSectionMonth-input" aria-label="Month" maxlength="2">' : ''}
+        <input type="text" role="spinbutton" data-automation-id="dateSectionYear-input" aria-label="Year" maxlength="4">
+      </div>
+    </div>`;
+  let we = 0, ed = 0;
+  document.getElementById('we-add').addEventListener('click', (e) => {
+    we += 1;
+    const n = we;
+    const panel = document.createElement('div');
+    panel.setAttribute('role', 'group');
+    panel.setAttribute('aria-labelledby', 'we-' + n);
+    panel.innerHTML = `
+      <h4 id="we-${n}">Work Experience ${n}</h4>
+      <div data-automation-id="formField-jobTitle"><label for="jt-${n}">Job Title<abbr title="required">*</abbr></label><input id="jt-${n}"></div>
+      <div data-automation-id="formField-companyName"><label for="co-${n}">Company<abbr title="required">*</abbr></label><input id="co-${n}"></div>
+      <div data-automation-id="formField-location"><label for="lo-${n}">Location</label><input id="lo-${n}"></div>
+      <div data-automation-id="formField-currentlyWorkHere"><input type="checkbox" id="cw-${n}"><label for="cw-${n}">I currently work here</label></div>
+      ${date('startDate', 'From', 'MY')}
+      <div class="to">${date('endDate', 'To', 'MY')}</div>
+      <div data-automation-id="formField-roleDescription"><label for="rd-${n}">Role Description</label><textarea id="rd-${n}"></textarea></div>
+      <button type="button" aria-label="Delete Work Experience ${n}">Delete</button>`;
+    document.getElementById('we-panels').appendChild(panel);
+    panel.querySelector('#cw-' + n).addEventListener('change', (ev) => {
+      panel.querySelector('.to').classList.toggle('hidden', ev.target.checked);
+    });
+    e.target.textContent = 'Add Another';
+  });
+
+  const degrees = ["High School Diploma", "Associate's Degree", "Bachelor's Degree", "Master's Degree", "Doctorate"];
+  const studies = ['Electrical Engineering', 'Electrical and Computer Engineering', 'Mechanical Engineering', 'Physics'];
+  const popup = document.getElementById('popup');
+  function show(items, onPick, anchor) {
+    popup.innerHTML = '';
+    for (const it of items) {
+      const li = document.createElement('li');
+      li.setAttribute('role', 'option');
+      li.textContent = it;
+      li.addEventListener('click', () => { onPick(it); popup.hidden = true; });
+      popup.appendChild(li);
+    }
+    popup.hidden = false;
+    anchor.after(popup);
+  }
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') popup.hidden = true; });
+
+  document.getElementById('ed-add').addEventListener('click', (e) => {
+    ed += 1;
+    const n = ed;
+    const panel = document.createElement('div');
+    panel.setAttribute('role', 'group');
+    panel.setAttribute('aria-labelledby', 'ed-' + n);
+    panel.innerHTML = `
+      <h4 id="ed-${n}">Education ${n}</h4>
+      <div data-automation-id="formField-school"><label for="sc-${n}">School or University<abbr title="required">*</abbr></label><input id="sc-${n}"></div>
+      <div data-automation-id="formField-degree"><label>Degree<abbr title="required">*</abbr></label><button type="button" aria-haspopup="listbox" id="dg-${n}">Select One</button></div>
+      <div data-automation-id="formField-fieldOfStudy"><label for="fs-${n}">Field of Study</label>
+        <div data-automation-id="multiselectInputContainer"><input id="fs-${n}" role="combobox" aria-autocomplete="list" placeholder="Search"><div class="pills"></div></div></div>
+      <div data-automation-id="formField-gradeAverage"><label for="gpa-${n}">Overall Result (GPA)</label><input id="gpa-${n}"></div>
+      ${date('firstYearAttended', 'From', 'Y')}
+      ${date('lastYearAttended', 'To (Actual or Expected)', 'Y')}`;
+    document.getElementById('ed-panels').appendChild(panel);
+    const dg = panel.querySelector('#dg-' + n);
+    dg.addEventListener('click', () => setTimeout(() => show(degrees, (v) => { dg.textContent = v; }, dg), 120));
+    const fs = panel.querySelector('#fs-' + n);
+    fs.addEventListener('keydown', (ev) => {
+      if (ev.key !== 'Enter') return;
+      const q = fs.value.toLowerCase();
+      setTimeout(() => show(studies.filter((s) => s.toLowerCase().includes(q)), (v) => {
+        const pill = document.createElement('div');
+        pill.setAttribute('data-automation-id', 'selectedItem');
+        pill.textContent = v;
+        panel.querySelector('.pills').appendChild(pill);
+        fs.value = '';
+      }, fs.parentElement), 120);
+    });
+    e.target.textContent = 'Add Another';
+  });
+
+  // spinbuttons accept digits only, like Workday's date sections
+  document.addEventListener('input', (e) => {
+    if (e.target.getAttribute('role') === 'spinbutton') e.target.value = e.target.value.replace(/\D/g, '');
+  });
+</script>
+<script>
+  // like Intel's Workday (live, Oct 2026): the page opens with a Work Experience block to fill
+  document.getElementById('we-add').click();
+</script>
+</body>
+</html>

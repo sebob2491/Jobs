@@ -165,6 +165,72 @@ def test_work_and_education_entries():
     assert entry("Education 1", "To (Actual or Expected)", sublabel="Year") == "2020"
 
 
+def test_a_jobs_dates_are_read_however_the_profile_writes_them():
+    """A profile written from a resume can hold a job's dates as start_date / end_date or as one
+    span ("Mar 2019 - Jun 2021"): Workday's From and To boxes stayed empty for those."""
+    from job_apply.autofill import entry_dates
+
+    assert entry_dates({"start": "2021-03", "end": "present"}) == ("2021-03", "present")
+    assert entry_dates({"start_date": "Mar 2019", "end_date": "Jun 2021"}) == ("Mar 2019", "Jun 2021")
+    assert entry_dates({"dates": "Mar 2019 - Jun 2021"}) == ("Mar 2019", "Jun 2021")
+    assert entry_dates({"dates": "03/2019 \u2013 Present"}) == ("03/2019", "Present")
+    assert entry_dates({"dates": "2019-2021"}) == ("2019", "2021")
+    assert entry_dates({"dates": "2019-03 to 2021-06"}) == ("2019-03", "2021-06")
+    assert entry_dates({"dates": "Mar 2019-Jun 2021"}) == ("Mar 2019", "Jun 2021")
+    assert entry_dates({"dates": "03/2019-06/2021"}) == ("03/2019", "06/2021")
+    assert entry_dates({"dates": "2019-03"}) == (None, None)  # one date, not a span
+    assert entry_dates({"start_year": 2019, "start_month": 3, "end_year": 2021, "end_month": "Jun"}) == \
+        ("2019-03", "Jun 2021")
+    assert entry_dates({"title": "Technician"}) == (None, None)
+    p = Profile({"work_history": [{"title": "Technician", "company": "Example Fab", "dates": "Mar 2019 - Present"},
+                                  {"title": "Assistant", "company": "Example Lab", "start_date": "2016-08",
+                                   "end_date": "Feb 2019"}]})
+
+    def entry(section, label, kind="text", **kw):
+        a = resolve_field({"id": "1", "kind": kind, "label": label, "section": section, "value": "", **kw}, p)
+        return None if a is None else a.value
+
+    assert entry("Work Experience 1", "From", sublabel="Month") == "03"
+    assert entry("Work Experience 1", "I currently work here", "checkbox") is True
+    assert entry("Work Experience 2", "From", sublabel="Year") == "2016"
+    assert entry("Work Experience 2", "To", sublabel="Month") == "02"
+
+
+def test_jobs_without_their_months_are_named_as_missing_from_the_profile():
+    """Workday asks every job's start and end month. The desk says which jobs in the profile
+    lack them, before an application asks, so they're added once."""
+    from job_apply.autofill import undated_jobs
+
+    p = Profile({"work_history": [
+        {"title": "Equipment Technician", "company": "Example Fab", "start": "2021-03", "end": "present"},
+        {"title": "Safety Technician", "company": "Example Steel", "dates": "2018 - 2021"},  # years only
+        {"title": "Line Cook", "company": "Example Diner"},
+        {"title": "Assistant", "company": "Example Lab", "start": "Jun 2016", "end": "Jan 2018"}]})
+    assert undated_jobs(p) == ["Safety Technician at Example Steel", "Line Cook at Example Diner"]
+    assert p.profile_gaps() == ["work_history dates: Safety Technician at Example Steel; Line Cook at Example Diner"]
+    # a gap, not a requirement: an old job's months can be forgotten, and most sites never ask
+    assert not [m for m in p.missing_required() if m.startswith("work_history")]
+    assert prof().profile_gaps() == []  # the test profile's jobs are dated
+
+
+def test_a_boxes_in_a_jobs_block_that_the_profile_doesnt_hold():
+    """"May we contact this employer?" in a job's block was given the company's name; it and
+    "Reason for leaving", "Hours per week" and a date's Day are the person's, not the profile's."""
+    from job_apply.autofill import entry_of
+
+    p = prof()
+
+    def field(label, **kw):
+        return {"id": "1", "kind": "text", "label": label, "section": "Work Experience 1", "value": "", **kw}
+
+    assert resolve_field(field("May we contact this employer?"), p) is None
+    for f in (field("May we contact this employer?"), field("Reason for Leaving"), field("Hours per week"),
+              field("From", sublabel="Day")):
+        assert entry_of(f, p) is None, f["label"]
+    assert entry_of(field("From", sublabel="Month"), p) == ("Equipment Technician at Intel", "work")
+    assert entry_of({**field("Degree"), "section": "Education 1"}, p) == ("Arizona State University", "education")
+
+
 def test_plan_skips_end_date_of_current_job():
     fields = [
         {"id": "1", "kind": "text", "label": "To", "sublabel": "Month", "section": "Work Experience 1", "value": ""},

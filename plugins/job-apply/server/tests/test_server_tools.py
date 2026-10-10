@@ -460,6 +460,35 @@ def test_the_click_tool_accepts_a_cookie_banner_only_where_the_person_allows_it(
 
 
 @needs_browser
+def test_a_school_the_sites_list_doesnt_have_is_its_other(srv, job_apply_home):
+    """Workday's School or University list is the employer's own, and small colleges are often
+    left out: the typed name read as filled while the box stayed empty. The list's "Other" is
+    the true answer there."""
+    import yaml
+    from conftest import fixture_url
+
+    path = job_apply_home / "profile.yaml"
+    profile = yaml.safe_load(path.read_text())
+    profile["education_history"][0]["school"] = "Example Valley Community College"
+    path.write_text(yaml.safe_dump(profile))
+
+    async def go():
+        await srv.browser.goto(fixture_url("site/workday-school-not-listed.html"))
+        result = await srv.autofill()
+        pills = await srv.browser._page.evaluate(
+            "() => [...document.querySelectorAll('[data-automation-id=selectedItem]')].map((p) => p.textContent)")
+        return result, pills
+
+    result, pills = run(go())
+    assert pills == ["Other"], (pills, result["failed"])
+    assert not result["failed"], result["failed"]
+    # only for a school the list lacks: not a slow list, or a pick the box didn't take
+    assert srv._NOT_IN_LIST.search("nothing in its list matched 'Example Valley Community College'")
+    assert not srv._NOT_IN_LIST.search("Picked 'Arizona State University' but the field didn't take it")
+    assert not srv._NOT_IN_LIST.search("Timeout 5000ms exceeded")
+
+
+@needs_browser
 def test_a_failed_desk_jobs_tab_is_still_the_desks(srv):
     """Resume takes a failed job up again in its tab: Claude's open_application doesn't load
     another posting there."""

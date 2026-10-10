@@ -1,0 +1,49 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Workday-style Education</title>
+<style>ul[role=listbox] { border: 1px solid #999; list-style: none; padding: 0; margin: 0; } ul[role=listbox][hidden] { display: none; }</style>
+</head>
+<body>
+<!-- like Workday's School or University prompt (Intel's, live, Oct 2026): a search over the
+     employer's own list of schools, which leaves out many small colleges and has "Other" -->
+<h2>My Experience</h2>
+<div data-automation-id="educationSection" role="group" aria-labelledby="ed-1">
+  <h4 id="ed-1">Education 1</h4>
+  <div data-automation-id="formField-school"><label for="sc-1">School or University<abbr title="required">*</abbr></label>
+    <div data-automation-id="multiselectInputContainer"><input id="sc-1" role="combobox" aria-autocomplete="list" placeholder="Search"><div class="pills"></div></div></div>
+</div>
+<ul role="listbox" id="popup" hidden></ul>
+<button type="button" data-automation-id="pageFooterNextButton">Save and Continue</button>
+<script>
+  const schools = ['Arizona State University', 'Example State University', 'Example Technical Institute', 'Other'];
+  const popup = document.getElementById('popup');
+  const sc = document.getElementById('sc-1');
+  sc.addEventListener('keydown', (ev) => {
+    if (ev.key !== 'Enter') return;
+    const q = sc.value.toLowerCase();
+    const found = schools.filter((s) => s.toLowerCase().includes(q));
+    setTimeout(() => {
+      popup.innerHTML = '';
+      if (!found.length) { popup.innerHTML = '<li>No Items.</li>'; }
+      for (const it of found) {
+        const li = document.createElement('li');
+        li.setAttribute('role', 'option');
+        li.textContent = it;
+        li.addEventListener('click', () => {
+          const pill = document.createElement('div');
+          pill.setAttribute('data-automation-id', 'selectedItem');
+          pill.textContent = it;
+          document.querySelector('.pills').appendChild(pill);
+          sc.value = '';
+          popup.hidden = true;
+        });
+        popup.appendChild(li);
+      }
+      popup.hidden = false;
+      sc.parentElement.after(popup);
+    }, 120);
+  });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') popup.hidden = true; });
+</script>
+</body>
+</html>

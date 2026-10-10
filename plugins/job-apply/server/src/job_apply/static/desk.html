@@ -277,7 +277,10 @@ const PROFILE_FIELDS = {
 };
 const profileField = (k) => {
   const gone = /^documents\.resume \(file not found: (.*)\)$/.exec(k);
-  return gone ? `your resume file (nothing is at ${gone[1]})` : PROFILE_FIELDS[k] || k;
+  if (gone) return `your resume file (nothing is at ${gone[1]})`;
+  const undated = /^work_history dates: (.*)$/.exec(k);
+  return undated ? `the start and end months of your jobs (${undated[1]}): ask Claude to "add the start and end months `
+    + `of my jobs from my resume to my profile"` : PROFILE_FIELDS[k] || k;
 };
 const inWords = (xs) => xs.length < 2 ? xs.join("") : `${xs.slice(0, -1).join(", ")} and ${xs[xs.length - 1]}`;
 // Job links come from employers' and job boards' data: only web addresses become links.
@@ -384,27 +387,32 @@ function renderRows() {
   $("apply").textContent = n ? `Apply to ${n} selected` : "Apply to selected";
 }
 
-function question(jobId, q, i) {
-  const name = `q-${jobId}-${q.label}`;
+function question(jobId, q, i, repeated = false) {
+  // A label more than one box has (Workday's "Date" Month and Year boxes) is answered for its own
+  // box ("section | label | sub-label"), for this application only: remembered, or answered by
+  // its words alone, one answer would go in every box with that label.
+  const key = repeated ? `${q.section || ""} | ${q.label} | ${q.sublabel || ""}` : q.label;
   const consent = /agree|consent|certify|acknowledge|terms|attest/i.test(q.label);
   const opts = (q.options || []).filter((o) => o && !/^(select|choose|--|no selection$)/i.test(o));
   let input;
   if (q.kind === "checkbox") {
-    input = `<select data-q="${esc(q.label)}"><option value=""></option><option>Yes</option><option>No</option></select>`;
+    input = `<select data-q="${esc(key)}"><option value=""></option><option>Yes</option><option>No</option></select>`;
   } else if (opts.length && (q.kind === "combobox" || opts.length > 25)) {
     // a long or searchable list (countries, schools): type to narrow it, or type an answer
     // the site's list only shows once you search for it. The same id on every refresh, so
     // the form isn't redrawn (and what's typed into it lost) each time the page refreshes.
     const list = `dl-${jobId}-${i}`;
-    input = `<input type="text" list="${list}" data-q="${esc(q.label)}" autocomplete="off" placeholder="Type or pick">
+    input = `<input type="text" list="${list}" data-q="${esc(key)}" autocomplete="off" placeholder="Type or pick">
       <datalist id="${list}">${opts.map((o) => `<option value="${esc(o)}"></option>`).join("")}</datalist>`;
   } else if (opts.length) {
-    input = `<select data-q="${esc(q.label)}"><option value=""></option>${opts.map((o) => `<option>${esc(o)}</option>`).join("")}</select>`;
+    input = `<select data-q="${esc(key)}"><option value=""></option>${opts.map((o) => `<option>${esc(o)}</option>`).join("")}</select>`;
   } else {
-    input = `<input type="text" data-q="${esc(q.label)}" autocomplete="off">`;
+    input = `<input type="text" data-q="${esc(key)}" autocomplete="off">`;
   }
-  return `<label class="q"><span>${esc(q.label)}${q.error ? ` <span class="small">(${esc(q.error)})</span>` : ""}</span>${input}
-    <span class="remember"><input type="checkbox" data-remember="${esc(q.label)}" ${consent ? "" : "checked"}> Remember for later applications</span></label>`;
+  // where it is, for a box whose words alone don't say ("Contact Details: Phone", "Date (Month)")
+  const where = `${q.section ? `${esc(q.section)}: ` : ""}${esc(q.label)}${q.sublabel ? ` (${esc(q.sublabel)})` : ""}`;
+  return `<label class="q"><span>${where}${q.error ? ` <span class="small">(${esc(q.error)})</span>` : ""}</span>${input}
+    ${repeated ? "" : `<span class="remember"><input type="checkbox" data-remember="${esc(q.label)}" ${consent ? "" : "checked"}> Remember for later applications</span>`}</label>`;
 }
 
 function jobButtons(r, which) {
@@ -437,9 +445,11 @@ function renderSide() {
   const needEntries = needs.map((r) => {
     const head = `<h3>${esc(r.title)} <span class="small">· ${esc(r.company)}</span></h3><p>${esc(r.reason)}</p>`;
     let body;
-    const form = (r.questions || []).length ? `<form data-answer="${r.job_id}">${r.questions.map((q, i) => question(r.job_id, q, i)).join("")}</form>` : "";
-    if (r.need === "questions") body = form + jobButtons(r, ["fill", "show", "skip"]);
-    else if (form) body = form + jobButtons(r, ["fill", "show", "resume", "skip"]);  // e.g. a missing file, plus questions
+    const qs = r.questions || [];
+    const repeated = new Set(qs.map((q) => q.label).filter((l, i, all) => all.indexOf(l) !== i));
+    const form = qs.length ? `<form data-answer="${r.job_id}">${qs.map((q, i) => question(r.job_id, q, i, repeated.has(q.label))).join("")}</form>` : "";
+    // questions (with Resume, for answers typed into the page itself), or a missing file plus questions
+    if (form || r.need === "questions") body = form + jobButtons(r, ["fill", "show", "resume", "skip"]);
     else if (["sign_in", "bot_check", "email_code"].includes(r.need)) body = jobButtons(r, ["show", r.blocking ? "later" : "resume", "skip"]);
     else if (r.need === "captcha") body = jobButtons(r, ["show", "submit", "skip"]);
     else if (r.need === "your_submit" || r.need === "check_submit") body = jobButtons(r, ["show", "applied", "skip"]);
@@ -519,6 +529,7 @@ function renderHeader() {
   if (state.tailoring) notes.push({cls: "waiting", html: `<strong>${state.tailoring} job${state.tailoring === 1 ? "" : "s"} waiting for a tailored resume.</strong>
     <span>In Claude Code, say \u201ctailor my resumes\u201d. Each job carries on as soon as its resume is ready.</span>`});
   if (p.missing && p.missing.length) notes.push({cls: "notice", html: `Your profile still needs: ${esc(inWords(p.missing.map(profileField)))}. Run <code>/job-apply:setup</code> in Claude Code, or edit <code>${esc(p.path)}</code>.`});
+  if (p.gaps && p.gaps.length) notes.push({cls: "notice", html: `Fewer stops: your profile could also hold ${esc(inWords(p.gaps.map(profileField)))}.`});
   if (state.profile_problem) notes.push({cls: "notice", html: `Your profile can't be read: ${esc(state.profile_problem)} Fix it and the desk picks it up again by itself.`});
   if (state.mail_problem) notes.push({cls: "notice", html: esc(state.mail_problem)});
   if (state.answers_problem) notes.push({cls: "notice", html: `Your saved answers aren't being used: ${esc(state.answers_problem)}.`});
@@ -670,7 +681,7 @@ document.addEventListener("click", (e) => {
     const form = document.querySelector(`form[data-answer="${job}"]`);
     const answers = [...form.querySelectorAll("[data-q]")].map((el) => ({
       label: el.dataset.q, value: el.value,
-      remember: form.querySelector(`[data-remember="${CSS.escape(el.dataset.q)}"]`)?.checked ?? true,
+      remember: form.querySelector(`[data-remember="${CSS.escape(el.dataset.q)}"]`)?.checked ?? !el.dataset.q.includes(" | "),
     })).filter((x) => x.value);
     if (!answers.length) { alert("Answer at least one question first."); return; }
     act(async () => { const out = await api("/api/answer", {job_id: Number(job), answers}); if (out.note) alert(out.note); });
