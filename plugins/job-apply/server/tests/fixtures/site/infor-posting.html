@@ -1,0 +1,23 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Job Posting / Candidate Experience</title></head>
+<body>
+<!-- like an Infor CloudSuite HCM job board's posting (Benchmark's, live, Oct 2026: /hcm/Jobs/form/
+     JobPosting[JobPostingSet](1,<job>,1).JobPostingDisplay): "Apply" and "Save" ("Sign In" and
+     "Register" sit in its navigation menu, out of sight). "Apply", signed out, goes on to Infor's
+     sign-in (infor-signin.html) with a fresh _logininst. Served by the tests at Benchmark's address
+     (routed: nothing goes to the real site). -->
+<header>Candidate Experience <button type="button" aria-label="Toggle Navigation">&#9776;</button></header>
+<h1>Field Service Technician - 10001</h1>
+<p>Arizona:Tempe | Manufacturing / Operations | Full Time</p>
+<button type="button" id="apply">Apply</button> <button type="button">Save</button>
+<h2>Description</h2>
+<p>Installs, maintains and repairs production equipment at customer sites.</p>
+<script>
+  document.getElementById('apply').addEventListener('click', () => {
+    location.href = '/sso/SSOServlet?_action=LOGINREQD&_logininst=' + Math.random().toString(36).slice(2)
+      + '&_serviceName=HCM.HCMAPP.JOBS';
+  });
+</script>
+</body>
+</html>

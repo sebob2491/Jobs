@@ -1,0 +1,69 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Infor - Sign In</title></head>
+<body>
+<!-- like Infor CloudSuite's sign-in (Benchmark's, live, Oct 2026: /sso/SSOServlet?_action=LOGINREQD&
+     _logininst=<token>&_serviceName=HCM.HCMAPP.JOBS, where a posting's "Apply" leads): "User Name",
+     "Password" and "Sign In", then a "Register" link (to ?_action=REGISTER, which goes on to the job
+     board's New Account Registration: register-picture-code.html) and "Forgot password?" (whose script
+     sends the page's form with _action=PWDRESET: infor-reset.html). The form is sent to /sso/SSOServlet
+     itself, so a refused sign-in comes back at that bare address, with an error (its words are the
+     fixture's) and the links. Opened again by that address, it's Infor's own sign-in, for no job board:
+     "User Name", "Password" and "Sign In", nothing else. The site has no account: every sign-in is
+     refused (counted in sessionStorage's infor.logins). Served by the tests at Benchmark's address
+     (routed: nothing goes to the real site). -->
+<a href="#maincontent" class="skip-link">Skip to Main Content</a>
+<section class="signin" role="main" id="maincontent">
+  <form method="POST" action="/sso/SSOServlet" id="loginForm" name="loginForm" autocomplete="off">
+    <div class="field">
+      <label class="required" for="userId">User Name</label>
+      <input type="text" name="_ssoUser" id="userId" class="required">
+    </div>
+    <div class="field">
+      <label class="required" for="password">Password</label>
+      <input type="password" name="_ssoPass" id="password" class="required" autocomplete="off">
+    </div>
+    <div class="field" id="err" role="alert"></div>
+    <div class="field">
+      <button type="submit" id="btnLogin" class="btn-primary"><span id="btnSignin">Sign In</span></button>
+    </div>
+    <div class="field">
+      <div class="linkSection" id="links">
+        <a href="#" id="register" class="inforHyperlink">Register</a> <br>
+        <a href="javascript:PasswordReset()" class="inforHyperlink">Forgot password?</a>
+      </div>
+    </div>
+    <div class="field"><div class="copyright">Copyright &copy; 2021 Infor. All rights reserved. www.infor.com</div></div>
+    <input type="hidden" name="_action" value="LOGIN">
+    <input type="hidden" name="_serviceName" value="">
+  </form>
+</section>
+<script>
+  const q = new URLSearchParams(location.search);
+  if (q.get('_action') === 'REGISTER') {
+    location.replace('/hcm/Jobs/form/Candidate.SelfRegistrationForm?action=CreateJobsLoginCasual&csk.JobBoard=EXTERNAL');
+  }
+  // a refused sign-in's answer, at the bare address its form was sent to: shown once
+  const refused = JSON.parse(sessionStorage.getItem('infor.refused') || 'null');
+  sessionStorage.removeItem('infor.refused');
+  const service = q.get('_serviceName') || (refused && refused.service) || '';
+  document.loginForm._serviceName.value = service;
+  if (service) {
+    document.getElementById('register').href = '/sso/SSOServlet?_action=REGISTER&_logininst=' + (q.get('_logininst') || '')
+      + '&_serviceName=' + service;
+  } else {
+    document.getElementById('links').remove();  // Infor's own sign-in, for no job board
+  }
+  if (refused) document.getElementById('err').textContent = 'The user name or password you entered is not valid.';
+  document.getElementById('loginForm').addEventListener('submit', (e) => {
+    e.preventDefault();
+    sessionStorage.setItem('infor.logins', String(Number(sessionStorage.getItem('infor.logins') || 0) + 1));
+    sessionStorage.setItem('infor.refused', JSON.stringify({service}));
+    location.href = '/sso/SSOServlet';
+  });
+  function PasswordReset() {
+    location.href = '/sso/SSOServlet?_action=PWDRESET&_serviceName=' + service;
+  }
+</script>
+</body>
+</html>

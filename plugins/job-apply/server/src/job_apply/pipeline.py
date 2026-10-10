@@ -123,6 +123,9 @@ _USER_NAME = re.compile(r"\buser ?name\b|\blog ?in\b", re.I)
 # person's to choose and answer, never made up
 _SECURITY_QUESTION = re.compile(r"\b(?:security|secret|challenge|password (?:reminder|recovery|hint))\b[^.?!]{0,20}?"
                                 r"\b(?:questions?|answers?)\b|\bpassword hint\b", re.I)
+# A picture code's box, a CAPTCHA the site draws itself (BrassRing's "Enter Captcha", Benchmark's Infor
+# registration's "Enter the text in image above"): the person's to solve
+_PICTURE_CODE = re.compile(r"captcha|text in (?:the )?(?:image|picture)", re.I)
 # With settings.manage_accounts: a Create Account form's own button, the boxes on it that agree to
 # the site's terms (required ones, or its terms, or a privacy policy or notice read: "Yes, I confirm that
 # I have read the privacy notice", a Workday site's; never a newsletter's, job alerts', being kept informed
@@ -1923,8 +1926,9 @@ class Applier:
         ones, or its terms, or a privacy notice read: never a newsletter's or job alerts') and press
         the form's own button, after its password boxes (its submit button, or a link or plain button
         in that form that its script sends it with: ApplicantStack's "Submit"). Once a job
-        (Run.accounts_tried). Not with a CAPTCHA on the page (a picture code's box too): that's the
-        person's. True when it was pressed; the account is said to be made only once the site shows it
+        (Run.accounts_tried). Not with a CAPTCHA on the page, a picture code's box among them
+        (Benchmark's Infor registration: "Enter the text in image above"): that's the person's. True
+        when it was pressed; the account is said to be made only once the site shows it
         (Run.account_made, in _drive). Nor with security questions on the form (some Taleo sites'):
         their answers are the person's."""
         if _captcha_on(data) or _security_boxes(data.get("fields") or []):
@@ -2313,20 +2317,30 @@ class Applier:
     async def _back_to_sign_in(self, run: Run) -> None:
         """Back to the sign-in page a password reset was asked from (run.reset_from). Where that page
         was good for one visit (SuccessFactors' career?_s.crb=..., Arizona Public Service's for the test
-        identity, live Oct 2026: "An error occurred while processing your request"), the job's posting
-        is opened again in its tab instead: its Apply leads to a fresh sign-in page. Where the reset was
-        drawn in its place, at the same address and fragment (BrassRing's #jobDetails=…, live, Oct 2026),
-        going there again leaves the reset on show: the page is loaded again (BrassRing's shows the
-        posting, whose Apply leads to the sign-in page)."""
+        identity, live Oct 2026: "An error occurred while processing your request"), or its address
+        alone doesn't bring it back (Benchmark's Infor sign-in, live Oct 2026: a refused sign-in answers
+        at /sso/SSOServlet, where its form is sent, and that address opened again is Infor's own
+        sign-in, with no "Register" or "Forgot password?"), the job's posting is opened again in its
+        tab instead: its Apply leads to a fresh sign-in page. Where the reset was drawn in its place,
+        at the same address and fragment (BrassRing's #jobDetails=…, live, Oct 2026), going there again
+        leaves the reset on show: the page is loaded again (BrassRing's shows the posting, whose Apply
+        leads to the sign-in page)."""
         assert run.page is not None
         if run.page.url == run.reset_from and urlparse(run.reset_from).fragment:
             await run.page.reload(wait_until="domcontentloaded", timeout=45000)
         else:
             await run.page.goto(run.reset_from, wait_until="domcontentloaded", timeout=45000)
         data, text = await self._look()
-        if not data.get("fields") and _SPENT_PAGE.search(text[:3000]):
-            self._log(run, f"{_site(run, data)}'s sign-in page couldn't be opened again, so I opened the job again")
-            await self.srv.open_application(job_id=run.job_id)
+        fields, actions = data.get("fields") or [], data.get("actions") or []
+        if not fields and _SPENT_PAGE.search(text[:3000]):
+            gone = " couldn't be opened again"
+        elif (any(f.get("kind") == "password" for f in fields) and _forgot_action(actions) is None
+              and _account_way(actions) is None):
+            gone = ", opened again, had no way to a new account or a password reset"
+        else:
+            return
+        self._log(run, f"{_site(run, data)}'s sign-in page{gone}, so I opened the job again")
+        await self.srv.open_application(job_id=run.job_id)
 
     async def _await_reset_email(self, run: Run, data: dict[str, Any]) -> None:
         watched = self.mail_login() is not None
@@ -2559,11 +2573,7 @@ class Applier:
             await srv.click(email_button["id"])
             return "email_step"
         passwords = [f for f in fields if f["kind"] == "password"]
-        # The way to a new account is a link or a plain button. A Create Account form's own
-        # button sends that form (it creates the account), so it's never it: a form's submit,
-        # or a button in a form with two password boxes (Workday's, a div).
-        create = next((a for a in actions if _CREATE_ACCOUNT.match(a["text"].strip()) and not a.get("form_submit")
-                       and not a.get("account_form")), None)
+        create = _account_way(actions)
         # Where the way to a new account led: a form with one password box (UKG Pro's "Create
         # your account") is the new account's, as it no longer offers a way to one.
         signing_up = len(passwords) == 1 and bool(tried.get("create_account")) and create is None
@@ -2940,6 +2950,14 @@ def _forgot_action(actions: list[dict[str, Any]]) -> dict[str, Any] | None:
     return next((a for a in actions if not a.get("disabled") and not a.get("cookie") and _FORGOT.search(a["text"])), None)
 
 
+def _account_way(actions: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """A sign-in page's way to a new account, a link or plain button. A Create Account form's own
+    button sends that form (it creates the account), so it's never it: a form's submit, or a button
+    in a form with two password boxes (Workday's, a div)."""
+    return next((a for a in actions if not a.get("disabled") and _CREATE_ACCOUNT.match(a["text"].strip())
+                 and not a.get("form_submit") and not a.get("account_form")), None)
+
+
 def _user_name_box(field: dict[str, Any]) -> bool:
     """A box for a user name, not the email (Taleo's "User Name"): the desk puts the email in it."""
     label = field.get("label") or ""
@@ -2953,11 +2971,6 @@ def _security_boxes(fields: list[dict[str, Any]]) -> list[dict[str, Any]]:
         return []
     return [f for f in fields if f.get("kind") not in ("password", "checkbox", "file")
             and re.search(r"\bquestions?\b|\banswers?\b|\bhint\b", f.get("label") or "", re.I)]
-
-
-# A picture code's box, a CAPTCHA the site draws itself: BrassRing's "Enter Captcha", Benchmark's
-# "Enter the text in image above"
-_PICTURE_CODE = re.compile(r"captcha|text in (?:the )?(?:image|picture)", re.I)
 
 
 def _captcha_on(data: dict[str, Any]) -> bool:

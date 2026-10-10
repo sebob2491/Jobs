@@ -1997,6 +1997,69 @@ def test_a_sign_in_page_good_for_one_visit_is_reached_again_through_the_posting(
     assert "created your account" in log and r.seen_form, (r.reason, r.log)
 
 
+# Benchmark's Infor CloudSuite board (data/companies.yaml): a posting, and Infor's sign-in
+INFOR = "https://css-benchmark-prd.inforcloudsuite.com"
+INFOR_POSTING = INFOR + "/hcm/Jobs/form/JobPosting.JobPostingDisplay?csk.JobBoard=EXTERNAL&csk.HROrganization=1"
+
+
+async def _infor_site(srv) -> None:
+    """Benchmark's Infor board from the hand-written pages (site/infor-*.html, and its New Account
+    Registration: register-picture-code.html) at its own address, so its saved password is Infor's as
+    it is live; routed: nothing reaches the real site. Infor's sign-in and its reset are both at
+    /sso/SSOServlet."""
+    site = Path(__file__).parent / "fixtures" / "site"
+    pages = {"/hcm/Jobs/form/JobPosting.JobPostingDisplay": "infor-posting.html", "/sso/SSOServlet": "infor-signin.html",
+             "/hcm/Jobs/form/Candidate.SelfRegistrationForm": "register-picture-code.html"}
+
+    async def handler(route):
+        url = urlparse(route.request.url)
+        name = "infor-reset.html" if "_action=PWDRESET" in url.query else pages.get(url.path)
+        await route.fulfill(status=200 if name else 404, content_type="text/html",
+                            body=(site / name).read_text(encoding="utf-8") if name else "<html><body>not found</body></html>")
+
+    await srv.browser.page()
+    await srv.browser._ctx.route(INFOR + "/**", handler)
+
+
+def test_infors_sign_in_opened_again_by_its_address_is_reached_through_the_posting(srv, monkeypatch, job_apply_home):
+    """Benchmark's Infor board (live, Oct 2026): the saved password didn't sign in, the password
+    reset's button stayed greyed out with the email filled in, and the desk went back to the sign-in
+    page's address to make an account there. But its form had been sent to /sso/SSOServlet, and that
+    address opened again is Infor's own sign-in, with no "Register" (nor "Forgot password?"): the desk
+    stopped there. It opens the posting again, whose Apply leads to a fresh sign-in with its "Register",
+    and fills in the board's New Account Registration; its picture code is the person's, and so is
+    its Submit."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setenv("JOB_APPLY_SECRET_INFOR_PASSWORD", "not-a-real-password")
+    manage_accounts(job_apply_home)
+    watched_inbox(monkeypatch)
+    job = srv.add_job(url=INFOR_POSTING, title="Field Service Technician", company="Benchmark Electronics")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        await _infor_site(srv)
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r, await r.page.evaluate("() => [window.result ? window.result() : location.href, window.created, "
+                                            "sessionStorage.getItem('infor.logins')]")
+        finally:
+            await applier.stop()
+
+    r, (filled, created, logins) = run(go())
+    assert filled == {"first": "Sam", "last": "Rivera", "email": "sam.rivera@example.com", "same": True, "code": "",
+                      "upload": "", "files": 0, "nores": False}, (filled, r.reason, r.log)
+    assert (created, logins) == (0, "1"), (created, logins, r.log)  # (one sign-in, never a second)
+    assert r.need == "sign_in" and "Create Account form" in r.reason and "CAPTCHA is yours to solve" in r.reason, r.reason
+    log = "\n".join(r.log)
+    assert "couldn't press its button, so I went back to make an account there instead" in log, log
+    assert "Infor's sign-in page, opened again, had no way to a new account or a password reset, so I opened the " \
+           "job again" in log, log
+    assert "your saved password didn't sign in, so I opened Create Account" in log, log
+    assert not any(line.startswith(("pressed “Submit”", "created your account")) for line in r.log), log
+
+
 # Kforce's Taleo career section, on Kforce's own address (data/lists/phoenix-metro.yaml)
 TALEO_LOGIN = "https://myhiring.kforce.com/careersection/iam/accessmanagement/login.jsf"
 
