@@ -53,6 +53,7 @@ def job_apply_home(tmp_path, monkeypatch):
     (home / "profile.yaml").write_text(yaml.safe_dump(profile))
     monkeypatch.setenv("JOB_APPLY_HOME", str(home))
     monkeypatch.setenv("JOB_APPLY_HEADLESS", "1")
+    monkeypatch.setenv("JOB_APPLY_NO_UPDATE_CHECK", "1")  # no look at GitHub for a newer version
     return home
 
 
