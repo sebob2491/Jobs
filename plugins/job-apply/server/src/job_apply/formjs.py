@@ -168,6 +168,8 @@ EXTRACT_JS = r"""
     if (el.required || el.getAttribute('aria-required') === 'true') return true;
     // "First Name *", "* First Name", "Email * (work)"; not "* indicates a required field"
     if ((/\*/.test(label || '') && !/indicates?|denotes?|required fields?/i.test(label)) || /\(required\)/i.test(label || '')) return true;
+    // Taleo's questionnaire: "1. Are you over the age of 18? . Required" (Kforce's, live, Oct 2026)
+    if (/[?.:]\s*\.?\s*required\s*$/i.test(label || '')) return true;
     // Oracle: a required row's label says so only by a class (its star is drawn by CSS)
     const row = el.closest('.input-row');
     if (row && row.querySelector('.input-row__label--required')) return true;

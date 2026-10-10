@@ -31,6 +31,18 @@ def test_an_asterisk_anywhere_in_the_label_means_required(srv, tmp_path):
                                                          "Middle Name": False}
 
 
+def test_a_taleo_question_marked_required_in_its_words_is_required(srv, tmp_path):
+    """Kforce's Taleo questionnaire (live, Oct 2026) says a question is required only in its label's
+    words ("4. Is any member of your immediate family ...? . Required"): one left empty wasn't asked
+    about, and Save and Continue was pressed three times over Taleo's "mandatory question" error. A
+    question that merely ends in the word is no such mark."""
+    got = fields_of(srv, tmp_path, '<label for="a">1. Are you over the age of 18? . Required</label>'
+                                   '<select id="a"><option></option><option>Yes</option><option>No</option></select>'
+                                   '<label for="b">Is a driver\'s license required</label>'
+                                   '<select id="b"><option></option><option>Yes</option><option>No</option></select>')
+    assert [f["required"] for f in got] == [True, False], got
+
+
 def test_a_hidden_file_box_is_named_by_its_own_upload_button(srv, tmp_path):
     """EMD Electronics' Phenom application (Oct 2026): the resume's file box is hidden beside its
     "Upload Resume/CV" button, after an "or" between it and Apply With LinkedIn, under a header

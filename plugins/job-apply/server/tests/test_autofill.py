@@ -1,5 +1,6 @@
 from job_apply.autofill import (
     choose_option,
+    clean_label,
     choose_place,
     is_empty_value,
     place_words,
@@ -1270,6 +1271,22 @@ def test_recurring_background_questions_are_answered_from_a_no_in_the_profile():
                              "must apply for an export license on behalf of an employee.)", "radio_group", options=yn),
                            person, job)
     assert export is None or export.rule != "government_employee", export
+
+
+def test_a_family_member_at_the_employer_or_on_its_board_is_a_relatives_question():
+    """Kforce's Taleo questionnaire (live, Oct 2026): "Is any member of your immediate family currently
+    employed at Kforce or a member of the Board of Directors? . Required" was taken for a question
+    about the person sitting on a board, and left empty. It's about relatives there: answered No from
+    the profile's relatives_at_employer, never from board_member."""
+    asked = ("4. Is any member of your immediate family currently employed at Kforce or a member of the Board of "
+             "Directors? . Required")
+    job, yn = {"company": "Kforce"}, ["Yes", "No"]
+    no_relatives = Profile({"background": {"relatives_at_employer": False}})
+    got = resolve_field(f(asked, "select", options=yn), no_relatives, job)
+    assert got is not None and (got.value, got.rule) == ("No", "relatives"), got
+    on_no_board = Profile({"background": {"board_member": False}})
+    assert resolve_field(f(asked, "select", options=yn), on_no_board, job) is None
+    assert clean_label(asked).endswith("Board of Directors"), clean_label(asked)
 
 
 def test_an_expected_graduation_date_is_never_a_past_year():
