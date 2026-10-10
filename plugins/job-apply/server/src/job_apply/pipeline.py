@@ -130,6 +130,8 @@ _SECURITY_QUESTION = re.compile(r"\b(?:security|secret|challenge|password (?:rem
 # email, not "Already have an account? Sign in"), the way to a password reset (not a username
 # reminder), the buttons of a reset's pages, and its "we've emailed you a link"
 _MAKE_ACCOUNT = re.compile(r"^(create(?: an| my| your| a new)? account|register|sign ?up|create|submit|continue)$", re.I)
+# and the button of its second step, on a page of its own (UKG Pro's "Create account" after a name and phone)
+_ACCOUNT_BUTTON = re.compile(r"^(create(?: an| my| your| a new)? account|register|sign ?up)$", re.I)
 _TERMS_ONLY = re.compile(r"terms|conditions|(?:privacy|data protection) (?:policy|notice|statement)", re.I)
 _TERMS_BOX = re.compile(r"terms|conditions|privacy|consent|agree|acknowledge|policy|notice", re.I)
 _NOT_TERMS = re.compile(r"newsletter|marketing|job alerts?|text messages?|\bsms\b|promotion|offers|subscribe|similar jobs|"
@@ -296,6 +298,7 @@ class Run:
     # An email-first sign-in said it has no account for the email here (an Eightfold site's modal): the
     # page (its address, bare) whose next steps make one (_email_account_view), until the application shows
     account_page: str = ""
+    account_finished: bool = False  # pressed the Create Account's second step (UKG Pro's "Almost there!"): never again
     try_later: bool = False  # left on a "Try Again Later" page: only the person's Resume goes on from it
     active_at: float = 0.0  # when its paused tab last changed: someone at work in it
     tab_mark: int = 0  # what its paused tab looked like then (address and box values)
@@ -316,7 +319,8 @@ class Run:
         return {k: v for k, v in self.__dict__.items() if k not in ("page", "tab_mark", "cookies_asked", "resetting",
                                                                      "reset_asked", "reset_from", "reset_waited",
                                                                      "reset_no_mail", "sign_in_tries", "sign_in_key",
-                                                                     "accounts_tried", "account_made", "account_page")}
+                                                                     "accounts_tried", "account_made", "account_page",
+                                                                     "account_finished")}
 
 
 def classify(data: dict[str, Any], text: str) -> str:
@@ -1247,10 +1251,13 @@ class Applier:
                     else None)
             if run.account_page and view is None and kind in ("form", "sign_in"):
                 run.account_page = ""  # on to the application (or back at its sign-in): no longer read as one
-            if run.account_made and kind in ("form", "email_code") and not run.resetting and view is None:
+            # the rest of a Create Account, on a page of its own (UKG Pro's "Almost there!"): not the application
+            finish = _account_details(data, text) if kind == "form" else None
+            if (run.account_made and kind in ("form", "email_code") and not run.resetting and view is None
+                    and finish is None):
                 # on from Create Account to the application (its sign-in got in) or to verifying the email:
                 # only now is the account said to be made. A form that went away (a Workday site swaps it
-                # for its Sign In) isn't that
+                # for its Sign In) isn't that, nor the account's own next step
                 self._log(run, run.account_made)
                 run.account_made = ""
             if str(data.get("url") or "").startswith("chrome-error://"):
@@ -1307,7 +1314,7 @@ class Applier:
                     else:  # the saved password is the site's now, as the person was asked: one more sign-in
                         run.sign_in_tries = min(run.sign_in_tries, SIGN_IN_TRIES - 1)
                     continue
-            if kind == "form":
+            if kind == "form" and finish is None:
                 run.resetting = False  # past the sign-in, however the password was set
                 run.sign_in_tries = 0  # (and none of its sign-ins was refused)
             if kind == "sign_in" and manage and run.resetting:
@@ -1416,6 +1423,10 @@ class Applier:
                     continue
                 if said == "paused":
                     return
+            if finish is not None:  # its boxes, its terms and its button (with settings.manage_accounts)
+                if await self._finish_account(run, data, finish):
+                    continue
+                return
             if kind == "form":
                 run.seen_form = True
                 once_failed = await self._fill_once(run, data)
@@ -1871,9 +1882,7 @@ class Applier:
         if data.get("captcha") or data.get("challenge") or _security_boxes(data.get("fields") or []):
             return False
         srv = self.srv
-        boxes = [f for f in data.get("fields") or [] if f.get("kind") == "checkbox" and is_empty_value(f.get("value"))
-                 and _TERMS_BOX.search(f.get("label") or "") and not _NOT_TERMS.search(f.get("label") or "")
-                 and (f.get("required") or _TERMS_ONLY.search(f.get("label") or ""))]
+        boxes = _terms_boxes(data)
         own = [a for a in data.get("actions") or [] if a.get("account_form") or a.get("in_account_form")
                or a.get("form_submit") and a.get("after_password")]
         button = self._account_button(own, _MAKE_ACCOUNT)
@@ -1897,6 +1906,79 @@ class Applier:
                             if boxes else "") + " (manage_accounts: false in profile.yaml leaves this to you)")
         await self._wait_for_account(data)
         return True
+
+    async def _finish_account(self, run: Run, data: dict[str, Any], button: dict[str, Any]) -> bool:
+        """The rest of a Create Account, on a page of its own after the email and password (UKG Pro's
+        "Almost there!", live, Oct 2026: a name and phone, a consent box, and "Create account", greyed
+        out until the box is ticked). Its boxes are filled from the profile. With
+        settings.manage_accounts (and no CAPTCHA), its terms boxes are ticked (never a newsletter's or
+        text messages': _terms_boxes) and its button pressed once it's enabled, once a job
+        (Run.account_finished); the account is said made only once the site goes on from it
+        (Run.account_made, in _drive). Otherwise, or when the page is still there after that, it's
+        the person's. True when pressed."""
+        srv = self.srv
+        site = _site(run, data)
+        said = button["text"].strip()
+        if await self._fill_account_details(data.get("fields") or []):
+            self._log(run, f"filled the rest of {site}'s Create Account form with your details")
+        why = ""
+        if _may_manage_accounts() and not run.account_finished and not (data.get("captcha") or data.get("challenge")):
+            now, _ = await self._look()
+            boxes = _terms_boxes(now)
+            pressable = None
+            if boxes and not (await srv.fill_form([{"id": f["id"], "value": True} for f in boxes])).get("ok"):
+                why = "its terms box wouldn't tick"
+            else:  # greyed out until its terms are ticked: a moment for the page to take that in
+                for _ in range(10):
+                    now, _ = await self._look()
+                    named = [a for a in now.get("actions") or [] if a.get("text", "").strip() == said]
+                    pressable = next((a for a in named if not a.get("disabled")), None)
+                    if pressable is not None or not named:
+                        break
+                    await asyncio.sleep(0.5)
+                if pressable is None:
+                    why = f"“{said}” stayed greyed out"
+            if pressable is not None:
+                try:
+                    await srv.browser.click(pressable["id"], allow_submit=True)  # (it creates the account)
+                except Exception:
+                    why = f"“{said}” wouldn't take a click"
+                else:
+                    run.account_finished = True
+                    ticked = ", ".join(f"“{_short(f.get('label') or '')}”" for f in boxes)
+                    self._log(run, f"pressed “{said}” to finish creating your account on {site}"
+                              + (f", after ticking {ticked}" if boxes else ""))
+                    terms = bool(boxes) or "agreed to its terms" in run.account_made
+                    run.account_made = _account_made_says(site, terms=terms, password=bool(run.account_made))
+                    await self._wait_to_leave(now, said)
+                    return True
+        await self._bring_forward(run)
+        now, _ = await self._look()
+        run.page_info = _page_info(now)
+        if run.account_finished or why:
+            wants = _account_wants(data, now) or "see the page in the browser window."
+            done = f"I pressed “{said}”" if run.account_finished else f"I couldn't finish it ({why})"
+            self._pause(run, "sign_in", f"{site} asked for a few more details to create your account, and {done}; it "
+                        f"wants something more: {wants} Finish it there; the desk carries on after that.", seen=now)
+        else:
+            self._pause(run, "sign_in", f"{site} asks for a few more details to create your account. I filled in what "
+                        f"your profile has; tick its terms box if you agree and press “{said}” in the "
+                        "browser window (then verify your email if they ask); the desk carries on after that.", seen=now)
+        return False
+
+    async def _wait_to_leave(self, form: dict[str, Any], button: str) -> None:
+        """After a press that sends a page (the rest of Create Account): until the site has done with
+        it (gone on, its button gone, or something said about it), as _wait_for_account."""
+        deadline = time.monotonic() + ACCOUNT_WAIT
+        while time.monotonic() < deadline:
+            await asyncio.sleep(1)
+            try:
+                now = await self.srv.inspect_form(include_dropdown_options=False)
+            except Exception:  # mid-way to the next page
+                continue
+            if (now.get("url") != form.get("url") or (now.get("errors") or []) != (form.get("errors") or [])
+                    or not any(a.get("text", "").strip() == button for a in now.get("actions") or [])):
+                return
 
     async def _wait_for_account(self, form: dict[str, Any]) -> None:
         """After Create Account: until the site has done with the form (gone on, or said something
@@ -2440,17 +2522,19 @@ class Applier:
                   + (" and your email as the user name" if as_user else ""))
         return "submitted"
 
-    async def _fill_account_details(self, fields: list[dict[str, Any]]) -> None:
+    async def _fill_account_details(self, fields: list[dict[str, Any]]) -> int:
         """A Create Account form's other boxes, from the profile: names, country. Its check
         boxes (a newsletter, the site's terms) and file boxes ("upload your resume now?") are
         left alone, as is anything the profile doesn't answer (Benchmark's picture code), and
-        its security questions and answers (the person's)."""
+        its security questions and answers (the person's). How many it filled."""
         questions = {f["id"] for f in _security_boxes(fields)}
         empty = [f for f in fields if f.get("kind") in _ACCOUNT_KINDS and is_empty_value(f.get("value"))
                  and f["id"] not in questions]
         plan = plan_autofill(empty, config.Profile.load(), {})
-        if plan["to_fill"]:
-            await self.srv.fill_form([{"id": f["id"], "value": f["value"]} for f in plan["to_fill"]])
+        if not plan["to_fill"]:
+            return 0
+        out = await self.srv.fill_form([{"id": f["id"], "value": f["value"]} for f in plan["to_fill"]])
+        return sum(1 for r in out.get("results") or [] if r.get("ok"))
 
     async def _apply_with_account(self, run: Run, data: dict[str, Any]) -> None:
         """A page that creates the account as it applies: Qorvo's SuccessFactors puts Create
@@ -2982,6 +3066,44 @@ def _email_account_view(data: dict[str, Any]) -> str | None:
             and any(_ACCOUNT_PAGE.search(h) for h in data.get("headings") or [])):
         return "email"
     return None
+
+
+def _account_details(data: dict[str, Any], text: str) -> dict[str, Any] | None:
+    """The rest of a Create Account that asks for more after its email and password (UKG Pro's
+    Register page, live, Oct 2026: "Almost there!", a name and phone, a consent box, and "Create
+    account", greyed out until the box is ticked): a page about making an account (its title,
+    headings or address), with boxes and no password box, whose only way on is its own Create
+    Account button. Never a sign-up for job alerts, a newsletter or a talent community. That
+    button (greyed out or not), else None."""
+    fields = data.get("fields") or []
+    if (not any(not f.get("aside") for f in fields) or any(f.get("kind") == "password" for f in fields)
+            or _SIDE_BOX.search(text[:3000])):
+        return None
+    about = " ".join([data.get("title") or "", *(data.get("headings") or []), urlparse(data.get("url") or "").path])
+    if not _ACCOUNT_PAGE.search(about):
+        return None
+    actions = [a for a in data.get("actions") or [] if not a.get("cookie") and not a.get("aside")]
+    if any(not a.get("disabled") and (a.get("is_submit") or _FORWARD.match(final_text(a["text"]))
+                                      or _ENTRY.match(final_text(a["text"]))) for a in actions):
+        return None  # an application's step (or a posting's Apply) is the way on there
+    return next((a for a in actions if _ACCOUNT_BUTTON.match(final_text(a["text"]).strip())
+                 and not _SOCIAL.search(a["text"])), None)
+
+
+def _terms_boxes(data: dict[str, Any]) -> list[dict[str, Any]]:
+    """A Create Account form's boxes that agree to the site's terms, still unticked: the required
+    ones, or its terms, or a privacy notice read. Never a newsletter's, job alerts' or text
+    messages' (_NOT_TERMS)."""
+    return [f for f in data.get("fields") or [] if f.get("kind") == "checkbox" and is_empty_value(f.get("value"))
+            and _TERMS_BOX.search(f.get("label") or "") and not _NOT_TERMS.search(f.get("label") or "")
+            and (f.get("required") or _TERMS_ONLY.search(f.get("label") or ""))]
+
+
+def _account_made_says(site: str, terms: bool, password: bool = True) -> str:
+    """What the log says once the site shows the account made (Run.account_made)."""
+    return ((f"created your account on {site} with your saved password" if password
+             else f"finished creating your account on {site}") + (" and agreed to its terms" if terms else "")
+            + " (manage_accounts: false in profile.yaml leaves this to you)")
 
 
 def _unanswered(data: dict[str, Any]) -> str:

@@ -157,6 +157,25 @@ def test_an_unlabelled_box_doesnt_take_the_label_before_it(srv, tmp_path):
     assert {f["label"]: f["required"] for f in got} == {"Phone Number *": True, "ext": False}
 
 
+def test_a_check_box_with_no_label_is_named_by_the_words_beside_it(srv, tmp_path):
+    """UKG Pro's Create Account (Nikon Precision, live, Oct 2026): its consent box's words sit in a
+    span beside it, not in a label, and the box was read with an empty label (and not required, its
+    star unseen), so the desk never knew it for the site's terms. The words beside a box are its label,
+    within its own wrapper: not words shared with another box."""
+    got = fields_of(srv, tmp_path,
+                    '<div class="consent"><input id="a" type="checkbox" value=""><span>By checking this box, I have '
+                    'read and agree to the <a href="#p">Consent and Privacy Policy</a>*</span></div>'
+                    '<div><input id="b" type="checkbox"> <span>Remember this device</span></div>'
+                    '<div><div role="checkbox" aria-checked="false" tabindex="0" style="width:12px;height:12px">'
+                    '</div><span>Keep me signed in</span></div>'
+                    '<div><input id="c" type="checkbox" value=""><input id="d" type="checkbox" value="">'
+                    '<span>Words for two boxes</span></div>')
+    assert [(f["kind"], f["label"], f["required"]) for f in got] == [
+        ("checkbox", "By checking this box, I have read and agree to the Consent and Privacy Policy*", True),
+        ("checkbox", "Remember this device", False), ("checkbox", "Keep me signed in", False),
+        ("checkbox", "", False), ("checkbox", "", False)]
+
+
 def test_placeholder_choices_count_as_empty():
     for shown in ("-- Please Select --", "- Select -", "Choose an option", "Please choose", "--"):
         assert is_empty_value(shown), shown

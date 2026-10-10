@@ -179,6 +179,20 @@ EXTRACT_JS = r"""
     if (l && txt(l)) return txt(l);
     return clean(el.getAttribute('aria-label') || labelledBy(el) || el.value || txt(el));
   };
+  // The words beside a check box with no label of its own: the text of its own wrapper, up to the
+  // first one that holds another box (UKG Pro's Create Account consent, live, Oct 2026: "By checking
+  // this box, I have read and agree to the Consent and Privacy Policy*" in a span after the box).
+  const CHOICE = CONTROL + ', [role="checkbox"], [role="radio"], [role="switch"]';
+  const besideText = (el) => {
+    for (let n = el.parentElement, d = 0; n && n !== document.body && d < 3; n = n.parentElement, d++) {
+      if ([...n.querySelectorAll(CHOICE)].some((x) => x !== el && !el.contains(x))) return '';
+      const copy = n.cloneNode(true);
+      copy.querySelectorAll('button, [role="button"], input, select, textarea, script, style').forEach((x) => x.remove());
+      const t = clean(copy.textContent);
+      if (t) return t.length < 300 ? t : t.slice(0, 297).replace(/\s+\S*$/, '') + '…';
+    }
+    return '';
+  };
   // The repeated block a field sits in, e.g. "Work Experience 2" or "Education 1". Not the field's
   // own group: Workday's date is a group labelled by the date's label ("From"), inside the block,
   // and (live, Oct 2026) a fieldset whose legend is that label.
@@ -432,6 +446,8 @@ EXTRACT_JS = r"""
         const legend = !q && first.closest('fieldset') && first.closest('fieldset').querySelector(':scope > legend');
         label = q || (legend && txt(legend)) || label;
       }
+      // still nothing but the box's own value ("", or "on" for one with none): the words beside it
+      if (/^(on|off|true|false|[01])?$/i.test(label)) label = besideText(first) || label;
       const single = { id: idOf(first), kind: 'checkbox', label, required: isRequired(first, label), value: checkedOf(first) };
       const section = sectionOf(first);
       if (section && section !== label) single.section = section;

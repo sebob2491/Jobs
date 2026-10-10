@@ -2386,6 +2386,85 @@ def test_a_sign_up_form_with_one_password_box_is_filled_in(srv, monkeypatch, pag
     assert "filled the Create Account form with your details and saved password" in r.log
 
 
+async def ukg_did(page):
+    """What the UKG-like Register page (site/ukg-register.html) has seen in this tab."""
+    return await page.evaluate("() => Object.fromEntries(Object.entries(sessionStorage).filter(([k]) => "
+                               "k.startsWith('ukg.')).map(([k, v]) => [k.slice(4), JSON.parse(v)]))")
+
+
+def test_with_manage_accounts_ukg_pros_second_account_step_is_finished(srv, monkeypatch, job_apply_home):
+    """UKG Pro (Nikon Precision, live, Oct 2026, the test identity): after the sign-up's email,
+    password and Continue, its Register page asks for a name and phone, a consent box ("By checking
+    this box, I have read and agree to the Consent and Privacy Policy*", its words beside it, not in a
+    label) and "Create account", greyed out until the box is ticked. The desk said the account was made
+    as that page came up, filled it as an application, and stopped: it couldn't find the button. It
+    finishes the account now (the consent ticked, never the text messages box), and says it's made
+    only once the site goes on to the application."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    saved_password(monkeypatch)
+    manage_accounts(job_apply_home)
+    job = srv.add_job(url=fixture_url("site/signin-signup-link.html") + "?register", title="FSE",
+                      company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r, await ukg_did(r.page)
+        finally:
+            await applier.stop()
+
+    r, did = run(go())
+    assert did == {"presses": 1, "texts": False, "created": True}, (did, r.log)
+    first = next(i for i, line in enumerate(r.log) if line.startswith("pressed “Continue” to create your account"))
+    second = [i for i, line in enumerate(r.log) if line.startswith("pressed “Create account” to finish creating your "
+                                                                    "account")]
+    made = [i for i, line in enumerate(r.log) if line.startswith("created your account on")]
+    assert len(second) == 1 and "after ticking “By checking this box, I have read and agree to the Consent and " \
+        "Privacy Policy”" in r.log[second[0]], r.log
+    assert len(made) == 1 and first < second[0] < made[0] and "agreed to its terms" in r.log[made[0]], r.log
+    assert r.seen_form and r.need != "sign_in" and "couldn't find the button" not in r.reason, (r.reason, r.log)
+    assert any("“My Information”" in line for line in r.log), r.log  # on to the application
+
+
+def test_without_manage_accounts_ukg_pros_second_account_step_is_the_persons(srv, monkeypatch):
+    """The same Register page, with settings.manage_accounts off: the person pressed Continue on the
+    sign-up the desk filled in, and the desk, carrying on, filled the next page as an application and
+    stopped, saying it couldn't find the button. It fills in the name and phone and leaves the consent
+    and "Create account" to the person, then carries on once they've pressed it."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    saved_password(monkeypatch)
+    job = srv.add_job(url=fixture_url("site/signin-signup-link.html") + "?register", title="FSE",
+                      company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status == "needs_you", about=state(r))
+            assert r.need == "sign_in" and "Create Account form" in r.reason, (r.reason, r.log)
+            await r.page.click("button:has-text('Continue')")  # the person creates the account
+            await until(lambda: "few more details" in r.reason, about=state(r))
+            assert r.need == "sign_in" and "“Create account”" in r.reason, (r.reason, r.log)
+            page = r.page
+            filled = await page.evaluate("() => [fn.value, ln.value, ph.value.length > 0, consent.checked, texts.checked]")
+            assert filled == ["Sam", "Rivera", True, False, False], filled  # the boxes, never the consent
+            assert (await ukg_did(page)).get("presses") is None  # nor its button
+            await page.check("#consent")  # the person agrees and creates the account
+            await page.click("button:has-text('Create account')")
+            await until(lambda: r.need == "questions" or r.status == "ready", about=state(r))  # carried on by itself
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert not any("created your account" in line or "pressed “Create account”" in line for line in r.log), r.log
+    assert r.seen_form, (r.reason, r.log)
+
+
 @pytest.mark.parametrize("mode", ["", "?slow=3500"])
 def test_a_question_the_site_answers_itself_is_not_asked(srv, monkeypatch, mode):
     """Oracle fills County from the ZIP picked. The profile has no county, so County was among

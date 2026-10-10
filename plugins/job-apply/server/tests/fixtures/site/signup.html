@@ -15,6 +15,10 @@
   document.getElementById('signup').addEventListener('submit', (e) => {
     e.preventDefault();
     window.created += 1;
+    // ?register: like UKG Pro (live), the account's name and phone come next, on a Register page of their own
+    if (location.search.includes('register') && document.getElementById('em').value && document.getElementById('pw').value) {
+      location.href = 'ukg-register.html';
+    }
   });
 </script>
 </body>
