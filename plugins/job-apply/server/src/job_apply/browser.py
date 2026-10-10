@@ -32,8 +32,8 @@ from . import config
 from .ats import detect_ats
 from .autofill import choose_option, choose_place, is_empty_value, norm, polarity
 from .formjs import (CHALLENGE_JS, CLICK_CHOICE_JS, COVERED_JS, ELEMENT_INFO_JS, ENTRIES_JS, EXTRACT_JS, FIELD_OPTIONS_JS,
-                     LOST_BOXES_JS, MARK_OPTIONS_JS, OPEN_MENU_JS, OUTSIDE_CLICK_JS, QUIET_JS, SHOWN_VALUE_JS, VISIBLE_TEXT_JS,
-                     WORKDAY_CHOSEN_JS, WORKDAY_PROMPT_JS)
+                     LOST_BOXES_JS, MARK_OPTIONS_JS, NOTICE_OVER_JS, OPEN_MENU_JS, OUTSIDE_CLICK_JS, QUIET_JS, SHOWN_VALUE_JS,
+                     VISIBLE_TEXT_JS, WORKDAY_CHOSEN_JS, WORKDAY_PROMPT_JS)
 
 SUBMIT_RE = re.compile(r"\bsubmit\b|send (my )?application|finish (my )?application|complete (my )?application", re.I)
 # A form's own submit button with one of these labels is the final step too ("Apply", "Send").
@@ -67,6 +67,20 @@ _ACCEPT_WORDS = re.compile(r"^(accept|allow|agree|ok|okay|got it|i agree|i accep
 _COOKIE_ACCEPT = re.compile(r"\b(accept|allow)\b[^.]*\bcookies\b|\bcookies\b[^.]*\b(accept|allow)", re.I)
 _DECLINES = re.compile(r"reject|decline|necessary|essential|required only|only required|deny|refuse|manage|settings|"
                        r"preferences|customi[sz]e|without", re.I)
+
+
+# An <input> tag as Chrome writes a page out (each attribute's value in double quotes), and in it a
+# password box's type and value
+_INPUT_TAG = re.compile(r'<input\b(?:[^>"]|"[^"]*")*>', re.I)
+_PASSWORD_TYPE = re.compile(r'\stype="password"', re.I)
+_VALUE_ATTR = re.compile(r'\svalue="[^"]*"', re.I)
+
+
+def _without_passwords(html: str) -> str:
+    """A page's HTML with nothing in its password boxes: a site that writes what's typed into its
+    HTML (React keeps a box's value attribute in step) would leave a password in a saved page."""
+    return _INPUT_TAG.sub(lambda m: _VALUE_ATTR.sub("", m.group()) if _PASSWORD_TYPE.search(m.group())
+                          else m.group(), html)
 
 
 CAPTCHA_SAYS = ("A CAPTCHA (a bot check: an \"I'm not a robot\" box or pictures) is on this page. It's for the "
@@ -128,6 +142,7 @@ FRAME_WAIT = 8  # seconds for a job board's frame (iCIMS's openings) to load its
 SETTLE_WAIT = 8  # seconds for a job board's page to stop loading things, at most
 LOST_FILL_WAIT = 0.5  # seconds after filling for a page to mark the boxes whose answers it lost
 LOST_FILL_TRIES = 3  # times a box is typed again on a page, at most (one the page refuses stays marked)
+BLOCK_DRAW_WAIT = 6000  # ms for blocks just added (Workday's Education 2) to draw their boxes, at most
 # How long a click may wait for its button to become clickable, in ms.
 CLICK_TIMEOUT = 8000
 # What a page says once an application has gone ("Thanks for applying!", Oracle's "Thank you for
@@ -272,6 +287,10 @@ class PickedAGroup(ValueError):
         self.entries = entries
 
 
+class DialogOpen(Exception):
+    """A dialog is open over the page (a notice to answer first): nothing is filled behind it."""
+
+
 class TabClosed(Exception):
     """The tab a job was working in is gone (closed, or skipped in the Job Desk)."""
 
@@ -344,6 +363,7 @@ class BrowserSession:
         self._actions: dict[str, dict] = {}
         self.current_job_id: int | None = None
         self.tab_jobs: dict[Page, int] = {}  # the job each tab was opened for
+        self._crashed: set[Page] = set()  # tabs whose page crashed (Chrome's "Aw, Snap!")
 
     @property
     def _lock(self) -> asyncio.Lock:
@@ -412,7 +432,15 @@ class BrowserSession:
         if not getattr(tab, "_ja_watched", False):
             tab._ja_watched = True  # type: ignore[attr-defined]
             tab.on("popup", lambda popup: self._on_popup(tab, popup))
-            tab.on("close", lambda _: (self._openers.pop(tab, None), self.tab_jobs.pop(tab, None)))  # type: ignore[call-overload]  # the handler's result is unused
+            tab.on("close", lambda _: self._closed(tab))
+            tab.on("crash", lambda _: self._crashed.add(tab))
+            tab.on("close", lambda _: self._crashed.discard(tab))
+
+    def _closed(self, tab: Page) -> None:
+        opener = self._openers.pop(tab, None)
+        self.tab_jobs.pop(tab, None)
+        if tab is self._page and opener is not None and not opener.is_closed():
+            self._page = opener  # a popup that closed itself (a sign-in window): back to its tab
 
     def _on_popup(self, opener: Page, popup: Page) -> None:
         # "Apply" buttons often open the application in a new tab: follow it, but only from
@@ -437,11 +465,8 @@ class BrowserSession:
         if self._ctx is None:
             await self._launch()
         assert self._ctx is not None
-        if self._page is None or self._page.is_closed():
-            opener = self._openers.get(self._page) if self._page is not None else None
-            if opener is not None and not opener.is_closed():
-                self._page = opener  # a popup that closed itself (a sign-in window): back to its tab
-            elif self.strict_tabs:
+        if self._page is None or self._page.is_closed():  # (a popup that closed itself is already back on its tab)
+            if self.strict_tabs:
                 raise TabClosed("The tab this application was in has been closed.")
             else:
                 live = [p for p in self._ctx.pages if not p.is_closed()]
@@ -458,11 +483,19 @@ class BrowserSession:
             return self._page
 
     def use_tab(self, page: Page | None) -> bool:
-        """Act on this tab from now on; False if it has been closed."""
-        if page is None or page.is_closed() or self._ctx is None:
+        """Act on this tab from now on; False if it has been closed (or crashed)."""
+        if page is None or self.lost(page) or self._ctx is None:
             return False
         self._page = page
         return True
+
+    def lost(self, tab: Page) -> str:
+        """Why nothing more can be done in a tab: "browser" (the browser it was in was closed, or
+        crashed, and the tab with it), "closed", or "crashed" (Chrome's "Aw, Snap!": not even a
+        reload brings the tab back to the tools). "" while it's there to use."""
+        if tab.context is not self._ctx:
+            return "browser"
+        return "closed" if tab.is_closed() else "crashed" if tab in self._crashed else ""
 
     def lineage(self, tab: Page | None) -> list[Page]:
         """This tab and the tabs that opened it, nearest first: one job's tabs."""
@@ -559,7 +592,7 @@ class BrowserSession:
         raise KeyError(f"The frame holding {element_id} is gone; call inspect_form again")
 
     async def _extract(self, page: Page) -> dict[str, Any]:
-        result: dict[str, Any] = {"fields": [], "actions": [], "errors": [], "headings": []}
+        result: dict[str, Any] = {"fields": [], "actions": [], "errors": [], "headings": [], "dialogs": []}
         for frame in page.frames:
             if frame.is_detached():
                 continue
@@ -573,7 +606,7 @@ class BrowserSession:
                 data = await frame.evaluate(EXTRACT_JS, self._frame_prefix(frame, page))
             except PlaywrightError:
                 continue  # cross-origin frame that refused, or navigated mid-read
-            for key in ("fields", "actions", "errors", "headings"):
+            for key in ("fields", "actions", "errors", "headings", "dialogs"):
                 result[key].extend(data.get(key, []))
         self._fields = {f["id"]: f for f in result["fields"]}
         self._actions = {a["id"]: a for a in result["actions"]}
@@ -958,8 +991,8 @@ class BrowserSession:
         return False
 
     async def snapshot(self, dest: Path, note: str = "", details: Any = None) -> Path:
-        """Save what's needed to debug a page later: HTML of every frame, a screenshot
-        and the extracted fields. Stays on the user's machine."""
+        """Save what's needed to debug a page later: HTML of every frame (never what's in a
+        password box), a screenshot and the extracted fields. Stays on the user's machine."""
         async with self._lock:
             page = await self.page()
             dest.mkdir(parents=True, exist_ok=True)
@@ -968,7 +1001,7 @@ class BrowserSession:
             for i, frame in enumerate(f for f in page.frames if not f.is_detached()):
                 name = "page.html" if frame is page.main_frame else f"frame-{i}.html"
                 try:
-                    (dest / name).write_text(await frame.content(), encoding="utf-8")
+                    (dest / name).write_text(_without_passwords(await frame.content()), encoding="utf-8")
                     frames.append({"file": name, "url": frame.url})
                 except PlaywrightError:
                     continue
@@ -1048,6 +1081,7 @@ class BrowserSession:
                         if await self._holds(page, field, item.get("value")):
                             results.append({"id": fid, "label": field.get("label", ""), "ok": True, "result": "already set"})
                             continue
+                        await self._clear_of_dialogs(page, field)
                         outcome = await self._fill_one(page, field, item.get("value"))
                         results.append({"id": fid, "label": field.get("label", ""), "ok": True, "result": outcome})
                         if outcome in ("filled", "typed"):
@@ -1063,6 +1097,17 @@ class BrowserSession:
             finally:
                 await self._close_menus(page)  # none left open over the buttons, or over its own field
             return results
+
+    async def _clear_of_dialogs(self, page: Page, field: dict) -> None:
+        """Nothing is filled behind a dialog open over the page: the boxes under it time out or
+        lose what's put in them, and the dialog is answered first (Eightfold opens its notice about
+        its AI screening as the resume goes up, part-way through a page's fills)."""
+        try:
+            over = await self._frame_for(page, field["id"]).evaluate(NOTICE_OVER_JS, field["id"])
+        except PlaywrightError:  # a frame mid-way through loading: the fill says what's wrong, if anything
+            return
+        if over:
+            raise DialogOpen(f"“{over[:160]}” is open over the page; it's answered first, then this is filled")
 
     async def _fill_lost(self, page: Page) -> None:
         """Type again what a text box shows when it's something the desk typed on this page and
@@ -1200,11 +1245,16 @@ class BrowserSession:
             text = "Yes" if value else "No"
         if field.get("role") == "spinbutton":
             # Date parts (Workday's MM / YYYY) react to keystrokes, not a pasted value. Where the
-            # date's "MM/DD/YYYY" hint is drawn over its boxes (Workday's Self Identify), a click
-            # never reaches them: focus takes the keys just the same.
-            try:
-                await loc.click(timeout=2000)
-            except PlaywrightTimeout:
+            # date's "MM/DD/YYYY" hint is drawn over its boxes (Workday's Self Identify), or each
+            # part's own "MM" (My Experience, live, Oct 2026), a click never reaches them: focus
+            # takes the keys just the same. Checked first, so no click timeout is waited out.
+            covered = await loc.evaluate(COVERED_JS)
+            if not covered:
+                try:
+                    await loc.click(timeout=2000)
+                except PlaywrightTimeout:
+                    covered = True
+            if covered:
                 await loc.focus()
             await loc.fill("")
             await loc.press_sequentially(text, delay=40)
@@ -1512,6 +1562,15 @@ class BrowserSession:
                         state = new
                         break
                 state = new
+            # Workday draws a new block's heading first and its boxes a moment later: the page is read
+            # next (autofill) once they're there, or the new block isn't filled
+            waited = 0
+            while clicks and state.get("empty") and waited < BLOCK_DRAW_WAIT:
+                await page.wait_for_timeout(250)
+                waited += 250
+                state = await frame.evaluate(ENTRIES_JS, kind_pattern)
+            if waited:
+                await self._settle(page, timeout=2000)  # the rest of their boxes
             return {"before": before, "after": state["entries"], "clicks": clicks,
                     "add_button_found": bool(state["buttons"]) or clicks > 0}
 

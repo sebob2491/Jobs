@@ -3,6 +3,8 @@
 review -> submit)."""
 
 import asyncio
+import contextlib
+import json
 import time
 from pathlib import Path
 
@@ -73,6 +75,22 @@ def test_what_a_page_flags_is_named():
     assert pipeline._flagged({"errors": ["Field Service Engineer page is loaded"], "actions": ["Next"]}) == []
     # a click's summary: the actions' texts and how many fields there are (Onto's run crashed on it)
     assert pipeline._flagged({"fields": 16, "actions": ["Error-Email", "Next"], "errors": []}) == ["“Email” needs fixing"]
+
+
+def test_what_a_create_account_form_wants_is_named():
+    """A Create Account form that didn't go through: what the site said and marked on it, or else
+    the boxes still empty that it needs (never a "keep me informed" one), or nothing at all."""
+    left = {"errors": ["1 error found", "Your password must contain\n at least one symbol."],
+            "actions": [{"text": "Error - Yes, I confirm that I have read the privacy notice."}, {"text": "Create Account"}]}
+    assert pipeline._account_wants(left, {}) == ("it says “Your password must contain at least one symbol”; "
+                                                 "“Yes, I confirm that I have read the privacy notice.” needs fixing.")
+    filled = {"fields": [{"kind": "checkbox", "label": "I am at least 18 years of age*", "required": True, "value": False},
+                         {"kind": "checkbox", "label": "Keep me informed, as the privacy notice describes", "value": False},
+                         {"kind": "text", "label": "Phone*", "required": True, "value": ""},
+                         {"kind": "password", "label": "Password*", "required": True, "value": ""}]}
+    assert pipeline._account_wants({"errors": []}, filled) == ("“I am at least 18 years of age” isn't ticked; "
+                                                               "“Phone” is still empty.")
+    assert pipeline._account_wants({}, {"fields": []}) == ""
 
 
 def test_one_button_apply_walks_the_whole_flow(srv, monkeypatch):
@@ -762,6 +780,176 @@ def test_a_cookie_banner_after_a_long_posting_is_still_declined(srv, monkeypatch
     assert r.log[1:3] == ["declined cookies (“Reject All”)", "clicked “Apply now”"], r.log
 
 
+NOTICE = "Notice Related to Example Corp's Use of the Eightfold AI Recruiting Software"
+
+
+def notice_settings(job_apply_home, **settings):
+    import yaml
+
+    path = job_apply_home / "profile.yaml"
+    profile = yaml.safe_load(path.read_text())
+    profile["settings"].update(settings)
+    path.write_text(yaml.safe_dump(profile))
+
+
+async def notice_page(r):
+    """What the Eightfold-like form shows: its uploads and answers to the notice, and its boxes."""
+    return await r.page.evaluate("() => ({uploads: window.uploads, agreed: window.agreed, "
+                                 "first: document.getElementById('first').value, "
+                                 "country: document.getElementById('input-13').value, "
+                                 "terms: document.getElementById('input-65').value})")
+
+
+@pytest.mark.parametrize("settings", [{"accept_notices": False}, {"submit_mode": "dry_run"}], ids=["off", "practice"])
+def test_a_notice_over_the_form_is_the_persons_and_the_form_is_filled_after_it(srv, monkeypatch, job_apply_home, settings):
+    """Eightfold's notice about its AI screening was open over the one-page form (live, Oct 2026).
+    The desk left it alone but never said so, and went on filling the boxes behind it: Country of
+    Residence timed out and came back as a question the profile doesn't answer. Without
+    settings.accept_notices (and always in practice mode) the notice is the person's: the desk
+    stops, naming it. Once they've answered it, the form is filled behind it, the resume the page
+    already holds isn't sent again (each upload brings the notice back), and the attestation is
+    asked."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    notice_settings(job_apply_home, **settings)
+    job = srv.add_job(url=fixture_url("site/ai-notice-form.html") + "?notice=1", title="Equipment Technician",
+                      company="Example Corp")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            first = (r.status, r.need, r.reason, await notice_page(r))
+            await r.page.click("#cancelUploadResume")  # the person answers it
+            stopped = r.paused_at
+            applier.enqueue(job["id"])  # and presses Resume
+            await until(lambda: r.paused_at > stopped and r.status not in ("queued", "running"), about=state(r))
+            return r, first, await notice_page(r)
+        finally:
+            await applier.stop()
+
+    r, (status, need, reason, before), after = run(go())
+    assert (status, need) == ("needs_you", "stuck") and f"“{NOTICE}”" in reason, reason
+    assert "press its button in the browser window, then press Resume" in reason and "accept_notices: true" in reason
+    assert before == {"uploads": 0, "agreed": 0, "first": "", "country": "", "terms": ""}  # nothing done behind it
+    assert (r.status, r.need) == ("needs_you", "questions"), (r.status, r.reason, r.log)
+    assert [q["label"][:20] for q in r.questions] == ["Terms and Conditions"], r.questions
+    assert after == {"uploads": 0, "agreed": 0, "first": "Sam", "country": "United States", "terms": ""}
+
+
+def test_with_accept_notices_the_desk_agrees_to_an_ai_notice_and_an_attestation(srv, monkeypatch):
+    """The owner's choice: settings.accept_notices (on unless turned off) agrees for the person to
+    an employer's notice about AI screening (Eightfold's, which opens as the resume goes up), and
+    picks an application's attestation that its information is true (its Terms and Conditions
+    dropdown, with one choice), saying each in the log. The resume goes up once, the boxes behind
+    the notice are filled once it's answered, and the form is ready to submit."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    job = srv.add_job(url=fixture_url("site/ai-notice-form.html"), title="Equipment Technician",
+                      company="Example Corp")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r, await notice_page(r)
+        finally:
+            await applier.stop()
+
+    r, shown = run(go())
+    assert r.status == "ready", (r.status, r.reason, r.log)
+    assert shown == {"uploads": 1, "agreed": 1, "first": "Sam", "country": "United States", "terms": "I Agree"}
+    assert f"agreed to Example Corp's notice “{NOTICE}” for you (settings.accept_notices)" in r.log, r.log
+    assert any(line.startswith("picked “I Agree” for “Terms and Conditions")
+               and line.endswith("for you (settings.accept_notices)") for line in r.log), r.log
+
+
+def test_another_dialog_over_the_form_is_the_persons_even_with_accept_notices(srv, monkeypatch):
+    """settings.accept_notices agrees only to notices about AI screening: any other dialog over the
+    form (a privacy policy with Cancel and Ok) stops the desk for the person."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    job = srv.add_job(url=fixture_url("site/ai-notice-form.html") + "?notice=privacy", title="Equipment Technician",
+                      company="Example Corp")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r, await notice_page(r)
+        finally:
+            await applier.stop()
+
+    r, shown = run(go())
+    assert (r.status, r.need) == ("needs_you", "stuck"), (r.status, r.reason, r.log)
+    assert "“Privacy Policy of Example Corp”" in r.reason and "accept_notices" not in r.reason, r.reason
+    assert shown["agreed"] == 0 and shown["first"] == "", shown
+
+
+def test_a_box_that_wouldnt_fill_is_said_as_that_not_asked(srv, monkeypatch):
+    """A fill that failed with an error is no question the profile doesn't answer: Eightfold's
+    Country of Residence came back as one, "TimeoutError: Locator.evaluate: Timeout 15000ms
+    exceeded." on the card (live, Oct 2026). It's said as a fill that failed."""
+    from playwright.async_api import TimeoutError as PlaywrightTimeout
+
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    fill_one = srv.browser._fill_one
+
+    async def times_out(page, field, value):
+        if field.get("label") == "Country of Residence":
+            raise PlaywrightTimeout("Locator.evaluate: Timeout 15000ms exceeded.")
+        return await fill_one(page, field, value)
+
+    monkeypatch.setattr(srv.browser, "_fill_one", times_out)
+    job = srv.add_job(url=fixture_url("site/ai-notice-form.html") + "?uploaded=1", title="Equipment Technician",
+                      company="Example Corp")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert (r.status, r.need, r.questions) == ("needs_you", "stuck", []), (r.status, r.reason, r.questions)
+    assert r.reason.startswith("I couldn't fill “Country of Residence” (the page didn't respond in time). "
+                               "Fill it in the browser, then press Resume"), r.reason
+    assert "TimeoutError" not in r.reason and "question" not in r.reason
+
+
+def test_what_attests_to_an_application_and_what_doesnt():
+    """An application's attestation (its information true and complete, or consent to the background
+    check that comes with applying) is picked only where it's required and has one choice that
+    agrees, or is a check box; a yes/no question, a newsletter or a fact about the person isn't one."""
+    certify = ("Terms and Conditions Please read carefully. I certify that the information contained in the "
+               "application is correct and complete.")
+    attestation = pipeline._attestation
+    assert attestation({"kind": "combobox", "label": certify, "required": True, "options": ["I Agree"]}) == "I Agree"
+    assert attestation({"kind": "select", "label": certify, "required": True, "options": ["Select...", "Yes"]}) == "Yes"
+    assert attestation({"kind": "checkbox", "label": "I authorize Example Corp to conduct a background check as part "
+                                                     "of my application *", "required": True}) is True
+    for q in ({"kind": "select", "label": certify, "required": True, "options": ["Yes", "No"]},  # a choice to make
+              {"kind": "select", "label": certify, "required": True, "options": ["I do not agree"]},
+              {"kind": "combobox", "label": certify, "required": False, "options": ["I Agree"]},
+              {"kind": "combobox", "label": certify, "required": True, "options": []},  # choices unknown
+              {"kind": "checkbox", "label": "I certify that I am at least 18 years old", "required": True},
+              {"kind": "checkbox", "label": "I agree to the terms of use", "required": True},
+              {"kind": "checkbox", "label": "I certify my information is true, and send me job alerts", "required": True},
+              {"kind": "text", "label": "Type your name to certify that your answers are true", "required": True}):
+        assert attestation(q) is None, q
+    # notices about AI screening, as the desk tells them from others
+    assert pipeline._AI_NOTICE.search("Example Corp uses an artificial intelligence (\"AI\") recruiting software")
+    assert pipeline._AI_NOTICE.search("We use automated employment decision tools to screen applications")
+    assert not pipeline._AI_NOTICE.search("Example Corp protects the personal data you give it. Said in Spain.")
+
+
 def test_create_account_is_filled_but_left_for_the_person(srv, monkeypatch):
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
     saved_password(monkeypatch)
@@ -1072,6 +1260,45 @@ def test_an_application_the_person_submitted_on_the_site_is_marked_applied(srv, 
     assert srv.tracker().get(job["id"])["status"] == "applied"
 
 
+def test_a_form_page_that_thanks_the_person_isnt_taken_for_a_confirmation(srv, monkeypatch):
+    """A Workday site's Application Questions step (step 3 of 6) opens with "Thank you for your
+    application. Please complete the below questions." The desk, back on the job after the person
+    moved on in the browser, marked it Submitted (live, Oct 2026). A page with required boxes still
+    empty, a button on to the next step, or a progress bar short of its last step is still the form."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    job = srv.add_job(url=fixture_url("site/workday-questions-thank-you.html"), title="Equipment Technician",
+                      company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        r = applier.enqueue(job["id"])
+        r.seen_form = True  # (filled earlier steps: the person pressed Resume)
+        applier.start()
+        try:
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert r.status != "submitted" and r.need == "questions", (r.status, r.need, r.reason, r.log)
+    assert [q["label"] for q in r.questions] == ["2) Have you ever held a security clearance with a foreign government?*"], \
+        r.questions
+    assert srv.tracker().get(job["id"])["status"] != "applied"
+
+
+@pytest.mark.parametrize("data, mid", [
+    ({"fields": [{"kind": "select", "label": "Q", "required": True, "value": ""}], "actions": []}, True),
+    ({"fields": [], "actions": [{"text": "Save and Continue"}]}, True),
+    ({"fields": [], "actions": [], "headings": ["current step 3 of 6 Application Questions"]}, True),
+    ({"fields": [], "actions": [], "headings": ["current step 6 of 6 Review"]}, False),
+    ({"fields": [], "actions": [{"text": "Search for More Jobs"}, {"text": "Return to Home"}],
+      "headings": ["Application Submitted"]}, False),
+])
+def test_what_says_a_page_is_partway_through_the_form(data, mid):
+    assert pipeline._mid_application(data) is mid
+
+
 def watched_inbox(monkeypatch, reset_link=None):
     """An email app password on the desk, and an inbox that holds `reset_link` (or nothing)."""
     monkeypatch.setattr(pipeline, "MAIL_POLL_SECONDS", 0)
@@ -1168,6 +1395,148 @@ def test_a_new_account_the_site_takes_a_moment_over_is_signed_in_to(srv, monkeyp
     assert "wants something more" not in r.reason, (r.reason, r.log)
     assert r.log.count("filled the Create Account form with your details and saved password") == 1, r.log
     assert any(line.startswith("pressed \u201cSign In\u201d") for line in r.log) and r.seen_form, (r.reason, r.log)
+
+
+async def workday_did(page):
+    """What the Workday-like account page (site/workday-account.html) has seen in this tab."""
+    return await page.evaluate("() => Object.fromEntries(Object.entries(sessionStorage).filter(([k]) => "
+                               "k.startsWith('wd.')).map(([k, v]) => [k.slice(3), JSON.parse(v)]))")
+
+
+def test_a_workday_account_is_said_made_only_once_its_sign_in_gets_in(srv, monkeypatch, job_apply_home):
+    """A Workday site's Create Account wants its "I confirm that I have read the privacy notice" box
+    ticked (never a "keep me informed" one), and goes on to its Sign In whether or not it made the
+    account (live, Oct 2026). The desk said it had made the account as the button was pressed: it's
+    said only once the new account's sign-in gets in."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    saved_password(monkeypatch)
+    manage_accounts(job_apply_home)
+    job = srv.add_job(url=fixture_url("site/workday-account.html"), title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r, await workday_did(r.page)
+        finally:
+            await applier.stop()
+
+    r, did = run(go())
+    assert (did["privacy"], did["informed"], did["presses"], did["created"], did["signIns"]) == (True, False, 1, 1, 2), did
+    signed_in = max(i for i, line in enumerate(r.log) if line.startswith("pressed \u201cSign In\u201d"))
+    made = [i for i, line in enumerate(r.log) if line.startswith("created your account on")]
+    assert len(made) == 1 and signed_in < made[0], r.log
+    pressed = [line for line in r.log[:signed_in] if line.startswith("pressed \u201cCreate Account\u201d")]
+    assert len(pressed) == 1 and "after ticking \u201cYes, I confirm that I have read the privacy notice.\u201d" in pressed[0]
+    assert r.seen_form, (r.reason, r.log)
+
+
+def test_a_workday_create_account_that_doesnt_sign_in_goes_to_a_reset_not_round_again(srv, monkeypatch, job_apply_home):
+    """A Workday site, without the inbox watched (live, Oct 2026): the saved password didn't sign in,
+    Create Account went back to Sign In, the sign-in failed again, Create Account again, round and
+    round across a Resume, until the site said the account might be locked. One refused sign-in and
+    one Create Account that didn't take go to the password reset (the person follows its emailed
+    link); the counts hold across Resume, and the refused password is pressed at most twice (once
+    more after the reset)."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    saved_password(monkeypatch)
+    manage_accounts(job_apply_home)
+    job = srv.add_job(url=fixture_url("site/workday-account.html") + "?exists=another-password", title="FSE",
+                      company="Example Fab")["job"]
+    applier = Applier(srv)
+    seen = []
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            while True:  # the reset's email asked for, then Resume twice
+                await until(lambda: r.status not in ("queued", "running"), about=state(r))
+                seen.append((r.need, r.reason, await workday_did(r.page)))
+                if len(seen) == 3:
+                    return r
+                applier.enqueue(job["id"], front=True)
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    (need, reason, did), *after = seen
+    assert need == "email_code" and "Open the link in the email" in reason, (reason, r.log)
+    assert (did["signIns"], did["presses"], did.get("created", 0), did["resets"]) == (2, 1, 0, 1), did
+    for need, reason, did in after:  # once more after the reset, then never again
+        assert need == "sign_in" and "won't try it again for this job" in reason, (reason, r.log)
+        assert "before or after I pressed its Create Account" in reason and "might be locked" in reason, reason
+        assert (did["signIns"], did["presses"], did["resets"]) == (3, 1, 1), did
+    assert not any("created your account" in line for line in r.log), r.log
+
+
+def test_with_the_inbox_watched_a_workday_create_account_that_doesnt_sign_in_stops(srv, monkeypatch, job_apply_home):
+    """With the inbox watched, the reset comes first; no email comes, so the desk makes an account,
+    which a Workday site doesn't sign in to either. It stops there, never pressing Create Account or
+    the refused password again, Resume or not; a new password saved on the desk is tried."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "RESET_MAIL_WAIT", 4)
+    saved_password(monkeypatch)
+    manage_accounts(job_apply_home)
+    watched_inbox(monkeypatch)
+    job = srv.add_job(url=fixture_url("site/workday-account.html") + "?exists=another-password", title="FSE",
+                      company="Example Fab")["job"]
+    applier = Applier(srv)
+    seen = []
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status == "needs_you" and r.need != "email_code", timeout=60, about=state(r))
+            seen.append((r.need, r.reason, await workday_did(r.page)))
+            applier.enqueue(job["id"], front=True)  # Resume
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            seen.append((r.need, r.reason, await workday_did(r.page)))
+            monkeypatch.setenv("JOB_APPLY_SECRET_TEST_SITE_PASSWORD", "another-password")  # the account's, saved
+            applier.enqueue(job["id"], front=True)
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    for need, reason, did in seen:
+        assert need == "sign_in" and "won't try it again for this job" in reason, (reason, r.log)
+        assert (did["signIns"], did["presses"], did["resets"]) == (2, 1, 1), did
+    assert not any("created your account" in line for line in r.log), r.log
+    assert r.seen_form and r.need != "sign_in", (r.reason, r.log)
+
+
+@pytest.mark.parametrize("page, query, says", [
+    ("create-account-signin.html", "?policy", "it says \u201cYour password must contain at least one symbol\u201d."),
+    ("workday-account.html", "?create&adult", "\u201cI am at least 18 years of age\u201d isn't ticked."),
+])
+def test_a_create_account_that_doesnt_go_through_says_what_the_page_wants(srv, monkeypatch, job_apply_home, page, query,
+                                                                          says):
+    """Create Account pressed, and the form is still there: the card says what the page says (its
+    error), or names the boxes it requires that are still empty, not a guess at a picture code."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "ACCOUNT_WAIT", 2)  # (a form that says nothing is waited on that long)
+    saved_password(monkeypatch)
+    manage_accounts(job_apply_home)
+    job = srv.add_job(url=fixture_url(f"site/{page}") + query, title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert r.need == "sign_in" and f"it wants something more: {says} Finish it there" in r.reason, (r.reason, r.log)
+    assert "picture code" not in r.reason
 
 
 @pytest.mark.parametrize("page", ["signin-no-account.html", "signin-no-account-link.html",
@@ -2432,6 +2801,146 @@ def test_a_paused_jobs_tab_taken_to_another_posting_isnt_filled_as_that_job(srv,
     assert srv.tracker().get(b["id"])["status"] != "applied"
 
 
+EXAMPLE_CORP = "https://careers.example-corp.example"
+
+
+def _example_corp(srv, monkeypatch, loads: list[str]) -> str:
+    """Example Corp's careers site, its application all on one page as Eightfold's is, served
+    through the browser (and through the browser opened again, after it closed). Each address
+    loaded goes into `loads`. Returns the job's posting."""
+    site = Path(__file__).parent / "fixtures" / "site"
+    pages = {f"{EXAMPLE_CORP}{path}": (site / name).read_text() for path, name in (
+        ("/careers/job/1", "one-page-posting.html"), ("/careers/apply", "one-page-apply.html"),
+        ("/careers", "one-page-home.html"))}
+
+    async def handler(route):
+        if route.request.method == "GET":
+            loads.append(route.request.url)
+        body = pages.get(route.request.url.split("?")[0], "<html><body><h1>Thank you for applying</h1></body></html>")
+        await route.fulfill(status=200, content_type="text/html", body=body)
+
+    real_launch = srv.browser._launch
+
+    async def launch():
+        await real_launch()
+        await srv.browser._ctx.route("https://**.example/**", handler)
+
+    monkeypatch.setattr(srv.browser, "_launch", launch)
+    if srv.browser.is_open:  # (open already: served from now on)
+        run(srv.browser._ctx.route("https://**.example/**", handler))
+    return f"{EXAMPLE_CORP}/careers/job/1"
+
+
+async def _crash(tab):
+    """Crash a tab's page, as Chrome's "Aw, Snap!" is."""
+    crashed = []
+    tab.once("crash", lambda _: crashed.append(True))
+    with contextlib.suppress(Exception):
+        await tab.goto("chrome://crash", timeout=5000)
+    await until(lambda: crashed)
+
+
+@pytest.mark.parametrize("how", ["answered", "resumed", "crashed", "closed", "browser", "home"])
+def test_a_job_picked_up_again_carries_on_with_the_form_in_its_tab(srv, monkeypatch, how):
+    """Eightfold, live (Oct 2026): a job waiting on a question on its one-page form was picked
+    up again by opening its posting and pressing Apply Now, onto a fresh form without the resume
+    uploaded and the boxes filled in the old one. Answered on the desk, or in the browser and
+    Resume pressed, it carries on with the form in its tab. Only a tab that's gone (closed,
+    crashed, or the browser with it) or that has left the application (back to the careers home,
+    whose Apply is another job's) has the job opened again, and the desk says why."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    loads: list[str] = []
+    posting = _example_corp(srv, monkeypatch, loads)
+    job = srv.add_job(url=posting, title="Field Service Engineer", company="Example Corp")["job"]
+    applier = Applier(srv)
+
+    def form(tab):  # (a page loaded again has another loadedAt)
+        return tab.evaluate("() => [window.loadedAt, cv.files.length, fn.value, sp.value, ge.value, ts.value]")
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status == "needs_you", about=state(r))
+            assert r.need == "questions" and len(r.questions) == 1 and "TS/SCI" in r.questions[0]["label"], r.reason
+            tab, before = r.page, await form(r.page)
+            if how == "resumed":
+                await tab.select_option("#ts", "No")  # answered in the browser instead
+            else:
+                r.once[question_key(r.questions[0]["label"])] = "No"
+            if how == "crashed":
+                await _crash(tab)
+            elif how == "closed":
+                await tab.close()
+            elif how == "browser":
+                await srv.browser.close()
+            elif how == "home":
+                await tab.goto(f"{EXAMPLE_CORP}/careers")  # the person, looking at the site's other jobs
+            applier.enqueue(job["id"], front=True)
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r, tab, before, await form(r.page) if r.status == "ready" else None
+        finally:
+            await applier.stop()
+
+    r, tab, before, after = run(go())
+    assert before[1:] == [1, "Sam", "No", "Decline to self-identify", ""]  # its resume and boxes, filled
+    assert r.status == "ready" and r.page.url == f"{EXAMPLE_CORP}/careers/apply?pid=1", (r.status, r.reason, r.log)
+    assert after[1:] == [1, "Sam", "No", "Decline to self-identify", "No"]
+    assert not any("pid=2" in u for u in loads), loads  # the careers home's other job is never applied to
+    since = r.log[next(i for i, line in enumerate(r.log) if "question(s)" in line):]  # from the pause on
+    if how in ("answered", "resumed"):
+        # the same tab, its page never loaded again: what was uploaded and filled there is kept
+        assert r.page is tab and after[0] == before[0], r.log
+        assert loads.count(posting) == 1 and not any(line.startswith(("opened", "its tab")) for line in since), r.log
+    else:
+        said = {"crashed": "its tab crashed", "closed": "its tab was closed",
+                "browser": "the browser had closed", "home": "its tab had gone back to the site's careers home"}[how]
+        assert r.page is not tab and loads.count(posting) == 2, (loads, r.log)
+        assert any(line.startswith(said) for line in since), r.log
+        if how == "home":  # the person's to look at still
+            assert not tab.is_closed() and tab.url == f"{EXAMPLE_CORP}/careers"
+        else:
+            assert tab.is_closed()  # (a crashed tab's "Aw, Snap!" is closed for the new one)
+
+
+def test_a_tab_that_crashes_while_its_job_runs_is_opened_again_on_resume(srv, monkeypatch):
+    """A tab whose page crashes while the desk fills it is no use to the desk again, even
+    reloaded: the job says so, and Resume opens it in a new tab. (Each Resume failed again in
+    the crashed tab: "Something went wrong: TargetClosedError: ... Page crashed".)"""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    posting = _example_corp(srv, monkeypatch, [])
+    job = srv.add_job(url=posting, title="Field Service Engineer", company="Example Corp")["job"]
+    applier = Applier(srv)
+    real_click = srv.click
+    crashed = []
+
+    async def click_then_crash(target):
+        out = await real_click(target)
+        if not crashed:
+            crashed.append(srv.browser.current_tab)
+            await _crash(crashed[0])
+        return out
+
+    monkeypatch.setattr(srv, "click", click_then_crash)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            said = r.reason
+            applier.enqueue(job["id"], front=True)  # Resume
+            await until(lambda: r.status == "needs_you", about=state(r))
+            return r, said
+        finally:
+            await applier.stop()
+
+    r, said = run(go())
+    assert said == "Its tab crashed. Press Resume to start this application again.", said
+    assert r.need == "questions" and r.page is not crashed[0] and crashed[0].is_closed(), (r.reason, r.log)
+    assert any(line.startswith("its tab crashed, so I opened the job again") for line in r.log), r.log
+
+
 def test_submit_presses_the_applications_button_not_a_footer_alerts_one(srv, monkeypatch):
     """A one-page application, and the site's footer job-alerts box with a "Submit" of its own
     (whose "Thank you for your interest!" reads like a confirmation). The person's Submit
@@ -2617,7 +3126,9 @@ def test_an_emailed_code_put_in_between_jobs_gives_the_tools_back(srv, monkeypat
             claude_tab = await srv.browser.new_tab()  # Claude's own
             await srv.open_application(job_id=other["id"])
             sent["yet"] = True
-            await until(lambda: r.need == "questions" or r.status == "ready", about=state(r))
+            # (the step ends once the page it stopped on is saved: then the tools are given back)
+            await until(lambda: (r.need == "questions" or r.status == "ready") and applier.current is None,
+                        about=state(r))
             return r, srv.browser.current_tab is claude_tab, srv.browser.current_job_id
         finally:
             await applier.stop()
@@ -2928,6 +3439,74 @@ def test_a_page_that_doesnt_move_on_says_its_next_is_greyed_out(srv, monkeypatch
     assert not any("Apply!" in line for line in r.log), r.log  # a link to the form already on show: not pressed
 
 
+def test_the_page_a_job_stops_on_is_saved_for_its_report_scrubbed(srv, monkeypatch, job_apply_home):
+    """A job stuck on a Workday form page made a report with no pages ("pages": []): only a failed
+    fill saved one. The page a job stops on is now saved in its folder's debug/, and its report
+    holds it, without the person's details or what was filled in (a React site writes that into
+    its HTML)."""
+    from job_apply import report
+
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 1)
+    job = srv.add_job(url=fixture_url("site/stuck-filled.html"), title="Technician", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            # (the step ends once the page it stopped on is saved: then the tools are given back)
+            await until(lambda: r.status not in ("queued", "running") and applier.current is None, about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert r.need == "stuck" and "“Next” is greyed out" in r.reason, (r.reason, r.log)
+    out = report.build(srv.tracker().get(job["id"]), r)
+    assert out["pages"], "the report holds no page"
+    [stop] = (Path(job["folder"]) / "debug").glob("*-stop")
+    assert 'value="sam.rivera@example.com"' in (stop / "page.html").read_text()  # what the site wrote in
+    assert json.loads((stop / "snapshot.json").read_text())["note"] == "stopped: stuck"
+    assert out["pages"] == [f"pages/{stop.name}.expect.json", f"pages/{stop.name}.html"]
+    page = (Path(out["folder"]) / out["pages"][1]).read_text()
+    assert "My Information" in page and f"### Page saved {stop.name}" in out["preview"]
+    for private in ("Sam", "Rivera", "sam.rivera", "value="):
+        assert private not in page, private
+
+
+def test_the_newest_few_stops_are_kept_and_one_that_cant_be_saved_still_waits(srv, monkeypatch, job_apply_home):
+    """Each stop saves its page: only as many as a report holds are kept. A tailored resume is
+    waited for before the job's tab opens, so there's no page to save; and whatever goes wrong
+    saving one, the job still waits on the person."""
+    job = srv.add_job(url=fixture_url("site/stuck-filled.html"), title="Technician", company="Example Fab")["job"]
+    run(srv.open_application(job_id=job["id"]))
+    applier = Applier(srv)
+    r = Run(job["id"], "Technician", "Example Fab", status="running", page=srv.browser.current_tab)
+    applier.runs[job["id"]] = r
+    debug = Path(job["folder"]) / "debug"
+
+    def stops():
+        return sorted(p.name for p in debug.glob(f"*-{pipeline.STOP}")) if debug.is_dir() else []
+
+    applier._pause(r, "tailor", "Waiting for a resume written for this job.")
+    run(applier._save_stop(r))
+    assert stops() == []
+    for _ in range(4):
+        applier._pause(r, "stuck", "The page didn't move on.")
+        run(applier._save_stop(r))
+    assert len(stops()) == pipeline.report.PAGES == 3
+    newest = stops()
+
+    async def broken(*args, **kw):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(srv.browser, "snapshot", broken)
+    applier._pause(r, "sign_in", "Sign in.")
+    run(applier._save_stop(r))
+    assert (r.status, r.need) == ("needs_you", "sign_in") and stops() == newest
+
+
 def test_a_page_whose_only_way_on_makes_an_account_is_left_to_the_person(srv, monkeypatch):
     """amazon.jobs, after an email it doesn't know (live, Oct 2026), offers only "Proceed to create
     account". The desk said it couldn't find the button; the account is the person's to make."""
@@ -3192,7 +3771,8 @@ def test_a_school_the_sites_list_refuses_is_not_called_missing_from_the_profile(
                {"id": "b", "label": "From", "sublabel": "Month", "section": "Work Experience 3", "required": True},
                {"id": "c", "label": "Are you 18 or older?", "required": True, "kind": "text"}]
     said, rest = applier._entry_gaps(r, {"url": "https://example.wd1.myworkdayjobs.com/x"}, pending)
-    assert "didn't take your profile's answer for: Arizona State University (School or University)" in said
+    assert "didn't take your profile's answer for: Arizona State University in Education 1 (School or University)" \
+        in said
     assert "more blocks than your profile has entries: Work Experience 3 (your profile has no job 3) (From)" in said
     assert "your profile doesn't have" not in said, said
     assert [q["id"] for q in rest] == ["c"]
@@ -3213,7 +3793,8 @@ def test_what_a_jobs_or_schools_block_lacks_is_said_for_its_own_list(srv):
                {"id": "b", "label": "Reason for Leaving", "section": "Work Experience 1", "required": True},
                {"id": "c", "label": "From", "sublabel": "Day", "section": "Work Experience 2", "required": True}]
     said, rest = applier._entry_gaps(r, {"url": "https://example.wd1.myworkdayjobs.com/x"}, pending)
-    assert "your schools, and your profile doesn't have this for them: Arizona State University (From)" in said
+    assert "your schools, and your profile doesn't have this for them: Arizona State University in Education 1 (From)" \
+        in said
     assert "education_history" in said and "work_history" not in said, said
     assert [q["id"] for q in rest] == ["b", "c"]
 
@@ -3232,10 +3813,85 @@ def test_a_schools_missing_degree_is_asked_for_as_a_degree_never_as_dates(srv):
     r = Run(1, "Technician", "Example Litho")
     pending = [{"id": "a", "label": "Degree*", "section": "Education 1", "required": True, "kind": "listbox"}]
     said, rest = applier._entry_gaps(r, {"url": "https://example.wd1.myworkdayjobs.com/x"}, pending)
-    assert "Arizona State University (Degree)" in said, said
+    assert "Arizona State University in Education 1 (Degree)" in said, said
     assert "Some college (no degree)" in said and "never a degree you didn't finish" in said, said
     assert "years as start" not in said, said
     assert rest == []
+
+
+WORKDAY_DEGREES = ["High School", "GED", "Associates", "Bachelors", "Masters", "Doctorate", "PH.D"]
+
+
+def test_a_degree_list_with_nothing_for_classes_leaves_the_pick_to_the_person(srv):
+    """A Workday site's Degree list holds High School, GED, Associates and up, and nothing for
+    classes without a degree (live, Oct 2026). For a second block of one school, where the person
+    took classes, the desk named only the school and said to add "Some college (no degree)" to the
+    profile, which can't go in there. It names the block and leaves that pick to the person."""
+    import yaml
+
+    path = config.profile_path()
+    profile = yaml.safe_load(path.read_text())
+    school = profile["education_history"][0]["school"]
+    profile["education_history"].append({"school": school, "degree": "", "start": 2021, "end": 2022})
+    path.write_text(yaml.safe_dump(profile))
+    applier = Applier(srv)
+    r = Run(1, "Technician", "Example Litho")
+    site = {"url": "https://example.wd1.myworkdayjobs.com/x"}
+    degree = {"id": "a", "label": "Degree*", "section": "Education 2", "required": True, "kind": "listbox",
+              "options": WORKDAY_DEGREES}
+    said, rest = applier._entry_gaps(r, site, [degree])
+    assert f"The Degree list for {school} in Education 2 has no choice for classes without a degree" in said, said
+    assert "choose in the browser" in said and "Some college" not in said, said
+    assert rest == []
+
+    # a list that has such a choice: the profile can say it
+    said, _ = applier._entry_gaps(r, site, [{**degree, "options": [*WORKDAY_DEGREES, "Some College, No Degree"]}])
+    assert f"{school} in Education 2 (Degree)" in said and "Some college (no degree)" in said, said
+
+    # written as setup writes it, and turned down by the list: still the person's pick, never "the closest"
+    profile["education_history"][1]["degree"] = "Some college (no degree)"
+    path.write_text(yaml.safe_dump(profile))
+    said, _ = applier._entry_gaps(r, site, [{**degree, "error": "ValueError: doesn't match any option"}])
+    assert "no choice for classes without a degree" in said and "closest choice" not in said, said
+
+
+def test_a_workday_experience_page_is_filled_block_by_block(srv, monkeypatch, job_apply_home):
+    """A Workday site's My Experience page as drawn live (Oct 2026): each date a fieldset of its
+    own, and an Education block's boxes drawn a moment after its heading. Every job's and
+    school's dates go in, the second block of one school is filled once drawn, and its Degree
+    (classes, no degree, in a list without such a choice) is named with its block as the person's."""
+    import yaml
+
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 1)
+    path = job_apply_home / "profile.yaml"
+    profile = yaml.safe_load(path.read_text())
+    school = profile["education_history"][0]["school"]
+    profile["education_history"].append({"school": school, "degree": "", "major": "Physics", "start": 2021,
+                                         "end": 2022})
+    path.write_text(yaml.safe_dump(profile))
+    job = srv.add_job(url=fixture_url("site/workday-experience-blocks.html"), title="Equipment Technician",
+                      company="Example Litho")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r, await r.page.evaluate(
+                "() => [...document.querySelectorAll('[role=spinbutton], [name=school], [name=degree]')]"
+                ".filter((e) => e.getClientRects().length).map((e) => e.value || e.textContent)")
+        finally:
+            await applier.stop()
+
+    r, shown = run(go())
+    assert (r.status, r.need) == ("needs_you", "stuck"), (r.status, r.reason, r.log)
+    assert f"The Degree list for {school} in Education 2 has no choice for classes without a degree" in r.reason, \
+        r.reason
+    assert not r.questions, r.questions
+    assert shown == ["03", "2021", "06", "2018", "02", "2021", school, "Bachelors", "2016", "2020",
+                     school, "Select One", "2021", "2022"], shown
 
 
 def test_a_posting_that_has_closed_says_so(srv, monkeypatch):

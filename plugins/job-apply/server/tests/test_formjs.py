@@ -1,7 +1,7 @@
 """How the page script reads forms: labels, required marks, groups, blocks and ids."""
 
 import pytest
-from conftest import browser_available, run
+from conftest import browser_available, fixture_url, run
 
 from job_apply.autofill import is_empty_value
 
@@ -37,6 +37,41 @@ def test_blocks_with_their_headings_beside_them(srv, tmp_path):
     assert [f.get("section") for f in got] == ["Work Experience 1", "Work Experience 2"]
 
 
+# A job's Location and From date as a Workday site draws them (live, Oct 2026): the date is a
+# fieldset of its own, its legend the date's label. `deeper` puts the date further down its block.
+def workday_job(deeper: int = 0) -> str:
+    return ('<div role="group" aria-labelledby="p1"><div><h3 id="p1">Work Experience 1</h3></div>'
+            '<div data-automation-id="formField-location" data-fkit-id="workExperience-16--location">'
+            '<label for="workExperience-16--location">Location</label>'
+            '<div><div><input type="text" id="workExperience-16--location" name="location"></div></div></div>'
+            '<div data-automation-id="formField-startDate" data-fkit-id="workExperience-16--startDate">'
+            + '<div>' * deeper + '<fieldset><legend><label id="label121"><span>From<abbr aria-hidden="true">*</abbr>'
+            '</span></label></legend><div id="workExperience-16--startDate" role="group" '
+            'data-automation-id="dateInputWrapper" aria-labelledby="hiddenDateValueId-workExperience-16--startDate">'
+            '<div id="workExperience-16--startDate-dateSectionMonth"><input role="spinbutton" aria-label="Month" '
+            'id="workExperience-16--startDate-dateSectionMonth-input" data-automation-id="dateSectionMonth-input">'
+            '</div><div id="workExperience-16--startDate-dateSectionYear"><input role="spinbutton" aria-label="Year" '
+            'id="workExperience-16--startDate-dateSectionYear-input" data-automation-id="dateSectionYear-input"></div>'
+            '</div></fieldset>' + '</div>' * deeper + '</div></div>')
+
+
+def test_a_date_in_a_fieldset_of_its_own_is_in_its_jobs_block(srv, tmp_path):
+    """The legend of a date's own fieldset ("From") was taken for its block, and dropped as the
+    date's own label: a Workday site's 16 From and To boxes were asked bare, with no job named,
+    and left empty (live, Oct 2026)."""
+    got = fields_of(srv, tmp_path, workday_job())
+    assert [(f["label"], f.get("sublabel"), f.get("section")) for f in got] == [
+        ("Location", None, "Work Experience 1"), ("From*", "Month", "Work Experience 1"),
+        ("From*", "Year", "Work Experience 1")]
+
+
+def test_a_box_whose_block_isnt_found_takes_its_neighbours_by_their_ids(srv, tmp_path):
+    """Where a box's block can't be found above it, Workday's ids still say it: "workExperience-16--"
+    begins the ids of every box in that job's block."""
+    got = fields_of(srv, tmp_path, workday_job(deeper=12))
+    assert [f.get("section") for f in got] == ["Work Experience 1"] * 3, got
+
+
 def test_radios_with_no_name_or_group_are_one_question(srv, tmp_path):
     got = fields_of(srv, tmp_path, '<p>Are you 18 or older?</p><div>'
                                    '<div role="radio" aria-checked="false" tabindex="0">Yes</div>'
@@ -66,3 +101,61 @@ def test_placeholder_choices_count_as_empty():
     for shown in ("-- Please Select --", "- Select -", "Choose an option", "Please choose", "--"):
         assert is_empty_value(shown), shown
     assert not is_empty_value("Select Engineering")
+
+
+def page_of(srv, name: str, query: str = "") -> dict:
+    run(srv.browser.goto(fixture_url(name) + query))
+    return run(srv.browser.inspect(include_dropdown_options=False))
+
+
+def test_a_resume_the_page_shows_as_uploaded_is_the_boxs_value(srv, tmp_path):
+    """Eightfold's resume box is empty again after an upload, beside the file's own buttons
+    ("Replace", "Delete file resume.pdf", "Preview file: resume.pdf") under "File upload completed
+    successfully" (live, Oct 2026): read as empty, the resume went up again on every pass, and each
+    upload brought its notice back."""
+    def resume(data):
+        return next(f for f in data["fields"] if f["kind"] == "file")
+    assert resume(page_of(srv, "site/ai-notice-form.html"))["value"] == ""  # nothing up yet
+    assert resume(page_of(srv, "site/ai-notice-form.html", "?uploaded=1"))["value"] == "resume.pdf"
+    # without the file's name: its Replace, or the page saying the upload is done
+    got = fields_of(srv, tmp_path, '<fieldset><legend>Resume</legend><div role="status">File upload completed successfully'
+                                   '</div><div><input type="file"><button type="button">Replace</button></div></fieldset>'
+                                   '<label for="fn">First name</label><input id="fn">')
+    assert next(f for f in got if f["kind"] == "file")["value"] == "uploaded"
+
+
+def test_a_dialog_open_over_the_page_is_read_with_its_buttons(srv):
+    """Eightfold's notice about its AI screening opens over the whole form as the resume goes up;
+    the desk sees it, its heading and all its buttons. A cookie banner is said to be one, and a
+    dialog that is the form itself (a sign-in pop-up) or one that's closed isn't a dialog over it."""
+    dialogs = page_of(srv, "site/ai-notice-form.html", "?notice=1")["dialogs"]
+    assert [d["heading"] for d in dialogs] == ["Notice Related to Example Corp's Use of the Eightfold AI Recruiting Software"]
+    assert [b["text"] for b in dialogs[0]["buttons"]] == ["Close", "Cancel", "I Agree"] and not dialogs[0].get("cookie")
+    assert "artificial intelligence" in dialogs[0]["text"]
+    assert page_of(srv, "site/ai-notice-form.html")["dialogs"] == []
+    assert [d.get("cookie") for d in page_of(srv, "site/cookie-form.html")["dialogs"]] == [True]
+    assert page_of(srv, "site/signin-header-popup.html", "?start=popup")["dialogs"] == []
+
+
+def test_what_isnt_a_dialog_over_the_form(srv, tmp_path):
+    """Nothing is filled behind a dialog over the form, so only one that waits on an answer counts:
+    not a loading overlay (nothing to press), a box's own pop-up (a date picker's calendar, a
+    country list), a side panel slid off the window, or a chat widget in a frame of its own."""
+    over = 'role="dialog" aria-modal="true" style="position: fixed; inset: 0; background: #fff"'
+    form = '<label for="fn">First name</label><input id="fn">'
+    chat = ('<iframe style="width: 300px; height: 150px" srcdoc="<div role=&quot;dialog&quot; aria-modal=&quot;true&quot; '
+            'style=&quot;position: fixed; inset: 0&quot;><p>Hi! Any questions?</p><button>Chat</button></div>"></iframe>')
+    for body in (f"<div {over}><p>Loading your application</p></div>",
+                 f'<div {over}><button>Previous month</button><table role="grid"><tr><td role="gridcell">1</td></tr></table></div>',
+                 f'<div {over}><ul role="listbox"><li role="option">Canada</li></ul><button>Close</button></div>',
+                 '<div role="dialog" aria-modal="true" style="position: fixed; top: 0; left: 100%; width: 400px; '
+                 'height: 100%"><p>Job cart</p><button>Close</button></div>',
+                 chat):
+        page = tmp_path / "dialog.html"
+        page.write_text(f"<!doctype html><html><body>{form}{body}</body></html>")
+        run(srv.browser.goto(page.resolve().as_uri()))
+        assert run(srv.browser.inspect(include_dropdown_options=False))["dialogs"] == [], body
+    page.write_text(f'<!doctype html><html><body>{form}<div {over} aria-label="Before you apply"><p>Read this first.</p>'
+                    '<button>OK</button></div></body></html>')
+    run(srv.browser.goto(page.resolve().as_uri()))
+    assert [d["heading"] for d in run(srv.browser.inspect(include_dropdown_options=False))["dialogs"]] == ["Before you apply"]

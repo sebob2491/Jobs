@@ -12,6 +12,9 @@ a job stops on something it most likely got wrong (pipeline.NOTED), and the pers
 them together in one issue from the desk's Notes. A note holds no answers, and says the
 employer by its job system ("a Workday employer"), not its name: only the addresses of the
 pages show which site it was.
+
+A report made anonymous says the job that way too, and leaves out its title, its addresses and
+its requisition number, from the issue and from the saved pages.
 """
 
 from __future__ import annotations
@@ -23,12 +26,13 @@ import zipfile
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 
 from . import config
-from .ats import ATS_NAMES, detect_ats
+from .ats import ATS_NAMES, detect_ats, shared_system
 from .autofill import is_empty_value
-from .fixtures import REDACTED, _without_query, convert, personal_strings, redact
+from .fixtures import REDACTED, _pattern, _spellings, _without_query, convert, personal_strings, redact
+from .mailbox import site_domain
 
 PAGES = 3  # the latest saved pages put in a report
 ISSUE_BODY = 6000  # characters of the report in the issue's address at most...
@@ -89,6 +93,47 @@ def _scrubber(secrets: list[str]) -> Callable[[Any], str]:
     def scrub(text: Any) -> str:
         return redact(_URL.sub(lambda m: _without_query(m.group(0)), str(text or "")), secrets)
     return scrub
+
+
+def _a(name: str) -> str:
+    return f"{'an' if name[:1] in 'AEIOaeio' else 'a'} {name}"
+
+
+def _address_said(url: str) -> str:
+    """An address in a report that doesn't say which job it was: its job system alone."""
+    ats = detect_ats(url)
+    return f"({_a(ATS_NAMES.get(ats, ats))} address)" if ats and ats != "company_site" else "(an employer's own address)"
+
+
+def _anonymous(job: dict[str, Any], run: Any, urls: list[Any],
+               secrets: list[str]) -> tuple[Callable[[Any], str], list[str]]:
+    """For a report that doesn't say which job it was: a scrubber for its text that also says every
+    address by its job system alone, the employer as "the employer" and the job's title as "the
+    job", and takes out its requisition number and its sites; and what its saved pages lose
+    besides the person's details: those names, and the sites of the job's addresses (each host,
+    and the employer's own domain beside it, never a job system's)."""
+    said: dict[str, str] = {}
+    for value, stand_in in ((job.get("external_id"), REDACTED), (job.get("title"), "the job"),
+                            (getattr(run, "title", ""), "the job"), (job.get("company"), "the employer"),
+                            (getattr(run, "company", ""), "the employer")):
+        if len(name := str(value or "").strip()) >= 2:
+            said.setdefault(name, stand_in)
+    sites = set()
+    for url in urls:
+        host = (urlparse(str(url or "")).hostname or "").lower().removeprefix("www.")
+        if host:
+            own = shared_system(f"https://{host}/") is None and re.search(r"[a-z]", host)
+            sites |= {host, site_domain(host)} if own else {host}
+    secrets = sorted({*secrets, *(s for name in [*said, *sites] for s in _spellings(name) if len(s) >= 2)},
+                     key=len, reverse=True)
+    scrub, names = _scrubber(secrets), sorted(said, key=len, reverse=True)
+
+    def say(text: Any) -> str:
+        text = _URL.sub(lambda m: _address_said(m.group(0)), str(text or ""))
+        for name in names:
+            text = re.sub(_pattern(name), said[name], text, flags=re.I if len(name) >= 3 else 0)
+        return scrub(text)
+    return say, secrets
 
 
 def _without_answers(error: Any) -> str:
@@ -162,22 +207,38 @@ def _issue_url(title: str, text: str, rest: str = "the whole report is in report
         limit = min(limit - 100, int(limit * ISSUE_URL / len(url)))
 
 
-def build(job: dict[str, Any], run: Any = None, profile: config.Profile | None = None) -> dict[str, Any]:
+def build(job: dict[str, Any], run: Any = None, profile: config.Profile | None = None,
+          anonymous: bool = False) -> dict[str, Any]:
     """Write the report for a job and return what it holds: its folder, report.zip (the text
     and the scrubbed pages, kept on this computer), the text the person sees before anything
-    is filed (`preview`), and the address of a new GitHub issue with that text (`issue_url`)."""
+    is filed (`preview`), and the address of a new GitHub issue with that text (`issue_url`).
+    `anonymous`: the job said by its job system alone ("a Workday employer"), as a note says it,
+    with no employer, job title, address or requisition number in the issue or the saved pages."""
     prof = profile or config.Profile.load()
     secrets = report_strings(prof)
     scrub = _scrubber(secrets)
+    saved = []
+    for snap in _snapshots(Path(job["folder"])) if job.get("folder") else []:
+        try:
+            saved.append((snap, json.loads((snap / "snapshot.json").read_text(encoding="utf-8"))))
+        except (OSError, ValueError):
+            continue
+    if anonymous:
+        urls = [job.get("url"), job.get("apply_url"), getattr(run, "url", ""),
+                (getattr(run, "page_info", None) or {}).get("url")]
+        for _, meta in saved:
+            urls += [meta.get("url"), *(f.get("url") for f in meta.get("frames") or [] if isinstance(f, dict))]
+        scrub, secrets = _anonymous(job, run, urls, secrets)
     out_dir = _folder(int(job["id"]))
     pages_dir = out_dir / "pages"
     pages_dir.mkdir()
 
+    employer = _job_system(job, run)[1]
     lines = [
         f"**Plugin version:** {config.plugin_version() or 'unknown'}",
-        f"**Job:** {scrub(job.get('title'))} at {scrub(job.get('company'))}",
+        f"**Job:** {employer}" if anonymous else f"**Job:** {scrub(job.get('title'))} at {scrub(job.get('company'))}",
         f"**Job system:** {job.get('ats') or 'unknown'}",
-        f"**Address:** {scrub(job.get('apply_url') or job.get('url') or '')}",
+        *([] if anonymous else [f"**Address:** {scrub(job.get('apply_url') or job.get('url') or '')}"]),
     ]
     if run is not None:
         lines += [f"**Desk status:** {getattr(run, 'status', '')} {getattr(run, 'need', '')}".rstrip(),
@@ -186,11 +247,7 @@ def build(job: dict[str, Any], run: Any = None, profile: config.Profile | None =
         if steps:
             lines += ["", "### What the desk did", *[f"{i}. {s}" for i, s in enumerate(steps, 1)]]
         lines += map(scrub, _paused_page(getattr(run, "page_info", None) or {}, getattr(run, "questions", None) or []))
-    for snap in _snapshots(Path(job["folder"])) if job.get("folder") else []:
-        try:
-            meta = json.loads((snap / "snapshot.json").read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            continue
+    for snap, meta in saved:
         try:
             convert(snap, snap.name, pages_dir, secrets=secrets)
         except (OSError, ValueError, KeyError, TypeError):
@@ -198,8 +255,9 @@ def build(job: dict[str, Any], run: Any = None, profile: config.Profile | None =
         lines += ["", f"### Page saved {snap.name}: {scrub(meta.get('title'))}",
                   scrub(meta.get("url") or "") + (f" ({scrub(meta.get('note'))})" if meta.get("note") else ""),
                   *map(scrub, _fields(meta))]
+    left_out = "The employer, the job's title, its addresses and its requisition number are left out. "
     text = "\n".join(lines) + f"\n\n_Personal details found in the profile are shown as {REDACTED}. " \
-                              "No screenshots or saved pages are included._\n"
+                              f"{left_out if anonymous else ''}No screenshots or saved pages are included._\n"
     (out_dir / "report.md").write_text(text, encoding="utf-8")
     pages = sorted(str(p.relative_to(out_dir)) for p in pages_dir.iterdir() if p.is_file())
     zip_path = out_dir / "report.zip"
@@ -207,7 +265,8 @@ def build(job: dict[str, Any], run: Any = None, profile: config.Profile | None =
         z.write(out_dir / "report.md", "report.md")
         for page in pages:
             z.write(out_dir / page, page)
-    title = f"Report: {scrub(job.get('company'))}, {getattr(run, 'need', '') or getattr(run, 'status', '') or 'a problem'}"
+    title = f"Report: {employer if anonymous else scrub(job.get('company'))}, " \
+            f"{getattr(run, 'need', '') or getattr(run, 'status', '') or 'a problem'}"
     return {"folder": str(out_dir), "zip": str(zip_path), "preview": text, "issue_url": _issue_url(title, text),
             "pages": pages}
 
@@ -228,8 +287,7 @@ def _job_system(job: dict[str, Any], run: Any) -> tuple[str, str]:
     ats = next((a for a in [*found[:1], str(job.get("ats") or ""), *found[1:]] if a and a != "company_site"), "")
     if not ats:
         return "company_site", "an employer with its own careers site"
-    name = ATS_NAMES.get(ats, ats)
-    return ats, f"{'an' if name[:1] in 'AEIOaeio' else 'a'} {name} employer"
+    return ats, f"{_a(ATS_NAMES.get(ats, ats))} employer"
 
 
 def _note_scrubber(job: dict[str, Any], run: Any, prof: config.Profile) -> Callable[[Any], str]:

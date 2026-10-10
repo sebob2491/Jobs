@@ -20,7 +20,16 @@ The desk is a local web page served by this plugin. It does what the `find-jobs`
     remembered in `~/.job-apply/answers.yaml` unless the user unticks "remember".
     A remembered answer fills only the same question, worded the same, and one about
     an employer ("Why do you want to work here?") isn't reused for another company.
-    Consent questions default to not remembered;
+    Consent questions default to not remembered. A box the page wouldn't let the desk fill
+    (it timed out) isn't a question: the card says "I couldn't fill …";
+  - a dialog open over a form, which the user answers in the browser before pressing
+    Resume (the boxes behind it are filled after that). With `settings.accept_notices` (on
+    unless the user turns it off; never in practice mode) the desk agrees for the user to an
+    employer's notice about AI screening of the application (Eightfold's opens as the resume
+    goes up), and picks an application's attestation that its information is true and
+    complete (or consent to the background check that comes with applying), noting each in
+    the job's log. Any other dialog over a form still stops for the user, and cookie banners
+    keep their own rule;
   - sign-ins, bot checks, CAPTCHAs and emailed codes. The user deals with these in the
     browser window, and the desk carries on by itself once the page moves past them. A
     link a site emails to confirm the address opens in the user's usual browser, which
@@ -42,7 +51,11 @@ The desk is a local web page served by this plugin. It does what the `find-jobs`
   user files them all at once: **File on GitHub** opens one issue with them, **Copy all**
   copies the whole text, and **Clear** removes them once filed. A note holds no answers and
   says the employer by its job system rather than its name. **Report a problem** on a job's
-  card stays for one job: a fuller report, with the employer and the pages the desk saved.
+  card stays for one job: a fuller report, with the employer and the pages the desk saved
+  (the page the job stopped on among them). Its box **Don't say which job it was** (for
+  Claude, `report_problem(job_id, anonymous=True)`) makes it again with only the job system
+  and where it stopped: no employer, job title, address or requisition number in the issue
+  or the saved pages. Offer it when the user would rather not show which job they applied for.
 - **Site passwords** stores one password per job system: Workday, SuccessFactors, iCIMS,
   ApplicantStack, UKG Pro or Infor. The page names, by each system, the employers on the
   user's own lists that use it (on the semiconductor list, Workday has 12 of them; on the
@@ -56,7 +69,11 @@ The desk is a local web page served by this plugin. It does what the `find-jobs`
   or no reset email comes in 3 minutes (the other jobs carry on meanwhile), it opens the
   site's Create Account form ("Create an account", "Register", "Don't have an account
   yet?") and creates the account. Without the inbox it tries Create Account first, and
-  resets where the site says the email already has an account.
+  asks for the reset (the user opens the emailed link) where the site says the email already
+  has an account, or where the password still doesn't sign in after Create Account. It presses
+  Create Account once per job, and a sign-in with a refused password twice at most (once more
+  after a reset), Resume or not, so the account isn't locked; then the desk card says what the
+  site said.
   `settings.manage_accounts: false` leaves all of this to the user (the desk fills
   in Create Account for them to finish); practice mode never creates an account. A password is only typed into its
   own system's addresses. The user types it into the desk page; never ask for it in the

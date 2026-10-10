@@ -45,6 +45,26 @@ def test_managing_accounts_is_on_unless_turned_off_and_never_in_practice_mode(mo
     assert config.Settings.from_dict({"manage_accounts": True}).manage_accounts_chosen is True
 
 
+def test_accepting_notices_is_on_unless_turned_off_and_never_in_practice_mode(monkeypatch):
+    """settings.accept_notices (agreeing to an employer's notice about AI screening, and to an
+    application's attestation) is on where the profile doesn't say: the owner's choice, which setup
+    tells each person. Off for false, no or off, an answer it can't read, or a settings section
+    that isn't one, since it agrees in the person's name; and never in practice mode."""
+    def accept(settings):
+        return config.Settings.from_dict(settings).may_accept_notices
+
+    assert accept({}) is True and accept({"accept_notices": None}) is True and accept({"accept_notices": "yes"}) is True
+    for off in (False, "false", "no", "off", "maybe"):
+        assert accept({"accept_notices": off}) is False, off
+    assert config.Settings.from_dict("review").may_accept_notices is False
+    assert accept({"accept_notices": True, "submit_mode": "dry_run"}) is False
+    monkeypatch.setenv("JOB_APPLY_NEVER_SUBMIT", "1")
+    assert accept({"accept_notices": True}) is False
+    monkeypatch.delenv("JOB_APPLY_NEVER_SUBMIT")
+    template = yaml.safe_load(config.TEMPLATE_PROFILE.read_text())
+    assert template["settings"]["accept_notices"] is True  # the template says so, and how to turn it off
+
+
 def test_submit_mode_spellings():
     from job_apply.config import Settings
 

@@ -1394,6 +1394,25 @@ def entry_of(field: dict, prof: Profile) -> tuple[str, str] | None:
     return str(entries[n - 1].get("school") or "").strip() or str(field.get("section")), "education"
 
 
+# How a school attended without finishing a degree is written in the profile (setup writes it so)
+NO_DEGREE = "Some college (no degree)"
+
+
+def no_choice_for_no_degree(field: dict, prof: Profile) -> bool:
+    """A school's Degree list with nothing for the entry's classes without a degree (a Workday
+    site's lists only High School, GED, Associates and up, live, Oct 2026): writing "Some college
+    (no degree)" in the profile can't place it there, and none of the others is ever picked for
+    it (coursework is not a degree). The pick there is the person's."""
+    slot = _entry_slot(field, prof)
+    if slot is None or slot[0] != "education_history" or slot[3] != "degree" or not field.get("options"):
+        return False
+    _, n, entries, _ = slot
+    if not 0 < n <= len(entries) or finished_degree(entries[n - 1].get("degree")):
+        return False
+    said = str(entries[n - 1].get("degree") or "").strip()  # ("Not completed", say)
+    return all(choose_option(words, field["options"]) is None for words in {said, NO_DEGREE} if words)
+
+
 def _resolve_entry(field: dict, prof: Profile) -> tuple[bool, Answer | None]:
     """(handled, answer) for fields inside a numbered block like "Work Experience 2"."""
     slot = _entry_slot(field, prof)

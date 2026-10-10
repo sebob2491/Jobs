@@ -27,6 +27,59 @@ SIGN_IN_FORM_JS = r"""
   };
 """
 
+# Dialogs open over the page (Eightfold's notice about its AI screening, opened as the resume
+# goes up): shown, drawn on top, and modal (aria-modal, an alert, or over the window's middle).
+# Not one off the window (a side panel slid away), nor one holding boxes of its own (the form
+# itself: Paycom's Quick Apply, a sign-in pop-up), nor a box's own pop-up (a date picker's
+# calendar, a country list, what a box's aria-controls opens), nor one with nothing to press (a
+# loading overlay). In a frame, only one over boxes there (not a chat widget's frame). Each with
+# its heading, its words, and whether it's a cookie banner (by its names, or words about cookies
+# up front). Put into EXTRACT_JS and NOTICE_OVER_JS.
+OPEN_DIALOGS_JS = r"""
+  const openDialogs = () => {
+    const words = (n) => (n ? (n.innerText || n.textContent || '') : '').replace(/\s+/g, ' ').trim();
+    const drawn = (n) => {
+      for (; n && n.nodeType === 1; n = n.parentElement) {
+        const s = getComputedStyle(n);
+        if (s.visibility === 'hidden' || Number(s.opacity) < 0.1) return false;
+      }
+      return true;
+    };
+    const BOX = 'input:not([type="hidden"]):not([type="button"]):not([type="submit"]):not([type="reset"]):not([type="image"]), '
+      + 'select, textarea, [role="combobox"], [role="textbox"], [role="radio"], [role="checkbox"], [role="switch"]';
+    const PRESS = 'button, [role="button"], a[href], input[type="submit"], input[type="button"]';
+    const COOKIE_NAMES = /cookie|onetrust|cybot|truste|gdpr/i;
+    const named = (n) => COOKIE_NAMES.test(`${n.id || ''} ${typeof n.className === 'string' ? n.className : ''} ${n.getAttribute('aria-label') || ''}`);
+    const out = [];
+    const boxes = [...document.querySelectorAll(BOX)].filter((b) => b.getClientRects().length > 0);
+    for (const d of document.querySelectorAll('[role="dialog"], [role="alertdialog"], dialog[open]')) {
+      if (out.some((o) => o.el.contains(d)) || !d.getClientRects().length || !drawn(d)) continue;
+      const r = d.getBoundingClientRect();
+      const left = Math.max(r.left, 0), right = Math.min(r.right, innerWidth);
+      const top = Math.max(r.top, 0), bottom = Math.min(r.bottom, innerHeight);
+      if (right - left < 40 || bottom - top < 40) continue;
+      const hit = document.elementFromPoint((left + right) / 2, (top + bottom) / 2);
+      if (!hit || !d.contains(hit)) continue;  // under something else
+      const middle = document.elementFromPoint(innerWidth / 2, innerHeight / 2);
+      let modal = d.getAttribute('aria-modal') === 'true' || d.getAttribute('role') === 'alertdialog' || (!!middle && d.contains(middle));
+      try { modal = modal || d.matches(':modal'); } catch (e) { /* a browser without :modal */ }
+      if (!modal || boxes.some((b) => d.contains(b)) || (window !== window.top && !boxes.length)) continue;
+      if (d.querySelector('[role="grid"], [role="listbox"]') || (d.id && document.querySelector(
+        `[aria-controls~="${CSS.escape(d.id)}"], [aria-owns~="${CSS.escape(d.id)}"]`))) continue;
+      if (![...d.querySelectorAll(PRESS)].some((b) => b.getClientRects().length > 0)) continue;  // a loading overlay
+      const labelled = (d.getAttribute('aria-labelledby') || '').split(/\s+/).filter(Boolean)
+        .map((i) => words(document.getElementById(i))).join(' ').trim();
+      const heading = (labelled || (d.getAttribute('aria-label') || '').trim()
+        || words(d.querySelector('h1, h2, h3, h4, h5, h6, [role="heading"], legend'))).slice(0, 200);
+      const text = words(d).slice(0, 3000);
+      const cookie = named(d) || !!(d.parentElement && d.parentElement.closest('[id*="cookie" i], [class*="cookie" i], '
+        + '[id*="onetrust" i], [id*="cybot" i], [id*="truste" i], [id*="gdpr" i]')) || /cookie/i.test(`${heading} ${text.slice(0, 300)}`);
+      out.push({ el: d, heading, text, cookie });
+    }
+    return out;
+  };
+"""
+
 EXTRACT_JS = r"""
 (prefix) => {
   const W = window;
@@ -127,7 +180,8 @@ EXTRACT_JS = r"""
     return clean(el.getAttribute('aria-label') || labelledBy(el) || el.value || txt(el));
   };
   // The repeated block a field sits in, e.g. "Work Experience 2" or "Education 1". Not the field's
-  // own group: Workday's date is a group labelled by the date's label ("From"), inside the block.
+  // own group: Workday's date is a group labelled by the date's label ("From"), inside the block,
+  // and (live, Oct 2026) a fieldset whose legend is that label.
   const HEADING = ':scope > h2, :scope > h3, :scope > h4, :scope > h5, :scope > legend, :scope > [role="heading"], :scope > div:first-child > h3, :scope > div:first-child > h4';
   const bare = (t) => clean(t).replace(/[\s*:]+$/, '').toLowerCase();
   const sectionOf = (el, own) => {
@@ -136,27 +190,45 @@ EXTRACT_JS = r"""
       const role = (node.getAttribute('role') || '').toLowerCase();
       const container = role === 'group' || role === 'region' || node.tagName === 'FIELDSET' || node.tagName === 'SECTION';
       let t = container ? labelledBy(node) : '';
-      if (t && own && bare(t) === bare(own)) continue;  // the field's own group
       if (!t) {
         // the last heading before the field: "Work Experience 2" sits beside block 2, after block 1
         const hs = Array.from(node.querySelectorAll(HEADING)).filter((h) => h.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING);
         t = hs.length ? txt(hs[hs.length - 1]) : '';
       }
-      if (!t || t.length > 80) continue;
+      if (!t || t.length > 80 || (own && bare(t) === bare(own))) continue;  // (the field's own group)
       if (container || /\b\d+\s*$/.test(t)) return t;
     }
     return '';
   };
+  // The block Workday's ids name ("workExperience-16--location", data-fkit-id
+  // "workExperience-16--startDate"): what ties a box to the block of its neighbours
+  const BLOCK_ID = /^(.+?-\d+)--/;
+  const blockId = (el) => {
+    const own = BLOCK_ID.exec(el.id || '');
+    if (own) return own[1];
+    const kit = el.closest('[data-fkit-id]');
+    const m = kit && BLOCK_ID.exec(kit.getAttribute('data-fkit-id') || '');
+    return m ? m[1] : '';
+  };
   // Files an upload box has already sent: Workday's box empties after each upload and lists the
-  // file below it ("resume.pdf  Successfully Uploaded!"), so an empty box isn't one still to fill.
-  // Looks only in the box's own field: stops at the first wrapper holding another form control.
+  // file below it ("resume.pdf  Successfully Uploaded!"), and Eightfold's stays empty beside the
+  // file's own buttons ("Replace", "Delete file resume.pdf", "Preview file: resume.pdf") under
+  // "File upload completed successfully". So an empty box isn't one still to fill: its value is
+  // the file's name, where the page gives it. Looks only in the box's own field: stops at the
+  // first wrapper holding another form control.
+  const FILE_BUTTON = /^(?:delete|remove|preview|download|view|open) file:?\s+(.+)$/i;
+  const UPLOADED = /\bfile upload completed\b|\bupload(?:ed)? (?:completed? )?successfully\b|\bsuccessfully uploaded\b/i;
   const uploadedNear = (el) => {
     for (let n = el.parentElement, d = 0; n && d < 6; n = n.parentElement, d++) {
       if (Array.from(n.querySelectorAll('input, select, textarea')).some((x) => x !== el && x.type !== 'hidden'
           && x.type !== 'file' && x.getClientRects().length > 0)) break;
       const items = Array.from(n.querySelectorAll('[data-automation-id="file-upload-item-name"], '
         + '[data-automation-id*="fileName" i], [class*="file-name" i], [class*="filename" i]')).map(txt).filter(Boolean);
+      const buttons = Array.from(n.querySelectorAll('button, [role="button"], a')).filter((b) => b.getClientRects().length > 0)
+        .map((b) => clean(b.getAttribute('aria-label') || txt(b)));
+      items.push(...buttons.map((t) => (FILE_BUTTON.exec(t) || [])[1]).filter(Boolean));
       if (items.length) return Array.from(new Set(items)).join(', ');
+      if (buttons.some((t) => /^replace(?: file)?$/i.test(t)) || UPLOADED.test(txt(n))) return 'uploaded';
     }
     return '';
   };
@@ -211,6 +283,7 @@ EXTRACT_JS = r"""
   const GENERIC_FILE = /^(attach|upload|choose (a )?file|browse|select files?|add (a )?file|drop (your )?files? here|or|enter manually)$/i;
   const HONEYPOT = /for robots|robots only|if you('| a)?re (a )?human|not (be )?(filled|entered) by humans|honey ?pot|leave this field (blank|empty)/i;
   const fields = [];
+  const blockIds = new Map();  // a field's blockId, where its box has one
   const passwordBoxes = [];
   const seen = new Set();
   const groups = new Map();
@@ -328,6 +401,8 @@ EXTRACT_JS = r"""
     if (el.getAttribute('aria-invalid') === 'true') f.invalid = true;
     if (el.maxLength > 0 && el.maxLength < 100000) f.max_length = el.maxLength;
     fields.push(f);
+    const ofBlock = blockId(el);
+    if (ofBlock) blockIds.set(f, ofBlock);
     if (kind === 'password') passwordBoxes.push(el);
   }
 
@@ -349,6 +424,8 @@ EXTRACT_JS = r"""
       const section = sectionOf(first);
       if (section && section !== label) single.section = section;
       fields.push(single);
+      const ofBlock = blockId(first);
+      if (ofBlock) blockIds.set(single, ofBlock);
       continue;
     }
     const gid = ownGid(first, 'data-ja-gid-member');
@@ -370,6 +447,12 @@ EXTRACT_JS = r"""
     if (section && section !== label) group.section = section;
     fields.push(group);
   }
+  // A box whose block wasn't found above takes the one its neighbours with the same block id are in
+  const blockOf = new Map();
+  for (const [f, b] of blockIds) if (f.section && !blockOf.has(b)) blockOf.set(b, f.section);
+  for (const [f, b] of blockIds) {
+    if (!f.section && blockOf.has(b) && blockOf.get(b) !== f.label) f.section = blockOf.get(b);
+  }
 
   const SUBMIT = /\bsubmit\b|send (my )?application|finish (my )?application|complete (my )?application/i;
   // browser.FINALISH_RE and final_text: a form's own "Apply for this job", "Apply Now ›" sends it
@@ -380,6 +463,7 @@ EXTRACT_JS = r"""
   // job alerts or newsletter sign-up. Its Submit is never the application's.
   const SIDE_BOX = /job alerts?|alerts? by e-?mail|e-?mail alerts?|newsletter|\bsubscribe\b|talent (?:community|network|pool)|notify me|similar (?:jobs|openings|roles)|stay (?:connected|in touch)/i;
   /*SIGN_IN_FORM*/
+  /*OPEN_DIALOGS*/
   const boxesIn = (form) => [...form.elements].filter((e) => /^(INPUT|SELECT|TEXTAREA)$/.test(e.tagName)
     && !/^(hidden|submit|button|image|reset)$/i.test(e.type || '') && e.getClientRects().length > 0);
   const sideBox = (el) => {
@@ -477,9 +561,30 @@ EXTRACT_JS = r"""
     if (t && t.length < 120 && visible(el) && !headings.includes(t)) headings.push(t);
     if (headings.length >= 8) break;
   }
-  return { fields, actions, errors, headings };
+  // Dialogs open over the page, each with all its buttons (an Eightfold form has more than the 60
+  // above before its notice's "I Agree")
+  const dialogs = openDialogs().map((d) => ({
+    heading: d.heading, text: d.text, ...(d.cookie ? { cookie: true } : {}),
+    buttons: [...d.el.querySelectorAll(BUTTONS)].filter(visible).map((b) => {
+      const t = clean(txt(b) || b.value || b.getAttribute('aria-label') || '');
+      const off = b.disabled || b.getAttribute('aria-disabled') === 'true';
+      return t && t.length <= 60 ? { id: idOf(b), text: t, ...(off ? { disabled: true } : {}) } : null;
+    }).filter(Boolean),
+  }));
+  return { fields, actions, errors, headings, dialogs };
 }
-""".replace("/*SIGN_IN_FORM*/", SIGN_IN_FORM_JS)
+""".replace("/*SIGN_IN_FORM*/", SIGN_IN_FORM_JS).replace("/*OPEN_DIALOGS*/", OPEN_DIALOGS_JS)
+
+# Is a dialog open over the page that the box with this id isn't in (OPEN_DIALOGS_JS)? Its heading
+# (or "a dialog"), else null. Nothing is filled behind one. A cookie banner has its own rule.
+NOTICE_OVER_JS = r"""
+(id) => {
+  /*OPEN_DIALOGS*/
+  const el = document.querySelector(`[data-ja-id="${CSS.escape(id)}"], [data-ja-gid-member="${CSS.escape(id)}"]`);
+  const over = openDialogs().find((d) => !d.cookie && !(el && d.el.contains(el)));
+  return over ? (over.heading || 'a dialog') : null;
+}
+""".replace("/*OPEN_DIALOGS*/", OPEN_DIALOGS_JS)
 
 # Fallback for custom-styled radios/checkboxes whose input is display:none.
 CLICK_CHOICE_JS = r"""
@@ -494,16 +599,27 @@ VISIBLE_TEXT_JS = r"""
 () => (document.body ? document.body.innerText : '').replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim()
 """
 
-# Numbered entry headings ("Work Experience 2") and the Add buttons that create more.
+# Numbered entry headings ("Work Experience 2"), how many of those have no boxes drawn yet, and
+# the Add buttons that create more.
 ENTRIES_JS = r"""
 (kindPattern) => {
   const kind = new RegExp(kindPattern, 'i');
   const clean = (s) => (s || '').replace(/\s+/g, ' ').trim();
   const txt = (el) => clean(el ? (el.innerText || el.textContent || '') : '');
   const visible = (el) => !!el && el.getClientRects().length > 0 && getComputedStyle(el).visibility !== 'hidden';
-  const headings = Array.from(document.querySelectorAll('h1, h2, h3, h4, h5, h6, legend, [role="heading"]'))
-    .filter(visible).map(txt);
-  const entries = headings.filter((t) => kind.test(t) && /\b\d+\s*$/.test(t)).length;
+  const numbered = Array.from(document.querySelectorAll('h1, h2, h3, h4, h5, h6, legend, [role="heading"]'))
+    .filter((h) => visible(h) && kind.test(txt(h)) && /\b\d+\s*$/.test(txt(h)));
+  const entries = numbered.length;
+  // Workday draws a new block's heading first and its boxes a moment later: a block's boxes are
+  // the ones after its heading, before the next heading
+  const follows = (a, b) => !!(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
+  const marks = Array.from(document.querySelectorAll('h1, h2, h3, h4, h5, h6, [role="heading"]')).filter(visible);
+  const boxes = Array.from(document.querySelectorAll('input:not([type="hidden"]), select, textarea, [role="combobox"], '
+    + 'button[aria-haspopup="listbox"]')).filter(visible);
+  const empty = numbered.filter((h) => {
+    const next = marks.find((m) => m !== h && !h.contains(m) && follows(h, m));
+    return !boxes.some((b) => follows(h, b) && !(next && follows(next, b)));
+  }).length;
   const buttons = [];
   for (const b of document.querySelectorAll('button, [role="button"]')) {
     if (!visible(b)) continue;
@@ -525,7 +641,7 @@ ENTRIES_JS = r"""
       buttons.push({ id: b.getAttribute('data-ja-id'), text: txt(b) });
     }
   }
-  return { entries, buttons };
+  return { entries, empty, buttons };
 }
 """
 

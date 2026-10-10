@@ -68,6 +68,11 @@ the scrubber (`python -m job_apply.fixtures`) before they become test fixtures.
 - **Cookie banners** are declined or left to the person, never accepted, unless the person
   turned on `settings.accept_cookies` (off by default): then a banner with no way to decline
   is accepted for them.
+- **Notices and attestations:** with `settings.accept_notices` (on unless the person turns it
+  off, as the owner chose; never in practice mode) the desk agrees to an employer's notice about
+  AI screening and picks an application's attestation that its information is true (or consent
+  to the background check that comes with applying), logging each; with it off they're the
+  person's. Any other dialog over the form stops the desk for the person.
 - **Accounts:** with `settings.manage_accounts` (on unless the person turns it off, as the owner
   chose; setup tells each person; never in practice mode) the desk creates an account with that
   system's saved password, ticking only the site's terms (never a newsletter), and resets a saved

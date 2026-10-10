@@ -137,6 +137,13 @@ opens a page on your computer (served by the plugin on `127.0.0.1`):
      fills the same question, worded the same way. An answer about one employer
      ("Why do you want to work here?", "Have you worked for us before?") isn't reused
      for another.
+   - A dialog open over a form. You answer it in the browser and press **Resume**, and the
+     desk fills the form in behind it. It agrees for you to an employer's notice about AI
+     screening of your application (Eightfold's employers show one as your resume goes up),
+     and picks an application's attestation that its information is true and complete, or
+     your consent to the background check that comes with applying, noting each in the job's
+     log. To answer those yourself, set `accept_notices: false` under `settings:` in your
+     profile. Practice mode never agrees to them.
    - Sign-ins, bot checks, CAPTCHAs and emailed codes. You deal with those in the
      browser window, and the desk carries on by itself. A link a site emails you to
      confirm your address opens in your usual browser, so reload that job's tab in the
@@ -234,6 +241,7 @@ Settings in `profile.yaml`:
 | `submit_mode` | `review` | Set to `auto` to let Claude submit complete applications without asking, for the ATSs in `auto_submit_ats`. `dry_run` fills everything and never submits, which is good for a first practice run. |
 | `email_codes` | `false` | Claude may read the sign-in codes and verification links that career sites email you (needs the Gmail connector) |
 | `email_tracking` | `false` | Claude may search your email for replies to your applications (needs the Gmail connector) |
+| `accept_notices` | `true` | The Job Desk agrees for you to an employer's notice about AI screening of your application, and picks an application's attestation that its information is true (or your consent to its background check), noting each in the job's log. Never in practice mode. `false` leaves them to you. |
 
 ## What's inside
 
@@ -341,7 +349,8 @@ in a repository with no activity for 60 days.
 When the Job Desk gets a job wrong, press **Report a problem** on that job. It writes a
 report to `~/.job-apply/reports/<job>-<time>/`:
 - what the desk did, step by step;
-- each page it saved, with every field's label and whether it was filled (never what was in it);
+- each page it saved (the last pages it stopped on for you, and any page a fill failed on),
+  with every field's label and whether it was filled (never what was in it);
 - `report.zip`, which also holds the saved pages.
 
 The profile's personal details, plus your city, schools and employers, are replaced by
@@ -349,9 +358,12 @@ The profile's personal details, plus your city, schools and employers, are repla
 The desk then shows you the whole report, with a link that opens a new issue on this
 repository with the report's text filled in. Nothing is sent unless you follow the link and
 file the issue. GitHub issues are public: anyone can read one, and see which job you
-reported, so read it over first. The saved pages in `report.zip` aren't in the issue,
-because a filled-in form can still show your answers; they stay on your computer. Claude
-can make the same report with `report_problem`.
+reported, so read it over first. Tick **Don't say which job it was** in the report to make it
+again with only the job system (Workday, iCIMS, ...) and where it stopped: the employer, the
+job's title, its addresses and its requisition number are left out of the issue and the saved
+pages. The saved pages in `report.zip` aren't in the issue, because a filled-in form can
+still show your answers; they stay on your computer. Claude can make the same report with
+`report_problem` (`anonymous=True` for one that doesn't say which job it was).
 
 The desk also takes a note by itself, with nothing pressed, each time a job stops on
 something it most likely got wrong: it's stuck, at a sign-in, its Submit didn't go through
@@ -367,7 +379,8 @@ by its job system ("a Workday employer") rather than named, since one issue hold
 ### Turning a failure into a test
 
 When a field won't fill on a real site, the plugin saves a snapshot to
-`~/.job-apply/applications/<job>/debug/<time>/`. To turn it into a regression
+`~/.job-apply/applications/<job>/debug/<time>/` (and the Job Desk keeps the last three pages
+a job stopped on for you, in `debug/<time>-stop/`). To turn it into a regression
 test, run:
 
 ```

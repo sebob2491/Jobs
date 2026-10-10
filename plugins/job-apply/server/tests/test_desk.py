@@ -888,6 +888,51 @@ def test_report_a_problem_shows_the_report_with_a_link_to_file_it(srv, job_apply
     assert len(list((job_apply_home / "reports").iterdir())) == 1
 
 
+def test_report_a_problem_can_leave_out_which_job_it_was(srv, job_apply_home):
+    """The report named the job: the employer in the issue's title, the job and its address in its
+    text. The dialog's box makes it again with the job system alone, and clearing it names it again."""
+    from urllib.parse import parse_qs, urlsplit
+
+    from playwright.async_api import async_playwright
+
+    from job_apply.pipeline import Run
+
+    desk = Desk(srv)
+    job = srv.add_job(url="https://acme.wd1.myworkdayjobs.com/External/job/x", title="Technician",
+                      company="Example Litho")["job"]
+    desk.applier.runs[job["id"]] = Run(job["id"], "Technician", "Example Litho", status="failed",
+                                       reason="Something went wrong on Example Litho's site.")
+    desk.applier.start = lambda: None
+    desk.search.update(status="done", at=time.time())
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with async_playwright() as pw:
+                browser = await pw.chromium.launch(**launch_options())
+                page = await browser.new_page()
+                await page.goto(desk.url)
+                await page.click(f"button[data-job='{job['id']}'][data-job-act='report']")
+                await page.wait_for_selector("#report[open]")
+                named = await page.locator("#report-text").inner_text()
+                await page.check("#report-anonymous")
+                await page.wait_for_function("() => !document.querySelector('#report-text').textContent.includes('Litho')")
+                anonymous = await page.locator("#report-text").inner_text()
+                title = parse_qs(urlsplit(await page.locator("#report-open").get_attribute("href")).query)["title"]
+                await page.uncheck("#report-anonymous")
+                await page.wait_for_function("() => document.querySelector('#report-text').textContent.includes('Litho')")
+                await browser.close()
+                return named, anonymous, title
+        finally:
+            await desk.stop()
+
+    named, anonymous, title = run(go())
+    assert "Technician at Example Litho" in named and "acme.wd1" in named
+    assert "**Job:** a Workday employer" in anonymous and title == ["Report: a Workday employer, failed"]
+    assert "Something went wrong on the employer's site." in anonymous
+    assert not any(word in anonymous for word in ("Technician", "Example Litho", "acme"))
+
+
 def test_the_desk_reads_an_icims_posting_in_its_browser(srv, monkeypatch):
     """iCIMS postings turn away plain requests: Find jobs reads one in a background tab, from
     the frame its posting is drawn in (in_iframe=1). Other sites' postings aren't read that way."""

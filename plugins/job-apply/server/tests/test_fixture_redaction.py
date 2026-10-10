@@ -96,6 +96,25 @@ def test_personal_data_written_another_way_is_redacted_too():
     assert "Al!" not in short and "Wu," not in short and "Alabama Wuhan" in short
 
 
+def test_a_value_is_taken_out_as_a_whole_word_and_wherever_its_one():
+    """A first name "Rob" came out of "Problem" as "PREDACTEDlem": garbled, and the name easy to
+    guess. A value is taken out only as a whole word, but that's wherever it is one: in an email,
+    a link, a file name, an attribute, run into the next name, and a number not inside a longer one."""
+    prof = Profile({"personal": {"first_name": "Rob", "last_name": "Hall", "email": "rob.hall77@example.org",
+                                 "address": {"line1": "742 W. Evergreen Ter.", "postal_code": "85201"}}})
+    raw = """<html><body><h1>Problem? Robotics shall meet the Challenge</h1>
+      <p>Rob Hall, ROB HALL, robhall · RobHall.pdf · Rob_Hall_Resume.pdf · Resume%20Rob%20Hall.pdf</p>
+      <p>rob.hall77@example.org · 742 W Evergreen Terrace · ZIP 85201-1234 · order 1852011</p>
+      <a href="https://example.com/jobs/Rob-Hall-123" data-user="Hall">x</a></body></html>"""
+    out = clean_html(raw, personal_strings(prof))
+    assert "Problem? Robotics shall meet the Challenge" in out and "order 1852011" in out
+    for kept in ("REDACTED, REDACTED, REDACTED ·", "REDACTED.pdf", "REDACTED_Resume.pdf", "Resume%20REDACTED.pdf",
+                 "ZIP REDACTED-1234", 'href="https://example.com/jobs/REDACTED-123"', 'data-user="REDACTED"'):
+        assert kept in out, kept
+    for leaked in ("Rob ", "Hall", "robhall", "hall77", "Evergreen"):
+        assert leaked not in out, leaked
+
+
 def test_expectations_keep_accented_names_findable_and_drop_query_strings(tmp_path):
     prof = Profile({"personal": {"first_name": "José", "last_name": "Núñez", "email": "sunflower77@example.org"}})
     snap = tmp_path / "snap"

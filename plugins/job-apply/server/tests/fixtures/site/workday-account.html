@@ -1,0 +1,96 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Field Service Engineer</title></head>
+<body>
+<!-- like a Workday site's Create Account/Sign In step (live, Oct 2026): Sign In, Create Account and
+     Forgot Password swap in one place on one page. Create Account makes the account only with its
+     privacy-notice box ticked (and says so when it isn't), then goes on to Sign In; a wrong password is
+     refused in the site's own words. What happened is kept for the tab (sessionStorage's wd.* keys), so a
+     reload doesn't lose it.
+     ?exists=<password>: the email has an account there already, with that password; Create Account then
+     goes back to Sign In without a word, as the live site did.
+     ?create: the step starts on Create Account. ?adult: Create Account also requires an "18 or older"
+     box, and says nothing when it's left empty. -->
+<a href="#">Back to Job Posting</a>
+<h2>Field Service Engineer</h2>
+<h3>current step 1 of 7 Create Account/Sign In</h3>
+<div id="step"></div>
+<script>
+  const q = new URLSearchParams(location.search);
+  const got = (k, d) => JSON.parse(sessionStorage.getItem('wd.' + k) || JSON.stringify(d));
+  const put = (k, v) => sessionStorage.setItem('wd.' + k, JSON.stringify(v));
+  const bump = (k) => put(k, got(k, 0) + 1);
+  if (q.has('exists') && got('account', null) === null) put('account', q.get('exists'));
+  const step = document.getElementById('step');
+  const $ = (id) => document.getElementById(id);
+
+  function signIn() {
+    step.innerHTML = '<h2>Sign In</h2>'
+      + '<label for="em">Email Address</label><input id="em" type="text">'
+      + '<label for="pw">Password</label><input id="pw" type="password">'
+      + '<button type="button" id="go">Sign In</button>'
+      + '<div id="err" role="alert"></div>'
+      + '<button type="button" id="forgot">Forgot your password?</button>'
+      + '<div>Don\'t have an account yet? <button type="button" id="create">Create Account</button></div>';
+    $('go').addEventListener('click', () => {
+      bump('signIns');
+      const account = got('account', null);
+      if (account !== null && $('pw').value === account) location.href = 'step1.html';
+      else $('err').textContent = 'You may have entered the wrong email address or password or your account might be locked.';
+    });
+    $('forgot').addEventListener('click', forgot);
+    $('create').addEventListener('click', create);
+  }
+
+  function create() {
+    step.innerHTML = '<h2>Create Account</h2>'
+      + '<label for="em">Email Address*</label><input id="em" type="text">'
+      + '<label for="pw">Password*</label><input id="pw" type="password">'
+      + '<label for="pw2">Verify New Password*</label><input id="pw2" type="password">'
+      + '<input id="privacy" type="checkbox"><label for="privacy">Yes, I confirm that I have read the privacy notice.</label>'
+      + '<button type="button">Read More</button>'
+      + '<input id="informed" type="checkbox"><label for="informed">Keep me informed of new jobs, as the privacy notice '
+      + 'describes</label>'
+      + (q.has('adult') ? '<input id="adult" type="checkbox" required><label for="adult">I am at least 18 years of age*</label>' : '')
+      + '<div role="button" tabindex="0" id="make">Create Account</div>'
+      + '<div id="err" role="alert"></div>'
+      + '<div>Already have an account? <button type="button" id="back">Sign In</button></div>';
+    $('make').addEventListener('click', () => {
+      bump('presses');
+      put('privacy', $('privacy').checked);
+      put('informed', $('informed').checked);
+      if (!$('privacy').checked) {
+        $('err').textContent = 'Error: confirm that you have read the privacy notice to create your account.';
+        return;
+      }
+      if (q.has('adult') && !$('adult').checked) return;
+      const pw = $('pw').value;
+      if (!$('em').value || !pw || pw !== $('pw2').value) {
+        $('err').textContent = 'Error: enter your email address and the same password twice.';
+        return;
+      }
+      if (got('account', null) === null) {
+        put('account', pw);
+        bump('created');
+      }
+      signIn();  // on to Sign In, made or not
+    });
+    $('back').addEventListener('click', signIn);
+  }
+
+  function forgot() {
+    step.innerHTML = '<h2>Forgot Password</h2>'
+      + '<p>Enter your email address and we\'ll email you a link to reset your password.</p>'
+      + '<label for="fe">Email Address</label><input id="fe" type="text">'
+      + '<button type="button" id="send">Submit</button>';
+    $('send').addEventListener('click', () => {
+      if (!$('fe').value) return;
+      bump('resets');
+      step.innerHTML = '<h2>Check your email</h2><p>We have sent a link to reset your password to your email address.</p>';
+    });
+  }
+
+  if (q.has('create')) create(); else signIn();
+</script>
+</body>
+</html>

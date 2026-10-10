@@ -228,7 +228,7 @@ def setup_status() -> dict[str, Any]:
                      "browser_channel": s.browser_channel, "headless": s.headless,
                      "email_codes": s.email_codes, "email_tracking": s.email_tracking,
                      "accept_cookies": s.accept_cookies, "manage_accounts": s.manage_accounts,
-                     "manage_accounts_chosen": s.manage_accounts_chosen},
+                     "manage_accounts_chosen": s.manage_accounts_chosen, "accept_notices": s.accept_notices},
         "chrome_detected": has_chrome,
         "browser_note": "The desk uses Google Chrome, or Microsoft Edge without it. If neither starts, install Chrome or run "
                         f"`uv run --project \"{config.PLUGIN_ROOT / 'server'}\" playwright install chromium` "
@@ -551,19 +551,25 @@ async def tailoring_queue() -> dict[str, Any]:  # async: it reads the desk's run
 
 
 @tool()
-async def report_problem(job_id: int) -> dict[str, Any]:
+async def report_problem(job_id: int, anonymous: bool = False) -> dict[str, Any]:
     """Write a problem report for a job that went wrong: what the Job Desk did and the fields
-    of the pages it saved, with the person's details taken out (no screenshots). Show the user
-    `preview`, all of it, before anything else, and say the issue will be public and shows
-    which job they applied for. Only with their OK, give them `issue_url` to open (a new issue
-    on the plugin's public GitHub repository with that text). Never file it without their OK.
-    `zip` also holds the saved pages, scrubbed but possibly still showing their answers: it
-    stays on their computer, and never goes on the public issue."""
+    of the pages it saved (the page it stopped on among them), with the person's details taken
+    out (no screenshots). Show the user `preview`, all of it, before anything else, and say the
+    issue will be public and shows which job they applied for, unless it's anonymous. Only with
+    their OK, give them `issue_url` to open (a new issue on the plugin's public GitHub repository
+    with that text). Never file it without their OK. `zip` also holds the saved pages, scrubbed
+    but possibly still showing their answers: it stays on their computer, and never goes on the
+    public issue.
+
+    anonymous=True says the job by its job system alone ("a Workday employer") and the step it
+    stopped at: the employer, the job's title, its addresses and its requisition number are left
+    out of the issue's title, its text and the saved pages. Offer it when the user would rather
+    not show which job they applied for."""
     from . import desk, report
 
     job = _job(job_id)
     run = desk._desk.applier.runs.get(job["id"]) if desk._desk is not None else None
-    return await asyncio.to_thread(report.build, job, run)
+    return await asyncio.to_thread(report.build, job, run, anonymous=anonymous)
 
 
 @tool()
@@ -626,8 +632,9 @@ async def inspect_form(include_dropdown_options: bool = True) -> dict[str, Any]:
     kind (text, textarea, select, listbox, combobox, radio_group, checkbox_group, checkbox,
     file, password), label, required flag, options and current value. Buttons are listed
     under `actions`; is_submit marks the final submit button. A CAPTCHA on show is said
-    under `captcha` (its own frame isn't listed): it's the user's to solve. Ids stay valid
-    until the page changes; call this again after navigating."""
+    under `captcha` (its own frame isn't listed): it's the user's to solve. A dialog open over
+    the page (a notice to answer first) is listed under `dialogs` with its buttons; nothing is
+    filled behind one. Ids stay valid until the page changes; call this again after navigating."""
     data = await browser.inspect(include_dropdown_options)
     data["ats"] = detect_ats(data["url"])
     return data

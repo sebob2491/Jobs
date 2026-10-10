@@ -404,6 +404,56 @@ def test_each_jobs_currently_work_here_box_is_its_own(srv):
         == [True, False]
 
 
+def test_each_jobs_dates_go_in_its_own_block(srv):
+    """A Workday site's dates are each a fieldset of their own, with each part's "MM" or "YYYY"
+    drawn over its box: the desk filled every job's title, company and description and left all
+    its From and To boxes empty, asked bare with no job named (live, Oct 2026)."""
+    run(srv.browser.goto(fixture_url("site/workday-experience-blocks.html")))
+    run(srv.add_entries("work"))
+    fields = run(srv.inspect_form(include_dropdown_options=False))["fields"]
+    dates = [f for f in fields if f.get("role") == "spinbutton"]
+    assert [f.get("section") for f in dates] == ["Work Experience 1"] * 4 + ["Work Experience 2"] * 4, dates
+
+    result = run(srv.autofill())
+    assert not result["failed"], result["failed"]
+    assert not [f for f in result["needs_input"] if f.get("section", "").startswith("Work")], result["needs_input"]
+    got = {(f.get("section"), f["label"].rstrip("*"), f.get("sublabel")): f["value"]
+           for f in run(srv.inspect_form(include_dropdown_options=False))["fields"]}
+    assert (got[("Work Experience 1", "From", "Month")], got[("Work Experience 1", "From", "Year")]) == ("03", "2021")
+    assert ("Work Experience 1", "To", "Month") not in got  # it's the job held now
+    assert [got[("Work Experience 2", d, p)] for d in ("From", "To") for p in ("Month", "Year")] == \
+        ["06", "2018", "02", "2021"]
+
+
+def test_blocks_drawn_after_their_heading_are_read_and_filled(srv, job_apply_home):
+    """A Workday site draws a new Education block's heading at once and its boxes a moment later:
+    the desk added two blocks and read the page before their boxes were there, so the second was
+    never filled (live, Oct 2026). Its Degree list has nothing for classes without a degree, so
+    that box stays the person's: never High School, GED or Associates for coursework."""
+    import yaml
+
+    path = job_apply_home / "profile.yaml"
+    profile = yaml.safe_load(path.read_text())
+    school = profile["education_history"][0]["school"]
+    profile["education_history"].append({"school": school, "degree": "", "major": "Physics", "start": 2021,
+                                         "end": 2022})
+    path.write_text(yaml.safe_dump(profile))
+    run(srv.browser.goto(fixture_url("site/workday-experience-blocks.html")))
+    assert run(srv.add_entries("education"))["after"] == 2
+
+    result = run(srv.autofill())
+    assert not result["failed"], result["failed"]
+    got = {(f.get("section"), f["label"].rstrip("*"), f.get("sublabel")): f["value"]
+           for f in run(srv.inspect_form(include_dropdown_options=False))["fields"]}
+    assert got[("Education 1", "Degree", None)] == "Bachelors"
+    boxes = (("School or University", None), ("Field of Study", None), ("From", "Year"),
+             ("To (Actual or Expected)", "Year"))
+    assert [got[("Education 2", label, sub)] for label, sub in boxes] == [school, "Physics", "2021", "2022"]
+    assert got[("Education 2", "Degree", None)] == "Select One"
+    degree = next(f for f in result["needs_input"] if f["label"] == "Degree*")
+    assert degree["section"] == "Education 2" and "Associates" in degree["options"], degree
+
+
 def test_final_apply_button_honeypot_and_enter(srv, monkeypatch):
     job = srv.add_job(url=fixture_url("apply_button_form.html"), title="Tech", company="Example Fab")["job"]
     run(srv.open_application(job_id=job["id"]))
@@ -1087,6 +1137,26 @@ def test_answers_a_page_loses_in_a_quick_run_of_fills_are_put_in_again(srv):
     assert run(cleared())["Phone"] == times["Phone"]
 
 
+def test_nothing_is_filled_behind_a_dialog_open_over_the_page(srv):
+    """Eightfold's notice about its AI screening sat open over the form while the boxes behind it
+    were filled: its Country of Residence timed out and came back as a question (live, Oct 2026).
+    Nothing is filled behind an open dialog; once it's answered, everything is, and the resume the
+    page already holds isn't sent again."""
+    run(srv.open_application(url=fixture_url("site/ai-notice-form.html") + "?notice=1"))
+    page = run(srv.browser.page())
+    out = run(srv.autofill())
+    assert not out["filled"] and {f["label"] for f in out["failed"]} >= {"First name", "Country of Residence"}, out
+    assert all(f["error"].startswith("DialogOpen: “Notice Related to Example Corp's Use of the Eightfold AI")
+               for f in out["failed"]), out["failed"]
+    assert run(page.input_value("#first")) == "" and run(page.input_value("#input-13")) == ""
+    run(page.click("#cancelUploadResume"))  # the person answers it
+    out = run(srv.autofill())
+    assert not out["failed"], out["failed"]
+    filled = {f["label"]: f["value"] for f in out["filled"]}
+    assert filled["First name"] == "Sam" and filled["Country of Residence"] == "United States", filled
+    assert run(page.evaluate("() => window.uploads")) == 0
+
+
 def test_a_long_requirement_row_is_its_questions_label_not_its_number(srv):
     """Phoenix Children's qualifications (live, Oct 2026) are a table of rows "5. | <the
     requirement> | Yes / No". A requirement too long to read as a label left its question
@@ -1097,3 +1167,43 @@ def test_a_long_requirement_row_is_its_questions_label_not_its_number(srv):
     assert labels[1].startswith("Experience in system integrated Enterprise Resource Planning (ERP)")
     assert labels[1].endswith("…") and len(labels[1]) <= 300
     assert labels[2] == "I Agree"
+
+
+def test_a_sign_in_window_that_closes_itself_hands_back_to_the_tab_that_opened_it(srv):
+    """A job's tab opens a sign-in window, which the desk follows, and the window closes itself
+    once the person is in. With the desk's one tab per job, the tools go back to the tab that
+    opened it: the tab's close forgot its opener before that was looked up, so the job failed
+    with "The tab this application was in has been closed"."""
+    async def go():
+        tab = await srv.browser.new_tab()
+        await tab.goto(fixture_url("site/step1.html"))
+        srv.browser.strict_tabs = True
+        try:
+            async with tab.expect_popup() as opened:
+                await tab.evaluate("u => { window.open(u) }", fixture_url("site/signin.html"))
+            popup = await opened.value
+            assert srv.browser.use_tab(popup)  # (followed, as a click of the desk's would be)
+            await popup.evaluate("() => window.close()")
+            await popup.wait_for_event("close")
+            return tab, await srv.browser.page()
+        finally:
+            srv.browser.strict_tabs = False
+
+    tab, now = run(go())
+    assert now is tab
+
+
+def test_a_jobs_own_tab_closed_is_still_said_closed(srv):
+    """The tab a job was opened in, closed (not a window it opened): nothing to go back to."""
+    async def go():
+        tab = await srv.browser.new_tab()
+        await tab.goto(fixture_url("site/step1.html"))
+        srv.browser.strict_tabs = True
+        try:
+            await tab.close()
+            with pytest.raises(browser_module.TabClosed):
+                await srv.browser.page()
+        finally:
+            srv.browser.strict_tabs = False
+
+    run(go())
