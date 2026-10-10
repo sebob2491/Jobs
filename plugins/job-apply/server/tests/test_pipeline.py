@@ -1180,6 +1180,135 @@ def test_with_manage_accounts_a_create_account_forms_link_is_pressed(srv, monkey
     assert any("“My Information”" in line for line in r.log), r.log  # on to the application
 
 
+SF_ACCOUNT = "site/sf-create-account.html"
+STATEMENT = "Data Privacy Consent Statement"
+
+
+async def statement_page(r):
+    """What the SuccessFactors-like Create Account kept for the tab: its sf.* keys (sessionStorage)."""
+    return await r.page.evaluate("() => Object.fromEntries(Object.keys(sessionStorage).filter(k => k.startsWith('sf.'))"
+                                 ".map(k => [k.slice(3), JSON.parse(sessionStorage.getItem(k))]))")
+
+
+def create_account_on_sf(srv, query="", watch=0):
+    """Apply at the SuccessFactors-like Create Account until the desk stops: the run, what the page kept, and
+    what its boxes hold (None once it has gone on to the application). `watch`: seconds more it's left to
+    watch the paused tab, which carries on by itself where the person is past the pause."""
+    job = srv.add_job(url=fixture_url(SF_ACCOUNT) + query, title="Financial Analyst", company="Example Corp")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            await asyncio.sleep(watch)
+            form = await r.page.evaluate("() => document.getElementById('fbclc_userName') && [fbclc_userName.value, "
+                                         "fbclc_fName.value, fbclc_country.value, fbclc_pwd.value.length > 0]")
+            return r, await statement_page(r), form
+        finally:
+            await applier.stop()
+
+    return run(go())
+
+
+@pytest.mark.parametrize("how", ["on", "slow", "test-identity"])
+def test_with_manage_accounts_a_data_privacy_statement_is_opened_and_accepted_for_the_account(
+        srv, monkeypatch, job_apply_home, how):
+    """SuccessFactors' Create Account (APS's, live, Oct 10, 2026) makes no account until its data privacy
+    statement has been read and accepted: a link, "Read and accept the data privacy statement.", opens it in
+    a dialog (Accept, Decline). The desk pressed Create Account without it, and the page stayed, with only
+    its password hints to say ("Password accepted; Password matches"). With settings.accept_notices the desk
+    opens the statement, accepts it for the person (as any employer notice), says so in the log and presses
+    Create Account; never Decline, and never the box for hearing more about career opportunities (marketing).
+    The statement comes a moment after its link is pressed (slow). The live check's test identity does the
+    same in practice mode."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    saved_password(monkeypatch)
+    manage_accounts(job_apply_home)
+    if how == "test-identity":
+        as_test_identity(monkeypatch, job_apply_home)
+    r, kept, _ = create_account_on_sf(srv, "?slow" if how == "slow" else "")
+    log = "\n".join(r.log)
+    agreed = f"agreed to Example Corp's notice “{STATEMENT}” for you (settings.accept_notices)"
+    assert agreed in r.log, log
+    assert any(line.startswith("created your account on") and "accepted its data privacy statement" in line
+               for line in r.log), log
+    assert r.log.index(agreed) < next(i for i, line in enumerate(r.log) if line.startswith("pressed “Create Account”")), log
+    assert kept == {"opened": 1, "statement": "accepted", "presses": 1, "created": 1, "campaign": False}, kept
+    assert r.need != "sign_in" and "Create Account" not in r.reason, (r.status, r.reason, log)
+    assert any("“My Information”" in line for line in r.log), log  # on to the application
+
+
+@pytest.mark.parametrize("how", ["notices-off", "practice"])
+def test_a_data_privacy_statement_is_the_persons_without_accept_notices(srv, monkeypatch, job_apply_home, how):
+    """Without settings.accept_notices (or in practice mode, which never makes an account) the desk fills
+    SuccessFactors' Create Account form and leaves it: the data privacy statement agrees to something in
+    the person's name, so it's not opened, nor Create Account pressed (the site would refuse it). The
+    pause says plainly that the form asks them to read and accept it."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    saved_password(monkeypatch)
+    if how == "practice":
+        manage_accounts(job_apply_home, submit_mode="dry_run")
+    else:
+        manage_accounts(job_apply_home)
+        notice_settings(job_apply_home, accept_notices=False)
+    r, kept, filled = create_account_on_sf(srv)
+    assert (r.status, r.need) == ("needs_you", "sign_in"), (r.status, r.reason, r.log)
+    assert "asks you to read and accept its data privacy statement" in r.reason, r.reason
+    assert "accept_notices: true" in r.reason and "I tried" not in r.reason, r.reason
+    assert kept == {}, kept  # the statement never opened, nothing pressed
+    assert filled == ["sam.rivera@example.com", "Sam", "United States", True], filled  # the form is filled in
+    assert not any("agreed to" in line for line in r.log), r.log
+
+
+def test_a_data_privacy_statement_that_also_signs_up_for_marketing_is_the_persons(srv, monkeypatch, job_apply_home):
+    """Never a newsletter, job alerts or marketing: a statement whose opening says that accepting it
+    also signs the person up for marketing emails and job alerts is opened but not accepted, left open
+    for them to read, and Create Account is not pressed."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    saved_password(monkeypatch)
+    manage_accounts(job_apply_home)
+    r, kept, _ = create_account_on_sf(srv, "?marketing", watch=3)  # (it stays paused, the statement open)
+    assert (r.status, r.need) == ("needs_you", "sign_in"), (r.status, r.reason, r.log)
+    assert "asks you to read and accept its data privacy statement" in r.reason, r.reason
+    assert "I tried to open it and accept it for you, and couldn't." in r.reason, r.reason
+    assert kept == {"opened": 1}, kept  # opened, and nothing else: not accepted, declined or closed
+    assert not any("agreed to" in line or "created your account" in line for line in r.log), r.log
+
+
+def test_a_data_privacy_statements_link_and_its_long_text_are_told_from_the_rest():
+    """A Create Account form's link to the statement is told by its words (read and accept, a privacy
+    notice or terms, nothing about a newsletter, job alerts or a talent community) and its place after
+    the password boxes, in the form. Its dialog, named so in its heading, is read for what's never agreed to
+    only at its opening: its long text speaks of affiliates, marketing and deleting data as practices."""
+    def link(text, **kw):
+        return {"id": "a1", "text": text, "in_account_form": True, **kw}
+
+    found = pipeline._privacy_statement({"actions": [link("Show"), link("Read and accept the data privacy statement.")]})
+    assert found is not None and found["text"].startswith("Read and accept")
+    for text in ("Data privacy policy", "Read our privacy statement", "I accept the privacy statement",
+                 "Read and accept the talent community privacy statement",
+                 "Read and agree to receive job alerts, and the privacy statement"):
+        assert pipeline._privacy_statement({"actions": [link(text)]}) is None, text
+    footer = {"id": "a2", "text": "Read and accept the data privacy statement."}  # not in the account form
+    assert pipeline._privacy_statement({"actions": [footer]}) is None
+    assert pipeline._privacy_statement({"actions": [link(footer["text"], disabled=True)]}) is None
+    notice = pipeline._terms_notice
+    statement = ("Contact the HR Service Team at 100 Example Street, Example City. " * 8
+                 + "Example Corp and its affiliated companies protect your Personal Information. It is not used for "
+                 "marketing. You may ask us to delete it, withdraw your consent, or stop cookies.")
+    assert statement.index("affiliated") > pipeline.NOTICE_OPENING  # (past its opening)
+    assert notice("Data Privacy Consent Statement", statement) == (True, True)
+    assert notice("Before you apply", statement) == (False, False)  # not named in its heading: all of it is read
+    assert notice("Data Privacy Consent Statement",
+                  "By accepting you also agree to receive marketing emails. " + statement) == (False, False)
+    assert notice("Talent Community Privacy Statement", statement) == (False, False)
+    # a legal waiver is never agreed to for the person, however deep in the statement it sits
+    for waiver in ("Any dispute will be resolved by binding arbitration.", "You waive any right to a jury trial."):
+        assert notice("Data Privacy Consent Statement", statement + " " + waiver) == (False, False), waiver
+
+
 def as_test_identity(monkeypatch, job_apply_home, email="sam.rivera@example.com"):
     """The nightly live check's switches on (live_smoke.py --test-identity), with `email` as the test
     identity's: the conftest profile's own makes it the test identity, in practice mode."""

@@ -231,6 +231,18 @@ _TERMS = re.compile(r"\bprivacy\b|\bdata protection\b|\bterms (?:of (?:use|servi
                     r"\b(?:gdpr|ccpa)\b", re.I)
 _ACCEPTS = re.compile(r"\b(?:agree|accept|acknowledge|consent|have read|understand)\b", re.I)
 _TAKES_IN = re.compile(r"^(?:ok|okay|got it|continue|proceed)$", re.I)
+# A Create Account form's link that opens the site's data privacy statement to be read and accepted: the site
+# makes no account without it (SuccessFactors', live, Oct 10, 2026: "Read and accept the data privacy statement.",
+# which opens the statement in a dialog with Accept and Decline). Its words accept a privacy notice or terms
+# (_agrees_to_terms), and nothing more
+_STATEMENT_LINK = re.compile(r"^(?:please )?(?:read|view|open)\b", re.I)
+# How much of a notice named for the employer's privacy statement or terms (in its heading) is read for what's
+# never agreed to: its opening. The statement's long text speaks of its affiliates, marketing and cookies as
+# its practices (APS's, live: "... Company and its affiliated companies ..."), which don't sign anyone up
+NOTICE_OPENING = 300
+# but a legal waiver (an arbitration agreement, a jury trial waived, a non-compete) is never agreed to for the
+# person however deep in its text it sits
+_WAIVES = re.compile(r"arbitrat|\bwaive|\bjury\b|non-?compete|non-?solicit", re.I)
 # Never agreed to for the person, wherever it's asked: what _NOT_TERMS keeps out of account forms
 # (newsletters, marketing, job alerts, a talent community, being contacted, other roles), a talent pool,
 # keeping their profile for later, cookies (their own rule), and legal waivers (arbitration, a jury trial)
@@ -268,11 +280,13 @@ def _agrees_to_terms(text: str) -> bool:
 def _terms_notice(heading: str, text: str) -> tuple[bool, bool]:
     """Is a dialog the employer's privacy notice or terms to take in, and may its Ok do it? Named so
     in its heading ("Privacy Policy of Example Corp": its Ok too), or asking in its words to accept
-    them; never one about an error, a profile to overwrite or the like, nor what's never agreed to."""
-    said = f"{heading} {text}"
-    if _NEVER_AGREED.search(said) or _NOT_A_NOTICE.search(said):
-        return False, False
+    them; never one about an error, a profile to overwrite or the like, nor what's never agreed to.
+    One named in its heading is the statement itself, and only its opening is read for those (NOTICE_OPENING),
+    but all of it for a legal waiver (_WAIVES)."""
     named = bool(_TERMS.search(heading))
+    said = f"{heading} {text[:NOTICE_OPENING] if named else text}"
+    if _NEVER_AGREED.search(said) or _NOT_A_NOTICE.search(said) or _WAIVES.search(text):
+        return False, False
     return named or bool(_TERMS.search(text) and _ACCEPTS.search(text)), named
 # A fill the page never let happen (it timed out, its script failed, a dialog stood over the box):
 # the profile has the answer, so it's no question for the person
@@ -1405,6 +1419,14 @@ class Applier:
                     elif _captcha_on(data):  # (never touched, so never pressed for the person either)
                         asks = ("Its CAPTCHA is yours to solve: solve it, tick their terms box if there is one and create "
                                 "the account (then verify your email if they ask)")
+                    elif _privacy_statement(data) is not None:  # (SuccessFactors': no account without it)
+                        asks = ("It asks you to read and accept its data privacy statement, which agrees to something in "
+                                "your name, so it's yours: open it in the browser window and accept it if you're happy "
+                                "to, then create the account (then verify your email if they ask)")
+                        first += (" (The desk accepts an employer's privacy notice for you with accept_notices: true "
+                                  "under settings: in profile.yaml, outside practice mode.)" if not _may_accept_notices()
+                                  else " I tried to open it and accept it for you, and couldn't." if manage else "")
+                        data, _ = await self._look()  # (the statement it opened for them is open still: paused on)
                     return self._pause(run, "sign_in", f"I filled in {_site(run, data)}'s Create Account form with your "
                                        f"details and saved password{user}. {asks}; the desk carries on after that."
                                        + first, seen=data)
@@ -1925,8 +1947,10 @@ class Applier:
         """settings.manage_accounts: tick a filled Create Account form's terms boxes (the required
         ones, or its terms, or a privacy notice read: never a newsletter's or job alerts') and press
         the form's own button, after its password boxes (its submit button, or a link or plain button
-        in that form that its script sends it with: ApplicantStack's "Submit"). Once a job
-        (Run.accounts_tried). Not with a CAPTCHA on the page, a picture code's box among them
+        in that form that its script sends it with: ApplicantStack's "Submit"). A data privacy statement
+        the site makes no account without (SuccessFactors') is opened and accepted first, where
+        settings.accept_notices allows (_accept_statement); otherwise the form is left to the person.
+        Once a job (Run.accounts_tried). Not with a CAPTCHA on the page, a picture code's box among them
         (Benchmark's Infor registration: "Enter the text in image above"): that's the person's. True
         when it was pressed; the account is said to be made only once the site shows it
         (Run.account_made, in _drive). Nor with security questions on the form (some Taleo sites'):
@@ -1934,6 +1958,11 @@ class Applier:
         if _captcha_on(data) or _security_boxes(data.get("fields") or []):
             return False
         srv = self.srv
+        statement = _privacy_statement(data)
+        if statement is not None:
+            if not await self._accept_statement(run, data, statement):
+                return False
+            data, _ = await self._look()  # (as it is once accepted)
         terms = _terms_boxes(data)
         boxes = terms + _new_candidate_boxes(data, run.company) + _other_positions_boxes(data)
         own = [a for a in data.get("actions") or [] if a.get("account_form") or a.get("in_account_form")
@@ -1956,9 +1985,32 @@ class Applier:
         self._log(run, f"pressed \u201c{button['text'].strip()}\u201d to create your account on {site} with {with_}"
                   + (f", after ticking {ticked}" if boxes else ""))
         run.account_made = (f"created your account on {site} with {with_}" + (" and agreed to its terms"
-                            if terms else "") + " (manage_accounts: false in profile.yaml leaves this to you)")
+                            if terms else "") + (" and accepted its data privacy statement" if statement else "")
+                            + " (manage_accounts: false in profile.yaml leaves this to you)")
         await self._wait_for_account(data)
         return True
+
+    async def _accept_statement(self, run: Run, data: dict[str, Any], link: dict[str, Any]) -> bool:
+        """A Create Account form's data privacy statement (_privacy_statement), which the site makes no
+        account without: its link pressed to open it (a dialog over the page, drawn a moment after) and
+        its Accept pressed for the person, as for any employer notice the desk agrees to (_answer_notice:
+        settings.accept_notices, never in practice mode; said in the log; never Decline). True once it's
+        accepted. False when it isn't allowed, wouldn't open (SuccessFactors' won't before a country is
+        chosen) or isn't one to agree to for them: the person's, left open for them to read."""
+        if not _may_accept_notices():
+            return False
+        try:
+            await self.srv.browser.click(link["id"])
+        except Exception:  # gone, or it won't take a click: the person's, as without the setting
+            return False
+        deadline = time.monotonic() + ACCOUNT_STEP_WAIT
+        while True:
+            now, _ = await self._look()
+            notice = _notice(now)
+            if notice is not None or time.monotonic() > deadline:
+                break
+            await asyncio.sleep(0.5)
+        return notice is not None and await self._answer_notice(run, now, notice, set(), over_form=False) == "agreed"
 
     async def _finish_account(self, run: Run, data: dict[str, Any], button: dict[str, Any]) -> bool:
         """The rest of a Create Account, on a page of its own after the email and password (UKG Pro's
@@ -3232,6 +3284,16 @@ def _terms_boxes(data: dict[str, Any]) -> list[dict[str, Any]]:
     return [f for f in data.get("fields") or [] if f.get("kind") == "checkbox" and is_empty_value(f.get("value"))
             and _TERMS_BOX.search(f.get("label") or "") and not _NOT_TERMS.search(f.get("label") or "")
             and (f.get("required") or _TERMS_ONLY.search(f.get("label") or ""))]
+
+
+def _privacy_statement(data: dict[str, Any]) -> dict[str, Any] | None:
+    """A Create Account form's link or button that opens the site's data privacy statement to be read
+    and accepted (_STATEMENT_LINK: "Read and accept the data privacy statement."), after its password
+    boxes and in the same form. Not one that also says something never agreed to (_agrees_to_terms:
+    a newsletter's, job alerts', a talent community's), nor a privacy link that accepts nothing."""
+    return next((a for a in data.get("actions") or [] if a.get("in_account_form") and not a.get("disabled")
+                 and not a.get("cookie") and not a.get("aside") and _STATEMENT_LINK.match(a["text"].strip())
+                 and _agrees_to_terms(a["text"])), None)
 
 
 def _new_candidate_boxes(data: dict[str, Any], company: str) -> list[dict[str, Any]]:
