@@ -586,9 +586,14 @@ class Applier:
         tab) keeps its tab with the work in it."""
         done = sorted((r for r in self.runs.values() if r.status == "submitted" and r.page is not None),
                       key=lambda r: r.updated, reverse=True)
-        for run in done[DONE_TABS_KEPT:]:
+        closing = done[DONE_TABS_KEPT:]
+        # never a tab another job still has (each job opens its own, but a tab never goes twice)
+        gone = {r.job_id for r in closing}
+        kept = {t for r in self.runs.values() if r.job_id not in gone and r.page is not None
+                for t in self.srv.browser.lineage(r.page)}
+        for run in closing:
             for tab in self.srv.browser.lineage(run.page):  # its application tab, and the tab that opened it
-                if not tab.is_closed():
+                if tab not in kept and not tab.is_closed():
                     with contextlib.suppress(Exception):
                         await tab.close()
             run.page = None

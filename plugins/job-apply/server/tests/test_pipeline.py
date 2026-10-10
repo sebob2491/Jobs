@@ -4149,3 +4149,24 @@ def test_a_stops_page_info_holds_a_whole_workday_experience_page():
     info = pipeline._page_info({"url": "https://x.example", "fields": fields, "actions": actions})
     assert len(info["fields"]) == 80 and info["fields"][-1]["section"] == "Work Experience 8"
     assert len(info["actions"]) == 45
+
+
+def test_a_tab_another_job_still_has_is_never_closed_with_a_finished_job(srv, monkeypatch, loop):
+    """A finished job's tabs are closed with the tab that opened its application, but never one
+    another job still has: a waiting job's work would go with it."""
+    monkeypatch.setattr(pipeline, "DONE_TABS_KEPT", 0)
+    applier = Applier(srv)
+
+    async def go():
+        shared = await srv.browser.new_tab()
+        await shared.goto(fixture_url("site/posting.html"))
+        async with shared.expect_popup() as opened:
+            await shared.evaluate("u => { window.open(u) }", fixture_url("site/step1.html"))
+        waiting_tab = await opened.value
+        applier.runs[1] = Run(1, status="submitted", page=shared, updated=1.0)
+        applier.runs[2] = Run(2, status="needs_you", page=waiting_tab, updated=2.0)
+        await applier._close_done_tabs()
+        return shared.is_closed(), waiting_tab.is_closed(), applier.runs[1].page
+
+    shared_closed, waiting_closed, done_page = run(go())
+    assert not shared_closed and not waiting_closed and done_page is None
