@@ -514,8 +514,11 @@ EXTRACT_JS = r"""
   // application", so it was never seen. Submit and next-step buttons always make it in.
   const actions = [];
   const STEP = /^(next|continue|save and continue|review|submit)/i;
-  const COOKIE_BOX = '[id*="cookie" i], [class*="cookie" i], [aria-label*="cookie" i], [id*="consent" i], '
-    + '[class*="consent" i], [id*="onetrust" i], [class*="onetrust" i], [id*="cybot" i], [id*="gdpr" i], [id*="truste" i]';
+  const COOKIE_BOX = '[id*="cookie" i], [class*="cookie" i], [aria-label*="cookie" i], [id*="onetrust" i], '
+    + '[class*="onetrust" i], [id*="cybot" i], [id*="gdpr" i], [id*="truste" i]';
+  // a "consent" box only when it speaks of cookies: not an account's own consent step (Northrop's Eightfold
+  // "consentContainer" and its "auth-v2-consent-submit-button", live, Oct 2026)
+  const CONSENT_BOX = '[id*="consent" i], [class*="consent" i]';
   // Buttons drawn as web components (UKG's <ukg-button>, whose real button is in its shadow root) count too,
   // and links whose address is in data-href, followed by the site's script on a click (KPMG's Apply Now).
   const BUTTONS = 'button, [role="button"], input[type="submit"], input[type="button"], a[href], a[data-href], '
@@ -546,7 +549,8 @@ EXTRACT_JS = r"""
     if (applyItem) a.menu = true;
     // A cookie banner's own buttons (OneTrust's sits at the very end of a long page, past
     // the page text the desk reads)
-    const box = el.closest(COOKIE_BOX);
+    const consent = el.closest(CONSENT_BOX);
+    const box = el.closest(COOKIE_BOX) || (consent && /cookie/i.test(consent.innerText || '') ? consent : null);
     if (box && box !== document.body && box !== document.documentElement) a.cookie = true;
     if (formSubmit) a.form_submit = true;
     if (isSubmit) a.is_submit = true;

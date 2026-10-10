@@ -55,7 +55,7 @@
   }
 
   function consent() {
-    view.innerHTML = '<h2 id="head">Please review before continuing</h2>'
+    view.innerHTML = '<div class="consentContainer-3hcDK"><h2 id="head">Please review before continuing</h2>'
       + '<div><input id="consent-checkbox" type="checkbox" value="label" '
       + 'aria-label="I have read and agree to the Privacy Policy"><label for="consent-checkbox"><span></span></label>'
       + '<span>I have read and agree to the <a href="privacy.html" target="_blank">Privacy Policy'
@@ -65,9 +65,11 @@
         + 'aria-label="I understand that I may be considered for other open positions in my country, in addition to '
         + 'the role(s) to which I apply"><label for="contact-consent-choice-0">I understand that I may be considered '
         + 'for other open positions in my country, in addition to the role(s) to which I apply</label></div></div>' : '')
-      + '<p id="consent-error" role="alert"></p><span id="buttons"></span>';
+      + '<p id="consent-error" role="alert"></p><span id="buttons"></span></div>';
     const agree = () => {
-      document.getElementById('buttons').innerHTML = '<button type="button" id="agree">Submit</button>';
+      // (named as live: "consent" in its own id and its box's class)
+      document.getElementById('buttons').innerHTML = '<button type="button" id="agree" '
+        + 'data-testid="auth-v2-consent-submit-button">Submit</button>';
       document.getElementById('agree').addEventListener('click', submitted);
     };
     if (params.has('late')) setTimeout(agree, 1500); else agree();
