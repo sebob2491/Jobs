@@ -278,10 +278,12 @@ def test_nothing_personal_is_printed(fine, loop, job_apply_home, capsys):
     for args in ([], ["--json"]):
         doctor.main(args)
         out = capsys.readouterr().out
+        # (JSON writes a Windows path's backslashes doubled: read it back to compare)
+        shown = json.loads(out)["report"] if args else out
         for personal_text in ("Sam", "Rivera", "sam.rivera@example.com", "480-555", "100 W Main", "Chandler",
                               "85225", "Intel", "Equipment Technician", "Arizona State", "samrivera"):
-            assert personal_text not in out, personal_text
-        assert str(config.profile_path()) in out
+            assert personal_text not in out and personal_text not in shown, personal_text
+        assert str(config.profile_path()) in shown
     write_profile(job_apply_home, work_history=work, education_history=education)
     doctor.main([])
     out = capsys.readouterr().out
@@ -297,7 +299,10 @@ def test_json_report(fine, loop, capsys):
     assert data["report"].startswith("job-apply doctor")
 
 
-def test_marks_fall_back_to_plain_text():
+def test_marks_fall_back_to_plain_text(monkeypatch):
+    """By the stream's own encoding, whatever the computer running the test (Windows' older
+    console has a test of its own below)."""
+    monkeypatch.setattr(doctor, "on_windows", lambda: False)
     utf8 = io.TextIOWrapper(io.BytesIO(), encoding="utf-8")
     cp1252 = io.TextIOWrapper(io.BytesIO(), encoding="cp1252")
     assert doctor.marks_for(utf8) == doctor.MARKS

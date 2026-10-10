@@ -20,31 +20,41 @@ BASH = shutil.which("bash")
 PWSH = shutil.which("pwsh")
 needs_bash = pytest.mark.skipif(BASH is None or sys.platform == "win32", reason="no bash")
 
-CLAUDE = r"""#!/bin/sh
-echo "claude $*" >> "$STUB_LOG"
-case "$*" in
-  "--version") echo "2.1.0 (Claude Code)" ;;
-  "plugin marketplace list --json")
-    if [ -f "$STUB_STATE/market" ]; then printf '[\n  {\n    "name": "sebob-jobs",\n    "source": "github"\n  }\n]\n'
-    else echo '[]'; fi ;;
-  "plugin marketplace add sebob2491/Jobs") touch "$STUB_STATE/market" ;;
-  "plugin marketplace update sebob-jobs") ;;
-  "plugin list --json")
-    if [ -f "$STUB_STATE/plugin" ]; then
-      printf '[\n  {\n    "id": "dev-kit@sebob-jobs",\n    "enabled": true,\n    "installPath": "/elsewhere"\n  },\n'
-      printf '  {\n    "id": "job-apply@sebob-jobs",\n    "version": "0.3.92",\n    "enabled": %s,\n    "installPath": "%s"\n  }\n]\n' \
-        "$(cat "$STUB_STATE/enabled" 2>/dev/null || echo true)" "$STUB_PLUGIN"
-    else echo '[]'; fi ;;
-  "plugin install job-apply@sebob-jobs") touch "$STUB_STATE/plugin" ;;
-  "plugin update job-apply@sebob-jobs") ;;
-  "plugin enable job-apply@sebob-jobs") echo true > "$STUB_STATE/enabled" ;;
-  *) echo "unexpected: $*" >&2; exit 3 ;;
-esac
-"""
-UV = r"""#!/bin/sh
-echo "uv $*" >> "$STUB_LOG"
-[ "$1" = --version ] && echo "uv 0.11.32"
-exit 0
+# The stand-ins, in Python so they run the same everywhere: a `claude` or `uv` beside them
+# (a .cmd on Windows, which can't run a shell script) hands its arguments to this.
+STAND_IN = r"""
+import json, os, sys
+from pathlib import Path
+
+tool, args = sys.argv[1], sys.argv[2:]
+state = Path(os.environ["STUB_STATE"])
+with open(os.environ["STUB_LOG"], "a", encoding="utf-8") as log:
+    log.write(" ".join([tool, *args]) + "\n")
+said = " ".join(args)
+if tool == "uv":
+    if said == "--version":
+        print("uv 0.11.32 (stand-in)")
+elif said == "--version":
+    print("2.1.0 (Claude Code)")
+elif said == "plugin marketplace list --json":
+    print(json.dumps([{"name": "sebob-jobs", "source": "github"}] if (state / "market").exists() else [], indent=2))
+elif said == "plugin marketplace add sebob2491/Jobs":
+    (state / "market").touch()
+elif said == "plugin list --json":
+    plugins = []
+    if (state / "plugin").exists():
+        enabled = not (state / "enabled").exists() or (state / "enabled").read_text().strip() != "false"
+        plugins = [{"id": "dev-kit@sebob-jobs", "enabled": True, "installPath": "/elsewhere"},
+                   {"id": "job-apply@sebob-jobs", "version": "0.3.92", "enabled": enabled,
+                    "installPath": os.environ["STUB_PLUGIN"]}]
+    print(json.dumps(plugins, indent=2))
+elif said == "plugin install job-apply@sebob-jobs":
+    (state / "plugin").touch()
+elif said == "plugin enable job-apply@sebob-jobs":
+    (state / "enabled").write_text("true")
+elif said not in ("plugin marketplace update sebob-jobs", "plugin update job-apply@sebob-jobs"):
+    print("unexpected: " + said, file=sys.stderr)
+    sys.exit(3)
 """
 CHANGES = ("install", "add", "update", "enable", "sync", "run")  # what a dry run never calls
 
@@ -62,10 +72,16 @@ def machine(tmp_path):
     plugin = tmp_path / "Claude plugins" / "job-apply" / "0.3.92"
     (plugin / "server").mkdir(parents=True)
     (plugin / "server" / "pyproject.toml").write_text('[project.scripts]\njob-apply-doctor = "job_apply.doctor:main"\n')
-    env = {k: v for k, v in os.environ.items() if not k.startswith(("JOB_APPLY_", "CLAUDE", "UV_", "PLAYWRIGHT", "XDG_"))
-           and k not in ("USERPROFILE", "VIRTUAL_ENV")}
-    env.update(HOME=str(home), PATH=f"{bin_dir}{os.pathsep}/usr/bin{os.pathsep}/bin", STUB_LOG=str(tmp_path / "calls.log"),
-               STUB_STATE=str(state), STUB_PLUGIN=str(plugin))
+    (tmp_path / "stand_in.py").write_text(STAND_IN)
+    env = {k: v for k, v in os.environ.items() if not k.upper().startswith(("JOB_APPLY_", "CLAUDE", "UV_", "PLAYWRIGHT", "XDG_"))
+           and k.upper() not in ("USERPROFILE", "VIRTUAL_ENV", "APPDATA", "LOCALAPPDATA")}
+    env.update(HOME=str(home), STUB_LOG=str(tmp_path / "calls.log"), STUB_STATE=str(state), STUB_PLUGIN=str(plugin))
+    if sys.platform == "win32":  # the person's folders, all in the same home
+        env.update(USERPROFILE=str(home), APPDATA=str(home / "AppData" / "Roaming"),
+                   LOCALAPPDATA=str(home / "AppData" / "Local"),
+                   PATH=os.pathsep.join([str(bin_dir), os.path.join(os.environ.get("SYSTEMROOT", r"C:\Windows"), "System32")]))
+    else:
+        env["PATH"] = os.pathsep.join([str(bin_dir), "/usr/bin", "/bin"])
 
     class Machine:
         def __init__(self):
@@ -73,10 +89,15 @@ def machine(tmp_path):
             self.log = tmp_path / "calls.log"
 
         def tools(self, *names):
+            stand_in = tmp_path / "stand_in.py"
             for name in names:
-                path = bin_dir / name
-                path.write_text({"claude": CLAUDE, "uv": UV}[name])
-                path.chmod(path.stat().st_mode | stat.S_IEXEC)
+                if sys.platform == "win32":  # Windows runs a .cmd, not a script without an extension
+                    (bin_dir / f"{name}.cmd").write_text(f'@"{sys.executable}" "{stand_in}" {name} %*\r\n'
+                                                         "@exit /b %ERRORLEVEL%\r\n")
+                else:
+                    path = bin_dir / name
+                    path.write_text(f'#!/bin/sh\nexec "{sys.executable}" "{stand_in}" {name} "$@"\n')
+                    path.chmod(path.stat().st_mode | stat.S_IEXEC)
 
         def calls(self):
             text = self.log.read_text() if self.log.exists() else ""
@@ -205,9 +226,15 @@ def test_install_ps1_dry_run(machine):
     code, out = machine.run([PWSH, "-NoProfile", "-NonInteractive", "-File", str(INSTALL_PS1), "-DryRun"])
     assert code == 0, out
     assert "Dry run" in out and "That's the plan." in out and "went wrong" not in out
+    # the stand-ins ran, and what they said was read
+    assert "Claude Code is installed (version 2.1.0)." in out and "uv is installed (version 0.11.32)." in out
     assert "Would run: claude plugin marketplace update sebob-jobs" in out
     assert "Would run: claude plugin update job-apply@sebob-jobs" in out
-    assert "Would set UV_PYTHON_INSTALL_DIR" in out
+    assert "marketplace add" not in out and "plugin install" not in out
+    # never an empty path (a Windows runner's own registry may already hold a setting: then it's kept)
+    assert (f"Would set UV_PYTHON_INSTALL_DIR to {machine.home / '.uv-python'} for you" in out
+            or "uv keeps the plugin's Python in" in out), out
+    assert f"Would make it: {machine.home / '.job-apply'}" in out
     assert "Would run: uv sync --frozen --project" in out and "job-apply-doctor --launch" in out
     calls = machine.calls()
     assert calls and not [c for c in calls if any(f" {word} " in f" {c} " for word in CHANGES)], calls

@@ -136,7 +136,9 @@ check_claude() {
     step "2 of 8: Claude Code"
     CLAUDE=$(command -v claude 2>/dev/null)
     if [ -n "$CLAUDE" ]; then
-        done_ "Claude Code is installed (version $("$CLAUDE" --version </dev/null 2>/dev/null | head -n 1 | cut -d' ' -f1))."
+        local version
+        version=$("$CLAUDE" --version </dev/null 2>/dev/null | head -n 1 | cut -d' ' -f1)
+        done_ "Claude Code is installed${version:+ (version $version)}."
         return 0
     fi
     note "Claude Code isn't installed. Its official installer is: $CLAUDE_INSTALL"
@@ -214,7 +216,9 @@ check_uv() {
     step "4 of 8: uv (it runs the plugin's Python server)"
     UV=$(command -v uv 2>/dev/null)
     if [ -n "$UV" ]; then
-        done_ "uv is installed (version $("$UV" --version </dev/null 2>/dev/null | head -n 1 | cut -d' ' -f2))."
+        local version
+        version=$("$UV" --version </dev/null 2>/dev/null | head -n 1 | cut -d' ' -f2)
+        done_ "uv is installed${version:+ (version $version)}."
         return 0
     fi
     if [ "$DRY_RUN" = 1 ]; then
@@ -456,6 +460,10 @@ main() {
     done
 
     say "Setting up job-apply, the Claude Code plugin that applies to jobs for you."
+    if [ -z "$HOME" ]; then
+        say "HOME isn't set, so there's nowhere to put your job-apply folder. Open a new Terminal window and try again."
+        return 1
+    fi
     [ "$DRY_RUN" = 1 ] && say "Dry run: this says what it would do, and changes nothing."
     refresh_path
 

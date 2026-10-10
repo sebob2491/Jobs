@@ -42,7 +42,7 @@ $script:JAMarketRepo = 'sebob2491/Jobs'
 $script:JAMarket = 'sebob-jobs'
 $script:JAPlugin = 'job-apply@sebob-jobs'
 $script:JAResumeTypes = @('.pdf', '.docx', '.doc', '.rtf', '.odt', '.txt')
-$script:JAUserHome = if ($env:USERPROFILE) { $env:USERPROFILE } else { $HOME }
+$script:JAUserHome = $null  # (Get-JAUserHome, when Install-JobApply starts)
 $script:JAOnWindows = ($env:OS -eq 'Windows_NT')
 
 function Write-JAStep([string]$Text) { Write-Host ''; Write-Host "== $Text" -ForegroundColor Cyan }
@@ -91,8 +91,31 @@ function Invoke-JA([string]$What, [string]$Exe, [string[]]$Arguments) {
     return $true
 }
 
+function Get-JAUserHome {
+    # The person's own folder: USERPROFILE, else what Windows (or .NET elsewhere) says it is,
+    # else HOME. $null only when none of them says (the caller stops rather than use '').
+    if ($env:USERPROFILE) { return [string]$env:USERPROFILE }
+    try {
+        $profileDir = [Environment]::GetFolderPath('UserProfile')
+        if ($profileDir) { return [string]$profileDir }
+    } catch { }
+    foreach ($candidate in @($HOME, $env:HOME)) { if ($candidate) { return [string]$candidate } }
+    return $null
+}
+
 function Get-JAOutput([string]$Exe, [string[]]$Arguments) {
-    try { return ((& $Exe @Arguments 2>$null) | Out-String) } catch { return '' }
+    # What a command prints, as one string: '' (never $null) when it prints nothing or can't run
+    $text = $null
+    try { $text = (& $Exe @Arguments 2>$null) | Out-String } catch { }
+    if ($null -eq $text) { return '' }
+    return [string]$text
+}
+
+function Get-JAVersion([string]$Exe, [int]$Word) {
+    # One word of `<program> --version` ('2.1.0 (Claude Code)': word 0; 'uv 0.11.32 (...)': word 1)
+    $words = @((Get-JAOutput $Exe @('--version')).Trim() -split '\s+')
+    if ($words.Count -gt $Word -and $words[$Word]) { return [string]$words[$Word] }
+    return ''
 }
 
 function Find-JACommand([string]$Name) {
@@ -187,8 +210,8 @@ function Install-JAClaude {
     Write-JAStep '2 of 9: Claude Code'
     $script:JAClaude = Find-JACommand 'claude'
     if ($script:JAClaude) {
-        $version = @((Get-JAOutput $script:JAClaude @('--version')).Trim() -split '\s+')[0]
-        Write-JAOk "Claude Code is installed (version $version)."
+        $version = Get-JAVersion $script:JAClaude 0
+        if ($version) { Write-JAOk "Claude Code is installed (version $version)." } else { Write-JAOk 'Claude Code is installed.' }
         return
     }
     Write-JASay 'Claude Code is not installed. Its official installer is: irm https://claude.ai/install.ps1 | iex'
@@ -247,8 +270,8 @@ function Install-JAUv {
     Write-JAStep "4 of 9: uv (it runs the plugin's Python server)"
     $script:JAUv = Find-JACommand 'uv'
     if ($script:JAUv) {
-        $version = @((Get-JAOutput $script:JAUv @('--version')).Trim() -split '\s+')[1]
-        Write-JAOk "uv is installed (version $version)."
+        $version = Get-JAVersion $script:JAUv 1
+        if ($version) { Write-JAOk "uv is installed (version $version)." } else { Write-JAOk 'uv is installed.' }
         return
     }
     if ($script:JADryRun) {
@@ -268,6 +291,7 @@ function Set-JAPythonDir {
     # The Claude app for Windows keeps its own copy of what's written under AppData, so a Python
     # that uv puts there can be missing for it. UV_PYTHON_INSTALL_DIR outside AppData avoids that.
     $wanted = Join-JAPath $script:JAUserHome '.uv-python'
+    if (-not $wanted) { Write-JAProblem "Couldn't tell where your user folder is, so UV_PYTHON_INSTALL_DIR wasn't set."; return }
     $saved = $null
     try { $saved = [Environment]::GetEnvironmentVariable('UV_PYTHON_INSTALL_DIR', 'User') } catch { }
     $value = if ($env:UV_PYTHON_INSTALL_DIR) { $env:UV_PYTHON_INSTALL_DIR } else { $saved }
@@ -434,7 +458,8 @@ function Copy-JAResume([string]$Source) {
 
 function Initialize-JAHome {
     Write-JAStep '8 of 9: Your job-apply folder (your profile and resume stay on this computer, in it)'
-    $script:JAHome = if ($env:JOB_APPLY_HOME) { $env:JOB_APPLY_HOME } else { Join-JAPath $script:JAUserHome '.job-apply' }
+    $script:JAHome = if ($env:JOB_APPLY_HOME) { [string]$env:JOB_APPLY_HOME } else { Join-JAPath $script:JAUserHome '.job-apply' }
+    if (-not $script:JAHome) { Write-JAProblem "Couldn't tell where your user folder is, so the job-apply folder wasn't made."; return }
     if ($script:JAHome.StartsWith('~')) { $script:JAHome = $script:JAUserHome + $script:JAHome.Substring(1) }
     if (Test-Path -LiteralPath $script:JAHome -PathType Container) {
         Write-JAOk "It's there: $($script:JAHome)"
@@ -504,6 +529,11 @@ function Install-JobApply {
             return
         }
         Write-Host '(Not Windows: this shows the plan Windows would get.)'
+    }
+    $script:JAUserHome = Get-JAUserHome
+    if (-not $script:JAUserHome) {
+        Write-JAProblem "Couldn't tell where your user folder is (USERPROFILE isn't set). Open a new PowerShell window and try again."
+        return
     }
     try { [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor 3072 } catch { }
     $oldOutput = $null
