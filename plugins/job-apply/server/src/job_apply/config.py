@@ -167,7 +167,7 @@ def never_submit() -> bool:
 
 # Account handling's default, where a profile doesn't say (settings.manage_accounts)
 MANAGE_ACCOUNTS_DEFAULT = True
-# And agreeing to notices about AI screening and to attestations (settings.accept_notices)
+# And agreeing to notices about AI screening, privacy notices and terms, and attestations (settings.accept_notices)
 ACCEPT_NOTICES_DEFAULT = True
 
 

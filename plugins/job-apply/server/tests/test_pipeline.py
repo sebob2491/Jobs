@@ -892,11 +892,13 @@ def test_with_accept_notices_the_desk_agrees_to_an_ai_notice_and_an_attestation(
                and line.endswith("for you (settings.accept_notices)") for line in r.log), r.log
 
 
-def test_another_dialog_over_the_form_is_the_persons_even_with_accept_notices(srv, monkeypatch):
-    """settings.accept_notices agrees only to notices about AI screening: any other dialog over the
-    form (a privacy policy with Cancel and Ok) stops the desk for the person."""
+@pytest.mark.parametrize("notice", ["privacy", "other"])
+def test_a_privacy_dialog_over_the_form_is_agreed_and_another_is_the_persons(srv, monkeypatch, notice):
+    """settings.accept_notices agrees to the employer's privacy notice too, the owner's call (Oct
+    10): a privacy policy over the form, with Cancel and Ok, is taken in with its Ok. Any other
+    dialog over the form (about neither AI screening nor privacy) stops the desk for the person."""
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
-    job = srv.add_job(url=fixture_url("site/ai-notice-form.html") + "?notice=privacy", title="Equipment Technician",
+    job = srv.add_job(url=fixture_url("site/ai-notice-form.html") + f"?notice={notice}", title="Equipment Technician",
                       company="Example Corp")["job"]
     applier = Applier(srv)
 
@@ -910,9 +912,45 @@ def test_another_dialog_over_the_form_is_the_persons_even_with_accept_notices(sr
             await applier.stop()
 
     r, shown = run(go())
+    if notice == "privacy":
+        assert "agreed to Example Corp's notice “Privacy Policy of Example Corp” for you (settings.accept_notices)" \
+            in r.log, r.log
+        assert shown["agreed"] == 1 and shown["first"] == "Sam", shown
+        return
     assert (r.status, r.need) == ("needs_you", "stuck"), (r.status, r.reason, r.log)
-    assert "“Privacy Policy of Example Corp”" in r.reason and "accept_notices" not in r.reason, r.reason
+    assert "“Before you continue”" in r.reason and "accept_notices" not in r.reason, r.reason
     assert shown["agreed"] == 0 and shown["first"] == "", shown
+
+
+@pytest.mark.parametrize("settings", [{}, {"accept_notices": False}], ids=["on", "off"])
+def test_a_privacy_agreement_before_the_application_is_accepted_for_the_person(srv, monkeypatch, job_apply_home,
+                                                                                settings):
+    """Kforce's Taleo career section (live, Oct 2026) puts a privacy agreement before the
+    application, its only ways on "I Accept" and "I Decline". With settings.accept_notices (the
+    owner's call, Oct 10) the desk accepts it for the person, says so, and goes on to fill the
+    application; with it off the agreement is theirs to press."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 1)
+    notice_settings(job_apply_home, **settings)
+    job = srv.add_job(url=fixture_url("site/privacy-agreement.html"), title="Recruiter", company="Example Staffing")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    if settings:
+        assert (r.status, r.need) == ("needs_you", "stuck") and "“I Accept”" in r.reason, (r.reason, r.log)
+        assert r.url.endswith("privacy-agreement.html")
+        return
+    assert "agreed to Example Staffing's “I Accept” for you (settings.accept_notices)" in r.log, r.log
+    assert r.url.endswith("generic_form.html") and any(line.startswith("filled") for line in r.log), r.log
 
 
 def test_a_box_that_wouldnt_fill_is_said_as_that_not_asked(srv, monkeypatch):
@@ -952,22 +990,47 @@ def test_a_box_that_wouldnt_fill_is_said_as_that_not_asked(srv, monkeypatch):
 
 def test_what_attests_to_an_application_and_what_doesnt():
     """An application's attestation (its information true and complete, or consent to the background
-    check that comes with applying) is picked only where it's required and has one choice that
-    agrees, or is a check box; a yes/no question, a newsletter or a fact about the person isn't one."""
+    check that comes with applying) and, the owner's call (Oct 10), its acceptance of the employer's
+    privacy notice or terms of use are picked where they're required: a check box, the one choice
+    that agrees, or the one Yes. A newsletter, job alerts, a talent community, cookies or a fact
+    about the person isn't one."""
     certify = ("Terms and Conditions Please read carefully. I certify that the information contained in the "
                "application is correct and complete.")
     attestation = pipeline._attestation
     assert attestation({"kind": "combobox", "label": certify, "required": True, "options": ["I Agree"]}) == "I Agree"
     assert attestation({"kind": "select", "label": certify, "required": True, "options": ["Select...", "Yes"]}) == "Yes"
+    assert attestation({"kind": "select", "label": certify, "required": True, "options": ["Yes", "No"]}) == "Yes"
     assert attestation({"kind": "checkbox", "label": "I authorize Example Corp to conduct a background check as part "
                                                      "of my application *", "required": True}) is True
-    for q in ({"kind": "select", "label": certify, "required": True, "options": ["Yes", "No"]},  # a choice to make
-              {"kind": "select", "label": certify, "required": True, "options": ["I do not agree"]},
+    # the employer's privacy notice and terms (ASM's box, EMD's tick in a group of one, a yes/no)
+    assert attestation({"kind": "checkbox", "label": "I have read and agree to the Privacy notice and Terms of use.*",
+                        "required": True}) is True
+    assert attestation({"kind": "checkbox", "label": "I agree to the terms of use", "required": True}) is True
+    emd = ("Terms of Use & Data Privacy Statement: Please accept our Terms of Use and Data Privacy Statement. For "
+           "Chinese residents: I agree to the transfer of my personal data")
+    assert attestation({"kind": "checkbox_group", "label": "You are applying for", "required": True,
+                        "options": [emd]}) == [emd]
+    assert attestation({"kind": "radio_group", "label": "Do you accept our applicant privacy notice?", "required": True,
+                        "options": ["Yes", "No"]}) is None  # (a radio group isn't one of the kinds it picks in)
+    assert attestation({"kind": "select", "label": "Do you accept our applicant privacy notice?", "required": True,
+                        "options": ["Select...", "Yes", "No"]}) == "Yes"
+    for q in ({"kind": "select", "label": certify, "required": True, "options": ["I do not agree"]},
               {"kind": "combobox", "label": certify, "required": False, "options": ["I Agree"]},
               {"kind": "combobox", "label": certify, "required": True, "options": []},  # choices unknown
+              {"kind": "select", "label": certify, "required": True, "options": ["Yes, I agree", "Yes"]},  # which?
               {"kind": "checkbox", "label": "I certify that I am at least 18 years old", "required": True},
-              {"kind": "checkbox", "label": "I agree to the terms of use", "required": True},
               {"kind": "checkbox", "label": "I certify my information is true, and send me job alerts", "required": True},
+              {"kind": "checkbox", "label": "I agree (i) to join the global Talent Community to be considered for current "
+                                            "and future job opportunities as explained in our privacy statement",
+               "required": True},
+              {"kind": "select", "label": "Use of Your Profile: Please select Yes if you wish your profile to be kept in "
+                                          "our global talent community (see our privacy statement)", "required": True,
+               "options": ["Please Select", "Yes", "No"]},
+              {"kind": "checkbox", "label": "I agree to receive text messages about my application (privacy policy)",
+               "required": True},
+              {"kind": "checkbox", "label": "I accept the cookie and privacy policy", "required": True},
+              {"kind": "checkbox_group", "label": "Consents", "required": True,
+               "options": ["I accept the privacy notice", "Send me job alerts"]},  # more than one
               {"kind": "text", "label": "Type your name to certify that your answers are true", "required": True}):
         assert attestation(q) is None, q
     # notices about AI screening, as the desk tells them from others
@@ -3535,13 +3598,18 @@ def test_a_form_still_being_drawn_is_waited_for(srv, monkeypatch):
     assert "clicked “Next”" in r.log and r.url.endswith("review.html"), r.log
 
 
-def test_an_agreement_is_left_to_the_person_and_a_captchas_buttons_arent_the_pages(srv, monkeypatch):
+@pytest.mark.parametrize("settings", [{"accept_notices": False}, {}], ids=["off", "on"])
+def test_an_agreement_is_left_to_the_person_and_a_captchas_buttons_arent_the_pages(srv, monkeypatch, job_apply_home,
+                                                                                     settings):
     """Schwab's iCIMS sign-in (live, Oct 2026): the way on is "I Acknowledge the Privacy Notice",
     and a hidden hCaptcha frame's "Verify" and "Refresh Challenge." were read as the page's own
-    buttons. The CAPTCHA's frame isn't read, and the desk names the button that agrees to
-    something rather than pressing it or saying it couldn't find one."""
+    buttons. The CAPTCHA's frame isn't read. Without settings.accept_notices the desk names the
+    button that agrees to something rather than pressing it or saying it couldn't find one; with
+    it (the owner's call, Oct 10) it acknowledges the notice for the person, once: a page that
+    stays after that is theirs."""
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
     monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 1)
+    notice_settings(job_apply_home, **settings)
     job = srv.add_job(url=fixture_url("site/privacy-signin.html"), title="FSE", company="Example Fab")["job"]
     applier = Applier(srv)
 
@@ -3560,7 +3628,9 @@ def test_an_agreement_is_left_to_the_person_and_a_captchas_buttons_arent_the_pag
 
     r, acknowledged = run(go())
     assert r.need == "stuck" and "“I Acknowledge the Privacy Notice”" in r.reason, (r.reason, r.log)
-    assert not acknowledged
+    assert acknowledged is not bool(settings)
+    assert ("agreed to Example Fab's “I Acknowledge the Privacy Notice” for you (settings.accept_notices)"
+            in r.log) is not bool(settings), r.log
     assert not {"Verify", "Refresh Challenge."} & set(r.page_info.get("actions") or []), r.page_info
 
 

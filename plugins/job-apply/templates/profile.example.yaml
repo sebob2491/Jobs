@@ -174,7 +174,9 @@ settings:
   manage_accounts: true
   # Notices and attestations: the desk agrees for you to an employer's notice about AI screening
   # of your application (Eightfold's "Notice Related to … Use of the Eightfold AI Recruiting
-  # Software"), and picks an application's attestation that its information is true and complete
+  # Software") and to its privacy notice and terms of use (a privacy agreement's "I Accept", a
+  # terms box; never a newsletter or a talent community), and picks an application's attestation
+  # that its information is true and complete
   # (or your consent to the background check that comes with applying), saying each in the job's
   # log. Never in practice mode. Any other dialog over a form waits for you. Set this to false to
   # answer them yourself.
