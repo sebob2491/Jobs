@@ -15,6 +15,8 @@ name: live-nightly
 # didn't finish fails (employers it didn't reach keep their last result).
 # Only runs of the default branch write to the issue: a manual run from another branch shows
 # its comparison in the job summary only.
+# The four checks run at once, each on a machine of its own (about a quarter of the time they
+# took one after another); the compare job then reads their logs.
 
 on:
   schedule:
@@ -31,13 +33,73 @@ permissions:
 
 jobs:
   check:
+    name: ${{ matrix.check }} check
     runs-on: ubuntu-latest
-    timeout-minutes: 140
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false  # each check reports on its own; one that fails leaves its employers' last results
+      matrix:
+        include:
+          - check: pipeline  # the Job Desk pipeline, semiconductor list
+            args: --pipeline --fake-passwords --parallel 4
+            minutes: 20
+          - check: hr  # HR jobs, phoenix-metro list
+            args: --pipeline --fake-passwords --parallel 4 --lists phoenix-metro --role hr
+            minutes: 30
+          - check: finance  # finance jobs, phoenix-metro list
+            args: --pipeline --fake-passwords --parallel 4 --lists phoenix-metro --role finance
+            minutes: 30
+          - check: search  # whether each phoenix-metro employer's search works
+            args: --lists phoenix-metro --parallel 4
+            minutes: 30
     defaults:
       run:
         working-directory: plugins/job-apply/server
     env:
       JOB_APPLY_NEVER_SUBMIT: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.13"
+          enable-cache: true
+          cache-dependency-glob: plugins/job-apply/server/uv.lock
+      - run: uv sync --frozen
+      - run: uv run --frozen playwright install --with-deps chromium
+      - name: Run the check
+        id: run
+        continue-on-error: true
+        timeout-minutes: ${{ matrix.minutes }}
+        env:
+          CHECK: ${{ matrix.check }}
+          ARGS: ${{ matrix.args }}
+        run: |
+          set -o pipefail
+          mkdir -p "live-$CHECK"
+          # (ARGS unquoted: it's the matrix's own list of options)
+          uv run --frozen python scripts/live_smoke.py $ARGS --out "live-$CHECK" 2>&1 | tee "live-$CHECK/run.log"
+      - name: Note how it ended
+        if: always()
+        env:
+          CHECK: ${{ matrix.check }}
+          OUTCOME: ${{ steps.run.outcome }}
+        run: mkdir -p "live-$CHECK" && echo "$OUTCOME" > "live-$CHECK/outcome"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: live-${{ matrix.check }}
+          path: plugins/job-apply/server/live-${{ matrix.check }}
+          retention-days: 7
+
+  compare:
+    needs: check
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: plugins/job-apply/server
+    env:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
       ISSUE_TITLE: Nightly live check
@@ -50,64 +112,30 @@ jobs:
           enable-cache: true
           cache-dependency-glob: plugins/job-apply/server/uv.lock
       - run: uv sync --frozen
-      - run: uv run --frozen playwright install --with-deps chromium
-      - name: Pipeline check (semiconductor list)
-        id: pipeline
-        continue-on-error: true
-        timeout-minutes: 20
-        run: |
-          set -o pipefail
-          mkdir -p live-pipeline
-          uv run --frozen python scripts/live_smoke.py --pipeline --fake-passwords --parallel 4 \
-            --out live-pipeline 2>&1 | tee live-pipeline/run.log
-      - name: Pipeline check (HR jobs, phoenix-metro list)
-        id: hr
-        continue-on-error: true
-        timeout-minutes: 30
-        run: |
-          set -o pipefail
-          mkdir -p live-hr
-          uv run --frozen python scripts/live_smoke.py --pipeline --fake-passwords --parallel 4 \
-            --lists phoenix-metro --role hr --out live-hr 2>&1 | tee live-hr/run.log
-      - name: Pipeline check (finance jobs, phoenix-metro list)
-        id: finance
-        continue-on-error: true
-        timeout-minutes: 30
-        run: |
-          set -o pipefail
-          mkdir -p live-finance
-          uv run --frozen python scripts/live_smoke.py --pipeline --fake-passwords --parallel 4 \
-            --lists phoenix-metro --role finance --out live-finance 2>&1 | tee live-finance/run.log
-      - name: Search check (phoenix-metro list)
-        id: search
-        continue-on-error: true
-        timeout-minutes: 30
-        run: |
-          set -o pipefail
-          mkdir -p live-search
-          uv run --frozen python scripts/live_smoke.py --lists phoenix-metro --parallel 4 \
-            --out live-search 2>&1 | tee live-search/run.log
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: live-*
+          path: plugins/job-apply/server  # each check's folder: live-pipeline, live-hr, ...
       - name: Compare with the last run
         id: compare
         env:
-          PIPELINE_OUTCOME: ${{ steps.pipeline.outcome }}
-          HR_OUTCOME: ${{ steps.hr.outcome }}
-          FINANCE_OUTCOME: ${{ steps.finance.outcome }}
-          SEARCH_OUTCOME: ${{ steps.search.outcome }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           mkdir -p live-compare
           gh issue list --label "$ISSUE_LABEL" --state all --limit 100 \
             --json number,title,state,body > live-compare/issues.json
           args=(--issues live-compare/issues.json --title "$ISSUE_TITLE" --run-url "$RUN_URL"
-                --log pipeline=live-pipeline/run.log --log hr=live-hr/run.log
-                --log finance=live-finance/run.log --log search=live-search/run.log
                 --body-out live-compare/body.md --comment-out live-compare/comment.md
                 --github-output "$GITHUB_OUTPUT")
-          if [ "$PIPELINE_OUTCOME" != success ]; then args+=(--partial pipeline); fi
-          if [ "$HR_OUTCOME" != success ]; then args+=(--partial hr); fi
-          if [ "$FINANCE_OUTCOME" != success ]; then args+=(--partial finance); fi
-          if [ "$SEARCH_OUTCOME" != success ]; then args+=(--partial search); fi
+          unfinished=()
+          for check in pipeline hr finance search; do
+            args+=(--log "$check=live-$check/run.log")
+            # a check that didn't finish (or whose machine never reported) keeps its employers' last results
+            if [ "$(cat "live-$check/outcome" 2>/dev/null)" != success ]; then
+              args+=(--partial "$check"); unfinished+=("$check")
+            fi
+          done
+          echo "unfinished=${unfinished[*]}" >> "$GITHUB_OUTPUT"
           uv run --frozen python scripts/live_compare.py "${args[@]}"
           {
             if [ -f live-compare/comment.md ]; then cat live-compare/comment.md; echo; fi
@@ -135,24 +163,13 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: live-nightly
-          path: |
-            plugins/job-apply/server/live-pipeline
-            plugins/job-apply/server/live-hr
-            plugins/job-apply/server/live-finance
-            plugins/job-apply/server/live-search
-            plugins/job-apply/server/live-compare
+          name: live-compare
+          path: plugins/job-apply/server/live-compare
           retention-days: 7
       - name: Fail if a check didn't finish
-        if: >-
-          steps.pipeline.outcome != 'success' || steps.hr.outcome != 'success' ||
-          steps.finance.outcome != 'success' || steps.search.outcome != 'success'
+        if: steps.compare.outputs.unfinished != ''
         env:
-          PIPELINE_OUTCOME: ${{ steps.pipeline.outcome }}
-          HR_OUTCOME: ${{ steps.hr.outcome }}
-          FINANCE_OUTCOME: ${{ steps.finance.outcome }}
-          SEARCH_OUTCOME: ${{ steps.search.outcome }}
+          UNFINISHED: ${{ steps.compare.outputs.unfinished }}
         run: |
-          echo "::error::A check didn't finish (pipeline: $PIPELINE_OUTCOME, hr: $HR_OUTCOME," \
-               "finance: $FINANCE_OUTCOME, search: $SEARCH_OUTCOME); see its log"
+          echo "::error::A check didn't finish ($UNFINISHED); see its job's log"
           exit 1
