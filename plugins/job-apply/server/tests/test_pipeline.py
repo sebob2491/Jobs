@@ -4503,3 +4503,18 @@ def test_an_apply_link_with_its_address_in_data_href_is_pressed(srv, monkeypatch
     r = run(go())
     assert "clicked “Apply Now”" in r.log, (r.status, r.need, r.reason, r.log)
     assert any(line.startswith("filled") for line in r.log), r.log
+
+
+def test_what_a_filled_page_still_needs_is_said_the_same_way_on_each_path(srv):
+    """The pause for what a filled page still needs was written out twice (an application page, and
+    one that makes the account as it applies) and had drifted: on the second, a missing file's card
+    ran on into the next sentence with no full stop. One helper says it for both."""
+    applier = Applier(srv)
+    run_ = Run(1)
+    unfilled = {"label": "Country of Residence", "kind": "combobox", "error": "TimeoutError: Locator.evaluate"}
+    assert applier._stop_for_what_is_left(run_, "", [unfilled], [{"label": "Resume/CV*"}])
+    assert run_.need == "stuck" and run_.reason.startswith(
+        "The form needs a file the profile doesn't point to (set documents.resume in profile.yaml): Resume/CV*. "), \
+        run_.reason
+    nothing = Run(2)
+    assert not applier._stop_for_what_is_left(nothing, "", [], []) and nothing.status != "needs_you"

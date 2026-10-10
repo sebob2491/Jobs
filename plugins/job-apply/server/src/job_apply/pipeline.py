@@ -622,6 +622,33 @@ class Applier:
                         await tab.close()
             run.page = None
 
+    def _stop_for_what_is_left(self, run: Run, gaps: str, pending: list[dict[str, Any]],
+                               missing_files: list[dict[str, Any]]) -> bool:
+        """Pause a filled page for what it still needs, if anything: a file the profile doesn't
+        point to, entries the profile lacks (gaps), questions it doesn't answer, or boxes the desk
+        couldn't fill. The questions come along on each card, so they can be answered meanwhile.
+        True when it paused."""
+        unfilled, pending = _unfilled(pending)
+        couldnt = f" {_couldnt_fill(unfilled)}" if unfilled else ""
+        if missing_files:
+            self._pause(run, "stuck", "The form needs a file the profile doesn't point to (set documents.resume in "
+                        "profile.yaml): " + ", ".join(f["label"] for f in missing_files) + "."
+                        + (f" {gaps}" if gaps else "")
+                        + (f" It also has {len(pending)} question(s) your profile doesn't answer." if pending else "")
+                        + couldnt, pending)
+        elif gaps:
+            self._pause(run, "stuck", gaps + (f" It also has {len(pending)} other question(s), here." if pending else "")
+                        + couldnt, pending)
+        elif pending:
+            self._pause(run, "questions", f"{len(pending)} question(s) your profile doesn't answer. Answer them here "
+                        "and the desk fills them in (and remembers them)." + couldnt, pending)
+        elif unfilled:
+            self._pause(run, "stuck", f"{couldnt.strip()} Fill {'it' if len(unfilled) == 1 else 'them'} in the browser, "
+                        "then press Resume (or press Resume for the desk to try again).")
+        else:
+            return False
+        return True
+
     def _hold_tools(self, job_id: int) -> tuple[Any, Any, Any]:
         """Take the browser tools for one of this job's steps: Claude's calls that act in the
         browser wait meanwhile (server._desk_driving). Returns what to give back."""
@@ -1269,24 +1296,8 @@ class Applier:
                     refilled.add(page_key)  # answers drew new questions ("If yes, explain"): fill those too
                     continue
                 gaps, pending = self._entry_gaps(run, data, pending)
-                unfilled, pending = _unfilled(pending)
-                couldnt = f" {_couldnt_fill(unfilled)}" if unfilled else ""
-                if missing_files:  # questions come along, so they can be answered meanwhile
-                    return self._pause(run, "stuck", "The form needs a file the profile doesn't point to (set "
-                                       "documents.resume in profile.yaml): " + ", ".join(f["label"] for f in missing_files)
-                                       + "." + (f" {gaps}" if gaps else "")
-                                       + (f" It also has {len(pending)} question(s) your profile doesn't answer."
-                                          if pending else "") + couldnt, pending)
-                if gaps:
-                    return self._pause(run, "stuck", gaps + (f" It also has {len(pending)} other question(s), here."
-                                                             if pending else "") + couldnt, pending)
-                if pending:
-                    return self._pause(run, "questions", f"{len(pending)} question(s) your profile doesn't answer. "
-                                       "Answer them here and the desk fills them in (and remembers them)." + couldnt,
-                                       pending)
-                if unfilled:
-                    return self._pause(run, "stuck", f"{couldnt.strip()} Fill {'it' if len(unfilled) == 1 else 'them'} in "
-                                       "the browser, then press Resume (or press Resume for the desk to try again).")
+                if self._stop_for_what_is_left(run, gaps, pending, missing_files):
+                    return
                 actions = data.get("actions") or []
                 entry_here = any(_ENTRY.match(final_text(a["text"])) and not a.get("disabled") for a in actions)
             # a step button beside a Submit (a footer "Submit" on step 1 of 4) means there's more to
@@ -2072,21 +2083,8 @@ class Applier:
         data, _ = await self._look()
         run.page_info = _page_info(data)  # the page as filled
         gaps, pending = self._entry_gaps(run, data, pending)
-        unfilled, pending = _unfilled(pending)
-        couldnt = f" {_couldnt_fill(unfilled)}" if unfilled else ""
-        if missing_files:
-            return self._pause(run, "stuck", "The form needs a file the profile doesn't point to (set documents.resume "
-                               "in profile.yaml): " + ", ".join(f["label"] for f in missing_files)
-                               + (f". {gaps}" if gaps else "") + couldnt, pending)
-        if gaps:
-            return self._pause(run, "stuck", gaps + (f" It also has {len(pending)} other question(s), here."
-                                                     if pending else "") + couldnt, pending)
-        if pending:
-            return self._pause(run, "questions", f"{len(pending)} question(s) your profile doesn't answer. Answer them "
-                               "here and the desk fills them in (and remembers them)." + couldnt, pending)
-        if unfilled:
-            return self._pause(run, "stuck", f"{couldnt.strip()} Fill {'it' if len(unfilled) == 1 else 'them'} in the "
-                               "browser, then press Resume (or press Resume for the desk to try again).")
+        if self._stop_for_what_is_left(run, gaps, pending, missing_files):
+            return
         saved = await self._sign_in(run, data, {}, details=False) == "prefilled"  # filled in above
         if saved:  # the record of the page shows its password boxes filled, too
             run.page_info = _page_info((await self._look())[0])
