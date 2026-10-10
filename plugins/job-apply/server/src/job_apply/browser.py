@@ -55,8 +55,9 @@ NAVIGATION_RE = re.compile(
     r"sign ?in|log ?in|create account|verify|send (me a )?code|ok|accept( all)?( cookies)?|i agree|apply manually|start)\b",
     re.I,
 )
-# What accepts a cookie or privacy banner (never pressed for the person): "Accept All
-# Cookies", or inside a banner "Accept", "Allow all", "I agree", "AGREE AND PROCEED" (TI's)
+# What accepts a cookie or privacy banner (never pressed for the person, unless they set
+# settings.accept_cookies): "Accept All Cookies", or inside a banner "Accept", "Allow all",
+# "I agree", "AGREE AND PROCEED" (TI's)
 _ACCEPT_WORDS = re.compile(r"^(accept|allow|agree|ok|okay|got it|i agree|i accept|i understand|yes,? i agree|"
                            r"agree (and|&) (proceed|continue|close)|accept (and|&) (proceed|continue|close))"
                            r"( all)?( cookies)?[.!]?$", re.I)
@@ -76,10 +77,45 @@ _CAPTCHA_FRAME = re.compile(r"^https?://([\w-]+\.)*(hcaptcha\.com|recaptcha\.net
                             r"^https?://(www\.)?google\.com/recaptcha/", re.I)
 
 
+# What declines a cookie banner, pressed for the person wherever a banner offers it: anywhere
+# cookies are spoken of, "Reject all" or "Necessary only"; in a cookie box, also "Deny", "Refuse",
+# "Opt out", "No thanks" and "Continue without accepting"
+_DECLINE_COOKIES = re.compile(
+    r"^(reject(?: all)?(?: cookies)?|decline(?: all)?(?: cookies)?|only (?:strictly )?necessary|necessary (?:cookies )?only"
+    r"|use necessary cookies only|accept (?:only )?necessary(?: cookies)?|reject optional(?: cookies)?"
+    r"|(?:reject|decline) non-?essential(?: cookies)?)$", re.I)
+_DECLINE_IN_BANNER = re.compile(
+    r"^((?:deny|refuse|disagree|opt out)(?: all)?(?: cookies)?|(?:i )?do not (?:accept|agree)|no,? thanks"
+    r"|(?:reject|decline|deny|refuse) (?:all )?(?:optional|additional|non-?essential|non-?necessary)(?: cookies)?"
+    r"|(?:only|accept|allow|use) (?:only )?(?:strictly )?(?:essential|required)(?: cookies)?(?: only)?"
+    r"|(?:essential|required) (?:cookies )?only|continue without (?:accepting|agreeing|consent(?:ing)?|cookies))[.!]?$",
+    re.I)
+
+
 def _accepts_cookies(label: str, text: str, in_banner: bool) -> bool:
     if _DECLINES.search(label):
         return False  # "Accept necessary cookies only", "Reject all": the private choice
     return bool(_COOKIE_ACCEPT.search(label) or in_banner and _ACCEPT_WORDS.match(text))
+
+
+def declines_cookies(text: str, in_banner: bool) -> bool:
+    text = text.strip()
+    return bool(_DECLINE_COOKIES.match(text) or in_banner and _DECLINE_IN_BANNER.match(text))
+
+
+def _cookie_setting() -> bool:
+    try:
+        return config.Profile.load().settings.accept_cookies
+    except ValueError:  # a profile with a typo allows nothing
+        return False
+
+
+def may_accept_cookies(info: dict[str, Any]) -> bool:
+    """Whether a cookie banner's accept (ELEMENT_INFO_JS's facts about it) may be pressed for the
+    person: only where they set settings.accept_cookies, and only on a banner with no way to
+    decline (TI's "Manage Preferences" or "Agree and Proceed"). One that can be declined is."""
+    return (bool(info.get("cookie")) and not any(declines_cookies(t, True) for t in info.get("cookieButtons") or [])
+            and _cookie_setting())
 
 
 # SuccessFactors' older career sites show a posting inside a form whose submit button is
@@ -1310,10 +1346,11 @@ class BrowserSession:
     def _check_clickable(info: dict[str, Any], url: str = "") -> None:
         label = " ".join((info.get("label") or "").split())
         text = (info.get("text") or "").strip()
-        if _accepts_cookies(label, text, bool(info.get("cookie"))):
+        if _accepts_cookies(label, text, bool(info.get("cookie"))) and not may_accept_cookies(info):
             raise SubmitBlocked(
-                f"Cookie and privacy banners are never accepted for the user: {label!r} would accept one. Decline it "
-                "if the banner offers that, or leave the choice to the user in the browser window.")
+                f"Cookie and privacy banners aren't accepted for the user: {label!r} would accept one. Decline it if "
+                "the banner offers that, or leave the choice to the user in the browser window. (Only where they set "
+                "accept_cookies: true under settings: in profile.yaml is a banner with no way to decline accepted.)")
         # a posting's own Apply on SuccessFactors' older sites: an empty form, so nothing is sent
         opens = bool(info.get("formSubmit") and POSTING_PAGE_RE.search(url) and re.match(r"^apply( now)?$", text, re.I)
                      and not info.get("formFields"))
@@ -1384,6 +1421,16 @@ class BrowserSession:
             data = await self._extract(page)
             # not a footer's job-alerts "Submit" (marked aside): pressing it sends no application
             return [a for a in data["actions"] if a.get("is_submit") and not a.get("disabled") and not a.get("aside")]
+
+    async def element_info(self, element_id: str) -> dict[str, Any] | None:
+        """ELEMENT_INFO_JS's facts about an element on the page (a cookie banner's button: the
+        banner's other buttons, and whether it covers the page), or None once it's gone."""
+        async with self._lock:
+            page = await self.page()
+            try:
+                return await self._locator(page, element_id).evaluate(ELEMENT_INFO_JS, timeout=3000)
+            except (PlaywrightError, PlaywrightTimeout):
+                return None
 
     async def press_submit(self, action_id: str) -> dict[str, Any]:
         if config.Profile.load().settings.dry_run:  # second lock on the door, after submit_application's

@@ -665,6 +665,82 @@ def test_cookie_dialog_is_declined_never_accepted(srv, monkeypatch):
     assert "declined cookies (“Reject”)" in r.log and accepted == 0
 
 
+def test_a_cookie_banner_with_no_way_to_decline_is_the_persons_unless_they_allow_it(srv, monkeypatch, job_apply_home):
+    """Texas Instruments' consent prompt (live, Oct 2026) offers only "Manage Preferences" and
+    "Agree and Proceed", over the whole application: the desk sat behind it. It says it's the
+    person's to answer, and accepts it only where they set settings.accept_cookies."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 1)
+
+    def apply_once():
+        job = srv.add_job(url=fixture_url("site/cookie-agree-only.html"), title="FSE", company="Example Fab")["job"]
+        applier = Applier(srv)
+
+        async def go():
+            applier.start()
+            try:
+                r = applier.enqueue(job["id"])
+                await until(lambda: r.status not in ("queued", "running"), about=state(r))
+                return r, await r.page.evaluate("() => [window.accepted || 0, window.prefs || 0]")
+            finally:
+                await applier.stop()
+
+        return run(go())
+
+    r, (accepted, prefs) = apply_once()
+    assert (r.status, r.need) == ("needs_you", "stuck") and "can't decline" in r.reason, (r.reason, r.log)
+    assert "accept_cookies: true" in r.reason and (accepted, prefs) == (0, 0)
+    profile = job_apply_home / "profile.yaml"
+    profile.write_text(profile.read_text().replace("settings:\n", "settings:\n  accept_cookies: true\n"))
+    r, (accepted, prefs) = apply_once()
+    assert accepted == 1 and prefs == 0, (r.reason, r.log)
+    assert any(line.startswith("accepted cookies (\u201cAGREE AND PROCEED\u201d)") for line in r.log), r.log
+    assert r.status == "ready", (r.status, r.reason, r.log)
+
+
+def test_a_banner_that_can_be_declined_is_declined_even_where_accepting_is_allowed(srv, monkeypatch, job_apply_home):
+    """settings.accept_cookies lets the desk accept only a banner with no way to decline: one
+    whose way is "Deny" is denied."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    profile = job_apply_home / "profile.yaml"
+    profile.write_text(profile.read_text().replace("settings:\n", "settings:\n  accept_cookies: true\n"))
+    job = srv.add_job(url=fixture_url("site/cookie-deny.html"), title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r, await r.page.evaluate("() => [window.accepted || 0, window.denied || 0]")
+        finally:
+            await applier.stop()
+
+    r, (accepted, denied) = run(go())
+    assert (accepted, denied) == (0, 1) and "declined cookies (\u201cDeny\u201d)" in r.log, (r.reason, r.log)
+    assert r.status == "ready", (r.status, r.reason, r.log)
+
+
+def test_a_cookie_notice_along_the_edge_is_left_be(srv, monkeypatch):
+    """A notice along the bottom with only "Got it" doesn't cover the form: the desk leaves it
+    there and goes on, neither accepting it nor stopping for it."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    job = srv.add_job(url=fixture_url("site/cookie-bar.html"), title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r, await r.page.evaluate("() => window.accepted || 0")
+        finally:
+            await applier.stop()
+
+    r, accepted = run(go())
+    assert r.status == "ready" and accepted == 0, (r.status, r.reason, r.log)
+
+
 def test_a_cookie_banner_after_a_long_posting_is_still_declined(srv, monkeypatch):
     """Qorvo's cookie banner comes after a long posting, past the page text the desk reads.
     Its buttons sit in the banner's own box, so it's still turned down, and never accepted."""
@@ -2271,9 +2347,25 @@ def test_a_button_with_an_arrow_after_its_words_is_still_the_way_in():
 
 def test_reject_non_essential_cookies_is_a_way_to_decline():
     """Aerotek's iCIMS banner (live, Oct 2026) offers "Reject Non-Essential Cookies"."""
-    assert pipeline._DECLINE_COOKIES.match("Reject Non-Essential Cookies")
-    assert pipeline._DECLINE_COOKIES.match("Decline nonessential")
-    assert not pipeline._DECLINE_COOKIES.match("Accept Non-Essential Cookies")
+    from job_apply.browser import declines_cookies
+
+    assert declines_cookies("Reject Non-Essential Cookies", False)
+    assert declines_cookies("Decline nonessential", False)
+    assert not declines_cookies("Accept Non-Essential Cookies", True)
+
+
+def test_a_banners_other_ways_to_decline_count_too():
+    """Banners decline in more words than "Reject": "Deny", "Continue without accepting",
+    "Essential cookies only". Looser ones ("No thanks") count only inside a cookie box."""
+    from job_apply.browser import declines_cookies
+
+    for words in ("Deny", "Deny all", "Refuse all", "Continue without accepting", "Essential cookies only",
+                  "Accept essential cookies only", "Only required cookies", "Opt out", "No thanks",
+                  "Reject optional cookies", "Do not accept"):
+        assert declines_cookies(words, True), words
+    for words, in_banner in (("No thanks", False), ("Deny", False), ("Accept all", True), ("Got it", True),
+                             ("Manage preferences", True), ("Cookie settings", True)):
+        assert not declines_cookies(words, in_banner), words
 
 
 def test_a_form_still_being_drawn_is_waited_for(srv, monkeypatch):
@@ -2559,6 +2651,55 @@ def test_an_application_that_ends_on_an_unreachable_host_says_so(srv, monkeypatc
     r = run(go())
     assert (r.status, r.need) == ("needs_you", "stuck") and "couldn't be reached" in r.reason, (r.reason, r.log)
     assert "find the button" not in r.reason, r.reason
+
+
+def test_a_name_and_email_box_before_the_application_is_the_persons_to_send(srv, monkeypatch):
+    """The State of Arizona's postings (live, Oct 2026) have an "Apply Now" box taking a name and
+    email, whose APPLY sends them on before the application itself (on PageUp). The desk filled it
+    and called it the review page. It isn't the application, and its button sends the person's
+    details: the person presses it, and nothing is called ready."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 1)
+    job = srv.add_job(url=fixture_url("site/apply-now-sign-up.html"), title="Accounting Supervisor",
+                      company="State of Example")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert (r.status, r.need) == ("needs_you", "stuck"), (r.status, r.reason, r.log)
+    assert "name and email" in r.reason and "\u201cAPPLY\u201d" in r.reason, r.reason
+    assert not any("review page" in line for line in r.log), r.log
+
+
+def test_a_name_and_email_box_sent_by_a_plain_button_is_the_persons_too(srv, monkeypatch):
+    """The same box with an APPLY that isn't the form's submit (a page script sends it): the
+    desk took it for the way in and pressed it, sending the name and email."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 1)
+    job = srv.add_job(url=fixture_url("site/apply-now-sign-up-button.html"), title="Accounting Supervisor",
+                      company="State of Example")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r, await r.page.evaluate("() => window.sent || 0")
+        finally:
+            await applier.stop()
+
+    r, sent = run(go())
+    assert (r.status, r.need, sent) == ("needs_you", "stuck", 0), (r.status, r.reason, r.log)
+    assert "name and email" in r.reason and "\u201cAPPLY\u201d" in r.reason, r.reason
 
 
 def test_a_posting_that_has_closed_says_so(srv, monkeypatch):

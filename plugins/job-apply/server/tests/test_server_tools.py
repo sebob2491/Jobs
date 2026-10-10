@@ -433,8 +433,30 @@ def test_the_click_tool_refuses_a_cookie_banners_accept(srv):
         return accept, accepted, reject
 
     accept, accepted, reject = run(go())
-    assert accept["clicked"] is False and "never accepted" in accept["blocked"] and accepted == 0
+    assert accept["clicked"] is False and "aren't accepted" in accept["blocked"] and accepted == 0
     assert reject["clicked"] is True
+
+
+
+@pytest.mark.skipif(not browser_available(), reason="no Playwright Chromium installed")
+def test_the_click_tool_accepts_a_cookie_banner_only_where_the_person_allows_it(srv, job_apply_home):
+    from conftest import fixture_url
+
+    profile = job_apply_home / "profile.yaml"
+    profile.write_text(profile.read_text().replace("settings:\n", "settings:\n  accept_cookies: true\n"))
+
+    async def go():
+        clicks = []
+        # a banner with a way to decline is declined, setting or not ("Deny" in OneTrust's banner,
+        # around an accept button that's a box of its own by its id)
+        for page, button in (("cookie-form.html", "Accept"), ("cookie-deny.html", "Allow all"),
+                             ("cookie-agree-only.html", "AGREE AND PROCEED")):
+            await srv.browser.goto(fixture_url(f"site/{page}"))
+            clicked = await srv.click(button)
+            clicks.append((clicked["clicked"], await srv.browser._page.evaluate("() => window.accepted || 0")))
+        return clicks
+
+    assert run(go()) == [(False, 0), (False, 0), (True, 1)]
 
 
 @needs_browser
