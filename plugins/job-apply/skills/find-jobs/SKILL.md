@@ -28,12 +28,12 @@ The goal is a short, deduplicated list of real openings saved to the tracker
    It queries each company's own job search directly: Workday, Greenhouse, Lever,
    Eightfold, SmartRecruiters, Oracle, ApplicantStack, iCIMS, Paycom, UKG Pro, SuccessFactors
    (Edwards, Qorvo, Amkor), Infor CloudSuite (Benchmark), Taleo (Kforce), Talemetry
-   (Valleywise Health), iCIMS Jibe (PetSmart, Sprouts, State Farm) and Jobvite (Knight-Swift)
-   sites, amazon.jobs, Edward Jones' search and Phoenix Children's, Randstad's and KPMG's own job
-   sites, for the companies in the employer list `companies_file` in `setup_status` names: the
-   plugin's `data/companies.yaml`, or the user's own `~/.job-apply/companies.yaml` when they have
-   one (for other fields or places; the same shape). Pass `companies=[...]` to limit it to
-   particular employers.
+   (Valleywise Health), iCIMS Jibe (PetSmart, Sprouts, State Farm), Jobvite (Knight-Swift) and
+   Avature (Deloitte) sites, amazon.jobs, Edward Jones' search and Phoenix Children's, Randstad's
+   and KPMG's own job sites, for the companies in the employer list `companies_file` in
+   `setup_status` names: the plugin's `data/companies.yaml`, or the user's own
+   `~/.job-apply/companies.yaml` when they have one (for other fields or places; the same shape).
+   Pass `companies=[...]` to limit it to particular employers.
    - Results already in the tracker carry `tracked`. Skip those.
    - Eightfold sites (Lam Research, Micron, Infineon) refuse direct API calls, and
      ASML's, Daifuku's (iCIMS), Ebara's (Paycom), Nikon Precision's (UKG Pro), Edwards' and
@@ -42,12 +42,16 @@ The goal is a short, deduplicated list of real openings saved to the tracker
      list doesn't say where each job is, so each matching posting is read for the place it names.
    - Workday lists a job in several places as "7 Locations". The search reads those postings
      for their places, the ones in the area first ("Phoenix, AZ; Austin, TX; ...").
+   - Deloitte lists most jobs as "Multiple Locations", and its Arizona filter also finds some
+     that aren't offered there. The search reads 20 of those postings for their places ("Tempe,
+     Arizona, United States (+38 more)") and leaves out the ones not in the area. The rest say
+     "check the posting".
    - `errors` lists companies whose search failed. Fall back to the browser for
      those: open the careers URL with `open_application(url=...)`, use the site's search
      box with `fill_form` and `click`, and read the results with `page_text`. WebSearch
      with `site:` on the careers domain also works.
    - `browser_only` lists employers with no search the plugin can use: TSMC Arizona in the
-     default list, and with the `phoenix-metro` list about ten more (a system it can't
+     default list, and with the `phoenix-metro` list five more (a system it can't
      search, such as PeopleSoft's City of Phoenix site, or a site that refuses automated browsers, such as
      TSMC's and Carvana's Cloudflare checks). Nothing tries to get around those. Don't open
      them in the automation browser: give the user their careers links, a short list, to

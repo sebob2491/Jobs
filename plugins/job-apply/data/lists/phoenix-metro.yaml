@@ -282,9 +282,13 @@ companies:
     search: {workday: https://bakertilly.wd5.myworkdayjobs.com/BTCareers}
   - name: Deloitte
     careers_url: https://apply.deloitte.com/en_US/careers/SearchJobs
-    ats: custom               # avature
-    az_sites: Phoenix, Tempe
-    confidence: medium        # page seen, Oct 2026; no search: postings say "Multiple Locations", with no place to filter on
+    ats: custom               # Avature, on Deloitte's own domain (not avature.net, where a saved Avature password goes)
+    az_sites: Tempe, Gilbert
+    confidence: high          # live check, Oct 2026: 552 openings in Arizona by its State filter (Tempe and Gilbert)
+    # Its State filter (field 9336) and Arizona's number in it, as the page's own filter-options call
+    # answers; words go with it. Most postings are listed as "Multiple Locations", and about one in six
+    # the filter finds name no Arizona place on their own pages: the search reads those pages (20 a search).
+    search: {avature: {url: https://apply.deloitte.com/en_US/careers/SearchJobs, state_field: 9336, states: {AZ: 690346}}}
   - name: KPMG
     careers_url: https://www.kpmguscareers.com/job-search/
     ats: avature              # its own job search (WordPress over a Google Cloud Talent search); Apply goes to

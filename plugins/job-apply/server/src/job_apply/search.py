@@ -20,6 +20,8 @@ Each company in data/companies.yaml may carry a `search` block naming one of:
     randstad:        https://www.randstadusa.com/jobs/internal  (Randstad's own jobs)
     mcloud:          {company: companies/<id>}  (a Google Cloud Talent search at jobsapi-google.m-cloud.io: Edward Jones)
     kpmg:            ["Phoenix, AZ", ...]  (KPMG's own job search: its place filter's values)
+    avature:         {url: <search page>, state_field: 9336, states: {AZ: 690346}}
+                                            (Avature career portals: Deloitte; its State filter's values)
     icims:           <portal name>          (read in the browser)
     paycom:          <career portal key>    (read in the browser)
     ukg:             <job board address>    (UKG Pro / UltiPro; read in the browser)
@@ -64,8 +66,9 @@ EMPLOYERS_AT_ONCE = 8  # employers searched at the same time (each its own site;
 CLIENT_SIDE = {"greenhouse", "lever", "applicantstack", "paycom", "ukg", "sfclassic", "infor", "phoenixchildrens",
                "jobvite", "randstad", "kpmg"}  # whole board at once; titles filtered here
 # Searches that take the whole query and pace its wordings themselves (the State of Arizona's
-# site, whose bot check a quick run of requests sets off)
-OWN_WORDINGS = {"careerpages"}
+# site, whose bot check a quick run of requests sets off; Avature portals, which read an
+# opening's places once however many wordings find it)
+OWN_WORDINGS = {"careerpages", "avature"}
 
 
 def wordings_for(kind: str, query: str) -> list[str]:
@@ -1280,6 +1283,112 @@ def parse_kpmg(page: str) -> list[Listing]:
     return out
 
 
+# ----------------------------------------------------------------- Avature career portals (Deloitte)
+AVATURE_PAGE = 10  # openings a results page shows, whatever it asks for (Deloitte's, Oct 2026)
+AVATURE_PAGES = 6  # pages read for one wording, at most; half that each for several (a page takes 1-2 s)
+AVATURE_PLACE_PAGES = 20  # postings in several places read for theirs, per search
+_SEVERAL_PLACES = re.compile(r"multiple locations", re.I)  # how a portal lists a posting in several places
+
+
+async def _avature(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, terms: list[str]) -> list[Listing]:
+    """Avature career portals (Deloitte's apply.deloitte.com) draw a search's openings on the
+    server, 10 a page: each one's title, link (/JobDetail/<title>/<number>) and place, or
+    "Multiple Locations" for one offered in several (most of Deloitte's). The portal's State
+    filter, a field of its own (`state_field: 9336`), takes the portal's own number for a state
+    (`states: {AZ: 690346}`) and words with it: a search in a state it names is filtered to it,
+    one elsewhere or anywhere is searched nationwide. The search takes the whole query, its
+    wordings at once: an opening several of them find is one, and its places are read once."""
+    url = str(cfg["url"]).rstrip("/") + "/"
+    state = icims_state(terms)
+    states = {str(k).upper(): v for k, v in (cfg.get("states") or {}).items()}
+    where = {f"{cfg['state_field']}[]": states[state]} if state in states else {}
+    words = alternatives(query)
+
+    async def search(wording: str) -> list[Listing]:
+        rows: list[Listing] = []
+        for n in range(AVATURE_PAGES if len(words) == 1 else AVATURE_PAGES // 2):
+            # sorted: without it, the portal answers with a redirect to the same search sorted (a second more)
+            params = {"search": wording, "listFilterMode": 1, "sort": "relevancy", "jobRecordsPerPage": AVATURE_PAGE,
+                      "jobOffset": n * AVATURE_PAGE, **where}
+            r = await _send(client, "GET", url, params=params)
+            _raise_for(r, url)
+            page = parse_avature(r.text, str(r.url))
+            rows += page
+            if len(page) < AVATURE_PAGE or len(rows) >= limit:
+                break
+        return rows
+
+    found: dict[str, Listing] = {}
+    failed: list[BaseException] = []
+    for rows in await asyncio.gather(*(search(w) for w in words), return_exceptions=True):
+        if isinstance(rows, BaseException):
+            failed.append(rows)
+            continue
+        for listing in rows:
+            found.setdefault(listing.url, listing)
+    if failed and not found:  # (one wording's failure still leaves the others' openings)
+        raise failed[0]
+    out = list(found.values())
+    if where:
+        await _avature_places(client, out, query, terms)
+    return out
+
+
+def parse_avature(page: str, base: str) -> list[Listing]:
+    """A results page's openings, each with the last part of the line under its title as its
+    place (Deloitte's "Deloitte US | Deloitte Tax LLP | Tempe, Arizona, United States"). A page
+    that is neither results nor "No jobs found" isn't the portal's search."""
+    soup = BeautifulSoup(page, "html.parser")
+    items = soup.select("article.article--result")
+    if not items and soup.select_one(".article--result--nojobs") is None:
+        raise SearchError(f"No job list from {base.split('?')[0]}")
+    out: list[Listing] = []
+    for item in items:
+        link = item.select_one('a[href*="/JobDetail/"]')
+        m = re.search(r"/JobDetail/(?:[^/?#]+/)?(\d+)/?(?:[?#]|$)", str(link["href"])) if link is not None else None
+        if m is None or link is None or not link.get_text(strip=True):
+            continue
+        parts = item.select(".article__header__text__subtitle span")
+        out.append(Listing(company="", title=link.get_text(" ", strip=True), url=urljoin(base, str(link["href"])),
+                           location=" ".join(parts[-1].get_text(" ", strip=True).split()) if parts else "",
+                           external_id=m.group(1), ats="avature"))
+    return out
+
+
+def avature_places(page: str) -> list[str]:
+    """The places a posting's own page lists under "Same job available in 52 locations"."""
+    found = (p.get_text(" ", strip=True) for p in BeautifulSoup(page, "html.parser").select(".article__header--locations p"))
+    return list(dict.fromkeys(" ".join(p.split()) for p in found if p))
+
+
+async def _avature_places(client: httpx.AsyncClient, listings: list[Listing], query: str, terms: list[str]) -> None:
+    """The State filter isn't the last word on a posting in several places: about one in six of
+    Deloitte's Arizona ones list no Arizona place on their own pages (25 of 150 opened, live,
+    Oct 2026). So those are read for their places, the ones whose titles match first, and say
+    the area's and how many more ("Tempe, Arizona, United States (+51 more)"), or all of theirs
+    when none is in it (keep_listings then leaves them out). The rest stay "check the posting"."""
+    sem = asyncio.Semaphore(4)
+
+    async def one(listing: Listing) -> None:
+        async with sem:
+            try:
+                r = await _send(client, "GET", listing.url)
+                _raise_for(r, listing.url)
+            except Exception:  # an unreadable posting keeps what the list said
+                return
+        places = avature_places(r.text)
+        here = [p for p in places if location_matches(p, terms) is True]
+        more = len(places) - len(here)
+        if here:
+            listing.location = "; ".join(here) + (f" (+{more} more)" if more else "")
+        elif places:
+            listing.location = "; ".join(places)
+
+    several = sorted((x for x in listings if _SEVERAL_PLACES.fullmatch(x.location.strip())),
+                     key=lambda x: not title_matches(x.title, query))
+    await asyncio.gather(*(one(x) for x in several[:AVATURE_PLACE_PAGES]))
+
+
 # ----------------------------------------------------------------- amazon.jobs
 AMAZON_PAGE = 100  # openings a search reads: its first page, nearest the place first
 
@@ -1956,6 +2065,7 @@ SEARCHERS: dict[str, Callable[[httpx.AsyncClient, Any, str, int, list[str]], Awa
     "randstad": _randstad,
     "mcloud": _mcloud,
     "kpmg": _kpmg,
+    "avature": _avature,
 }
 
 
