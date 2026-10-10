@@ -56,7 +56,11 @@ The desk is a local web page served by this plugin. It does what the `find-jobs`
   or no reset email comes in 3 minutes (the other jobs carry on meanwhile), it opens the
   site's Create Account form ("Create an account", "Register", "Don't have an account
   yet?") and creates the account. Without the inbox it tries Create Account first, and
-  resets where the site says the email already has an account.
+  asks for the reset (the user opens the emailed link) where the site says the email already
+  has an account, or where the password still doesn't sign in after Create Account. It presses
+  Create Account once per job, and a sign-in with a refused password twice at most (once more
+  after a reset), Resume or not, so the account isn't locked; then the desk card says what the
+  site said.
   `settings.manage_accounts: false` leaves all of this to the user (the desk fills
   in Create Account for them to finish); practice mode never creates an account. A password is only typed into its
   own system's addresses. The user types it into the desk page; never ask for it in the

@@ -75,6 +75,22 @@ def test_what_a_page_flags_is_named():
     assert pipeline._flagged({"fields": 16, "actions": ["Error-Email", "Next"], "errors": []}) == ["“Email” needs fixing"]
 
 
+def test_what_a_create_account_form_wants_is_named():
+    """A Create Account form that didn't go through: what the site said and marked on it, or else
+    the boxes still empty that it needs (never a "keep me informed" one), or nothing at all."""
+    left = {"errors": ["1 error found", "Your password must contain\n at least one symbol."],
+            "actions": [{"text": "Error - Yes, I confirm that I have read the privacy notice."}, {"text": "Create Account"}]}
+    assert pipeline._account_wants(left, {}) == ("it says “Your password must contain at least one symbol”; "
+                                                 "“Yes, I confirm that I have read the privacy notice.” needs fixing.")
+    filled = {"fields": [{"kind": "checkbox", "label": "I am at least 18 years of age*", "required": True, "value": False},
+                         {"kind": "checkbox", "label": "Keep me informed, as the privacy notice describes", "value": False},
+                         {"kind": "text", "label": "Phone*", "required": True, "value": ""},
+                         {"kind": "password", "label": "Password*", "required": True, "value": ""}]}
+    assert pipeline._account_wants({"errors": []}, filled) == ("“I am at least 18 years of age” isn't ticked; "
+                                                               "“Phone” is still empty.")
+    assert pipeline._account_wants({}, {"fields": []}) == ""
+
+
 def test_one_button_apply_walks_the_whole_flow(srv, monkeypatch):
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
     job = srv.add_job(url=fixture_url("site/posting.html"), title="Field Service Engineer", company="Example Fab")["job"]
@@ -1207,6 +1223,148 @@ def test_a_new_account_the_site_takes_a_moment_over_is_signed_in_to(srv, monkeyp
     assert "wants something more" not in r.reason, (r.reason, r.log)
     assert r.log.count("filled the Create Account form with your details and saved password") == 1, r.log
     assert any(line.startswith("pressed \u201cSign In\u201d") for line in r.log) and r.seen_form, (r.reason, r.log)
+
+
+async def workday_did(page):
+    """What the Workday-like account page (site/workday-account.html) has seen in this tab."""
+    return await page.evaluate("() => Object.fromEntries(Object.entries(sessionStorage).filter(([k]) => "
+                               "k.startsWith('wd.')).map(([k, v]) => [k.slice(3), JSON.parse(v)]))")
+
+
+def test_a_workday_account_is_said_made_only_once_its_sign_in_gets_in(srv, monkeypatch, job_apply_home):
+    """A Workday site's Create Account wants its "I confirm that I have read the privacy notice" box
+    ticked (never a "keep me informed" one), and goes on to its Sign In whether or not it made the
+    account (live, Oct 2026). The desk said it had made the account as the button was pressed: it's
+    said only once the new account's sign-in gets in."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    saved_password(monkeypatch)
+    manage_accounts(job_apply_home)
+    job = srv.add_job(url=fixture_url("site/workday-account.html"), title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r, await workday_did(r.page)
+        finally:
+            await applier.stop()
+
+    r, did = run(go())
+    assert (did["privacy"], did["informed"], did["presses"], did["created"], did["signIns"]) == (True, False, 1, 1, 2), did
+    signed_in = max(i for i, line in enumerate(r.log) if line.startswith("pressed \u201cSign In\u201d"))
+    made = [i for i, line in enumerate(r.log) if line.startswith("created your account on")]
+    assert len(made) == 1 and signed_in < made[0], r.log
+    pressed = [line for line in r.log[:signed_in] if line.startswith("pressed \u201cCreate Account\u201d")]
+    assert len(pressed) == 1 and "after ticking \u201cYes, I confirm that I have read the privacy notice.\u201d" in pressed[0]
+    assert r.seen_form, (r.reason, r.log)
+
+
+def test_a_workday_create_account_that_doesnt_sign_in_goes_to_a_reset_not_round_again(srv, monkeypatch, job_apply_home):
+    """A Workday site, without the inbox watched (live, Oct 2026): the saved password didn't sign in,
+    Create Account went back to Sign In, the sign-in failed again, Create Account again, round and
+    round across a Resume, until the site said the account might be locked. One refused sign-in and
+    one Create Account that didn't take go to the password reset (the person follows its emailed
+    link); the counts hold across Resume, and the refused password is pressed at most twice (once
+    more after the reset)."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    saved_password(monkeypatch)
+    manage_accounts(job_apply_home)
+    job = srv.add_job(url=fixture_url("site/workday-account.html") + "?exists=another-password", title="FSE",
+                      company="Example Fab")["job"]
+    applier = Applier(srv)
+    seen = []
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            while True:  # the reset's email asked for, then Resume twice
+                await until(lambda: r.status not in ("queued", "running"), about=state(r))
+                seen.append((r.need, r.reason, await workday_did(r.page)))
+                if len(seen) == 3:
+                    return r
+                applier.enqueue(job["id"], front=True)
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    (need, reason, did), *after = seen
+    assert need == "email_code" and "Open the link in the email" in reason, (reason, r.log)
+    assert (did["signIns"], did["presses"], did.get("created", 0), did["resets"]) == (2, 1, 0, 1), did
+    for need, reason, did in after:  # once more after the reset, then never again
+        assert need == "sign_in" and "won't try it again for this job" in reason, (reason, r.log)
+        assert "before or after I pressed its Create Account" in reason and "might be locked" in reason, reason
+        assert (did["signIns"], did["presses"], did["resets"]) == (3, 1, 1), did
+    assert not any("created your account" in line for line in r.log), r.log
+
+
+def test_with_the_inbox_watched_a_workday_create_account_that_doesnt_sign_in_stops(srv, monkeypatch, job_apply_home):
+    """With the inbox watched, the reset comes first; no email comes, so the desk makes an account,
+    which a Workday site doesn't sign in to either. It stops there, never pressing Create Account or
+    the refused password again, Resume or not; a new password saved on the desk is tried."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "RESET_MAIL_WAIT", 4)
+    saved_password(monkeypatch)
+    manage_accounts(job_apply_home)
+    watched_inbox(monkeypatch)
+    job = srv.add_job(url=fixture_url("site/workday-account.html") + "?exists=another-password", title="FSE",
+                      company="Example Fab")["job"]
+    applier = Applier(srv)
+    seen = []
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status == "needs_you" and r.need != "email_code", timeout=60, about=state(r))
+            seen.append((r.need, r.reason, await workday_did(r.page)))
+            applier.enqueue(job["id"], front=True)  # Resume
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            seen.append((r.need, r.reason, await workday_did(r.page)))
+            monkeypatch.setenv("JOB_APPLY_SECRET_TEST_SITE_PASSWORD", "another-password")  # the account's, saved
+            applier.enqueue(job["id"], front=True)
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    for need, reason, did in seen:
+        assert need == "sign_in" and "won't try it again for this job" in reason, (reason, r.log)
+        assert (did["signIns"], did["presses"], did["resets"]) == (2, 1, 1), did
+    assert not any("created your account" in line for line in r.log), r.log
+    assert r.seen_form and r.need != "sign_in", (r.reason, r.log)
+
+
+@pytest.mark.parametrize("page, query, says", [
+    ("create-account-signin.html", "?policy", "it says \u201cYour password must contain at least one symbol\u201d."),
+    ("workday-account.html", "?create&adult", "\u201cI am at least 18 years of age\u201d isn't ticked."),
+])
+def test_a_create_account_that_doesnt_go_through_says_what_the_page_wants(srv, monkeypatch, job_apply_home, page, query,
+                                                                          says):
+    """Create Account pressed, and the form is still there: the card says what the page says (its
+    error), or names the boxes it requires that are still empty, not a guess at a picture code."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "ACCOUNT_WAIT", 2)  # (a form that says nothing is waited on that long)
+    saved_password(monkeypatch)
+    manage_accounts(job_apply_home)
+    job = srv.add_job(url=fixture_url(f"site/{page}") + query, title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert r.need == "sign_in" and f"it wants something more: {says} Finish it there" in r.reason, (r.reason, r.log)
+    assert "picture code" not in r.reason
 
 
 @pytest.mark.parametrize("page", ["signin-no-account.html", "signin-no-account-link.html",
