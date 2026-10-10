@@ -86,6 +86,7 @@ FAKE_PROFILE = {
 from job_apply import server  # noqa: E402
 from job_apply.fixtures import convert  # noqa: E402
 from job_apply.postings import fetch_posting  # noqa: E402
+from job_apply.search import title_matches  # noqa: E402
 from job_apply.autofill import is_empty_value, polarity  # noqa: E402
 from job_apply.search import load_companies, sitecore_search  # noqa: E402
 
@@ -183,7 +184,7 @@ async def check_company(company: dict[str, Any], out: Path, fixtures: bool, rec:
         rec["search_any"] = search_brief(found, company["name"])
     if not found["results"]:
         return
-    first = found["results"][0]
+    first = best_posting(found["results"])
 
     posting = None
     try:
@@ -1070,6 +1071,13 @@ async def list_probe(questions: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return out
 
 
+def best_posting(results: list[dict[str, Any]]) -> dict[str, Any]:
+    """The first posting whose title is the kind of job looked for. Workday's search matches
+    words anywhere in a posting ("human resources" in its equal-opportunity text), so its first
+    result for an HR applicant can be a software job: the run then tested nothing of the role."""
+    return next((r for r in results if title_matches(r.get("title") or "", f"{QUERY_AZ} | {QUERY_ANY}")), results[0])
+
+
 async def check_pipeline(company: dict[str, Any], out: Path, rec: dict[str, Any], fixtures: bool = False) -> None:
     from job_apply.pipeline import Applier, question_key
 
@@ -1080,7 +1088,7 @@ async def check_pipeline(company: dict[str, Any], out: Path, rec: dict[str, Any]
     if not found["results"]:
         rec["note"] = "no postings found"
         return
-    first = found["results"][0]
+    first = best_posting(found["results"])
     rec["posting"] = {k: first.get(k) for k in ("title", "location", "url")}
     apply_url = ""
     try:  # as the desk does: the posting's own apply link, when it has one
