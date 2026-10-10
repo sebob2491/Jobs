@@ -26,6 +26,8 @@ The outcomes:
 An employer missing from a check that finished has left the list ("removed"). One missing
 from a check that didn't finish (--partial) keeps its last outcome, and a check that reported
 no employers at all keeps all of its last outcomes: a broken run isn't an employer's change.
+Nor is a site down for its maintenance (Workday's at weekends): "site down" keeps the
+employer's last outcome too.
 """
 
 from __future__ import annotations
@@ -68,6 +70,12 @@ def _join(*parts: Any) -> str:
     return " · ".join(str(p) for p in parts if p)
 
 
+# What the search or the Job Desk says of a site down for its maintenance (job_apply.search,
+# pipeline: "... is down for maintenance"): no outcome of the employer's own
+SITE_DOWN = "site down"
+_DOWN = re.compile(r"\bdown for maintenance\b", re.I)
+
+
 def pipeline_outcome(rec: dict[str, Any]) -> Result:
     """One LIVE_PIPELINE record: where the pipeline ended on the employer's posting."""
     title = _short((rec.get("posting") or {}).get("title"), 45)  # room for the reason, which says more
@@ -75,8 +83,11 @@ def pipeline_outcome(rec: dict[str, Any]) -> Result:
         return Result("crash", _join(title, rec["crash"]))
     rounds = rec.get("rounds") or []
     if not rounds:  # the search found no posting to run it on
-        return Result("no postings", rec.get("note") or "")
+        note = rec.get("note") or ""
+        return Result(SITE_DOWN if _DOWN.search(note) else "no postings", note)
     last = rounds[-1]
+    if last.get("need") == "stuck" and _DOWN.search(last.get("reason") or ""):
+        return Result(SITE_DOWN, _join(title, last.get("reason")))
     outcome = " ".join(p for p in (last.get("status") or "unknown", last.get("need") or "") if p)
     return Result(outcome, _join(title, last.get("reason")))
 
@@ -95,7 +106,7 @@ def search_outcome(rec: dict[str, Any]) -> Result:
     # one wording (or one later page) failing while the others answer is a bad night for the
     # site, not a broken search: it would flip the result back and forth from night to night
     if errors and not (any(s.get("count") for s in searches) or all(_PARTLY.search(e) for e in errors)):
-        return Result("error", errors[0])
+        return Result(SITE_DOWN if all(_DOWN.search(e) for e in errors) else "error", errors[0])
     if not searches:  # crashed or timed out before the search answered
         return Result("error", rec.get("crash") or "no search result")
     in_az = rec["search_az"].get("count", 0) if rec.get("search_az") else 0
@@ -166,7 +177,9 @@ def compare(previous: dict[str, dict[str, str]] | None, current: dict[str, dict[
         saved = {name: r.outcome for name, r in now.items()}
         if before is not None:
             for name in sorted(now, key=str.lower):
-                if before.get(name) != now[name].outcome:
+                if now[name].outcome == SITE_DOWN and name in before:  # down for the night: not its change
+                    saved[name] = before[name]
+                elif before.get(name) != now[name].outcome:
                     changes.append(Change(check, name, before.get(name), now[name].outcome, now[name].detail))
             for name in sorted(set(before) - set(now), key=str.lower):
                 if check in partial:  # not reached this time: not a change

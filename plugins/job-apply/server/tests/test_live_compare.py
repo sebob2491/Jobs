@@ -304,3 +304,24 @@ def test_the_finance_pipeline_check_is_a_check_of_its_own(tmp_path):
                                   hr_records=[pipeline_rec("Axon")], finance_records=fin2)
     assert outputs["changes"] == "1"
     assert "EY: `needs_you your_submit` → `needs_you sign_in`" in comment.split("finance jobs", 1)[1]
+
+
+def test_a_site_down_for_maintenance_keeps_its_employers_last_outcome():
+    """Workday's weekend maintenance (live, Oct 2026) sent every Workday employer's search to its
+    maintenance page: a night's run would have reported each one as changed to "no postings",
+    and changed back the next night. Down for maintenance is no outcome of the employer's own."""
+    down = {"company": "KLA", "seconds": 3,
+            "note": "no postings found (the search failed: SearchError: kla.wd1.myworkdayjobs.com is down for "
+                    "maintenance (it sends searches to community.workday.com/maintenance-page); try again in a few hours)"}
+    assert lc.pipeline_outcome(down).outcome == lc.SITE_DOWN
+    stopped = pipeline_rec("ASML", "needs_you", "stuck", "ASML's site is down for maintenance (it sent the job to "
+                           "https://www.asml.com/en/maintenance). Try again in a few hours: press Resume once it's back.")
+    assert lc.pipeline_outcome(stopped).outcome == lc.SITE_DOWN
+    assert lc.search_outcome(search_rec("KLA", az=0, error="SearchError: kla.wd1.myworkdayjobs.com is down for "
+                                         "maintenance (...); try again in a few hours")).outcome == lc.SITE_DOWN
+    previous = {"pipeline": {"KLA": "needs_you sign_in", "ASML": "needs_you sign_in", "Intel": "needs_you sign_in"}}
+    current = {"pipeline": {"KLA": lc.pipeline_outcome(down), "ASML": lc.pipeline_outcome(stopped),
+                            "Intel": Result("ready", "")}}
+    state, changes = lc.compare(previous, current)
+    assert [(c.employer, c.after) for c in changes] == [("Intel", "ready")]
+    assert state["pipeline"] == {"ASML": "needs_you sign_in", "Intel": "ready", "KLA": "needs_you sign_in"}
