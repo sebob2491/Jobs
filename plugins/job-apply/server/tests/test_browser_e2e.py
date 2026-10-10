@@ -1167,3 +1167,43 @@ def test_a_long_requirement_row_is_its_questions_label_not_its_number(srv):
     assert labels[1].startswith("Experience in system integrated Enterprise Resource Planning (ERP)")
     assert labels[1].endswith("…") and len(labels[1]) <= 300
     assert labels[2] == "I Agree"
+
+
+def test_a_sign_in_window_that_closes_itself_hands_back_to_the_tab_that_opened_it(srv):
+    """A job's tab opens a sign-in window, which the desk follows, and the window closes itself
+    once the person is in. With the desk's one tab per job, the tools go back to the tab that
+    opened it: the tab's close forgot its opener before that was looked up, so the job failed
+    with "The tab this application was in has been closed"."""
+    async def go():
+        tab = await srv.browser.new_tab()
+        await tab.goto(fixture_url("site/step1.html"))
+        srv.browser.strict_tabs = True
+        try:
+            async with tab.expect_popup() as opened:
+                await tab.evaluate("u => { window.open(u) }", fixture_url("site/signin.html"))
+            popup = await opened.value
+            assert srv.browser.use_tab(popup)  # (followed, as a click of the desk's would be)
+            await popup.evaluate("() => window.close()")
+            await popup.wait_for_event("close")
+            return tab, await srv.browser.page()
+        finally:
+            srv.browser.strict_tabs = False
+
+    tab, now = run(go())
+    assert now is tab
+
+
+def test_a_jobs_own_tab_closed_is_still_said_closed(srv):
+    """The tab a job was opened in, closed (not a window it opened): nothing to go back to."""
+    async def go():
+        tab = await srv.browser.new_tab()
+        await tab.goto(fixture_url("site/step1.html"))
+        srv.browser.strict_tabs = True
+        try:
+            await tab.close()
+            with pytest.raises(browser_module.TabClosed):
+                await srv.browser.page()
+        finally:
+            srv.browser.strict_tabs = False
+
+    run(go())

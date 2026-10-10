@@ -432,9 +432,15 @@ class BrowserSession:
         if not getattr(tab, "_ja_watched", False):
             tab._ja_watched = True  # type: ignore[attr-defined]
             tab.on("popup", lambda popup: self._on_popup(tab, popup))
-            tab.on("close", lambda _: (self._openers.pop(tab, None), self.tab_jobs.pop(tab, None)))  # type: ignore[call-overload]  # the handler's result is unused
+            tab.on("close", lambda _: self._closed(tab))
             tab.on("crash", lambda _: self._crashed.add(tab))
             tab.on("close", lambda _: self._crashed.discard(tab))
+
+    def _closed(self, tab: Page) -> None:
+        opener = self._openers.pop(tab, None)
+        self.tab_jobs.pop(tab, None)
+        if tab is self._page and opener is not None and not opener.is_closed():
+            self._page = opener  # a popup that closed itself (a sign-in window): back to its tab
 
     def _on_popup(self, opener: Page, popup: Page) -> None:
         # "Apply" buttons often open the application in a new tab: follow it, but only from
@@ -459,11 +465,8 @@ class BrowserSession:
         if self._ctx is None:
             await self._launch()
         assert self._ctx is not None
-        if self._page is None or self._page.is_closed():
-            opener = self._openers.get(self._page) if self._page is not None else None
-            if opener is not None and not opener.is_closed():
-                self._page = opener  # a popup that closed itself (a sign-in window): back to its tab
-            elif self.strict_tabs:
+        if self._page is None or self._page.is_closed():  # (a popup that closed itself is already back on its tab)
+            if self.strict_tabs:
                 raise TabClosed("The tab this application was in has been closed.")
             else:
                 live = [p for p in self._ctx.pages if not p.is_closed()]
