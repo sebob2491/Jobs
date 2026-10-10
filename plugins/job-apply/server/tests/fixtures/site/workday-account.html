@@ -12,7 +12,13 @@
      ?create: the step starts on Create Account. ?adult: Create Account also requires an "18 or older"
      box, and says nothing when it's left empty. ?candidate: Create Account also wants its "Yes, I am a new
      candidate and not a current employee" box ticked (not marked required), and says nothing when it's left
-     empty, as Banner Health's did. -->
+     empty, as Banner Health's did.
+     ?verify: an account made here must be verified before it signs in (Banner Health's, live, Oct 2026):
+     Create Account goes back to Sign In saying "An email has been sent to you. Please verify your account",
+     and the password is refused until the link in that email was opened. The link is workday-verify.html,
+     opened in another tab: over http its localStorage stands in for the site's own records, shared by the
+     browser's tabs (a file:// page has none: there wd.verified, in this tab's sessionStorage, is the link
+     opened elsewhere). ?verify=late: Sign In says so only once its button is pressed. -->
 <a href="#">Back to Job Posting</a>
 <h2>Field Service Engineer</h2>
 <h3>current step 1 of 7 Create Account/Sign In</h3>
@@ -25,19 +31,25 @@
   if (q.has('exists') && got('account', null) === null) put('account', q.get('exists'));
   const step = document.getElementById('step');
   const $ = (id) => document.getElementById(id);
+  const VERIFY = 'An email has been sent to you. Please verify your account';
+  const verified = () => {
+    try { return got('verified', false) || localStorage.getItem('wd.verified') === 'yes'; } catch (e) { return got('verified', false); }
+  };
+  const unverified = () => q.has('verify') && got('created', 0) > 0 && !verified();
 
   function signIn() {
     step.innerHTML = '<h2>Sign In</h2>'
       + '<label for="em">Email Address</label><input id="em" type="text">'
       + '<label for="pw">Password</label><input id="pw" type="password">'
       + '<button type="button" id="go">Sign In</button>'
-      + '<div id="err" role="alert"></div>'
+      + '<div id="err" role="alert">' + (unverified() && q.get('verify') !== 'late' ? VERIFY : '') + '</div>'
       + '<button type="button" id="forgot">Forgot your password?</button>'
       + '<div>Don\'t have an account yet? <button type="button" id="create">Create Account</button></div>';
     $('go').addEventListener('click', () => {
       bump('signIns');
       const account = got('account', null);
-      if (account !== null && $('pw').value === account) location.href = 'step1.html';
+      if (unverified()) $('err').textContent = VERIFY;
+      else if (account !== null && $('pw').value === account) location.href = 'step1.html';
       else $('err').textContent = 'You may have entered the wrong email address or password or your account might be locked.';
     });
     $('forgot').addEventListener('click', forgot);

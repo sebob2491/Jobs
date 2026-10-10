@@ -346,6 +346,9 @@ class Run:
     once_page: dict[str, tuple] = field(default_factory=dict)  # where each this-application answer went in
     mail_checked: float = 0.0  # when the inbox was last looked at for its emailed code or link
     mail_done: bool = False  # the code or link from the inbox went in: no more looking
+    # This pause waits for the verification email of the account the desk just made (_await_verify_email):
+    # a Resume after it, or its link opened from the inbox, means the account is verified: signed in to once
+    verifying: bool = False
     # Submit was pressed for this job before and no confirmation showed (its folder keeps the
     # record): it may have gone, so it's never pressed again without the person
     pressed_before: bool = False
@@ -358,7 +361,7 @@ class Run:
                                                                      "reset_asked", "reset_from", "reset_waited",
                                                                      "reset_no_mail", "sign_in_tries", "sign_in_key",
                                                                      "accounts_tried", "account_made", "account_page",
-                                                                     "account_finished")}
+                                                                     "account_finished", "verifying")}
 
 
 def classify(data: dict[str, Any], text: str) -> str:
@@ -1049,6 +1052,8 @@ class Applier:
                 self._log(run, f"opened the confirmation link from your email (sent from {found.sender})")
                 if run.page is not None and not run.page.is_closed():
                     await run.page.reload()
+                if run.verifying:  # the account's verified: the Sign In it paused on (the same page, reloaded) is past the pause
+                    run.pause_sig = None
         except Exception as e:  # a slow site or a closed tab: the person finishes it, as without the inbox
             run.mail_done = True
             self._log(run, f"couldn't use the {found.kind} from your email ({type(e).__name__}); "
@@ -1125,7 +1130,7 @@ class Applier:
         run.blocking = need in HANDS_ON
         run.paused_at = run.active_at = time.time()
         run.tab_mark, run.left, run.moved_since = 0, False, 0.0
-        run.mail_checked, run.mail_done = 0.0, False
+        run.mail_checked, run.mail_done, run.verifying = 0.0, False, False
         run.paused_site = _site_key(run.url)
         run.paused_host = urlparse(run.url).hostname or ""
         run.hold_host = ""
@@ -1372,6 +1377,11 @@ class Applier:
                 if asked == "no_account":
                     sign_ins["submitted"] = 1
                     continue
+            if (kind == "sign_in" and manage and sign_ins.get("made") and _VERIFY_EMAIL.search(said_exists)
+                    and sum(f.get("kind") == "password" for f in data.get("fields") or []) == 1):
+                # the account just made says it emailed a link to verify it (Banner Health's Workday, live,
+                # Oct 2026): its Sign In takes no password before the link is opened
+                return await self._await_verify_email(run, data)
             if kind == "sign_in":
                 # With the inbox watched, a refused password is reset before a new account is made (the
                 # owner's choice: an account there already is the likelier, on a second application)
@@ -2422,6 +2432,29 @@ class Applier:
         if watched:  # nothing for the person to do: the queue goes on, and the job is picked up again after
             run.blocking, run.left = False, True
             self._wake.set()
+
+    async def _await_verify_email(self, run: Run, data: dict[str, Any]) -> None:
+        """The Sign In a Workday site goes back to after the desk made the account says it emailed a link
+        to verify it (Banner Health's, live, Oct 2026: "An email has been sent to you. Please verify your
+        account"). The saved password isn't taken until that link is opened (the desk pressed Sign In, was
+        refused and stopped on "your saved password didn't sign in"), so it isn't pressed yet, and a
+        refusal before this, for the same reason, doesn't count against the job's sign-ins. With the inbox
+        watched, the link is opened in this browser when its email comes (_check_mail), and the job goes
+        on to sign in, once; without it the person opens the link, then presses Resume, which signs in once."""
+        run.sign_in_tries = min(run.sign_in_tries, SIGN_IN_TRIES - 1)
+        site = _site(run, data)
+        said = f"{site} emailed you a link to verify your new account, and won't sign in until it's opened."
+        if self.mail_login() is not None:
+            self._pause(run, "email_code", f"{said} The desk is watching your inbox for it: it opens the link, then signs "
+                        "in with your saved password. The other jobs carry on meanwhile.", seen=data)
+            run.blocking, run.left = False, True  # nothing for the person to do: the queue goes on
+            self._wake.set()
+        else:
+            await self._bring_forward(run)
+            self._pause(run, "sign_in", f"{said} Open the link in that email, then press Resume: the desk signs in with "
+                        "your saved password (an email app password saved on the desk lets it open the link itself).",
+                        seen=data)
+        run.verifying = True
 
     def _reset_overdue(self, run: Run) -> bool:
         """Waiting on a reset email, with the inbox watched, that hasn't come in RESET_MAIL_WAIT."""
