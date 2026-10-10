@@ -31,14 +31,22 @@ def test_the_desks_browser_doesnt_offer_to_save_passwords(tmp_path):
     fresh = tmp_path / "fresh"
     quiet_password_manager(fresh)
     prefs = json.loads((fresh / "Default" / "Preferences").read_text())
-    assert prefs["credentials_enable_service"] is False and prefs["profile"]["password_manager_enabled"] is False
+    assert prefs == {"credentials_enable_service": False, "credentials_enable_autosignin": False,
+                     "profile": {"password_manager_enabled": False, "password_manager_leak_detection": False}}
+    assert oct((fresh / "Default").stat().st_mode & 0o777) == "0o700"  # private, as the browser makes it
+    quiet_password_manager(fresh)  # already quiet: left as it is
+    assert not (fresh / "Default" / "Preferences.tmp").exists()
 
     used = tmp_path / "used"
     (used / "Default").mkdir(parents=True)
     (used / "Default" / "Preferences").write_text(json.dumps({"profile": {"name": "Person 1"}, "homepage": "x"}))
     quiet_password_manager(used)
     prefs = json.loads((used / "Default" / "Preferences").read_text())
-    assert prefs["profile"] == {"name": "Person 1", "password_manager_enabled": False} and prefs["homepage"] == "x"
+    assert prefs["profile"] == {"name": "Person 1", "password_manager_enabled": False,
+                                "password_manager_leak_detection": False} and prefs["homepage"] == "x"
+    written = (used / "Default" / "Preferences").read_text()
+    quiet_password_manager(used)
+    assert (used / "Default" / "Preferences").read_text() == written
 
     broken = tmp_path / "broken"
     (broken / "Default").mkdir(parents=True)

@@ -8,6 +8,7 @@ can watch every step and take over at any time.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import os
 import re
@@ -169,11 +170,18 @@ UNAVAILABLE_HELP = (
 )
 
 
+# The browser's own password offers, off in the desk's profile: saving, signing in with a saved
+# one, and the "found in a data breach" check after one is typed
+_QUIET = {"credentials_enable_service": False, "credentials_enable_autosignin": False}
+_QUIET_PROFILE = {"password_manager_enabled": False, "password_manager_leak_detection": False}
+
+
 def quiet_password_manager(profile: Path) -> None:
     """Turn off the browser's own "Save password?" offer in the desk's profile, before it starts:
     the desk keeps the passwords (on its page) and types them in itself, and the bubble popped
-    up over the page after every sign-in. The profile's other settings are kept, and one that
-    can't be read is left as it is."""
+    up over the page after every sign-in. The profile's other settings are kept, a file that
+    can't be read is left as it is, and the file is replaced whole (a half-written one would
+    reset the profile)."""
     prefs = profile / "Default" / "Preferences"
     try:
         data = json.loads(prefs.read_text(encoding="utf-8")) if prefs.exists() else {}
@@ -183,16 +191,19 @@ def quiet_password_manager(profile: Path) -> None:
         return
     found = data.get("profile")
     profile_prefs: dict[str, Any] = found if isinstance(found, dict) else {}
-    if (data.get("credentials_enable_service") is False and data.get("credentials_enable_autosignin") is False
-            and profile_prefs.get("password_manager_enabled") is False):
+    if all(data.get(k) == v for k, v in _QUIET.items()) and all(profile_prefs.get(k) == v for k, v in _QUIET_PROFILE.items()):
         return
-    data.update(credentials_enable_service=False, credentials_enable_autosignin=False,
-                profile={**profile_prefs, "password_manager_enabled": False})
+    data.update(_QUIET, profile={**profile_prefs, **_QUIET_PROFILE})
+    temp = prefs.with_name(prefs.name + ".tmp")
     try:
-        prefs.parent.mkdir(parents=True, exist_ok=True)
-        prefs.write_text(json.dumps(data), encoding="utf-8")
+        for folder in (profile, prefs.parent):  # private, as the browser makes them
+            folder.mkdir(mode=0o700, exist_ok=True)
+        with os.fdopen(os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w", encoding="utf-8") as f:
+            f.write(json.dumps(data))
+        os.replace(temp, prefs)
     except OSError:
-        pass
+        with contextlib.suppress(OSError):
+            temp.unlink()
 
 
 def profile_dir(usual: Path, attempt: dict[str, Any], settings: config.Settings) -> Path:
