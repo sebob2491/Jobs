@@ -1,6 +1,6 @@
 {
   "name": "job-apply",
-  "version": "0.3.81",
+  "version": "0.3.82",
   "description": "Apply to jobs from LinkedIn, Indeed and company career sites (Workday, Greenhouse, Lever, Eightfold, SuccessFactors...). Claude reads the posting, fills the application in a real browser from your profile, tracks every application, and you approve the submit.",
   "author": {
     "name": "sebob2491"
