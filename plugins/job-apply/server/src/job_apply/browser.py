@@ -145,6 +145,9 @@ LOST_FILL_TRIES = 3  # times a box is typed again on a page, at most (one the pa
 BLOCK_DRAW_WAIT = 6000  # ms for blocks just added (Workday's Education 2) to draw their boxes, at most
 # How long a click may wait for its button to become clickable, in ms.
 CLICK_TIMEOUT = 8000
+# How long a box under an overlay (or being drawn again) may take to take the focus, in ms: not
+# Playwright's 30 s for each of Workday's 16 date parts on My Experience
+FOCUS_TIMEOUT = 5000
 # What a page says once an application has gone ("Thanks for applying!", Oracle's "Thank you for
 # your job application", "Thank you for submitting your application"); only words that weren't
 # on the page before Submit count. Not "Thank you for your interest", which a sign-in page says
@@ -659,7 +662,7 @@ class BrowserSession:
                 return
             except (PlaywrightError, PlaywrightTimeout):
                 pass
-        await loc.focus()
+        await loc.focus(timeout=FOCUS_TIMEOUT)
         await loc.press("ArrowDown")
 
     async def _field_options(self, page: Page, field_id: str, loc: Locator, wait_ms: int) -> list[str]:
@@ -1265,7 +1268,7 @@ class BrowserSession:
                 except PlaywrightTimeout:
                     covered = True
             if covered:
-                await loc.focus()
+                await loc.focus(timeout=FOCUS_TIMEOUT)
             await loc.fill("")
             await loc.press_sequentially(text, delay=40)
             await loc.evaluate("el => el.blur()")

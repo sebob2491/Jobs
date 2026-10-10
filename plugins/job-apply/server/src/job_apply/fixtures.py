@@ -109,7 +109,10 @@ def _pattern(secret: str, inside: bool = False) -> str:
     "janedoe"). Several words may run on at the end, as an address written out does
     ("742 W Evergreen Terrace"). `inside`: for the name of something (`_RUN`), where a surname
     often follows an initial ("jdoe1987"), the value with the letters it runs on into, so none are
-    left to guess it by (not "dREDACTEDboard" for "Ash"); only a digit beside a digit keeps it apart."""
+    left to guess it by; only a digit beside a digit keeps it apart. A short value (under 5 letters
+    or digits) only with an initial or two beside it ("jdoe", "JDoe", its word ending where the case
+    turns too: "JDoeResume"), since in a longer word it's that word's, not the person's: not "Tom" in
+    "custom_field", nor "Ted" in "status=accepted". A longer one goes wherever it is ("samrivera87")."""
     if secret.isdigit() and len(secret) >= 7:  # its country code (or the US one), or a 0 before it, may be left off
         apart = r"[\s.\-()]*"
         return (rf"(?<!\d)(?:\+?{apart.join(secret[:-10] or '1')}[\s.\-]*|0[\s.\-]*)?{apart.join(secret[-10:])}"
@@ -119,7 +122,13 @@ def _pattern(secret: str, inside: bool = False) -> str:
     humps = len(secret) >= 3  # a two-letter name only as a word of its own: not "Do" in "toDo"
     body = (_edge(words[0][0], False, humps, inside) + r"[\s.,_\u00a0-]*".join(map(re.escape, words))
             + (_edge(words[-1][-1], True, humps, inside) if len(words) == 1 else ""))
-    return rf"(?<!{_LETTER}){_LETTER}*?(?:{body}){_LETTER}*" if inside else body
+    if not inside:
+        return body
+    if sum(c.isalnum() for c in secret) >= 5:
+        return rf"(?<!{_LETTER}){_LETTER}*?(?:{body}){_LETTER}*"
+    # up to 2 letters beside it, before or after, in a word that begins and ends where letters do or the case turns
+    start, end = rf"(?:(?<!{_LETTER})|{_HUMP})", rf"(?:(?!{_LETTER})|{_HUMP})"
+    return rf"{start}(?:{_LETTER}{{0,2}}(?:{body})|{_LETTER}?(?:{body}){_LETTER}|(?:{body}){_LETTER}{{2}}){end}"
 
 
 def _in_names(text: str, find: re.Pattern[str]) -> str:
@@ -129,9 +138,10 @@ def _in_names(text: str, find: re.Pattern[str]) -> str:
 
 def redact(text: str, secrets: list[str]) -> str:
     """`text` with each of `secrets` taken out as a whole word (`_pattern`), and also where it runs
-    into other letters in the name of something (`_RUN`), with those letters: "jdoe1987" and
-    "JDoe_Resume.pdf" become "REDACTED1987" and "REDACTED_Resume.pdf" for a surname "Doe", while
-    "Problem" keeps a name "Rob"."""
+    into other letters in the name of something (`_RUN`), with those letters when they're an initial
+    or two or the value is long: "jdoe1987" and "JDoe_Resume.pdf" become "REDACTED1987" and
+    "REDACTED_Resume.pdf" for a surname "Doe", and "samrivera87" "REDACTED87" for "Rivera", while
+    "custom_field" keeps a name "Tom" and "Problem" keeps "Rob"."""
     for s in secrets:
         # a two-letter name only as written ("Al", "Do"): not "all", nor "do" in a question
         text = re.sub(_pattern(s), REDACTED, text, flags=0 if len(s) < 3 else re.I)

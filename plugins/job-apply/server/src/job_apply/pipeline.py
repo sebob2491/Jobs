@@ -34,8 +34,8 @@ from . import config, mailbox, report
 from .ats import ATS_NAMES, detect_ats, shared_system
 from .autofill import (clean_label, entry_of, is_empty_value, no_choice_for_no_degree, norm, plan_autofill,
                        polarity, tailored_document)
-from .browser import (TabClosed, _accepts_cookies, _cookie_setting, confirmations, declines_cookies, final_text,
-                      may_accept_cookies)
+from .browser import (CONFIRMATION_RE, TabClosed, _accepts_cookies, _cookie_setting, confirmations, declines_cookies,
+                      final_text, may_accept_cookies)
 
 NEW_TAB_WAIT = 4  # seconds to wait for a tab opened late by a click before calling it a stall
 ONCE_SETTLE = 1.0  # seconds after filling the person's answers before checking they stayed in
@@ -69,7 +69,7 @@ RESET_MAIL_WAIT = 3 * 60
 ACCOUNT_WAIT = 15
 # A site locks an account after a few refused sign-ins: a job's sign-in is pressed with the same saved
 # password this many times at most (once more after a password reset or an account the desk made, and
-# after each Resume the person presses)
+# after each Resume the person presses on a sign-in card)
 SIGN_IN_TRIES = 2
 NOTICE_WAIT = 5  # seconds for a notice agreed to for the person to go (one may fade out)
 # A job that went in keeps its tab (its confirmation, for the person to see) while it's among the newest
@@ -146,6 +146,11 @@ _STEP_OF = re.compile(r"\bstep (\d+) of (\d+)\b", re.I)  # a progress bar's plac
 # application or on the page that thanks the person for one: its boxes and button are never the application's
 _SIDE_BOX = re.compile(r"job alerts?|alerts? by e-?mail|e-?mail alerts?|newsletter|\bsubscribe\b|talent (?:community|"
                        r"network|pool)|notify me|similar (?:jobs|openings|roles)|stay (?:connected|in touch)", re.I)
+# Words that ask the person to go on with the form, after a step of it thanks them for applying
+# ("Thank you for your application. Please complete the below questions.")
+_GO_ON = re.compile(r"\bplease (?:complete|continue|answer|proceed|fill|finish|go on)\b|\b(?:complete|answer|"
+                    r"fill (?:in|out)|respond to) (?:the |these |all )?(?:following|below|remaining)\b|"
+                    r"\b(?:following|below|remaining) questions\b|\bquestions below\b", re.I)
 _SIGN_IN_STEP = re.compile(r"create account\s*/\s*sign in|sign in\s*/\s*create account", re.I)  # Workday's step name
 _ENTRY = re.compile(r"^(apply manually|apply now|apply online|apply|easy apply|quick apply|"
                     r"apply for (?:this|the) (?:job|position|role)(?: online)?|"
@@ -388,12 +393,15 @@ class Applier:
         return run
 
     def resume(self, job_id: int) -> Run:
-        """The person pressed Resume. A saved password the site refused gets one more press: they may
-        have reset the password to it by hand, as the card asks. One for each Resume, and none when the
-        queue carries on with the job by itself."""
+        """The person pressed Resume. On a sign-in card, a saved password the site refused gets one more
+        press: they may have reset the password to it by hand, as the card asks. One for each such Resume;
+        none for a Resume on any other card (a question, a stuck page), nor when the queue carries on with
+        the job by itself."""
         run = self.runs.get(job_id)
+        signing_in = run is not None and run.need == "sign_in"  # (before enqueue clears it)
         run = self.enqueue(job_id, submit=bool(run and run.submit), front=True)
-        run.sign_in_tries = min(run.sign_in_tries, SIGN_IN_TRIES - 1)
+        if signing_in:
+            run.sign_in_tries = min(run.sign_in_tries, SIGN_IN_TRIES - 1)
         return run
 
     def submit_now(self, job_id: int) -> Run:
@@ -695,7 +703,9 @@ class Applier:
         job = self.srv.tracker().get(run.job_id, with_description=False) or {}
         own = [u for u in (run.url, job.get("url"), job.get("apply_url")) if u]
         # a site that names the job in its address's query (an Eightfold site's /careers?pid=123):
-        # ?pid=999 there is another job, and /careers?query=... with no id its careers home
+        # ?pid=999 there is another job, and /careers?query=... with no id its careers home. One with
+        # no query at all is the job's own page, its address rewritten by the site's script
+        # (/careers/job?gh_jid=123 to /careers/job, the application still open)
         mine: dict[str, set[str]] = {}
         for u in own:
             for key, value in _job_ids(u).items():
@@ -703,7 +713,7 @@ class Applier:
         theirs = _job_ids(tab.url)
         if not any(k in mine and v not in mine[k] for k, v in theirs.items()):  # (not another job's)
             if any(_bare(tab.url) == _bare(u) for u in own):
-                if not mine or any(k in theirs for k in mine):
+                if not mine or any(k in theirs for k in mine) or not urlparse(tab.url).query:
                     return False  # the posting, its application, or the page it was left on
             elif not any(_above(tab.url, u) for u in own):
                 return False
@@ -1025,7 +1035,8 @@ class Applier:
             run.page_info = _page_info(data)
             run.url = data["url"]
             run.page = srv.browser.current_tab or run.page
-            if run.seen_form and not pressed and (gone := sorted(confirmations(text))) and not _mid_application(data):
+            if (run.seen_form and not pressed and (gone := sorted(confirmations(text)))
+                    and not _mid_application(data, text)):
                 # Back on a job the desk filled in, before it has pressed anything: the person pressed the
                 # site's own Submit and then Resume (Workday's Candidate Home shows "Application Submitted").
                 # It went, so it's marked applied and never filled in again. (Not a step of the form that
@@ -1950,8 +1961,8 @@ class Applier:
 
         None when there's nothing (more) to do. `tried` counts what this pass already did, and the
         run what the whole job did (Run.sign_in_tries: never more than SIGN_IN_TRIES with one saved
-        password, but for one more after a reset, a new account or a Resume); `details=False` leaves a
-        Create Account form's other boxes as they are."""
+        password, but for one more after a reset, a new account or a Resume on its sign-in card);
+        `details=False` leaves a Create Account form's other boxes as they are."""
         srv = self.srv
         secret = password_for(data["url"])
         saved = _secret(secret) if secret is not None else None
@@ -2391,23 +2402,49 @@ def _empty_required(data: dict[str, Any]) -> list[dict[str, Any]]:
 def _application_boxes(data: dict[str, Any]) -> list[dict[str, Any]]:
     """A page's boxes but a sign-up's for job alerts, a newsletter or a talent community: those whose
     own words say so, and the one or two name and email boxes of a page whose headings or buttons are
-    about one ("Get job alerts": Email, Subscribe), as the form reader tells such a box's Submit."""
-    boxes = [f for f in data.get("fields") or [] if not f.get("disabled")
-             and not _SIDE_BOX.search(" ".join(str(f.get(k) or "") for k in ("label", "section", "sublabel")))]
+    about one ("Get job alerts": Email, Subscribe), as the form reader tells such a box's Submit. Those
+    stay where they may be the application's after all: beside a step button (a sign-up has its own
+    Subscribe or Sign up, not Next), or on a page whose sign-up email box its own words tell already."""
+    fields = [f for f in data.get("fields") or [] if not f.get("disabled")]
+    side = [bool(_SIDE_BOX.search(" ".join(str(f.get(k) or "") for k in ("label", "section", "sublabel"))))
+            for f in fields]
+    boxes = [f for f, s in zip(fields, side) if not s]
     about = any(_SIDE_BOX.search(h) for h in data.get("headings") or []) or any(
         a.get("aside") or _SIDE_BOX.search(a.get("text") or "") for a in data.get("actions") or [])
-    if about and len(boxes) <= 2 and all(_CONTACT_FIELD.match(norm(clean_label(f.get("label") or ""))) for f in boxes):
+    told = any(s and f.get("kind") == "text" for f, s in zip(fields, side))  # ("Get job alerts by email")
+    if (about and len(boxes) <= 2 and not told and not _step_beside(data)
+            and all(_CONTACT_FIELD.match(norm(clean_label(f.get("label") or ""))) for f in boxes)):
         return []
     return boxes
 
 
-def _mid_application(data: dict[str, Any]) -> bool:
-    """A page partway through the form, whatever its words: a progress bar short of its last step
-    (Workday's "current step 3 of 6"), a required box of the application's still empty, or a button on
-    to the next step beside its boxes (Save and Continue even with none: nothing is saved once it's
-    sent). Not a page that thanks the person and offers job alerts (a required Email, its Subscribe)
-    or a bare Continue (to a voluntary survey, or back to the careers site)."""
-    if any(int(m[1]) < int(m[2]) for h in data.get("headings") or [] for m in _STEP_OF.finditer(h)):
+def _step_beside(data: dict[str, Any]) -> bool:
+    """Is a step button (Next, Continue) beside a page's boxes, greyed out or not (until they're
+    filled in): one in a form with boxes, or any while no sign-up's button sits in a form of its own?
+    Not a survey's bare Continue beside a job-alerts form's Email and Subscribe."""
+    actions = data.get("actions") or []
+    framed = [bool(a.get("form_submit") or a.get("form_fields")) for a in actions]
+    own = any(a.get("aside") or f and _SIDE_BOX.search(a.get("text") or "") for a, f in zip(actions, framed))
+    return any(_FORWARD.match(final_text(a.get("text") or "")) and (f or not own) for a, f in zip(actions, framed))
+
+
+def _goes_on(text: str) -> bool:
+    """Does a page thank the person for applying and then ask them to go on, in the same sentence or
+    the next ("Thank you for your application. Please complete the below questions.")?"""
+    flat = re.sub(r"\s+", " ", (text or "").replace("\u2019", "'").replace("\xa0", " "))
+    return any(_GO_ON.search(" ".join(re.split(r"(?<=[.!?]) ", flat[m.end():], maxsplit=2)[:2]))
+               for m in CONFIRMATION_RE.finditer(flat))
+
+
+def _mid_application(data: dict[str, Any], text: str) -> bool:
+    """A page partway through the form, though it may thank the person for applying: one that asks them
+    to go on after that, a progress bar short of its last step (Workday's "current step 3 of 6"), a
+    required box of the application's still empty, or a button on to the next step beside its boxes
+    (Save and Continue even with none: nothing is saved once it's sent). Not a page that thanks the
+    person and offers job alerts (a required Email, its Subscribe) or a bare Continue (to a voluntary
+    survey, or back to the careers site). In doubt, partway: a confirmation missed leaves the person to
+    press "I submitted it", and an application taken for sent is never filled in again."""
+    if _goes_on(text) or any(int(m[1]) < int(m[2]) for h in data.get("headings") or [] for m in _STEP_OF.finditer(h)):
         return True
     boxes = _application_boxes(data)
     steps = [final_text(a.get("text") or "") for a in data.get("actions") or [] if not a.get("disabled")]
@@ -2432,8 +2469,9 @@ _JOB_ID_KEY = re.compile(r"pid|job|jid|gh_jid|job_?id|req_?id|job_?req_?id|requi
 
 
 def _job_ids(url: str) -> dict[str, str]:
-    """The job ids an address carries in its query, by key (lower case)."""
-    return {k.lower(): v for k, v in parse_qsl(urlparse(url).query) if _JOB_ID_KEY.fullmatch(k) and v}
+    """The job ids an address carries in its query, by key (lower case): values with a digit, as a
+    job's id has, not a word under one of those keys (?job=apply)."""
+    return {k.lower(): v for k, v in parse_qsl(urlparse(url).query) if _JOB_ID_KEY.fullmatch(k) and re.search(r"\d", v)}
 
 
 def _above(url: str, below: str) -> bool:

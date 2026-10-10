@@ -1312,28 +1312,96 @@ def test_a_form_page_that_thanks_the_person_isnt_taken_for_a_confirmation(srv, m
     assert srv.tracker().get(job["id"])["status"] != "applied"
 
 
-@pytest.mark.parametrize("data, mid", [
-    ({"fields": [{"kind": "select", "label": "Q", "required": True, "value": ""}], "actions": []}, True),
-    ({"fields": [], "actions": [{"text": "Save and Continue"}]}, True),
-    ({"fields": [], "actions": [], "headings": ["current step 3 of 6 Application Questions"]}, True),
-    ({"fields": [], "actions": [], "headings": ["current step 6 of 6 Review"]}, False),
+def test_a_first_step_that_thanks_the_person_isnt_taken_for_a_confirmation(srv, monkeypatch):
+    """A careers site's first step thanks the person ("Thanks for applying to Acme!") over its required
+    First Name and Email and their Next, and its footer asks them to join its talent community. Back on
+    the job before pressing anything, the desk took the two boxes for the talent community's and marked
+    the job applied: an application never sent, and never filled in again. A Next beside them is the
+    form's, and so are they."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    url = "https://careers.acme.example/apply/1"
+    first = ('<html><head><title>Acme application</title></head><body><h1>Thanks for applying to Acme!</h1>'
+             '<p>Tell us who you are to get started.</p><form method="post" action="/apply/2">'
+             '<label for="fn">First Name *</label><input id="fn" name="fn" required>'
+             '<label for="em">Email *</label><input id="em" name="em" type="email" required>'
+             '<button type="submit">Next</button></form><footer><h2>Join our talent community</h2>'
+             '<button type="button">Subscribe</button></footer></body></html>')
+    pages = {url: first,
+             ("POST", "https://careers.acme.example/apply/2"): _form("Acme", "Do you hold an active TS/SCI clearance?",
+                                                                    button="Next")}
+    posts: list[str] = []
+    job = srv.add_job(url=url, title="Field Service Engineer", company="Acme")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        await _serve(srv, pages, posts)
+        r = applier.enqueue(job["id"])
+        r.seen_form = True  # (filled before: the person pressed Resume)
+        applier.start()
+        try:
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert r.status != "submitted" and r.need == "questions", (r.status, r.need, r.reason, r.log)
+    assert posts == ["https://careers.acme.example/apply/2"]  # its first step filled in and sent on
+    assert srv.tracker().get(job["id"])["status"] != "applied"
+
+
+_FIRST_STEP = [{"kind": "text", "label": "First name*", "required": True, "value": ""},
+               {"kind": "text", "label": "Email*", "required": True, "value": "", "input_type": "email"}]
+
+
+@pytest.mark.parametrize("data, text, mid", [
+    ({"fields": [{"kind": "select", "label": "Q", "required": True, "value": ""}], "actions": []}, "", True),
+    ({"fields": [], "actions": [{"text": "Save and Continue"}]}, "", True),
+    ({"fields": [], "actions": [], "headings": ["current step 3 of 6 Application Questions"]}, "", True),
+    ({"fields": [], "actions": [], "headings": ["current step 6 of 6 Review"]}, "", False),
     ({"fields": [], "actions": [{"text": "Search for More Jobs"}, {"text": "Return to Home"}],
-      "headings": ["Application Submitted"]}, False),
+      "headings": ["Application Submitted"]}, "", False),
     # after the site's own Submit: job alerts (a required Email, its Subscribe), or on to a voluntary survey
     ({"fields": [{"kind": "text", "label": "Email*", "required": True, "value": ""}], "actions": [{"text": "Subscribe"}],
-      "headings": ["Thank you for applying!", "Get job alerts"]}, False),
-    ({"fields": [], "actions": [{"text": "Continue"}], "headings": ["Thank you for applying!"]}, False),
+      "headings": ["Thank you for applying!", "Get job alerts"]}, "", False),
+    ({"fields": [], "actions": [{"text": "Continue"}], "headings": ["Thank you for applying!"]}, "", False),
     ({"fields": [{"kind": "checkbox", "label": "Join our talent community", "required": True, "value": False},
                 {"kind": "text", "label": "Email Address", "required": True, "value": ""}],
-      "actions": [{"text": "Continue"}, {"text": "Submit", "is_submit": True, "aside": True}]}, False),
+      "actions": [{"text": "Continue"}, {"text": "Submit", "is_submit": True, "aside": True}]}, "", False),
+    # both (applied-job-alerts.html as the form reader reads it): the survey's Continue is in no form, and
+    # the alerts' Subscribe is its own form's
+    ({"fields": [{"kind": "text", "label": "Email*", "required": True, "value": "", "input_type": "email"}],
+      "actions": [{"text": "Continue"}, {"text": "Subscribe", "form_submit": True}],
+      "headings": ["Thank you for applying!", "Get job alerts"]},
+     "Thank you for applying! We have your application for Equipment Technician at Example Corp. Our recruiters "
+     "will be in touch. Help us improve: tell us how applying went in a two-minute voluntary survey. Continue",
+     False),
     # but an Email nothing says is the alerts', and a step button beside the application's boxes, are the form's
     ({"fields": [{"kind": "text", "label": "Email*", "required": True, "value": ""}], "actions": [{"text": "Continue"}],
-      "headings": ["Thank you for applying!"]}, True),
+      "headings": ["Thank you for applying!"]}, "", True),
     ({"fields": [{"kind": "text", "label": "First Name", "required": True, "value": "Sam"}], "actions": [{"text": "Next"}],
-      "headings": ["Thank you for applying!"]}, True),
+      "headings": ["Thank you for applying!"]}, "", True),
+    # a first step that thanks the person, its name and email beside a Next, with a talent community or job
+    # alerts sign-up in the footer: a Next isn't a sign-up's (its button is a Subscribe of its own), and
+    # once the sign-up's box is told by its words, the others are the application's
+    ({"fields": _FIRST_STEP, "actions": [{"text": "Next"}, {"text": "Subscribe"}],
+      "headings": ["Thanks for applying to Acme!", "Join our talent community"]}, "", True),
+    ({"fields": _FIRST_STEP, "actions": [{"text": "Next", "disabled": True}],  # (greyed out until they're filled in)
+      "headings": ["Thanks for applying to Acme!", "Join our talent community"]}, "", True),
+    ({"fields": _FIRST_STEP, "actions": [{"text": "Next", "form_submit": True},
+                                         {"text": "Submit", "is_submit": True, "form_submit": True, "aside": True}],
+      "headings": ["Thanks for applying to Acme!"]}, "", True),
+    ({"fields": [*_FIRST_STEP, {"kind": "text", "label": "Get job alerts by email", "required": False, "value": ""}],
+      "actions": [{"text": "Next"}, {"text": "Submit", "is_submit": True, "form_submit": True, "aside": True}],
+      "headings": ["Thanks for applying to Acme!"]}, "", True),
+    # a step that thanks the person and asks them to go on, its questions on the next step (or in a frame)
+    ({"fields": [], "actions": [{"text": "Continue"}], "headings": ["Thank you for your application"]},
+     "Thank you for your application. Please continue to the questions. Continue", True),
+    ({"fields": [], "actions": [], "headings": ["Application Questions"]},
+     "Application Questions\n\nThank you for your application. Please complete the below questions.", True),
 ])
-def test_what_says_a_page_is_partway_through_the_form(data, mid):
-    assert pipeline._mid_application(data) is mid
+def test_what_says_a_page_is_partway_through_the_form(data, text, mid):
+    assert pipeline._mid_application(data, text) is mid
 
 
 def watched_inbox(monkeypatch, reset_link=None):
@@ -1586,6 +1654,20 @@ def test_a_resume_after_the_password_is_reset_by_hand_signs_in(srv, monkeypatch,
         assert need == "sign_in" and "won't try it again for this job unless you press Resume" in reason, (reason, r.log)
     assert [tries for _, _, tries in refused] == [3, 3, 4], seen  # the queue's pass pressed nothing
     assert signed_in == 5 and r.seen_form and r.need != "sign_in", (r.reason, r.log)
+
+
+@pytest.mark.parametrize("need, tries", [("sign_in", 1), ("questions", 2), ("stuck", 2)])
+def test_only_a_resume_on_a_sign_in_card_presses_a_refused_password_again(srv, need, tries):
+    """The sign-in card asks the person to reset the password by hand and press Resume, and that
+    Resume gets one more press of the saved password. A Resume on a question's card or a stuck page's,
+    of a job whose saved password was refused twice, gave it one all the same: a third refused sign-in,
+    which the guard against a locked account is there to stop."""
+    job = srv.add_job(url="https://example.com/a", title="FSE", company="Example Corp")["job"]
+    applier = Applier(srv)
+    paused = Run(job["id"], "FSE", "Example Corp", status="needs_you", need=need, sign_in_tries=2)
+    applier.runs[job["id"]] = paused
+    applier.resume(job["id"])
+    assert (paused.status, paused.sign_in_tries) == ("queued", tries)
 
 
 def test_an_account_the_desk_made_is_signed_in_to_after_the_tries_ran_out(srv, monkeypatch, job_apply_home):
@@ -4343,6 +4425,8 @@ def test_a_job_sent_to_a_maintenance_page_is_said_down_for_maintenance(srv, monk
     ("https://careers.example-corp.example/careers?pid=999&domain=example-corp.com", True),  # another job's posting
     ("https://careers.example-corp.example/careers/apply?pid=999", True),  # another job's application
     ("https://careers.example-corp.example/careers?query=technician", True),  # the careers home's search
+    # its application, the site's script having rewritten its address without the query (a single-page site)
+    ("https://careers.example-corp.example/careers/apply", False),
 ])
 def test_a_tab_on_another_job_named_in_the_query_isnt_carried_on_with(srv, monkeypatch, tab_url, gone):
     """An Eightfold site names the job in its address's query (/careers?pid=123). A paused job's
@@ -4361,6 +4445,27 @@ def test_a_tab_on_another_job_named_in_the_query_isnt_carried_on_with(srv, monke
 
     monkeypatch.setattr(srv.browser, "peek", peek)
     assert run(applier._gone_home(left, SimpleNamespace(url=tab_url))) is gone
+
+
+def test_a_word_under_a_job_key_in_the_address_isnt_a_job_id(srv, monkeypatch):
+    """"job" names a job in a Taleo site's query (?job=12345), but a site may name its application's
+    steps with it (?job=apply, then ?job=questions). Taken for job ids, the next step was another job's
+    page, and the job was opened again in a new tab, its form lost. A job's id has a digit."""
+    from types import SimpleNamespace
+
+    assert pipeline._job_ids("https://jobs.acme.example/apply?job=apply&pid=123&reqId=R-0042") == {
+        "pid": "123", "reqid": "R-0042"}
+    job = srv.add_job(url="https://jobs.acme.example/position/4512", title="Field Service Engineer",
+                      company="Acme")["job"]
+    applier = Applier(srv)
+    left = Run(job["id"], url="https://jobs.acme.example/position/4512/apply?job=apply")
+
+    async def peek(tab):
+        return {}, "Careers at Acme"
+
+    monkeypatch.setattr(srv.browser, "peek", peek)
+    tab = SimpleNamespace(url="https://jobs.acme.example/position/4512/apply?job=questions")
+    assert run(applier._gone_home(left, tab)) is False
 
 
 def test_an_apply_link_with_its_address_in_data_href_is_pressed(srv, monkeypatch):

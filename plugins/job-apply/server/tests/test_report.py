@@ -167,14 +167,15 @@ def test_an_employee_id_is_taken_out_of_a_report(job_apply_home):
 def test_a_report_or_note_takes_a_value_out_only_as_a_whole_word(job_apply_home):
     """A value was taken out even where it was only part of an everyday word: a first name "Rob"
     left "PREDACTEDlem" for "Problem", garbled and easy to guess. Only whole words go, wherever
-    one is: in an email, a file name, run into the next name."""
+    one is: in an email, a file name, run into the next name. In the name of something a short one
+    goes only with an initial or two: a town "Ware" left "REDACTED_v2" for the field "software_v2"."""
     person = Profile({"personal": {"first_name": "Rob", "last_name": "Hall", "email": "rob.hall77@example.org",
                                    "address": {"city": "Ware"}}})
-    said = ("Problem on the Robotics page: you shall answer the Challenge about software, Rob Hall from Ware "
+    said = ("Problem on the Robotics page: you shall answer the Challenge about software_v2, Rob Hall from Ware "
             "(rob.hall77@example.org, RobHall.pdf, Rob_Hall_Resume.pdf)")
     job = {"id": 15, "title": "Technician", "company": "Example Corp", "ats": "workday", "url": "https://example.com/j"}
     r = Run(15, "Technician", "Example Corp", status="needs_you", need="stuck", reason=said, log=[said])
-    whole = ("Problem on the Robotics page: you shall answer the Challenge about software, REDACTED from REDACTED "
+    whole = ("Problem on the Robotics page: you shall answer the Challenge about software_v2, REDACTED from REDACTED "
              "(REDACTED, REDACTED.pdf, REDACTED_Resume.pdf)")
     assert f"**What the desk said:** {whole}" in report.build(job, r, person)["preview"]
     assert f"**What the desk said:** {whole}" in report.note(job, r, person)

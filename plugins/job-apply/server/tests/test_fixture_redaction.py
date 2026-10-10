@@ -118,9 +118,9 @@ def test_a_value_is_taken_out_as_a_whole_word_and_wherever_its_one():
 def test_a_surname_after_an_initial_is_taken_out_of_a_user_name_a_file_name_or_a_link():
     """Taken out as a whole word only, a last name "Doe" stayed in "jdoe1987", "JDoe_Resume.pdf", an
     email and a link, which a problem report would show. In the name of something (no spaces, its
-    words joined by a digit, "_", "@", "/" or ".") a value goes wherever it is, with the letters it
-    runs on into, so no half-word is left to guess it by. Prose keeps its words whole, and a ZIP
-    code inside a longer number is still another number."""
+    words joined by a digit, "_", "@", "/" or ".") a value goes wherever it is, with the initial or two
+    it runs on into, so no half-word is left to guess it by. Prose keeps its words whole, a link its
+    longer ones ("dashboard" for "Ash"), and a ZIP code inside a longer number is still another number."""
     secrets = personal_strings(Profile({"personal": {"first_name": "Jane", "last_name": "Doe",
                                                      "address": {"postal_code": "85201"}}}))
     for named in ("jdoe1987", "JDoe_Resume.pdf", "jdoe@example.com", "https://x.example/u/jdoe"):
@@ -134,9 +134,31 @@ def test_a_surname_after_an_initial_is_taken_out_of_a_user_name_a_file_name_or_a
                                                      "preferred_name": "Ash"}}))
     prose = "Problem? Don't flee the gray washing. Robotics, Leeway, Raymond and Ashes."
     assert redact(prose, secrets) == prose
-    assert redact("https://example.com/careers/dashboard", secrets) == "https://example.com/careers/REDACTED"
+    assert redact("https://example.com/careers/dashboard", secrets) == "https://example.com/careers/dashboard"
     secrets = personal_strings(Profile({"personal": {"first_name": "Ted", "last_name": "Hall"}}))
     assert redact("Ted_Hall_Resume.pdf", secrets) == "REDACTED_Resume.pdf"  # not "Ted" again in the REDACTED
+
+
+def test_a_short_name_leaves_the_longer_words_of_a_name_of_something_whole():
+    """In the name of something, a value went with every letter it ran on into: a first name "Tom"
+    turned "custom_field" into "REDACTED_field" and "Ted" "?status=accepted" into "?status=REDACTED",
+    so a problem report lost what it needed and a fixture's ids weren't the site's. A short value goes
+    there only with an initial or two ("jdoe1987", "JDoe_Resume.pdf", and "JDoeResume.pdf", whose next
+    word starts with a capital), a long one wherever it is ("samrivera87"), and a full name run
+    together still goes ("janedoe99")."""
+    for first, named in (("Tom", "custom_field"), ("Ted", "?status=accepted"), ("Ann", "announcement_bar"),
+                         ("Ted", "formField-selected_2"), ("Dan", "abundant_2")):
+        assert redact(named, personal_strings(Profile({"personal": {"first_name": first}}))) == named, named
+    page = '<div class="announcement_bar" data-view="?status=accepted" id="formField-selected_2">custom_field</div>'
+    names = {"first_name": "Ted", "last_name": "Ann", "preferred_name": "Tom"}
+    assert clean_html(page, personal_strings(Profile({"personal": names}))) == page
+    secrets = personal_strings(Profile({"personal": {"first_name": "Jane", "last_name": "Doe"}}))
+    for named in ("jdoe1987", "JDoe_Resume.pdf", "jdoe@example.com", "https://x.example/u/jdoe", "JDoeResume.pdf",
+                  "jdoes_2", "janedoe99", "jane_doe_2"):
+        assert "doe" not in redact(named, secrets).lower(), named
+    assert redact("jdoe1987, JDoeResume.pdf", secrets) == "REDACTED1987, REDACTEDResume.pdf"
+    secrets = personal_strings(Profile({"personal": {"first_name": "Jane", "last_name": "Rivera"}}))
+    assert redact("samrivera87", secrets) == "REDACTED87"
 
 
 def test_expectations_keep_accented_names_findable_and_drop_query_strings(tmp_path):

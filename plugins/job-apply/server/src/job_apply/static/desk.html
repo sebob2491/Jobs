@@ -703,28 +703,33 @@ function selectable(url) {
 
 // A problem report for a job, shown in a dialog with a link: the person's own click opens GitHub,
 // which a pop-up opened after the wait would not (browsers block those). Made again for the same
-// job when its "Don't say which job it was" box is ticked or cleared.
-let reportJob = null;
-let reportShown = null;  // the report in the dialog: whether it leaves the job out, and its issue link
-function makeReport(job) {
+// job (`again`) when its "Don't say which job it was" box is ticked or cleared.
+let reportShown = null;  // the report in the dialog: its job, whether it leaves the job out, and its issue link
+function makeReport(job, again = false) {
   if (reporting) return;  // one at a time: a double click makes one report
   reporting = true;
   const box = $("report-anonymous"), open = $("report-open");
   box.disabled = true;
   open.removeAttribute("href");  // no link while the box may not say what the report shown does
+  if (!again) {  // from the job's button: the report shown last was for another job, or an earlier one
+    reportShown = null;
+    $("report-text").textContent = "";
+    $("report-where").textContent = "";
+  }
   act(async () => {
     try {
       const out = await api(`/api/job/${job}/report`, {anonymous: box.checked});
-      reportJob = job;
-      reportShown = {anonymous: box.checked, url: out.issue_url};
+      reportShown = {job, anonymous: box.checked, url: out.issue_url};
       $("report-text").textContent = out.preview;
       $("report-where").textContent = `It's saved in ${out.folder}, with report.zip: that also holds the pages the`
         + " desk saved. They can still show your answers, so they stay on your computer and aren't in the issue.";
       if (!$("report").open) $("report").showModal();
     } finally {
       // the box and the link go with the report shown: one that couldn't be made again without the
-      // job mustn't leave the box ticked over the report that names it
-      if (reportShown) { box.checked = reportShown.anonymous; open.href = reportShown.url; }
+      // job mustn't leave the box ticked over the report that names it. With none shown (the job's
+      // first couldn't be made), there's no link to file one, and the box waits unticked.
+      box.checked = !!reportShown?.anonymous;
+      if (reportShown) open.href = reportShown.url;
       reporting = false;
       box.disabled = false;
     }
@@ -844,7 +849,7 @@ document.addEventListener("change", (e) => {
     act(() => api("/api/settings", {auto_submit: t.checked}));
   }
   if (t.id === "tailor") act(() => api("/api/settings", {tailor_resumes: t.checked}));
-  if (t.id === "report-anonymous" && reportJob !== null) makeReport(reportJob);
+  if (t.id === "report-anonymous" && reportShown) makeReport(reportShown.job, true);
 });
 
 // the link opens GitHub in a new tab; without one (a report being made) it does nothing
