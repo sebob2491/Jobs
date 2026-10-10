@@ -1321,6 +1321,10 @@ class Applier:
                 if closed := _closed_notice(data, text):  # only where nothing else explains the stop
                     return self._pause(run, "stuck", f"{_site(run, data)} says this posting has closed: \u201c{closed}\u201d "
                                        "There's nothing to apply to, so skip this job.")
+                if _maintenance_page(data):
+                    return self._pause(run, "stuck", f"{_site(run, data)} is down for maintenance (it sent the job to "
+                                       f"{_bare(data.get('url') or '')}). Try again in a few hours: press Resume once "
+                                       "it's back.")
                 return self._pause(run, "stuck", "I couldn't find the button that moves this application on. "
                                    "Take it a step further in the browser, then press Resume.")
             if (kind == "form" and action.get("form_fields") == len(data.get("fields") or [])
@@ -2452,6 +2456,13 @@ def _site_key(url: str) -> str:
     """The part of a page's address that names its site ("myworkdayjobs.com", "asml.com"), near enough."""
     host = (urlparse(url).hostname or "").lower()
     return ".".join(host.split(".")[-2:])
+
+
+def _maintenance_page(data: dict[str, Any]) -> bool:
+    """A site down for maintenance: the job sent on to a page named for it (Workday's
+    community.workday.com/maintenance-page, asml.com/en/maintenance's "We'll be back.", live, Oct 2026)."""
+    return bool(re.fullmatch(r"maintenance(?:-page)?|outage", urlparse(data.get("url") or "").path.rstrip("/")
+                             .rsplit("/", 1)[-1], re.I))
 
 
 def _closed_notice(data: dict[str, Any], text: str) -> str:
