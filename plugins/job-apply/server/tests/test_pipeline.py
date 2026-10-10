@@ -3,6 +3,7 @@
 review -> submit)."""
 
 import asyncio
+import contextlib
 import time
 from pathlib import Path
 
@@ -2627,6 +2628,146 @@ def test_a_paused_jobs_tab_taken_to_another_posting_isnt_filled_as_that_job(srv,
     assert not any("other-litho" in p for p in posts), posts
     assert r.status == "submitted" and posts == ["https://careers.acme-fab.example/posted"], (r.status, r.reason, posts)
     assert srv.tracker().get(b["id"])["status"] != "applied"
+
+
+EXAMPLE_CORP = "https://careers.example-corp.example"
+
+
+def _example_corp(srv, monkeypatch, loads: list[str]) -> str:
+    """Example Corp's careers site, its application all on one page as Eightfold's is, served
+    through the browser (and through the browser opened again, after it closed). Each address
+    loaded goes into `loads`. Returns the job's posting."""
+    site = Path(__file__).parent / "fixtures" / "site"
+    pages = {f"{EXAMPLE_CORP}{path}": (site / name).read_text() for path, name in (
+        ("/careers/job/1", "one-page-posting.html"), ("/careers/apply", "one-page-apply.html"),
+        ("/careers", "one-page-home.html"))}
+
+    async def handler(route):
+        if route.request.method == "GET":
+            loads.append(route.request.url)
+        body = pages.get(route.request.url.split("?")[0], "<html><body><h1>Thank you for applying</h1></body></html>")
+        await route.fulfill(status=200, content_type="text/html", body=body)
+
+    real_launch = srv.browser._launch
+
+    async def launch():
+        await real_launch()
+        await srv.browser._ctx.route("https://**.example/**", handler)
+
+    monkeypatch.setattr(srv.browser, "_launch", launch)
+    if srv.browser.is_open:  # (open already: served from now on)
+        run(srv.browser._ctx.route("https://**.example/**", handler))
+    return f"{EXAMPLE_CORP}/careers/job/1"
+
+
+async def _crash(tab):
+    """Crash a tab's page, as Chrome's "Aw, Snap!" is."""
+    crashed = []
+    tab.once("crash", lambda _: crashed.append(True))
+    with contextlib.suppress(Exception):
+        await tab.goto("chrome://crash", timeout=5000)
+    await until(lambda: crashed)
+
+
+@pytest.mark.parametrize("how", ["answered", "resumed", "crashed", "closed", "browser", "home"])
+def test_a_job_picked_up_again_carries_on_with_the_form_in_its_tab(srv, monkeypatch, how):
+    """Eightfold, live (Oct 2026): a job waiting on a question on its one-page form was picked
+    up again by opening its posting and pressing Apply Now, onto a fresh form without the resume
+    uploaded and the boxes filled in the old one. Answered on the desk, or in the browser and
+    Resume pressed, it carries on with the form in its tab. Only a tab that's gone (closed,
+    crashed, or the browser with it) or that has left the application (back to the careers home,
+    whose Apply is another job's) has the job opened again, and the desk says why."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    loads: list[str] = []
+    posting = _example_corp(srv, monkeypatch, loads)
+    job = srv.add_job(url=posting, title="Field Service Engineer", company="Example Corp")["job"]
+    applier = Applier(srv)
+
+    def form(tab):  # (a page loaded again has another loadedAt)
+        return tab.evaluate("() => [window.loadedAt, cv.files.length, fn.value, sp.value, ge.value, ts.value]")
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status == "needs_you", about=state(r))
+            assert r.need == "questions" and len(r.questions) == 1 and "TS/SCI" in r.questions[0]["label"], r.reason
+            tab, before = r.page, await form(r.page)
+            if how == "resumed":
+                await tab.select_option("#ts", "No")  # answered in the browser instead
+            else:
+                r.once[question_key(r.questions[0]["label"])] = "No"
+            if how == "crashed":
+                await _crash(tab)
+            elif how == "closed":
+                await tab.close()
+            elif how == "browser":
+                await srv.browser.close()
+            elif how == "home":
+                await tab.goto(f"{EXAMPLE_CORP}/careers")  # the person, looking at the site's other jobs
+            applier.enqueue(job["id"], front=True)
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r, tab, before, await form(r.page) if r.status == "ready" else None
+        finally:
+            await applier.stop()
+
+    r, tab, before, after = run(go())
+    assert before[1:] == [1, "Sam", "No", "Decline to self-identify", ""]  # its resume and boxes, filled
+    assert r.status == "ready" and r.page.url == f"{EXAMPLE_CORP}/careers/apply?pid=1", (r.status, r.reason, r.log)
+    assert after[1:] == [1, "Sam", "No", "Decline to self-identify", "No"]
+    assert not any("pid=2" in u for u in loads), loads  # the careers home's other job is never applied to
+    since = r.log[next(i for i, line in enumerate(r.log) if "question(s)" in line):]  # from the pause on
+    if how in ("answered", "resumed"):
+        # the same tab, its page never loaded again: what was uploaded and filled there is kept
+        assert r.page is tab and after[0] == before[0], r.log
+        assert loads.count(posting) == 1 and not any(line.startswith(("opened", "its tab")) for line in since), r.log
+    else:
+        said = {"crashed": "its tab crashed", "closed": "its tab was closed",
+                "browser": "the browser had closed", "home": "its tab had gone back to the site's careers home"}[how]
+        assert r.page is not tab and loads.count(posting) == 2, (loads, r.log)
+        assert any(line.startswith(said) for line in since), r.log
+        if how == "home":  # the person's to look at still
+            assert not tab.is_closed() and tab.url == f"{EXAMPLE_CORP}/careers"
+        else:
+            assert tab.is_closed()  # (a crashed tab's "Aw, Snap!" is closed for the new one)
+
+
+def test_a_tab_that_crashes_while_its_job_runs_is_opened_again_on_resume(srv, monkeypatch):
+    """A tab whose page crashes while the desk fills it is no use to the desk again, even
+    reloaded: the job says so, and Resume opens it in a new tab. (Each Resume failed again in
+    the crashed tab: "Something went wrong: TargetClosedError: ... Page crashed".)"""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    posting = _example_corp(srv, monkeypatch, [])
+    job = srv.add_job(url=posting, title="Field Service Engineer", company="Example Corp")["job"]
+    applier = Applier(srv)
+    real_click = srv.click
+    crashed = []
+
+    async def click_then_crash(target):
+        out = await real_click(target)
+        if not crashed:
+            crashed.append(srv.browser.current_tab)
+            await _crash(crashed[0])
+        return out
+
+    monkeypatch.setattr(srv, "click", click_then_crash)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            said = r.reason
+            applier.enqueue(job["id"], front=True)  # Resume
+            await until(lambda: r.status == "needs_you", about=state(r))
+            return r, said
+        finally:
+            await applier.stop()
+
+    r, said = run(go())
+    assert said == "Its tab crashed. Press Resume to start this application again.", said
+    assert r.need == "questions" and r.page is not crashed[0] and crashed[0].is_closed(), (r.reason, r.log)
+    assert any(line.startswith("its tab crashed, so I opened the job again") for line in r.log), r.log
 
 
 def test_submit_presses_the_applications_button_not_a_footer_alerts_one(srv, monkeypatch):

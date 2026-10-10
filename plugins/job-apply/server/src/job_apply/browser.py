@@ -345,6 +345,7 @@ class BrowserSession:
         self._actions: dict[str, dict] = {}
         self.current_job_id: int | None = None
         self.tab_jobs: dict[Page, int] = {}  # the job each tab was opened for
+        self._crashed: set[Page] = set()  # tabs whose page crashed (Chrome's "Aw, Snap!")
 
     @property
     def _lock(self) -> asyncio.Lock:
@@ -414,6 +415,8 @@ class BrowserSession:
             tab._ja_watched = True  # type: ignore[attr-defined]
             tab.on("popup", lambda popup: self._on_popup(tab, popup))
             tab.on("close", lambda _: (self._openers.pop(tab, None), self.tab_jobs.pop(tab, None)))  # type: ignore[call-overload]  # the handler's result is unused
+            tab.on("crash", lambda _: self._crashed.add(tab))
+            tab.on("close", lambda _: self._crashed.discard(tab))
 
     def _on_popup(self, opener: Page, popup: Page) -> None:
         # "Apply" buttons often open the application in a new tab: follow it, but only from
@@ -459,11 +462,19 @@ class BrowserSession:
             return self._page
 
     def use_tab(self, page: Page | None) -> bool:
-        """Act on this tab from now on; False if it has been closed."""
-        if page is None or page.is_closed() or self._ctx is None:
+        """Act on this tab from now on; False if it has been closed (or crashed)."""
+        if page is None or self.lost(page) or self._ctx is None:
             return False
         self._page = page
         return True
+
+    def lost(self, tab: Page) -> str:
+        """Why nothing more can be done in a tab: "browser" (the browser it was in was closed, or
+        crashed, and the tab with it), "closed", or "crashed" (Chrome's "Aw, Snap!": not even a
+        reload brings the tab back to the tools). "" while it's there to use."""
+        if tab.context is not self._ctx:
+            return "browser"
+        return "closed" if tab.is_closed() else "crashed" if tab in self._crashed else ""
 
     def lineage(self, tab: Page | None) -> list[Page]:
         """This tab and the tabs that opened it, nearest first: one job's tabs."""

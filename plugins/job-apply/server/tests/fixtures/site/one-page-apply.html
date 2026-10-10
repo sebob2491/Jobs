@@ -1,0 +1,26 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Submit application for Field Service Engineer</title></head>
+<body>
+<!-- like Eightfold's application: the whole form on one page, its resume uploaded in place -->
+<h1>Application Form</h1>
+<form id="app" method="post" action="/careers/apply/submit" novalidate>
+  <h2>Resume</h2>
+  <label for="cv">Accepted file format: .pdf, .doc or .docx</label><input id="cv" name="cv" type="file">
+  <h2>Contact Information</h2>
+  <label for="fn">First name *</label><input id="fn" name="fn" required>
+  <label for="ln">Last name *</label><input id="ln" name="ln" required>
+  <label for="em">Email *</label><input id="em" name="em" type="email" required>
+  <h2>Position Specific Questions</h2>
+  <label for="sp">Will you now or in the future require sponsorship for employment visa status? *</label>
+  <select id="sp" name="sp" required><option value="">Select</option><option>Yes</option><option>No</option></select>
+  <label for="ge">Gender *</label>
+  <select id="ge" name="ge" required><option value="">Select</option><option>Female</option><option>Male</option>
+    <option>Decline to self-identify</option></select>
+  <label for="ts">Do you hold an active TS/SCI clearance? *</label>
+  <select id="ts" name="ts" required><option value="">Select</option><option>Yes</option><option>No</option></select>
+  <button type="submit">Submit application</button>
+</form>
+<script>window.loadedAt = Math.random();  // a page loaded again (a fresh form) has another</script>
+</body>
+</html>

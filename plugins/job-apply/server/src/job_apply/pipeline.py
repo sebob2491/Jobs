@@ -539,6 +539,8 @@ class Applier:
             if run.status != "skipped":
                 run.status, run.need = "failed", ""
                 run.reason = f"Something went wrong: {type(e).__name__}: {str(e).splitlines()[0][:200] if str(e) else ''}"
+                if run.page is not None and self.srv.browser.lost(run.page) == "crashed":  # (Playwright: "Page crashed")
+                    run.reason = "Its tab crashed. Press Resume to start this application again."
                 self._log(run, run.reason)
         finally:
             self._give_back_tools(held)
@@ -619,6 +621,21 @@ class Applier:
         # share: not another employer's own careers site, which isn't one
         paused_on_own_site = shared_system(f"https://{run.paused_host}/") is None
         return paused_on_own_site and shared_system(url) not in (None, "linkedin", "indeed")
+
+    async def _gone_home(self, run: Run, tab: Any) -> bool:
+        """Has the person taken a job's tab back up to its site's careers home or front page: an
+        address above the job's posting, or above the page it was left on ("/careers" from
+        "/careers/job/12")? Never the page it was left on or the posting itself, nor a page that
+        says the application went (a site may go home after its own Submit): those carry on."""
+        job = self.srv.tracker().get(run.job_id, with_description=False) or {}
+        own = [u for u in (run.url, job.get("url"), job.get("apply_url")) if u]
+        if any(_bare(tab.url) == _bare(u) for u in own) or not any(_above(tab.url, u) for u in own):
+            return False
+        try:
+            _, text = await self.srv.browser.peek(tab)
+        except Exception:  # a tab mid-way through loading: carried on with, as before
+            return False
+        return not confirmations(text)
 
     def _own_hosts(self, run: Run) -> set[str]:
         job = self.srv.tracker().get(run.job_id, with_description=False) or {}
@@ -834,16 +851,34 @@ class Applier:
 
     async def _open(self, run: Run) -> bool:
         srv = self.srv
-        # its own tab, while that still shows this job's application. One taken on to another
-        # posting meanwhile (by the person, or by Claude's tools) is no longer this job's: filling
-        # it would put this job's details into another employer's form, and Submit for me send it
-        if (run.page is not None and not run.page.is_closed()
-                and not self._own_place(run, run.page.url)):
-            self._log(run, "its tab had gone on to another page, so I opened the job again in a new tab")
-            run.page = None
+        # its own tab, while that still shows this job's application: carried on with as it is,
+        # with what's filled in and uploaded there. One taken on to another posting meanwhile (by
+        # the person, or by Claude's tools) is no longer this job's: filling it would put this
+        # job's details into another employer's form, and Submit for me send it
+        if run.page is not None and not srv.browser.lost(run.page):
+            if not self._own_place(run, run.page.url):
+                self._log(run, "its tab had gone on to another page, so I opened the job again in a new tab")
+                run.page = None
+            elif await self._gone_home(run, run.page):
+                # no application there, and the jobs it lists aren't this one: an Apply pressed
+                # there would apply to another job as this one
+                self._log(run, "its tab had gone back to the site's careers home, so I opened the job again in a "
+                          "new tab")
+                run.page = None
         if srv.browser.use_tab(run.page):
             srv.browser.current_job_id = run.job_id
             return True
+        if run.page is not None:
+            # The only other time it starts over: its tab is gone, and the form with it (nothing
+            # brings back a resume uploaded there). Said, as all the person sees is a fresh form,
+            # and after a browser crash Chrome's "Restore pages?"
+            why = srv.browser.lost(run.page)
+            self._log(run, {"browser": "the browser had closed (or crashed) since, and its tab with it",
+                            "crashed": "its tab crashed"}.get(why, "its tab was closed")
+                      + ", so I opened the job again in a new tab: its application starts over")
+            if why == "crashed":
+                with contextlib.suppress(Exception):
+                    await run.page.close()  # its "Aw, Snap!" page: the new tab takes its place
         run.page = await srv.browser.new_tab()
         opened = await srv.open_application(job_id=run.job_id)
         run.page = srv.browser.current_tab or run.page
@@ -2113,6 +2148,15 @@ def _new_required(before: dict[str, Any], after: dict[str, Any]) -> bool:
 def _bare(url: str) -> str:
     """An address without its query and fragment."""
     return urlparse(url)._replace(query="", fragment="").geturl()
+
+
+def _above(url: str, below: str) -> bool:
+    """Is `url` a page above `below` on the same site: "/careers" above "/careers/job/12", the
+    front page above any other?"""
+    a, b = urlparse(url), urlparse(below)
+    if not a.hostname or a.hostname.lower() != (b.hostname or "").lower():
+        return False
+    return b.path.rstrip("/").startswith(a.path.rstrip("/") + "/")
 
 
 def _account_step(data: dict[str, Any]) -> bool:
