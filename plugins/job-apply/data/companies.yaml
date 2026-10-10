@@ -236,3 +236,24 @@ companies:
     az_sites: Phoenix (field service for wafer-handling robots)
     confidence: medium        # live check, Oct 2026: a Senior Field Service Engineer for the Phoenix area
     search: {workday: https://brooksauto.wd1.myworkdayjobs.com/Brooks_External_Site}
+  # Industrial gas suppliers whose plants supply the Phoenix-area fabs with high-purity gases. Their
+  # career sites are Cornerstone OnDemand ones (<company>.csod.com), searched through the site's own
+  # search call: the token its page carries, and its State filter for a search in Arizona.
+  - name: Linde
+    careers_url: https://linde.csod.com/ux/ats/careersite/23/home?c=linde
+    ats: csod                 # us.lindecareers.com/search-jobs links here (career site 23 is North America's; 20 is Europe's)
+    az_sites: Phoenix (Linde Electronics' gas plants at the fabs), Tempe, Kingman, Morenci, Lake Havasu, Flagstaff, Show Low
+    confidence: high
+    # Live check, Oct 2026: 32 openings in Arizona. For "technician": I&E Technician and Production
+    # Technician in Phoenix, Production Technician in Morenci, Maintenance & Repair Technician I in
+    # Kingman, and a Superintendent - Analytical for a Phoenix air separation plant serving a fab.
+    search: {csod: "https://linde.csod.com/ux/ats/careersite/23/home?c=linde"}
+  - name: Matheson
+    careers_url: https://mathesongas.csod.com/ux/ats/careersite/1/home?c=mathesongas
+    ats: csod                 # Matheson Tri-Gas, Nippon Sanso's US company
+    az_sites: Mesa (air separation plant), Phoenix
+    confidence: high
+    # Live check, Oct 2026: 5 openings in Arizona: ASU Reliability Maintenance Technician, Rotating
+    # Equipment Specialist and ASU Turnaround Specialist in Mesa; Cylinder Handler Loader and
+    # Regional General Manager in Phoenix.
+    search: {csod: "https://mathesongas.csod.com/ux/ats/careersite/1/home?c=mathesongas"}

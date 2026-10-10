@@ -30,8 +30,8 @@ NXP, TEL, ADI, Onto Innovation, Axcelis, Thermo Fisher, Air Liquide, Air Product
 Eightfold (Lam Research, Micron, Infineon), SuccessFactors (Edwards, TSMC Arizona, Amkor, Qorvo,
 Rogers, Pfeiffer Vacuum), Oracle (onsemi, TI), Greenhouse (ASM, Marketech), ApplicantStack
 (SCREEN), iCIMS (Daifuku, Fujifilm), Paycom (Ebara), UKG Pro (Nikon Precision, UCT), Infor
-CloudSuite (Benchmark) and Lever.
-`plugins/job-apply/data/companies.yaml` lists 36 semiconductor employers with
+CloudSuite (Benchmark), Cornerstone (Linde, Matheson) and Lever.
+`plugins/job-apply/data/companies.yaml` lists 38 semiconductor employers with
 Arizona sites, including equipment makers whose field service engineers work at
 Arizona fabs, and the suppliers whose technicians run the fabs' gases and chemicals.
 

@@ -22,6 +22,8 @@ Each company in data/companies.yaml may carry a `search` block naming one of:
     kpmg:            ["Phoenix, AZ", ...]  (KPMG's own job search: its place filter's values)
     avature:         {url: <search page>, state_field: 9336, states: {AZ: 690346}}
                                             (Avature career portals: Deloitte; its State filter's values)
+    csod:            <career site address>  (Cornerstone OnDemand career sites:
+                                            https://linde.csod.com/ux/ats/careersite/23/home?c=linde)
     icims:           <portal name>          (read in the browser)
     paycom:          <career portal key>    (read in the browser)
     ukg:             <job board address>    (UKG Pro / UltiPro; read in the browser)
@@ -55,9 +57,9 @@ import yaml
 from bs4 import BeautifulSoup
 
 from . import config
-from .ats import workday_parts
+from .ats import csod_parts, workday_parts
 from .autofill import US_STATES, norm
-from .postings import USER_AGENT, html_to_text, place_in_text, successfactors_place
+from .postings import USER_AGENT, csod_context, csod_place, html_to_text, place_in_text, successfactors_place
 
 WORKDAY_PAGE = 20  # Workday rejects larger pages
 MAX_ALTERNATIVES = 4
@@ -1438,6 +1440,73 @@ async def _avature_places(client: httpx.AsyncClient, listings: list[Listing], qu
     await asyncio.gather(*(one(x) for x in several[:AVATURE_PLACE_PAGES]))
 
 
+# ----------------------------------------------------------------- Cornerstone OnDemand career sites (Linde, Matheson)
+CSOD_PAGE = 100  # openings a request asks for (the site's own page asks for 25; 100 are answered, Oct 2026)
+CSOD_PAGES = 5  # pages read per wording, at most
+CSOD_SEARCH = "rec-job-search/external/jobs"  # on the site's region's API host (its page's endpoints.cloud)
+
+
+async def _csod(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, terms: list[str]) -> list[Listing]:
+    """Cornerstone OnDemand career sites (linde.csod.com/ux/ats/careersite/23/home?c=linde). The
+    site's page carries an anonymous token and its region's API address (csod.context), where its
+    search posts the words and gets openings back as JSON, each with its places. A search in one
+    state uses the site's own State filter, whose values are the state's code ("az" on Linde's and
+    Matheson's, live, Oct 2026); elsewhere the openings from anywhere are read further, and
+    keep_listings keeps the area's."""
+    site = str(cfg)
+    parts = csod_parts(site)
+    if not parts:
+        raise SearchError(f"Not a Cornerstone career site address: {cfg}")
+    r = await _send(client, "GET", site)
+    _raise_for(r, site)
+    ctx = csod_context(r.text)
+    token, cloud = ctx.get("token"), str((ctx.get("endpoints") or {}).get("cloud") or "")
+    # the token goes only to Cornerstone's own API hosts (us.api.csod.com, eu-fra.api.csod.com)
+    if not token or not cloud.startswith("https://") or not (urlsplit(cloud).hostname or "").endswith(".csod.com"):
+        raise SearchError(f"No Cornerstone search token and API address on {site.split('?')[0]}")
+    api = urljoin(cloud, CSOD_SEARCH)
+    state = icims_state(terms)
+    want = max(limit, AREA_SCAN) if terms and not state else limit
+    out: list[Listing] = []
+    for page in range(1, CSOD_PAGES + 1):
+        body = {"careerSiteId": int(parts["site"]), "careerSitePageId": int(parts["site"]), "pageNumber": page,
+                "pageSize": CSOD_PAGE, "cultureId": ctx.get("cultureID") or 1, "searchText": query,
+                "cultureName": ctx.get("cultureName") or "en-US", "states": [state.lower()] if state else [],
+                "countryCodes": [], "cities": [], "placeID": "", "radius": None, "postingsWithinDays": None,
+                "customFieldCheckboxKeys": [], "customFieldDropdowns": [], "customFieldRadios": []}
+        r = await _send(client, "POST", api, json=body,
+                        headers={"Authorization": f"Bearer {token}", "Accept": "application/json"})
+        _raise_for(r, api)
+        try:
+            data = r.json()["data"]
+            reqs, total = list(data["requisitions"] or []), int(data["totalCount"] or 0)
+        except (ValueError, KeyError, TypeError) as e:
+            raise SearchError(f"No job list from {api}") from e
+        out += parse_csod(reqs, parts)
+        if len(reqs) < CSOD_PAGE or page * CSOD_PAGE >= total or len(out) >= want:
+            break
+    return out[:want]
+
+
+def parse_csod(reqs: list[Any], parts: dict[str, str]) -> list[Listing]:
+    """A search's openings, each with its posting's page on the career site, which answers plain
+    requests with its title (og:title)."""
+    out: list[Listing] = []
+    for req in reqs:
+        if not isinstance(req, dict):
+            continue
+        title, rid = str(req.get("displayJobTitle") or "").strip(), str(req.get("requisitionId") or "")
+        if not title or not rid:
+            continue
+        places = [csod_place(p) for p in req.get("locations") or []]
+        out.append(Listing(
+            company="", title=title, ats="csod", external_id=rid, posted=_paycom_date(req.get("postingEffectiveDate")),
+            url=f"https://{parts['host']}/ux/ats/careersite/{parts['site']}/home/requisition/{rid}?"
+                + urlencode({"c": parts["corp"]}),
+            location="; ".join(dict.fromkeys(p for p in places if p))))
+    return out
+
+
 # ----------------------------------------------------------------- amazon.jobs
 AMAZON_PAGE = 100  # openings a search reads: its first page, nearest the place first
 
@@ -2115,6 +2184,7 @@ SEARCHERS: dict[str, Callable[[httpx.AsyncClient, Any, str, int, list[str]], Awa
     "mcloud": _mcloud,
     "kpmg": _kpmg,
     "avature": _avature,
+    "csod": _csod,
 }
 
 

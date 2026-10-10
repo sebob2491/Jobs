@@ -2069,6 +2069,145 @@ def test_an_answer_from_kpmg_that_isnt_its_job_list_is_said(monkeypatch, status,
     assert out["results"] == [] and out["errors"] == {"KPMG": said + search_module.KPMG_API}
 
 
+CSOD_SITE = "https://acme.csod.com/ux/ats/careersite/7/home?c=acme"
+CSOD_API = "https://us.api.csod.com/rec-job-search/external/jobs"
+
+
+def csod_page(context: dict | None) -> str:
+    """A Cornerstone career site's page as plain requests get it (Linde's and Matheson's, Oct 2026):
+    an empty root its script draws into, and what the script is given (csod.context)."""
+    setup = (f'if(!csod.context  || !csod.context.token)  csod.context={json.dumps(context)};'
+             if context is not None else "")
+    return (f'<!DOCTYPE html><html><head></head><body><div id="cs-root"></div><script type="text/javascript">'
+            f'var csodPlayerRouteInfo={{"package": "career-site", "page": "home", "cid": "7"}};</script>'
+            f'<script type="text/javascript">{setup}</script></body></html>')
+
+
+CSOD_CONTEXT = {"corp": "acme", "user": -100, "cultureID": 1, "cultureName": "en-US", "package": "career-site",
+                "endpoints": {"cloud": "https://us.api.csod.com/", "api": "/"}, "token": "anon-token-1",
+                "debug": False, "log": {"level": "Warn"}}
+
+
+def csod_req(rid: int, title: str, *places: tuple[str, str, str], posted: str = "10/9/2026") -> dict:
+    return {"requisitionId": str(rid), "postingEffectiveDate": posted, "postingExpirationDate": "-",
+            "displayJobTitle": title, "externalDescription": "You will run an air separation plant",
+            "locations": [{"city": c, "state": s, "country": n} for c, s, n in places]}
+
+
+def test_a_cornerstone_search_takes_its_pages_token_and_reads_to_the_total(monkeypatch):
+    """Cornerstone OnDemand career sites (Linde's and Matheson's, live, Oct 2026): the site's page
+    carries an anonymous token and its region's API address (csod.context), where the page's own
+    search posts the words; the answer has the openings and how many there are in all. A search
+    in one state goes through the site's State filter; elsewhere the openings from anywhere are
+    read, and the area's kept."""
+    monkeypatch.setattr(search_module, "CSOD_PAGE", 2)
+    pages = {1: [csod_req(33907, "Facilities Maintenance Technician", ("Tonawanda", "NY", "US")),
+                 csod_req(33392, "Regional Environmental Specialist", ("Wilmington", "CA", "US"), ("Tempe", "AZ", "US"),
+                          posted="9/18/2026")],
+             2: [csod_req(33267, "Production Technician", ("Phoenix", "AZ", "US")),
+                 csod_req(29399, "Dry Ice Technician", ("Sarnia", "ON", "CA"))],  # Ontario, Canada: not California
+             3: [csod_req(32448, "Production Technician", ("Morenci", "AZ", "US"), posted="8/11/2026")]}
+    asked: list[dict] = []
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            assert str(request.url) == CSOD_SITE
+            return httpx.Response(200, html=csod_page(CSOD_CONTEXT))
+        assert str(request.url) == CSOD_API
+        assert request.headers["Authorization"] == "Bearer anon-token-1"
+        assert request.headers["Content-Type"] == "application/json"
+        body = json.loads(request.content)
+        asked.append(body)
+        return httpx.Response(200, json={"status": "Success", "data": {
+            "totalCount": 5, "requisitions": pages[body["pageNumber"]], "filters": [], "customFieldFilters": []}})
+
+    def search(location: str | None) -> dict:
+        async def go():
+            async with httpx.AsyncClient(transport=httpx.MockTransport(answer)) as client:
+                return await search_companies("technician | environmental", location=location, client=client,
+                                              companies=[{"name": "Acme Gases", "search": {"csod": CSOD_SITE}}])
+        return asyncio.run(go())
+
+    out = search("Phoenix|Tempe|Morenci|Remote")  # not one state: the openings from anywhere, the area's kept
+    assert not out["errors"]
+    assert asked[0] == {"careerSiteId": 7, "careerSitePageId": 7, "pageNumber": 1, "pageSize": 2, "cultureId": 1,
+                        "searchText": "technician", "cultureName": "en-US", "states": [], "countryCodes": [],
+                        "cities": [], "placeID": "", "radius": None, "postingsWithinDays": None,
+                        "customFieldCheckboxKeys": [], "customFieldDropdowns": [], "customFieldRadios": []}
+    assert [(a["searchText"], a["pageNumber"]) for a in asked] == [
+        ("technician", 1), ("technician", 2), ("technician", 3), ("environmental", 1), ("environmental", 2),
+        ("environmental", 3)]  # to the total (5), and no further
+    assert [(r["title"], r["location"], r["posted"], r["external_id"], r["ats"], r["url"]) for r in out["results"]] == [
+        ("Production Technician", "Phoenix, AZ", "2026-10-09", "33267", "csod",
+         "https://acme.csod.com/ux/ats/careersite/7/home/requisition/33267?c=acme"),
+        ("Production Technician", "Morenci, AZ", "2026-08-11", "32448", "csod",
+         "https://acme.csod.com/ux/ats/careersite/7/home/requisition/32448?c=acme"),
+        ("Regional Environmental Specialist", "Wilmington, CA; Tempe, AZ", "2026-09-18", "33392", "csod",
+         "https://acme.csod.com/ux/ats/careersite/7/home/requisition/33392?c=acme")]
+
+    asked.clear()
+    out = search("AZ")  # one state: the site's own State filter, by the state's code
+    assert {tuple(a["states"]) for a in asked} == {("az",)}
+    assert not out["errors"]
+
+
+@pytest.mark.parametrize("context", [
+    None,  # no csod.context at all: a sign-in page, or Cornerstone's page has changed
+    {**CSOD_CONTEXT, "token": ""},
+    {**CSOD_CONTEXT, "endpoints": {"cloud": "https://collector.example.com/", "api": "/"}},  # not Cornerstone's API
+])
+def test_a_cornerstone_page_without_its_search_token_is_said(context):
+    """A career site page that doesn't set up its search (no token, or no Cornerstone API address
+    to send it to) is said so, and the token goes nowhere else."""
+    asked = []
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        asked.append(request.method)
+        return httpx.Response(200, html=csod_page(context))
+
+    async def go():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(answer)) as client:
+            return await search_companies("technician", location="AZ", client=client,
+                                          companies=[{"name": "Acme Gases", "search": {"csod": CSOD_SITE}}])
+    out = asyncio.run(go())
+    assert asked == ["GET"] and out["results"] == []
+    assert out["errors"] == {"Acme Gases": "SearchError: No Cornerstone search token and API address on "
+                                           "https://acme.csod.com/ux/ats/careersite/7/home"}
+
+
+def test_a_cornerstone_posting_is_read_from_its_job_requisition_service():
+    """A Cornerstone posting's page holds only its title and the start of its text (og:description,
+    empty on Matheson's, Oct 2026); its script reads the posting from the site's job-requisition
+    service with the page's token."""
+    url = "https://acme.csod.com/ux/ats/careersite/7/home/requisition/33392?c=acme"
+    asked = []
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        asked.append(str(request.url))
+        if str(request.url) == url:
+            return httpx.Response(200, html=csod_page(CSOD_CONTEXT).replace(
+                "<head>", '<head><meta property="og:title" content="Regional Environmental Specialist" />'
+                          '<meta property="og:description" content="" />'))
+        assert request.headers["Authorization"] == "Bearer anon-token-1"
+        return httpx.Response(200, json={"status": 0, "data": {
+            "displayTitle": "Regional Environmental Specialist", "ref": "req33392", "allowApply": True,
+            "externalDescription": "<ul><li>Implement environmental compliance programs across assigned facilities"
+                                   "</li><li>Travel up to 50%</li></ul>" + "<p>Air permits and reporting.</p>" * 12,
+            "primaryLocation": {"title": "US-CA - Wilmington, CA", "city": "Wilmington", "state": "CA", "country": "US"},
+            "additionalLocations": [{"city": "Tempe", "state": "AZ", "country": "US"}],
+            "openDate": "2026-09-18T18:22:32", "companyApplyUrl": url}})
+
+    async def go():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(answer)) as client:
+            return await fetch_posting(url, client=client)
+    posting = asyncio.run(go())
+    assert asked == [url, "https://acme.csod.com/services/x/job-requisition/v2/requisitions/33392/jobDetails?cultureId=1"]
+    assert (posting.parse_method, posting.ats, posting.title, posting.location, posting.posted_at, posting.external_id,
+            posting.apply_url) == ("csod-api", "csod", "Regional Environmental Specialist", "Wilmington, CA; Tempe, AZ",
+                                   "2026-09-18", "33392", url)
+    assert "- Travel up to 50%" in posting.description and posting.is_useful and not posting.warnings
+
+
 DELOITTE = {"name": "Deloitte", "search": {"avature": {
     "url": "https://apply.deloitte.com/en_US/careers/SearchJobs", "state_field": 9336, "states": {"AZ": 690346}}}}
 DELOITTE_SEARCH = "https://apply.deloitte.com/en_US/careers/SearchJobs/"
