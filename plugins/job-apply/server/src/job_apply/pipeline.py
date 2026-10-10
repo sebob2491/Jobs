@@ -28,7 +28,7 @@ from urllib.parse import urlparse
 
 from . import config, mailbox
 from .ats import ATS_NAMES, detect_ats, shared_system
-from .autofill import clean_label, is_empty_value, norm, plan_autofill, tailored_document
+from .autofill import clean_label, entry_of, is_empty_value, norm, plan_autofill, tailored_document
 from .browser import TabClosed, _accepts_cookies, _cookie_setting, declines_cookies, final_text, may_accept_cookies
 
 NEW_TAB_WAIT = 4  # seconds to wait for a tab opened late by a click before calling it a stall
@@ -928,11 +928,16 @@ class Applier:
                 if _new_required(before, data) and page_key not in refilled:
                     refilled.add(page_key)  # answers drew new questions ("If yes, explain"): fill those too
                     continue
+                gaps, pending = self._entry_gaps(run, data, pending)
                 if missing_files:  # questions come along, so they can be answered meanwhile
                     return self._pause(run, "stuck", "The form needs a file the profile doesn't point to (set "
                                        "documents.resume in profile.yaml): " + ", ".join(f["label"] for f in missing_files)
-                                       + (f". It also has {len(pending)} question(s) your profile doesn't answer."
+                                       + "." + (f" {gaps}" if gaps else "")
+                                       + (f" It also has {len(pending)} question(s) your profile doesn't answer."
                                           if pending else ""), pending)
+                if gaps:
+                    return self._pause(run, "stuck", gaps + (f" It also has {len(pending)} other question(s), here."
+                                                             if pending else ""), pending)
                 if pending:
                     return self._pause(run, "questions", f"{len(pending)} question(s) your profile doesn't answer. "
                                        "Answer them here and the desk fills them in (and remembers them).", pending)
@@ -1136,7 +1141,10 @@ class Applier:
         failed: dict[str, dict[str, Any]] = {}
         for attempt in range(2):
             fields = {f["id"]: f for f in data.get("fields") or []}
-            by_id = {fid: question_key(f.get("label") or "") for fid, f in fields.items()}
+            # a box's own answer (the desk's "section | label | sub-label", for a label more than
+            # one box has), else the answer to its label
+            by_id = {fid: placed if (placed := placed_key(f)) in run.once else question_key(f.get("label") or "")
+                     for fid, f in fields.items()}
             # an answer stays with the page it first went in on: "If yes, please explain" about
             # relatives isn't the answer to a later page's "If yes, please explain"
             here = _page_key(data)
@@ -1171,6 +1179,52 @@ class Applier:
         if skipped:
             self._log(run, f"skipped {len(skipped)} optional field(s) that wouldn't take your profile's answer: "
                       + ", ".join(f"\u201c{label}\u201d" for label in skipped[:3]))
+
+    def _entry_gaps(self, run: Run, data: dict[str, Any],
+                    pending: list[dict[str, Any]]) -> tuple[str, list[dict[str, Any]]]:
+        """Boxes in a job's or school's block ("Work Experience 2": its From and To) whose answer
+        lives in the profile's work_history or education_history are never asked one by one:
+        twenty bare "From" and "To" boxes on the desk couldn't say whose they were, and an answer
+        typed there would go in every one. What's said instead (which entries lack what, or
+        which of the profile's answers the site didn't take), and the questions left to ask."""
+        prof = config.Profile.load()
+        missing: dict[str, dict[str, list[str]]] = {"work": {}, "education": {}, "extra": {}}
+        refused: dict[str, list[str]] = {}  # the profile has it; the page didn't take it
+        rest = []
+        for q in pending:
+            found = entry_of(q, prof)
+            if found is None:
+                rest.append(q)
+                continue
+            name, kind = found
+            what = clean_label(q.get("label") or "").strip() or "a box"
+            into = refused if q.get("error") else missing[kind]
+            if what not in into.setdefault(name, []):
+                into[name].append(what)
+
+        def listed(entries: dict[str, list[str]]) -> str:
+            return "; ".join(f"{name} ({', '.join(what)})" for name, what in entries.items())
+
+        site, said = _site(run, data), []
+        if missing["work"]:
+            said.append(f"{site} asks about your past jobs, and your profile doesn't have this for them: "
+                        f"{listed(missing['work'])}. Add it to those jobs under work_history in profile.yaml (dates "
+                        "as start: 2021-03 and end: 2023-06, or end: present), or ask Claude: \u201cadd the start and "
+                        "end months of my jobs from my resume to my profile\u201d.")
+        if missing["education"]:
+            said.append(f"{site} asks about your schools, and your profile doesn't have this for them: "
+                        f"{listed(missing['education'])}. Add it to those schools under education_history in "
+                        "profile.yaml (years as start: 2016 and end: 2018), or ask Claude to add it from your resume.")
+        if said:
+            said.append("Then press Resume: the desk fills them in from your profile on every application after that. "
+                        "Or type them into the page in the browser and press Resume.")
+        if missing["extra"]:
+            said.append(f"The page has more blocks than your profile has entries: {listed(missing['extra'])}. Remove "
+                        "the extra block in the browser (or fill it in there), then press Resume.")
+        if refused:
+            said.append(f"{site} didn't take your profile's answer for: {listed(refused)}. Fill those in the browser "
+                        "(in a list, the closest choice), then press Resume.")
+        return " ".join(said), rest
 
     async def _sign_up_pause(self, run: Run, data: dict[str, Any], button: dict[str, Any]) -> None:
         await self._bring_forward(run)
@@ -1319,9 +1373,14 @@ class Applier:
         self._note_skipped(run, result)
         data, _ = await self._look()
         run.page_info = _page_info(data)  # the page as filled
+        gaps, pending = self._entry_gaps(run, data, pending)
         if missing_files:
             return self._pause(run, "stuck", "The form needs a file the profile doesn't point to (set documents.resume "
-                               "in profile.yaml): " + ", ".join(f["label"] for f in missing_files), pending)
+                               "in profile.yaml): " + ", ".join(f["label"] for f in missing_files)
+                               + (f". {gaps}" if gaps else ""), pending)
+        if gaps:
+            return self._pause(run, "stuck", gaps + (f" It also has {len(pending)} other question(s), here."
+                                                     if pending else ""), pending)
         if pending:
             return self._pause(run, "questions", f"{len(pending)} question(s) your profile doesn't answer. Answer them "
                                "here and the desk fills them in (and remembers them).", pending)
@@ -1460,19 +1519,22 @@ def _account_and_application(data: dict[str, Any]) -> bool:
 def _pending(result: dict[str, Any], once_failed: dict[str, dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """After autofill: the required questions to put to the person (with any answer of theirs
     the page turned down), and the required file inputs nothing could go in."""
-    pending = [{**f, **once_failed[question_key(f.get("label") or "")]}
-               if question_key(f.get("label") or "") in once_failed else f
-               for f in result["needs_input"] if f.get("required") and f.get("kind") != "file"]
+    def turned_down(f: dict[str, Any]) -> dict[str, Any]:  # an answer of theirs for the box, or its label
+        return once_failed.get(placed_key(f)) or once_failed.get(question_key(f.get("label") or "")) or {}
+
+    pending = [{**f, **turned_down(f)} for f in result["needs_input"] if f.get("required") and f.get("kind") != "file"]
     # the profile's answers that didn't go in, where the site requires one (an optional field
     # is skipped: Qorvo's optional veteran question has no "don't wish to answer")
     pending += [{"id": f["id"], "label": f.get("label") or "", "kind": f.get("kind") or ("combobox" if f.get("options") else "text"),
                  "required": True, "error": f.get("error"),
-                 **({"options": f["options"]} if f.get("options") else {})}
+                 **({"options": f["options"]} if f.get("options") else {}),
+                 **{k: f[k] for k in ("section", "sublabel") if f.get(k)}}
                 for f in result["failed"] if f.get("required", True)]
     # an answer of theirs the page turned down is asked again, even when the box isn't empty
     # (words left in a picker's search box read as an answer), unless the profile's answer
     # went in after it
-    asked = {question_key(f.get("label") or "") for f in pending + (result.get("filled") or [])}
+    asked = ({question_key(f.get("label") or "") for f in pending + (result.get("filled") or [])}
+             | {placed_key(f) for f in pending})
     pending += [f for key, f in once_failed.items() if key not in asked and f.get("kind") != "file"]
     missing_files = [f for f in result["needs_input"] if f.get("required") and f.get("kind") == "file"]
     return pending, missing_files
@@ -1645,6 +1707,11 @@ def _site(run: Run, data: dict[str, Any]) -> str:
 
 def question_key(label: str) -> str:
     return norm(clean_label(label))
+
+
+def placed_key(field: dict[str, Any]) -> str:
+    """The key of an answer given for one box: the desk sends "section | label | sub-label"."""
+    return question_key(f"{field.get('section') or ''} | {field.get('label') or ''} | {field.get('sublabel') or ''}")
 
 
 def _page_said(data: dict[str, Any]) -> str:

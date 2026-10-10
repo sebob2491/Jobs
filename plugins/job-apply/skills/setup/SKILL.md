@@ -92,7 +92,11 @@ All of the user's data lives in `~/.job-apply/`, outside the plugin:
      target titles ("HR Generalist", "Recruiter"), since ranking follows them.
 
 4. Write `~/.job-apply/profile.yaml` and keep its comments. Run `setup_status` again
-   until `profile_complete` is true. Then show the user a short summary of their
+   until `profile_complete` is true. If its `profile_gaps` lists `work_history dates: <jobs>`,
+   those jobs lack a start or end month (Workday asks both for every job): take them from
+   the resume as `start: 2021-03` and `end: 2023-06` (or `end: present`), and ask the user
+   for any the resume gives only as years or not at all. They needn't remember an old
+   job's months; leave those as they are rather than guess. Then show the user a short summary of their
    answers to confirm, with sensitive values (EEO choices) summarized rather than
    echoed.
 

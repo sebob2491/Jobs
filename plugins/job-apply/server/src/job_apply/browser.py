@@ -1256,8 +1256,11 @@ class BrowserSession:
                 raise ValueError(f"{text!r} doesn't match any suggestion: {options[:30]}")
             # Nothing was listed. A pick-list (one that names its menu) needs a pick: Eightfold's
             # Country code dropped the typed text once its menu closed, and the field stayed
-            # empty while counting as filled. Only a free-text box may keep what was typed.
-            picks = await loc.evaluate("el => !!(el.getAttribute('aria-controls') || el.getAttribute('aria-owns'))")
+            # empty while counting as filled. So does a Workday prompt, whose value is only ever
+            # a pill (a school its list doesn't have read as filled with the typed name). Only a
+            # free-text box may keep what was typed.
+            picks = (await loc.evaluate("el => !!(el.getAttribute('aria-controls') || el.getAttribute('aria-owns'))")
+                     or await loc.evaluate(WORKDAY_PROMPT_JS))
             await loc.evaluate("el => el.blur()")
             await page.wait_for_timeout(200)
             if picks or norm(await loc.input_value()) != norm(query):
