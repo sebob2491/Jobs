@@ -10,7 +10,8 @@
      Username incorrect.", "Password incorrect."). Its reset asks for the email and a picture code ("Enter
      Captcha"), and its Continue without the code says "One or more fields require your attention. Captcha
      text Required field". Its Create Account ("Let's Get Started") asks for the email first, then emails a
-     passcode to it. ?captcha: a picture code on Create Account too. What happened is kept for the tab
+     passcode to it. ?captcha: a picture code on Create Account too. ?refuse: its Continue refuses the email
+     ("Please enter a valid email address.") and stays. What happened is kept for the tab
      (sessionStorage's br.* keys), so a reload doesn't lose it: signIns, resetPresses, captcha (anything
      typed in a picture code), accountEmail (the email Create Account's Continue sent) -->
 <header><a href="javascript:void(0)" id="top-sign-in">Sign In</a> <a href="javascript:void(0)">Example Corp Careers</a></header>
@@ -96,6 +97,11 @@
     watch('acode');
     $('account').addEventListener('submit', (e) => {
       e.preventDefault();
+      bump('accountPresses');
+      if (q.has('refuse')) {
+        $('err').innerHTML = '<p>Please enter a valid email address.</p>';
+        return;
+      }
       if (!$('aem').value || q.has('captcha') && !$('acode').value) {
         $('err').innerHTML = '<p>One or more fields require your attention.</p>';
         return;

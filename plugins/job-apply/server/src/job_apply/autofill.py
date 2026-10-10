@@ -1182,7 +1182,8 @@ RULES: list[tuple[str, str, Getter, int | None, set[str] | None]] = [
     ("government_employee", r"\b(are|were|have) you\b.{0,80}\b(government|federal|state or local|public sector)\b.{0,60}"
      r"\b(employee|employed|official|worker)|\b(employ\w*|work\w*) (by|for) (a |the |any )?(u s |us |federal |state |local |"
      r"city |county )?(government|public agency)\b", _government, None, _YES_NO_KINDS),
-    ("relatives", r"\b(relatives?|related|family( members?)?|friends?|spouse|in laws?)\b.{0,80}\b(employ\w*|work\w*)\b|"
+    ("relatives", r"\b(relatives?|related|(immediate )?family members?|members? of your (immediate )?family|immediate family|"
+     r"friends?|spouse|in laws?)\b.{0,80}\b(employ\w*|work\w*)\b|"
      r"\b(employ\w*|work\w*)\b.{0,60}\b(relatives?|family members?)\b", _relatives, None, _YES_NO_KINDS),
     ("restrictive_agreement", r"\bnon ?(compet\w*|solicit\w*)\b|restrictive covenant|\bagreements?\b.{0,160}\b(impact|interfere|"
      r"restrict|limit|prevent|prohibit)\w*", _background("restrictive_agreement", unless=r"\b(willing|sign|agree to)\b"), None,

@@ -139,7 +139,7 @@ _TERMS_ONLY = re.compile(r"terms|conditions|(?:privacy|data protection) (?:polic
 _TERMS_BOX = re.compile(r"terms|conditions|privacy|consent|agree|acknowledge|policy|notice", re.I)
 _NOT_TERMS = re.compile(r"newsletter|marketing|job alerts?|text messages?|\bsms\b|promotion|offers|subscribe|similar jobs|"
                         r"talent (?:community|network)|keep me|stay informed|send me|contact(?:ed)? me|be contacted|"
-                        r"share my|other (?:roles|positions|jobs|opportunities)|affiliat", re.I)
+                        r"share my|other (?:\w+ )?(?:roles|positions|jobs|openings|opportunities)|affiliat", re.I)
 # A Create Account box that says the person applies from outside, not as one of the employer's staff
 # (Banner Health's Workday, live, Oct 2026: "Yes, I am a new candidate and not a current employee"; no
 # account without it, though it isn't marked required). That and nothing more: a box that says more
@@ -243,6 +243,10 @@ NOTICE_OPENING = 300
 # but a legal waiver (an arbitration agreement, a jury trial waived, a non-compete) is never agreed to for the
 # person however deep in its text it sits
 _WAIVES = re.compile(r"arbitrat|\bwaive|\bjury\b|non-?compete|non-?solicit", re.I)
+# nor what signs them up for something ("By clicking Accept you also join our Talent Community")
+_SIGNS_UP = re.compile(r"\b(?:join\w*|subscrib\w*|sign(?:s|ed|ing)? (?:you )?up|receiv\w*|enrol\w*|added to|opt(?:s|ed)? "
+                       r"(?:you )?in)\b.{0,60}?\b(?:talent (?:community|network|pool)|newsletters?|job alerts?|marketing|"
+                       r"promotion\w*)", re.I | re.S)
 # Never agreed to for the person, wherever it's asked: what _NOT_TERMS keeps out of account forms
 # (newsletters, marketing, job alerts, a talent community, being contacted, other roles), a talent pool,
 # keeping their profile for later, cookies (their own rule), and legal waivers (arbitration, a jury trial)
@@ -282,10 +286,10 @@ def _terms_notice(heading: str, text: str) -> tuple[bool, bool]:
     in its heading ("Privacy Policy of Example Corp": its Ok too), or asking in its words to accept
     them; never one about an error, a profile to overwrite or the like, nor what's never agreed to.
     One named in its heading is the statement itself, and only its opening is read for those (NOTICE_OPENING),
-    but all of it for a legal waiver (_WAIVES)."""
+    but all of it for a legal waiver (_WAIVES) or a sign-up (_SIGNS_UP)."""
     named = bool(_TERMS.search(heading))
     said = f"{heading} {text[:NOTICE_OPENING] if named else text}"
-    if _NEVER_AGREED.search(said) or _NOT_A_NOTICE.search(said) or _WAIVES.search(text):
+    if _NEVER_AGREED.search(said) or _NOT_A_NOTICE.search(said) or _WAIVES.search(text) or _SIGNS_UP.search(text):
         return False, False
     return named or bool(_TERMS.search(text) and _ACCEPTS.search(text)), named
 # A fill the page never let happen (it timed out, its script failed, a dialog stood over the box):
@@ -331,6 +335,7 @@ class Run:
     # An email-first sign-in said it has no account for the email here (an Eightfold site's modal): the
     # page (its address, bare) whose next steps make one (_email_account_view), until the application shows
     account_page: str = ""
+    statement_accepted: bool = False  # a Create Account's data privacy statement accepted for them (_accept_statement)
     account_finished: bool = False  # pressed the Create Account's second step (UKG Pro's "Almost there!"): never again
     try_later: bool = False  # left on a "Try Again Later" page: only the person's Resume goes on from it
     active_at: float = 0.0  # when its paused tab last changed: someone at work in it
@@ -1419,7 +1424,7 @@ class Applier:
                     elif _captcha_on(data):  # (never touched, so never pressed for the person either)
                         asks = ("Its CAPTCHA is yours to solve: solve it, tick their terms box if there is one and create "
                                 "the account (then verify your email if they ask)")
-                    elif _privacy_statement(data) is not None:  # (SuccessFactors': no account without it)
+                    elif _privacy_statement(data) is not None and not run.statement_accepted:  # (SuccessFactors')
                         asks = ("It asks you to read and accept its data privacy statement, which agrees to something in "
                                 "your name, so it's yours: open it in the browser window and accept it if you're happy "
                                 "to, then create the account (then verify your email if they ask)")
@@ -1642,11 +1647,12 @@ class Applier:
                 here = f"{_page_key(data)} "
                 held = next((g[len(here):] for g in agreed if g.startswith(here)), "")
                 if held:  # an agreement pressed for them on this pass, its button greyed out since
-                    if _BOT_BADGE.search(text) or any(_BOT_BADGE.search(a.get("text") or "") for a in data.get("actions") or []):
-                        # Charles Schwab's iCIMS (live check, Oct 2026): its hCaptcha held the press
+                    badge = _BOT_BADGE.search(" ".join([text, *(a.get("text") or "" for a in data.get("actions") or [])]))
+                    if badge:  # Charles Schwab's iCIMS (live check, Oct 2026): its hCaptcha held the press
+                        check = "reCAPTCHA" if "re" in badge.group(0).lower() else "hCaptcha"
                         return self._pause(run, "stuck", f"I pressed \u201c{held}\u201d for you "
                                            "(settings.accept_notices), and the page stayed with it greyed out. The page "
-                                           "is protected by a bot check (hCaptcha), which may want you to show you're "
+                                           f"is protected by a bot check ({check}), which may want you to show you're "
                                            "not a robot: that's yours. Look at it in the browser window, then press Resume.")
                     return self._pause(run, "stuck", f"I pressed \u201c{held}\u201d for you (settings.accept_notices), "
                                        "but the page stayed: it may want a box filled or a check passed first. "
@@ -2010,7 +2016,9 @@ class Applier:
             if notice is not None or time.monotonic() > deadline:
                 break
             await asyncio.sleep(0.5)
-        return notice is not None and await self._answer_notice(run, now, notice, set(), over_form=False) == "agreed"
+        run.statement_accepted = notice is not None and await self._answer_notice(run, now, notice, set(),
+                                                                                  over_form=False) == "agreed"
+        return run.statement_accepted
 
     async def _finish_account(self, run: Run, data: dict[str, Any], button: dict[str, Any]) -> bool:
         """The rest of a Create Account, on a page of its own after the email and password (UKG Pro's
@@ -2154,7 +2162,7 @@ class Applier:
             await asyncio.sleep(0.5)
             now, _ = await self._look()
             if _email_account_view(now) != view:
-                break
+                return True  # it went on by itself: the main loop's next look
             data, button = now, self._account_button(now.get("actions") or [], pattern)
         if button is None:
             return await self._account_theirs(run, data, f"I couldn't find the button that goes on with making your account "
@@ -2192,15 +2200,19 @@ class Applier:
             self._log(run, f"chose “{button['text'].strip()}” on {site}: the account needs no password there")
         now, _ = await self._after_press(data)
         wanted = _other_positions_boxes(now, required=False) if view == "consent" else []
-        if wanted and _email_account_view(now) == view and _page_sig(now) == _page_sig(data):
+        others = [f for f in now.get("fields") or [] if not f.get("disabled") and not f.get("aside")
+                  and is_empty_value(f.get("value")) and f not in wanted]
+        if (wanted and not others and _email_account_view(now) == view and _page_sig(now) == _page_sig(data)
+                and (now.get("errors") or []) != (data.get("errors") or [])):
             # refused without its consent to be considered for other open positions too: given, and pressed again
             again = self._account_button(now.get("actions") or [], _ACCOUNT_ON)
             if again is not None and await self._give_other_positions(run, now, wanted, refused=True):
                 with contextlib.suppress(Exception):
                     await srv.browser.click(again["id"], allow_submit=True)
                     now, _ = await self._after_press(now)
-        if _email_account_view(now) != view or _page_sig(now) != _page_sig(data):
-            return True  # on to its next step (the main loop's next look)
+        if _email_account_view(now) not in (view, None) or _page_sig(now) != _page_sig(data):
+            return True  # on to its next step (the main loop's next look); a page that stayed (BrassRing's email
+            # step, which has no view of its own) is said, never pressed again
         # still there: a choice left that's the person's, or what the site said
         said = "; ".join(e for e in now.get("errors") or [] if not _ERROR_COUNT.match(e.strip()))[:200].rstrip(" .")
         left = [f for f in now.get("fields") or [] if not f.get("disabled") and not f.get("aside")
@@ -3039,7 +3051,9 @@ def _email_first_account(data: dict[str, Any]) -> bool:
     other but a picture code's."""
     fields = [f for f in data.get("fields") or [] if not f.get("disabled") and not f.get("aside")]
     emails = [f for f in fields if f.get("kind") in ("text", "email") and re.search(r"e-?mail", f.get("label") or "", re.I)]
-    return bool(emails) and all(f in emails or _PICTURE_CODE.search(f.get("label") or "") for f in fields)
+    headings = " ".join(data.get("headings") or [])
+    return (bool(emails) and all(f in emails or _PICTURE_CODE.search(f.get("label") or "") for f in fields)
+            and bool(re.search(r"\baccount\b", headings, re.I)) and not _NOT_TERMS.search(headings))
 
 
 # A posting page's own boxes, never an application's: Phenom's "Save Job" ticks and its chatbot's box
@@ -3303,9 +3317,10 @@ def _new_candidate_boxes(data: dict[str, Any], company: str) -> list[dict[str, A
     employee applies the way their employer says)."""
     boxes = [f for f in data.get("fields") or [] if f.get("kind") == "checkbox" and not f.get("disabled")
              and is_empty_value(f.get("value")) and _NEW_CANDIDATE.fullmatch(clean_label(f.get("label") or "").rstrip(" ."))]
-    if not boxes or not company or works_there_now(config.Profile.load(), company):
-        return []
-    return boxes
+    profile = config.Profile.load()
+    if not boxes or not company or not (profile.get("work_history") or profile.get("experience.current_company")):
+        return []  # (a profile that says nothing of their work says nothing of this either)
+    return [] if works_there_now(profile, company) else boxes
 
 
 def _other_positions_consent(field: dict[str, Any]) -> Any:

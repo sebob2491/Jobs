@@ -10,7 +10,8 @@
      2. "Create an account" opens "Please review before continuing": a box agreeing to the Privacy
         Policy, then Submit. ?contact=required: also a required "Contact Consent" with one choice,
         being considered for other open positions (Northrop's); ?contact=optional: the same, not
-        required. ?late: its Submit is drawn a moment after its boxes (Northrop's, live).
+        required. ?late: its Submit is drawn a moment after its boxes (Northrop's, live). ?question: also a
+        required choice between two ("Preferred contact method": Email or Phone), which is the person's.
      3. "Create an account": the email (kept from the sign-in), Continue. An email it has an account
         for gets "An account already exists with this email." (?exists).
      4. "Check your email": a box per digit of the emailed code (123456), Submit. Then the application
@@ -65,6 +66,9 @@
         + 'aria-label="I understand that I may be considered for other open positions in my country, in addition to '
         + 'the role(s) to which I apply"><label for="contact-consent-choice-0">I understand that I may be considered '
         + 'for other open positions in my country, in addition to the role(s) to which I apply</label></div></div>' : '')
+      + (params.has('question') ? '<div role="radiogroup" aria-label="Preferred contact method">'
+        + '<input id="by-email" name="by" type="radio"><label for="by-email">Email</label>'
+        + '<input id="by-phone" name="by" type="radio"><label for="by-phone">Phone</label></div>' : '')
       + '<p id="consent-error" role="alert"></p><span id="buttons"></span></div>';
     const agree = () => {
       // (named as live: "consent" in its own id and its box's class)
@@ -79,6 +83,9 @@
       const said = document.getElementById('consent-error');
       if (!privacy) { said.textContent = 'Please accept the privacy policy'; return; }
       if (contact === 'required' && !chosen) { said.textContent = 'You must select one option'; return; }
+      if (params.has('question') && !document.querySelector('[name="by"]:checked')) {
+        said.textContent = 'You must select one option'; return;
+      }
       signIn(true);
     }
   }

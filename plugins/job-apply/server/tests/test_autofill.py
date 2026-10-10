@@ -1284,6 +1284,10 @@ def test_a_family_member_at_the_employer_or_on_its_board_is_a_relatives_question
     no_relatives = Profile({"background": {"relatives_at_employer": False}})
     got = resolve_field(f(asked, "select", options=yn), no_relatives, job)
     assert got is not None and (got.value, got.rule) == ("No", "relatives"), got
+    for other in ("Do you have any family obligations that would prevent you from working weekends or overtime?",
+                  "Is your family able to relocate for this work?"):
+        got = resolve_field(f(other, "select", options=yn), no_relatives, job)
+        assert got is None or got.rule != "relatives", (other, got)
     on_no_board = Profile({"background": {"board_member": False}})
     assert resolve_field(f(asked, "select", options=yn), on_no_board, job) is None
     assert clean_label(asked).endswith("Board of Directors"), clean_label(asked)
