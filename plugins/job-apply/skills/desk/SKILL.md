@@ -35,6 +35,14 @@ The desk is a local web page served by this plugin. It does what the `find-jobs`
     password in the chat either: it goes into the desk page.
   - **Alert me** (in the header) turns on desktop notifications for jobs that come to
     need the user or are ready to submit, so the desk can be left in the background.
+- **Notes (N)** (in the header, once there are any) collects the notes the desk takes by
+  itself whenever a job stops on something it most likely got wrong: stuck, a sign-in, a
+  Submit that didn't go through or showed no confirmation, or an answer that didn't go in
+  (not bot checks, CAPTCHAs, emailed codes or questions the profile doesn't answer). The
+  user files them all at once: **File on GitHub** opens one issue with them, **Copy all**
+  copies the whole text, and **Clear** removes them once filed. A note holds no answers and
+  says the employer by its job system rather than its name. **Report a problem** on a job's
+  card stays for one job: a fuller report, with the employer and the pages the desk saved.
 - **Site passwords** stores one password per job system: Workday, SuccessFactors, iCIMS,
   ApplicantStack, UKG Pro or Infor. The page names, by each system, the employers on the
   user's own lists that use it (on the semiconductor list, Workday has 12 of them; on the

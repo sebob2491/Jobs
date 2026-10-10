@@ -943,3 +943,97 @@ def test_the_password_list_names_the_persons_own_employers(job_apply_home):
     own.write_text("lists: [phoenix-metro\n")  # a typo: the systems without names, the page still up
     os.utime(own, (time.time() + 10, time.time() + 10))
     assert {s["value"]: s["label"] for s in desk_module.password_systems()}["workday"] == "Workday"
+
+
+def _note(job_id, reason="I couldn't find the button that moves this application on.", log=()):
+    """A note the desk took on a job's stop (as Applier._pause takes them)."""
+    from job_apply import report
+    from job_apply.pipeline import Run
+
+    job = {"id": job_id, "title": "Technician", "company": "Example Litho", "ats": "workday"}
+    return report.take_note(job, Run(job_id, "Technician", "Example Litho", status="needs_you", need="stuck",
+                                     reason=reason, log=list(log)))
+
+
+def test_the_notes_are_counted_in_the_header_shown_as_one_issue_and_cleared(srv, job_apply_home):
+    """Notes the desk took on its stops: a Notes (N) link in the header once there are any, a
+    panel with all of them as the one issue they make, and Clear once they're filed."""
+    from urllib.parse import parse_qs, urlsplit
+
+    from playwright.async_api import async_playwright
+
+    desk = Desk(srv)
+    desk.applier.start = lambda: None
+    desk.search.update(status="done", at=time.time())
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with async_playwright() as pw:
+                browser = await pw.chromium.launch(**launch_options())
+                page = await browser.new_page()
+                page.on("dialog", lambda d: asyncio.ensure_future(d.accept()))  # Clear's "are you sure"
+                await page.goto(desk.url)
+                await page.wait_for_selector("#plugin-version:not(:empty)")  # the page has its state
+                assert await page.locator("#notes-btn").is_hidden()  # none yet
+                for i in range(3):
+                    _note(i + 1, reason=f"stop {i}")
+                await page.wait_for_selector("#notes-btn:text('Notes (3)')")
+                await page.click("#notes-btn")
+                await page.wait_for_selector("#notes[open]")
+                text = await page.locator("#notes-text").inner_text()
+                assert text.count("## stuck: Technician, at a Workday employer") == 3 and "Example Litho" not in text
+                href = await page.locator("#notes-open").get_attribute("href")
+                assert href.startswith("https://github.com/sebob2491/Jobs/issues/new?")
+                query = parse_qs(urlsplit(href).query)
+                assert query["title"] == [f"Live-run notes: 3 stops (job-apply {config.plugin_version()})"]
+                assert query["body"][0] == text.strip() + "\n" and await page.locator("#notes-cut").is_hidden()
+                await page.click("[data-act=notes-clear]")
+                await page.wait_for_selector("#notes-btn", state="hidden")
+                assert await page.locator("#notes[open]").count() == 0
+                await browser.close()
+        finally:
+            await desk.stop()
+
+    run(go())
+    assert list((job_apply_home / "notes").glob("*.md")) == []
+
+
+def test_many_notes_make_one_issue_whose_address_github_takes(srv, job_apply_home):
+    """Fifty notes with long logs: the issue's address stays under GitHub's limit, cut with a
+    line saying the rest is in Copy all's text, which holds every note. Only the newest 50 are
+    kept; the notes need the page's key, and Clear removes only the ones shown."""
+    from urllib.parse import parse_qs, urlsplit
+
+    from job_apply import report
+
+    for i in range(55):
+        _note(i + 1, reason=f"stop {i}", log=[f"clicked “Next” on page {n}: " + "x" * 200 for n in range(20)])
+    desk = Desk(srv)
+    desk.applier.start = lambda: None
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with _client(desk) as c:
+                h = {"x-desk-token": desk.token}
+                assert (await c.post("/api/notes/show")).status_code == 403
+                assert (await c.post("/api/notes/clear", json={"ids": []})).status_code == 403
+                assert (await c.post("/api/notes/clear", headers=h, json={"ids": "all"})).status_code == 400
+                assert (await c.post("/api/notes/everything", headers=h)).status_code == 404
+                shown = (await c.post("/api/notes/show", headers=h)).json()
+                _note(99, reason="taken after they were shown")
+                ids = [n["id"] for n in shown["notes"]]
+                cleared = (await c.post("/api/notes/clear", headers=h, json={"ids": ids})).json()
+                return shown, cleared, (await c.get("/api/state", headers=h)).json()["notes"]
+        finally:
+            await desk.stop()
+
+    shown, cleared, left = run(go())
+    assert len(shown["notes"]) == report.NOTES == 50 and shown["text"].count("## stuck: Technician") == 50
+    assert "said:** stop 4\n" not in shown["text"] and "said:** stop 5\n" in shown["text"]  # the oldest went
+    assert len(shown["issue_url"]) <= report.ISSUE_URL and shown["cut"]
+    body = parse_qs(urlsplit(shown["issue_url"]).query)["body"][0]
+    assert body.endswith("(cut short: the rest is in the text the Job Desk's Copy all copies)\n")
+    # the note taken since stays (the oldest shown had made way for it: 50 at most)
+    assert cleared == {"cleared": 49} and left == 1

@@ -353,6 +353,17 @@ reported, so read it over first. The saved pages in `report.zip` aren't in the i
 because a filled-in form can still show your answers; they stay on your computer. Claude
 can make the same report with `report_problem`.
 
+The desk also takes a note by itself, with nothing pressed, each time a job stops on
+something it most likely got wrong: it's stuck, at a sign-in, its Submit didn't go through
+or showed no confirmation, or an answer didn't go in. Bot checks, CAPTCHAs, emailed codes
+and questions your profile doesn't answer are yours, so they aren't noted. **Notes (N)** in
+the desk's header shows them all as one issue: **File on GitHub** opens it, **Copy all**
+copies the whole text (for when it's too long for the link), and **Clear** removes them once
+they're filed. A note holds less than a report: none of your answers, and each employer said
+by its job system ("a Workday employer") rather than named, since one issue holds many jobs
+(the addresses of the pages it stopped on still show the site). The newest 50 are kept in
+`~/.job-apply/notes/`.
+
 ### Turning a failure into a test
 
 When a field won't fill on a real site, the plugin saves a snapshot to
