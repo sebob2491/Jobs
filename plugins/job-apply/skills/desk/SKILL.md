@@ -73,8 +73,8 @@ The desk is a local web page served by this plugin. It does what the `find-jobs`
   has an account, or where the password still doesn't sign in after Create Account. It presses
   Create Account once per job, and a sign-in with a refused password twice at most (once more
   after a reset or an account it made), so the account isn't locked; then the desk card says what
-  the site said. Each Resume the user presses tries the saved password once more (after they reset
-  it to that by hand, say).
+  the site said. A Resume the user presses on that sign-in card tries the saved password once more
+  (after they reset it to that by hand, say); a Resume on any other card doesn't.
   `settings.manage_accounts: false` leaves all of this to the user (the desk fills
   in Create Account for them to finish); practice mode never creates an account. A password is only typed into its
   own system's addresses. The user types it into the desk page; never ask for it in the
