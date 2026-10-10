@@ -37,6 +37,7 @@ from .ats import detect_ats
 from .postings import FetchError, Posting, fetch_posting, finalize, parse_html
 from .recommend import recommend, score_listing
 from .search import load_companies, own_companies_path
+from .updates import UpdateCheck
 
 PAGE = Path(__file__).resolve().parent / "static" / "desk.html"
 DEFAULT_PORT = 8765
@@ -90,6 +91,8 @@ class Desk:
                                        "errors": {}, "browser_only": []}
         self._search_task: asyncio.Task | None = None
         self._serve_task: asyncio.Task | None = None
+        self.updates = UpdateCheck()  # a newer published version, said on the page
+        self._update_task: asyncio.Task | None = None
         self._server: uvicorn.Server | None = None
         self._load()
 
@@ -151,12 +154,25 @@ class Desk:
             if self._serve_task.done():
                 raise RuntimeError(f"The Job Desk couldn't start on port {self.port}")
         self.applier.start()
+        if self._update_task is None or self._update_task.done():
+            self._update_task = asyncio.get_running_loop().create_task(self._watch_updates())
         if open_browser:
             await asyncio.get_running_loop().run_in_executor(None, webbrowser.open, self.url)
         return self.url
 
+    async def _watch_updates(self) -> None:
+        """Look for a newer published version now and then (UpdateCheck keeps to its own pace)."""
+        while True:
+            with contextlib.suppress(Exception):
+                await self.updates.refresh()
+            await asyncio.sleep(600)
+
     async def stop(self) -> None:
         await self.applier.stop()
+        if self._update_task is not None and not self._update_task.done():
+            self._update_task.cancel()
+            with contextlib.suppress(BaseException):
+                await self._update_task
         if self._search_task is not None and not self._search_task.done():
             self._search_task.cancel()
             with contextlib.suppress(BaseException):
@@ -507,6 +523,7 @@ class Desk:
             "mail_problem": self.applier.mail_problem,
             "profile_problem": profile_problem,
             "version": config.plugin_version(),
+            "update": self.updates.notice(),
             "answers_problem": config.answers_problem(),
             "search": self.search,
             "listings": rows,

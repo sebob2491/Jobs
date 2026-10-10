@@ -56,6 +56,9 @@ The desk is a local web page served by this plugin. It does what the `find-jobs`
 - **Submit** sends one application. **Submit for me** sends every application that
   needs nothing, and stays off until the user turns it on. LinkedIn and Indeed are
   always submitted by the user.
+- **A newer version**: the desk looks at the plugin's published version when it starts and
+  every few hours, and says when a newer one is out, with the two update commands (then a
+  restart of the Claude app). Best done between runs. `JOB_APPLY_NO_UPDATE_CHECK=1` turns the look off.
 - **Tailor my resume for each job** holds each picked job, before its browser tab
   opens, until Claude has written a resume for it (see Tailoring resumes). The page
   says how many are waiting. **Use my usual resume** sends one on without.

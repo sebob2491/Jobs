@@ -545,6 +545,10 @@ function renderHeader() {
     a site turns your saved password down, resets it to that one through the site's "Forgot password" email. To keep doing
     these yourself, add <code>manage_accounts: false</code> under <code>settings:</code> in <code>${esc(p.path)}</code>;
     <code>manage_accounts: true</code> keeps them and hides this note.`});
+  const up = state.update;
+  if (up) notes.push({cls: "notice", html: `job-apply ${esc(up.latest)} is out (you have ${esc(up.current)}). Between runs, `
+    + `in a terminal (PowerShell on Windows) run ${up.commands.map((c) => `<code>${esc(c)}</code>`).join(", then ")}, then `
+    + `restart the Claude app.`});
   if (state.profile_problem) notes.push({cls: "notice", html: `Your profile can't be read: ${esc(state.profile_problem)} Fix it and the desk picks it up again by itself.`});
   if (state.mail_problem) notes.push({cls: "notice", html: esc(state.mail_problem)});
   if (state.answers_problem) notes.push({cls: "notice", html: `Your saved answers aren't being used: ${esc(state.answers_problem)}.`});
