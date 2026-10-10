@@ -593,7 +593,7 @@ async def open_application(job_id: int | None = None, url: str | None = None) ->
     Next steps are usually click("Apply") / click("Easy Apply"), then autofill()."""
     if job_id is None and not url:
         raise ValueError("Pass job_id or url")
-    target = url
+    target = url or ""
     if job_id is None:
         # the job saved at this address, if any: never the one opened before, whose documents
         # would go into this form and whose status a submit here would change
@@ -603,17 +603,19 @@ async def open_application(job_id: int | None = None, url: str | None = None) ->
     else:
         job = _job(job_id)
         target = url or job.get("apply_url") or job["url"]
-        target = greenhouse_form_url(target) or target
         browser.current_job_id = job_id
         if job["status"] == "saved":
             tracker().update(job_id, status="in_progress", note="opened application")
+    # a Greenhouse board that sends visitors to the employer's site (Carvana's is behind a
+    # Cloudflare check): Greenhouse's own form, however the posting was named
+    target = greenhouse_form_url(target) or target
     owner = _desk_tab_job(browser.current_tab)
     if owner is not None and owner != job_id:
         # the tab holds another job the Job Desk has paused or filled: it's left as it is, and
         # this one opens in a tab of its own (the desk would otherwise fill this page as that job)
         await browser.new_tab()
     try:
-        summary = await browser.goto(target)  # type: ignore[arg-type]
+        summary = await browser.goto(target)
     except BrowserUnavailable as e:
         return {"error": str(e)}
     if browser.current_tab is not None:  # which job this tab is for, when Claude switches back to it

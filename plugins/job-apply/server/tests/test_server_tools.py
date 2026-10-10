@@ -86,6 +86,29 @@ def test_a_page_opened_by_its_address_isnt_the_job_opened_before(srv):
     assert sent == [] and srv.get_job(a["id"])["job"]["status"] != "applied"
 
 
+def test_a_greenhouse_posting_opened_by_its_address_opens_greenhouses_own_form(srv, monkeypatch):
+    """A Greenhouse board set to send visitors to the employer's site redirects its postings
+    there (Carvana's, behind a Cloudflare check, Oct 2026). Opened by job or by address, the
+    posting opens on Greenhouse's own form instead, as search results give it."""
+    opened = []
+
+    async def goto(url):
+        opened.append(url)
+        return {"url": url}
+
+    async def human_submit_ats(page=None):
+        return None
+    monkeypatch.setattr(srv.browser, "goto", goto)
+    monkeypatch.setattr(srv.browser, "human_submit_ats", human_submit_ats)
+    form = "https://job-boards.greenhouse.io/embed/job_app?for=carvana&token=8080485"
+    run(srv.open_application(url="https://job-boards.greenhouse.io/carvana/jobs/8080485"))
+    job = srv.add_job(url="https://job-boards.greenhouse.io/carvana/jobs/8080485", title="Coordinator",
+                      company="Carvana")["job"]
+    run(srv.open_application(job_id=job["id"]))
+    run(srv.open_application(url="https://jobs.other.com/b"))
+    assert opened == [form, form, "https://jobs.other.com/b"]
+
+
 @needs_browser
 def test_a_saved_password_goes_only_into_a_password_box_on_its_own_site(srv, job_apply_home):
     routed(srv)

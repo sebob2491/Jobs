@@ -1220,7 +1220,7 @@ def parse_mcloud(data: dict[str, Any]) -> list[Listing]:
     for hit in data.get("searchResults") or []:
         job = hit.get("job") or {}
         title, url = str(job.get("title") or "").strip(), str(job.get("url") or "")
-        if not title or not url or str(job.get("is_internal") or "").lower() == "internal":
+        if not title or not url or re.match(r"\s*(?:internal|true)\b", str(job.get("is_internal")), re.I):
             continue
         places = [", ".join(str(x) for x in (job.get("primary_city"), job.get("primary_state")) if x)]
         places += [", ".join(str(x) for x in (p.get("addtnl_city"), p.get("addtnl_state")) if x)

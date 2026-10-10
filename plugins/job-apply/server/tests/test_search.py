@@ -1895,6 +1895,7 @@ def test_an_m_cloud_search_leaves_out_staff_only_copies():
     def answer(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={"totalHits": 4, "searchResults": [
             job(1, "Digital Content Developer, HR", "119566BR", "Internal"),
+            job(5, "Payroll Specialist", "119567BR", " Internal Only"),
             job(2, "Leadership Development Consultant", "119500BR", "Internal"),
             job(3, "Leadership Development Consultant", "119500BR", "External"),
             job(4, "HR Generalist", "119501BR", "External")]})
