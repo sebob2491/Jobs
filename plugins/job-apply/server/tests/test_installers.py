@@ -241,6 +241,39 @@ def test_install_ps1_dry_run(machine):
     assert not (machine.home / ".job-apply").exists()
 
 
+@pytest.mark.skipif(PWSH is None or sys.platform != "win32", reason="Windows PowerShell only")
+def test_install_ps1_remakes_an_appdata_python_environment_only_when_its_free(machine, tmp_path):
+    """A .venv made with uv's Python inside AppData is made again outside it. While the Claude
+    app runs the plugin from it, deleting it took what wasn't held and left half an environment
+    under the running server; now it's moved aside whole or left alone, and the person is asked
+    to quit the Claude app first."""
+    machine.tools("claude", "uv")
+    (machine.state / "market").touch()
+    (machine.state / "plugin").touch()
+    venv = machine.plugin / "server" / ".venv"
+    (venv / "Scripts").mkdir(parents=True)
+    python_home = machine.home / "AppData" / "Roaming" / "uv" / "python" / "cpython-3.12-windows-x86_64-none"
+    (venv / "pyvenv.cfg").write_text(f"home = {python_home}\n")
+    (venv / "Scripts" / "python.exe").write_bytes(b"MZ")
+    # uv keeps Python outside AppData now (a folder that needn't exist: nothing is installed)
+    machine.env["UV_PYTHON_INSTALL_DIR"] = os.path.join(os.path.splitdrive(str(tmp_path))[0] + os.sep, "uv-python-elsewhere")
+    command = [PWSH, "-NoProfile", "-NonInteractive", "-File", str(INSTALL_PS1)]
+
+    with open(venv / "Scripts" / "python.exe", "rb"):  # in use, as by the plugin's running server
+        code, out = machine.run(command)
+    assert code == 1, out
+    assert "Quit the Claude app, then run this installer again" in out
+    assert (venv / "pyvenv.cfg").exists() and (venv / "Scripts" / "python.exe").exists()  # all of it, untouched
+    assert not list(venv.parent.glob(".venv-old-*"))
+    assert not [c for c in machine.calls() if c.startswith("uv sync")]
+
+    code, out = machine.run(command)  # the app quit: now it's made again
+    assert code == 0, out
+    assert "Making the plugin's Python environment again, outside AppData." in out
+    assert not venv.exists() and not list(venv.parent.glob(".venv-old-*"))
+    assert [c for c in machine.calls() if c.startswith("uv sync --frozen --project")]
+
+
 def test_the_readme_gives_both_commands():
     readme = (config.PACKAGE_DIR.parents[4] / "README.md").read_text(encoding="utf-8")
     base = "https://raw.githubusercontent.com/sebob2491/Jobs/main/plugins/job-apply/setup/"

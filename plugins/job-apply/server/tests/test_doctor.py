@@ -5,6 +5,7 @@ import io
 import json
 import os
 import shutil
+from pathlib import Path
 
 import httpx
 import pytest
@@ -134,7 +135,7 @@ def test_no_browser(fine, loop, monkeypatch):
     monkeypatch.setattr(doctor, "bundled_chromium_installed", lambda: False)
     c = check(report(), "browser")
     assert c.status == doctor.PROBLEM and "browser_channel: chromium" in c.say
-    assert "playwright install chromium" in c.fix and str(config.PLUGIN_ROOT / "server") in c.fix
+    assert "playwright install chromium" in c.fix and doctor.in_shell(config.PLUGIN_ROOT / "server") in c.fix
     assert not report().ok
 
 
@@ -283,12 +284,56 @@ def test_nothing_personal_is_printed(fine, loop, job_apply_home, capsys):
         for personal_text in ("Sam", "Rivera", "sam.rivera@example.com", "480-555", "100 W Main", "Chandler",
                               "85225", "Intel", "Equipment Technician", "Arizona State", "samrivera"):
             assert personal_text not in out and personal_text not in shown, personal_text
-        assert str(config.profile_path()) in shown
+        assert doctor.private(str(config.profile_path())) in shown
     write_profile(job_apply_home, work_history=work, education_history=education)
     doctor.main([])
     out = capsys.readouterr().out
     assert "start and end months for some jobs" in out and "what you finished at some schools" in out
     assert "Intel" not in out and "Arizona State" not in out
+
+
+def test_a_profile_it_cant_read_is_a_problem_not_a_crash(fine, loop, job_apply_home, srv, capsys):
+    """`answers: 5` beside answers saved from the desk made loading the profile raise TypeError,
+    which took the doctor command and tool down with it. It's a problem with the profile, said
+    without its values."""
+    write_profile(job_apply_home, answers=5)
+    (job_apply_home / "answers.yaml").write_text("answers:\n- match: Sam Rivera's question\n  answer: 'yes'\n")
+    c = check(report(), "profile")
+    assert c.status == doctor.PROBLEM and "can't read (TypeError)" in c.say and "set up job-apply" in c.fix
+    out = run(srv.doctor())
+    assert out["ok"] is False and "Sam" not in json.dumps(out)
+    assert doctor.main([]) == 1  # (last: it ends the test's event loop)
+    assert "Sam" not in capsys.readouterr().out
+
+
+def test_the_home_folder_is_shown_as_tilde(fine, loop, monkeypatch, tmp_path, capsys):
+    """Paths hold the account's name (C:\\Users\\First Last\\...): the report shows the home folder
+    as ~, and a command to paste as $HOME (which a shell reads inside quotes, as it doesn't ~)."""
+    home = tmp_path / "First Last"
+    (home / ".job-apply").mkdir(parents=True)
+    monkeypatch.setattr(doctor.Path, "home", lambda: home)
+    monkeypatch.setenv("JOB_APPLY_HOME", str(home / ".job-apply"))
+    monkeypatch.setattr(config, "PLUGIN_ROOT", home / ".claude" / "plugins" / "cache" / "sebob-jobs" / "job-apply" / "0.3.92")
+    monkeypatch.setattr(doctor, "bundled_chromium_installed", lambda: False)  # so the command to get one is shown
+    text = report().text()
+    sep = os.sep
+    assert f"Your job-apply folder: ~{sep}.job-apply" in text
+    assert f"No profile yet (~{sep}.job-apply{sep}profile.yaml)" in text
+    assert f'uv run --project "$HOME{sep}.claude{sep}plugins{sep}cache{sep}sebob-jobs' in text
+    for args in ([], ["--json"]):
+        assert doctor.main(args) == 1
+        out = capsys.readouterr().out
+        assert "First Last" not in out, out
+
+
+def test_only_the_home_folder_itself_is_hidden(monkeypatch, tmp_path):
+    home = tmp_path / "pat"
+    monkeypatch.setattr(doctor.Path, "home", lambda: home)
+    other = tmp_path / "patricia" / "x"
+    assert doctor.private(f"{home / 'x'} and {other}") == f"~{os.sep}x and {other}"
+    assert doctor.in_shell(home / "x") == f"$HOME{os.sep}x" and doctor.in_shell(other) == str(other)
+    monkeypatch.setattr(doctor.Path, "home", lambda: Path("/"))  # a home of "/" hides nothing
+    assert doctor.private("/x/y") == "/x/y" and doctor.in_shell(Path("/x")) == str(Path("/x"))
 
 
 def test_json_report(fine, loop, capsys):

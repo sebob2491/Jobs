@@ -5,8 +5,9 @@
 and say, in plain words, what to do about any that isn't: Python and uv, the plugin's version
 and whether a newer one is out, a browser, ~/.job-apply, the profile and the resume, and on
 Windows where uv keeps its Python. It changes nothing, and starts the browser only when asked
-(`--launch`). Nothing from the profile is shown but which answers are missing, so the report
-can be pasted where others see it.
+(`--launch`). Nothing from the profile is shown but which answers are missing, and the home
+folder (which holds the account's name) is shown as ~ ($HOME in a command to paste), so the
+report can be pasted where others see it.
 """
 
 from __future__ import annotations
@@ -59,6 +60,32 @@ GAP_WORDS = {
 BROWSER_NAMES = {"chrome": "Google Chrome", "chrome-beta": "Google Chrome Beta", "msedge": "Microsoft Edge"}
 
 
+def home_folder() -> str:
+    """The person's home folder, when it's one worth hiding (not "/" or "")."""
+    home = str(Path.home())
+    return home if len(Path(home).parts) > 1 else ""
+
+
+def private(text: str) -> str:
+    """The text with the home folder shown as ~ (C:\\Users\\First Last\\.job-apply -> ~\\.job-apply)."""
+    home = home_folder()
+    if not home or not text:
+        return text
+    flags = re.IGNORECASE if on_windows() else 0
+    return re.sub(re.escape(home) + r"(?![\w-])", "~", text, flags=flags)  # (/home/pat, not /home/patricia)
+
+
+def in_shell(path: Path) -> str:
+    """A path for a command to paste, with the home folder as $HOME (PowerShell, bash and zsh all
+    read that inside double quotes; ~ isn't read there)."""
+    home = home_folder()
+    text = str(path)
+    same = (lambda a, b: a.lower() == b.lower()) if on_windows() else (lambda a, b: a == b)
+    if home and (same(text, home) or same(text[:len(home) + 1], home + os.sep)):
+        return "$HOME" + text[len(home):]
+    return text
+
+
 @dataclass
 class Check:
     name: str  # which check, for Claude reading the tool's answer
@@ -78,9 +105,9 @@ class Report:
     def text(self, marks: dict[str, str] = MARKS) -> str:
         lines = ["job-apply doctor", ""]
         for c in self.checks:
-            lines.append(f"{marks[c.status]} {c.say}")
+            lines.append(f"{marks[c.status]} {private(c.say)}")
             if c.fix:
-                lines.append(f"    {'To fix: ' if c.status == PROBLEM else ''}{c.fix}")
+                lines.append(f"    {'To fix: ' if c.status == PROBLEM else ''}{private(c.fix)}")
         problems = sum(c.status == PROBLEM for c in self.checks)
         lines.append("")
         lines.append("Everything the plugin needs is in place." if not problems else
@@ -88,7 +115,8 @@ class Report:
         return "\n".join(lines)
 
     def as_dict(self) -> dict[str, Any]:
-        return {"ok": self.ok, "checks": [asdict(c) for c in self.checks], "report": self.text()}
+        checks = [{**asdict(c), "say": private(c.say), "fix": private(c.fix)} for c in self.checks]
+        return {"ok": self.ok, "checks": checks, "report": self.text()}
 
 
 # --------------------------------------------------------------------- what's on this computer
@@ -293,7 +321,7 @@ async def check_browser(settings: config.Settings, launch: bool) -> Check:
     """The browser the Job Desk would start: the first of its choices (browser.launch_attempts)
     that's on the computer."""
     attempts = launch_attempts(settings)
-    get_chromium = (f'run `uv run --project "{config.PLUGIN_ROOT / "server"}" playwright install chromium`'
+    get_chromium = (f'run `uv run --project "{in_shell(config.PLUGIN_ROOT / "server")}" playwright install chromium`'
                     " in a terminal")
     install = f"Install Google Chrome (https://www.google.com/chrome/), or {get_chromium}."
     found = [a for a in attempts if installed(a)]
@@ -336,8 +364,22 @@ def check_profile() -> tuple[config.Profile | None, list[Check]]:
         return None, [Check("profile", PROBLEM, f"No profile yet ({path})", SETUP)]
     try:
         prof = config.Profile.load()
-    except (ValueError, OSError) as e:
+    except (ValueError, OSError) as e:  # its own plain words: the file, and the line with a typo
         return None, [Check("profile", PROBLEM, str(e), f"Fix that line, or {SAY_SETUP} and Claude fixes it.")]
+    except Exception as e:  # a section in a shape it can't take (answers: 5): which isn't said, nor its values
+        return None, [unreadable(path, e)]
+    try:
+        return prof, profile_checks(prof, path)
+    except Exception as e:
+        return None, [unreadable(path, e)]
+
+
+def unreadable(path: Path, e: Exception) -> Check:
+    return Check("profile", PROBLEM, f"Your profile ({path}) has a section the plugin can't read ({type(e).__name__})",
+                 f"{cap(SAY_SETUP)} and Claude fixes it.")
+
+
+def profile_checks(prof: config.Profile, path: Path) -> list[Check]:
     checks = []
     missing = [m for m in prof.missing_required() if not m.startswith("documents.resume")]  # the resume's own check
     if len(missing) > len(FIELD_WORDS) // 2:  # a new one, as the template made it
@@ -352,8 +394,8 @@ def check_profile() -> tuple[config.Profile | None, list[Check]]:
             checks.append(Check("profile_gaps", ADVICE, "Your profile could also hold " + "; ".join(gaps),
                                 'With these the Job Desk stops less often: in Claude, say "ask me everything the desk needs".'))
     for warning in prof.settings.warnings:
-        checks.append(Check("settings", ADVICE, warning, "change it under settings: in your profile"))
-    return prof, checks
+        checks.append(Check("settings", ADVICE, warning, "Change it under settings: in your profile."))
+    return checks
 
 
 def resume_in_home() -> Path | None:

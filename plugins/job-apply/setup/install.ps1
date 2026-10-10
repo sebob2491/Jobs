@@ -346,6 +346,25 @@ function Find-JAServer {
     return $null
 }
 
+function Remove-JAVenv([string]$Venv) {
+    # Take a Python environment away whole, or not at all. A program running from it (the Claude
+    # app's job-apply server) holds its files: deleting what isn't held would leave half of it,
+    # breaking that program and uv sync alike. So: nothing running from it, and the folder moved
+    # aside in one step (Windows refuses while a file in it is in use) before it's deleted.
+    $prefix = $Venv.TrimEnd([char[]]@('\', '/')) + [IO.Path]::DirectorySeparatorChar
+    $running = @(Get-Process -ErrorAction SilentlyContinue | Where-Object {
+        $exe = $null
+        try { $exe = $_.Path } catch { }
+        $exe -and $exe.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)
+    })
+    if ($running.Count -gt 0) { return $false }
+    $aside = (Split-Path $Venv -Leaf) + '-old-' + (Get-Date -Format 'yyyyMMddHHmmss')
+    try { Rename-Item -LiteralPath $Venv -NewName $aside -ErrorAction Stop } catch { return $false }
+    Write-JASay "Making the plugin's Python environment again, outside AppData."
+    Remove-Item -LiteralPath (Join-Path (Split-Path $Venv -Parent) $aside) -Recurse -Force -ErrorAction SilentlyContinue
+    return $true
+}
+
 function Initialize-JAServer {
     Write-JAStep "6 of 9: The plugin's Python packages (so its first start is quick)"
     $script:JAServer = Find-JAServer
@@ -368,9 +387,10 @@ function Initialize-JAServer {
         $movedOut = $env:UV_PYTHON_INSTALL_DIR -and -not (Test-JAInAppData $env:UV_PYTHON_INSTALL_DIR)
         if ($movedOut -and (Test-JAInAppData $pythonHome) -and ($pythonHome -match '\\uv\\python\\')) {
             if ($script:JADryRun) { Write-JASay "Would make the plugin's Python environment again, outside AppData." }
-            else {
-                Write-JASay "Making the plugin's Python environment again, outside AppData."
-                Remove-Item -LiteralPath (Join-JAPath $script:JAServer '.venv') -Recurse -Force -ErrorAction SilentlyContinue
+            elseif (-not (Remove-JAVenv (Join-JAPath $script:JAServer '.venv'))) {
+                Write-JAProblem ("The plugin's Python environment has to be made again outside AppData, and it's in use " +
+                    '(the Claude app is probably running the plugin). Quit the Claude app, then run this installer again.')
+                return
             }
         }
     }
