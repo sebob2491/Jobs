@@ -1399,6 +1399,9 @@ class Applier:
                     if _security_boxes(fields):  # (never made up, so never pressed for the person: _make_account)
                         asks = ("It also asks for security questions and their answers: those are yours to choose (the "
                                 "desk never makes up answers). Fill them in there and create the account")
+                    elif _captcha_on(data):  # (never touched, so never pressed for the person either)
+                        asks = ("Its CAPTCHA is yours to solve: solve it, tick their terms box if there is one and create "
+                                "the account (then verify your email if they ask)")
                     return self._pause(run, "sign_in", f"I filled in {_site(run, data)}'s Create Account form with your "
                                        f"details and saved password{user}. {asks}; the desk carries on after that."
                                        + first, seen=data)
@@ -1443,6 +1446,22 @@ class Applier:
                 if await self._finish_account(run, data, finish):
                     continue
                 return
+            if kind == "form" and sign_ins.get("create_account") and _email_first_account(data):
+                # the Create Account opened for the saved password asks for the email first (BrassRing's,
+                # live, Oct 2026: its Continue emails a passcode there, the account's first step). The
+                # desk's to go on with only with settings.manage_accounts, and never with a CAPTCHA on it
+                captcha = _captcha_on(data)
+                if not captcha and _may_manage_accounts():
+                    if await self._email_account_step(run, data, "email"):
+                        continue  # (its passcode next: the inbox's, or the person's)
+                    return
+                await self._bring_forward(run)
+                asks = (", with a CAPTCHA that's yours to solve: enter your email and solve it there"
+                        if captcha else ". Making the account is yours: enter your email there")
+                return self._pause(run, "sign_in", f"Your saved password didn't sign in on {_site(run, data)}, so I "
+                                   f"opened its Create Account, which asks for your email first{asks}, and go on in "
+                                   "the browser window (or sign in with the email you use there); the desk carries on "
+                                   "by itself after that.", seen=data)
             if kind == "form":
                 run.seen_form = True
                 once_failed = await self._fill_once(run, data)
@@ -1904,10 +1923,11 @@ class Applier:
         ones, or its terms, or a privacy notice read: never a newsletter's or job alerts') and press
         the form's own button, after its password boxes (its submit button, or a link or plain button
         in that form that its script sends it with: ApplicantStack's "Submit"). Once a job
-        (Run.accounts_tried). Not with a CAPTCHA on the page: that's the person's. True when it was
-        pressed; the account is said to be made only once the site shows it (Run.account_made, in _drive).
-        Nor with security questions on the form (some Taleo sites'): their answers are the person's."""
-        if data.get("captcha") or data.get("challenge") or _security_boxes(data.get("fields") or []):
+        (Run.accounts_tried). Not with a CAPTCHA on the page (a picture code's box too): that's the
+        person's. True when it was pressed; the account is said to be made only once the site shows it
+        (Run.account_made, in _drive). Nor with security questions on the form (some Taleo sites'):
+        their answers are the person's."""
+        if _captcha_on(data) or _security_boxes(data.get("fields") or []):
             return False
         srv = self.srv
         terms = _terms_boxes(data)
@@ -2210,12 +2230,17 @@ class Applier:
                         "you saved on the desk, then press Resume: the desk signs in with it.", seen=page)
             return "paused"
 
+        def way_back() -> bool:
+            # to the sign-in page, for its way to a new account: not once a Create Account here was told
+            # the email has one
+            return bool(run.reset_from) and run.page is not None and not tried.get("made")
+
         async def instead(why: str, page: dict[str, Any]) -> str:
             # No reset the desk can do there: back to the sign-in page, for its way to a new account. With
             # no account for the email (a first application there, the test identity's), that's the way
             # on; a site that has one says so when it's asked to make another, and that's the person's (as
             # it is once a Create Account here was told the email has one).
-            if not run.reset_from or run.page is None or tried.get("made"):
+            if not way_back():
                 return await stop(why, page)
             self._log(run, f"your saved password didn't sign in on {site}, and I {why}, so I went back to make an "
                       "account there instead")
@@ -2254,9 +2279,14 @@ class Applier:
         if (not _RESET_PAGE.search(" ".join([text[:2000], *(data.get("headings") or [])])) or not boxes or not address
                 or any(f.get("kind") == "password" for f in data.get("fields") or [])):
             return await instead("opened its password reset, which isn't one I can fill in", data)
+        captcha = _captcha_on(data)
+        if captcha and way_back():
+            # BrassRing's asks for a picture code (live, Oct 2026), never touched: its Continue pressed
+            # without one only said "Captcha text Required field"
+            return await instead("opened its password reset, which has a CAPTCHA (yours to solve)", data)
         if not (await srv.fill_form([{"id": boxes[0]["id"], "value": address}])).get("ok"):
             return await instead("opened its password reset, which didn't take your email", data)
-        if data.get("captcha") or data.get("challenge"):
+        if captcha:  # (and no new account to go back for: the site said the email has one)
             run.resetting = True
             await self._bring_forward(run)
             self._pause(run, "bot_check", f"I opened {site}'s password reset for your saved password, which didn't sign "
@@ -2284,9 +2314,15 @@ class Applier:
         """Back to the sign-in page a password reset was asked from (run.reset_from). Where that page
         was good for one visit (SuccessFactors' career?_s.crb=..., Arizona Public Service's for the test
         identity, live Oct 2026: "An error occurred while processing your request"), the job's posting
-        is opened again in its tab instead: its Apply leads to a fresh sign-in page."""
+        is opened again in its tab instead: its Apply leads to a fresh sign-in page. Where the reset was
+        drawn in its place, at the same address and fragment (BrassRing's #jobDetails=…, live, Oct 2026),
+        going there again leaves the reset on show: the page is loaded again (BrassRing's shows the
+        posting, whose Apply leads to the sign-in page)."""
         assert run.page is not None
-        await run.page.goto(run.reset_from, wait_until="domcontentloaded", timeout=45000)
+        if run.page.url == run.reset_from and urlparse(run.reset_from).fragment:
+            await run.page.reload(wait_until="domcontentloaded", timeout=45000)
+        else:
+            await run.page.goto(run.reset_from, wait_until="domcontentloaded", timeout=45000)
         data, text = await self._look()
         if not data.get("fields") and _SPENT_PAGE.search(text[:3000]):
             self._log(run, f"{_site(run, data)}'s sign-in page couldn't be opened again, so I opened the job again")
@@ -2917,6 +2953,28 @@ def _security_boxes(fields: list[dict[str, Any]]) -> list[dict[str, Any]]:
         return []
     return [f for f in fields if f.get("kind") not in ("password", "checkbox", "file")
             and re.search(r"\bquestions?\b|\banswers?\b|\bhint\b", f.get("label") or "", re.I)]
+
+
+# A picture code's box, a CAPTCHA the site draws itself: BrassRing's "Enter Captcha", Benchmark's
+# "Enter the text in image above"
+_PICTURE_CODE = re.compile(r"captcha|text in (?:the )?(?:image|picture)", re.I)
+
+
+def _captcha_on(data: dict[str, Any]) -> bool:
+    """A CAPTCHA on the page, always the person's: a check's own frame (reCAPTCHA's, hCaptcha's), its
+    pictures over the page, or a picture code's box (BrassRing's password reset, live, Oct 2026)."""
+    return bool(data.get("captcha") or data.get("challenge")) or any(
+        f.get("kind") in ("text", "number") and _PICTURE_CODE.search(f.get("label") or "")
+        for f in data.get("fields") or [])
+
+
+def _email_first_account(data: dict[str, Any]) -> bool:
+    """A Create Account that asks for the email before any password (BrassRing's "Let's Get Started",
+    live, Oct 2026: an email box and Continue, which emails a passcode to it): an email box, and no
+    other but a picture code's."""
+    fields = [f for f in data.get("fields") or [] if not f.get("disabled") and not f.get("aside")]
+    emails = [f for f in fields if f.get("kind") in ("text", "email") and re.search(r"e-?mail", f.get("label") or "", re.I)]
+    return bool(emails) and all(f in emails or _PICTURE_CODE.search(f.get("label") or "") for f in fields)
 
 
 # A posting page's own boxes, never an application's: Phenom's "Save Job" ticks and its chatbot's box

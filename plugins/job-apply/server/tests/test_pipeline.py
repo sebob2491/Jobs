@@ -1910,6 +1910,65 @@ def test_a_reset_the_desk_cant_fill_in_makes_an_account_instead(srv, monkeypatch
     assert "created your account" in log and r.seen_form, (r.reason, r.log)
 
 
+async def brassring_did(page):
+    """What the BrassRing-like page (site/brassring-signin.html) has seen in this tab."""
+    return await page.evaluate("() => Object.fromEntries(Object.entries(sessionStorage).filter(([k]) => "
+                               "k.startsWith('br.')).map(([k, v]) => [k.slice(3), JSON.parse(v)]))")
+
+
+@pytest.mark.parametrize("who", ["on", "captcha", "off", "practice"])
+def test_a_reset_with_a_captcha_makes_the_account_instead(srv, monkeypatch, job_apply_home, who):
+    """Edward Jones' BrassRing (live, Oct 2026): the saved password didn't sign in, and its password
+    reset asks for a picture code ("Enter Captcha"). The desk filled in the email, pressed the reset's
+    Continue without the code, and stopped on "One or more fields require your attention. Captcha text
+    Required field". A CAPTCHA is the person's, so that's a reset the desk can't do: with
+    manage_accounts it goes back to the sign-in page (drawn in place at the posting's own address, so
+    the page is loaded again: going to that address left the reset on show) and makes the account
+    through "Don't have an account yet?", whose first step takes the email (its Continue emails a
+    passcode there). The reset's CAPTCHA is never touched, nor its Continue pressed. A CAPTCHA on
+    Create Account too ("captcha") is the person's, and the pause says so. Without manage_accounts,
+    or in practice mode, no reset is asked for, and Create Account's Continue, which begins the
+    account, is the person's (the desk had pressed it, taking it for an application's step)."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    saved_password(monkeypatch)
+    if who in ("on", "captcha"):
+        manage_accounts(job_apply_home)
+    elif who == "practice":
+        manage_accounts(job_apply_home, submit_mode="dry_run")
+    watched_inbox(monkeypatch)
+    url = fixture_url("site/brassring-signin.html") + ("?captcha" if who == "captcha" else "")
+    job = srv.add_job(url=url, title="Senior Analyst", company="Example Corp")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r, await brassring_did(r.page)
+        finally:
+            await applier.stop()
+
+    r, did = run(go())
+    log = "\n".join(r.log)
+    assert "captcha" not in did and "resetPresses" not in did, (did, r.log)  # no CAPTCHA typed in, nor reset sent
+    assert did.get("signIns") == 1, (did, r.log)  # the saved password, once
+    if who in ("off", "practice"):
+        assert "password reset" not in log and "accountEmail" not in did, (did, r.log)
+        assert r.need == "sign_in" and "Making the account is yours" in r.reason, (r.reason, r.log)
+        return
+    assert "asked it to email a password reset" not in log, log
+    assert ("I opened its password reset, which has a CAPTCHA (yours to solve), so I went back to make an account "
+            "there instead") in log, log
+    if who == "captcha":
+        assert "accountEmail" not in did, (did, r.log)
+        assert r.need == "sign_in" and "with a CAPTCHA that's yours to solve" in r.reason, (r.reason, r.log)
+        return
+    assert did.get("accountEmail") == "sam.rivera@example.com", (did, r.log)
+    assert "gave Example Corp's site your email for the new account and pressed “Continue”" in log, log
+    assert r.need == "email_code", (r.reason, r.log)  # its passcode: the inbox's, or the person's
+
+
 def test_a_sign_in_page_good_for_one_visit_is_reached_again_through_the_posting(srv, monkeypatch, job_apply_home):
     """SuccessFactors' sign-in page (career?_s.crb=…) is good for one visit: going back to it after a
     reset the desk couldn't do showed "An error occurred while processing your request" (Arizona
@@ -2980,6 +3039,33 @@ def test_a_create_account_form_is_filled_from_the_profile(srv, monkeypatch, page
     user = " (your email as its user name)" if "username" in page else ""
     assert "filled the Create Account form with your details and saved password" + user in r.log, r.log
     assert srv.tracker().get(job["id"])["status"] != "ready"
+
+
+def test_with_manage_accounts_a_create_account_with_a_picture_code_is_left_to_the_person(srv, monkeypatch,
+                                                                                          job_apply_home):
+    """Benchmark's Infor registration asks for a picture code ("Enter the text in image above"), a
+    CAPTCHA the site draws itself. The desk took only a check's own frame for a CAPTCHA, so with
+    manage_accounts it pressed the form's Submit with the code empty. A CAPTCHA is the person's: the
+    form is filled in and left to them, and the pause says the CAPTCHA is theirs."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    saved_password(monkeypatch)
+    manage_accounts(job_apply_home)
+    job = srv.add_job(url=fixture_url("site/register-picture-code.html"), title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r, await r.page.evaluate("() => [window.created, window.result().code]")
+        finally:
+            await applier.stop()
+
+    r, (created, code) = run(go())
+    assert (created, code) == (0, ""), (created, code, r.log)
+    assert r.need == "sign_in" and "Its CAPTCHA is yours to solve" in r.reason, (r.reason, r.log)
+    assert not any(line.startswith("pressed") for line in r.log), r.log
 
 
 def test_follows_an_application_that_opens_in_a_new_tab_late(srv, monkeypatch):
