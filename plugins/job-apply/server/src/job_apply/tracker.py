@@ -283,6 +283,31 @@ class Tracker:
         return self.get(job_id)
 
     @_locked
+    def unskip(self, job_id: int, note: str = "skip undone") -> dict[str, Any] | None:
+        """Undo a skip: the job goes back to the status it had before it was skipped, read from
+        its history (every status change is in it; "saved" when none came before), moved on by any
+        employer email logged for it (a confirmation: "applied"), with its notes and history kept.
+        None, and nothing changed, for a job that isn't skipped."""
+        job = self.get(job_id, with_description=False)
+        if job is None:
+            raise KeyError(f"No job with id {job_id}")
+        if job["status"] != "skipped":
+            return None
+        row = self.conn.execute("SELECT status FROM events WHERE job_id = ? AND status NOT IN ('', 'skipped') "
+                                "ORDER BY id DESC LIMIT 1", (job_id,)).fetchone()
+        status = row["status"] if row and row["status"] in STATUSES else "saved"
+        # and what the employer's emails said, which a skipped job doesn't take in (log_email): one that
+        # confirmed the application, sent on the site before the Skip, makes it "applied", so the desk never
+        # queues it for a second one
+        for email in self.conn.execute("SELECT category FROM emails WHERE job_id = ? ORDER BY logged_at", (job_id,)):
+            target = EMAIL_CATEGORIES.get(email["category"])
+            if target == "rejected":
+                status = status if status in ("offer", "withdrawn") else "rejected"
+            elif target and status in _PIPELINE and _PIPELINE.index(target) > _PIPELINE.index(status):
+                status = target
+        return self.update(job_id, status=status, note=note)
+
+    @_locked
     def log_email(self, job_id: int, thread_id: str, category: str, summary: str = "",
                   received_at: str = "") -> dict[str, Any]:
         """Record an employer email once and move the status forward if it says so.

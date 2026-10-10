@@ -160,6 +160,8 @@ opens a page on your computer (served by the plugin on `127.0.0.1`):
 4. Press **Submit** on each finished application, or turn on **Submit for me**, so
    that every application that needs nothing from you is sent. LinkedIn and Indeed
    are always yours to submit.
+5. Pressed **Skip job** by mistake? **Undo** on its card (or by its row in the list) puts it back
+   where it was, back in the queue or in the list, and sends nothing: it stops at its review page for you.
 
 Each employer has its own account on its job site. In the desk's **Site passwords**
 card, save one password for a job system: Workday (13 of the employers), SuccessFactors
@@ -172,7 +174,8 @@ signs you in after that (pressing the sign-in form's own button, even one that r
 with the email app password below saved, resets that employer's password to the saved one
 through the site's own "Forgot password" email, which it reads itself. When the site says it
 has no account for your email, or no reset email comes in 3 minutes (most likely your first
-application there; the other jobs carry on meanwhile), it opens that employer's Create
+application there; the other jobs carry on meanwhile), or its reset isn't one the desk can do
+(a security question, say: those stay yours), it opens that employer's Create
 Account form ("Create an account", "Register", "Don't have an account yet?") and creates the
 account. Without the email app password it tries Create Account first, and asks you to
 open the reset email where the site says the email already has an account. To do these steps yourself, set

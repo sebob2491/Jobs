@@ -16,7 +16,7 @@
      The Terms and Conditions dropdown's one choice certifies the application.
      ?uploaded=1: the resume is up already. ?notice=1: and the notice is open over the form, as
      an upload left it. ?notice=privacy: the notice is a privacy policy's, about no AI; ?notice=other: about
-     neither. -->
+     neither. &ack=1: the notice's agree reads "I Acknowledge" and is a form's own submit button. -->
 <h2>Equipment Technician</h2>
 <form id="app" novalidate>
   <fieldset>
@@ -95,6 +95,15 @@
     document.getElementById('notice-text').textContent = 'Example Corp will call you about the next steps.';
     notice.querySelectorAll('p')[1].remove();
     document.querySelector('#confirmUploadResume span').textContent = 'Ok';
+  }
+  if (params.get('ack')) {
+    const agree = document.getElementById('confirmUploadResume');
+    const form = document.createElement('form');
+    form.addEventListener('submit', (e) => e.preventDefault());
+    agree.replaceWith(form);
+    form.appendChild(agree);
+    agree.type = 'submit';
+    agree.querySelector('span').textContent = 'I Acknowledge';
   }
   const shown = (name) => {
     document.getElementById('upload-status').textContent = 'File upload completed successfully';

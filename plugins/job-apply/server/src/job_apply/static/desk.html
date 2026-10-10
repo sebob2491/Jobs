@@ -77,6 +77,7 @@ ul.rows { list-style: none; margin: 0; padding: 0; }
 @media (max-width: 600px) { .row { grid-template-columns: auto auto minmax(0, 1fr); } .row > div:last-child { grid-column: 3; } }
 .row.done { opacity: .6; }
 .row input[type=checkbox] { margin-top: 4px; width: 17px; height: 17px; }
+.row .state { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
 .score { min-width: 38px; text-align: center; font-weight: 700; font-size: 14px; padding: 3px 0; border-radius: 8px; background: var(--chip); }
 .score.s4 { background: var(--good-bg); color: var(--good); }
 .score.s3 { background: var(--info-bg); color: var(--accent); }
@@ -398,13 +399,16 @@ function renderRows() {
       ...fit.concerns.map((x) => `<span class="chip ${fit.blocked ? "stop" : "minus"}">${esc(x)}</span>`),
     ].join("");
     const checked = selected.has(r.url) && !done ? "checked" : "";
+    // skipped (here or before the desk restarted): Undo puts it back
+    const undo = r.job_id != null && (r.status === "skipped" || (r.run && r.run.status === "skipped"))
+      ? `<button class="link" data-job="${r.job_id}" data-job-act="unskip" title="Put this job back where it was before you skipped it">Undo</button>` : "";
     return {key: r.url, html: `<li class="row ${DONE.has(r.status) ? "done" : ""}">
       <input type="checkbox" data-pick="${esc(r.url)}" ${checked} ${done ? "disabled" : ""} aria-label="Select ${esc(r.title)}">
       <span class="score ${scoreClass(fit.score)}" title="Fit score">${esc(fit.score)}</span>
       <div>${link(r.url, esc(r.title), "title")}
         <div class="meta">${esc(r.company)} · <span title="${esc(r.location)}">${esc(places(r.location) || "location not given")}</span>${r.posted ? ` · <span class="nowrap">${esc(shownDate(r.posted))}</span>` : ""}</div>
         <div class="chips">${chips}</div></div>
-      <div>${statusPill(r)}</div></li>`};
+      <div class="state">${statusPill(r)}${undo}</div></li>`};
   });
   if (!entries.length) {
     const msg = state.search.status === "running" ? "Searching employers' career sites…"
@@ -457,6 +461,7 @@ function jobButtons(r, which) {
   if (which.includes("usual_resume")) out.push(b("usual_resume", "Use my usual resume"));
   if (which.includes("later")) out.push(b("later", "Later"));
   if (which.includes("skip")) out.push(b("skip", "Skip job"));
+  if (which.includes("unskip")) out.push(b("unskip", "Undo", "primary"));
   out.push(b("report", "Report a problem", "link"));
   return `<div class="actions">${out.join("")}</div>`;
 }
@@ -504,10 +509,11 @@ function renderSide() {
   if (!workEntries.length) workEntries.push({key: "idle", html: `<div class="empty">Idle.</div>`});
   patch($("work"), workEntries);
 
-  const done = runs.filter((r) => ["ready", "submitted", "failed"].includes(r.status));
+  const done = runs.filter((r) => ["ready", "submitted", "failed", "skipped"].includes(r.status));
   const doneEntries = done.map((r) => {
     const buttons = r.status === "ready" ? jobButtons(r, ["show", "submit", "skip"])
-      : r.status === "failed" ? jobButtons(r, ["show", "resume", "skip"]) : jobButtons(r, []);  // submitted: Report only
+      : r.status === "failed" ? jobButtons(r, ["show", "resume", "skip"])
+      : r.status === "skipped" ? jobButtons(r, ["unskip"]) : jobButtons(r, []);  // submitted: Report only
     const [text, cls] = RUN[r.status];
     return {key: "d" + r.job_id + r.status, html: `<div class="task"><h3>${esc(r.title)} <span class="small">· ${esc(r.company)}</span>
       <span class="pill ${cls}">${esc(text)}</span></h3><p>${esc(r.reason)}</p>${buttons}</div>`};
@@ -790,7 +796,8 @@ document.addEventListener("click", (e) => {
     act(async () => {
       const out = await api("/api/apply", {urls, submit: auto});
       selected.clear();
-      if ((out.already_applied || []).length) alert("Already applied, so not queued again: " + out.already_applied.join(", "));
+      if ((out.already_applied || []).length) alert("Already applied or skipped, so not queued: " + out.already_applied.join(", ")
+        + ". Undo on a skipped job puts it back.");
     });
   }
   if (jobAct === "fill") {
@@ -803,6 +810,9 @@ document.addEventListener("click", (e) => {
     act(async () => { const out = await api("/api/answer", {job_id: Number(job), answers}); if (out.note) alert(out.note); });
   } else if (jobAct === "report") {
     makeReport(job);
+  } else if (jobAct === "unskip") {  // back where it was: queued again, or in the list unticked
+    (state.listings || []).filter((r) => String(r.job_id) === job).forEach((r) => selected.delete(r.url));
+    act(() => api(`/api/job/${job}/unskip`, {}));
   } else if (jobAct === "submit") {
     if (confirm("Submit this application now?")) act(() => api(`/api/job/${job}/submit`, {}));
   } else if (jobAct) {

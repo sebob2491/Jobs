@@ -156,6 +156,50 @@ def test_click_guard_rules(monkeypatch):
         check({"label": "Send it", "text": "Send it", "formSubmit": True})
 
 
+def test_practice_modes_lock_lets_through_only_the_test_identitys_agreements(monkeypatch):
+    """Practice mode refuses a form's button that isn't a step button: it may send the application.
+    The live check's test identity agrees to notices in practice mode, so a button the desk found
+    agrees to one (`agreement`: Charles Schwab's iCIMS privacy gate, "I Acknowledge the Privacy
+    Notice", a form's own) goes through for it, and nothing else does: not a "Send" or a "Finish"
+    said to agree, not the final submit, not a cookie banner, not the button unsaid, not any other
+    profile's, nor the test identity's with accept_notices off."""
+    from job_apply.browser import BrowserSession, SubmitBlocked
+
+    check = BrowserSession._check_clickable
+    ack = {"label": "I Acknowledge the Privacy Notice", "text": "I Acknowledge the Privacy Notice", "formSubmit": True}
+    monkeypatch.setenv("JOB_APPLY_NEVER_SUBMIT", "1")
+    with pytest.raises(SubmitBlocked, match="^Dry run"):
+        check(ack, agreement=True)  # an ordinary practice-mode profile's
+    monkeypatch.setenv("JOB_APPLY_LIVE_TEST_IDENTITY", "1")
+    monkeypatch.setenv("LIVE_TEST_EMAIL", "sam.rivera@example.com")  # (the conftest profile's)
+    assert config.Profile.load().settings.test_identity
+    check(ack, agreement=True)
+    with pytest.raises(SubmitBlocked, match="^Dry run"):
+        check(ack)  # not found to agree: the lock as before
+    sends = ["Send", "Finish", "Send application", "Complete my application", "Confirm and send"]  # (a form's or not)
+    for text, form in [*((t, True) for t in [*sends, "I Acknowledge and Send", "I Accept and Apply", "Apply"]),
+                       *((t, False) for t in [*sends, "Submit application"])]:
+        with pytest.raises(SubmitBlocked):
+            check({"label": text, "text": text, "formSubmit": form}, agreement=True)
+    with pytest.raises(SubmitBlocked, match="^Cookie"):
+        check({"label": "Accept All Cookies", "text": "Accept All Cookies", "cookie": True, "formSubmit": True},
+              agreement=True)
+    monkeypatch.setattr(config.Settings, "may_accept_notices", property(lambda s: False))  # accept_notices: false
+    with pytest.raises(SubmitBlocked, match="^Dry run"):
+        check(ack, agreement=True)
+
+
+def test_the_click_tool_never_says_a_press_agrees():
+    """Browser.click's `agreement` is the Job Desk's, for a press it found agrees to a notice: the
+    click tool Claude calls never passes it on (so the lock it loosens isn't Claude's to loosen)."""
+    import inspect
+
+    from job_apply import server
+
+    assert list(inspect.signature(server.click).parameters) == ["target"]
+    assert "agreement" not in inspect.getsource(server.click)
+
+
 def test_every_employer_list_loads_with_known_values():
     """The plugin's employer lists (data/companies.yaml and data/lists/*.yaml, which a
     person's companies.yaml names) and the template that names them. A misspelt search kind

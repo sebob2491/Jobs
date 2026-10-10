@@ -2,20 +2,42 @@
 <html>
 <head><meta charset="utf-8"><title>Create an Account - Example Fab</title></head>
 <body>
-<!-- like SCREEN's ApplicantStack "Create an Account": a user name, then the name and email -->
-<form id="create" novalidate>
-  <label for="un">* Username:</label><input id="un" type="text">
-  <label for="pw">* Password:</label><input id="pw" type="password">
-  <label for="pw2">* Confirm Password:</label><input id="pw2" type="password">
-  <label for="nm">* Name:</label><input id="nm" type="text">
-  <label for="em">* Email:</label><input id="em" type="text">
-  <input type="submit" value="Submit">
+<!-- like SCREEN's ApplicantStack "Create an Account" (live, Oct 2026): a user name, then the name and
+     email, in a table; a hidden box for robots; and the form's own "Submit" is a link whose script
+     sends the form (form.submit()), not a submit button -->
+<div id="contenttitle">Create an Account</div>
+<p>Please fill in the fields below to create or edit your account in our application system.
+  <font color="#FF0000">Fields with an asterisk (*) are required.</font></p>
+<form action="" method="post" enctype="multipart/form-data" id="mainform">
+  <input type="hidden" name="postaction" id="postaction" value="add_jbaccount">
+  <input type="text" name="hpspecialhp_name_1" id="hpspecialhp_name_1" style="display:none;height:0px;width:0px;" size="25">
+  <table class="formtable" width="100%">
+    <tr><td colspan="2"><div class="sectionhead">Choose a Login</div></td></tr>
+    <tr><th><font color="red">*</font> Username:</th><td><input type="text" name="username" id="username" size="30"></td></tr>
+    <tr><th><font color="red">*</font> Password:</th><td><input type="password" name="password" id="password" size="30"></td></tr>
+    <tr><th><font color="red">*</font> Confirm Password:</th><td><input type="password" name="confirm_password" id="confirm_password" size="30"></td></tr>
+    <tr><td colspan="2"><div class="sectionhead">Contact Information</div></td></tr>
+    <tr><th><font color="red">*</font> Name:</th><td><input type="text" name="name" id="name" size="30"></td></tr>
+    <tr><th><font color="red">*</font> Email:</th><td><input type="text" name="email" id="email" size="30"></td></tr>
+  </table>
+  <br><br>
+  <div class="buttons"><a href="#" onclick="sb1('submitbutton'); return false;" class="as_mobile_skip">&nbsp;Submit&nbsp;</a></div>
+  <div class="buttons"><a class="secondary" href="posting.html">Cancel</a></div>
 </form>
 <script>
+  const box = (id) => document.getElementById(id);
   window.created = 0;
-  document.getElementById('create').addEventListener('submit', (e) => { e.preventDefault(); window.created += 1; });
-  window.result = () => ({user: un.value, same: pw.value === pw2.value && pw.value.length > 0, name: nm.value,
-                          email: em.value});
+  // the site's sb1(): the form goes to the server, which makes the account and goes on to the application
+  function sb1(name) {
+    window.created += 1;
+    const filled = ['username', 'password', 'name', 'email'].every((id) => box(id).value)
+      && box('password').value === box('confirm_password').value && !box('hpspecialhp_name_1').value;
+    if (filled) location.href = 'step1.html';
+    return false;
+  }
+  window.result = () => ({user: box('username').value, name: box('name').value, email: box('email').value,
+                          same: box('password').value === box('confirm_password').value && box('password').value.length > 0,
+                          robots: box('hpspecialhp_name_1').value});
 </script>
 </body>
 </html>

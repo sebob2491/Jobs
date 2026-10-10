@@ -3,7 +3,8 @@
 <head><meta charset="utf-8"><title>Privacy Agreement</title></head>
 <body>
 <!-- like Kforce's Taleo career section (live, Oct 2026): before the application, a privacy
-     agreement whose only ways on are "I Accept" and "I Decline" -->
+     agreement whose only ways on are "I Accept" and "I Decline". ?form=1: like Charles Schwab's iCIMS
+     posting (live, Oct 2026), the way on is a form's own submit button, "I Acknowledge the Privacy Notice" -->
 <h1>Privacy Agreement</h1>
 <div class="agreement">
   <p>Example Staffing collects the personal information you give in your application to consider you for
@@ -11,7 +12,13 @@
 </div>
 <button type="button" id="accept">I Accept</button>
 <button type="button" id="decline">I Decline</button>
+<form id="gate" hidden><button type="submit">I Acknowledge the Privacy Notice</button></form>
 <script>
+  if (new URLSearchParams(location.search).get('form')) {
+    for (const id of ['accept', 'decline']) document.getElementById(id).remove();
+    document.getElementById('gate').hidden = false;
+  }
+  document.getElementById('gate').addEventListener('submit', (e) => { e.preventDefault(); location.href = '../generic_form.html'; });
   document.getElementById('accept').addEventListener('click', () => { location.href = '../generic_form.html'; });
   document.getElementById('decline').addEventListener('click', () => { document.body.textContent = 'You declined.'; });
 </script>

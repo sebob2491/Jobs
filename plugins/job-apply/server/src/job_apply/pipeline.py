@@ -34,8 +34,8 @@ from . import config, mailbox, report
 from .ats import ATS_NAMES, detect_ats, shared_system
 from .autofill import (clean_label, entry_of, is_empty_value, no_choice_for_no_degree, norm, plan_autofill,
                        polarity, tailored_document)
-from .browser import (CONFIRMATION_RE, TabClosed, _accepts_cookies, _cookie_setting, confirmations, declines_cookies,
-                      final_text, may_accept_cookies)
+from .browser import (_SENDS_TOO, CONFIRMATION_RE, SubmitBlocked, TabClosed, _accepts_cookies, _cookie_setting,
+                      confirmations, declines_cookies, final_text, may_accept_cookies)
 
 NEW_TAB_WAIT = 4  # seconds to wait for a tab opened late by a click before calling it a stall
 ONCE_SETTLE = 1.0  # seconds after filling the person's answers before checking they stayed in
@@ -77,6 +77,7 @@ NOTICE_WAIT = 5  # seconds for a notice agreed to for the person to go (one may 
 DONE_TABS_KEPT = 3
 SHARED_LOOK_BACK = 30  # seconds looked back for a job's code while an earlier job waits on the same sender
 FINISHED = {"applied", "interviewing", "offer", "rejected", "withdrawn"}  # tracker statuses never applied to again
+UNSKIP_WAIT = 10  # seconds an Undo waits for the worker to finish the step a job was skipped in
 
 _BOT_TITLE = re.compile(r"just a moment|attention required|access denied|pardon our interruption|security check|"
                         r"are you a robot|bot (?:check|detection)", re.I)
@@ -127,7 +128,10 @@ _RESET_SET = re.compile(r"\b(?:reset|update|change|save|set|submit|continue|conf
 _NOT_A_STEP = re.compile(r"\b(?:back|cancel|sign in|log ?in|return)\b", re.I)
 _NEW_PASSWORD = re.compile(r"\bnew\b|confirm|verify|re-?enter|re-?type|again", re.I)
 _OLD_PASSWORD = re.compile(r"\b(?:current|old|existing|temporary)\b", re.I)
-_RESET_SENT = re.compile(r"\b(?:sent|emailed)\b.{0,80}\b(?:link|e-?mail|instructions)|check your (?:e-?mail|inbox)", re.I)
+# A reset's page saying its email is on the way: "We have sent a link", "Check your inbox", and Workday's
+# "You will receive an email with instructions ... if an account exists for this email address"
+_RESET_SENT = re.compile(r"\b(?:sent|emailed)\b.{0,80}\b(?:link|e-?mail|instructions)|check your (?:e-?mail|inbox)|"
+                         r"\byou(?:'ll| will) (?:receive|get) an? e-?mail\b|\bif an account exists\b", re.I)
 # A reset's page saying there's no account for the email ("There is no user with that username or email")
 _NO_ACCOUNT = re.compile(r"\bno (?:user|account|record|match)\b|\b(?:not|isn'?t|wasn'?t) (?:found|registered|recogni[sz]ed)|"
                          r"\b(?:don'?t|do not|didn'?t|did not) recogni[sz]e (?:this|that|your|the) e-?mail|"
@@ -212,9 +216,6 @@ _OTHER_QUESTION = re.compile(r"\b(?:have|do|are|will|can|did|were|would|has|is) 
 # A dialog that mentions personal data but isn't a notice to take in ("could not be saved", "overwrite?")
 _NOT_A_NOTICE = re.compile(r"\berror\b|could ?n[o']t|failed|signed? (?:you )?out|overwrite|existing (?:profile|account)|"
                            r"\bdelete|\bremove|withdraw|expired?\b", re.I)
-# A gate's button that also sends the application ("I Accept and Apply"): the person's
-_SENDS_TOO = re.compile(r"\b(?:apply|submit|send|finish|complete)\b", re.I)
-
 
 def _agrees_to_terms(text: str) -> bool:
     """Words that accept an employer's privacy notice or terms of use, and nothing more: not a
@@ -399,6 +400,8 @@ class Applier:
         self._worker_task: asyncio.Task | None = None
         self.mail_problem: str | None = None  # why the inbox couldn't be read, for the desk page
         self._mail_refused: str | None = None  # the app password the mail service turned down
+        # where each skipped job was, for Undo: its run's status ("" with no run yet) and its place in the queue
+        self._before_skip: dict[int, tuple[str, int | None]] = {}
 
     # ------------------------------------------------------------- control
     def start(self) -> None:
@@ -422,6 +425,8 @@ class Applier:
         if job.get("status") in FINISHED or run is not None and run.status == "submitted":
             # applying again could send a second application ("Submit for me")
             raise ValueError(f"{job.get('title') or 'That job'} is already marked {job.get('status') or 'submitted'}")
+        if job.get("status") == "skipped":  # never applied to until the person's Undo
+            raise ValueError(f"{job.get('title') or 'That job'} is skipped. Press Undo on it first.")
         run = run or Run(job_id, job.get("title", ""), job.get("company", ""))
         self.runs[job_id] = run
         if run.status == "running" and self.current == job_id:
@@ -512,10 +517,15 @@ class Applier:
     async def skip(self, job_id: int) -> Run:
         if self.srv.tracker().get(job_id, with_description=False) is None:
             raise KeyError(f"No job with id {job_id}")  # a stale page: no entry is made for it
-        run = self.runs.get(job_id) or Run(job_id)
+        run = self.runs.get(job_id)
+        if run is None or run.status != "skipped":  # (a second Skip keeps where it was before the first)
+            place = next((i for i, task in enumerate(self.tasks) if task == ("apply", job_id)), None)
+            self._before_skip[job_id] = (run.status if run else "", place)
+        run = run or Run(job_id)
         self.runs[job_id] = run
         self._cancel(job_id)
-        run.status, run.need, run.blocking, run.reason = "skipped", "", False, "Skipped"
+        run.status, run.need, run.blocking, run.reason = "skipped", "", False, "Skipped. Undo puts it back."
+        self._log(run, "skipped")
         self.srv.tracker().update(job_id, status="skipped", note="skipped in the Job Desk")
         for tab in self.srv.browser.lineage(run.page):  # its application tab, and the tab that opened it
             if not tab.is_closed():
@@ -523,7 +533,46 @@ class Applier:
                     await tab.close()
                 except Exception:
                     pass
-        run.page = None
+        # run.page stays, closed: put back by Undo, the job opens again in a new tab, and says why it starts over
+        return run
+
+    async def unskip(self, job_id: int) -> Run | None:
+        """The person's Undo on a skipped job. The tracker gets back the status the job had before
+        (its history keeps it), and the job goes back where it was: one the desk had begun goes back
+        in the queue (at its place, if it was waiting there), opened again in a new tab when Skip
+        closed its own; one it hadn't, back to the list, unselected. Its log, notes and answers stay.
+        Undo never sends anything: the job goes back with Submit for me off for it (it stops at its
+        review page for the person's Submit), and one sent or marked applied isn't queued again. A
+        job that isn't skipped is left as it is."""
+        tracker = self.srv.tracker()
+        if tracker.get(job_id, with_description=False) is None:
+            raise KeyError(f"No job with id {job_id}")
+        run = self.runs.get(job_id)
+        # Skipped while the worker was still on it (saving the page it paused on, or mid-step): its
+        # step ends first, or it would carry on in the tab Skip closed
+        deadline = time.monotonic() + UNSKIP_WAIT
+        while run is not None and run.status == "skipped" and self.current == job_id:
+            if time.monotonic() > deadline:
+                raise ValueError("That job is still stopping after its Skip. Press Undo again in a moment.")
+            await asyncio.sleep(0.1)
+        tracker.unskip(job_id, note="skip undone in the Job Desk")
+        before, place = self._before_skip.pop(job_id, (None, None))
+        if run is None or run.status != "skipped":
+            return run
+        if before == "":  # skipped before the desk began it
+            del self.runs[job_id]
+            return None
+        if self._already_done(run):  # marked applied (or past that): never queued again
+            return run
+        if before == "submitted":
+            run.status, run.reason = "submitted", "Skip undone. It went in before, so it isn't applied to again."
+            self._log(run, run.reason)
+            return run
+        self._log(run, "Skip undone: back in the queue")
+        self.enqueue(job_id)  # (submit=False: Undo is no Submit)
+        if place is not None:
+            self._cancel(job_id)
+            self.tasks.insert(min(place, len(self.tasks)), ("apply", job_id))
         return run
 
     async def focus(self, job_id: int) -> bool:
@@ -1176,10 +1225,11 @@ class Applier:
             if kind == "sign_in" and _account_and_application(data):
                 return await self._apply_with_account(run, data)
             manage = (kind in ("sign_in", "page", "email_code") or run.resetting) and _may_manage_accounts()
-            if kind == "form":
-                run.resetting = False  # past the sign-in, however the password was set
-                run.sign_in_tries = 0  # (and none of its sign-ins was refused)
-            if manage and run.resetting and kind in ("page", "email_code") and _RESET_SENT.search(text):
+            # On the reset's "email sent" page, or back from waiting on an email that didn't come, on whatever
+            # page the site left (Workday's reset form stays, filled, with its "if an account exists" note,
+            # which can read as a form: so before a form's "past the sign-in" below)
+            sent_page = kind in ("page", "email_code") and bool(_RESET_SENT.search(text))
+            if manage and run.resetting and (sent_page or run.reset_no_mail):
                 if not run.reset_waited:
                     return await self._await_reset_email(run, data)
                 # Resume pressed on it: the person set the password from the email themselves (or the
@@ -1196,6 +1246,9 @@ class Applier:
                     else:  # the saved password is the site's now, as the person was asked: one more sign-in
                         run.sign_in_tries = min(run.sign_in_tries, SIGN_IN_TRIES - 1)
                     continue
+            if kind == "form":
+                run.resetting = False  # past the sign-in, however the password was set
+                run.sign_in_tries = 0  # (and none of its sign-ins was refused)
             if kind == "sign_in" and manage and run.resetting:
                 done_reset = await self._set_new_password(run, data, text)
                 if done_reset == "set":
@@ -1414,7 +1467,7 @@ class Applier:
                                            "Look at it in the browser window, then press Resume.")
                     if _terms_gate(agree, data) and _may_accept_notices():
                         try:
-                            clicked = await srv.click(agree["id"])
+                            clicked = await self._press_agreement(agree["id"])
                         except KeyError:  # the page changed between looking and clicking: look again
                             continue
                         except Exception:  # it won't take a click: the person's, as without the setting
@@ -1730,16 +1783,18 @@ class Applier:
     async def _make_account(self, run: Run, data: dict[str, Any]) -> bool:
         """settings.manage_accounts: tick a filled Create Account form's terms boxes (the required
         ones, or its terms, or a privacy notice read: never a newsletter's or job alerts') and press
-        the form's own button, after its password boxes. Once a job (Run.accounts_tried). Not with a
-        CAPTCHA on the page: that's the person's. True when it was pressed; the account is said to be
-        made only once the site shows it (Run.account_made, in _drive)."""
+        the form's own button, after its password boxes (its submit button, or a link or plain button
+        in that form that its script sends it with: ApplicantStack's "Submit"). Once a job
+        (Run.accounts_tried). Not with a CAPTCHA on the page: that's the person's. True when it was
+        pressed; the account is said to be made only once the site shows it (Run.account_made, in _drive)."""
         if data.get("captcha") or data.get("challenge"):
             return False
         srv = self.srv
         boxes = [f for f in data.get("fields") or [] if f.get("kind") == "checkbox" and is_empty_value(f.get("value"))
                  and _TERMS_BOX.search(f.get("label") or "") and not _NOT_TERMS.search(f.get("label") or "")
                  and (f.get("required") or _TERMS_ONLY.search(f.get("label") or ""))]
-        own = [a for a in data.get("actions") or [] if a.get("account_form") or a.get("form_submit") and a.get("after_password")]
+        own = [a for a in data.get("actions") or [] if a.get("account_form") or a.get("in_account_form")
+               or a.get("form_submit") and a.get("after_password")]
         button = self._account_button(own, _MAKE_ACCOUNT)
         if button is None:
             return False
@@ -1798,6 +1853,18 @@ class Applier:
                         "you saved on the desk, then press Resume: the desk signs in with it.", seen=page)
             return "paused"
 
+        async def instead(why: str, page: dict[str, Any]) -> str:
+            # No reset the desk can do there: back to the sign-in page, for its way to a new account. With
+            # no account for the email (a first application there, the test identity's), that's the way
+            # on; a site that has one says so when it's asked to make another, and that's the person's (as
+            # it is once a Create Account here was told the email has one).
+            if not run.reset_from or run.page is None or tried.get("made"):
+                return await stop(why, page)
+            self._log(run, f"your saved password didn't sign in on {site}, and I {why}, so I went back to make an "
+                      "account there instead")
+            await run.page.goto(run.reset_from, wait_until="domcontentloaded", timeout=45000)
+            return "no_account"
+
         async def press(action: dict[str, Any], allow_submit: bool = False) -> bool:
             try:
                 out = await (srv.browser.click(action["id"], allow_submit=True) if allow_submit else srv.click(action["id"]))
@@ -1822,16 +1889,16 @@ class Applier:
                 return await stop("couldn't find its way to a password reset", data)
         run.reset_from = data.get("url") or ""
         if not await press(forgot):
-            return await stop("couldn't open its password reset", data)
+            return await instead("couldn't open its password reset", data)
         data, text = await self._look()
         address = config.Profile.load().get("personal.email")
         boxes = [f for f in data.get("fields") or [] if f.get("kind") in ("text", "email")
                  and re.search(r"e-?mail|user ?name|login", f.get("label") or "", re.I)]
         if (not _RESET_PAGE.search(" ".join([text[:2000], *(data.get("headings") or [])])) or not boxes or not address
                 or any(f.get("kind") == "password" for f in data.get("fields") or [])):
-            return await stop("opened its password reset, which isn't one I can fill in", data)
+            return await instead("opened its password reset, which isn't one I can fill in", data)
         if not (await srv.fill_form([{"id": boxes[0]["id"], "value": address}])).get("ok"):
-            return await stop("opened its password reset, which didn't take your email", data)
+            return await instead("opened its password reset, which didn't take your email", data)
         if data.get("captcha") or data.get("challenge"):
             run.resetting = True
             await self._bring_forward(run)
@@ -1841,7 +1908,7 @@ class Applier:
             return "paused"
         button = self._account_button(data.get("actions") or [], _RESET_ASK, full=False)
         if button is None or not await press(button, allow_submit=True):  # (asks for the email: sends no application)
-            return await stop("filled in your email on its password reset, but couldn't press its button", data)
+            return await instead("filled in your email on its password reset, but couldn't press its button", data)
         data, text = await self._look()
         if data.get("errors") and not _RESET_SENT.search(text):  # "No account found for this email"
             if _NO_ACCOUNT.search(" ".join(data["errors"])) and run.reset_from and run.page is not None:
@@ -1992,7 +2059,7 @@ class Applier:
         allowed = ai and agree is not None and _may_accept_notices()
         if allowed and agree is not None and heading not in agreed:
             try:
-                clicked = await self.srv.click(agree["id"])
+                clicked = await self._press_agreement(agree["id"])
             except Exception:  # gone, or it won't take a click: the person's, as without the setting
                 clicked = {"clicked": False}
             if clicked.get("clicked"):
@@ -2012,6 +2079,15 @@ class Applier:
                         if ai and agree is not None
                         and not allowed else ""))
         return "paused"
+
+    async def _press_agreement(self, element_id: str) -> dict[str, Any]:
+        """Press a button found to agree for the person (settings.accept_notices: a terms gate's way
+        on, a notice's agree), as the click tool does. Saying so lets the live check's test identity
+        press it in practice mode (Browser.click's `agreement`); every other check on it stays."""
+        try:
+            return {"clicked": True, **await self.srv.browser.click(element_id, agreement=True)}
+        except SubmitBlocked as e:
+            return {"clicked": False, "blocked": str(e)}
 
     async def _notice_closed(self, heading: str) -> None:
         """After a notice's agree button: until the notice has gone. One fading out is read a

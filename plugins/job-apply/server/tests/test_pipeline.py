@@ -1145,6 +1145,32 @@ def test_with_manage_accounts_the_desk_creates_the_account(srv, monkeypatch, job
     assert r.need != "sign_in" and "Create Account" not in r.reason, (r.status, r.reason, r.log)
 
 
+def test_with_manage_accounts_a_create_account_forms_link_is_pressed(srv, monkeypatch, job_apply_home):
+    """SCREEN's ApplicantStack (live, Oct 2026): its Create an Account form's own "Submit" is a link
+    whose script sends the form, not a submit button, and it reads neither account nor sign up. The
+    desk filled the form and then left it to the person, as if it had a picture code."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    saved_password(monkeypatch)
+    manage_accounts(job_apply_home)
+    job = srv.add_job(url=fixture_url("site/create-account-username.html"), title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert any(line.startswith("pressed “Submit” to create your account") for line in r.log), r.log
+    assert any(line.startswith("created your account on") for line in r.log), r.log
+    assert r.need != "sign_in" and "Create Account" not in r.reason, (r.status, r.reason, r.log)
+    assert any("“My Information”" in line for line in r.log), r.log  # on to the application
+
+
 def as_test_identity(monkeypatch, job_apply_home, email="sam.rivera@example.com"):
     """The nightly live check's switches on (live_smoke.py --test-identity), with `email` as the test
     identity's: the conftest profile's own makes it the test identity, in practice mode."""
@@ -1236,6 +1262,55 @@ def test_the_live_checks_test_identity_never_submits(srv, monkeypatch, job_apply
     r, first = run(go())
     assert first == "ready" and posts == [], (first, posts, r.reason, r.log)
     assert r.status != "submitted" and srv.tracker().get(job["id"])["status"] == "ready_to_submit", (r.status, r.reason)
+
+
+@pytest.mark.parametrize("page, query", [("privacy-agreement.html", "?form=1"), ("ai-notice-form.html", "?notice=1&ack=1")],
+                         ids=["gate", "dialog"])
+@pytest.mark.parametrize("identity", [True, False], ids=["test-identity", "practice"])
+def test_the_test_identity_agrees_with_a_forms_button_in_practice_mode(srv, monkeypatch, job_apply_home, page, query,
+                                                                       identity):
+    """Charles Schwab's iCIMS posting (live, Oct 10) puts its privacy notice before the application,
+    whose way on is a form's own button, "I Acknowledge the Privacy Notice": practice mode's lock on a
+    form's buttons that aren't step buttons refused it, and the live check's test identity stopped there.
+    The test identity agrees to notices in practice mode, so it presses that, as it does a notice's
+    agree that is a form's button ("I Acknowledge"), and says so. Any other practice-mode profile leaves
+    both to the person, as before."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 1)
+    if identity:
+        as_test_identity(monkeypatch, job_apply_home)
+    else:
+        manage_accounts(job_apply_home, submit_mode="dry_run")
+    gate = page.startswith("privacy")
+    job = srv.add_job(url=fixture_url(f"site/{page}") + query, title="Recruiter", company="Example Corp")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r, None if gate else await notice_page(r)
+        finally:
+            await applier.stop()
+
+    r, shown = run(go())
+    name = "I Acknowledge the Privacy Notice" if gate else NOTICE
+    if not identity:
+        assert (r.status, r.need) == ("needs_you", "stuck") and f"“{name}”" in r.reason, (r.status, r.reason, r.log)
+        assert not any(line.startswith("agreed") for line in r.log), r.log
+        if gate:
+            assert r.url.endswith("privacy-agreement.html?form=1"), r.url
+        else:
+            assert shown["agreed"] == 0, shown
+        return
+    said = f"“{name}”" if gate else f"notice “{name}”"
+    assert f"agreed to Example Corp's {said} for you (settings.accept_notices)" in r.log, (r.reason, r.log)
+    if gate:
+        assert r.url.endswith("generic_form.html") and any(line.startswith("filled") for line in r.log), r.log
+    else:
+        assert shown["agreed"] == 1 and shown["first"] == "Sam", shown
+    assert r.status != "submitted", (r.status, r.reason)
 
 
 def test_with_manage_accounts_a_refused_saved_password_is_reset(srv, monkeypatch, job_apply_home):
@@ -1694,6 +1769,70 @@ def test_no_reset_email_in_a_few_minutes_makes_an_account_and_the_queue_goes_on(
     assert "asked it to email a password reset" in log and "no password reset email came" in log, log
     assert "created your account" in log and r.seen_form, (r.reason, r.log)
     assert sum(line.startswith("pressed \u201cSubmit\u201d") for line in r.log) == 1, r.log  # not tried again
+
+
+def test_a_reset_the_desk_cant_fill_in_makes_an_account_instead(srv, monkeypatch, job_apply_home):
+    """The saved password didn't sign in, and the site's password reset isn't one the desk can fill
+    in (it asks a security question: the person's). UKG Pro's, SuccessFactors' and Infor's stopped the
+    test identity, which had no account at any of them (live, Oct 2026). With no reset to be had, the
+    desk goes back to the sign-in page and makes an account (a site that has one for the email says
+    so, and that's the person's)."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    saved_password(monkeypatch)
+    manage_accounts(job_apply_home)
+    watched_inbox(monkeypatch)
+    job = srv.add_job(url=fixture_url("site/signin-submit.html") + "?reset=odd", title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    log = "\n".join(r.log)
+    assert "asked it to email a password reset" not in log, log
+    assert "isn't one I can fill in, so I went back to make an account" in log, log
+    assert "created your account" in log and r.seen_form, (r.reason, r.log)
+
+
+@pytest.mark.parametrize("mode", ["workday", "workday-late"])
+def test_a_workday_reset_that_says_if_an_account_exists_waits_then_makes_one(srv, monkeypatch, job_apply_home, mode):
+    """Workday's password reset stays on its form and says "You will receive an email with
+    instructions to reset your password if an account exists for this email address." (live, Oct
+    2026, the test identity's first run). Said at once (Banner Health's), the desk took it for a
+    refusal and stopped; said a moment later (KLA's), it waited for the email, and when none came
+    it signed in on the reset's own form and stopped. Either way: wait for the email, then, with
+    none, back to the sign-in page to make an account."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "RESET_MAIL_WAIT", 4)
+    saved_password(monkeypatch)
+    manage_accounts(job_apply_home)
+    watched_inbox(monkeypatch)
+    job = srv.add_job(url=fixture_url("site/signin-submit.html") + f"?reset={mode}", title="FSE",
+                      company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status == "needs_you", about=state(r))
+            assert r.need == "email_code" and "makes one instead" in r.reason, (r.reason, r.log)
+            await until(lambda: r.status not in ("queued", "running") and r.need != "email_code", timeout=60,
+                        about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    log = "\n".join(r.log)
+    assert "asked it to email a password reset" in log and "no password reset email came" in log, log
+    assert "created your account" in log and r.seen_form, (r.reason, r.log)
 
 
 def test_a_new_account_the_site_takes_a_moment_over_is_signed_in_to(srv, monkeypatch, job_apply_home):
@@ -2425,9 +2564,10 @@ def test_a_create_account_forms_own_button_is_never_the_way_to_it(srv, monkeypat
     # Amkor's SuccessFactors: the email twice, names and country; the newsletter box is left alone
     ("create-account-details.html", {"email": "sam.rivera@example.com", "email2": "sam.rivera@example.com", "same": True,
                                      "first": "Sam", "last": "Rivera", "country": "United States", "news": False}),
-    # SCREEN's ApplicantStack: the user name is the email, then the name and the email again
+    # SCREEN's ApplicantStack: the user name is the email, then the name and the email again (its box
+    # for robots, hidden, stays empty)
     ("create-account-username.html", {"user": "sam.rivera@example.com", "same": True, "name": "Sam Rivera",
-                                      "email": "sam.rivera@example.com"}),
+                                      "email": "sam.rivera@example.com", "robots": ""}),
     # Benchmark's Infor: the picture code, the resume upload and the "no resume" box are the person's
     ("register-picture-code.html", {"first": "Sam", "last": "Rivera", "email": "sam.rivera@example.com", "same": True,
                                     "code": "", "upload": "", "files": 0, "nores": False}),
@@ -2808,6 +2948,128 @@ def test_a_job_skipped_while_its_paused_tab_is_looked_at_isnt_started_again(srv,
     monkeypatch.setattr(applier, "_moved_on", moved_on)
     run(applier._tick())
     assert paused.status == "skipped" and not applier.tasks
+
+
+def test_undo_puts_a_skipped_job_back_in_its_place_and_until_then_it_isnt_applied_to(srv, monkeypatch):
+    """Skip had no undo. Undo now gives the tracker back the job's status from before, and puts the
+    job back in the queue where it was, with its log; until then neither Apply, Resume nor the
+    queue going on starts it. It goes back with Submit for me off for it: Undo sends nothing."""
+    a, b, c = (srv.add_job(url=f"https://example.com/jobs/{n}", title=f"Job {n}", company="Example Co")["job"]["id"]
+               for n in "abc")
+    srv.update_job(b, status="in_progress", notes="asked about the night shift")
+    applier = Applier(srv)
+    driven = []
+
+    async def drive(r):  # (no browser: what the queue starts is what matters here)
+        driven.append(r.job_id)
+        r.status, r.reason = "ready", "Filled and waiting on the review page."
+
+    monkeypatch.setattr(applier, "_drive", drive)
+    for job_id in (a, b, c):
+        applier.enqueue(job_id, submit=True)
+    applier.runs[b].log.append("an earlier try")
+
+    run(applier.skip(b))
+    assert [j for _, j in applier.tasks] == [a, c] and srv.get_job(b)["job"]["status"] == "skipped"
+    for start in (lambda: applier.enqueue(b), lambda: applier.resume(b)):
+        with pytest.raises(ValueError, match="skipped"):
+            start()
+    assert [j for _, j in applier.tasks] == [a, c]
+
+    events = len(srv.get_job(a)["history"])
+    assert run(applier.unskip(a)) is applier.runs[a]  # not skipped: left as it is
+    assert applier.runs[a].status == "queued" and len(srv.get_job(a)["history"]) == events
+    with pytest.raises(KeyError):
+        run(applier.unskip(777))
+
+    r = run(applier.unskip(b))
+    assert [j for _, j in applier.tasks] == [a, b, c]  # its place
+    assert r.status == "queued" and not r.submit
+    assert r.log[0] == "an earlier try" and r.log[-1] == "Skip undone: back in the queue"
+    job = srv.get_job(b)
+    assert job["job"]["status"] == "in_progress" and job["job"]["notes"] == "asked about the night shift"
+    assert [e["status"] for e in job["history"]][-2:] == ["skipped", "in_progress"]
+
+    # skipped again: the queue goes on without it, and Undo puts it back to be applied to
+    run(applier.skip(b))
+    while applier.tasks:
+        run(applier._tick())
+    assert driven == [a, c] and applier.runs[b].status == "skipped"
+    run(applier.unskip(b))
+    run(applier._tick())
+    assert driven == [a, c, b] and applier.runs[b].status == "ready"
+
+
+def test_undo_waits_for_the_step_the_job_was_skipped_in(srv, monkeypatch):
+    """Skip pressed while the worker was still on the job (saving the page it paused on, say): an
+    Undo straight after it put the job back while that step still ran, which could carry on in the
+    tab Skip closed. Undo waits for the step to end, and says to press it again if it doesn't."""
+    job = srv.add_job(url="https://example.com/jobs/1", title="Job", company="Example Co")["job"]["id"]
+    applier = Applier(srv)
+    applier.runs[job] = Run(job, "Job", "Example Co", status="needs_you", need="sign_in")
+    applier.current = job  # the worker, still on it
+
+    async def go():
+        await applier.skip(job)
+        undo = asyncio.ensure_future(applier.unskip(job))
+        await asyncio.sleep(0.3)
+        assert not undo.done() and not applier.tasks and srv.get_job(job)["job"]["status"] == "skipped"
+        applier.current = None  # its step ends
+        return await undo
+
+    assert run(go()).status == "queued" and [j for _, j in applier.tasks] == [job]
+    monkeypatch.setattr(pipeline, "UNSKIP_WAIT", 0.2)
+    run(applier.skip(job))
+    applier.current = job
+    with pytest.raises(ValueError, match="still stopping"):
+        run(applier.unskip(job))
+    assert applier.runs[job].status == "skipped" and srv.get_job(job)["job"]["status"] == "skipped"
+
+
+def test_undo_of_a_skip_never_sends_or_queues_a_job_that_went_in(srv):
+    """Skipped after it went in (marked applied): Undo gives the tracker back "applied", and the job
+    is never queued again (with Submit for me on, that would apply twice). One skipped before the desk
+    began it goes back to the list."""
+    sent = srv.add_job(url="https://example.com/jobs/sent", title="Sent", company="Example Co")["job"]["id"]
+    fresh = srv.add_job(url="https://example.com/jobs/fresh", title="Fresh", company="Example Co")["job"]["id"]
+    applier = Applier(srv)
+    applier.auto_submit = True
+    applier.enqueue(sent, submit=True)
+    srv.update_job(sent, status="applied")
+    applier.mark_applied(sent)
+    run(applier.skip(sent))
+    run(applier.skip(fresh))
+    r = run(applier.unskip(sent))
+    assert r.status == "submitted" and not applier.tasks and srv.get_job(sent)["job"]["status"] == "applied"
+    assert run(applier.unskip(fresh)) is None and fresh not in applier.runs and not applier.tasks
+    assert srv.get_job(fresh)["job"]["status"] == "saved"
+
+
+def test_a_job_put_back_by_undo_opens_again_and_says_why_it_starts_over(srv, monkeypatch):
+    """Skip closed the job's tab: put back by Undo, it opens again in a new tab, its log saying why
+    its application starts over, and stops where it stopped before."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    job = srv.add_job(url=fixture_url("site/posting.html"), title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.need == "sign_in", about=state(r))
+            first = r.page
+            await applier.skip(job["id"])
+            assert first.is_closed() and srv.get_job(job["id"])["job"]["status"] == "skipped"
+            await applier.unskip(job["id"])  # (the worker may still be saving the paused page)
+            await until(lambda: r.need == "sign_in" and r.page is not first, about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert r.status == "needs_you" and not r.page.is_closed()
+    assert any(line.startswith("its tab was closed, so I opened the job again in a new tab") for line in r.log), r.log
+    assert srv.get_job(job["id"])["job"]["status"] == "in_progress"
 
 
 def test_a_flow_that_goes_round_in_a_circle_stops_after_one_lap(srv, monkeypatch):

@@ -141,3 +141,47 @@ def test_a_jobs_folder_stays_put_when_its_company_is_filled_in_later(job_apply_h
     assert not created and again["company"] == "Northwind Semi"
     assert Path(again["folder"]) == folder and (Path(again["folder"]) / "submission.json").exists()
     t.close()
+
+
+def test_undoing_a_skip_keeps_what_an_email_said_meanwhile(job_apply_home):
+    """A confirmation email logged while the job was skipped (the person sent it on the site, then
+    pressed Skip) leaves it skipped; Undo then gave back "ready_to_submit", and the desk queued it
+    again for a second application. Undo takes in what the employer's emails said."""
+    t = Tracker()
+    job, _ = t.upsert({"url": "https://example.com/jobs/10", "title": "Tech", "company": "Example"})
+    t.update(job["id"], status="ready_to_submit")
+    t.update(job["id"], status="skipped", note="skipped in the Job Desk")
+    t.log_email(job["id"], "thread-1", "confirmation", "We received your application")
+    assert t.get(job["id"])["status"] == "skipped"
+    assert t.unskip(job["id"])["status"] == "applied"
+    other, _ = t.upsert({"url": "https://example.com/jobs/11", "title": "Tech 2", "company": "Example"})
+    t.update(other["id"], status="in_progress")
+    t.update(other["id"], status="skipped")
+    t.log_email(other["id"], "thread-2", "interview", "Can you talk on Tuesday?")
+    assert t.unskip(other["id"])["status"] == "interviewing"
+    t.close()
+
+
+def test_undoing_a_skip_brings_back_the_status_before_it(job_apply_home):
+    """The Job Desk's Undo on a skipped job: the status it had before (from its history), with its
+    notes and history kept. A job that isn't skipped is left alone."""
+    t = Tracker()
+    job, _ = t.upsert({"url": "https://example.com/jobs/8", "title": "Tech", "company": "Example"})
+    t.update(job["id"], status="in_progress", notes="asked about the night shift", note="opened application")
+    t.update(job["id"], status="skipped", note="skipped in the Job Desk")
+    t.update(job["id"], status="skipped", note="skipped in the Job Desk")  # pressed twice
+    t.update(job["id"], note="a note with no status")
+    back = t.unskip(job["id"], note="skip undone")
+    assert back is not None and back["status"] == "in_progress" and back["notes"] == "asked about the night shift"
+    assert [e["status"] for e in t.events(job["id"])] == ["saved", "in_progress", "skipped", "skipped", "", "in_progress"]
+    assert t.unskip(job["id"]) is None and len(t.events(job["id"])) == 6  # not skipped now: nothing changes
+    # skipped again later: back to what it was then
+    t.update(job["id"], status="ready_to_submit")
+    t.update(job["id"], status="skipped")
+    assert t.unskip(job["id"])["status"] == "ready_to_submit"
+    # one saved as skipped, with nothing before it
+    other, _ = t.upsert({"url": "https://example.com/jobs/9", "title": "Tech 2"}, status="skipped")
+    assert t.unskip(other["id"])["status"] == "saved"
+    with pytest.raises(KeyError):
+        t.unskip(999)
+    t.close()

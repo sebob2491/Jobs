@@ -547,6 +547,11 @@ EXTRACT_JS = r"""
         if (boxes) { if (boxes >= 2) a.account_form = true; break; }
       }
     }
+    // A link or plain button after the password boxes, in the very form that holds two of them,
+    // whatever it reads: that form's own, which a script sends (ApplicantStack's "Submit", a link
+    // whose script calls form.submit()). A form's submit button says so already (form_submit).
+    const ownForm = !formSubmit && a.after_password && (el.form || el.closest('form'));
+    if (ownForm && ownForm.querySelectorAll('input[type="password"]').length >= 2) a.in_account_form = true;
     if (el.disabled || el.getAttribute('aria-disabled') === 'true') a.disabled = true;
     // A link to something already on show on this page (Phoenix Children's "Apply!" to its form,
     // #apply) only scrolls there; one to something hidden may be what shows it

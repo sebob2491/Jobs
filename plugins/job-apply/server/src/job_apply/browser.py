@@ -50,6 +50,8 @@ def final_text(text: str) -> str:
 # Words that send an application from any button, a form's or not: refused in a dry run
 _SENDS = re.compile(r"^(send( now| (my )?application)?|finish( (my )?application)?|complete (my )?application|"
                     r"confirm and send)$", re.I)
+# An agreement's button that also sends the application ("I Accept and Apply"): the person's
+_SENDS_TOO = re.compile(r"\b(?:apply|submit|send|finish|complete)\b", re.I)
 # Form buttons that only move between steps; in a dry run every other form submit is refused.
 NAVIGATION_RE = re.compile(
     r"^(next|continue|save( and| &)? continue|save( for later| draft)?|review|back|previous|add( another)?|search|"
@@ -1450,15 +1452,19 @@ class BrowserSession:
             raise
         return f"selected {choice}"
 
-    async def click(self, target: str, allow_submit: bool = False) -> dict[str, Any]:
-        """Click an action/field by id, or the first visible button/link with that text."""
+    async def click(self, target: str, allow_submit: bool = False, *, agreement: bool = False) -> dict[str, Any]:
+        """Click an action/field by id, or the first visible button/link with that text.
+
+        `agreement`: the Job Desk found the button agrees to an employer's notice or terms for the
+        person (settings.accept_notices), which lets the live check's test identity press it in
+        practice mode (_check_clickable). Only the desk's own presses say so, never the click tool."""
         self._follow_until = time.monotonic() + POPUP_FOLLOW
         async with self._lock:
             page = await self.page()
             by_id = target in self._actions or target in self._fields or re.fullmatch(r"(f\d+-)?[a-z]*\d+(\.\d+)?", target)
             loc = self._locator(page, target) if by_id else None
             text = self._actions[target]["text"] if target in self._actions else "" if by_id else target
-            loc, info = await self._clickable(page, loc, text, allow_submit, target)
+            loc, info = await self._clickable(page, loc, text, allow_submit, target, agreement)
             before, note = page.url, None
             try:
                 await loc.click(timeout=CLICK_TIMEOUT)
@@ -1470,7 +1476,7 @@ class BrowserSession:
                     # Knockout/React swapped the button out, or a cookie banner sits on top:
                     # click it directly, after finding and checking it again.
                     loc, info = await self._clickable(
-                        page, loc if present else None, info["text"] or text, allow_submit, target)
+                        page, loc if present else None, info["text"] or text, allow_submit, target, agreement)
                     await loc.evaluate("el => el.click()", timeout=5000)
                     note = "clicked directly: the button was covered or replaced"
                 else:
@@ -1481,7 +1487,7 @@ class BrowserSession:
             return {**summary, "note": note} if note else summary
 
     async def _clickable(self, page: Page, loc: Locator | None, text: str, allow_submit: bool,
-                         target: str) -> tuple[Locator, dict[str, Any]]:
+                         target: str, agreement: bool = False) -> tuple[Locator, dict[str, Any]]:
         """The element to click and what it is; final submit buttons are refused.
 
         Oracle's and other Knockout/React pages replace buttons as they re-render, so one
@@ -1499,7 +1505,7 @@ class BrowserSession:
                 loc = None
                 continue
             if not allow_submit:
-                self._check_clickable(info, page.url)
+                self._check_clickable(info, page.url, agreement)
             if await self._present(loc):
                 return loc, info
             loc = None
@@ -1513,7 +1519,7 @@ class BrowserSession:
             return False
 
     @staticmethod
-    def _check_clickable(info: dict[str, Any], url: str = "") -> None:
+    def _check_clickable(info: dict[str, Any], url: str = "", agreement: bool = False) -> None:
         label = " ".join((info.get("label") or "").split())
         text = (info.get("text") or "").strip()
         if _accepts_cookies(label, text, bool(info.get("cookie"))) and not may_accept_cookies(info):
@@ -1531,10 +1537,16 @@ class BrowserSession:
                 f"{label!r} looks like the final submit button. Use submit_application "
                 "(after the user confirms), or let the user click it in the browser."
             )
-        if (info.get("formSubmit") and not NAVIGATION_RE.match(text) and not opens
-                or _SENDS.match(final_text(text))) and config.Profile.load().settings.dry_run:
-            # (a page's script can send the application from a plain button: "Finish", "Send")
-            raise SubmitBlocked(f"Dry run: {label!r} may send the application, and it isn't a recognised step button.")
+        # (a page's script can send the application from a plain button: "Finish", "Send")
+        if info.get("formSubmit") and not NAVIGATION_RE.match(text) and not opens or _SENDS.match(final_text(text)):
+            settings = config.Profile.load().settings
+            # The live check's test identity agrees to notices in practice mode (Settings.may_accept_notices):
+            # a form's button the desk found agrees to one (iCIMS's "I Acknowledge the Privacy Notice"), and
+            # never one whose words send. Any other profile's practice mode presses none of these.
+            agrees = (agreement and not _SENDS_TOO.search(f"{label} {text}") and settings.test_identity
+                      and settings.may_accept_notices)
+            if settings.dry_run and not agrees:
+                raise SubmitBlocked(f"Dry run: {label!r} may send the application, and it isn't a recognised step button.")
 
     async def _find_by_text(self, page: Page, text: str) -> Locator | None:
         """First visible button/link named `text`, then any visible text match, across frames."""
