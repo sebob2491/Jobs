@@ -485,6 +485,9 @@ async def _workday_places(client: httpx.AsyncClient, cxs: str, base: str, listin
                 return
         places = [str(x).strip() for x in [info.get("location"), *(info.get("additionalLocations") or [])] if x]
         places = list(dict.fromkeys(x for x in places if x))
+        if not places:  # an empty "location", with the place in the requisition's ("TX - Burnet": Entegris, live, Oct 2026)
+            req = (info.get("jobRequisitionLocation") or {}).get("descriptor")
+            places = [str(req).strip()] if req and str(req).strip() else []
         places.sort(key=lambda x: location_matches(x, terms) is not True)
         where = "; ".join(places)
         if where and not (in_area and location_matches(where, terms) is not True):
