@@ -529,9 +529,17 @@ def _previously_employed(prof: Profile, job: dict, label: str = "") -> str | Non
     if not any(_same_employer(c, company) for c in past if c):
         # "...or any of its subsidiaries or affiliates": the profile can't say it's none of those
         return None if re.search(r"\b(subsidiar|affiliat)", asked) else "No"
+    return "Yes, currently" if works_there_now(prof, company) else "Yes, previously"
+
+
+def works_there_now(prof: Profile, company: str) -> bool:
+    """Does the profile have the person working for this employer now: a work_history entry that
+    runs to the present, or experience.current_company?"""
+    company = norm(company)
+    entries = [e for e in _listed(prof.get("work_history")) if isinstance(e, dict)]
     now = [norm(e.get("company")) for e in entries if is_present(entry_dates(e)[1]) or e.get("current") is True]
     now.append(norm(prof.get("experience.current_company")))
-    return "Yes, currently" if any(_same_employer(c, company) for c in now if c) else "Yes, previously"
+    return bool(company) and any(_same_employer(c, company) for c in now if c)
 
 
 def _said_no(prof: Profile, key: str) -> bool:

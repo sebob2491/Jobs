@@ -2136,6 +2136,41 @@ def test_a_workday_account_is_said_made_only_once_its_sign_in_gets_in(srv, monke
     assert r.seen_form, (r.reason, r.log)
 
 
+@pytest.mark.parametrize("company, ticked", [("Example Fab", True), ("Intel", False)])
+def test_a_workday_create_account_says_a_new_candidate_from_the_profile(srv, monkeypatch, job_apply_home, company, ticked):
+    """Banner Health's Workday (live, Oct 2026) made no account, and said nothing, until its "Yes, I am a
+    new candidate and not a current employee" box was ticked (not marked required). It's ticked when
+    the profile has no current job at the employer (an old one there doesn't count: Example Fab
+    Services ended in 2021); someone who works there now (Intel, in the test profile) is left to it,
+    and the card names the box."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "ACCOUNT_WAIT", 2)  # (a form that says nothing is waited on that long)
+    saved_password(monkeypatch)
+    manage_accounts(job_apply_home)
+    job = srv.add_job(url=fixture_url("site/workday-account.html") + "?candidate", title="FSE", company=company)["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r, await workday_did(r.page)
+        finally:
+            await applier.stop()
+
+    r, did = run(go())
+    assert (did["candidate"], did["privacy"], did.get("created")) == (ticked, True, 1 if ticked else None), (did, r.log)
+    pressed = next(line for line in r.log if line.startswith("pressed \u201cCreate Account\u201d"))
+    if ticked:
+        assert "\u201cYes, I am a new candidate and not a current employee\u201d" in pressed, r.log
+        assert any(line.startswith("created your account on") for line in r.log) and r.seen_form, (r.reason, r.log)
+    else:
+        assert "new candidate" not in pressed, r.log
+        assert r.need == "sign_in" and "\u201cYes, I am a new candidate and not a current employee\u201d isn't ticked" in r.reason, (
+            r.reason, r.log)
+
+
 def test_a_workday_create_account_that_doesnt_sign_in_goes_to_a_reset_not_round_again(srv, monkeypatch, job_apply_home):
     """A Workday site, without the inbox watched (live, Oct 2026): the saved password didn't sign in,
     Create Account went back to Sign In, the sign-in failed again, Create Account again, round and

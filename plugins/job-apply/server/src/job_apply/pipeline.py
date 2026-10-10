@@ -33,7 +33,7 @@ from urllib.parse import parse_qsl, urlparse
 from . import config, mailbox, report
 from .ats import ATS_NAMES, detect_ats, shared_system
 from .autofill import (clean_label, entry_of, is_empty_value, no_choice_for_no_degree, norm, plan_autofill,
-                       polarity, tailored_document)
+                       polarity, tailored_document, works_there_now)
 from .browser import (_SENDS_TOO, CONFIRMATION_RE, SubmitBlocked, TabClosed, _accepts_cookies, _cookie_setting,
                       confirmations, declines_cookies, final_text, may_accept_cookies)
 
@@ -137,6 +137,13 @@ _TERMS_BOX = re.compile(r"terms|conditions|privacy|consent|agree|acknowledge|pol
 _NOT_TERMS = re.compile(r"newsletter|marketing|job alerts?|text messages?|\bsms\b|promotion|offers|subscribe|similar jobs|"
                         r"talent (?:community|network)|keep me|stay informed|send me|contact(?:ed)? me|be contacted|"
                         r"share my|other (?:roles|positions|jobs|opportunities)|affiliat", re.I)
+# A Create Account box that says the person applies from outside, not as one of the employer's staff
+# (Banner Health's Workday, live, Oct 2026: "Yes, I am a new candidate and not a current employee"; no
+# account without it, though it isn't marked required). That and nothing more: a box that says more
+# about the person is theirs
+_NEW_CANDIDATE = re.compile(r"^(?:yes,? )?i am (?:a |an )?(?:new|external) (?:candidate|applicant)(?:,? and (?:i am )?not "
+                            r"(?:a |an )?(?:current|existing) (?:employee|associate|team member))?|^(?:yes,? )?i am not "
+                            r"(?:a |an )?(?:current|existing) (?:employee|associate|team member)(?: of [\w&.' -]+)?", re.I)
 _ACCOUNT_EXISTS = re.compile(r"\b(?:account|e-?mail(?: address)?|user ?name|login)\b[^.?!]{0,40}\balready\b\s*(?:exists|"
                              r"registered|in use|associated|taken|been (?:registered|used|taken))", re.I)
 _FORGOT = re.compile(r"\b(?:forgot|reset|recover)\b[^.?!]{0,20}\bpassword|trouble (?:signing|logging) in|"
@@ -1882,7 +1889,8 @@ class Applier:
         if data.get("captcha") or data.get("challenge") or _security_boxes(data.get("fields") or []):
             return False
         srv = self.srv
-        boxes = _terms_boxes(data)
+        terms = _terms_boxes(data)
+        boxes = terms + _new_candidate_boxes(data, run.company)
         own = [a for a in data.get("actions") or [] if a.get("account_form") or a.get("in_account_form")
                or a.get("form_submit") and a.get("after_password")]
         button = self._account_button(own, _MAKE_ACCOUNT)
@@ -1903,7 +1911,7 @@ class Applier:
         self._log(run, f"pressed \u201c{button['text'].strip()}\u201d to create your account on {site} with {with_}"
                   + (f", after ticking {ticked}" if boxes else ""))
         run.account_made = (f"created your account on {site} with {with_}" + (" and agreed to its terms"
-                            if boxes else "") + " (manage_accounts: false in profile.yaml leaves this to you)")
+                            if terms else "") + " (manage_accounts: false in profile.yaml leaves this to you)")
         await self._wait_for_account(data)
         return True
 
@@ -3099,6 +3107,18 @@ def _terms_boxes(data: dict[str, Any]) -> list[dict[str, Any]]:
             and (f.get("required") or _TERMS_ONLY.search(f.get("label") or ""))]
 
 
+def _new_candidate_boxes(data: dict[str, Any], company: str) -> list[dict[str, Any]]:
+    """A Create Account form's box saying the person is a new candidate, not a current employee
+    (_NEW_CANDIDATE), still unticked: ticked from the profile, so only when it has no current job
+    at this employer (autofill.works_there_now). Someone who works there now leaves it be (an
+    employee applies the way their employer says)."""
+    boxes = [f for f in data.get("fields") or [] if f.get("kind") == "checkbox" and not f.get("disabled")
+             and is_empty_value(f.get("value")) and _NEW_CANDIDATE.fullmatch(clean_label(f.get("label") or "").rstrip(" ."))]
+    if not boxes or not company or works_there_now(config.Profile.load(), company):
+        return []
+    return boxes
+
+
 def _account_made_says(site: str, terms: bool, password: bool = True) -> str:
     """What the log says once the site shows the account made (Run.account_made)."""
     return ((f"created your account on {site} with your saved password" if password
@@ -3132,8 +3152,8 @@ def _account_wants(left: dict[str, Any], filled: dict[str, Any]) -> str:
         return "; ".join(([f"it says \u201c{'; '.join(said)[:300].rstrip(' .')}\u201d"] if said else []) + marked) + "."
     empty = [f for f in filled.get("fields") or [] if f.get("label") and not f.get("disabled")
              and f.get("kind") not in ("password", "file") and is_empty_value(f.get("value"))
-             and (f.get("required") or f.get("kind") == "checkbox" and _TERMS_BOX.search(f["label"])
-                  and not _NOT_TERMS.search(f["label"]))]
+             and (f.get("required") or f.get("kind") == "checkbox" and (_TERMS_BOX.search(f["label"])
+                  and not _NOT_TERMS.search(f["label"]) or _NEW_CANDIDATE.fullmatch(clean_label(f["label"]).rstrip(" ."))))]
     named = [f"\u201c{_short(f['label'])}\u201d " + ("isn't ticked" if f.get("kind") == "checkbox" else "is still empty")
              for f in empty[:3]]
     return "; ".join(named) + "." if named else ""

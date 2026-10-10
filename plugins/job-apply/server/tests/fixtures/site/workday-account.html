@@ -10,7 +10,9 @@
      ?exists=<password>: the email has an account there already, with that password; Create Account then
      goes back to Sign In without a word, as the live site did.
      ?create: the step starts on Create Account. ?adult: Create Account also requires an "18 or older"
-     box, and says nothing when it's left empty. -->
+     box, and says nothing when it's left empty. ?candidate: Create Account also wants its "Yes, I am a new
+     candidate and not a current employee" box ticked (not marked required), and says nothing when it's left
+     empty, as Banner Health's did. -->
 <a href="#">Back to Job Posting</a>
 <h2>Field Service Engineer</h2>
 <h3>current step 1 of 7 Create Account/Sign In</h3>
@@ -52,6 +54,8 @@
       + '<input id="informed" type="checkbox"><label for="informed">Keep me informed of new jobs, as the privacy notice '
       + 'describes</label>'
       + (q.has('adult') ? '<input id="adult" type="checkbox" required><label for="adult">I am at least 18 years of age*</label>' : '')
+      + (q.has('candidate') ? '<input id="candidate" type="checkbox"><label for="candidate">Yes, I am a new candidate and '
+         + 'not a current employee</label>' : '')
       + '<div role="button" tabindex="0" id="make">Create Account</div>'
       + '<div id="err" role="alert"></div>'
       + '<div>Already have an account? <button type="button" id="back">Sign In</button></div>';
@@ -64,6 +68,8 @@
         return;
       }
       if (q.has('adult') && !$('adult').checked) return;
+      if (q.has('candidate')) put('candidate', $('candidate').checked);
+      if (q.has('candidate') && !$('candidate').checked) return;
       const pw = $('pw').value;
       if (!$('em').value || !pw || pw !== $('pw2').value) {
         $('err').textContent = 'Error: enter your email address and the same password twice.';
