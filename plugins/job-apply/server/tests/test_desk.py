@@ -1188,3 +1188,34 @@ def test_many_notes_make_one_issue_whose_address_github_takes(srv, job_apply_hom
     assert body.endswith("(cut short: the rest is in the text the Job Desk's Copy all copies)\n")
     # the note taken since stays (the oldest shown had made way for it: 50 at most)
     assert cleared == {"cleared": 49} and left == 1
+
+
+@pytest.mark.skipif(not browser_available(), reason="no browser")
+@pytest.mark.parametrize("width", [1280, 390])
+def test_the_desk_page_fits_its_window(srv, width):
+    """The Site passwords card's job-system list was as wide as its longest choice ("SuccessFactors:
+    TSMC Arizona, ..."), and nothing let it shrink: the page ran past a 1280-wide window, and a
+    phone's, and scrolled sideways."""
+    from playwright.async_api import async_playwright
+
+    desk = Desk(srv)
+    desk.applier.start = lambda: None
+    desk.search.update(status="done", at=time.time())
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with async_playwright() as pw:
+                browser = await pw.chromium.launch(**launch_options())
+                page = await browser.new_page(viewport={"width": width, "height": 900})
+                await page.goto(desk.url)
+                await page.wait_for_selector("#pw-site option", state="attached")
+                sizes = await page.evaluate("() => [document.documentElement.scrollWidth, "
+                                            "document.documentElement.clientWidth]")
+                await browser.close()
+                return sizes
+        finally:
+            await desk.stop()
+
+    scroll, client = run(go())
+    assert scroll <= client, (scroll, client)

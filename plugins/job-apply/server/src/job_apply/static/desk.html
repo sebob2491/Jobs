@@ -47,7 +47,7 @@ main { max-width: 1240px; margin: 0 auto; padding: 16px; display: grid; grid-tem
 /* one column on narrow screens: notices, then what needs the person, then the openings,
    then the password card */
 @media (max-width: 900px) {
-  main { grid-template-columns: 1fr; }
+  main { grid-template-columns: minmax(0, 1fr); }
   main > .side { display: contents; }
   #notices { order: -4; }
   [aria-labelledby="needs-h"] { order: -3; }
@@ -93,7 +93,7 @@ ul.rows { list-style: none; margin: 0; padding: 0; }
 .chip.stop { background: var(--bad-bg); color: var(--bad); }
 .chip.new { background: var(--info-bg); color: var(--accent); font-weight: 600; }
 .empty { padding: 28px 16px; text-align: center; color: var(--muted); }
-.side { display: grid; gap: 16px; }
+.side { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
 .task { padding: 12px 14px; border-top: 1px solid var(--line); }
 .task:first-child { border-top: 0; }
 .task h3 { font-size: 14px; margin: 0 0 4px; }
@@ -109,7 +109,8 @@ ul.rows { list-style: none; margin: 0; padding: 0; }
 .counts { display: flex; flex-wrap: wrap; gap: 6px; padding: 12px 14px; }
 .pw { padding: 2px 14px 14px; }
 .pw-row { display: flex; gap: 8px; margin-top: 8px; }
-.pw-row select { flex: 1; min-width: 0; font: inherit; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--text); }
+/* (width 0: a choice as long as "SuccessFactors: TSMC Arizona, ..." doesn't widen the page) */
+.pw-row select { flex: 1; min-width: 0; width: 0; font: inherit; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--text); }
 .pills { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 0; }
 .pw-row input { flex: 1; min-width: 0; font: inherit; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--text); }
 details { padding: 10px 14px; border-top: 1px solid var(--line); font-size: 13px; color: var(--muted); }
