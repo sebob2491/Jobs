@@ -34,8 +34,8 @@ from . import config, mailbox, report
 from .ats import ATS_NAMES, detect_ats, shared_system
 from .autofill import (clean_label, entry_of, is_empty_value, no_choice_for_no_degree, norm, plan_autofill,
                        polarity, tailored_document)
-from .browser import (CONFIRMATION_RE, TabClosed, _accepts_cookies, _cookie_setting, confirmations, declines_cookies,
-                      final_text, may_accept_cookies)
+from .browser import (_SENDS_TOO, CONFIRMATION_RE, SubmitBlocked, TabClosed, _accepts_cookies, _cookie_setting,
+                      confirmations, declines_cookies, final_text, may_accept_cookies)
 
 NEW_TAB_WAIT = 4  # seconds to wait for a tab opened late by a click before calling it a stall
 ONCE_SETTLE = 1.0  # seconds after filling the person's answers before checking they stayed in
@@ -216,9 +216,6 @@ _OTHER_QUESTION = re.compile(r"\b(?:have|do|are|will|can|did|were|would|has|is) 
 # A dialog that mentions personal data but isn't a notice to take in ("could not be saved", "overwrite?")
 _NOT_A_NOTICE = re.compile(r"\berror\b|could ?n[o']t|failed|signed? (?:you )?out|overwrite|existing (?:profile|account)|"
                            r"\bdelete|\bremove|withdraw|expired?\b", re.I)
-# A gate's button that also sends the application ("I Accept and Apply"): the person's
-_SENDS_TOO = re.compile(r"\b(?:apply|submit|send|finish|complete)\b", re.I)
-
 
 def _agrees_to_terms(text: str) -> bool:
     """Words that accept an employer's privacy notice or terms of use, and nothing more: not a
@@ -1470,7 +1467,7 @@ class Applier:
                                            "Look at it in the browser window, then press Resume.")
                     if _terms_gate(agree, data) and _may_accept_notices():
                         try:
-                            clicked = await srv.click(agree["id"])
+                            clicked = await self._press_agreement(agree["id"])
                         except KeyError:  # the page changed between looking and clicking: look again
                             continue
                         except Exception:  # it won't take a click: the person's, as without the setting
@@ -2062,7 +2059,7 @@ class Applier:
         allowed = ai and agree is not None and _may_accept_notices()
         if allowed and agree is not None and heading not in agreed:
             try:
-                clicked = await self.srv.click(agree["id"])
+                clicked = await self._press_agreement(agree["id"])
             except Exception:  # gone, or it won't take a click: the person's, as without the setting
                 clicked = {"clicked": False}
             if clicked.get("clicked"):
@@ -2082,6 +2079,15 @@ class Applier:
                         if ai and agree is not None
                         and not allowed else ""))
         return "paused"
+
+    async def _press_agreement(self, element_id: str) -> dict[str, Any]:
+        """Press a button found to agree for the person (settings.accept_notices: a terms gate's way
+        on, a notice's agree), as the click tool does. Saying so lets the live check's test identity
+        press it in practice mode (Browser.click's `agreement`); every other check on it stays."""
+        try:
+            return {"clicked": True, **await self.srv.browser.click(element_id, agreement=True)}
+        except SubmitBlocked as e:
+            return {"clicked": False, "blocked": str(e)}
 
     async def _notice_closed(self, heading: str) -> None:
         """After a notice's agree button: until the notice has gone. One fading out is read a

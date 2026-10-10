@@ -1264,6 +1264,55 @@ def test_the_live_checks_test_identity_never_submits(srv, monkeypatch, job_apply
     assert r.status != "submitted" and srv.tracker().get(job["id"])["status"] == "ready_to_submit", (r.status, r.reason)
 
 
+@pytest.mark.parametrize("page, query", [("privacy-agreement.html", "?form=1"), ("ai-notice-form.html", "?notice=1&ack=1")],
+                         ids=["gate", "dialog"])
+@pytest.mark.parametrize("identity", [True, False], ids=["test-identity", "practice"])
+def test_the_test_identity_agrees_with_a_forms_button_in_practice_mode(srv, monkeypatch, job_apply_home, page, query,
+                                                                       identity):
+    """Charles Schwab's iCIMS posting (live, Oct 10) puts its privacy notice before the application,
+    whose way on is a form's own button, "I Acknowledge the Privacy Notice": practice mode's lock on a
+    form's buttons that aren't step buttons refused it, and the live check's test identity stopped there.
+    The test identity agrees to notices in practice mode, so it presses that, as it does a notice's
+    agree that is a form's button ("I Acknowledge"), and says so. Any other practice-mode profile leaves
+    both to the person, as before."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 1)
+    if identity:
+        as_test_identity(monkeypatch, job_apply_home)
+    else:
+        manage_accounts(job_apply_home, submit_mode="dry_run")
+    gate = page.startswith("privacy")
+    job = srv.add_job(url=fixture_url(f"site/{page}") + query, title="Recruiter", company="Example Corp")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r, None if gate else await notice_page(r)
+        finally:
+            await applier.stop()
+
+    r, shown = run(go())
+    name = "I Acknowledge the Privacy Notice" if gate else NOTICE
+    if not identity:
+        assert (r.status, r.need) == ("needs_you", "stuck") and f"“{name}”" in r.reason, (r.status, r.reason, r.log)
+        assert not any(line.startswith("agreed") for line in r.log), r.log
+        if gate:
+            assert r.url.endswith("privacy-agreement.html?form=1"), r.url
+        else:
+            assert shown["agreed"] == 0, shown
+        return
+    said = f"“{name}”" if gate else f"notice “{name}”"
+    assert f"agreed to Example Corp's {said} for you (settings.accept_notices)" in r.log, (r.reason, r.log)
+    if gate:
+        assert r.url.endswith("generic_form.html") and any(line.startswith("filled") for line in r.log), r.log
+    else:
+        assert shown["agreed"] == 1 and shown["first"] == "Sam", shown
+    assert r.status != "submitted", (r.status, r.reason)
+
+
 def test_with_manage_accounts_a_refused_saved_password_is_reset(srv, monkeypatch, job_apply_home):
     """The email has an account there, and the saved password isn't its password. With the
     inbox watched, the desk asks for a password reset before trying a new account (the owner's
