@@ -1086,7 +1086,8 @@ async def check_pipeline(company: dict[str, Any], out: Path, rec: dict[str, Any]
         found = await server.search_company_jobs(QUERY_ANY, companies=[company["name"]], location=None,
                                                  limit_per_company=3)
     if not found["results"]:
-        rec["note"] = "no postings found"
+        failed = next(iter((found.get("errors") or {}).values()), "")  # (a site down for maintenance, say)
+        rec["note"] = "no postings found" + (f" (the search failed: {failed[:200]})" if failed else "")
         return
     first = best_posting(found["results"])
     rec["posting"] = {k: first.get(k) for k in ("title", "location", "url")}
