@@ -1260,6 +1260,31 @@ def test_an_application_the_person_submitted_on_the_site_is_marked_applied(srv, 
     assert srv.tracker().get(job["id"])["status"] == "applied"
 
 
+def test_a_confirmation_with_job_alerts_and_a_survey_is_marked_applied(srv, monkeypatch):
+    """The person pressed the site's own Submit and then Resume, on a page that thanks them for applying
+    and offers job alerts by email (its Email box required, its own Subscribe) and a voluntary survey
+    (Continue). The desk took the required box and the Continue for a step of the form, and the job was
+    never marked applied. Neither is the application's."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    job = srv.add_job(url=fixture_url("site/applied-job-alerts.html"), title="Equipment Technician",
+                      company="Example Corp")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        r = applier.enqueue(job["id"])
+        r.seen_form = True  # (filled before: the person pressed Resume)
+        applier.start()
+        try:
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert r.status == "submitted" and "thank you for applying" in r.reason, (r.status, r.need, r.reason, r.log)
+    assert srv.tracker().get(job["id"])["status"] == "applied"
+
+
 def test_a_form_page_that_thanks_the_person_isnt_taken_for_a_confirmation(srv, monkeypatch):
     """A Workday site's Application Questions step (step 3 of 6) opens with "Thank you for your
     application. Please complete the below questions." The desk, back on the job after the person
@@ -1294,6 +1319,18 @@ def test_a_form_page_that_thanks_the_person_isnt_taken_for_a_confirmation(srv, m
     ({"fields": [], "actions": [], "headings": ["current step 6 of 6 Review"]}, False),
     ({"fields": [], "actions": [{"text": "Search for More Jobs"}, {"text": "Return to Home"}],
       "headings": ["Application Submitted"]}, False),
+    # after the site's own Submit: job alerts (a required Email, its Subscribe), or on to a voluntary survey
+    ({"fields": [{"kind": "text", "label": "Email*", "required": True, "value": ""}], "actions": [{"text": "Subscribe"}],
+      "headings": ["Thank you for applying!", "Get job alerts"]}, False),
+    ({"fields": [], "actions": [{"text": "Continue"}], "headings": ["Thank you for applying!"]}, False),
+    ({"fields": [{"kind": "checkbox", "label": "Join our talent community", "required": True, "value": False},
+                {"kind": "text", "label": "Email Address", "required": True, "value": ""}],
+      "actions": [{"text": "Continue"}, {"text": "Submit", "is_submit": True, "aside": True}]}, False),
+    # but an Email nothing says is the alerts', and a step button beside the application's boxes, are the form's
+    ({"fields": [{"kind": "text", "label": "Email*", "required": True, "value": ""}], "actions": [{"text": "Continue"}],
+      "headings": ["Thank you for applying!"]}, True),
+    ({"fields": [{"kind": "text", "label": "First Name", "required": True, "value": "Sam"}], "actions": [{"text": "Next"}],
+      "headings": ["Thank you for applying!"]}, True),
 ])
 def test_what_says_a_page_is_partway_through_the_form(data, mid):
     assert pipeline._mid_application(data) is mid
@@ -1438,8 +1475,8 @@ def test_a_workday_create_account_that_doesnt_sign_in_goes_to_a_reset_not_round_
     Create Account went back to Sign In, the sign-in failed again, Create Account again, round and
     round across a Resume, until the site said the account might be locked. One refused sign-in and
     one Create Account that didn't take go to the password reset (the person follows its emailed
-    link); the counts hold across Resume, and the refused password is pressed at most twice (once
-    more after the reset)."""
+    link); the counts hold as the queue comes back to the job, and the refused password is pressed at
+    most twice (once more after the reset)."""
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
     saved_password(monkeypatch)
     manage_accounts(job_apply_home)
@@ -1452,7 +1489,7 @@ def test_a_workday_create_account_that_doesnt_sign_in_goes_to_a_reset_not_round_
         applier.start()
         try:
             r = applier.enqueue(job["id"])
-            while True:  # the reset's email asked for, then Resume twice
+            while True:  # the reset's email asked for, then back to the job twice
                 await until(lambda: r.status not in ("queued", "running"), about=state(r))
                 seen.append((r.need, r.reason, await workday_did(r.page)))
                 if len(seen) == 3:
@@ -1475,7 +1512,7 @@ def test_a_workday_create_account_that_doesnt_sign_in_goes_to_a_reset_not_round_
 def test_with_the_inbox_watched_a_workday_create_account_that_doesnt_sign_in_stops(srv, monkeypatch, job_apply_home):
     """With the inbox watched, the reset comes first; no email comes, so the desk makes an account,
     which a Workday site doesn't sign in to either. It stops there, never pressing Create Account or
-    the refused password again, Resume or not; a new password saved on the desk is tried."""
+    the refused password again as the queue comes back to it; a new password saved on the desk is tried."""
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
     monkeypatch.setattr(pipeline, "RESET_MAIL_WAIT", 4)
     saved_password(monkeypatch)
@@ -1492,7 +1529,7 @@ def test_with_the_inbox_watched_a_workday_create_account_that_doesnt_sign_in_sto
             r = applier.enqueue(job["id"])
             await until(lambda: r.status == "needs_you" and r.need != "email_code", timeout=60, about=state(r))
             seen.append((r.need, r.reason, await workday_did(r.page)))
-            applier.enqueue(job["id"], front=True)  # Resume
+            applier.enqueue(job["id"], front=True)  # (the queue back to it: a Resume tries once more)
             await until(lambda: r.status not in ("queued", "running"), about=state(r))
             seen.append((r.need, r.reason, await workday_did(r.page)))
             monkeypatch.setenv("JOB_APPLY_SECRET_TEST_SITE_PASSWORD", "another-password")  # the account's, saved
@@ -1508,6 +1545,75 @@ def test_with_the_inbox_watched_a_workday_create_account_that_doesnt_sign_in_sto
         assert (did["signIns"], did["presses"], did["resets"]) == (2, 1, 1), did
     assert not any("created your account" in line for line in r.log), r.log
     assert r.seen_form and r.need != "sign_in", (r.reason, r.log)
+
+
+def test_a_resume_after_the_password_is_reset_by_hand_signs_in(srv, monkeypatch, job_apply_home):
+    """A Workday site refused the saved password until the desk stopped trying, so the account isn't
+    locked; its card said to reset the password to the saved one through "Forgot password". The person
+    did and pressed Resume, and the desk said the same again without signing in. Each Resume the person
+    presses tries the saved password once more (once, refused or not); the queue coming back to the job
+    by itself doesn't."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    saved_password(monkeypatch)
+    manage_accounts(job_apply_home)
+    job = srv.add_job(url=fixture_url("site/workday-account.html") + "?exists=another-password", title="FSE",
+                      company="Example Corp")["job"]
+    applier = Applier(srv)
+    seen = []
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            for then in ("resume", "queue", "resume", "reset by hand", None):
+                await until(lambda: r.status not in ("queued", "running"), about=state(r))
+                seen.append((r.need, r.reason, (await workday_did(r.page))["signIns"]))
+                if then == "reset by hand":  # to the saved password, through the site's own Forgot Password
+                    await r.page.evaluate("() => sessionStorage.setItem('wd.account', "
+                                          "JSON.stringify('not-a-real-password'))")
+                if then == "queue":
+                    applier.enqueue(job["id"], front=True)
+                elif then:
+                    applier.resume(job["id"])
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    (need, reason, tries), *refused, (_, _, signed_in) = seen
+    assert need == "email_code" and tries == 2, (reason, r.log)  # the reset the desk asked for
+    for need, reason, tries in refused:
+        assert need == "sign_in" and "won't try it again for this job unless you press Resume" in reason, (reason, r.log)
+    assert [tries for _, _, tries in refused] == [3, 3, 4], seen  # the queue's pass pressed nothing
+    assert signed_in == 5 and r.seen_form and r.need != "sign_in", (r.reason, r.log)
+
+
+def test_an_account_the_desk_made_is_signed_in_to_after_the_tries_ran_out(srv, monkeypatch, job_apply_home):
+    """The saved password was refused twice at this job on earlier passes, and the desk then made the
+    account there with it. Its sign-in was never pressed (the job's two were used), so the new account
+    went to a password reset instead. An account the desk has just made gets one sign-in."""
+    import hashlib
+
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    saved_password(monkeypatch)
+    manage_accounts(job_apply_home)
+    job = srv.add_job(url=fixture_url("site/workday-account.html"), title="FSE", company="Example Corp")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        r = applier.enqueue(job["id"])
+        r.sign_in_tries = pipeline.SIGN_IN_TRIES  # (refused on earlier passes)
+        r.sign_in_key = hashlib.sha256(b"not-a-real-password").hexdigest()
+        applier.start()
+        try:
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r, await workday_did(r.page)
+        finally:
+            await applier.stop()
+
+    r, did = run(go())
+    assert (did["presses"], did.get("created"), did.get("signIns"), did.get("resets")) == (1, 1, 1, None), (did, r.log)
+    assert any(line.startswith("created your account on") for line in r.log) and r.seen_form, (r.reason, r.log)
 
 
 @pytest.mark.parametrize("page, query, says", [

@@ -812,6 +812,31 @@ def test_ill_typed_requests_are_turned_away_and_change_nothing(srv, job_apply_ho
     assert config.saved_answers() == []  # nothing remembered for a job that wasn't asking
 
 
+def test_resume_on_the_desk_tries_a_refused_password_once_more(srv, job_apply_home):
+    """The desk's Resume is the person's: a job that stopped pressing a refused saved password gets
+    one more press with it (they may have reset the password to it by hand). The queue carrying on
+    with the job by itself gets none."""
+    from job_apply.pipeline import SIGN_IN_TRIES, Run
+
+    desk = Desk(srv)
+    desk.applier.start = lambda: None  # (nothing is driven: only what Resume sets up is looked at)
+    job = srv.add_job(url="https://example.com/a", title="FSE", company="Example Corp")["job"]
+    paused = Run(job["id"], "FSE", "Example Corp", status="needs_you", need="sign_in", sign_in_tries=SIGN_IN_TRIES + 1)
+    desk.applier.runs[job["id"]] = paused
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with _client(desk) as c:
+                r = await c.post(f"/api/job/{job['id']}/resume", headers={"x-desk-token": desk.token})
+                assert r.json() == {"ok": True}
+        finally:
+            await desk.stop()
+
+    run(go())
+    assert (paused.status, paused.sign_in_tries) == ("queued", SIGN_IN_TRIES - 1)
+
+
 def test_a_password_saved_on_the_desk_is_the_one_used(srv, monkeypatch):
     """One set in the environment wins over the file, so saving there is refused, saying why;
     the same email app password saved again after a refusal is tried again."""

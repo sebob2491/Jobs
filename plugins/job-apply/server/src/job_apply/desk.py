@@ -269,8 +269,7 @@ class Desk:
             return JSONResponse({"error": f"No job with id {job_id}"}, status_code=404)
         try:
             if action == "resume":
-                run = a.runs.get(job_id)
-                a.enqueue(job_id, submit=bool(run and run.submit), front=True)
+                a.resume(job_id)
             elif action == "later":
                 a.later(job_id)
             elif action == "skip":
