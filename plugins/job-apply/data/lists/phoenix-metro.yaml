@@ -287,9 +287,13 @@ companies:
     confidence: medium        # page seen, Oct 2026; no search: postings say "Multiple Locations", with no place to filter on
   - name: KPMG
     careers_url: https://www.kpmguscareers.com/job-search/
-    ats: custom               # its own job search (AZ - Phoenix, AZ - Tempe among its places)
+    ats: avature              # its own job search (WordPress over a Google Cloud Talent search); Apply goes to
+                              # its Avature portal, us-talentcommunity.kpmg.com
     az_sites: Phoenix, Tempe
-    confidence: medium        # page seen, Oct 2026; no search block yet
+    confidence: high          # live check, Oct 2026: 113 openings in Arizona, each with Phoenix or Tempe among its places
+    # Its place filter's own values. With words too, the site ignores the filter: the offices'
+    # openings are read whole, page by page, and their titles matched by the plugin.
+    search: {kpmg: ["Phoenix, AZ", "Tempe, AZ"]}
   - name: PwC
     careers_url: https://pwc.wd3.myworkdayjobs.com/US_Experienced_Careers
     ats: workday              # pwc.com answers with an Akamai "Access Denied"; its postings are on Workday

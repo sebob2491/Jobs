@@ -484,8 +484,10 @@ EXTRACT_JS = r"""
   const STEP = /^(next|continue|save and continue|review|submit)/i;
   const COOKIE_BOX = '[id*="cookie" i], [class*="cookie" i], [aria-label*="cookie" i], [id*="consent" i], '
     + '[class*="consent" i], [id*="onetrust" i], [class*="onetrust" i], [id*="cybot" i], [id*="gdpr" i], [id*="truste" i]';
-  // Buttons drawn as web components (UKG's <ukg-button>, whose real button is in its shadow root) count too.
-  const BUTTONS = 'button, [role="button"], input[type="submit"], input[type="button"], a[href], [data-tag-name="button"], '
+  // Buttons drawn as web components (UKG's <ukg-button>, whose real button is in its shadow root) count too,
+  // and links whose address is in data-href, followed by the site's script on a click (KPMG's Apply Now).
+  const BUTTONS = 'button, [role="button"], input[type="submit"], input[type="button"], a[href], a[data-href], '
+    + '[data-tag-name="button"], '
     + 'ukg-button, sl-button, mwc-button, ion-button, vaadin-button, fluent-button, md-filled-button, md-outlined-button, '
     + 'md-text-button, md-filled-tonal-button, md-elevated-button';
   for (const el of document.querySelectorAll(BUTTONS)) {

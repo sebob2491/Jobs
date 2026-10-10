@@ -1881,6 +1881,84 @@ def test_an_m_cloud_search_is_read_for_its_places():
     assert not out["errors"]
 
 
+def kpmg_item(job_id: int, title: str, line: str) -> str:
+    """An opening as KPMG's job list draws it (Oct 2026): a grid view that says only how many
+    places, and a list view with its title, its practice and its places."""
+    return f"""<div class="search--item mb-2 mb-md-3 search--experienced ">
+    <a href="/jobdetail/?jobId={job_id}" data-id="1169417{job_id}" class="box-shadow d-block">
+    <div class="grid-view"><div class="p-3"><div class="h4 mb-4">{title}</div>
+    <div class="text-xs text-dark-grey">29 Locations</div></div></div>
+    <div class="list-view d-flex justify-content-between"><div class="p-2 ps-4">
+    <div class="h5 text-dark-grey">{title}</div>
+    <div class="text-xs text-dark-grey">{line}</div></div></div></a></div>"""
+
+
+def kpmg_answer(items: list[str], size: int) -> httpx.Response:
+    """Its job list's answer: JSON (sent as text/html) holding a page's openings as HTML."""
+    return httpx.Response(200, headers={"Content-Type": "text/html; charset=UTF-8"}, text=json.dumps({
+        "postings": {"jobs": "".join(items), "size": size}, "pagination": "<ul class=\"pagination\"></ul>",
+        "showing": f"<span data-action=\"count\">{size}</span> Results"}))
+
+
+def kpmg_search(answer, query: str, location: str | None = "AZ") -> dict:
+    async def go():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(answer)) as client:
+            return await search_companies(query, location=location, client=client, companies=[
+                {"name": "KPMG", "search": {"kpmg": ["Phoenix, AZ", "Tempe, AZ"]}}])
+    return asyncio.run(go())
+
+
+def test_kpmgs_offices_openings_are_read_whole_and_matched_by_title():
+    """KPMG's job list takes its own place names as a filter ("Phoenix, AZ|Tempe, AZ|"), but
+    ignores it once given words too (Montvale and McLean analysts for Phoenix, live, Oct 2026).
+    So the offices' openings are read with no words, page by page to the last (12 a page there),
+    and titles are matched here. An opening in many places comes as several under one job number,
+    each with some of its places."""
+    pages = {"1": [kpmg_item(101, "Senior Associate, Business Analyst", "Advisory | New York, NY; Phoenix, AZ"),
+                   kpmg_item(102, "Manager, Tax", "Tax | Phoenix, AZ"),
+                   kpmg_item(103, "HR Generalist", "Business Support Services | Albany, NY; Austin, TX")],
+             "2": [kpmg_item(103, "HR Generalist", "Business Support Services | Seattle, WA; Tempe, AZ"),
+                   kpmg_item(104, "Analyst, Revenue Accounting", "Audit | Dallas, TX")]}  # not in Arizona
+    asked = []
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        asked.append(dict(request.url.params))
+        return kpmg_answer(pages.get(request.url.params["spage"], []), size=5)
+
+    out = kpmg_search(answer, "analyst | human resources")
+    assert asked == [{"ajax": "1", "location-filter": "Phoenix, AZ|Tempe, AZ|", "spage": str(n)} for n in (1, 2)]
+    assert all(request.get("keyword") is None for request in asked)
+    assert [(r["title"], r["location"], r["url"], r["external_id"], r["ats"]) for r in out["results"]] == [
+        ("HR Generalist", "Albany, NY; Austin, TX; Seattle, WA; Tempe, AZ",
+         "https://www.kpmguscareers.com/jobdetail/?jobId=103", "103", "avature"),
+        ("Senior Associate, Business Analyst", "New York, NY; Phoenix, AZ",
+         "https://www.kpmguscareers.com/jobdetail/?jobId=101", "101", "avature")]  # Dallas's left out
+    assert not out["errors"]
+
+
+def test_kpmgs_job_list_is_read_no_further_than_its_page_cap(monkeypatch):
+    monkeypatch.setattr(search_module, "KPMG_PAGES", 3)
+    asked = []
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        n = int(request.url.params["spage"])
+        asked.append(n)
+        return kpmg_answer([kpmg_item(n, f"Analyst {n}", "Advisory | Phoenix, AZ")], size=500)
+
+    out = kpmg_search(answer, "analyst")
+    assert asked == [1, 2, 3] and len(out["results"]) == 3
+
+
+@pytest.mark.parametrize("status, body, said", [
+    (200, "<html><body>Access Denied</body></html>", "SearchError: No job list from "),
+    (200, '{"postings": null}', "SearchError: No job list from "),
+    (503, "", "SearchError: HTTP 503 from ")])
+def test_an_answer_from_kpmg_that_isnt_its_job_list_is_said(monkeypatch, status, body, said):
+    monkeypatch.setattr(search_module, "RETRY_DELAY", 0)
+    out = kpmg_search(lambda request: httpx.Response(status, text=body), "analyst")
+    assert out["results"] == [] and out["errors"] == {"KPMG": said + search_module.KPMG_API}
+
+
 def test_employers_are_searched_eight_at_a_time():
     """Find jobs on the Phoenix list (about 50 employers with a search) took about 100 s,
     searching four employers at a time; each is its own site, so eight at once halve it."""
