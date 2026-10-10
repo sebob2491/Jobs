@@ -1800,6 +1800,34 @@ def test_a_reset_the_desk_cant_fill_in_makes_an_account_instead(srv, monkeypatch
     assert "created your account" in log and r.seen_form, (r.reason, r.log)
 
 
+def test_a_sign_in_page_good_for_one_visit_is_reached_again_through_the_posting(srv, monkeypatch, job_apply_home):
+    """SuccessFactors' sign-in page (career?_s.crb=…) is good for one visit: going back to it after a
+    reset the desk couldn't do showed "An error occurred while processing your request" (Arizona
+    Public Service, the test identity, live Oct 2026). The desk opens the job's posting again, whose
+    Apply leads to a fresh sign-in page, and makes the account there."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    saved_password(monkeypatch)
+    manage_accounts(job_apply_home)
+    watched_inbox(monkeypatch)
+    job = srv.add_job(url=fixture_url("site/sf-posting.html"), title="Energy Analyst", company="Example Utility")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    log = "\n".join(r.log)
+    assert "so I went back to make an account there instead" in log, log
+    assert "sign-in page couldn't be opened again, so I opened the job again" in log, log
+    assert "created your account" in log and r.seen_form, (r.reason, r.log)
+
+
 @pytest.mark.parametrize("mode", ["workday", "workday-late"])
 def test_a_workday_reset_that_says_if_an_account_exists_waits_then_makes_one(srv, monkeypatch, job_apply_home, mode):
     """Workday's password reset stays on its form and says "You will receive an email with

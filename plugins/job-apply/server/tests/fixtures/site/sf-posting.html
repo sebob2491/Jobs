@@ -1,0 +1,17 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Energy Analyst - Example Utility</title></head>
+<body>
+<!-- A SuccessFactors posting whose "Apply now" opens a sign-in page good for one visit
+     (career?_s.crb=<token>): opened again, it shows SuccessFactors' error (live, Oct 2026) -->
+<h1>Energy Analyst</h1>
+<p>Phoenix, AZ. Full time.</p>
+<a href="#" id="apply">Apply now &raquo;</a>
+<script>
+  document.getElementById('apply').addEventListener('click', (e) => {
+    e.preventDefault();
+    location.href = 'signin-submit.html?reset=odd&s=' + Math.random().toString(36).slice(2);
+  });
+</script>
+</body>
+</html>

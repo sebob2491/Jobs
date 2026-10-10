@@ -18,6 +18,7 @@ dev = ["pytest>=8", "pytest-xdist>=3.5", "ruff>=0.16", "mypy>=2.4", "types-PyYAM
 [project.scripts]
 job-apply-mcp = "job_apply.server:main"
 job-apply-desk = "job_apply.desk:main"
+job-apply-doctor = "job_apply.doctor:main"
 
 [build-system]
 requires = ["hatchling"]

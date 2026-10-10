@@ -1,6 +1,6 @@
 ---
 name: setup
-description: Set up the job-apply plugin, which means building the applicant profile from the user's resume, answering the work-authorization, preference and EEO questions, and opening the browser so the user can sign in to LinkedIn and Indeed. Use on first use, when setup_status reports a missing profile field, or when the user wants to change their saved answers or submit settings.
+description: Set up the job-apply plugin, which means building the applicant profile from the user's resume, answering the work-authorization, preference and EEO questions, and opening the browser so the user can sign in to LinkedIn and Indeed. Use on first use, when setup_status reports a missing profile field, when something about the plugin seems broken (its doctor tool checks the computer's setup), or when the user wants to change their saved answers or submit settings.
 ---
 
 # Set up job-apply
@@ -16,6 +16,24 @@ All of the user's data lives in `~/.job-apply/`, outside the plugin:
 | `browser/` | Persistent browser profile that keeps sign-ins (`browser-msedge/` when Edge stands in for Chrome) |
 | `applications/<id>-<company>-<title>/` | Per-job tailored documents, screenshots and the submission record |
 
+## Before setup: the installer and the doctor
+
+Most people arrive from the one-step installer (`setup/install.ps1` on Windows, `setup/install.sh`
+on macOS and Linux; the README has the commands). It installs Git, Claude Code and uv where
+they're missing, adds or updates the plugin, gets a browser ready, sets `UV_PYTHON_INSTALL_DIR`
+outside AppData on Windows, makes `~/.job-apply`, and copies the resume the person gave it to
+`~/.job-apply/resume.pdf` (or `resume.docx`, `.doc`, `.rtf`, `.odt`, `.txt`). Someone who hasn't
+installed the plugin yet, or whose computer is missing a piece, can run it (again) safely: each
+step looks first and only acts when needed.
+
+When something seems broken (the plugin's tools fail, no browser starts, the desk misbehaves
+after an update), run the `doctor` tool (`launch_browser=true` also starts the browser, out of
+sight). It reports Python, uv, the plugin's version and whether a newer one is out, the browser,
+`~/.job-apply`, the profile, the resume and, on Windows, `UV_PYTHON_INSTALL_DIR`, each with what
+to do. Walk the person through each problem in plain words. When the plugin's tools aren't there
+at all (its server didn't start), have them run the installer again, or
+`uv run --project <plugin>/server job-apply-doctor` in a terminal, and read you its report.
+
 ## Steps
 
 Ask everything the Job Desk would otherwise stop an application for here, in one sitting:
@@ -27,7 +45,10 @@ through its `missing` and `profile_gaps` together.
 1. Run `setup_status`. On first run it creates `~/.job-apply/profile.yaml` from the
    template, and it lists the missing fields.
 
-2. **Resume.** Ask for the resume file path, or look for a resume in the working
+2. **Resume.** If the installer copied one to `~/.job-apply` (`resume.pdf`, `resume.docx`...;
+   `doctor` and `setup_status`'s `missing_profile_fields` say when the profile doesn't point at
+   it yet), confirm with the user that it's the one to use, and set `documents.resume` to it.
+   Otherwise ask for the resume file path, or look for a resume in the working
    directory. Copy it to `~/.job-apply/resume.pdf` (or `.docx`) and set
    `documents.resume`. If the user has no file handy and the Indeed connector is
    available, call its `get_resume` and use that as the source instead. Indeed

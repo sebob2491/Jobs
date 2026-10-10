@@ -242,6 +242,20 @@ def setup_status() -> dict[str, Any]:
     }
 
 
+@tool()
+async def doctor(launch_browser: bool = False) -> dict[str, Any]:
+    """Check this computer's setup for the plugin, as the `job-apply-doctor` command does:
+    Python, uv, the plugin's version and whether a newer one is out, the browser, ~/.job-apply,
+    the profile and the resume, and on Windows UV_PYTHON_INSTALL_DIR. Each check is ok, a
+    problem (with what to do about it), advice, or skipped; `ok` is false when something
+    needed is missing. Run it when something seems broken, and pass on its fixes in plain
+    words. launch_browser=True also starts the browser, out of sight, to be sure it opens.
+    It changes nothing."""
+    from . import doctor as checkup
+
+    return (await checkup.run(launch=launch_browser)).as_dict()
+
+
 def _employer_list_problem() -> str | None:
     """What's wrong with the person's own companies.yaml, if anything, before a search finds it."""
     try:
