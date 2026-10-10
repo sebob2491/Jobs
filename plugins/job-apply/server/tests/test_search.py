@@ -1959,6 +1959,147 @@ def test_an_answer_from_kpmg_that_isnt_its_job_list_is_said(monkeypatch, status,
     assert out["results"] == [] and out["errors"] == {"KPMG": said + search_module.KPMG_API}
 
 
+DELOITTE = {"name": "Deloitte", "search": {"avature": {
+    "url": "https://apply.deloitte.com/en_US/careers/SearchJobs", "state_field": 9336, "states": {"AZ": 690346}}}}
+DELOITTE_SEARCH = "https://apply.deloitte.com/en_US/careers/SearchJobs/"
+
+
+def avature_row(job_id: int, title: str, where: str) -> str:
+    """An opening as Deloitte's Avature portal lists it (Oct 2026): its title's link, and under
+    it the brand, the firm and its place, or "Multiple Locations"."""
+    slug = re.sub(r"[^A-Za-z0-9]+", "-", title).strip("-")
+    return f"""<article class="article--result " data-total="999+"><div class="article__content--result">
+    <div class="article__header__text"><h3 class="article__header__text__title article__header__text__title--2">
+    <a href="https://apply.deloitte.com/en_US/careers/JobDetail/{slug}/{job_id}" class="link">
+                        {title.replace("&", "&amp;")}
+    </a></h3><div class="article__header__text__subtitle">
+    <span>
+        Deloitte US
+    </span> | <span>
+        Deloitte Tax LLP
+    </span> | <span>{where}</span></div></div></div></article>"""
+
+
+def avature_results(rows: list[str]) -> httpx.Response:
+    body = "".join(rows) or ('<article class="article article--result--nojobs"><div class="list__item__description">'
+                             'No jobs found</div></article>')
+    return httpx.Response(200, text=f'<div class="list-controls__legend"><span class="jobListTotalRecords">'
+                                    f'{len(rows)}+</span> jobs</div><div class="section__content__results">{body}</div>')
+
+
+def avature_posting(places: list[str]) -> httpx.Response:
+    """A posting's own page: its places under "Same job available in N locations"."""
+    listed = "".join(f'<p class="paragraph">{p}</p>' for p in places)
+    return httpx.Response(200, text=f"""<h2 class="article__header__text__title">A job</h2>
+    <div class="article__header__text__subtitle"><a class="link toggleLocations">Same job available in {len(places)} locations</a>
+    <div class="article__header--locations article__header--locations-none"><div class="fluid-cols fluid-cols--cols2">
+    {listed}</div></div></div>""")
+
+
+def deloitte_search(answer, query: str, location: str | None = "AZ") -> dict:
+    async def go():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(answer)) as client:
+            return await search_companies(query, location=location, client=client, companies=[DELOITTE])
+    return asyncio.run(go())
+
+
+def test_deloittes_avature_portal_is_searched_in_the_state_and_its_postings_read_for_their_places(monkeypatch):
+    """Deloitte's Avature portal draws a search's openings on its page, 10 a page, most of them
+    "Multiple Locations". Its State filter takes Arizona's number in it (9336[]=690346) with the
+    words, but finds some postings whose own pages name no Arizona place (about one in six, live,
+    Oct 2026): those pages are read, and the area's places are said, or the posting left out."""
+    monkeypatch.setattr(search_module, "RETRY_DELAY", 0)
+    several = "Multiple Locations"
+    tempe, gilbert = "Tempe, Arizona, United States", "Gilbert, Arizona, United States"
+    pages = {"0": [avature_row(101, "Staff Accountant", several), avature_row(102, "Senior Accountant", several),
+                   avature_row(103, "Tax Accountant", tempe)]
+             + [avature_row(n, f"Strategy Consultant {n}", several) for n in range(104, 111)],
+             "10": [avature_row(111, "Accountant Intern", "Denver, Colorado, United States"),
+                    avature_row(112, "Payroll Accountant", several)]}
+    postings = {"101": ["Atlanta, Georgia, United States", gilbert, tempe],
+                "102": ["Hartford, Connecticut, United States", "New York, New York, United States"]}  # not Arizona
+    searched, read = [], []
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        if "/JobDetail/" in request.url.path:
+            job = request.url.path.rsplit("/", 1)[-1]
+            read.append(job)
+            if job == "112":
+                return httpx.Response(500)  # it keeps what the list said
+            return avature_posting(postings.get(job, [tempe, "Denver, Colorado, United States"]))
+        assert str(request.url).split("?")[0] == DELOITTE_SEARCH
+        searched.append(dict(request.url.params))
+        return avature_results(pages.get(request.url.params["jobOffset"], []))
+
+    out = deloitte_search(answer, "accountant")
+    assert searched == [{"search": "accountant", "listFilterMode": "1", "sort": "relevancy", "jobRecordsPerPage": "10",
+                         "jobOffset": offset, "9336[]": "690346"} for offset in ("0", "10")]  # the second page had 2
+    # each "Multiple Locations" posting, once (112's three times: it answered with an error)
+    assert sorted(set(read)) == sorted(["101", "102", "112", *(str(n) for n in range(104, 111))])
+    assert len(read) == 9 + 3
+    rows = {r["external_id"]: r for r in out["results"]}
+    assert [(r["title"], r["location"], r["url"], r["ats"], r["title_match"]) for r in out["results"][:3]] == [
+        ("Payroll Accountant", several, "https://apply.deloitte.com/en_US/careers/JobDetail/Payroll-Accountant/112",
+         "avature", True),
+        ("Staff Accountant", f"{gilbert}; {tempe} (+1 more)",
+         "https://apply.deloitte.com/en_US/careers/JobDetail/Staff-Accountant/101", "avature", True),
+        ("Tax Accountant", tempe, "https://apply.deloitte.com/en_US/careers/JobDetail/Tax-Accountant/103", "avature", True)]
+    assert rows["112"]["notes"] == ["location given as 'Multiple Locations'; check the posting"]
+    assert rows["104"]["location"] == f"{tempe} (+1 more)" and not rows["104"]["title_match"]
+    assert "102" not in rows and "111" not in rows  # its page names no Arizona place; Denver
+    assert not out["errors"]
+
+
+def test_an_avature_search_takes_each_wording_and_reads_title_matches_places_first(monkeypatch):
+    """Each wording of a query is searched (three pages each, at once), an opening two of them
+    find is one, and the postings read for their places are capped, title matches first."""
+    monkeypatch.setattr(search_module, "AVATURE_PLACE_PAGES", 5)
+    asked: dict[str, list[str]] = {}
+    read = []
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        if "/JobDetail/" in request.url.path:
+            read.append(int(request.url.path.rsplit("/", 1)[-1]))
+            return avature_posting(["Tempe, Arizona, United States"])
+        words, offset = request.url.params["search"], int(request.url.params["jobOffset"])
+        asked.setdefault(words, []).append(str(offset))
+        if words == "payroll":
+            return avature_results([avature_row(29, "Staff Accountant 29", "Multiple Locations"),
+                                    avature_row(31, "Payroll Specialist", "Multiple Locations")])
+        return avature_results([avature_row(n, f"Staff Accountant {n}" if n > 27 else f"Strategy Consultant {n}",
+                                            "Multiple Locations") for n in range(offset + 1, offset + 11)])
+
+    out = deloitte_search(answer, "accountant | payroll")
+    assert asked == {"accountant": ["0", "10", "20"], "payroll": ["0"]}
+    assert sorted(read) == [1, 28, 29, 30, 31]  # the four title matches, then the first other
+    assert [r["external_id"] for r in out["results"]].count("29") == 1
+
+
+@pytest.mark.parametrize("location", [None, "TX"])
+def test_an_avature_search_elsewhere_or_anywhere_is_nationwide(location):
+    """A search anywhere, or in a state the portal has no number for, isn't filtered, and its
+    postings aren't read for their places."""
+    asked = []
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        assert "/JobDetail/" not in request.url.path
+        asked.append(dict(request.url.params))
+        return avature_results([avature_row(7, "Accountant", "Multiple Locations")])
+
+    out = deloitte_search(answer, "accountant", location)
+    assert "9336[]" not in asked[0] and len(asked) == 1
+    assert [(r["title"], r["location"]) for r in out["results"]] == [("Accountant", "Multiple Locations")]
+
+
+@pytest.mark.parametrize("status, body, said", [
+    (200, "<html><body>Access Denied</body></html>", "SearchError: No job list from "),
+    (503, "", "SearchError: HTTP 503 from ")])
+def test_an_answer_from_an_avature_portal_that_isnt_its_job_list_is_said(monkeypatch, status, body, said):
+    monkeypatch.setattr(search_module, "RETRY_DELAY", 0)
+    out = deloitte_search(lambda request: httpx.Response(status, text=body), "accountant")
+    assert out["results"] == [] and out["errors"] == {"Deloitte": said + DELOITTE_SEARCH}
+
+
 def test_employers_are_searched_eight_at_a_time():
     """Find jobs on the Phoenix list (about 50 employers with a search) took about 100 s,
     searching four employers at a time; each is its own site, so eight at once halve it."""
