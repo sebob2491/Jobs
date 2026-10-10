@@ -1293,6 +1293,21 @@ def test_a_family_member_at_the_employer_or_on_its_board_is_a_relatives_question
     assert clean_label(asked).endswith("Board of Directors"), clean_label(asked)
 
 
+def test_a_primary_number_choice_is_the_phones_type():
+    """Kforce's Taleo (live check, Oct 2026): "Primary Number . Required", a choice of "Home Phone", "Work
+    Phone" or "Cellular Phone", stopped the desk. It's the phone's type, from personal.phone_type ("Mobile"
+    unless the profile says otherwise), and a mobile is a cellular phone. A box to type a number in is
+    no such choice."""
+    options = ["Not Specified", "Home Phone", "Work Phone", "Cellular Phone"]
+    asked = f("Primary Number . Required", "select", options=options)
+    got = resolve_field(asked, prof(), {"company": "Kforce"})
+    assert got is not None and (got.rule, got.value) == ("phone_type", "Cellular Phone"), got
+    home = Profile({"personal": {"phone": "480-555-0123", "phone_type": "Home"}})
+    assert resolve_field(asked, home, {"company": "Kforce"}).value == "Home Phone"
+    typed = resolve_field(f("Primary Number"), prof(), {})
+    assert typed is None or typed.rule != "phone_type", typed
+
+
 def test_an_expected_graduation_date_is_never_a_past_year():
     """American Express (live, Oct 2026) asks "What is your expected graduation date:" with
     "I am currently not attending school" among its choices, and the desk typed 2020, the

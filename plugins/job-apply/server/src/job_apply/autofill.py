@@ -37,6 +37,9 @@ US_STATES = {
 _COUNTRY_ALIASES = [
     # (not only countries: a self-identification form's words for the same answer too)
     {"female", "woman"}, {"male", "man"},
+    # a phone's type: Kforce's Taleo lists "Cellular Phone" for a profile's "Mobile"
+    {"mobile", "cell", "cellular", "mobile phone", "cell phone", "cellular phone"},
+    {"home", "home phone", "landline"}, {"work", "work phone", "business phone", "office phone"},
     {"united states", "united states of america", "usa", "us", "u s", "u s a", "america"},
     {"united kingdom", "uk", "great britain", "england"},
     {"netherlands", "the netherlands", "holland"},
@@ -1057,6 +1060,8 @@ RULES: list[tuple[str, str, Getter, int | None, set[str] | None]] = [
     ("preferred_name", r"^preferred (first )?name|^nick ?name", lambda p, j: p.get("personal.preferred_name") or p.get("personal.first_name"), 45, None),
     ("full_name", r"^(full |legal |your |candidate )?(full )?name$|^full (legal )?name|^legal name", _full_name, 45, None),
     ("phone_type", r"phone (device )?type|type of phone", lambda p, j: p.get("personal.phone_type", "Mobile"), 45, None),
+    # Kforce's Taleo: "Primary Number", a choice of Home, Work or Cellular Phone (live, Oct 2026)
+    ("phone_type", r"^primary (phone )?number$", lambda p, j: p.get("personal.phone_type", "Mobile"), 45, _YES_NO_KINDS),
     # (not "Phone Number (including country code)": that's the number, written with its code)
     ("phone_code", r"^(?!.*\b(number|no|incl|including|with)\b).*\b(country|phone|dial(ing)?) (phone )?code\b", _phone_code, 45, None),
     ("phone_ext", r"extension", lambda p, j: None, 45, None),

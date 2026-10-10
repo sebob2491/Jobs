@@ -2065,8 +2065,10 @@ class Applier:
             if pressable is not None:
                 try:
                     await srv.browser.click(pressable["id"], allow_submit=True)  # (it creates the account)
-                except Exception:
+                except Exception as e:  # (said in the log: Nikon's UKG Pro, live, Oct 2026, gave no clue why)
                     why = f"“{said}” wouldn't take a click"
+                    self._log(run, f"the click on “{said}” failed: {type(e).__name__}: "
+                              + (str(e).strip().splitlines() or [""])[0][:200])
                 else:
                     run.account_finished = True
                     ticked = ", ".join(f"“{_short(self._choice_said(f))}”" for f in boxes)
