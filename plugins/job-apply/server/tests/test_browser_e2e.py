@@ -1224,3 +1224,22 @@ def test_a_box_being_drawn_again_isnt_waited_on_before_typing(srv):
 
     covered, took = run(go())
     assert covered and took < 5, took
+
+
+def test_a_box_that_isnt_there_to_type_in_is_given_up_on_in_seconds(srv):
+    """After the 2 s overlay check, the box was focused with Playwright's default 30 s wait: a box
+    being drawn again still cost 30 s, only later. Its focus waits FOCUS_TIMEOUT at most."""
+    import time
+
+    from playwright.async_api import TimeoutError as PlaywrightTimeout
+
+    async def go():
+        page = await srv.browser.page()
+        await page.goto(fixture_url("site/step1.html"))
+        began = time.monotonic()
+        with pytest.raises(PlaywrightTimeout):
+            await srv.browser._activate(page.locator("#not-drawn-yet"))
+        return time.monotonic() - began
+
+    took = run(go())
+    assert took < 2 + browser_module.FOCUS_TIMEOUT / 1000 + 3, took
