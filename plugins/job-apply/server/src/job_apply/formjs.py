@@ -5,6 +5,28 @@ find it again. Radio buttons and same-named checkboxes are reported as one
 group field whose members are tagged `<group id>.<index>`.
 """
 
+# A button in a sign-in form and nothing more: the nearest box around it that holds a shown password
+# box holds just that one, at most one box to type in (the email or user name) and check boxes
+# ("Remember me"), and the button comes after the password. What it sends is the sign-in, whatever
+# it reads: SuccessFactors' sign-in button is "Submit". Put into EXTRACT_JS and ELEMENT_INFO_JS.
+SIGN_IN_FORM_JS = r"""
+  const signInForm = (el) => {
+    const shown = (e) => e.getClientRects().length > 0 && getComputedStyle(e).visibility !== 'hidden';
+    const passwords = (n) => [...n.querySelectorAll('input[type="password"]')].filter(shown);
+    let box = null;
+    for (let n = el.parentElement; n && n !== document.documentElement; n = n.parentElement) {
+      if (passwords(n).length) { box = n; break; }
+    }
+    if (!box || passwords(box).length !== 1) return false;
+    if (!(passwords(box)[0].compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING)) return false;
+    const boxes = [...box.querySelectorAll('input, select, textarea, [role="combobox"], [role="listbox"], '
+      + '[role="radio"], [role="textbox"], [contenteditable="true"]')].filter((e) => shown(e)
+      && !(e.tagName === 'INPUT' && /^(hidden|submit|button|image|reset|password|checkbox)$/i.test(e.type || '')));
+    return boxes.length <= 1 && boxes.every((e) => e.tagName === 'INPUT' && /^(text|email)$/i.test(e.type || 'text')
+      && !/combobox|listbox/i.test(e.getAttribute('role') || ''));
+  };
+"""
+
 EXTRACT_JS = r"""
 (prefix) => {
   const W = window;
@@ -104,14 +126,17 @@ EXTRACT_JS = r"""
     if (l && txt(l)) return txt(l);
     return clean(el.getAttribute('aria-label') || labelledBy(el) || el.value || txt(el));
   };
-  // The repeated block a field sits in, e.g. "Work Experience 2" or "Education 1".
+  // The repeated block a field sits in, e.g. "Work Experience 2" or "Education 1". Not the field's
+  // own group: Workday's date is a group labelled by the date's label ("From"), inside the block.
   const HEADING = ':scope > h2, :scope > h3, :scope > h4, :scope > h5, :scope > legend, :scope > [role="heading"], :scope > div:first-child > h3, :scope > div:first-child > h4';
-  const sectionOf = (el) => {
+  const bare = (t) => clean(t).replace(/[\s*:]+$/, '').toLowerCase();
+  const sectionOf = (el, own) => {
     let node = el.parentElement;
     for (let d = 0; node && d < 12; d++, node = node.parentElement) {
       const role = (node.getAttribute('role') || '').toLowerCase();
       const container = role === 'group' || role === 'region' || node.tagName === 'FIELDSET' || node.tagName === 'SECTION';
       let t = container ? labelledBy(node) : '';
+      if (t && own && bare(t) === bare(own)) continue;  // the field's own group
       if (!t) {
         // the last heading before the field: "Work Experience 2" sits beside block 2, after block 1
         const hs = Array.from(node.querySelectorAll(HEADING)).filter((h) => h.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING);
@@ -119,6 +144,19 @@ EXTRACT_JS = r"""
       }
       if (!t || t.length > 80) continue;
       if (container || /\b\d+\s*$/.test(t)) return t;
+    }
+    return '';
+  };
+  // Files an upload box has already sent: Workday's box empties after each upload and lists the
+  // file below it ("resume.pdf  Successfully Uploaded!"), so an empty box isn't one still to fill.
+  // Looks only in the box's own field: stops at the first wrapper holding another form control.
+  const uploadedNear = (el) => {
+    for (let n = el.parentElement, d = 0; n && d < 6; n = n.parentElement, d++) {
+      if (Array.from(n.querySelectorAll('input, select, textarea')).some((x) => x !== el && x.type !== 'hidden'
+          && x.type !== 'file' && x.getClientRects().length > 0)) break;
+      const items = Array.from(n.querySelectorAll('[data-automation-id="file-upload-item-name"], '
+        + '[data-automation-id*="fileName" i], [class*="file-name" i], [class*="filename" i]')).map(txt).filter(Boolean);
+      if (items.length) return Array.from(new Set(items)).join(', ');
     }
     return '';
   };
@@ -220,7 +258,10 @@ EXTRACT_JS = r"""
       kind = 'select';
       options = Array.from(el.options).map((o) => clean(o.text)).filter(Boolean);
       value = Array.from(el.selectedOptions).filter((o) => o.value !== '').map((o) => clean(o.text)).join(', ');
-    } else if (type === 'file') { kind = 'file'; value = Array.from(el.files || []).map((f) => f.name).join(', '); }
+    } else if (type === 'file') {
+      kind = 'file';
+      value = Array.from(el.files || []).map((f) => f.name).join(', ') || uploadedNear(el);
+    }
     else if (type === 'password') { kind = 'password'; value = el.value ? '(set)' : ''; }
     else if (tagName === 'button' || (role === 'combobox' && tagName !== 'input')) { kind = 'listbox'; value = txt(el); }
     else if (role === 'combobox' || el.getAttribute('aria-autocomplete') === 'list'
@@ -256,7 +297,7 @@ EXTRACT_JS = r"""
       id: idOf(el), kind, label, required: isRequired(el, label), value: kind === 'password' ? value : clean(String(value || '')),
     };
     if (tagName === 'input' && type && type !== 'text') f.input_type = type;
-    const section = sectionOf(el);
+    const section = sectionOf(el, label);
     if (section && section !== label) f.section = section;
     if (kind === 'text') {
       const dai = el.getAttribute('data-automation-id') || '';
@@ -335,6 +376,7 @@ EXTRACT_JS = r"""
   // A box of the site's own beside the application with a Submit of its own: the footer's
   // job alerts or newsletter sign-up. Its Submit is never the application's.
   const SIDE_BOX = /job alerts?|alerts? by e-?mail|e-?mail alerts?|newsletter|\bsubscribe\b|talent (?:community|network|pool)|notify me|similar (?:jobs|openings|roles)|stay (?:connected|in touch)/i;
+  /*SIGN_IN_FORM*/
   const boxesIn = (form) => [...form.elements].filter((e) => /^(INPUT|SELECT|TEXTAREA)$/.test(e.tagName)
     && !/^(hidden|submit|button|image|reset)$/i.test(e.type || '') && e.getClientRects().length > 0);
   const sideBox = (el) => {
@@ -346,7 +388,7 @@ EXTRACT_JS = r"""
     const foot = el.closest('footer, [role="contentinfo"]');
     return !!foot && !(boxes && boxes.length > 2) && SIDE_BOX.test(foot.innerText || '');
   };
-  const ACTION = /apply|next|continue|review|submit|save|add|upload|sign ?in|log ?in|create (an |your |a new )?account|sign ?up|register|start|back|previous|edit|done|ok\b|accept|agree|use my last|autofill|manually|verify|confirm|remove|delete|forgot|reset/i;
+  const ACTION = /apply|next|continue|review|submit|save|add|upload|sign ?in|log ?in|create (an |your |a new )?account|sign ?up|register|start|back|previous|edit|done|ok\b|accept|agree|use my last|autofill|manually|verify|confirm|remove|delete|forgot|reset|don['\u2019]?t have an account/i;
   // Up to 60 of the page's buttons. A dropdown's entries are choices in a field, not
   // things to do on the page: Eightfold draws them as buttons, and an open list of
   // referral sources or countries used to fill all 60 places before "Submit
@@ -395,6 +437,7 @@ EXTRACT_JS = r"""
     // A button after a password box: a sign-in form's own "Sign In", not the one in the
     // site's header (Workday's opens a sign-in pop-up, and sends nothing)
     if (passwordBoxes.some((p) => p.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING)) a.after_password = true;
+    if (a.after_password && signInForm(el)) a.sign_in_form = true;
     // A "Create Account" in a form with two password boxes is that form's own button, which
     // creates the account (Workday draws it as a div, not a form's submit): never the way to
     // the form. Boxes a pop-up hides count too.
@@ -433,7 +476,7 @@ EXTRACT_JS = r"""
   }
   return { fields, actions, errors, headings };
 }
-"""
+""".replace("/*SIGN_IN_FORM*/", SIGN_IN_FORM_JS)
 
 # Fallback for custom-styled radios/checkboxes whose input is display:none.
 CLICK_CHOICE_JS = r"""
@@ -486,6 +529,7 @@ ENTRIES_JS = r"""
 # Facts click() needs about an element before deciding whether it may press it.
 ELEMENT_INFO_JS = r"""
 (el) => {
+  /*SIGN_IN_FORM*/
   const BOX = '[id*="cookie" i], [class*="cookie" i], [aria-label*="cookie" i], [id*="consent" i], '
     + '[class*="consent" i], [id*="onetrust" i], [class*="onetrust" i], [id*="cybot" i], [id*="gdpr" i], [id*="truste" i]';
   const names = (n) => `${n.id || ''} ${typeof n.className === 'string' ? n.className : ''} ${n.getAttribute('aria-label') || ''}`;
@@ -516,9 +560,11 @@ ELEMENT_INFO_JS = r"""
     // what its form has to fill in, where it can be seen
     formFields: el.form ? [...el.form.elements].filter((e) => /^(INPUT|SELECT|TEXTAREA)$/.test(e.tagName)
       && !/^(hidden|submit|button|image|reset)$/i.test(e.type || '') && e.getClientRects().length > 0).length : 0,
+    // a sign-in form's own button, whatever it reads ("Submit"): it sends the sign-in, nothing more
+    signInForm: signInForm(el),
   };
 }
-"""
+""".replace("/*SIGN_IN_FORM*/", SIGN_IN_FORM_JS)
 
 # Is something else drawn on top of this element's centre?
 COVERED_JS = r"""

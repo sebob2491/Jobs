@@ -157,12 +157,15 @@ card, save one password for a job system: Workday (13 of the employers), Success
 Precision) or Infor (Benchmark). The desk then creates your account at each of that system's
 employers (your email, the password, and your name and country from the profile; it ticks
 their terms, never a newsletter, and presses the button; a picture code stays yours) and
-signs you in after that. When it doesn't sign in at an employer, usually because it's your
-first application there, the desk tries it once and then opens that employer's Create
-Account form ("Create an account", "Register", "Sign up") and creates the account. When the
-site says the email already has an account, the desk resets that account's password to the
-saved one through the site's own "Forgot password" email (it reads that email with the
-email app password below; without one it asks you to). To do these steps yourself, set
+signs you in after that (pressing the sign-in form's own button, even one that reads
+"Submit"). When the password doesn't sign in at an employer, the desk tries it once, then,
+with the email app password below saved, resets that employer's password to the saved one
+through the site's own "Forgot password" email, which it reads itself. When the site says it
+has no account for your email, or no reset email comes in 3 minutes (most likely your first
+application there; the other jobs carry on meanwhile), it opens that employer's Create
+Account form ("Create an account", "Register", "Don't have an account yet?") and creates the
+account. Without the email app password it tries Create Account first, and asks you to
+open the reset email where the site says the email already has an account. To do these steps yourself, set
 `manage_accounts: false` under `settings:` in your profile: the desk then fills in Create
 Account for you to finish. Practice mode never creates an account. On Qorvo's one-page application
 it puts the password in both boxes. The password goes from the page straight into

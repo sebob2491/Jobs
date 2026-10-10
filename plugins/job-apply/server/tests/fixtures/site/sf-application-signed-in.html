@@ -1,0 +1,34 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Career Opportunities: Field Service Engineer (12345)</title></head>
+<body>
+<!-- A SuccessFactors application for someone already signed in: their profile shows greyed out,
+     the job's own questions come below it, and the button that sends it all is a plain "Apply".
+     ?questions: two questions to answer there; otherwise none. -->
+<h1>Career Opportunities: Field Service Engineer (12345)</h1>
+<h2>Candidate Profile</h2>
+<label for="fn">First Name</label><input id="fn" value="Sam" disabled>
+<label for="ln">Last Name</label><input id="ln" value="Rivera" disabled>
+<label for="em">Email</label><input id="em" value="sam.rivera@example.com" disabled>
+<label for="ph">Phone</label><input id="ph" value="602-555-0100" disabled>
+<h2>Job-Specific Information</h2>
+<div id="q"></div>
+<button type="button" id="apply">Apply</button>
+<script>
+  window.applied = 0;
+  if (location.search.includes('questions')) {
+    document.getElementById('q').innerHTML = `
+      <fieldset><legend>Are you legally authorized to work in the United States?</legend>
+        <label><input type="radio" name="auth" value="Yes">Yes</label>
+        <label><input type="radio" name="auth" value="No">No</label></fieldset>
+      <fieldset><legend>Will you now or in the future require sponsorship for employment visa status?</legend>
+        <label><input type="radio" name="sp" value="Yes">Yes</label>
+        <label><input type="radio" name="sp" value="No">No</label></fieldset>`;
+  }
+  document.getElementById('apply').addEventListener('click', () => {
+    window.applied += 1;
+    document.body.insertAdjacentHTML('beforeend', '<p>Thank you for applying!</p>');
+  });
+</script>
+</body>
+</html>
