@@ -68,10 +68,15 @@ the scrubber (`python -m job_apply.fixtures`) before they become test fixtures.
 - **Cookie banners** are declined or left to the person, never accepted, unless the person
   turned on `settings.accept_cookies` (off by default): then a banner with no way to decline
   is accepted for them.
-- **Accounts:** the desk never creates an account.
+- **Accounts:** the desk never creates an account, unless the person turned on
+  `settings.manage_accounts` (off by default, never in practice mode): then it creates one
+  with that system's saved password, ticking only the site's terms (never a newsletter), and
+  resets a saved password the site refuses, through the site's own "Forgot password" and its
+  emailed link. A CAPTCHA or security question on the way stays the person's.
 - **Passwords:**
   - a saved password goes only onto its own system's sites;
-  - the inbox app password only reads sign-up codes;
+  - the inbox app password only reads sign-up codes (and, with `manage_accounts`, the reset
+    email a site was just asked for, from that site);
   - never ask for a password in chat (the desk page holds them).
 - **Answers come only from the profile or the person.** Never overstate education or
   experience: coursework is not a degree.

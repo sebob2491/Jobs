@@ -789,6 +789,100 @@ def test_create_account_is_filled_but_left_for_the_person(srv, monkeypatch):
     assert "filled the Create Account form with your details and saved password" in r.log
 
 
+def manage_accounts(job_apply_home, submit_mode="review"):
+    import yaml
+
+    path = job_apply_home / "profile.yaml"
+    profile = yaml.safe_load(path.read_text())
+    profile["settings"].update(manage_accounts=True, submit_mode=submit_mode)
+    path.write_text(yaml.safe_dump(profile))
+
+
+def test_with_manage_accounts_the_desk_creates_the_account(srv, monkeypatch, job_apply_home):
+    """The person turned on settings.manage_accounts: the desk ticks the Create Account form's
+    terms box and presses its button itself, with the saved password, and carries on."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    saved_password(monkeypatch)
+    manage_accounts(job_apply_home)
+    job = srv.add_job(url=fixture_url("site/create-account.html"), title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert any(line.startswith("created your account on") and "agreed to its terms" in line for line in r.log), r.log
+    assert r.need != "sign_in" and "Create Account" not in r.reason, (r.status, r.reason, r.log)
+
+
+def test_in_practice_mode_the_desk_never_creates_an_account(srv, monkeypatch, job_apply_home):
+    """Practice mode sends nothing, an account's details included, whatever manage_accounts says."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    saved_password(monkeypatch)
+    manage_accounts(job_apply_home, submit_mode="dry_run")
+    job = srv.add_job(url=fixture_url("site/create-account.html"), title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r, await r.page.evaluate("() => window.created")
+        finally:
+            await applier.stop()
+
+    r, created = run(go())
+    assert (r.need, created) == ("sign_in", 0) and "Create Account form" in r.reason, (r.reason, r.log)
+
+
+def test_with_manage_accounts_a_refused_saved_password_is_reset(srv, monkeypatch, job_apply_home):
+    """The email has an account there, and the saved password isn't its password: the desk's
+    new account is refused ("already exists"), so it asks for a password reset, opens the
+    emailed link in the job's tab, sets the saved password as the new one, and signs in. A
+    newsletter box on the account form is left unticked."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "MAIL_POLL_SECONDS", 0)
+    saved_password(monkeypatch)
+    manage_accounts(job_apply_home)
+    monkeypatch.setenv("JOB_APPLY_SECRET_EMAIL_PASSWORD", "an-app-password")
+    monkeypatch.setattr(pipeline.mailbox, "imap_host", lambda address: "imap.example.com")
+    wanted = []
+
+    def inbox(address, password, since, senders, want, allowed_link, before=None, look_back=None):
+        wanted.append(want)
+        link = fixture_url("site/reset-password.html") + "?token=abc"
+        return pipeline.mailbox.Found(want, link, "careers.example.com", time.time()) if want == "reset" else None
+
+    monkeypatch.setattr(pipeline.mailbox, "search", inbox)
+    job = srv.add_job(url=fixture_url("site/signin-forgot.html"), title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status == "needs_you" and r.need != "email_code" or r.status == "ready",
+                        timeout=90, about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    log = "\n".join(r.log)
+    assert "asked it to email a password reset" in log, log
+    assert "opened the password reset link from your email (sent from careers.example.com)" in log, r.log
+    assert "set your saved password as" in log, r.log
+    assert r.seen_form and not any(w in r.url for w in ("signin", "reset", "forgot")), (r.url, r.reason, r.log)
+    assert "reset" in wanted
+
+
 @pytest.mark.parametrize("page", ["signin-no-account.html", "signin-no-account-link.html",
                                   "signin-no-account-lost-click.html"])
 def test_a_saved_password_that_doesnt_sign_in_opens_create_account(srv, monkeypatch, page):

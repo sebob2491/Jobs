@@ -150,3 +150,9 @@ settings:
   # Cookie banners: the desk declines them. One with no way to decline (TI's "Agree and
   # Proceed") waits for you, unless you set this to true to let the desk accept it for you.
   accept_cookies: false
+  # Accounts on job sites: the desk fills in Create Account and leaves the rest to you. Set this
+  # to true to let it create the account (ticking the site's terms, never a newsletter) with the
+  # password you saved on the desk for that system, and, when a saved password doesn't sign in,
+  # reset it through the site's "Forgot password" email (it reads that email with your email app
+  # password) to the one you saved. Never in practice mode. Picture codes stay yours.
+  manage_accounts: false

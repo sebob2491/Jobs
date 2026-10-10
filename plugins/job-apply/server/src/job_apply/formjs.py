@@ -346,7 +346,7 @@ EXTRACT_JS = r"""
     const foot = el.closest('footer, [role="contentinfo"]');
     return !!foot && !(boxes && boxes.length > 2) && SIDE_BOX.test(foot.innerText || '');
   };
-  const ACTION = /apply|next|continue|review|submit|save|add|upload|sign ?in|log ?in|create (an |your |a new )?account|sign ?up|register|start|back|previous|edit|done|ok\b|accept|agree|use my last|autofill|manually|verify|confirm|remove|delete/i;
+  const ACTION = /apply|next|continue|review|submit|save|add|upload|sign ?in|log ?in|create (an |your |a new )?account|sign ?up|register|start|back|previous|edit|done|ok\b|accept|agree|use my last|autofill|manually|verify|confirm|remove|delete|forgot|reset/i;
   // Up to 60 of the page's buttons. A dropdown's entries are choices in a field, not
   // things to do on the page: Eightfold draws them as buttons, and an open list of
   // referral sources or countries used to fill all 60 places before "Submit

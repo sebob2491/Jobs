@@ -56,6 +56,8 @@ _MIXED = re.compile(r"\b(?=[A-Z0-9]*\d)(?=[A-Z0-9]*[A-Z])[A-Z0-9]{6,10}\b")
 # Between the words and a year-like code ("Your code is 2047"): nothing but joining words
 _JOINING = re.compile(r"^[\s:\-\u2013\u2026.]*(?:is|was|below)?[\s:\-\u2013\u2026.]*$", re.I)
 _LINK_WORDS = re.compile(r"verif|confirm|activat|validat", re.I)
+# A password reset's link (settings.manage_accounts: the desk asked the site for one)
+_RESET_WORDS = re.compile(r"reset|password|recover|passwd|pwd", re.I)
 # A link in the same email that undoes or refuses ("Not you? Deactivate", "unsubscribe")
 _UNDOES = re.compile(r"deactivat|unsubscrib|opt-?out", re.I)  # in a link's query: career_ns=account_deactivation
 _NOT_THIS_LINK = re.compile(r"deactivat|invalidat|unsubscrib|opt-?out|not-?you|report|declin|reject|cancel", re.I)
@@ -158,10 +160,11 @@ def _find_code(text: str) -> tuple[str | None, bool]:
     return nearest, False
 
 
-def find_link(text: str, links: list[str], allowed_link: Callable[[str], bool]) -> str | None:
+def find_link(text: str, links: list[str], allowed_link: Callable[[str], bool], words: re.Pattern[str] = _LINK_WORDS) -> str | None:
     """A confirmation link in a sign-up email that points back to the job site: one whose
     address itself says verify or confirm before one that only says so in its query (a logo
-    link tagged "utm_campaign=email_verification"), and never "Not you? Deactivate"."""
+    link tagged "utm_campaign=email_verification"), and never "Not you? Deactivate". With
+    `words`=_RESET_WORDS, a password reset's link instead."""
     def path(url: str) -> str | None:
         try:
             return urlparse(url).path
@@ -173,7 +176,7 @@ def find_link(text: str, links: list[str], allowed_link: Callable[[str], bool]) 
             and not _UNDOES.search(urlparse(u).query) and allowed_link(u)]
     for where in (path, lambda u: u):
         for url in urls:
-            if _LINK_WORDS.search(where(url) or ""):
+            if words.search(where(url) or ""):
                 return url
     return None
 
@@ -181,7 +184,8 @@ def find_link(text: str, links: list[str], allowed_link: Callable[[str], bool]) 
 def search(address: str, password: str, since: float, allowed: set[str], want: str,
            allowed_link: Callable[[str], bool] = lambda url: False, before: float | None = None,
            look_back: float = LOOK_BACK) -> Found | None:
-    """The newest code (want="code") or confirmation link (want="link") from an allowed
+    """The newest code (want="code"), confirmation link (want="link") or password reset link
+    (want="reset") from an allowed
     sender that arrived after `since` (a time.time()) less `look_back`, and before `before`
     when given (mail after then is another waiting job's). Read-only: nothing is marked read."""
     host = imap_host(address)
@@ -248,7 +252,8 @@ def search(address: str, password: str, since: float, allowed: set[str], want: s
                     value = next((v for v, sure in answers if v and sure), None) or \
                         next((v for v, _ in answers if v), None)
                 else:
-                    value = next((v for t in texts or [""] if (v := find_link(t, links, allowed_link))), None)
+                    words = _RESET_WORDS if want == "reset" else _LINK_WORDS
+                    value = next((v for t in texts or [""] if (v := find_link(t, links, allowed_link, words))), None)
             except Exception:  # a malformed message: the next one
                 continue
             if value:

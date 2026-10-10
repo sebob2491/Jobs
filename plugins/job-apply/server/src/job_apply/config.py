@@ -174,6 +174,8 @@ class Settings:
     email_codes: bool = False  # may Claude read sign-in/verification codes from the user's email
     email_tracking: bool = False  # may Claude scan email for replies to applications
     accept_cookies: bool = False  # may the desk accept a cookie banner that offers no way to decline
+    # may the desk make the person's accounts on job sites, and reset a saved password a site refuses
+    manage_accounts: bool = False
     warnings: list[str] = field(default_factory=list)
 
     @classmethod
@@ -193,6 +195,7 @@ class Settings:
             email_codes=d.get("email_codes") is True,
             email_tracking=d.get("email_tracking") is True,
             accept_cookies=d.get("accept_cookies") is True,
+            manage_accounts=d.get("manage_accounts") is True,
         )
         if os.environ.get("JOB_APPLY_HEADLESS") == "1":
             s.headless = True
@@ -203,6 +206,11 @@ class Settings:
     @property
     def dry_run(self) -> bool:
         return self.submit_mode == "dry_run"
+
+    @property
+    def may_manage_accounts(self) -> bool:
+        """Making an account sends the person's details: never in practice mode, which sends nothing."""
+        return self.manage_accounts and not self.dry_run
 
     def may_auto_submit(self, ats: str) -> bool:
         if ats in HUMAN_SUBMIT_ONLY or self.dry_run:
