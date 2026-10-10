@@ -357,7 +357,13 @@ EXTRACT_JS = r"""
     const form = el.closest('form');
     if (form && [form.getAttribute('action'), form.id, form.getAttribute('class')].some(isSearchName)) continue;
     let label = labelFor(el);
-    // Upload widgets often label the input with its button ("Attach"); use the field's heading.
+    // Upload widgets often label the input with its button ("Attach"); use the field's heading,
+    // or the button beside a hidden one that opens it ("Upload Resume/CV": EMD's, Oct 2026).
+    if (kind === 'file' && GENERIC_FILE.test(label) && el.parentElement) {
+      const own = Array.from(el.parentElement.querySelectorAll(':scope > button, :scope > [role="button"]'))
+        .map(txt).find((t) => t && t.length < 80 && !GENERIC_FILE.test(t));
+      if (own) label = own;
+    }
     if (kind === 'file' && GENERIC_FILE.test(label)) {
       for (let node = el.parentElement, d = 0; node && d < 5; node = node.parentElement, d++) {
         // the nearest heading *before* the input, so a big container doesn't hand back an earlier field's label
@@ -543,6 +549,12 @@ EXTRACT_JS = r"""
     const target = anchor && document.getElementById(anchor[1]);
     if (target && target.getClientRects().length > 0) a.same_page = true;
     actions.push(a);
+  }
+  // A box in such a sign-up (a talent community's email and consent beside a posting) isn't the
+  // application's either
+  for (const f of fields) {
+    const el = document.querySelector(`[data-ja-id="${CSS.escape(f.id)}"]`);
+    if (el && sideBox(el)) f.aside = true;
   }
 
   const errors = [];

@@ -93,6 +93,32 @@ def test_what_a_create_account_form_wants_is_named():
     assert pipeline._account_wants({}, {"fields": []}) == ""
 
 
+def test_a_posting_with_a_talent_community_box_goes_in_through_apply(srv, monkeypatch):
+    """EMD Electronics' posting (a Phenom site, live, Oct 2026) has a box to join its Talent
+    Community (an email and a consent tick, with a Submit of its own), a chatbot's box and two
+    "Save Job" ticks beside the job. Five boxes made it look like the application: the desk filled
+    the email, asked about the consent, and left "Apply Now" to the person as the button that sends
+    it. Those boxes aren't the application's: the desk goes in through Apply Now and joins nothing."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    job = srv.add_job(url=fixture_url("site/talent-community-posting.html"), title="Equipment Technician/Engineer",
+                      company="Example Materials")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status in ("needs_you", "ready"))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert r.log[1] == "clicked \u201cApply Now\u201d", r.log
+    assert not any("Talent Community" in (q.get("label") or "") for q in r.questions)
+    assert not any(line.startswith("filled") and "Communication" in line for line in r.log)
+
+
 def test_one_button_apply_walks_the_whole_flow(srv, monkeypatch):
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
     job = srv.add_job(url=fixture_url("site/posting.html"), title="Field Service Engineer", company="Example Fab")["job"]

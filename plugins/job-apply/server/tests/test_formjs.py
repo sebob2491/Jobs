@@ -31,6 +31,21 @@ def test_an_asterisk_anywhere_in_the_label_means_required(srv, tmp_path):
                                                          "Middle Name": False}
 
 
+def test_a_hidden_file_box_is_named_by_its_own_upload_button(srv, tmp_path):
+    """EMD Electronics' Phenom application (Oct 2026): the resume's file box is hidden beside its
+    "Upload Resume/CV" button, after an "or" between it and Apply With LinkedIn, under a header
+    that's a plain paragraph. It was read as "or", so the resume never went in."""
+    got = fields_of(srv, tmp_path, '<div class="resume-group"><span class="sr-only">Upload options</span>'
+                                   '<p>Your resume/CV is required - upload your document here to get started!*</p>'
+                                   '<ul><li><button type="button">Apply With LinkedIn</button></li></ul>'
+                                   '<div class="apply-or-line"><span class="apply-or-box">or</span></div>'
+                                   '<div class="resume-upload-wrapper"><input type="file" style="display: none;">'
+                                   '<button type="button">Upload Resume/CV</button></div></div>'
+                                   '<div><h4>Cover Letter</h4><div><input type="file" style="display: none;">'
+                                   '<button type="button">Upload</button></div></div>')
+    assert [(f["kind"], f["label"]) for f in got] == [("file", "Upload Resume/CV"), ("file", "Cover Letter")]
+
+
 def test_blocks_with_their_headings_beside_them(srv, tmp_path):
     got = fields_of(srv, tmp_path, '<div><h3>Work Experience 1</h3><div><label for="t1">Job Title</label><input id="t1"></div>'
                                    '<h3>Work Experience 2</h3><div><label for="t2">Job Title</label><input id="t2"></div></div>')

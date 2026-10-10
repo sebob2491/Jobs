@@ -1,0 +1,36 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Equipment Technician/Engineer | Careers</title></head>
+<body>
+<!-- A Phenom career site's posting (live, Oct 2026): beside the job, "Save Job" ticks, a chatbot's
+     box and a form to join the site's Talent Community (an email, a consent tick and a Submit of
+     its own). Apply Now goes to the application, on another system. -->
+<header><a href="#">Discover us</a> <a href="#">Join us</a></header>
+<main>
+  <h1>Equipment Technician/Engineer</h1>
+  <label><input type="checkbox" id="save1"> Save Job</label>
+  <a href="../generic_form.html" id="apply1">Apply Now</a>
+  <h2>YOUR ROLE</h2>
+  <p>Support the equipment in our Tempe plant: preventive maintenance, troubleshooting and repairs.</p>
+  <h2>Communication &amp; Documentation</h2>
+  <p>Keep maintenance records and work orders up to date.</p>
+  <label><input type="checkbox" id="save2"> Save Job</label>
+  <a href="../generic_form.html" id="apply2">Apply Now</a>
+</main>
+<aside>
+  <h3>Join our Talent Community</h3>
+  <form id="tc" onsubmit="document.body.insertAdjacentHTML('beforeend', '<p id=joined>You joined</p>'); return false;">
+    <label for="tcem">Enter Email address (Required)</label>
+    <input id="tcem" type="email" required>
+    <label><input type="checkbox" id="tcok" required> I agree (i) to join the global Talent Community to be
+      considered for current and future job opportunities as explained in our privacy statement and (ii) to
+      receive career related electronic communications</label>
+    <button type="submit">Submit</button>
+  </form>
+</aside>
+<div class="chatbot">
+  <input type="text" aria-label="Chatbot User Input Box With Send Button">
+  <button type="button">send</button>
+</div>
+</body>
+</html>

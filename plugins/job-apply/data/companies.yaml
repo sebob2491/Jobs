@@ -257,3 +257,9 @@ companies:
     # Equipment Specialist and ASU Turnaround Specialist in Mesa; Cylinder Handler Loader and
     # Regional General Manager in Phoenix.
     search: {csod: "https://mathesongas.csod.com/ux/ats/careersite/1/home?c=mathesongas"}
+  - name: EMD Electronics
+    careers_url: https://careers.emdgroup.com/us/en/search-results
+    ats: successfactors       # careers.emdgroup.com is a Phenom front end for all of Merck KGaA's US companies; Apply goes to SuccessFactors
+    az_sites: Tempe, Chandler (specialty gases and chemicals for the fabs)
+    confidence: high          # live check, Oct 2026: Arizona openings in Tempe and Chandler, operations and equipment technicians among them
+    search: {phenom: {host: careers.emdgroup.com, country: us, lang: en_us}}

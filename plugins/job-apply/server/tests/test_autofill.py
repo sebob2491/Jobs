@@ -778,6 +778,11 @@ def test_boxes_for_someone_elses_details_or_another_date_or_document():
         assert _answer("Date", p, section=section) is None, section
     assert _answer("Phone Number (including country code)", p) == "+1 480-555-0100"
     assert _answer("Phone (incl. country code)", p) == "+1 480-555-0100"
+    # a long label that says how to write it (EMD Electronics' Phenom form, Oct 2026)
+    emd = 'Phone Number [must include your location code using the "+", (e.g. +1##########), with no spaces or dashes]*'
+    assert _answer(emd, p) == "+14805550100"
+    assert _answer("Phone number, digits only, no spaces or dashes", p) == "4805550100"
+    assert _answer("Phone Number (with country code, no spaces)", p) == "+14805550100"
     assert _answer("Phone", p) == "480-555-0100"
     for label in ("Upload a copy of your degree or diploma", "Unofficial transcript"):
         assert resolve_field({"id": "1", "label": label, "kind": "file"}, p, {"company": "Acme"}) is None, label

@@ -2334,8 +2334,16 @@ def _forgot_action(actions: list[dict[str, Any]]) -> dict[str, Any] | None:
     return next((a for a in actions if not a.get("disabled") and not a.get("cookie") and _FORGOT.search(a["text"])), None)
 
 
+# A posting page's own boxes, never an application's: Phenom's "Save Job" ticks and its chatbot's box
+_PAGE_WIDGET = re.compile(r"^save (?:this )?job$|\bchat ?bot\b", re.I)
+
+
 def _application_like(data: dict[str, Any]) -> bool:
-    fields = data.get("fields") or []
+    """Does a page hold an application's boxes: three or more, or one an application asks for?
+    Not a sign-up's beside a posting (a talent community's email and consent, which the form
+    reader marks aside) nor the posting page's own ("Save Job", a chatbot's box)."""
+    fields = [f for f in data.get("fields") or []
+              if not f.get("aside") and not _PAGE_WIDGET.search(clean_label(f.get("label") or ""))]
     return len(fields) >= 3 or sum(bool(_APPLICATION_FIELD.search(f.get("label") or "")) for f in fields) >= 1
 
 

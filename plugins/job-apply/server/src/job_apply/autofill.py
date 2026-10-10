@@ -967,11 +967,26 @@ def _travel(prof: Profile, job: dict, label: str = "") -> Any:
 
 
 def _phone(prof: Profile, job: dict, label: str = "") -> Any:
-    """The phone number; with its dial code where the box asks for it ("including country code")."""
+    """The phone number; with its dial code where the box asks for it ("including country code",
+    "must include your location code"), and as bare digits where it says so ("no spaces or
+    dashes": EMD Electronics' "+1##########", Oct 2026)."""
     phone = prof.get("personal.phone")
-    if phone and re.search(r"(including|incl|with) (the |your )?country code", norm(label)) \
-            and not str(phone).strip().startswith("+"):
-        return f"{prof.get('personal.phone_country_code', '+1')} {phone}"
+    if not phone:
+        return phone
+    asked = norm(label)
+    code = str(prof.get("personal.phone_country_code", "+1"))
+    with_code = re.search(r"(including|incl|include|with) (the |your )?(country|location|dial(ing)?|international) code",
+                          asked)
+    written = str(phone).strip()
+    if re.search(r"\bno (spaces|dashes)|without (spaces|dashes)|digits only|numbers only", asked):
+        digits = re.sub(r"\D", "", written)
+        if written.startswith("+"):
+            return "+" + digits
+        if code == "+1" and len(digits) == 11 and digits.startswith("1"):
+            digits = digits[1:]  # (written with its 1 already)
+        return f"{code}{digits}" if with_code else digits
+    if with_code and not written.startswith("+"):
+        return f"{code} {phone}"
     return phone
 
 
@@ -1027,6 +1042,9 @@ RULES: list[tuple[str, str, Getter, int | None, set[str] | None]] = [
     ("phone_code", r"^(?!.*\b(number|no|incl|including|with)\b).*\b(country|phone|dial(ing)?) (phone )?code\b", _phone_code, 45, None),
     ("phone_ext", r"extension", lambda p, j: None, 45, None),
     ("phone", r"phone|mobile|cell|telephone", _phone, 45, {"text", "combobox"}),
+    # a longer label that goes on to say how to write it ("Phone Number [must include your location code ...]")
+    ("phone", r"^((mobile|cell|home|primary) )?(tele)?phone( number)? (must|should|including|incl|with|format|in the format|"
+              r"e g|digits|no spaces)\b", _phone, None, {"text"}),
     ("address2", r"address line 2|^address 2|apartment|suite|^apt|^unit", _p("personal.address.line2"), 45, None),
     ("address1", r"address line 1|^address 1|^street|^(home |mailing |street )?address$", _p("personal.address.line1"), 45, None),
     ("city", r"^city|town|location city|current city|city of residence|"
