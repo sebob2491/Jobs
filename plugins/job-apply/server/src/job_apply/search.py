@@ -24,6 +24,8 @@ Each company in data/companies.yaml may carry a `search` block naming one of:
                                             (Avature career portals: Deloitte; its State filter's values)
     csod:            <career site address>  (Cornerstone OnDemand career sites:
                                             https://linde.csod.com/ux/ats/careersite/23/home?c=linde)
+    phenom:          {host: careers.emdgroup.com, country: us, lang: en_us}
+                                            (Phenom career sites' own search: EMD Electronics)
     icims:           <portal name>          (read in the browser)
     paycom:          <career portal key>    (read in the browser)
     ukg:             <job board address>    (UKG Pro / UltiPro; read in the browser)
@@ -1512,6 +1514,62 @@ def parse_csod(reqs: list[Any], parts: dict[str, str], us_dates: bool = True) ->
     return out
 
 
+# ----------------------------------------------------------------- Phenom career sites (EMD Electronics)
+PHENOM_PAGE = 50  # openings a request asks for
+PHENOM_PAGES = 4  # pages read per wording, at most
+
+
+async def _phenom(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, terms: list[str]) -> list[Listing]:
+    """Phenom career sites (careers.emdgroup.com) search with the page's own call: POST /widgets
+    with "ddoKey": "refineSearch", which answers plain requests with the openings as JSON (live,
+    Oct 2026). Given one state, the site's own state filter narrows them, by the state's name
+    ("Arizona"); its openings' pages are /<country>/<language>/job/<id>."""
+    conf = cfg if isinstance(cfg, dict) else {"host": cfg}
+    host = re.sub(r"^https?://", "", str(conf["host"])).strip("/")  # a block without one fails loudly
+    country, lang = str(conf.get("country") or "us"), str(conf.get("lang") or "en_us")
+    api = f"https://{host}/widgets"
+    state = _sf_state(terms)
+    want = max(limit, AREA_SCAN) if terms and not state else limit
+    size = min(PHENOM_PAGE, want)
+    out: list[Listing] = []
+    for page in range(PHENOM_PAGES):
+        body = {"lang": lang, "deviceType": "desktop", "country": country, "pageName": "search-results",
+                "ddoKey": "refineSearch", "from": page * size, "size": size, "jobs": True, "counts": True,
+                "all_fields": ["state"], "keywords": query, "global": True,
+                "selected_fields": {"state": [state]} if state else {}}
+        r = await _send(client, "POST", api, json=body, headers={"Accept": "application/json"})
+        _raise_for(r, api)
+        try:
+            found = r.json()["refineSearch"]
+            jobs, total = list((found.get("data") or {}).get("jobs") or []), int(found.get("totalHits") or 0)
+            refused = int(found.get("status") or 200) >= 400  # an error said inside a 200 answer
+        except (ValueError, KeyError, TypeError, AttributeError) as e:
+            raise SearchError(f"No job list from {api}") from e
+        if refused:
+            raise SearchError(f"No job list from {api} (status {found.get('status')})")
+        out += parse_phenom(jobs, f"https://{host}/{country}/{lang.split('_')[0]}")
+        if not jobs or (page + 1) * size >= total or len(out) >= want:
+            break
+    return out[:want]
+
+
+def parse_phenom(jobs: list[Any], base: str) -> list[Listing]:
+    """A Phenom search's openings, each at <base>/job/<id>, with all its places."""
+    out: list[Listing] = []
+    for job in jobs:
+        if not isinstance(job, dict):
+            continue
+        title, jid = str(job.get("title") or "").strip(), str(job.get("jobId") or "").strip()
+        if not title or not jid:
+            continue
+        listed = job.get("multi_location")
+        places = [str(p).strip() for p in (listed if isinstance(listed, list) else [listed]) if p and str(p).strip()]
+        out.append(Listing(company="", title=title, url=f"{base}/job/{quote(jid)}", ats="phenom",
+                           location="; ".join(dict.fromkeys(places)) or str(job.get("location") or "").strip(),
+                           posted=str(job.get("postedDate") or "")[:10], external_id=str(job.get("reqId") or jid)))
+    return out
+
+
 # ----------------------------------------------------------------- amazon.jobs
 AMAZON_PAGE = 100  # openings a search reads: its first page, nearest the place first
 
@@ -2190,6 +2248,7 @@ SEARCHERS: dict[str, Callable[[httpx.AsyncClient, Any, str, int, list[str]], Awa
     "kpmg": _kpmg,
     "avature": _avature,
     "csod": _csod,
+    "phenom": _phenom,
 }
 
 

@@ -2259,6 +2259,73 @@ def test_a_cornerstone_posting_closed_to_applications_says_so():
     assert asyncio.run(go()).warnings == ["Cornerstone says this posting takes no applications now."]
 
 
+def test_a_phenom_site_is_searched_with_its_own_call_and_state_filter(monkeypatch):
+    """Phenom career sites (EMD Electronics', live, Oct 2026) search with the page's own call,
+    POST /widgets ("ddoKey": "refineSearch"), which answers plain requests. Given one state, the
+    site's state filter takes its name ("Arizona"); each opening's page is /us/en/job/<id>, with
+    all its places."""
+    monkeypatch.setattr(search_module, "PHENOM_PAGE", 2)
+    asked: list[dict] = []
+
+    def job(jid: str, title: str, *places: str, posted: str = "2026-10-07T21:03:11.000+0000") -> dict:
+        return {"jobId": jid, "reqId": jid, "title": title, "location": places[0] if places else "",
+                "multi_location": list(places), "postedDate": posted}
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        assert str(request.url) == "https://careers.example.com/widgets" and request.method == "POST"
+        body = json.loads(request.content)
+        asked.append(body)
+        jobs = [[job("304571", "Equipment Technician/Engineer", "Tempe, Arizona, United States"),
+                 job("302024", "Facilities Engineering Technician", "Tempe, Arizona, United States",
+                     "Chandler, Arizona, United States")],
+                [job("304370", "Operations Technician - 5pm-5am", "Tempe, Arizona, United States")]][body["from"] // 2]
+        return httpx.Response(200, json={"refineSearch": {"status": 200, "totalHits": 3, "data": {"jobs": jobs}}})
+
+    async def go(location):
+        async with httpx.AsyncClient(transport=httpx.MockTransport(answer)) as client:
+            return await search_companies("technician", location=location, client=client, companies=[
+                {"name": "EMD", "search": {"phenom": {"host": "careers.example.com", "country": "us", "lang": "en_us"}}}])
+    out = asyncio.run(go("AZ"))
+    assert not out["errors"]
+    assert [(a["from"], a["size"], a["keywords"], a["selected_fields"], a["ddoKey"]) for a in asked] == [
+        (0, 2, "technician", {"state": ["Arizona"]}, "refineSearch"), (2, 2, "technician", {"state": ["Arizona"]}, "refineSearch")]
+    assert sorted((r["title"], r["location"], r["url"], r["posted"]) for r in out["results"]) == [
+        ("Equipment Technician/Engineer", "Tempe, Arizona, United States", "https://careers.example.com/us/en/job/304571",
+         "2026-10-07"),
+        ("Facilities Engineering Technician", "Tempe, Arizona, United States; Chandler, Arizona, United States",
+         "https://careers.example.com/us/en/job/302024", "2026-10-07"),
+        ("Operations Technician - 5pm-5am", "Tempe, Arizona, United States", "https://careers.example.com/us/en/job/304370",
+         "2026-10-07")]
+    asked.clear()
+    asyncio.run(go(None))
+    assert {str(a["selected_fields"]) for a in asked} == {"{}"}  # anywhere: no state filter
+
+
+def test_an_answer_from_phenom_that_isnt_its_job_list_is_said():
+    async def go():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(
+                lambda request: httpx.Response(200, html="<html>Access denied</html>"))) as client:
+            return await search_companies("technician", location="AZ", client=client, companies=[
+                {"name": "EMD", "search": {"phenom": {"host": "careers.example.com"}}}])
+    assert asyncio.run(go())["errors"] == {"EMD": "SearchError: No job list from https://careers.example.com/widgets"}
+
+
+def test_a_phenom_error_inside_its_answer_is_said_and_one_place_written_alone_is_read():
+    answers = [{"refineSearch": {"status": 400, "totalHits": 0}},
+               {"refineSearch": {"status": 200, "totalHits": 1, "data": {"jobs": [
+                   {"jobId": "1", "title": "Technician", "multi_location": "Tempe, Arizona, United States"}]}}}]
+
+    def search():
+        async def go():
+            async with httpx.AsyncClient(transport=httpx.MockTransport(
+                    lambda request: httpx.Response(200, json=answers.pop(0)))) as client:
+                return await search_companies("technician", location="AZ", client=client, companies=[
+                    {"name": "EMD", "search": {"phenom": {"host": "careers.example.com"}}}])
+        return asyncio.run(go())
+    assert search()["errors"] == {"EMD": "SearchError: No job list from https://careers.example.com/widgets (status 400)"}
+    assert [r["location"] for r in search()["results"]] == ["Tempe, Arizona, United States"]
+
+
 DELOITTE = {"name": "Deloitte", "search": {"avature": {
     "url": "https://apply.deloitte.com/en_US/careers/SearchJobs", "state_field": 9336, "states": {"AZ": 690346}}}}
 DELOITTE_SEARCH = "https://apply.deloitte.com/en_US/careers/SearchJobs/"

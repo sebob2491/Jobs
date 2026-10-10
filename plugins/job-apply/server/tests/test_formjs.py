@@ -31,6 +31,47 @@ def test_an_asterisk_anywhere_in_the_label_means_required(srv, tmp_path):
                                                          "Middle Name": False}
 
 
+def test_a_hidden_file_box_is_named_by_its_own_upload_button(srv, tmp_path):
+    """EMD Electronics' Phenom application (Oct 2026): the resume's file box is hidden beside its
+    "Upload Resume/CV" button, after an "or" between it and Apply With LinkedIn, under a header
+    that's a plain paragraph. It was read as "or", so the resume never went in."""
+    got = fields_of(srv, tmp_path, '<div class="resume-group"><span class="sr-only">Upload options</span>'
+                                   '<p>Your resume/CV is required - upload your document here to get started!*</p>'
+                                   '<ul><li><button type="button">Apply With LinkedIn</button></li></ul>'
+                                   '<div class="apply-or-line"><span class="apply-or-box">or</span></div>'
+                                   '<div class="resume-upload-wrapper"><input type="file" style="display: none;">'
+                                   '<button type="button">Upload Resume/CV</button></div></div>'
+                                   '<div><h4>Cover Letter</h4><div><input type="file" style="display: none;">'
+                                   '<button type="button">Upload</button></div></div>')
+    assert [(f["kind"], f["label"]) for f in got] == [("file", "Upload Resume/CV"), ("file", "Cover Letter")]
+    # only the upload button right after its own hidden box, and only one that says what it takes
+    got = fields_of(srv, tmp_path, '<div><h4>Documents</h4><input type="file" aria-label="Upload" hidden>'
+                                   '<button type="button">Upload Resume</button><input type="file" aria-label="Upload" hidden>'
+                                   '<button type="button">Upload Cover Letter</button></div>'
+                                   '<h4>Transcript</h4><div><input type="file" aria-label="Attach" hidden>'
+                                   '<button type="button">Clear selection</button><button type="button">Attach</button></div>'
+                                   '<form><h3>Portfolio</h3><label for="r">Attach</label><input type="file" id="r">'
+                                   '<button type="submit">Submit application</button></form>')
+    assert [f["label"] for f in got] == ["Upload Resume", "Upload Cover Letter", "Transcript", "Portfolio"]
+
+
+def test_a_sign_ups_boxes_are_marked_aside_but_not_an_applications_own(srv, tmp_path):
+    """A box to join a talent community or get job alerts beside the application (its email,
+    its consent, a choice of interests) is marked aside, as its Submit is; a short form whose
+    own button goes on with the application isn't, whatever its words say of job alerts."""
+    got = fields_of(srv, tmp_path, '<form id="tc"><h3>Join our Talent Community</h3><label for="e">Email</label>'
+                                   '<input id="e" type="email"><label><input type="checkbox" id="ok"> I agree to join the '
+                                   'Talent Community</label><button type="submit">Submit</button></form>'
+                                   '<footer><p>Get job alerts</p><label><input type="radio" name="i" value="a"> Engineering'
+                                   '</label><label><input type="radio" name="i" value="b"> Operations</label></footer>'
+                                   '<form><p>Enter your email to start your application. We will also send you job alerts.</p>'
+                                   '<label for="s">Email to start application</label><input id="s" type="email">'
+                                   '<button type="submit">Apply</button></form>')
+    assert [(f["label"], bool(f.get("aside"))) for f in got] == [  # (ticks and choices after the boxes)
+        ("Email", True), ("Email to start application", False), ("I agree to join the Talent Community", True),
+        ("Get job alerts", True)]
+
+
 def test_blocks_with_their_headings_beside_them(srv, tmp_path):
     got = fields_of(srv, tmp_path, '<div><h3>Work Experience 1</h3><div><label for="t1">Job Title</label><input id="t1"></div>'
                                    '<h3>Work Experience 2</h3><div><label for="t2">Job Title</label><input id="t2"></div></div>')
