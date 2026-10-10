@@ -462,14 +462,16 @@ def csod_context(page: str) -> dict[str, Any]:
     """What a Cornerstone OnDemand career page sets up for its script (`csod.context={...}`):
     the anonymous token its search and posting calls carry, and its region's API address
     (endpoints.cloud). {} for a page without one."""
-    m = _CSOD_CONTEXT.search(page or "")
-    if not m:
-        return {}
-    try:
-        ctx, _ = json.JSONDecoder().raw_decode(page, m.end())
-    except ValueError:
-        return {}
-    return ctx if isinstance(ctx, dict) else {}
+    found: dict[str, Any] = {}
+    for m in _CSOD_CONTEXT.finditer(page or ""):  # the one with a token: not a placeholder set up before it
+        try:
+            ctx, _ = json.JSONDecoder().raw_decode(page, m.end())
+        except ValueError:
+            continue
+        if isinstance(ctx, dict) and ctx.get("token"):
+            return ctx
+        found = found or (ctx if isinstance(ctx, dict) else {})
+    return found
 
 
 def csod_place(loc: Any) -> str:
@@ -497,9 +499,10 @@ async def _fetch_csod(client: httpx.AsyncClient, url: str) -> Posting | None:
     if not data.get("displayTitle"):
         return None
     places = [csod_place(p) for p in [data.get("primaryLocation"), *(data.get("additionalLocations") or [])]]
-    return Posting(
+    posting = Posting(
         url=url,
         title=str(data["displayTitle"]),
+        company=parts["corp"],  # (the site's own name for the employer: "linde"; its pages give no other)
         location="; ".join(dict.fromkeys(p for p in places if p)),
         description=html_to_text(str(data.get("externalDescription") or ""))[:MAX_DESCRIPTION],
         apply_url=url,
@@ -507,6 +510,9 @@ async def _fetch_csod(client: httpx.AsyncClient, url: str) -> Posting | None:
         posted_at=str(data.get("openDate") or "")[:10],
         parse_method="csod-api",
     )
+    if str(data.get("allowApply")).lower() == "false":
+        posting.warnings.append("Cornerstone says this posting takes no applications now.")
+    return posting
 
 
 async def fetch_posting(url: str, timeout: float = 20.0, client: httpx.AsyncClient | None = None) -> Posting:

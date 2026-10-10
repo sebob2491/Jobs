@@ -2151,6 +2151,41 @@ def test_a_cornerstone_search_takes_its_pages_token_and_reads_to_the_total(monke
     assert not out["errors"]
 
 
+def test_a_cornerstone_search_reads_short_pages_to_the_total_and_dates_by_its_culture(monkeypatch):
+    """A site answering fewer openings than asked is still read to its total; a page that sets
+    up an empty context before the real one is read for the one with the token; and dates are
+    read as M/D/YYYY only on an en-US site ("9/10/2026" is 9 October on an en-GB one)."""
+    monkeypatch.setattr(search_module, "CSOD_PAGE", 3)
+    culture = {"name": "en-US"}
+    asked: list[dict] = []
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            real = csod_page({**CSOD_CONTEXT, "cultureName": culture["name"]})
+            return httpx.Response(200, html=real.replace("<body>", "<body><script>csod.context = {};</script>"))
+        body = json.loads(request.content)
+        asked.append(body)
+        n = body["pageNumber"]
+        return httpx.Response(200, json={"data": {"totalCount": 5, "requisitions": [
+            csod_req(n * 10 + i, f"Technician {n}{i}", ("Phoenix", "AZ", "US"), posted="9/10/2026")
+            for i in range(2 if n < 3 else 1)]}})
+
+    def search() -> dict:
+        async def go():
+            async with httpx.AsyncClient(transport=httpx.MockTransport(answer)) as client:
+                return await search_companies("technician", location="AZ", client=client,
+                                              companies=[{"name": "Acme Gases", "search": {"csod": CSOD_SITE}}])
+        return asyncio.run(go())
+
+    out = search()
+    assert not out["errors"] and [(a["pageNumber"], a["pageSize"]) for a in asked] == [(1, 3), (2, 3)]
+    assert len(out["results"]) == 4 and {r["posted"] for r in out["results"]} == {"2026-09-10"}
+    culture["name"] = "en-GB"
+    asked.clear()
+    out = search()
+    assert {r["posted"] for r in out["results"]} == {""} and {a["cultureName"] for a in asked} == {"en-GB"}
+
+
 @pytest.mark.parametrize("context", [
     None,  # no csod.context at all: a sign-in page, or Cornerstone's page has changed
     {**CSOD_CONTEXT, "token": ""},
@@ -2206,6 +2241,22 @@ def test_a_cornerstone_posting_is_read_from_its_job_requisition_service():
             posting.apply_url) == ("csod-api", "csod", "Regional Environmental Specialist", "Wilmington, CA; Tempe, AZ",
                                    "2026-09-18", "33392", url)
     assert "- Travel up to 50%" in posting.description and posting.is_useful and not posting.warnings
+    assert posting.company == "acme"  # the site's own name for the employer: its pages give no other
+
+
+def test_a_cornerstone_posting_closed_to_applications_says_so():
+    url = "https://acme.csod.com/ux/ats/careersite/7/home/requisition/33392?c=acme"
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        if str(request.url) == url:
+            return httpx.Response(200, html=csod_page(CSOD_CONTEXT))
+        return httpx.Response(200, json={"data": {"displayTitle": "Production Technician", "allowApply": False,
+                                                  "externalDescription": "<p>Run the plant.</p>" * 30}})
+
+    async def go():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(answer)) as client:
+            return await fetch_posting(url, client=client)
+    assert asyncio.run(go()).warnings == ["Cornerstone says this posting takes no applications now."]
 
 
 DELOITTE = {"name": "Deloitte", "search": {"avature": {

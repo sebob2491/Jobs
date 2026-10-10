@@ -57,7 +57,7 @@ import yaml
 from bs4 import BeautifulSoup
 
 from . import config
-from .ats import csod_parts, workday_parts
+from .ats import csod_parts, shared_system, workday_parts
 from .autofill import US_STATES, norm
 from .postings import USER_AGENT, csod_context, csod_place, html_to_text, place_in_text, successfactors_place
 
@@ -1462,16 +1462,18 @@ async def _csod(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, ter
     ctx = csod_context(r.text)
     token, cloud = ctx.get("token"), str((ctx.get("endpoints") or {}).get("cloud") or "")
     # the token goes only to Cornerstone's own API hosts (us.api.csod.com, eu-fra.api.csod.com)
-    if not token or not cloud.startswith("https://") or not (urlsplit(cloud).hostname or "").endswith(".csod.com"):
+    if not token or not cloud.startswith("https://") or shared_system(cloud) != "csod":
         raise SearchError(f"No Cornerstone search token and API address on {site.split('?')[0]}")
     api = urljoin(cloud, CSOD_SEARCH)
     state = icims_state(terms)
     want = max(limit, AREA_SCAN) if terms and not state else limit
+    size = min(CSOD_PAGE, want)
+    culture = str(ctx.get("cultureName") or "en-US")
     out: list[Listing] = []
     for page in range(1, CSOD_PAGES + 1):
         body = {"careerSiteId": int(parts["site"]), "careerSitePageId": int(parts["site"]), "pageNumber": page,
-                "pageSize": CSOD_PAGE, "cultureId": ctx.get("cultureID") or 1, "searchText": query,
-                "cultureName": ctx.get("cultureName") or "en-US", "states": [state.lower()] if state else [],
+                "pageSize": size, "cultureId": ctx.get("cultureID") or 1, "searchText": query,
+                "cultureName": culture, "states": [state.lower()] if state else [],
                 "countryCodes": [], "cities": [], "placeID": "", "radius": None, "postingsWithinDays": None,
                 "customFieldCheckboxKeys": [], "customFieldDropdowns": [], "customFieldRadios": []}
         r = await _send(client, "POST", api, json=body,
@@ -1482,15 +1484,17 @@ async def _csod(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, ter
             reqs, total = list(data["requisitions"] or []), int(data["totalCount"] or 0)
         except (ValueError, KeyError, TypeError) as e:
             raise SearchError(f"No job list from {api}") from e
-        out += parse_csod(reqs, parts)
-        if len(reqs) < CSOD_PAGE or page * CSOD_PAGE >= total or len(out) >= want:
+        out += parse_csod(reqs, parts, us_dates=culture.lower() == "en-us")
+        # (not a short page: a site answering fewer than asked still has its total to read)
+        if not reqs or page * size >= total or len(out) >= want:
             break
     return out[:want]
 
 
-def parse_csod(reqs: list[Any], parts: dict[str, str]) -> list[Listing]:
+def parse_csod(reqs: list[Any], parts: dict[str, str], us_dates: bool = True) -> list[Listing]:
     """A search's openings, each with its posting's page on the career site, which answers plain
-    requests with its title (og:title)."""
+    requests with its title (og:title). Dates are written the site's culture's way: M/D/YYYY read
+    only for en-US ("9/10/2026" is 9 October on an en-GB site)."""
     out: list[Listing] = []
     for req in reqs:
         if not isinstance(req, dict):
@@ -1500,7 +1504,8 @@ def parse_csod(reqs: list[Any], parts: dict[str, str]) -> list[Listing]:
             continue
         places = [csod_place(p) for p in req.get("locations") or []]
         out.append(Listing(
-            company="", title=title, ats="csod", external_id=rid, posted=_paycom_date(req.get("postingEffectiveDate")),
+            company="", title=title, ats="csod", external_id=rid,
+            posted=_paycom_date(req.get("postingEffectiveDate")) if us_dates else "",
             url=f"https://{parts['host']}/ux/ats/careersite/{parts['site']}/home/requisition/{rid}?"
                 + urlencode({"c": parts["corp"]}),
             location="; ".join(dict.fromkeys(p for p in places if p))))
