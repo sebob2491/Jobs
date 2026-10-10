@@ -1786,16 +1786,18 @@ class Applier:
     async def _make_account(self, run: Run, data: dict[str, Any]) -> bool:
         """settings.manage_accounts: tick a filled Create Account form's terms boxes (the required
         ones, or its terms, or a privacy notice read: never a newsletter's or job alerts') and press
-        the form's own button, after its password boxes. Once a job (Run.accounts_tried). Not with a
-        CAPTCHA on the page: that's the person's. True when it was pressed; the account is said to be
-        made only once the site shows it (Run.account_made, in _drive)."""
+        the form's own button, after its password boxes (its submit button, or a link or plain button
+        in that form that its script sends it with: ApplicantStack's "Submit"). Once a job
+        (Run.accounts_tried). Not with a CAPTCHA on the page: that's the person's. True when it was
+        pressed; the account is said to be made only once the site shows it (Run.account_made, in _drive)."""
         if data.get("captcha") or data.get("challenge"):
             return False
         srv = self.srv
         boxes = [f for f in data.get("fields") or [] if f.get("kind") == "checkbox" and is_empty_value(f.get("value"))
                  and _TERMS_BOX.search(f.get("label") or "") and not _NOT_TERMS.search(f.get("label") or "")
                  and (f.get("required") or _TERMS_ONLY.search(f.get("label") or ""))]
-        own = [a for a in data.get("actions") or [] if a.get("account_form") or a.get("form_submit") and a.get("after_password")]
+        own = [a for a in data.get("actions") or [] if a.get("account_form") or a.get("in_account_form")
+               or a.get("form_submit") and a.get("after_password")]
         button = self._account_button(own, _MAKE_ACCOUNT)
         if button is None:
             return False

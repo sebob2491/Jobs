@@ -1145,6 +1145,32 @@ def test_with_manage_accounts_the_desk_creates_the_account(srv, monkeypatch, job
     assert r.need != "sign_in" and "Create Account" not in r.reason, (r.status, r.reason, r.log)
 
 
+def test_with_manage_accounts_a_create_account_forms_link_is_pressed(srv, monkeypatch, job_apply_home):
+    """SCREEN's ApplicantStack (live, Oct 2026): its Create an Account form's own "Submit" is a link
+    whose script sends the form, not a submit button, and it reads neither account nor sign up. The
+    desk filled the form and then left it to the person, as if it had a picture code."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    saved_password(monkeypatch)
+    manage_accounts(job_apply_home)
+    job = srv.add_job(url=fixture_url("site/create-account-username.html"), title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert any(line.startswith("pressed “Submit” to create your account") for line in r.log), r.log
+    assert any(line.startswith("created your account on") for line in r.log), r.log
+    assert r.need != "sign_in" and "Create Account" not in r.reason, (r.status, r.reason, r.log)
+    assert any("“My Information”" in line for line in r.log), r.log  # on to the application
+
+
 def as_test_identity(monkeypatch, job_apply_home, email="sam.rivera@example.com"):
     """The nightly live check's switches on (live_smoke.py --test-identity), with `email` as the test
     identity's: the conftest profile's own makes it the test identity, in practice mode."""
@@ -2489,9 +2515,10 @@ def test_a_create_account_forms_own_button_is_never_the_way_to_it(srv, monkeypat
     # Amkor's SuccessFactors: the email twice, names and country; the newsletter box is left alone
     ("create-account-details.html", {"email": "sam.rivera@example.com", "email2": "sam.rivera@example.com", "same": True,
                                      "first": "Sam", "last": "Rivera", "country": "United States", "news": False}),
-    # SCREEN's ApplicantStack: the user name is the email, then the name and the email again
+    # SCREEN's ApplicantStack: the user name is the email, then the name and the email again (its box
+    # for robots, hidden, stays empty)
     ("create-account-username.html", {"user": "sam.rivera@example.com", "same": True, "name": "Sam Rivera",
-                                      "email": "sam.rivera@example.com"}),
+                                      "email": "sam.rivera@example.com", "robots": ""}),
     # Benchmark's Infor: the picture code, the resume upload and the "no resume" box are the person's
     ("register-picture-code.html", {"first": "Sam", "last": "Rivera", "email": "sam.rivera@example.com", "same": True,
                                     "code": "", "upload": "", "files": 0, "nores": False}),
