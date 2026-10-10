@@ -1220,23 +1220,29 @@ def profile_entries(prof: Profile, key: str) -> list[dict]:
     return entries
 
 
+def _entry_section(section: Any) -> tuple[str, int] | None:
+    """A numbered job's or school's block ("Work Experience 2", "Education 1"): the profile list
+    it's from (work_history, education_history) and its number. None for any other section."""
+    section = norm(section)
+    m = re.search(r"(\d+)$", section)
+    if not m:
+        return None
+    key = next((key for key, pattern in _ENTRY_SECTIONS if re.search(pattern, section)), None)
+    return (key, int(m.group(1))) if key else None
+
+
 def _entry_slot(field: dict, prof: Profile) -> tuple[str, int, list[dict], str | None] | None:
     """For a field inside a numbered block like "Work Experience 2": the profile list it's from
     (work_history, education_history), the block's number, that list's entries, and the entry's
     attribute it asks for (None when it's none of them: "Hours per week")."""
-    section = norm(field.get("section"))
-    m = re.search(r"(\d+)$", section)
-    if not m:
+    found = _entry_section(field.get("section"))
+    if found is None:
         return None
-    for key, pattern in _ENTRY_SECTIONS:
-        if re.search(pattern, section):
-            break
-    else:
-        return None
+    key, n = found
     label = norm(clean_label(field.get("label") or ""))
     attr = next((a for pattern, a in (_WORK_FIELDS if key == "work_history" else _EDUCATION_FIELDS)
                  if re.search(pattern, label)), None)
-    return key, int(m.group(1)), profile_entries(prof, key), attr
+    return key, n, profile_entries(prof, key), attr
 
 
 def entry_of(field: dict, prof: Profile) -> tuple[str, str] | None:
@@ -1630,31 +1636,39 @@ _EDU_FIELD = re.compile(r"^(school|university|college|institution|degree|discipl
                         r"(?!.*\b(licen[cs]\w*|certif\w*))")
 # (not "Position Applied For", the job being applied to)
 _JOB_FIELD = re.compile(r"^(company|employer|job title|title|position)\b(?! (applied|you are applying|of interest|desired|sought))")
-_DATE_PART = re.compile(r"^(start|end|from|to)( date)?( (year|month))?$")
+_DATE_PART = re.compile(r"^(start|end|from|to)( date)?( (year|month))?( actual or expected)?$")
 
 
 def _with_context(fields: list[dict]) -> list[dict]:
     """Greenhouse-style forms put School, Degree, Discipline and "Start date year" together
     with no section heading: they're one school's, the first in the profile's education
     history, so its school is never given another school's degree. Unsectioned dates after
-    a job's boxes are that job's."""
-    out, block, school = [], None, False
+    a job's or a school's boxes are that one's: Greenhouse's, and Workday's From and To
+    Month and Year, which Intel's My Experience page (live, Oct 2026) shows with no section
+    between a "Work Experience 2" block's Location and its Role Description. After such a
+    named block, a box of another section ("Availability") ends it: a date after that box
+    is never the job's."""
+    out, block, school, named = [], None, False, False  # named: block is a section the page gave
     for f in fields:
         label = norm(clean_label(f.get("label") or ""))
-        if not f.get("section"):
-            if _EDU_START.match(label):
-                block, school = "Education 1", True
+        section = f.get("section")
+        if section:
+            if _entry_section(section):
+                block, named = section, True
+            elif named:
+                block, named = None, False
+        elif _EDU_START.match(label):
+            block, school, named = "Education 1", True, False
+            f = {**f, "section": block}
+        elif _EDU_FIELD.match(label):
+            if block == "Education 1" and school:
                 f = {**f, "section": block}
-            elif _EDU_FIELD.match(label):
-                if block == "Education 1" and school:
-                    f = {**f, "section": block}
-                else:  # a Degree with no School before it is the person's highest; its dates a school's
-                    block, school = "Education 1", False
-            elif _JOB_FIELD.match(label):
-                school = False
-                block = "Work Experience 1"
-            elif block and _DATE_PART.match(label):
-                f = {**f, "section": block}
+            else:  # a Degree with no School before it is the person's highest; its dates a school's
+                block, school, named = "Education 1", False, False
+        elif _JOB_FIELD.match(label):
+            block, school, named = "Work Experience 1", False, False
+        elif block and _DATE_PART.match(label):
+            f = {**f, "section": block}
         out.append(f)
     return out
 

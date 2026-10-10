@@ -256,6 +256,45 @@ def test_unsectioned_education_dates_follow_school_fields():
     assert "5" not in plan  # a start date in another section is not an education date
 
 
+def test_unsectioned_dates_inside_a_workday_job_block_are_that_jobs():
+    """Intel's Workday My Experience page (live, Oct 2026) reads a job's Job Title, Company,
+    Location and Role Description in "Work Experience N" but its From and To Month and Year
+    with no section: all twenty were left empty, under Needs you, with nothing to say whose."""
+    def date(id_, label, part):  # as read there: no section
+        return {"id": id_, "kind": "text", "label": label, "sublabel": part, "role": "spinbutton", "value": ""}
+
+    def job(n):
+        s = {"section": f"Work Experience {n}", "value": ""}
+        return [{"id": f"title{n}", "kind": "text", "label": "Job Title*", **s},
+                {"id": f"company{n}", "kind": "text", "label": "Company*", **s},
+                {"id": f"location{n}", "kind": "text", "label": "Location", **s},
+                {"id": f"current{n}", "kind": "checkbox", "label": "I currently work here", **s},
+                date(f"from{n}.month", "From*", "Month"), date(f"from{n}.year", "From*", "Year"),
+                date(f"to{n}.month", "To*", "Month"), date(f"to{n}.year", "To*", "Year"),
+                {"id": f"description{n}", "kind": "textarea", "label": "Role Description", **s}]
+
+    school = [{"id": "school", "kind": "text", "label": "School or University*", "section": "Education 1", "value": ""},
+              date("school.from", "From*", "Year"), date("school.to", "To (Actual or Expected)*", "Year")]
+    after = [{"id": "available", "kind": "text", "label": "Available from", "section": "Availability", "value": ""},
+             {"id": "start", "kind": "text", "label": "Start Date", "value": ""}]
+    plan = plan_autofill(job(1) + job(2) + school + after, _person())
+    filled = {f["id"]: f["value"] for f in plan["to_fill"]}
+    rules = {f["id"]: f["rule"] for f in plan["to_fill"]}
+    # _person(): Example Fab from 2022-06 to present, ASM from 2019-01 to 2022-05
+    assert (filled["from1.month"], filled["from1.year"]) == ("06", "2022")
+    assert (filled["from2.month"], filled["from2.year"]) == ("01", "2019")
+    assert (filled["to2.month"], filled["to2.year"]) == ("05", "2022")
+    assert rules["to2.month"] == "work_history[2].end"
+    # the job still held: "I currently work here" ticked and its To left empty, as in a sectioned block
+    assert filled["current1"] is True and filled["current2"] is False
+    assert "to1.month" not in filled and "to1.year" not in filled
+    assert (filled["school.from"], filled["school.to"]) == ("2017", "2019")  # the school's own years
+    assert not [f for f in plan["needs_input"] if f.get("sublabel")], plan["needs_input"]  # no date asked
+    assert filled["company2"] == "ASM"
+    # a date after a box of another section isn't the last block's
+    assert not rules.get("start", "").startswith(("work_history", "education_history"))
+
+
 def test_a_citizen_holds_no_nonimmigrant_visa():
     """Texas Instruments (live, Oct 2026) asks whether you hold an H, L, E, J or F visa."""
     q = f("U.S. Immigration Form: Do you currently hold an H, L, E, J, or F nonimmigrant visa (examples: H-1B, "
