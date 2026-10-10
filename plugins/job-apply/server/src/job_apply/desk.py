@@ -31,7 +31,7 @@ from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, Response
 from starlette.routing import Route
 
-from . import config
+from . import config, report
 from .pipeline import DESK_PASSWORDS, Applier, question_key
 from .ats import detect_ats
 from .postings import FetchError, Posting, fetch_posting, finalize, parse_html
@@ -134,6 +134,7 @@ class Desk:
             r("/api/apply", self.apply_view, methods=["POST"]),
             r("/api/answer", self.answer_view, methods=["POST"]),
             r("/api/job/{job_id:int}/{action}", self.job_view, methods=["POST"]),
+            r("/api/notes/{action}", self.notes_view, methods=["POST"]),
             r("/api/settings", self.settings_view, methods=["POST"]),
             r("/api/password", self.password_view, methods=["POST"]),
             r("/api/add", self.add_view, methods=["POST"]),
@@ -288,14 +289,30 @@ class Desk:
                 job = self.srv.tracker().get(job_id)
                 if job is None:
                     raise KeyError(f"No job with id {job_id}")
-                from . import report
-
                 return JSONResponse(await asyncio.to_thread(report.build, job, a.runs.get(job_id)))
             else:
                 return JSONResponse({"error": f"unknown action {action!r}"}, status_code=404)
         except (KeyError, ValueError) as e:
             return self._bad(e)
         return JSONResponse({"ok": True})
+
+    async def notes_view(self, request: Request) -> Response:
+        """The notes the desk took on its stops (report.take_note): shown as the one issue they'd
+        make, filed on GitHub by the person, then cleared."""
+        if not self._allowed(request, api=True):
+            return self._forbidden()
+        action = request.path_params["action"]
+        if action == "show":
+            return JSONResponse(await asyncio.to_thread(report.notes))
+        if action != "clear":
+            return JSONResponse({"error": f"unknown action {action!r}"}, status_code=404)
+        try:
+            ids = (await self._body(request)).get("ids")
+            if not isinstance(ids, list) or not all(isinstance(i, str) for i in ids):
+                raise ValueError("ids should be a list of the notes shown")
+        except ValueError as e:
+            return self._bad(e)
+        return JSONResponse({"cleared": report.clear_notes(ids)})
 
     async def settings_view(self, request: Request) -> Response:
         if not self._allowed(request, api=True):
@@ -531,6 +548,7 @@ class Desk:
             "current": self.applier.current,
             "queued": [jid for kind, jid in self.applier.tasks if kind == "apply"],
             "counts": t.counts(),
+            "notes": report.notes_count(),  # notes on the desk's stops, waiting to be filed
         }
 
 

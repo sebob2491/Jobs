@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import logging
 import re
 import time
 from collections import deque
@@ -26,7 +27,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-from . import config, mailbox
+from . import config, mailbox, report
 from .ats import ATS_NAMES, detect_ats, shared_system
 from .autofill import clean_label, entry_of, is_empty_value, norm, plan_autofill, tailored_document
 from .browser import (TabClosed, _accepts_cookies, _cookie_setting, confirmations, declines_cookies, final_text,
@@ -45,6 +46,11 @@ HANDS_ON = {"bot_check", "sign_in", "email_code"}
 # and carried on with once its tab is past the pause.
 HANDS_ON_IDLE = 5 * 60
 HANDS_ON_TIMEOUT = 45 * 60  # the longest it holds the queue, even for someone at work in the tab
+# Stops the desk most likely got wrong, noted for the developer with nothing pressed (report.take_note),
+# as are questions whose answers didn't go in. A bot check, a CAPTCHA, an emailed code, the person's
+# own Submit, a tailored resume and a question the profile doesn't answer are the person's by design.
+# Practice mode notes them too: practice runs are where they're looked for
+NOTED = {"stuck", "sign_in", "submit_failed", "check_submit"}
 POLL_SECONDS = 3.0
 # With an email app password saved, a job waiting on an emailed code or link has the inbox
 # looked at this often, for this long after it began waiting
@@ -794,6 +800,17 @@ class Applier:
         run.paused_host = urlparse(run.url).hostname or ""
         run.hold_host = ""
         self._log(run, reason)
+        if need in NOTED or need == "questions" and any(q.get("error") for q in run.questions):
+            self._take_note(run)
+
+    def _take_note(self, run: Run) -> None:
+        """A note on this stop, for the person to file on the desk's Notes. Whatever goes wrong
+        taking it, the job still pauses and the queue goes on."""
+        try:
+            job = self.srv.tracker().get(run.job_id, with_description=False) or {"id": run.job_id}
+            report.take_note(job, run)
+        except Exception:
+            logging.getLogger(__name__).warning("couldn't take a note on job %s's stop", run.job_id, exc_info=True)
 
     async def _look(self) -> tuple[dict[str, Any], str]:
         data = await self.srv.inspect_form(include_dropdown_options=False)

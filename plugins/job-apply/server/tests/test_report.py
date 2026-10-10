@@ -162,3 +162,56 @@ def test_an_employee_id_is_taken_out_of_a_report(job_apply_home):
     r = Run(11, "Technician", "Acme Semi", status="needs_you", need="stuck", log=["filled Employee ID with 88812345"])
     text = report.build(job, r, person)["preview"]
     assert "88812345" not in text and "filled Employee ID with" in text
+
+
+def test_a_note_holds_the_stop_but_not_the_person_their_answers_or_the_employer(job_apply_home):
+    """Notes are filed many at once in one public issue: each is scrubbed as a report is, holds
+    no field's value and none of the person's answers (a fill's error quotes them), and names
+    the employer by its job system only, or the issue would list every employer applied to."""
+    url = "https://acme.wd1.myworkdayjobs.com/External/job/x/apply"
+    job = {"id": 12, "title": "Field Service Engineer", "company": "Acme Semi", "ats": "workday",
+           "url": "https://acme.wd1.myworkdayjobs.com/External/job/x?source=jquill77"}
+    r = Run(12, "Field Service Engineer", "Acme Semi", status="needs_you", need="questions",
+            reason="1 question(s) your profile doesn't answer.", url=url + "?sid=SESS123",
+            log=[f"step {i}" for i in range(30)] + [
+                f"opened {url};jsessionid=SESS123?email=jquill77%40example.org",
+                "filled 12 field(s) for Jordan Quill on Acme Semi's site, from Blue Mesa Fab and Copperline Tools",
+                "left 1 optional question(s) empty, as none of their choices is your profile's answer: "
+                "“Veteran status” (yours: “Protected veteran”)"],
+            page_info={"url": url + "?sid=SESS123", "title": "Apply to Acme Semi - Jordan Quill",
+                       "headings": ["My Information"], "actions": ["Save and Continue"], "errors": [],
+                       "fields": [{"label": "City", "kind": "text", "required": True, "empty": False,
+                                   "value": "Gilbertville"},
+                                  {"label": "Phone", "kind": "text", "required": True, "empty": True}]},
+            questions=[{"id": "a", "label": "Are you authorized to work in the US?", "kind": "select",
+                        "options": ["Select One", "Yes", "No"], "section": "Application Questions", "value": "Maybe",
+                        "error": "ValueError: Picked 'Klingon' but the field shows 'Select One'; set it by hand"},
+                       {"id": "b", "label": "Highest degree", "kind": "combobox",
+                        "error": "your profile's answer “Doctorate of Wizardry” isn't one of its choices"},
+                       {"id": "c", "label": "Country", "kind": "combobox",
+                        "error": "ValueError: 'Atlantis' doesn't match any suggestion: ['Albania', 'Algeria']"}])
+    text = report.note(job, r, PERSON)
+    assert text.startswith("## questions: Field Service Engineer, at a Workday employer\n")
+    assert "**Job system:** workday" in text and "Acme Semi" not in text and "the employer's site" in text
+    assert "1 question(s) your profile doesn't answer." in text
+    assert "15. " in text and "16. " not in text and "step 17\n" not in text  # its last 15 steps
+    assert f"{url} (Apply to the employer - REDACTED)" in text  # an address keeps its host and page only
+    assert "- City (text, required, filled)" in text and "- Phone (text, required, empty)" in text
+    assert ("- Are you authorized to work in the US? (select, 3 choices) [Application Questions]: "
+            "ValueError: Picked … but the field shows …; set it by hand") in text
+    assert "- Highest degree (combobox): your profile's answer … isn't one of its choices" in text
+    assert "- Country (combobox): ValueError: … doesn't match any suggestion\n" in text
+    assert "(yours: …)" in text
+    for private in (*PRIVATE, *MORE_PRIVATE, "SESS123", "jsessionid", "Maybe", "Klingon", "Wizardry", "Atlantis",
+                    "Albania", "Protected veteran"):
+        assert private not in text, private
+
+
+def test_a_note_says_which_job_system_the_job_stopped_on(job_apply_home):
+    """The page it stopped on names the system (a company's posting that sends the application
+    to Workday), else the posting's; a careers site of the employer's own is said so."""
+    r = Run(13, "Technician", "Acme Semi", need="stuck", url="https://acme.wd1.myworkdayjobs.com/External/apply")
+    assert "at a Workday employer" in report.note({"id": 13, "ats": "company_site"}, r, PERSON)
+    r.url = "https://careers.acme-semi.example/apply"
+    assert "at an iCIMS employer" in report.note({"id": 13, "ats": "icims"}, r, PERSON)
+    assert "at an employer with its own careers site" in report.note({"id": 13, "ats": "company_site"}, r, PERSON)

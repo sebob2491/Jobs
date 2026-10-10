@@ -127,6 +127,7 @@ footer { max-width: 1240px; margin: 0 auto; padding: 0 16px 24px; color: var(--m
     <span id="mode"></span>
     <span class="spacer"></span>
     <span class="small" id="searched"></span>
+    <button class="link" id="notes-btn" data-act="notes" title="Notes the desk took where it stopped on something it most likely got wrong, for you to file" hidden>Notes</button>
     <button class="link" id="alerts" data-act="alerts" hidden>Alert me</button>
     <button id="find" data-act="find">Find jobs</button>
   </div>
@@ -214,6 +215,22 @@ footer { max-width: 1240px; margin: 0 auto; padding: 0 16px 24px; color: var(--m
     <button data-act="report-close">Close</button>
   </div>
 </dialog>
+<dialog id="notes" aria-labelledby="notes-h">
+  <h2 id="notes-h">Notes on the desk's stops</h2>
+  <p>Each time a job stopped on something the desk most likely got wrong, it took a note. This is everything the
+    issue will hold, with your details and answers taken out and each employer said by its job system, not named.
+    GitHub issues are public: anyone can read this one, and the pages' addresses still show which sites they were
+    on. Read it over first. Once it's filed, press Clear.</p>
+  <pre id="notes-text"></pre>
+  <p class="small" id="notes-cut" hidden>It's too long for the issue page to open with all of it. Press Copy all
+    first, then on GitHub replace the issue's text with what you copied.</p>
+  <div class="actions">
+    <a class="button primary" id="notes-open" target="_blank" rel="noopener">File on GitHub</a>
+    <button id="notes-copy" data-act="notes-copy">Copy all</button>
+    <button data-act="notes-clear">Clear</button>
+    <button data-act="notes-close">Close</button>
+  </div>
+</dialog>
 <footer>
   The desk fills applications in the automation browser window and stops at each review page.
   It only submits when you press Submit, or when "Submit for me" is on. LinkedIn and Indeed are always submitted by you.
@@ -231,6 +248,7 @@ let filter = "recommended";
 let state = null;
 let busy = false;
 let reporting = false;  // a problem report being written
+let notesShown = [];  // the notes in the Notes panel: Clear removes those, not one taken since
 let autoSearchedAt = 0;
 const STALE_SEARCH = 12 * 3600;  // seconds: listings older than this are searched again, also on a desk left open
 
@@ -605,12 +623,34 @@ function announce() {
   announced = keys;
 }
 
+// Notes the desk took on its stops (shown only when there are some), filed by the person
+function renderNotes() {
+  const n = state.notes || 0;
+  $("notes-btn").hidden = !n;
+  $("notes-btn").textContent = `Notes (${n})`;
+}
+
+async function copyNotes() {
+  try {
+    await navigator.clipboard.writeText($("notes-text").textContent);
+  } catch (e) {  // no clipboard here: the text is selected instead, to copy by hand
+    const range = document.createRange();
+    range.selectNodeContents($("notes-text"));
+    getSelection().removeAllRanges();
+    getSelection().addRange(range);
+    if (!document.execCommand("copy")) { alert("Couldn't copy it: the text is selected, so press Ctrl+C (Cmd+C on a Mac)."); return; }
+  }
+  $("notes-copy").textContent = "Copied";
+  setTimeout(() => { $("notes-copy").textContent = "Copy all"; }, 2000);
+}
+
 function render() {
   if (!state) return;
   renderHeader();
   renderRows();
   renderSide();
   renderAlerts();
+  renderNotes();
   announce();
 }
 
@@ -667,6 +707,21 @@ document.addEventListener("click", (e) => {
   if (!state && (a || jobAct)) return;  // the page hasn't loaded yet
   if (a === "find") act(() => api("/api/search", {}));
   if (a === "report-close") $("report").close();
+  if (a === "notes") {
+    act(async () => {
+      const out = await api("/api/notes/show", {});
+      notesShown = out.notes.map((n) => n.id);
+      $("notes-text").textContent = out.text;
+      $("notes-open").href = out.issue_url;
+      $("notes-cut").hidden = !out.cut;
+      $("notes").showModal();
+    }, false);
+  }
+  if (a === "notes-copy") copyNotes();
+  if (a === "notes-close") $("notes").close();
+  if (a === "notes-clear" && confirm("Clear these notes? Do this once they're filed: they can't be brought back.")) {
+    act(async () => { await api("/api/notes/clear", {ids: notesShown}); $("notes").close(); });
+  }
   if (a === "alerts" && "Notification" in window) {
     if (Notification.permission === "granted") {
       try { localStorage.setItem(ALERTS_KEY, alertsOn() ? "off" : "on"); } catch (err) { /* stays as it was */ }

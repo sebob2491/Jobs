@@ -3327,3 +3327,101 @@ def test_a_greyed_out_next_names_the_required_boxes_still_empty(srv):
     run(page.set_input_files("#resume", files=[{"name": "resume.pdf", "mimeType": "application/pdf", "buffer": b"%PDF-1.4"}]))
     data = run(srv.browser.inspect(False))
     assert not pipeline._greyed_step(data) and pipeline._unanswered(data) == ""
+
+
+def _notes(home: Path) -> list[str]:
+    folder = home / "notes"
+    return [p.read_text() for p in sorted(folder.glob("*.md"))] if folder.is_dir() else []
+
+
+def _paused_run(srv, need="stuck", reason="I couldn't find the button that moves this application on.", **kw):
+    job = srv.add_job(url="https://acme.wd1.myworkdayjobs.com/External/job/x", title="FSE", company="Acme Fab")["job"]
+    applier = Applier(srv)
+    r = Run(job["id"], "FSE", "Acme Fab", status="running", url="https://acme.wd1.myworkdayjobs.com/External/job/x/apply",
+            page_info={"url": "https://acme.wd1.myworkdayjobs.com/External/job/x/apply", "title": "Apply",
+                       "headings": ["My Information"], "actions": ["Save and Continue"], "errors": [],
+                       "fields": [{"label": "First Name", "kind": "text", "required": True, "empty": False}]})
+    applier.runs[job["id"]] = r
+    applier._pause(r, need, reason, **kw)
+    return applier, r
+
+
+def test_a_stop_the_desk_likely_got_wrong_is_noted_once(srv, job_apply_home, monkeypatch):
+    """The owner told the developer about each stop with a Report a problem per job. A stop
+    that's likely the desk's own is now noted with nothing pressed, once: the same job stopping
+    the same way again isn't noted twice. In practice mode too, where the owner looks for them."""
+    monkeypatch.setenv("JOB_APPLY_NEVER_SUBMIT", "1")
+    applier, r = _paused_run(srv)
+    assert (r.status, r.need) == ("needs_you", "stuck")
+    [text] = _notes(job_apply_home)
+    assert "I couldn't find the button that moves this application on." in text and "My Information" in text
+    applier._pause(r, "stuck", "I couldn't find the button that moves this application on.")
+    assert len(_notes(job_apply_home)) == 1
+    applier._pause(r, "submit_failed", "I pressed Submit, but the form is still there.")
+    assert len(_notes(job_apply_home)) == 2
+
+
+@pytest.mark.parametrize("need", ["bot_check", "captcha", "email_code", "your_submit", "tailor", "questions"])
+def test_a_stop_thats_the_persons_by_design_isnt_noted(srv, job_apply_home, need):
+    """A bot check, a CAPTCHA, an emailed code, the person's own Submit, a tailored resume and
+    questions the profile doesn't answer are theirs to do, not the desk getting it wrong."""
+    applier, r = _paused_run(srv, need, "Over to you.",
+                             questions=[{"id": "1", "label": "Why us?", "kind": "text", "required": True}])
+    assert r.need == need and _notes(job_apply_home) == []
+    applier._pause(r, "stuck", "The page didn't move on.")  # the same job stuck after it is noted
+    assert len(_notes(job_apply_home)) == 1
+
+
+def test_answers_that_didnt_go_in_are_noted_without_the_answer(srv, job_apply_home):
+    """A questions stop is noted when a fill failed there: the desk picked an answer and the box
+    didn't take it. What was picked is the person's, so it isn't in the note."""
+    _paused_run(srv, "questions", "1 question(s) your profile doesn't answer.", questions=[
+        {"id": "1", "label": "Are you a veteran?", "kind": "select", "options": ["Select One", "Yes", "No"],
+         "required": True, "error": "ValueError: Picked 'I am a protected veteran' but the field shows 'Select One'"}])
+    [text] = _notes(job_apply_home)
+    assert "- Are you a veteran? (select, 3 choices): ValueError: Picked … but the field shows …" in text
+    assert "protected veteran" not in text
+
+
+def test_a_note_that_cant_be_taken_doesnt_stop_the_pause(srv, job_apply_home, monkeypatch):
+    def broken(job, run, profile=None):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(pipeline.report, "take_note", broken)
+    applier, r = _paused_run(srv)
+    assert (r.status, r.need, r.log[-1]) == ("needs_you", "stuck", r.reason)
+    assert _notes(job_apply_home) == []
+
+
+def test_a_live_runs_stops_are_noted_without_the_persons_answers(srv, monkeypatch, job_apply_home):
+    """Through the desk's own run: a page that turns the browser away is noted; questions the
+    profile doesn't answer aren't, until an answer the person gave doesn't go in, and then the
+    note says why without the answer."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    turned_away = srv.add_job(url=fixture_url("site/forbidden.html"), title="Analyst", company="Example Health")["job"]
+    asks = srv.add_job(url=fixture_url("site/sf-select-form.html"), title="ET", company="Example Semi")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            first = applier.enqueue(turned_away["id"])
+            await until(lambda: first.status not in ("queued", "running"), about=state(first))
+            assert first.need == "stuck", first.reason
+            r = applier.enqueue(asks["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            assert r.need == "questions", (r.reason, r.log)
+            assert len(_notes(job_apply_home)) == 1  # questions the profile doesn't answer: not noted
+            r.once[question_key("Preferred Locale/Language")] = "Klingon"
+            applier.enqueue(asks["id"], front=True)
+            await until(lambda: any("didn't go in" in line for line in r.log) and r.status not in ("queued", "running"),
+                        about=state(r))
+            assert r.need == "questions" and "Klingon" in r.questions[0]["error"], (r.reason, r.questions)
+        finally:
+            await applier.stop()
+
+    run(go())
+    forbidden, answers = _notes(job_apply_home)
+    assert "403 Forbidden" in forbidden and "## stuck: Analyst, at an employer with its own careers site" in forbidden
+    assert "Example Health" not in forbidden
+    assert "- Preferred Locale/Language (" in answers and "Klingon" not in answers and "Example Semi" not in answers

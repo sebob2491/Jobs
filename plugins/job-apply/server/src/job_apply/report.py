@@ -6,26 +6,42 @@ is shown to the person, and only they file it: the issue page opens with that te
 in. The saved pages go in report.zip beside it, scrubbed, but they are never put in the
 issue: a filled-in form still shows answers no scrubber can know are the person's (the
 choices they picked, say). Screenshots are never included: a picture can't be scrubbed.
+
+Notes are the same, made lighter for filing many at once: the desk takes one by itself when
+a job stops on something it most likely got wrong (pipeline.NOTED), and the person files
+them together in one issue from the desk's Notes. A note holds no answers, and says the
+employer by its job system ("a Workday employer"), not its name: only the addresses of the
+pages show which site it was.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import zipfile
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import quote
 
 from . import config
+from .ats import ATS_NAMES, detect_ats
 from .autofill import is_empty_value
 from .fixtures import REDACTED, _without_query, convert, personal_strings, redact
 
 PAGES = 3  # the latest saved pages put in a report
 ISSUE_BODY = 6000  # characters of the report in the issue's address at most...
 ISSUE_URL = 7000  # ...and of the whole address, once encoded (GitHub refuses one much over 8 KB)
+NOTES = 50  # notes kept at most: the oldest go first
+NOTE_STEPS = 15  # the desk's last steps in a note
+_SEEN = 1000  # the stops already noted that are remembered, so one isn't noted again after a Clear
 _URL = re.compile(r"https?://[^\s\"'<>)\]]+")
+# Quoted text in a fill's error: the answer being filled, what the box showed instead ("Picked 'No'
+# but the field shows 'Select One'"). Python quotes it with ' or ", the desk with curly quotes
+_QUOTED = re.compile(r"\u201c[^\u201d]*\u201d|(?<!\w)'[^'\n]*'(?!\w)|(?<!\w)\"[^\"\n]*\"(?!\w)")
+# The profile's answer named in the desk's own words ("(yours: “No”)", "your profile's answer “X”")
+_ANSWER_SAID = re.compile(r"(yours: |your profile's answer )\u201c[^\u201d]*\u201d")
 
 
 def _repository() -> str:
@@ -67,15 +83,31 @@ def _fields(meta: dict[str, Any]) -> list[str]:
     return out
 
 
+def _scrubber(secrets: list[str]) -> Callable[[Any], str]:
+    """Text with the person's details taken out: addresses lose their queries (session ids,
+    tokens) before the redaction."""
+    def scrub(text: Any) -> str:
+        return redact(_URL.sub(lambda m: _without_query(m.group(0)), str(text or "")), secrets)
+    return scrub
+
+
+def _without_answers(error: Any) -> str:
+    """What went wrong with a fill, without what was being filled: the error quotes the answer,
+    what the box showed, and the list's choices after a colon."""
+    text = re.sub(r":\s*\[.*$", "", str(error or "").strip().split("\n")[0])
+    return _QUOTED.sub("\u2026", text)[:200]
+
+
 def _where_in_page(f: dict[str, Any]) -> str:
     """The block and sub-box a field sits in ("Work Experience 2", "Month"), when it says."""
     where = " / ".join(str(f.get(k)) for k in ("section", "sublabel") if f.get(k))
     return f" [{where}]" if where else ""
 
 
-def _paused_page(info: dict[str, Any], questions: list[dict[str, Any]]) -> list[str]:
+def _paused_page(info: dict[str, Any], questions: list[dict[str, Any]], errors: bool = False) -> list[str]:
     """The page the job stopped on, as the desk read it (headings, buttons, boxes: never what's
-    in them), and the questions it asked there with where each sits on the page."""
+    in them), and the questions it asked there with where each sits on the page. `errors`:
+    with why a fill didn't go in, less the answer it quotes."""
     if not info and not questions:
         return []
     out = ["", "### The page it stopped on"]
@@ -97,7 +129,8 @@ def _paused_page(info: dict[str, Any], questions: list[dict[str, Any]]) -> list[
             if isinstance(q, dict):
                 options = q.get("options") or []
                 out.append(f"- {q.get('label') or '?'} ({q.get('kind', '?')}"
-                           + (f", {len(options)} choices" if options else "") + f"){_where_in_page(q)}")
+                           + (f", {len(options)} choices" if options else "") + f"){_where_in_page(q)}"
+                           + (f": {_without_answers(q['error'])}" if errors and q.get("error") else ""))
     return out
 
 
@@ -116,12 +149,13 @@ def _folder(job_id: int) -> Path:
     raise RuntimeError(f"couldn't make a folder for the report beside {base}")
 
 
-def _issue_url(title: str, text: str) -> str:
+def _issue_url(title: str, text: str, rest: str = "the whole report is in report.md") -> str:
     """The new-issue address with as much of the report as fits: the cap is on the encoded
-    address, since encoding a quote or a line break makes it several characters."""
+    address, since encoding a quote or a line break makes it several characters. `rest`: where
+    the whole text is, said where it's cut."""
     repo, limit = _repository(), ISSUE_BODY
     while True:
-        body = text if len(text) <= limit else text[:limit] + "\n\n(cut short: the whole report is in report.md)\n"
+        body = text if len(text) <= limit else text[:limit] + f"\n\n(cut short: {rest})\n"
         url = f"{repo}/issues/new?title={quote(title)}&body={quote(body)}&labels=report"
         if len(url) <= ISSUE_URL or limit <= 200:
             return url
@@ -134,10 +168,7 @@ def build(job: dict[str, Any], run: Any = None, profile: config.Profile | None =
     is filed (`preview`), and the address of a new GitHub issue with that text (`issue_url`)."""
     prof = profile or config.Profile.load()
     secrets = report_strings(prof)
-
-    def scrub(text: Any) -> str:  # addresses lose their queries (session ids, tokens) before the redaction
-        return redact(_URL.sub(lambda m: _without_query(m.group(0)), str(text or "")), secrets)
-
+    scrub = _scrubber(secrets)
     out_dir = _folder(int(job["id"]))
     pages_dir = out_dir / "pages"
     pages_dir.mkdir()
@@ -179,3 +210,123 @@ def build(job: dict[str, Any], run: Any = None, profile: config.Profile | None =
     title = f"Report: {scrub(job.get('company'))}, {getattr(run, 'need', '') or getattr(run, 'status', '') or 'a problem'}"
     return {"folder": str(out_dir), "zip": str(zip_path), "preview": text, "issue_url": _issue_url(title, text),
             "pages": pages}
+
+
+def notes_dir() -> Path:
+    return config.home() / "notes"
+
+
+def _note_files() -> list[Path]:
+    folder = notes_dir()
+    return sorted(folder.glob("*.md")) if folder.is_dir() else []  # oldest first: each name starts with its time
+
+
+def _job_system(job: dict[str, Any], run: Any) -> tuple[str, str]:
+    """The job system a job stopped on (the page's, else the posting's), and the employer said
+    by it alone: "a Workday employer"."""
+    found = [detect_ats(url) for url in (getattr(run, "url", ""), job.get("apply_url"), job.get("url")) if url]
+    ats = next((a for a in [*found[:1], str(job.get("ats") or ""), *found[1:]] if a and a != "company_site"), "")
+    if not ats:
+        return "company_site", "an employer with its own careers site"
+    name = ATS_NAMES.get(ats, ats)
+    return ats, f"{'an' if name[:1] in 'AEIOaeio' else 'a'} {name} employer"
+
+
+def _note_scrubber(job: dict[str, Any], run: Any, prof: config.Profile) -> Callable[[Any], str]:
+    """`_scrubber`, and also: the profile's answers the desk names in its own words taken out,
+    and the employer applied to called "the employer" outside web addresses."""
+    scrub = _scrubber(report_strings(prof))
+    names = {str(n).strip() for n in (job.get("company"), getattr(run, "company", ""))
+             if n and len(str(n).strip()) >= 2}
+    spaced = [r"[\s.,]+".join(map(re.escape, n.split())) for n in sorted(names, key=len, reverse=True)]
+    employer = re.compile(r"(?<!\w)(?:" + "|".join(spaced) + r")(?!\w)", re.I) if spaced else None
+
+    def unnamed(text: str) -> str:
+        if employer is None:
+            return text
+        out, at = [], 0
+        for m in _URL.finditer(text):
+            out += [employer.sub("the employer", text[at:m.start()]), m.group(0)]
+            at = m.end()
+        return "".join(out) + employer.sub("the employer", text[at:])
+
+    return lambda text: scrub(unnamed(_ANSWER_SAID.sub("\\1\u2026", str(text or ""))))
+
+
+def note(job: dict[str, Any], run: Any, profile: config.Profile | None = None) -> str:
+    """A note on one job's stop: what the desk said, its last steps, the page it stopped on and
+    its questions, with why any answer didn't go in. Notes are filed together in one public
+    issue, so on top of what `build` takes out, a note holds none of the person's answers, and
+    says the employer by its job system only: the issue could otherwise list every employer
+    they applied to."""
+    say = _note_scrubber(job, run, profile or config.Profile.load())
+    ats, employer = _job_system(job, run)
+    stop, title = getattr(run, "need", "") or getattr(run, "status", ""), job.get("title") or getattr(run, "title", "")
+    lines = [
+        f"## {stop}: {say(title)}, at {employer}",
+        f"**Plugin version:** {config.plugin_version() or 'unknown'} \u00b7 **Job system:** {ats} \u00b7 "
+        f"**Noted:** {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+        f"**What the desk said:** {say(getattr(run, 'reason', ''))}",
+    ]
+    steps = [say(s) for s in (getattr(run, "log", None) or [])][-NOTE_STEPS:]
+    if steps:
+        lines += ["", "### Its last steps", *[f"{i}. {s}" for i, s in enumerate(steps, 1)]]
+    lines += map(say, _paused_page(getattr(run, "page_info", None) or {}, getattr(run, "questions", None) or [],
+                                   errors=True))
+    return "\n".join(lines) + "\n"
+
+
+def take_note(job: dict[str, Any], run: Any, profile: config.Profile | None = None) -> Path | None:
+    """Keep a note on a job's stop in ~/.job-apply/notes/, once for each job, stop and reason: a
+    job that stops the same way again isn't noted twice, even after the notes are cleared. The
+    newest NOTES are kept. Returns the note's file, or None when this stop was noted before."""
+    folder = notes_dir()
+    folder.mkdir(parents=True, exist_ok=True)
+    which = f"{job['id']}\n{getattr(run, 'need', '')}\n{getattr(run, 'reason', '')}"
+    key = hashlib.sha256(which.encode()).hexdigest()[:16]
+    seen_file = folder / "seen.json"
+    try:
+        seen = json.loads(seen_file.read_text(encoding="utf-8"))
+        seen = [k for k in seen if isinstance(k, str)] if isinstance(seen, list) else []
+    except (OSError, ValueError):
+        seen = []
+    if key in seen:
+        return None
+    path = folder / f"{datetime.now().strftime('%Y%m%d-%H%M%S-%f')}-{int(job['id']):04d}-{key}.md"
+    path.write_text(note(job, run, profile), encoding="utf-8")
+    seen_file.write_text(json.dumps([*seen, key][-_SEEN:]), encoding="utf-8")
+    for old in _note_files()[:-NOTES]:
+        old.unlink(missing_ok=True)
+    return path
+
+
+def notes_count() -> int:
+    return len(_note_files())
+
+
+def notes() -> dict[str, Any]:
+    """The notes kept, oldest first, as one issue: its title, the whole text (for the desk's Copy
+    all), the new-issue address with as much of it as fits, and whether that's all of it."""
+    kept = []
+    for path in _note_files():
+        try:
+            kept.append({"id": path.stem, "text": path.read_text(encoding="utf-8").strip()})
+        except OSError:  # cleared meanwhile
+            continue
+    stops = f"{len(kept)} stop{'' if len(kept) == 1 else 's'}"
+    title = f"Live-run notes: {stops} (job-apply {config.plugin_version() or 'unknown'})"
+    end = (f"_Personal details found in the profile are shown as {REDACTED}. Employers are said by their job "
+           "system, not named. No answers, field values or screenshots are included._")
+    text = "\n\n".join([*(n["text"] for n in kept), end]) + "\n"
+    url = _issue_url(title, text, rest="the rest is in the text the Job Desk's Copy all copies")
+    return {"notes": kept, "title": title, "text": text, "issue_url": url, "cut": quote(text) not in url}
+
+
+def clear_notes(ids: list[str]) -> int:
+    """Remove these notes (the ones the person was shown): one taken since stays. Returns how many went."""
+    gone = 0
+    for path in _note_files():
+        if path.stem in ids:
+            path.unlink(missing_ok=True)
+            gone += 1
+    return gone
