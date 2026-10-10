@@ -201,3 +201,72 @@ def load_employers(path: Path = EMPLOYERS_FILE) -> list[dict[str, str]]:
             raise ValueError(f"{path.name}: each employer needs a name, list, role, system and why: {entry!r}")
         out.append({k: entry[k].strip() for k in ("name", "list", "role", "system", "why")})
     return out
+
+
+INBOX_WINDOW = 15 * 60  # seconds back inbox_report looks
+_EMAIL_ADDRESS = re.compile(r"[\w.+%'-]+@[\w-]+(?:\.[\w-]+)+")
+_LONG_NUMBER = re.compile(r"\d{4,}")  # (a code, a job's number: not needed to see what the mail is)
+
+
+def inbox_report(env: Mapping[str, str], senders: Iterable[str] = (), paused_at: float | None = None,
+                 now: float | None = None) -> dict[str, Any]:
+    """What the test identity's inbox holds from the last INBOX_WINDOW seconds, its Spam folder too, for
+    the live check to print when a run ends still waiting on an emailed code (live_smoke.py's LIVE_INBOX
+    line): the sender's domain only, the subject (with any email address as "<email>" and any long number
+    as "<digits>"), when it arrived (UTC, and in seconds after `paused_at`, when the run began waiting),
+    whether the desk's sender check lets it through (`senders`: the domains this job's code may come
+    from) and whether the desk reads a code from it (yes or no: never the code). Never the address, the
+    password or a message's text. A fault in reading it is said in "error", not raised."""
+    import email
+    import email.policy
+    import email.utils
+    import imaplib
+    import time
+
+    from job_apply import mailbox
+
+    now = time.time() if now is None else now
+    allowed = {d.lower() for d in senders}
+    report: dict[str, Any] = {"within_minutes": INBOX_WINDOW // 60, "senders_allowed": sorted(allowed), "messages": []}
+    address, password, _ = credentials(env)
+    try:
+        box, _ = mailbox.connect(address, password)
+    except mailbox.MailboxError as e:
+        return {**report, "error": str(e)}
+    seen: list[tuple[float, dict[str, Any]]] = []
+    try:
+        junk = mailbox.junk_folder(box)
+        report["spam_folder"] = junk is not None
+        day = time.strftime("%d-%b-%Y", time.gmtime(now - INBOX_WINDOW - 86400))
+        for label, folder in (("inbox", "INBOX"), ("spam", mailbox.quoted(junk) if junk else None)):
+            if folder is None:
+                continue
+            box.select(folder, readonly=True)
+            ids = (box.search(None, "SINCE", day)[1][0] or b"").split()[-mailbox.NEWEST:]
+            if not ids:
+                continue
+            for received, mid, head in mailbox.headers(box, ids, "FROM SUBJECT"):
+                if received < now - INBOX_WINDOW:
+                    continue
+                sender = str(head.get("From") or "")
+                shown = email.utils.parseaddr(sender)[1]
+                subject = " ".join(str(head.get("Subject") or "").split())
+                try:  # whether the desk reads a code from it
+                    raw = next((p for p in box.fetch(mid, "(BODY.PEEK[])")[1] if isinstance(p, tuple)), None)
+                    code = raw is not None and bool(mailbox.message_code(
+                        email.message_from_bytes(raw[1], policy=email.policy.default)))
+                except Exception:  # noqa: BLE001 - an odd message: said as one the desk can't read a code from
+                    code = False
+                seen.append((received, {
+                    "folder": label, "from": shown.rsplit("@", 1)[1].lower() if "@" in shown else "",
+                    "subject": _LONG_NUMBER.sub("<digits>", _EMAIL_ADDRESS.sub("<email>", subject))[:120],
+                    "arrived": time.strftime("%H:%M:%S", time.gmtime(received)),
+                    **({"after_pause_s": round(received - paused_at)} if paused_at else {}),
+                    "allowed": mailbox.sender_allowed(sender, allowed), "code": code,
+                }))
+    except (imaplib.IMAP4.error, OSError) as e:
+        report["error"] = f"{type(e).__name__}: {str(e)[:200]}"
+    finally:
+        mailbox.logout(box)
+    report["messages"] = [m for _, m in sorted(seen, key=lambda s: s[0])]
+    return report

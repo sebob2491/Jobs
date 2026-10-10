@@ -104,7 +104,7 @@ _SIGN_IN_ACTION = re.compile(r"^(sign in|log ?in|sign in with email)$", re.I)
 _SIGN_IN_SUBMIT = re.compile(r"^(submit|continue|next|go|enter|log ?on|sign ?on|sign in now|log ?in now)$", re.I)
 # The button pressed once the emailed code is in; one labelled Submit is left to the person (but on
 # the code step of an account the desk is making, with nothing else on it: _account_code_button)
-_AFTER_CODE = re.compile(r"^(verify|confirm|continue|next)( (code|e-?mail|account|my e-?mail))?$", re.I)
+_AFTER_CODE = re.compile(r"^(verify|confirm|continue|next)( ((?:pass)?code|e-?mail|account|my e-?mail))?$", re.I)
 # With settings.manage_accounts, the buttons of an email-first site's steps of making an account (an
 # Eightfold site's: its agreement's "Submit", the email's "Continue", "Use a one-time code" in place of
 # a password, and the code's "Submit")
@@ -1045,11 +1045,11 @@ class Applier:
                     return
                 await run.page.goto(found.value, wait_until="domcontentloaded", timeout=45000)
                 run.mail_done = True
-                self._log(run, f"opened the password reset link from your email (sent from {found.sender})")
+                self._log(run, f"opened the password reset link from your email ({_sent_from(found)})")
             else:
                 await self.srv.browser.visit(found.value)
                 run.mail_done = True
-                self._log(run, f"opened the confirmation link from your email (sent from {found.sender})")
+                self._log(run, f"opened the confirmation link from your email ({_sent_from(found)})")
                 if run.page is not None and not run.page.is_closed():
                     await run.page.reload()
                 if run.verifying:  # the account's verified: the Sign In it paused on (the same page, reloaded) is past the pause
@@ -1077,9 +1077,13 @@ class Applier:
         else:
             fills = [{"id": boxes[0]["id"], "value": found.value}]
         out = await srv.fill_form(fills)
-        if not out.get("ok"):
+        if not out.get("ok"):  # (looked for again at the next look; said once, so the log says why none went in)
+            why = next((str(r.get("error")) for r in out.get("results") or [] if not r.get("ok")), "")
+            said = f"found the code in your email but couldn't type it into the page ({why[:160]}); I'll try again"
+            if said not in run.log[-3:]:
+                self._log(run, said)
             return False
-        self._log(run, f"entered the code from your email (sent from {found.sender})")
+        self._log(run, f"entered the code from your email ({_sent_from(found)})")
         press = next((a for a in data.get("actions") or [] if not a.get("disabled")
                       and _AFTER_CODE.match(a.get("text", "").strip())), None)
         mine = press is None and (press := self._account_code_button(run, data)) is not None
@@ -3483,6 +3487,11 @@ def _site(run: Run, data: dict[str, Any]) -> str:
     if ats in ("company_site", ""):
         return f"{run.company}'s site" if run.company else "the site"
     return ATS_NAMES.get(ats, ats)
+
+
+def _sent_from(found: mailbox.Found) -> str:
+    """Whose email a code or link came from, for the log (and where it was, when not the inbox)."""
+    return f"sent from {found.sender}" + (", in your Spam folder" if found.spam else "")
 
 
 def question_key(label: str) -> str:

@@ -32,7 +32,10 @@ test_identity_employers.yaml (one or two per job system, each with its role; --c
 them): the desk makes the accounts, reads their emailed codes, agrees to notices and uploads a test
 resume made for the run, and still never submits (practice mode and JOB_APPLY_NEVER_SUBMIT stay on).
 The three values are masked in everything it prints and writes. --fake-passwords, --lists and
---role don't apply.
+--role don't apply. An employer whose run ends still waiting on an emailed code gets a LIVE_INBOX
+line: the inbox's mail of the last 15 minutes (its Spam folder too) as sender domain, subject
+(any email address shown as <email>) and arrival time, and whether the desk would read a code
+from each, to say why the desk missed it.
 """
 
 from __future__ import annotations
@@ -1212,6 +1215,8 @@ async def check_pipeline(company: dict[str, Any], out: Path, rec: dict[str, Any]
                 continue  # the desk read the emailed code or link, and went on by itself
             break
     finally:
+        if TEST_IDENTITY and run is not None and (rec.get("rounds") or [{}])[-1].get("need") == "email_code":
+            await report_inbox(company["name"], applier, run)
         await applier.stop()
         if (rec.get("rounds") or [{}])[-1].get("need") == "sign_in":
             rec["account_form"] = await account_form()
@@ -1245,6 +1250,22 @@ async def wait_for_mail(applier: Any, run: Any) -> bool:
             return True
         await asyncio.sleep(1)
     return False
+
+
+async def report_inbox(company: str, applier: Any, run: Any) -> None:
+    """--test-identity, a run that ended still waiting on an emailed code or link: print one LIVE_INBOX line
+    of what the inbox held in the last 15 minutes (live_identity.inbox_report: each message's sender's
+    domain, its subject, when it came, whether the desk's sender check lets it through and whether it reads
+    a code from it; the Spam folder too), so the next run says why the desk missed it. Never the inbox's
+    address or password, nor a message's text. A fault here is said on the line and nothing else changes."""
+    report: dict[str, Any] = {"company": company}
+    try:
+        senders = applier._mail_senders(run)  # (who this job's code may come from)
+        report.update(await asyncio.to_thread(live_identity.inbox_report, os.environ, senders, run.paused_at))
+        report["mail_problem"] = applier.mail_problem  # (what the desk itself said of reading the inbox)
+    except Exception as e:  # noqa: BLE001 - a diagnostic: the run's record stands without it
+        report["error"] = f"{type(e).__name__}: {str(e)[:200]}"
+    print("LIVE_INBOX " + json.dumps(report, default=str), flush=True)
 
 
 async def pipeline_main(companies: list[dict[str, Any]], out: Path, fixtures: bool = False) -> int:

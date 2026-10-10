@@ -2128,6 +2128,91 @@ def test_a_reset_with_a_captcha_makes_the_account_instead(srv, monkeypatch, job_
     assert r.need == "email_code", (r.reason, r.log)  # its passcode: the inbox's, or the person's
 
 
+def test_brassrings_six_box_passcode_is_entered_from_the_inbox_and_verified(srv, monkeypatch, job_apply_home):
+    """Edward Jones' BrassRing (the live check's test identity, Oct 2026): its Create Account emails a
+    passcode and asks for it in six boxes ("Enter 1st digit of your passcode" ... "Enter 6th digit of
+    your passcode") and a "Verify Passcode" button. The desk paused for it and watched the inbox, but
+    "Verify Passcode" isn't one of the buttons it presses after a code (Verify, Confirm, Continue, Next,
+    each with "code", "email" or "account"), so the digits went in and the person had to press it. The
+    code goes in a digit per box and Verify Passcode is pressed (and the log says the mail was in Spam, where
+    BrassRing's page says to look, when it was)."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    saved_password(monkeypatch)
+    as_test_identity(monkeypatch, job_apply_home)
+    asked: list[str] = []
+    inbox_with_code(monkeypatch, asked, spam=True)
+    job = srv.add_job(url=fixture_url("site/brassring-signin.html"), title="Senior Analyst",
+                      company="Example Corp")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.need == "email_code", about=state(r))  # its passcode: the inbox's
+            await until(lambda: "pressed \u201cVerify Passcode\u201d" in r.log, about=state(r))
+            return r, await brassring_did(r.page)
+        finally:
+            await applier.stop()
+
+    r, did = run(go())
+    assert did.get("accountEmail") == "sam.rivera@example.com", (did, r.log)
+    assert (did.get("passcode"), did.get("verifies")) == ("123456", 1), (did, r.log)
+    assert "code" in asked and "link" not in asked, asked
+    assert "entered the code from your email (sent from careers.example.com, in your Spam folder)" in r.log, r.log
+
+
+def test_a_code_the_page_wouldnt_take_is_said_in_the_log_and_tried_again(srv, monkeypatch, job_apply_home):
+    """The inbox's code was found but didn't go into the page (a dialog open over it, a box that wouldn't
+    take it): the desk looked again at the next poll and said nothing, so a run that ended waiting on its
+    code couldn't say whether it was found. The log says so, once, and the next look types it."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    saved_password(monkeypatch)
+    as_test_identity(monkeypatch, job_apply_home)
+    inbox_with_code(monkeypatch)
+    real, refused = srv.fill_form, []
+
+    async def fill_form(values):
+        if len(values) == 6 and len(refused) < 2:  # (the code's six boxes: refused twice)
+            refused.append(values)
+            return {"ok": False, "results": [{"id": values[0]["id"], "ok": False,
+                                               "error": "DialogOpen: “Notice” is open over the page"}]}
+        return await real(values)
+
+    monkeypatch.setattr(srv, "fill_form", fill_form)
+    job = srv.add_job(url=fixture_url("site/brassring-signin.html"), title="Senior Analyst",
+                      company="Example Corp")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: "pressed “Verify Passcode”" in r.log, about=state(r))
+            return r, await brassring_did(r.page)
+        finally:
+            await applier.stop()
+
+    r, did = run(go())
+    said = [line for line in r.log if line.startswith("found the code in your email but couldn't type it")]
+    assert said == ["found the code in your email but couldn't type it into the page (DialogOpen: “Notice” "
+                    "is open over the page); I'll try again"], r.log
+    assert len(refused) == 2 and (did.get("passcode"), did.get("verifies")) == ("123456", 1), (did, r.log)
+
+
+def test_whose_mail_a_brassring_job_reads_a_code_from(srv):
+    """Edward Jones' posting is on its own careers site and its application on BrassRing: the codes may
+    come from either's domains, and from the job system's own (Kenexa's, too)."""
+    job = srv.add_job(url="https://careers.edwardjones.com/job/12345/financial-analyst", title="Financial Analyst",
+                      company="Edward Jones",
+                      apply_url="https://sjobs.brassring.com/TGnewUI/Search/home/HomeWithPreLoad?partnerid=26235"
+                                "&siteid=5374#jobDetails=1427502_5374")["job"]
+    applier = Applier(srv)
+    r = Run(job["id"], "Financial Analyst", "Edward Jones",
+            url="https://sjobs.brassring.com/TGnewUI/Search/home/HomeWithPreLoad?partnerid=26235&siteid=5374")
+    assert applier._mail_senders(r) == {"edwardjones.com", "brassring.com", "kenexa.com"}
+
+
 def test_a_sign_in_page_good_for_one_visit_is_reached_again_through_the_posting(srv, monkeypatch, job_apply_home):
     """SuccessFactors' sign-in page (career?_s.crb=…) is good for one visit: going back to it after a
     reset the desk couldn't do showed "An error occurred while processing your request" (Arizona
@@ -5715,9 +5800,9 @@ def test_an_email_the_site_has_no_account_for_is_said_so_with_its_way_to_make_on
 EIGHTFOLD = "site/eightfold-create-account.html"
 
 
-def inbox_with_code(monkeypatch, codes=None):
+def inbox_with_code(monkeypatch, codes=None, spam=False):
     """An email app password saved, and an inbox whose sign-up code is 123456 (`codes`: each
-    kind asked for, in turn)."""
+    kind asked for, in turn; `spam`: it's in the Spam folder)."""
     monkeypatch.setattr(pipeline, "MAIL_POLL_SECONDS", 0)
     monkeypatch.setenv("JOB_APPLY_SECRET_EMAIL_PASSWORD", "an-app-password")
     monkeypatch.setattr(pipeline.mailbox, "imap_host", lambda address: "imap.example.com")
@@ -5725,7 +5810,9 @@ def inbox_with_code(monkeypatch, codes=None):
     def inbox(address, password, since, senders, want, allowed_link, before=None, look_back=None):
         if codes is not None:
             codes.append(want)
-        return pipeline.mailbox.Found("code", "123456", "careers.example.com", time.time()) if want == "code" else None
+        found = pipeline.mailbox.Found("code", "123456", "careers.example.com", time.time())
+        found.spam = spam
+        return found if want == "code" else None
 
     monkeypatch.setattr(pipeline.mailbox, "search", inbox)
 

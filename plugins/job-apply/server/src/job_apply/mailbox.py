@@ -4,7 +4,9 @@ Used only with an app password the person saved on the Job Desk (``email_passwor
 only while a job waits on an emailed code or link. The inbox is opened read-only and mail
 is fetched with BODY.PEEK, so nothing is marked read or changed. Only mail that arrived
 after the desk began waiting, from the job site it's waiting on (its own domain or its job
-system's), is looked at, and only the code or link is kept from it.
+system's), is looked at, and only the code or link is kept from it. The inbox first, and its
+Spam (Junk) folder when the inbox has nothing: a site's first mail to an address sometimes lands
+there (BrassRing's own page says to look there), and it's the same code from the same sender.
 """
 
 from __future__ import annotations
@@ -42,6 +44,7 @@ ATS_MAIL_DOMAINS = {
     "lever": {"lever.co"},
     "paycom": {"paycom.com", "paycomonline.net", "paycomonline.com"},
     "taleo": {"taleo.net", "oracle.com"},
+    "brassring": {"brassring.com", "kenexa.com"},  # (IBM Kenexa BrassRing: Kenexa's own domain too)
 }
 # A refusal says so, whatever else it says ("Too many login failures, try again later" is still one)
 _REFUSED = re.compile(r"authenticationfailed|authentication failed|invalid credentials|login failed|"
@@ -81,6 +84,7 @@ class Found:
     value: str
     sender: str  # the sender's domain, for the log
     received: float
+    spam: bool = False  # it was in the Spam (Junk) folder, not the inbox
 
 
 def imap_host(address: str) -> str | None:
@@ -181,13 +185,9 @@ def find_link(text: str, links: list[str], allowed_link: Callable[[str], bool], 
     return None
 
 
-def search(address: str, password: str, since: float, allowed: set[str], want: str,
-           allowed_link: Callable[[str], bool] = lambda url: False, before: float | None = None,
-           look_back: float = LOOK_BACK) -> Found | None:
-    """The newest code (want="code"), confirmation link (want="link") or password reset link
-    (want="reset") from an allowed
-    sender that arrived after `since` (a time.time()) less `look_back`, and before `before`
-    when given (mail after then is another waiting job's). Read-only: nothing is marked read."""
+def connect(address: str, password: str) -> tuple[imaplib.IMAP4, str]:
+    """The address's IMAP server, signed in with the app password, and its host. MailboxError for a
+    refused app password, an address the desk can't read mail for, and a network fault."""
     host = imap_host(address)
     if host is None:
         raise MailboxError(f"the desk can't read mail for {address.rsplit('@', 1)[-1]} addresses")
@@ -207,62 +207,145 @@ def search(address: str, password: str, since: float, allowed: set[str], want: s
         except UnicodeError as e:  # app passwords are plain letters and digits
             raise MailboxError("the email app password has characters an app password never has; "
                                "copy it again from your email account's app-password page") from e
-        box.select("INBOX", readonly=True)
-        day = time.strftime("%d-%b-%Y", time.gmtime(since - look_back - 86400))
-        _, data = box.search(None, "SINCE", day)
-        ids = (data[0] or b"").split()[-NEWEST:]
-        if not ids:
-            return None
-        # When each arrived and who sent it, in one round trip; the whole message only for the
-        # job site's own mail since the wait began
-        _, heads = box.fetch(b",".join(ids), "(INTERNALDATE BODY.PEEK[HEADER.FIELDS (FROM)])")  # type: ignore[arg-type]  # imaplib takes bytes too
-        wanted = []
-        for i, part in enumerate(heads):
-            if not isinstance(part, tuple):
-                continue
-            # the date comes before the header, or (as some servers order them) after it
-            after = heads[i + 1] if i + 1 < len(heads) and isinstance(heads[i + 1], bytes) else b""
+    except MailboxError:
+        logout(box)
+        raise
+    return box, host
+
+
+def logout(box: imaplib.IMAP4) -> None:
+    try:
+        box.logout()
+    except (imaplib.IMAP4.error, OSError):
+        pass
+
+
+# A line of the server's folder list: its flags, its separator and its name: (\HasNoChildren \Junk) "/" "[Gmail]/Spam"
+_LISTED = re.compile(r'^\((?P<flags>[^)]*)\)\s+(?:"(?:[^"\\]|\\.)*"|NIL)\s+(?P<name>"(?:[^"\\]|\\.)*"|\S+)\s*$')
+# The names mail services give that folder, for a server that doesn't flag it \Junk
+_JUNK_NAMES = {"spam", "junk", "junk e-mail", "junk email", "bulk mail", "bulk", "[gmail]/spam"}
+
+
+def junk_folder(box: imaplib.IMAP4) -> str | None:
+    """The account's Spam (Junk) folder: the one the server flags \\Junk (Gmail's "[Gmail]/Spam",
+    iCloud's "Junk"), else one named as mail services name it. None when it has none."""
+    _, listing = box.list()
+    named = None
+    for line in listing or []:
+        m = _LISTED.match(line.decode("utf-8", "replace")) if isinstance(line, bytes) else None
+        if m is None or "\\noselect" in m["flags"].lower():
+            continue
+        name = m["name"]
+        if name.startswith('"'):
+            name = re.sub(r"\\(.)", r"\1", name[1:-1])
+        if "\\junk" in m["flags"].lower():
+            return name
+        if named is None and name.lower() in _JUNK_NAMES:
+            named = name
+    return named
+
+
+def quoted(folder: str) -> str:
+    """A folder's name as SELECT takes it: quoted, which imaplib leaves as it is (or, newer, sees is quoted)."""
+    return '"' + folder.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def headers(box: imaplib.IMAP4, ids: list[bytes],
+            fields: str = "FROM") -> list[tuple[float, bytes, email.message.EmailMessage]]:
+    """When each of these messages arrived, its id and the header fields asked for ("FROM SUBJECT"),
+    in one round trip."""
+    _, heads = box.fetch(b",".join(ids), f"(INTERNALDATE BODY.PEEK[HEADER.FIELDS ({fields})])")  # type: ignore[arg-type]  # imaplib takes bytes too
+    out: list[tuple[float, bytes, email.message.EmailMessage]] = []
+    for i, part in enumerate(heads):
+        if not isinstance(part, tuple):
+            continue
+        # the date comes before the header, or (as some servers order them) after it
+        after = heads[i + 1] if i + 1 < len(heads) and isinstance(heads[i + 1], bytes) else b""
+        try:
+            stamp = imaplib.Internaldate2tuple(part[0]) or imaplib.Internaldate2tuple(after)  # type: ignore[arg-type]  # bytes: checked above
+            received = time.mktime(stamp) if stamp else 0.0
+            head = email.message_from_bytes(part[1], policy=email.policy.default)
+            mid = part[0].split()[0]
+        except Exception:  # an odd message: not one to read
+            continue
+        out.append((received, mid, head))
+    return out
+
+
+def message_code(msg: email.message.EmailMessage, texts: list[str] | None = None) -> str | None:
+    """The code in a message. `texts`: its words (_parts), where they're at hand."""
+    if texts is None:
+        texts = _parts(msg)[0]
+    # its words before its subject: "Your verification code" in a subject would
+    # otherwise read on into the body's first number (the job's)
+    subject = str(msg.get("Subject") or "")
+    # the subject on its own last, then running into the words (a subject "Your
+    # verification code" over a body "Use 482913 to verify your email")
+    tries = [*texts, subject, subject + "\n" + (texts[0] if texts else "")]
+    # a code straight after the words, in any of them, before a nearest guess: the
+    # plain text may only name the job's number while the HTML shows the code
+    answers = [_find_code(t) for t in tries]
+    return next((v for v, sure in answers if v and sure), None) or next((v for v, _ in answers if v), None)
+
+
+def search(address: str, password: str, since: float, allowed: set[str], want: str,
+           allowed_link: Callable[[str], bool] = lambda url: False, before: float | None = None,
+           look_back: float = LOOK_BACK) -> Found | None:
+    """The newest code (want="code"), confirmation link (want="link") or password reset link
+    (want="reset") from an allowed
+    sender that arrived after `since` (a time.time()) less `look_back`, and before `before`
+    when given (mail after then is another waiting job's). Read-only: nothing is marked read.
+    The inbox first; its Spam folder only when the inbox has none."""
+    box, host = connect(address, password)
+    try:
+        args = (since, allowed, want, allowed_link, before, look_back)
+        found = _scan(box, "INBOX", *args)
+        if found is None:
             try:
-                stamp = imaplib.Internaldate2tuple(part[0]) or imaplib.Internaldate2tuple(after)  # type: ignore[arg-type]  # bytes: checked above
-                received = time.mktime(stamp) if stamp else 0.0
-                sender = str(email.message_from_bytes(part[1], policy=email.policy.default).get("From") or "")
-                mid = part[0].split()[0]
-            except Exception:  # an odd message: not one to read
-                continue
-            if received >= since - look_back and (before is None or received < before) and sender_allowed(sender, allowed):
-                wanted.append((received, mid, sender))
-        for received, mid, sender in sorted(wanted, key=lambda w: w[0], reverse=True):  # newest first
-            _, parts = box.fetch(mid, "(BODY.PEEK[])")  # type: ignore[arg-type]  # imaplib takes bytes too
-            raw = next((p for p in parts if isinstance(p, tuple)), None)
-            if raw is None:
-                continue
-            try:
-                msg = email.message_from_bytes(raw[1], policy=email.policy.default)
-                texts, links = _parts(msg)
-                if want == "code":
-                    # its words before its subject: "Your verification code" in a subject would
-                    # otherwise read on into the body's first number (the job's)
-                    subject = str(msg.get("Subject") or "")
-                    # the subject on its own last, then running into the words (a subject "Your
-                    # verification code" over a body "Use 482913 to verify your email")
-                    tries = [*texts, subject, subject + "\n" + (texts[0] if texts else "")]
-                    # a code straight after the words, in any of them, before a nearest guess: the
-                    # plain text may only name the job's number while the HTML shows the code
-                    answers = [_find_code(t) for t in tries]
-                    value = next((v for v, sure in answers if v and sure), None) or \
-                        next((v for v, _ in answers if v), None)
-                else:
-                    words = _RESET_WORDS if want == "reset" else _LINK_WORDS
-                    value = next((v for t in texts or [""] if (v := find_link(t, links, allowed_link, words))), None)
-            except Exception:  # a malformed message: the next one
-                continue
-            if value:
-                return Found(want, value, email.utils.parseaddr(sender)[1].rsplit("@", 1)[-1], received)
-        return None
+                junk = junk_folder(box)
+                found = _scan(box, quoted(junk), *args) if junk else None
+            except imaplib.IMAP4.error:  # a Spam folder that won't open: the inbox's answer (none) stands
+                found = None
+            if found is not None:
+                found.spam = True
+        return found
     except (imaplib.IMAP4.error, OSError) as e:
         raise MailboxError(f"reading {host} failed: {e}") from e
     finally:
+        logout(box)
+
+
+def _scan(box: imaplib.IMAP4, folder: str, since: float, allowed: set[str], want: str,
+          allowed_link: Callable[[str], bool], before: float | None, look_back: float) -> Found | None:
+    """search's answer from one folder."""
+    box.select(folder, readonly=True)
+    day = time.strftime("%d-%b-%Y", time.gmtime(since - look_back - 86400))
+    _, data = box.search(None, "SINCE", day)
+    ids = (data[0] or b"").split()[-NEWEST:]
+    if not ids:
+        return None
+    # When each arrived and who sent it, in one round trip; the whole message only for the
+    # job site's own mail since the wait began
+    wanted = []
+    for received, mid, head in headers(box, ids):
+        sender = str(head.get("From") or "")
+        if received >= since - look_back and (before is None or received < before) and sender_allowed(sender, allowed):
+            wanted.append((received, mid, sender))
+    for received, mid, sender in sorted(wanted, key=lambda w: w[0], reverse=True):  # newest first
+        _, parts = box.fetch(mid, "(BODY.PEEK[])")  # type: ignore[arg-type]  # imaplib takes bytes too
+        raw = next((p for p in parts if isinstance(p, tuple)), None)
+        if raw is None:
+            continue
         try:
-            box.logout()
-        except (imaplib.IMAP4.error, OSError):
-            pass
+            msg = email.message_from_bytes(raw[1], policy=email.policy.default)
+            texts, links = _parts(msg)
+            if want == "code":
+                value = message_code(msg, texts)
+            else:
+                words = _RESET_WORDS if want == "reset" else _LINK_WORDS
+                value = next((v for t in texts or [""] if (v := find_link(t, links, allowed_link, words))), None)
+        except Exception:  # a malformed message: the next one
+            continue
+        if value:
+            return Found(want, value, email.utils.parseaddr(sender)[1].rsplit("@", 1)[-1], received)
+    return None

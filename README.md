@@ -232,8 +232,9 @@ an emailed code or confirmation link gets it from your inbox:
 - the desk types the code in and presses Verify, Confirm, Continue or Next (never
   Submit), or opens the link in its own browser and reloads the job's tab;
 - it reads only mail from that job's site or its job system, sent after the job began
-  waiting, for up to 15 minutes;
-- it opens the inbox read-only, so nothing is marked read, moved or deleted.
+  waiting, for up to 15 minutes, in your inbox and, when the inbox has none, in your
+  Spam (Junk) folder, where a site's first mail sometimes lands;
+- it opens them read-only, so nothing is marked read, moved or deleted.
 
 If the app password is turned down, the desk page says so and stops trying until you
 save it again (a new one, or the same one if the mail service was only having trouble).

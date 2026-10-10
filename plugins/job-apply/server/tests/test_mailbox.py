@@ -84,14 +84,18 @@ def _message(sender: str, subject: str, body: str, html: bool = False) -> bytes:
 
 
 class FakeImap:
-    """An IMAP server with a few messages; records how it was used."""
+    """An IMAP server with a few messages (its inbox's, and its Spam folder's); records how it was used."""
     instances: list["FakeImap"] = []
     messages: list[tuple[float, bytes]] = []
+    spam: list[tuple[float, bytes]] = []
+    junk_name: str | None = "[Gmail]/Spam"  # what the server calls its Spam folder (None: it has none)
+    junk_flagged = True  # and whether it flags it \Junk, as Gmail does
+    spam_broken = False  # a Spam folder that won't open
     accept = True
     login_error: Exception | None = None  # what the server does to a sign-in, when not a refusal
 
     def __init__(self, host, timeout=None):
-        self.host, self.calls = host, []
+        self.host, self.calls, self.folder = host, [], "INBOX"
         FakeImap.instances.append(self)
 
     def login(self, user, password):
@@ -102,13 +106,31 @@ class FakeImap:
         if not FakeImap.accept:
             raise imaplib.IMAP4.error("[AUTHENTICATIONFAILED] Invalid credentials")
 
+    def list(self, directory="", pattern="*"):
+        self.calls.append(("list",))
+        lines = [b'(\\HasNoChildren) "/" "INBOX"', b'(\\Noselect \\HasChildren) "/" "[Gmail]"',
+                 b'(\\HasNoChildren) "/" "[Gmail]/Sent Mail"']
+        if FakeImap.junk_name:
+            flag = b" \\Junk" if FakeImap.junk_flagged else b""
+            lines.append(b'(\\HasNoChildren%s) "/" "%s"' % (flag, FakeImap.junk_name.encode()))
+        return "OK", lines
+
     def select(self, box, readonly=False):
         self.calls.append(("select", box, readonly))
+        self.folder = box.strip('"')
         return "OK", [b"3"]
+
+    def _mail(self):
+        if self.folder == "INBOX":
+            return FakeImap.messages
+        if FakeImap.spam_broken:
+            raise imaplib.IMAP4.error("command SEARCH illegal in state AUTH")
+        assert self.folder == FakeImap.junk_name, self.folder
+        return FakeImap.spam
 
     def search(self, charset, *criteria):
         self.calls.append(("search",) + criteria)
-        return "OK", [b" ".join(str(i + 1).encode() for i in range(len(FakeImap.messages)))]
+        return "OK", [b" ".join(str(i + 1).encode() for i in range(len(self._mail())))]
 
     date_last = False  # the server sends a message's date after its header, not before
 
@@ -116,10 +138,11 @@ class FakeImap:
         self.calls.append(("fetch", mids, parts))
         out = []
         for mid in mids.decode().split(","):
-            when, raw = FakeImap.messages[int(mid) - 1]
+            when, raw = self._mail()[int(mid) - 1]
             stamp = imaplib.Time2Internaldate(when).encode()
             if "HEADER.FIELDS" in parts:
-                head = b"".join(line + b"\r\n" for line in raw.split(b"\r\n") if line.lower().startswith(b"from:")) + b"\r\n"
+                names = tuple(f.lower().encode() + b":" for f in parts.split("(")[-1].rstrip(")]").split())
+                head = b"".join(line + b"\r\n" for line in raw.split(b"\r\n") if line.lower().startswith(names)) + b"\r\n"
                 if FakeImap.date_last:
                     out += [(b"%s (BODY[HEADER.FIELDS (FROM)] {%d}" % (mid.encode(), len(head)), head),
                             b" INTERNALDATE %s)" % stamp]
@@ -134,10 +157,16 @@ class FakeImap:
         self.calls.append(("logout",))
 
 
+    @classmethod
+    def reset(cls):
+        cls.instances, cls.messages, cls.accept, cls.date_last = [], [], True, False
+        cls.spam, cls.junk_name, cls.junk_flagged, cls.spam_broken = [], "[Gmail]/Spam", True, False
+        cls.login_error = None
+
+
 @pytest.fixture
 def imap(monkeypatch):
-    FakeImap.instances, FakeImap.messages, FakeImap.accept, FakeImap.date_last = [], [], True, False
-    FakeImap.login_error = None
+    FakeImap.reset()
     monkeypatch.setattr(mailbox.imaplib, "IMAP4_SSL", FakeImap)
     return FakeImap
 
@@ -318,3 +347,97 @@ def test_a_refusal_that_also_says_try_later_is_a_refusal(imap):
                                            "try again later.")
     with pytest.raises(MailboxError, match="app password"):
         mailbox.search("sam@gmail.com", "abcd efgh ijkl mnop", time.time(), {"ti.com"}, "code")
+
+
+def test_brassrings_passcode_mail_from_its_own_domains(imap):
+    """Edward Jones' BrassRing (the live check's test identity, Oct 2026) emails a passcode with the
+    subject "Your Passcode". The desk's list of each job system's mail domains had none for BrassRing,
+    so only brassring.com and the employer's own site were read: mail from Kenexa's domain (IBM Kenexa
+    BrassRing) was never looked at."""
+    from job_apply.ats import detect_ats
+
+    url = "https://sjobs.brassring.com/TGnewUI/Search/home/HomeWithPreLoad?partnerid=26235&siteid=5374"
+    assert detect_ats(url) == "brassring"
+    brassring = mailbox.ATS_MAIL_DOMAINS["brassring"]
+    assert sender_allowed("Edward Jones Careers <no-reply@mail.brassring.com>", brassring)
+    assert sender_allowed("noreply@kenexa.com", brassring)
+    assert not sender_allowed("noreply@not-kenexa.com", brassring)
+    since = time.time()
+    imap.messages = [(since + 8, _message("Edward Jones <noreply@kenexa.com>", "Your Passcode",
+                                          "Your passcode is 482913. It will expire in 10 minutes."))]
+    found = mailbox.search("sam@gmail.com", "app-password", since, brassring, "code")
+    assert (found.value, found.sender, found.spam) == ("482913", "kenexa.com", False)
+
+
+@pytest.mark.parametrize("body, markup", [
+    ("Your passcode is 482913. It will expire in 10 minutes.", False),
+    ("Hello,\n\nUse the passcode below to validate your email address.\n\n482913\n\nIt expires in 10 minutes.", False),
+    ("<p>Your passcode is <b>482913</b>.</p><p>Edward Jones, 12555 Manchester Rd, St. Louis</p>", True),
+    ("<table><tr><td>Your Passcode</td></tr><tr><td><span>482913</span></td></tr></table>", True),
+])
+def test_a_passcode_email_is_read_as_a_code(imap, body, markup):
+    """BrassRing's mail has the subject "Your Passcode" (its page says so): its passcode is read from a
+    plain or an HTML body, whether the words are in the body or only in the subject."""
+    since = time.time()
+    imap.messages = [(since + 8, _message("Edward Jones <noreply@brassring.com>", "Your Passcode", body, html=markup))]
+    assert mailbox.search("sam@gmail.com", "app-password", since, {"brassring.com"}, "code").value == "482913"
+
+
+def test_a_code_in_the_spam_folder_is_read_when_the_inbox_has_none(imap):
+    """BrassRing's page says "Be sure to check your Spam or Junk Mail folder if you do not see it in your
+    Inbox": the desk only ever looked in the inbox. Spam is looked in (read-only, as the inbox, and for the
+    same site's mail since the wait began) when the inbox has no code; a code in the inbox comes first."""
+    since = time.time()
+    spam = "[Gmail]/Spam"
+    imap.messages = [(since + 5, _message("Deals <deals@shop.com>", "Your code", "Your verification code is 222222"))]
+    imap.spam = [
+        (since - 3600, _message("noreply@brassring.com", "Your Passcode", "Your passcode is 111111")),  # before the wait
+        (since + 9, _message("Offers <offers@shop.com>", "Your Passcode", "Your passcode is 333333")),  # not the site
+        (since + 10, _message("Edward Jones <noreply@brassring.com>", "Your Passcode", "Your passcode is 482913")),
+    ]
+    found = mailbox.search("sam@gmail.com", "app-password", since, {"brassring.com"}, "code")
+    assert (found.kind, found.value, found.sender, found.spam) == ("code", "482913", "brassring.com", True)
+    calls = imap.instances[0].calls
+    assert ("select", "INBOX", True) in calls and ("select", f'"{spam}"', True) in calls  # both read-only
+    assert all("BODY.PEEK[" in c[2] for c in calls if c[0] == "fetch")
+    assert calls[-1] == ("logout",)
+    # a code in the inbox is the answer: its Spam folder isn't opened
+    imap.messages.append((since + 20, _message("noreply@brassring.com", "Your Passcode", "Your passcode is 555555")))
+    found = mailbox.search("sam@gmail.com", "app-password", since, {"brassring.com"}, "code")
+    assert (found.value, found.spam) == ("555555", False)
+    assert ("select", f'"{spam}"', True) not in imap.instances[-1].calls
+    # nothing in either: nothing
+    imap.messages, imap.spam = [], imap.spam[:2]
+    assert mailbox.search("sam@gmail.com", "app-password", since, {"brassring.com"}, "code") is None
+
+
+@pytest.mark.parametrize("name, flagged", [("[Gmail]/Spam", True), ("Junk", True), ("Bulk Mail", True),
+                                           ("Junk E-mail", False), ("Spam", False)])
+def test_the_spam_folder_is_found_by_its_flag_or_its_name(imap, name, flagged):
+    imap.junk_name, imap.junk_flagged = name, flagged
+    since = time.time()
+    imap.spam = [(since + 10, _message("noreply@brassring.com", "Your Passcode", "Your passcode is 482913"))]
+    found = mailbox.search("sam@gmail.com", "app-password", since, {"brassring.com"}, "code")
+    assert found is not None and found.value == "482913" and found.spam
+    assert ("select", f'"{name}"', True) in imap.instances[0].calls
+
+
+def test_an_account_with_no_spam_folder_or_one_that_wont_open_is_just_the_inbox(imap):
+    since = time.time()
+    imap.messages = [(since + 5, _message("Deals <deals@shop.com>", "Your code", "Your verification code is 222222"))]
+    imap.junk_name = None
+    assert mailbox.search("sam@gmail.com", "app-password", since, {"brassring.com"}, "code") is None
+    imap.junk_name, imap.spam_broken = "[Gmail]/Spam", True
+    assert mailbox.search("sam@gmail.com", "app-password", since, {"brassring.com"}, "code") is None
+    imap.messages = [(since + 5, _message("noreply@brassring.com", "Your Passcode", "Your passcode is 482913"))]
+    assert mailbox.search("sam@gmail.com", "app-password", since, {"brassring.com"}, "code").value == "482913"
+
+
+def test_a_confirmation_link_in_the_spam_folder_is_found_too(imap):
+    since = time.time()
+    own = lambda url: url.startswith("https://careers.acme.com/")  # noqa: E731
+    verify = "https://careers.acme.com/account/verify?token=abc"
+    imap.spam = [(since + 10, _message("no-reply@careers.acme.com", "Confirm your email",
+                                       f"Confirm your email address: {verify}"))]
+    found = mailbox.search("sam@gmail.com", "app-password", since, {"acme.com"}, "link", own)
+    assert (found.kind, found.value, found.spam) == ("link", verify, True)

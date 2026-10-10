@@ -107,13 +107,36 @@
         return;
       }
       put('accountEmail', $('aem').value);
-      view.innerHTML = '<h2>Let\'s Get Started</h2><p>We’ve sent a passcode to validate your email address to '
-        + $('aem').value + ', with the subject “Your Passcode”, which will expire in 10 minutes.</p>'
-        + '<label for="pc">Enter your passcode:</label><input id="pc" type="text">'
-        + '<button type="button">Verify Passcode</button>';
+      passcode($('aem').value);
     });
     $('back').addEventListener('click', signIn);
     $('cancel').addEventListener('click', signIn);
+  }
+
+  function passcode(address) {
+    const ordinals = ['1st', '2nd', '3rd', '4th', '5th', '6th'];
+    view.innerHTML = '<h2>Let\'s Get Started</h2><p>We’ve sent a passcode to validate your email address to '
+      + address + ', with the subject “Your Passcode”, which will expire in 10 minutes. Be sure to check your '
+      + 'Spam or Junk Mail folder if you do not see it in your Inbox, or <a href="javascript:void(0)" '
+      + 'id="resend">resend the passcode</a>.</p><div id="digits">'
+      + ordinals.map((o) => '<input type="text" inputmode="numeric" maxlength="1" class="digit" '
+        + 'aria-label="Enter ' + o + ' digit of your passcode">').join(' ')
+      + '</div><button type="button" id="verify">Verify Passcode</button><div id="err" role="alert"></div>';
+    const boxes = [...document.querySelectorAll('.digit')];
+    boxes.forEach((box, i) => box.addEventListener('input', () => {
+      box.value = box.value.replace(/\D/g, '').slice(0, 1);
+      if (box.value && boxes[i + 1]) boxes[i + 1].focus();
+    }));
+    $('verify').addEventListener('click', () => {
+      const typed = boxes.map((b) => b.value).join('');
+      bump('verifies');
+      put('passcode', typed);
+      if (typed.length < 6) {
+        $('err').innerHTML = '<p>Please enter the 6-digit passcode.</p>';
+        return;
+      }
+      view.innerHTML = '<h2>Let\'s Get Started</h2><p>Your email address has been validated.</p>';
+    });
   }
 
   $('top-sign-in').addEventListener('click', signIn);

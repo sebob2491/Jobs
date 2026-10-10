@@ -9,13 +9,15 @@ import json
 import os
 import subprocess
 import sys
+import time
 from collections import Counter
 from pathlib import Path
 
 import pytest
 import yaml
+from test_mailbox import FakeImap, _message  # (the fake inbox the mail tests use)
 
-from job_apply import config, search
+from job_apply import config, mailbox, search
 from job_apply.render import count_pages
 
 SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
@@ -238,3 +240,79 @@ def test_live_smoke_sets_up_the_test_identity_and_never_says_its_secrets(tmp_pat
     for key, value in {**ENV, "JOB_APPLY_NEVER_SUBMIT": "1", li.IDENTITY_SWITCH: "1"}.items():
         monkeypatch.setenv(key, value)
     assert config.Profile.load(home / "profile.yaml").settings.may_manage_accounts
+
+
+# --- the inbox report: why the desk missed an emailed code -----------------------------
+
+@pytest.fixture
+def fake_inbox(monkeypatch):
+    FakeImap.reset()
+    monkeypatch.setattr(mailbox.imaplib, "IMAP4_SSL", FakeImap)
+    return FakeImap
+
+
+def test_the_inbox_report_says_who_mailed_and_when_but_never_the_address_or_the_text(fake_inbox):
+    """A run that ends still waiting on an emailed code (Edward Jones' BrassRing, Oct 2026) can't be
+    explained from outside: the report lists the last 15 minutes of the test inbox, its Spam folder
+    too, as the sender's domain, the subject (with the address and long numbers hidden), the arrival
+    time, whether the desk's sender check lets it through and whether it reads a code from it."""
+    now = float(int(time.time()))
+    fake_inbox.messages = [
+        (now - 3000, _message("Old <old@elsewhere.example>", "Long ago", "Nothing")),  # outside the 15 minutes
+        (now - 120, _message("Edward Jones <noreply@brassring.com>", f"Your Passcode for {EMAIL}",
+                             "Your passcode is 482913. It expires in 10 minutes.")),
+        (now - 60, _message("Deals <deals@shop.example>", "Job 2617841 is open", "Apply now")),
+    ]
+    fake_inbox.spam = [(now - 30, _message("BrassRing <donotreply@kenexa.com>", "Your Passcode",
+                                     "Hello, your passcode is 111222"))]
+    report = li.inbox_report(ENV, {"brassring.com", "edwardjones.com"}, paused_at=now - 125, now=now)
+    said = json.dumps(report)
+    for private in (EMAIL, EMAIL.split("@")[0], INBOX_PASSWORD, INBOX_PASSWORD.replace(" ", ""), "482913", "111222",
+                    "noreply", "donotreply", "deals@", "2617841", "Apply now", "elsewhere"):
+        assert private not in said, private
+    assert [(m["folder"], m["from"], m["allowed"], m["code"]) for m in report["messages"]] == [
+        ("inbox", "brassring.com", True, True), ("inbox", "shop.example", False, False),
+        ("spam", "kenexa.com", False, True)]
+    first, second, third = report["messages"]
+    assert (first["subject"], second["subject"], third["subject"]) == ("Your Passcode for <email>",
+                                                                       "Job <digits> is open", "Your Passcode")
+    assert [m["after_pause_s"] for m in report["messages"]] == [5, 65, 95]
+    assert first["arrived"] == time.strftime("%H:%M:%S", time.gmtime(now - 120))
+    assert report["senders_allowed"] == ["brassring.com", "edwardjones.com"] and report["spam_folder"] is True
+    assert "error" not in report
+    calls = fake_inbox.instances[0].calls
+    assert ("select", "INBOX", True) in calls and ("select", '"[Gmail]/Spam"', True) in calls  # read-only
+    assert all("BODY.PEEK[" in c[2] for c in calls if c[0] == "fetch") and calls[-1] == ("logout",)
+
+
+def test_the_inbox_report_says_a_fault_without_the_password(fake_inbox):
+    fake_inbox.accept = False
+    report = li.inbox_report(ENV, {"brassring.com"}, paused_at=None)
+    assert "app password" in report["error"] and report["messages"] == []
+    assert not any(s in json.dumps(report) for s in (EMAIL, *SECRETS))
+
+
+def test_live_smoke_prints_the_inbox_report_as_one_line(tmp_path):
+    """What live_smoke.py prints for an employer whose run ended waiting on an emailed code: a LIVE_INBOX
+    line of JSON, with the job's allowed senders and what the desk said of reading the inbox."""
+    driver = (
+        "import asyncio, sys\n"
+        f"sys.path.insert(0, {str(SCRIPTS)!r})\n"
+        "import live_smoke\n"
+        "class Applier:\n"
+        "    mail_problem = 'it said something'\n"
+        "    def _mail_senders(self, run): return {'brassring.com'}\n"
+        "class Run:\n"
+        "    paused_at = 1000.0\n"
+        "live_smoke.live_identity.inbox_report = lambda env, senders, paused_at: {\n"
+        "    'senders_allowed': sorted(senders), 'paused': paused_at, 'messages': []}\n"
+        "asyncio.run(live_smoke.report_inbox('Edward Jones', Applier(), Run()))\n")
+    clean = {k: v for k, v in os.environ.items() if not k.startswith(("LIVE_TEST_", "JOB_APPLY_"))}
+    out = subprocess.run([sys.executable, "-c", driver], env={**clean, "TMPDIR": str(tmp_path)}, capture_output=True,
+                         text=True, timeout=120)
+    assert out.returncode == 0, out.stderr
+    lines = [line for line in out.stdout.splitlines() if line.startswith("LIVE_INBOX ")]
+    assert len(lines) == 1, out.stdout
+    assert json.loads(lines[0].removeprefix("LIVE_INBOX ")) == {
+        "company": "Edward Jones", "senders_allowed": ["brassring.com"], "paused": 1000.0, "messages": [],
+        "mail_problem": "it said something"}
