@@ -33,7 +33,7 @@ from urllib.parse import parse_qsl, urlparse
 from . import config, mailbox, report
 from .ats import ATS_NAMES, detect_ats, shared_system
 from .autofill import (clean_label, entry_of, is_empty_value, no_choice_for_no_degree, norm, plan_autofill,
-                       polarity, tailored_document)
+                       polarity, tailored_document, works_there_now)
 from .browser import (_SENDS_TOO, CONFIRMATION_RE, SubmitBlocked, TabClosed, _accepts_cookies, _cookie_setting,
                       confirmations, declines_cookies, final_text, may_accept_cookies)
 
@@ -123,6 +123,9 @@ _USER_NAME = re.compile(r"\buser ?name\b|\blog ?in\b", re.I)
 # person's to choose and answer, never made up
 _SECURITY_QUESTION = re.compile(r"\b(?:security|secret|challenge|password (?:reminder|recovery|hint))\b[^.?!]{0,20}?"
                                 r"\b(?:questions?|answers?)\b|\bpassword hint\b", re.I)
+# A picture code's box, a CAPTCHA the site draws itself (BrassRing's "Enter Captcha", Benchmark's Infor
+# registration's "Enter the text in image above"): the person's to solve
+_PICTURE_CODE = re.compile(r"captcha|text in (?:the )?(?:image|picture)", re.I)
 # With settings.manage_accounts: a Create Account form's own button, the boxes on it that agree to
 # the site's terms (required ones, or its terms, or a privacy policy or notice read: "Yes, I confirm that
 # I have read the privacy notice", a Workday site's; never a newsletter's, job alerts', being kept informed
@@ -136,7 +139,14 @@ _TERMS_ONLY = re.compile(r"terms|conditions|(?:privacy|data protection) (?:polic
 _TERMS_BOX = re.compile(r"terms|conditions|privacy|consent|agree|acknowledge|policy|notice", re.I)
 _NOT_TERMS = re.compile(r"newsletter|marketing|job alerts?|text messages?|\bsms\b|promotion|offers|subscribe|similar jobs|"
                         r"talent (?:community|network)|keep me|stay informed|send me|contact(?:ed)? me|be contacted|"
-                        r"share my|other (?:roles|positions|jobs|opportunities)|affiliat", re.I)
+                        r"share my|other (?:\w+ )?(?:roles|positions|jobs|openings|opportunities)|affiliat", re.I)
+# A Create Account box that says the person applies from outside, not as one of the employer's staff
+# (Banner Health's Workday, live, Oct 2026: "Yes, I am a new candidate and not a current employee"; no
+# account without it, though it isn't marked required). That and nothing more: a box that says more
+# about the person is theirs
+_NEW_CANDIDATE = re.compile(r"^(?:yes,? )?i am (?:a |an )?(?:new|external) (?:candidate|applicant)(?:,? and (?:i am )?not "
+                            r"(?:a |an )?(?:current|existing) (?:employee|associate|team member))?|^(?:yes,? )?i am not "
+                            r"(?:a |an )?(?:current|existing) (?:employee|associate|team member)(?: of [\w&.' -]+)?", re.I)
 _ACCOUNT_EXISTS = re.compile(r"\b(?:account|e-?mail(?: address)?|user ?name|login)\b[^.?!]{0,40}\balready\b\s*(?:exists|"
                              r"registered|in use|associated|taken|been (?:registered|used|taken))", re.I)
 _FORGOT = re.compile(r"\b(?:forgot|reset|recover)\b[^.?!]{0,20}\bpassword|trouble (?:signing|logging) in|"
@@ -221,12 +231,35 @@ _TERMS = re.compile(r"\bprivacy\b|\bdata protection\b|\bterms (?:of (?:use|servi
                     r"\b(?:gdpr|ccpa)\b", re.I)
 _ACCEPTS = re.compile(r"\b(?:agree|accept|acknowledge|consent|have read|understand)\b", re.I)
 _TAKES_IN = re.compile(r"^(?:ok|okay|got it|continue|proceed)$", re.I)
+# A Create Account form's link that opens the site's data privacy statement to be read and accepted: the site
+# makes no account without it (SuccessFactors', live, Oct 10, 2026: "Read and accept the data privacy statement.",
+# which opens the statement in a dialog with Accept and Decline). Its words accept a privacy notice or terms
+# (_agrees_to_terms), and nothing more
+_STATEMENT_LINK = re.compile(r"^(?:please )?(?:read|view|open)\b", re.I)
+# How much of a notice named for the employer's privacy statement or terms (in its heading) is read for what's
+# never agreed to: its opening. The statement's long text speaks of its affiliates, marketing and cookies as
+# its practices (APS's, live: "... Company and its affiliated companies ..."), which don't sign anyone up
+NOTICE_OPENING = 300
+# but a legal waiver (an arbitration agreement, a jury trial waived, a non-compete) is never agreed to for the
+# person however deep in its text it sits
+_WAIVES = re.compile(r"arbitrat|\bwaive|\bjury\b|non-?compete|non-?solicit", re.I)
+# nor what signs them up for something ("By clicking Accept you also join our Talent Community")
+_SIGNS_UP = re.compile(r"\b(?:join\w*|subscrib\w*|sign(?:s|ed|ing)? (?:you )?up|receiv\w*|enrol\w*|added to|opt(?:s|ed)? "
+                       r"(?:you )?in)\b.{0,60}?\b(?:talent (?:community|network|pool)|newsletters?|job alerts?|marketing|"
+                       r"promotion\w*)", re.I | re.S)
 # Never agreed to for the person, wherever it's asked: what _NOT_TERMS keeps out of account forms
 # (newsletters, marketing, job alerts, a talent community, being contacted, other roles), a talent pool,
 # keeping their profile for later, cookies (their own rule), and legal waivers (arbitration, a jury trial)
 _NEVER_AGREED = re.compile(_NOT_TERMS.pattern + r"|talent pool|future (?:job |career )?(?:opportunities|openings|roles|"
                            r"positions)|keep (?:my|your) (?:profile|information|data|resume)|retain (?:my|your)|campaigns?|"
                            r"cookie|arbitration|waive|jury|non-?compete|non-?solicit", re.I)
+# A consent to be considered for other open positions as well as the one applied to (Northrop Grumman's
+# Eightfold "Contact Consent", live, Oct 2026: "I understand that I may be considered for other open
+# positions in my country, in addition to the role(s) to which I apply"). The owner's call (Oct 10): given
+# for the person on an account form the site won't make the account without it (marked required, or
+# refused until it's given), never otherwise, nor with a newsletter, job alerts or the like in its words
+_OTHER_POSITIONS = re.compile(r"\bconsider(?:ed|ation)?\b.{0,60}?\bother (?:open |suitable |relevant |available )?"
+                              r"(?:positions|roles|jobs|openings|opportunities)\b", re.I | re.S)
 # A box that also says something about the person ("... and confirm I am authorized to work in the US"):
 # theirs, as the profile answers those
 _CLAIMS = re.compile(r"\b(?:authori[sz]ed|sponsor\w*|eligib\w*|citizen\w*|years? (?:old|of age)|at least \d+|"
@@ -235,6 +268,8 @@ _CLAIMS = re.compile(r"\b(?:authori[sz]ed|sponsor\w*|eligib\w*|citizen\w*|years?
 # and a question about something else beside the agreement ("Have you ever been convicted ...? I certify ...")
 _OTHER_QUESTION = re.compile(r"\b(?:have|do|are|will|can|did|were|would|has|is) you\b(?! (?:agree|accept|acknowledge|"
                              r"consent|certify|understand|have read|read|confirm)\b)", re.I)
+# A bot check's badge on a page ("Protected by hCaptcha", reCAPTCHA's): a press it holds is the person's
+_BOT_BADGE = re.compile(r"\bh ?captcha\b|\brecaptcha\b", re.I)
 # A dialog that mentions personal data but isn't a notice to take in ("could not be saved", "overwrite?")
 _NOT_A_NOTICE = re.compile(r"\berror\b|could ?n[o']t|failed|signed? (?:you )?out|overwrite|existing (?:profile|account)|"
                            r"\bdelete|\bremove|withdraw|expired?\b", re.I)
@@ -249,11 +284,13 @@ def _agrees_to_terms(text: str) -> bool:
 def _terms_notice(heading: str, text: str) -> tuple[bool, bool]:
     """Is a dialog the employer's privacy notice or terms to take in, and may its Ok do it? Named so
     in its heading ("Privacy Policy of Example Corp": its Ok too), or asking in its words to accept
-    them; never one about an error, a profile to overwrite or the like, nor what's never agreed to."""
-    said = f"{heading} {text}"
-    if _NEVER_AGREED.search(said) or _NOT_A_NOTICE.search(said):
-        return False, False
+    them; never one about an error, a profile to overwrite or the like, nor what's never agreed to.
+    One named in its heading is the statement itself, and only its opening is read for those (NOTICE_OPENING),
+    but all of it for a legal waiver (_WAIVES) or a sign-up (_SIGNS_UP)."""
     named = bool(_TERMS.search(heading))
+    said = f"{heading} {text[:NOTICE_OPENING] if named else text}"
+    if _NEVER_AGREED.search(said) or _NOT_A_NOTICE.search(said) or _WAIVES.search(text) or _SIGNS_UP.search(text):
+        return False, False
     return named or bool(_TERMS.search(text) and _ACCEPTS.search(text)), named
 # A fill the page never let happen (it timed out, its script failed, a dialog stood over the box):
 # the profile has the answer, so it's no question for the person
@@ -298,6 +335,7 @@ class Run:
     # An email-first sign-in said it has no account for the email here (an Eightfold site's modal): the
     # page (its address, bare) whose next steps make one (_email_account_view), until the application shows
     account_page: str = ""
+    statement_accepted: bool = False  # a Create Account's data privacy statement accepted for them (_accept_statement)
     account_finished: bool = False  # pressed the Create Account's second step (UKG Pro's "Almost there!"): never again
     try_later: bool = False  # left on a "Try Again Later" page: only the person's Resume goes on from it
     active_at: float = 0.0  # when its paused tab last changed: someone at work in it
@@ -1383,6 +1421,17 @@ class Applier:
                     if _security_boxes(fields):  # (never made up, so never pressed for the person: _make_account)
                         asks = ("It also asks for security questions and their answers: those are yours to choose (the "
                                 "desk never makes up answers). Fill them in there and create the account")
+                    elif _captcha_on(data):  # (never touched, so never pressed for the person either)
+                        asks = ("Its CAPTCHA is yours to solve: solve it, tick their terms box if there is one and create "
+                                "the account (then verify your email if they ask)")
+                    elif _privacy_statement(data) is not None and not run.statement_accepted:  # (SuccessFactors')
+                        asks = ("It asks you to read and accept its data privacy statement, which agrees to something in "
+                                "your name, so it's yours: open it in the browser window and accept it if you're happy "
+                                "to, then create the account (then verify your email if they ask)")
+                        first += (" (The desk accepts an employer's privacy notice for you with accept_notices: true "
+                                  "under settings: in profile.yaml, outside practice mode.)" if not _may_accept_notices()
+                                  else " I tried to open it and accept it for you, and couldn't." if manage else "")
+                        data, _ = await self._look()  # (the statement it opened for them is open still: paused on)
                     return self._pause(run, "sign_in", f"I filled in {_site(run, data)}'s Create Account form with your "
                                        f"details and saved password{user}. {asks}; the desk carries on after that."
                                        + first, seen=data)
@@ -1427,6 +1476,22 @@ class Applier:
                 if await self._finish_account(run, data, finish):
                     continue
                 return
+            if kind == "form" and sign_ins.get("create_account") and _email_first_account(data):
+                # the Create Account opened for the saved password asks for the email first (BrassRing's,
+                # live, Oct 2026: its Continue emails a passcode there, the account's first step). The
+                # desk's to go on with only with settings.manage_accounts, and never with a CAPTCHA on it
+                captcha = _captcha_on(data)
+                if not captcha and _may_manage_accounts():
+                    if await self._email_account_step(run, data, "email"):
+                        continue  # (its passcode next: the inbox's, or the person's)
+                    return
+                await self._bring_forward(run)
+                asks = (", with a CAPTCHA that's yours to solve: enter your email and solve it there"
+                        if captcha else ". Making the account is yours: enter your email there")
+                return self._pause(run, "sign_in", f"Your saved password didn't sign in on {_site(run, data)}, so I "
+                                   f"opened its Create Account, which asks for your email first{asks}, and go on in "
+                                   "the browser window (or sign in with the email you use there); the desk carries on "
+                                   "by itself after that.", seen=data)
             if kind == "form":
                 run.seen_form = True
                 once_failed = await self._fill_once(run, data)
@@ -1579,6 +1644,19 @@ class Applier:
                     return self._pause(run, "stuck", f"{_site(run, data)} is down for maintenance (it sent the job to "
                                        f"{_bare(data.get('url') or '')}). Try again in a few hours: press Resume once "
                                        "it's back.")
+                here = f"{_page_key(data)} "
+                held = next((g[len(here):] for g in agreed if g.startswith(here)), "")
+                if held:  # an agreement pressed for them on this pass, its button greyed out since
+                    badge = _BOT_BADGE.search(" ".join([text, *(a.get("text") or "" for a in data.get("actions") or [])]))
+                    if badge:  # Charles Schwab's iCIMS (live check, Oct 2026): its hCaptcha held the press
+                        check = "reCAPTCHA" if "re" in badge.group(0).lower() else "hCaptcha"
+                        return self._pause(run, "stuck", f"I pressed \u201c{held}\u201d for you "
+                                           "(settings.accept_notices), and the page stayed with it greyed out. The page "
+                                           f"is protected by a bot check ({check}), which may want you to show you're "
+                                           "not a robot: that's yours. Look at it in the browser window, then press Resume.")
+                    return self._pause(run, "stuck", f"I pressed \u201c{held}\u201d for you (settings.accept_notices), "
+                                       "but the page stayed: it may want a box filled or a check passed first. "
+                                       "Look at it in the browser window, then press Resume.")
                 return self._pause(run, "stuck", "I couldn't find the button that moves this application on. "
                                    "Take it a step further in the browser, then press Resume.")
             if (kind == "form" and action.get("form_fields") == len(data.get("fields") or [])
@@ -1875,20 +1953,30 @@ class Applier:
         """settings.manage_accounts: tick a filled Create Account form's terms boxes (the required
         ones, or its terms, or a privacy notice read: never a newsletter's or job alerts') and press
         the form's own button, after its password boxes (its submit button, or a link or plain button
-        in that form that its script sends it with: ApplicantStack's "Submit"). Once a job
-        (Run.accounts_tried). Not with a CAPTCHA on the page: that's the person's. True when it was
-        pressed; the account is said to be made only once the site shows it (Run.account_made, in _drive).
-        Nor with security questions on the form (some Taleo sites'): their answers are the person's."""
-        if data.get("captcha") or data.get("challenge") or _security_boxes(data.get("fields") or []):
+        in that form that its script sends it with: ApplicantStack's "Submit"). A data privacy statement
+        the site makes no account without (SuccessFactors') is opened and accepted first, where
+        settings.accept_notices allows (_accept_statement); otherwise the form is left to the person.
+        Once a job (Run.accounts_tried). Not with a CAPTCHA on the page, a picture code's box among them
+        (Benchmark's Infor registration: "Enter the text in image above"): that's the person's. True
+        when it was pressed; the account is said to be made only once the site shows it
+        (Run.account_made, in _drive). Nor with security questions on the form (some Taleo sites'):
+        their answers are the person's."""
+        if _captcha_on(data) or _security_boxes(data.get("fields") or []):
             return False
         srv = self.srv
-        boxes = _terms_boxes(data)
+        statement = _privacy_statement(data)
+        if statement is not None:
+            if not await self._accept_statement(run, data, statement):
+                return False
+            data, _ = await self._look()  # (as it is once accepted)
+        terms = _terms_boxes(data)
+        boxes = terms + _new_candidate_boxes(data, run.company) + _other_positions_boxes(data)
         own = [a for a in data.get("actions") or [] if a.get("account_form") or a.get("in_account_form")
                or a.get("form_submit") and a.get("after_password")]
         button = self._account_button(own, _MAKE_ACCOUNT)
         if button is None:
             return False
-        if boxes and not (await srv.fill_form([{"id": f["id"], "value": True} for f in boxes])).get("ok"):
+        if boxes and not (await srv.fill_form([{"id": f["id"], "value": _tick(f)} for f in boxes])).get("ok"):
             return False
         try:
             await srv.browser.click(button["id"], allow_submit=True)  # (the form's own button: it creates the account)
@@ -1896,16 +1984,41 @@ class Applier:
             return False
         run.accounts_tried += 1
         site = _site(run, data)
-        ticked = ", ".join(f"\u201c{_short(f.get('label') or '')}\u201d" for f in boxes)
+        ticked = ", ".join(f"\u201c{_short(self._choice_said(f))}\u201d" for f in boxes)
         # (a user name it asks for is the email: _sign_in put it there, and signs in with it later)
         with_ = "your email as its user name and your saved password" if any(
             _user_name_box(f) for f in data.get("fields") or [] if f.get("kind") in ("text", "email")) else "your saved password"
         self._log(run, f"pressed \u201c{button['text'].strip()}\u201d to create your account on {site} with {with_}"
                   + (f", after ticking {ticked}" if boxes else ""))
         run.account_made = (f"created your account on {site} with {with_}" + (" and agreed to its terms"
-                            if boxes else "") + " (manage_accounts: false in profile.yaml leaves this to you)")
+                            if terms else "") + (" and accepted its data privacy statement" if statement else "")
+                            + " (manage_accounts: false in profile.yaml leaves this to you)")
         await self._wait_for_account(data)
         return True
+
+    async def _accept_statement(self, run: Run, data: dict[str, Any], link: dict[str, Any]) -> bool:
+        """A Create Account form's data privacy statement (_privacy_statement), which the site makes no
+        account without: its link pressed to open it (a dialog over the page, drawn a moment after) and
+        its Accept pressed for the person, as for any employer notice the desk agrees to (_answer_notice:
+        settings.accept_notices, never in practice mode; said in the log; never Decline). True once it's
+        accepted. False when it isn't allowed, wouldn't open (SuccessFactors' won't before a country is
+        chosen) or isn't one to agree to for them: the person's, left open for them to read."""
+        if not _may_accept_notices():
+            return False
+        try:
+            await self.srv.browser.click(link["id"])
+        except Exception:  # gone, or it won't take a click: the person's, as without the setting
+            return False
+        deadline = time.monotonic() + ACCOUNT_STEP_WAIT
+        while True:
+            now, _ = await self._look()
+            notice = _notice(now)
+            if notice is not None or time.monotonic() > deadline:
+                break
+            await asyncio.sleep(0.5)
+        run.statement_accepted = notice is not None and await self._answer_notice(run, now, notice, set(),
+                                                                                  over_form=False) == "agreed"
+        return run.statement_accepted
 
     async def _finish_account(self, run: Run, data: dict[str, Any], button: dict[str, Any]) -> bool:
         """The rest of a Create Account, on a page of its own after the email and password (UKG Pro's
@@ -1924,9 +2037,10 @@ class Applier:
         why = ""
         if _may_manage_accounts() and not run.account_finished and not (data.get("captcha") or data.get("challenge")):
             now, _ = await self._look()
-            boxes = _terms_boxes(now)
+            terms = _terms_boxes(now)
+            boxes = terms + _other_positions_boxes(now)
             pressable = None
-            if boxes and not (await srv.fill_form([{"id": f["id"], "value": True} for f in boxes])).get("ok"):
+            if boxes and not (await srv.fill_form([{"id": f["id"], "value": _tick(f)} for f in boxes])).get("ok"):
                 why = "its terms box wouldn't tick"
             else:  # greyed out until its terms are ticked: a moment for the page to take that in
                 for _ in range(10):
@@ -1945,11 +2059,11 @@ class Applier:
                     why = f"“{said}” wouldn't take a click"
                 else:
                     run.account_finished = True
-                    ticked = ", ".join(f"“{_short(f.get('label') or '')}”" for f in boxes)
+                    ticked = ", ".join(f"“{_short(self._choice_said(f))}”" for f in boxes)
                     self._log(run, f"pressed “{said}” to finish creating your account on {site}"
                               + (f", after ticking {ticked}" if boxes else ""))
-                    terms = bool(boxes) or "agreed to its terms" in run.account_made
-                    run.account_made = _account_made_says(site, terms=terms, password=bool(run.account_made))
+                    run.account_made = _account_made_says(site, terms=bool(terms) or "agreed to its terms" in run.account_made,
+                                                          password=bool(run.account_made))
                     await self._wait_to_leave(now, said)
                     return True
         await self._bring_forward(run)
@@ -2028,21 +2142,28 @@ class Applier:
     async def _email_account_step(self, run: Run, data: dict[str, Any], view: str) -> bool:
         """One step of making an account the desk began on an email-first sign-in (_make_email_account):
         "consent": its boxes agreeing to the site's terms or privacy policy are ticked (never a
-        newsletter's, job alerts', or being considered for other jobs: those choices are the person's)
-        and its button pressed; "email": the profile's email, and Continue; "options": the one-time code
-        in place of a password. True: on its way; False: paused for the person (a choice that's theirs,
-        a CAPTCHA, or what the site said)."""
+        newsletter's or job alerts': those choices are the person's) and its button pressed; a consent
+        to be considered for other open positions too only when the site won't go on without it (marked
+        required, or refused until it's given: Northrop's "You must select one option"; the owner's
+        call, Oct 10); "email": the profile's email, and Continue; "options": the one-time code in place
+        of a password. True: on its way; False: paused for the person (a choice that's theirs, a
+        CAPTCHA, or what the site said)."""
         srv = self.srv
         site = _site(run, data)
         if data.get("captcha") or data.get("challenge"):
             return await self._account_theirs(run, data, f"{site}'s steps of making your account show a picture check "
                                         "(CAPTCHA), which is yours")
-        actions = data.get("actions") or []
         ticked: list[dict[str, Any]] = []
-        if view == "options":
-            button = self._account_button(actions, _ONE_TIME_CODE)
-        else:
-            button = self._account_button(actions, _ACCOUNT_ON)
+        pattern = _ONE_TIME_CODE if view == "options" else _ACCOUNT_ON
+        button = self._account_button(data.get("actions") or [], pattern)
+        deadline = time.monotonic() + ACCOUNT_STEP_WAIT
+        while button is None and time.monotonic() < deadline:
+            # its boxes drawn before its button (Northrop's agreement, live, Oct 2026): a moment more
+            await asyncio.sleep(0.5)
+            now, _ = await self._look()
+            if _email_account_view(now) != view:
+                return True  # it went on by itself: the main loop's next look
+            data, button = now, self._account_button(now.get("actions") or [], pattern)
         if button is None:
             return await self._account_theirs(run, data, f"I couldn't find the button that goes on with making your account "
                                         f"on {site}")
@@ -2055,6 +2176,10 @@ class Applier:
                                             "account, and its box didn't take my tick")
             for f in ticked:
                 self._log(run, f"ticked “{_short(f.get('label') or '')}” to make your account on {site}")
+            if not await self._give_other_positions(run, data, _other_positions_boxes(data)):
+                return await self._account_theirs(run, data, f"{site} asks you to agree to be considered for other "
+                                            "open positions before making your account, and its choice didn't take my "
+                                            "click")
         elif view == "email":
             address = config.Profile.load().get("personal.email")
             box = next(f for f in data.get("fields") or [] if not f.get("disabled") and not f.get("aside"))
@@ -2074,8 +2199,20 @@ class Applier:
         elif view == "options":
             self._log(run, f"chose “{button['text'].strip()}” on {site}: the account needs no password there")
         now, _ = await self._after_press(data)
-        if _email_account_view(now) != view or _page_sig(now) != _page_sig(data):
-            return True  # on to its next step (the main loop's next look)
+        wanted = _other_positions_boxes(now, required=False) if view == "consent" else []
+        others = [f for f in now.get("fields") or [] if not f.get("disabled") and not f.get("aside")
+                  and is_empty_value(f.get("value")) and f not in wanted]
+        if (wanted and not others and _email_account_view(now) == view and _page_sig(now) == _page_sig(data)
+                and (now.get("errors") or []) != (data.get("errors") or [])):
+            # refused without its consent to be considered for other open positions too: given, and pressed again
+            again = self._account_button(now.get("actions") or [], _ACCOUNT_ON)
+            if again is not None and await self._give_other_positions(run, now, wanted, refused=True):
+                with contextlib.suppress(Exception):
+                    await srv.browser.click(again["id"], allow_submit=True)
+                    now, _ = await self._after_press(now)
+        if _email_account_view(now) not in (view, None) or _page_sig(now) != _page_sig(data):
+            return True  # on to its next step (the main loop's next look); a page that stayed (BrassRing's email
+            # step, which has no view of its own) is said, never pressed again
         # still there: a choice left that's the person's, or what the site said
         said = "; ".join(e for e in now.get("errors") or [] if not _ERROR_COUNT.match(e.strip()))[:200].rstrip(" .")
         left = [f for f in now.get("fields") or [] if not f.get("disabled") and not f.get("aside")
@@ -2093,6 +2230,21 @@ class Applier:
                                         tail=False)
         return await self._account_theirs(run, now, f"I pressed “{button['text'].strip()}” while making your "
                                     f"account on {site}, and it didn't go on" + (f": “{said}”" if said else ""))
+
+    async def _give_other_positions(self, run: Run, data: dict[str, Any], fields: list[dict[str, Any]],
+                                    refused: bool = False) -> bool:
+        """Give an account form's consents to be considered for other open positions (_OTHER_POSITIONS),
+        which the site won't make the account without (`fields`: marked required, or `refused`: it
+        said so when its button was pressed), logging each. False when one wouldn't take it."""
+        if not fields:
+            return True
+        if not (await self.srv.fill_form([{"id": f["id"], "value": _tick(f)} for f in fields])).get("ok"):
+            return False
+        why = "it wouldn't go on without it" if refused else "it requires it"
+        for f in fields:
+            self._log(run, f"chose “{self._choice_said(f)}” to make your account on {_site(run, data)}, as {why} "
+                      "(settings.manage_accounts)")
+        return True
 
     @staticmethod
     def _choice_said(field: dict[str, Any]) -> str:
@@ -2146,12 +2298,17 @@ class Applier:
                         "you saved on the desk, then press Resume: the desk signs in with it.", seen=page)
             return "paused"
 
+        def way_back() -> bool:
+            # to the sign-in page, for its way to a new account: not once a Create Account here was told
+            # the email has one
+            return bool(run.reset_from) and run.page is not None and not tried.get("made")
+
         async def instead(why: str, page: dict[str, Any]) -> str:
             # No reset the desk can do there: back to the sign-in page, for its way to a new account. With
             # no account for the email (a first application there, the test identity's), that's the way
             # on; a site that has one says so when it's asked to make another, and that's the person's (as
             # it is once a Create Account here was told the email has one).
-            if not run.reset_from or run.page is None or tried.get("made"):
+            if not way_back():
                 return await stop(why, page)
             self._log(run, f"your saved password didn't sign in on {site}, and I {why}, so I went back to make an "
                       "account there instead")
@@ -2190,9 +2347,14 @@ class Applier:
         if (not _RESET_PAGE.search(" ".join([text[:2000], *(data.get("headings") or [])])) or not boxes or not address
                 or any(f.get("kind") == "password" for f in data.get("fields") or [])):
             return await instead("opened its password reset, which isn't one I can fill in", data)
+        captcha = _captcha_on(data)
+        if captcha and way_back():
+            # BrassRing's asks for a picture code (live, Oct 2026), never touched: its Continue pressed
+            # without one only said "Captcha text Required field"
+            return await instead("opened its password reset, which has a CAPTCHA (yours to solve)", data)
         if not (await srv.fill_form([{"id": boxes[0]["id"], "value": address}])).get("ok"):
             return await instead("opened its password reset, which didn't take your email", data)
-        if data.get("captcha") or data.get("challenge"):
+        if captcha:  # (and no new account to go back for: the site said the email has one)
             run.resetting = True
             await self._bring_forward(run)
             self._pause(run, "bot_check", f"I opened {site}'s password reset for your saved password, which didn't sign "
@@ -2219,14 +2381,30 @@ class Applier:
     async def _back_to_sign_in(self, run: Run) -> None:
         """Back to the sign-in page a password reset was asked from (run.reset_from). Where that page
         was good for one visit (SuccessFactors' career?_s.crb=..., Arizona Public Service's for the test
-        identity, live Oct 2026: "An error occurred while processing your request"), the job's posting
-        is opened again in its tab instead: its Apply leads to a fresh sign-in page."""
+        identity, live Oct 2026: "An error occurred while processing your request"), or its address
+        alone doesn't bring it back (Benchmark's Infor sign-in, live Oct 2026: a refused sign-in answers
+        at /sso/SSOServlet, where its form is sent, and that address opened again is Infor's own
+        sign-in, with no "Register" or "Forgot password?"), the job's posting is opened again in its
+        tab instead: its Apply leads to a fresh sign-in page. Where the reset was drawn in its place,
+        at the same address and fragment (BrassRing's #jobDetails=…, live, Oct 2026), going there again
+        leaves the reset on show: the page is loaded again (BrassRing's shows the posting, whose Apply
+        leads to the sign-in page)."""
         assert run.page is not None
-        await run.page.goto(run.reset_from, wait_until="domcontentloaded", timeout=45000)
+        if run.page.url == run.reset_from and urlparse(run.reset_from).fragment:
+            await run.page.reload(wait_until="domcontentloaded", timeout=45000)
+        else:
+            await run.page.goto(run.reset_from, wait_until="domcontentloaded", timeout=45000)
         data, text = await self._look()
-        if not data.get("fields") and _SPENT_PAGE.search(text[:3000]):
-            self._log(run, f"{_site(run, data)}'s sign-in page couldn't be opened again, so I opened the job again")
-            await self.srv.open_application(job_id=run.job_id)
+        fields, actions = data.get("fields") or [], data.get("actions") or []
+        if not fields and _SPENT_PAGE.search(text[:3000]):
+            gone = " couldn't be opened again"
+        elif (any(f.get("kind") == "password" for f in fields) and _forgot_action(actions) is None
+              and _account_way(actions) is None):
+            gone = ", opened again, had no way to a new account or a password reset"
+        else:
+            return
+        self._log(run, f"{_site(run, data)}'s sign-in page{gone}, so I opened the job again")
+        await self.srv.open_application(job_id=run.job_id)
 
     async def _await_reset_email(self, run: Run, data: dict[str, Any]) -> None:
         watched = self.mail_login() is not None
@@ -2459,11 +2637,7 @@ class Applier:
             await srv.click(email_button["id"])
             return "email_step"
         passwords = [f for f in fields if f["kind"] == "password"]
-        # The way to a new account is a link or a plain button. A Create Account form's own
-        # button sends that form (it creates the account), so it's never it: a form's submit,
-        # or a button in a form with two password boxes (Workday's, a div).
-        create = next((a for a in actions if _CREATE_ACCOUNT.match(a["text"].strip()) and not a.get("form_submit")
-                       and not a.get("account_form")), None)
+        create = _account_way(actions)
         # Where the way to a new account led: a form with one password box (UKG Pro's "Create
         # your account") is the new account's, as it no longer offers a way to one.
         signing_up = len(passwords) == 1 and bool(tried.get("create_account")) and create is None
@@ -2840,6 +3014,14 @@ def _forgot_action(actions: list[dict[str, Any]]) -> dict[str, Any] | None:
     return next((a for a in actions if not a.get("disabled") and not a.get("cookie") and _FORGOT.search(a["text"])), None)
 
 
+def _account_way(actions: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """A sign-in page's way to a new account, a link or plain button. A Create Account form's own
+    button sends that form (it creates the account), so it's never it: a form's submit, or a button
+    in a form with two password boxes (Workday's, a div)."""
+    return next((a for a in actions if not a.get("disabled") and _CREATE_ACCOUNT.match(a["text"].strip())
+                 and not a.get("form_submit") and not a.get("account_form")), None)
+
+
 def _user_name_box(field: dict[str, Any]) -> bool:
     """A box for a user name, not the email (Taleo's "User Name"): the desk puts the email in it."""
     label = field.get("label") or ""
@@ -2853,6 +3035,25 @@ def _security_boxes(fields: list[dict[str, Any]]) -> list[dict[str, Any]]:
         return []
     return [f for f in fields if f.get("kind") not in ("password", "checkbox", "file")
             and re.search(r"\bquestions?\b|\banswers?\b|\bhint\b", f.get("label") or "", re.I)]
+
+
+def _captcha_on(data: dict[str, Any]) -> bool:
+    """A CAPTCHA on the page, always the person's: a check's own frame (reCAPTCHA's, hCaptcha's), its
+    pictures over the page, or a picture code's box (BrassRing's password reset, live, Oct 2026)."""
+    return bool(data.get("captcha") or data.get("challenge")) or any(
+        f.get("kind") in ("text", "number") and _PICTURE_CODE.search(f.get("label") or "")
+        for f in data.get("fields") or [])
+
+
+def _email_first_account(data: dict[str, Any]) -> bool:
+    """A Create Account that asks for the email before any password (BrassRing's "Let's Get Started",
+    live, Oct 2026: an email box and Continue, which emails a passcode to it): an email box, and no
+    other but a picture code's."""
+    fields = [f for f in data.get("fields") or [] if not f.get("disabled") and not f.get("aside")]
+    emails = [f for f in fields if f.get("kind") in ("text", "email") and re.search(r"e-?mail", f.get("label") or "", re.I)]
+    headings = " ".join(data.get("headings") or [])
+    return (bool(emails) and all(f in emails or _PICTURE_CODE.search(f.get("label") or "") for f in fields)
+            and bool(re.search(r"\baccount\b", headings, re.I)) and not _NOT_TERMS.search(headings))
 
 
 # A posting page's own boxes, never an application's: Phenom's "Save Job" ticks and its chatbot's box
@@ -3099,6 +3300,66 @@ def _terms_boxes(data: dict[str, Any]) -> list[dict[str, Any]]:
             and (f.get("required") or _TERMS_ONLY.search(f.get("label") or ""))]
 
 
+def _privacy_statement(data: dict[str, Any]) -> dict[str, Any] | None:
+    """A Create Account form's link or button that opens the site's data privacy statement to be read
+    and accepted (_STATEMENT_LINK: "Read and accept the data privacy statement."), after its password
+    boxes and in the same form. Not one that also says something never agreed to (_agrees_to_terms:
+    a newsletter's, job alerts', a talent community's), nor a privacy link that accepts nothing."""
+    return next((a for a in data.get("actions") or [] if a.get("in_account_form") and not a.get("disabled")
+                 and not a.get("cookie") and not a.get("aside") and _STATEMENT_LINK.match(a["text"].strip())
+                 and _agrees_to_terms(a["text"])), None)
+
+
+def _new_candidate_boxes(data: dict[str, Any], company: str) -> list[dict[str, Any]]:
+    """A Create Account form's box saying the person is a new candidate, not a current employee
+    (_NEW_CANDIDATE), still unticked: ticked from the profile, so only when it has no current job
+    at this employer (autofill.works_there_now). Someone who works there now leaves it be (an
+    employee applies the way their employer says)."""
+    boxes = [f for f in data.get("fields") or [] if f.get("kind") == "checkbox" and not f.get("disabled")
+             and is_empty_value(f.get("value")) and _NEW_CANDIDATE.fullmatch(clean_label(f.get("label") or "").rstrip(" ."))]
+    profile = config.Profile.load()
+    if not boxes or not company or not (profile.get("work_history") or profile.get("experience.current_company")):
+        return []  # (a profile that says nothing of their work says nothing of this either)
+    return [] if works_there_now(profile, company) else boxes
+
+
+def _other_positions_consent(field: dict[str, Any]) -> Any:
+    """The value that gives an account form's consent to be considered for other open positions
+    (_OTHER_POSITIONS): True for its box, or a group's one choice. None for anything else: a group
+    with a choice between yes and no (a question for the person), or words that also sign them up
+    for something (_NEVER_AGREED: a newsletter, job alerts, a talent pool, keeping their data)."""
+    kind = field.get("kind")
+    options = [o for o in field.get("options") or [] if isinstance(o, str)]
+    value: Any
+    if kind == "checkbox":
+        said, value = field.get("label") or "", True
+    elif kind in ("radio", "radio_group") and len(options) == 1:
+        said, value = f"{field.get('label') or ''} {options[0]}", options[0]
+    elif kind == "checkbox_group" and len(options) == 1:
+        said, value = f"{field.get('label') or ''} {options[0]}", [options[0]]
+    else:
+        return None
+    if not _OTHER_POSITIONS.search(said) or _NEVER_AGREED.search(_OTHER_POSITIONS.sub(" ", said)):
+        return None
+    return value
+
+
+def _tick(field: dict[str, Any]) -> Any:
+    """The value that ticks an account form's box, or gives its consent to be considered for other
+    open positions (_other_positions_consent)."""
+    given = _other_positions_consent(field)
+    return True if given is None else given
+
+
+def _other_positions_boxes(data: dict[str, Any], required: bool = True) -> list[dict[str, Any]]:
+    """An account form's consents to be considered for other open positions still not given: the
+    ones it marks required (or, required=False, all of them: once the site has refused to go on
+    without them)."""
+    return [f for f in data.get("fields") or [] if not f.get("disabled") and not f.get("aside")
+            and is_empty_value(f.get("value")) and (f.get("required") or not required)
+            and _other_positions_consent(f) is not None]
+
+
 def _account_made_says(site: str, terms: bool, password: bool = True) -> str:
     """What the log says once the site shows the account made (Run.account_made)."""
     return ((f"created your account on {site} with your saved password" if password
@@ -3132,8 +3393,8 @@ def _account_wants(left: dict[str, Any], filled: dict[str, Any]) -> str:
         return "; ".join(([f"it says \u201c{'; '.join(said)[:300].rstrip(' .')}\u201d"] if said else []) + marked) + "."
     empty = [f for f in filled.get("fields") or [] if f.get("label") and not f.get("disabled")
              and f.get("kind") not in ("password", "file") and is_empty_value(f.get("value"))
-             and (f.get("required") or f.get("kind") == "checkbox" and _TERMS_BOX.search(f["label"])
-                  and not _NOT_TERMS.search(f["label"]))]
+             and (f.get("required") or f.get("kind") == "checkbox" and (_TERMS_BOX.search(f["label"])
+                  and not _NOT_TERMS.search(f["label"]) or _NEW_CANDIDATE.fullmatch(clean_label(f["label"]).rstrip(" ."))))]
     named = [f"\u201c{_short(f['label'])}\u201d " + ("isn't ticked" if f.get("kind") == "checkbox" else "is still empty")
              for f in empty[:3]]
     return "; ".join(named) + "." if named else ""

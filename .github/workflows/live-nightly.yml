@@ -5,7 +5,8 @@ name: live-nightly
 #   - the Job Desk pipeline on one posting per employer of the default semiconductor list:
 #     where it ended ("ready", "needs_you sign_in", "needs_you stuck", ...);
 #   - the same for HR jobs on the phoenix-metro list, as an applicant with an HR background,
-#     and for finance jobs there, as an applicant with a finance background;
+#     and for finance jobs there, as an applicant with a finance background (paused: the owner's call, Oct
+#     10, "put all finance on the back burner"; its last results stay in the issue as they were);
 #   - the search check on the phoenix-metro list: whether each employer's search works
 #     (how many openings it finds changes daily, and is never compared);
 #   - the accounts check: the pipeline as the test identity (a clearly fake applicant with an
@@ -50,9 +51,10 @@ jobs:
           - check: hr  # HR jobs, phoenix-metro list
             args: --pipeline --fake-passwords --parallel 4 --lists phoenix-metro --role hr
             minutes: 30
-          - check: finance  # finance jobs, phoenix-metro list
-            args: --pipeline --fake-passwords --parallel 4 --lists phoenix-metro --role finance
-            minutes: 30
+          # finance jobs, phoenix-metro list: paused (the owner's call, Oct 10). To resume, put back:
+          # - check: finance
+          #   args: --pipeline --fake-passwords --parallel 4 --lists phoenix-metro --role finance
+          #   minutes: 30
           - check: search  # whether each phoenix-metro employer's search works
             args: --lists phoenix-metro --parallel 4
             minutes: 30
@@ -163,7 +165,7 @@ jobs:
                 --body-out live-compare/body.md --comment-out live-compare/comment.md
                 --github-output "$GITHUB_OUTPUT")
           unfinished=()
-          for check in pipeline hr finance search accounts; do
+          for check in pipeline hr search accounts; do  # (finance: paused)
             outcome="$(cat "live-$check/outcome" 2>/dev/null)"
             if [ "$outcome" = not_set_up ]; then  # the accounts check, before the owner adds its secrets
               echo "$check: not set up, so not compared"

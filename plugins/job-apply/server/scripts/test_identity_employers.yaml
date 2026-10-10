@@ -12,6 +12,10 @@
 # looks for there: technician, hr or finance, as live_smoke.py's --role), system (the job system
 # its applications run on), and why it's here.
 #
+# No finance roles for now (the owner's call, Oct 10: finance is on the back burner): the employers that
+# were checked on finance postings use the HR or technician ones they have open (Kforce's only match is
+# a sales role), as the job system is what's tested here.
+#
 # The order matters: with --parallel 2, employers 1, 3, 5, ... run in one group and 2, 4, 6, ... in
 # the other, at the same time. Two employers on the same job system go in the same group (here
 # both Workday ones are odd), so one inbox is never waiting on two codes from the same sender.
@@ -34,12 +38,12 @@ employers:
     why: a second Workday site (another tenant, as an HR applicant), whose forms differ from KLA's
   - name: Arizona Public Service
     list: phoenix-metro
-    role: finance
+    role: technician
     system: SuccessFactors
     why: SAP SuccessFactors' Create Account form (its newer career site), then its application
   - name: Charles Schwab
     list: phoenix-metro
-    role: finance
+    role: hr
     system: iCIMS
     why: iCIMS; its "I Acknowledge the Privacy Notice" step is agreed to with accept_notices
   - name: onsemi
@@ -49,17 +53,17 @@ employers:
     why: Oracle Recruiting Cloud, which signs in with an emailed code and wants a resume uploaded
   - name: Northrop Grumman
     list: phoenix-metro
-    role: finance
+    role: hr
     system: Eightfold
     why: Eightfold's "create a new account" for an email it doesn't know yet
   - name: Kforce
     list: phoenix-metro
-    role: finance
+    role: technician
     system: Taleo
     why: Taleo; its "I Accept" step is agreed to with accept_notices, then its account
   - name: Edward Jones
     list: phoenix-metro
-    role: finance
+    role: hr
     system: BrassRing
     why: BrassRing's sign-in and account steps
   - name: Linde

@@ -92,7 +92,7 @@ def _only_declines(option: str) -> bool:
 
 def clean_label(label: str) -> str:
     # the form's marker, not the word in a question ("Sponsorship is not required for you?")
-    label = re.sub(r"\(required\)|^\s*required\b[:\s]*|[\s:-]*\brequired\s*[*:]?\s*$", " ", label or "", flags=re.I)
+    label = re.sub(r"\(required\)|^\s*required\b[:\s]*|[\s:.-]*\brequired\s*[*:]?\s*$", " ", label or "", flags=re.I)
     label = label.replace("*", " ")
     label = re.sub(r"\(\s*(yes\s*/\s*no|y\s*/\s*n)\s*\)", " ", label, flags=re.I)  # "...license? (Yes/No)"
     label = re.sub(r"\s+", " ", label).strip(" :?")
@@ -529,9 +529,17 @@ def _previously_employed(prof: Profile, job: dict, label: str = "") -> str | Non
     if not any(_same_employer(c, company) for c in past if c):
         # "...or any of its subsidiaries or affiliates": the profile can't say it's none of those
         return None if re.search(r"\b(subsidiar|affiliat)", asked) else "No"
+    return "Yes, currently" if works_there_now(prof, company) else "Yes, previously"
+
+
+def works_there_now(prof: Profile, company: str) -> bool:
+    """Does the profile have the person working for this employer now: a work_history entry that
+    runs to the present, or experience.current_company?"""
+    company = norm(company)
+    entries = [e for e in _listed(prof.get("work_history")) if isinstance(e, dict)]
     now = [norm(e.get("company")) for e in entries if is_present(entry_dates(e)[1]) or e.get("current") is True]
     now.append(norm(prof.get("experience.current_company")))
-    return "Yes, currently" if any(_same_employer(c, company) for c in now if c) else "Yes, previously"
+    return bool(company) and any(_same_employer(c, company) for c in now if c)
 
 
 def _said_no(prof: Profile, key: str) -> bool:
@@ -1174,7 +1182,8 @@ RULES: list[tuple[str, str, Getter, int | None, set[str] | None]] = [
     ("government_employee", r"\b(are|were|have) you\b.{0,80}\b(government|federal|state or local|public sector)\b.{0,60}"
      r"\b(employee|employed|official|worker)|\b(employ\w*|work\w*) (by|for) (a |the |any )?(u s |us |federal |state |local |"
      r"city |county )?(government|public agency)\b", _government, None, _YES_NO_KINDS),
-    ("relatives", r"\b(relatives?|related|family members?|friends?|spouse|in laws?)\b.{0,80}\b(employ\w*|work\w*)\b|"
+    ("relatives", r"\b(relatives?|related|(immediate )?family members?|members? of your (immediate )?family|immediate family|"
+     r"friends?|spouse|in laws?)\b.{0,80}\b(employ\w*|work\w*)\b|"
      r"\b(employ\w*|work\w*)\b.{0,60}\b(relatives?|family members?)\b", _relatives, None, _YES_NO_KINDS),
     ("restrictive_agreement", r"\bnon ?(compet\w*|solicit\w*)\b|restrictive covenant|\bagreements?\b.{0,160}\b(impact|interfere|"
      r"restrict|limit|prevent|prohibit)\w*", _background("restrictive_agreement", unless=r"\b(willing|sign|agree to)\b"), None,
@@ -1183,7 +1192,8 @@ RULES: list[tuple[str, str, Getter, int | None, set[str] | None]] = [
      r"\b(intellectual property|patents?)\b.{0,60}\b(own|interest)", _background("intellectual_property"), None, _YES_NO_KINDS),
     ("outside_work", r"\b(secondary|outside|second|additional) (employment|job|business)|\bmoonlight", _background("outside_work"),
      None, _YES_NO_KINDS),
-    ("board_member", r"\bboard of (directors|advisors)\b|\bboard member\b|governing body", _background("board_member"), None,
+    ("board_member", r"\bboard of (directors|advisors)\b|\bboard member\b|governing body",
+     _background("board_member", unless=r"\b(family|relatives?|spouse|friends?)\b"), None,
      _YES_NO_KINDS),
     ("military", r"\b(served|serve|serving|service) in (the |any )?(u s |us )?(military|armed forces)|\bmilitary service\b",
      _background("military", unless=r"\b(spouse|family|parent|relative)\b"), None, _YES_NO_KINDS),

@@ -113,7 +113,9 @@ through its `missing` and `profile_gaps` together.
      Proceed") waits for them. Ask whether the desk may accept those for them
      (`settings.accept_cookies: true`); leave it off unless they say yes.
    - Accounts on job sites: tell them the desk creates their accounts itself (agreeing to each
-     site's terms in their name) and, when a site refuses their saved password, asks that
+     site's terms in their name, and to being considered for other open positions where a site
+     won't make the account without that, never job alerts or a newsletter) and, when a site
+     refuses their saved password, asks that
      site for a password reset and sets the saved password as the new one (reading the reset
      email needs the email app password on the desk; without it, they finish the reset from
      the email). Ask whether that's all right, and write `settings.manage_accounts: true` or

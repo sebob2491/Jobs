@@ -1180,6 +1180,136 @@ def test_with_manage_accounts_a_create_account_forms_link_is_pressed(srv, monkey
     assert any("“My Information”" in line for line in r.log), r.log  # on to the application
 
 
+SF_ACCOUNT = "site/sf-create-account.html"
+STATEMENT = "Data Privacy Consent Statement"
+
+
+async def statement_page(r):
+    """What the SuccessFactors-like Create Account kept for the tab: its sf.* keys (sessionStorage)."""
+    return await r.page.evaluate("() => Object.fromEntries(Object.keys(sessionStorage).filter(k => k.startsWith('sf.'))"
+                                 ".map(k => [k.slice(3), JSON.parse(sessionStorage.getItem(k))]))")
+
+
+def create_account_on_sf(srv, query="", watch=0):
+    """Apply at the SuccessFactors-like Create Account until the desk stops: the run, what the page kept, and
+    what its boxes hold (None once it has gone on to the application). `watch`: seconds more it's left to
+    watch the paused tab, which carries on by itself where the person is past the pause."""
+    job = srv.add_job(url=fixture_url(SF_ACCOUNT) + query, title="Financial Analyst", company="Example Corp")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            await asyncio.sleep(watch)
+            form = await r.page.evaluate("() => document.getElementById('fbclc_userName') && [fbclc_userName.value, "
+                                         "fbclc_fName.value, fbclc_country.value, fbclc_pwd.value.length > 0]")
+            return r, await statement_page(r), form
+        finally:
+            await applier.stop()
+
+    return run(go())
+
+
+@pytest.mark.parametrize("how", ["on", "slow", "test-identity"])
+def test_with_manage_accounts_a_data_privacy_statement_is_opened_and_accepted_for_the_account(
+        srv, monkeypatch, job_apply_home, how):
+    """SuccessFactors' Create Account (APS's, live, Oct 10, 2026) makes no account until its data privacy
+    statement has been read and accepted: a link, "Read and accept the data privacy statement.", opens it in
+    a dialog (Accept, Decline). The desk pressed Create Account without it, and the page stayed, with only
+    its password hints to say ("Password accepted; Password matches"). With settings.accept_notices the desk
+    opens the statement, accepts it for the person (as any employer notice), says so in the log and presses
+    Create Account; never Decline, and never the box for hearing more about career opportunities (marketing).
+    The statement comes a moment after its link is pressed (slow). The live check's test identity does the
+    same in practice mode."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    saved_password(monkeypatch)
+    manage_accounts(job_apply_home)
+    if how == "test-identity":
+        as_test_identity(monkeypatch, job_apply_home)
+    r, kept, _ = create_account_on_sf(srv, "?slow" if how == "slow" else "")
+    log = "\n".join(r.log)
+    agreed = f"agreed to Example Corp's notice “{STATEMENT}” for you (settings.accept_notices)"
+    assert agreed in r.log, log
+    assert any(line.startswith("created your account on") and "accepted its data privacy statement" in line
+               for line in r.log), log
+    assert r.log.index(agreed) < next(i for i, line in enumerate(r.log) if line.startswith("pressed “Create Account”")), log
+    assert kept == {"opened": 1, "statement": "accepted", "presses": 1, "created": 1, "campaign": False}, kept
+    assert r.need != "sign_in" and "Create Account" not in r.reason, (r.status, r.reason, log)
+    assert any("“My Information”" in line for line in r.log), log  # on to the application
+
+
+@pytest.mark.parametrize("how", ["notices-off", "practice"])
+def test_a_data_privacy_statement_is_the_persons_without_accept_notices(srv, monkeypatch, job_apply_home, how):
+    """Without settings.accept_notices (or in practice mode, which never makes an account) the desk fills
+    SuccessFactors' Create Account form and leaves it: the data privacy statement agrees to something in
+    the person's name, so it's not opened, nor Create Account pressed (the site would refuse it). The
+    pause says plainly that the form asks them to read and accept it."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    saved_password(monkeypatch)
+    if how == "practice":
+        manage_accounts(job_apply_home, submit_mode="dry_run")
+    else:
+        manage_accounts(job_apply_home)
+        notice_settings(job_apply_home, accept_notices=False)
+    r, kept, filled = create_account_on_sf(srv)
+    assert (r.status, r.need) == ("needs_you", "sign_in"), (r.status, r.reason, r.log)
+    assert "asks you to read and accept its data privacy statement" in r.reason, r.reason
+    assert "accept_notices: true" in r.reason and "I tried" not in r.reason, r.reason
+    assert kept == {}, kept  # the statement never opened, nothing pressed
+    assert filled == ["sam.rivera@example.com", "Sam", "United States", True], filled  # the form is filled in
+    assert not any("agreed to" in line for line in r.log), r.log
+
+
+def test_a_data_privacy_statement_that_also_signs_up_for_marketing_is_the_persons(srv, monkeypatch, job_apply_home):
+    """Never a newsletter, job alerts or marketing: a statement whose opening says that accepting it
+    also signs the person up for marketing emails and job alerts is opened but not accepted, left open
+    for them to read, and Create Account is not pressed."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    saved_password(monkeypatch)
+    manage_accounts(job_apply_home)
+    r, kept, _ = create_account_on_sf(srv, "?marketing", watch=3)  # (it stays paused, the statement open)
+    assert (r.status, r.need) == ("needs_you", "sign_in"), (r.status, r.reason, r.log)
+    assert "asks you to read and accept its data privacy statement" in r.reason, r.reason
+    assert "I tried to open it and accept it for you, and couldn't." in r.reason, r.reason
+    assert kept == {"opened": 1}, kept  # opened, and nothing else: not accepted, declined or closed
+    assert not any("agreed to" in line or "created your account" in line for line in r.log), r.log
+
+
+def test_a_data_privacy_statements_link_and_its_long_text_are_told_from_the_rest():
+    """A Create Account form's link to the statement is told by its words (read and accept, a privacy
+    notice or terms, nothing about a newsletter, job alerts or a talent community) and its place after
+    the password boxes, in the form. Its dialog, named so in its heading, is read for what's never agreed to
+    only at its opening: its long text speaks of affiliates, marketing and deleting data as practices."""
+    def link(text, **kw):
+        return {"id": "a1", "text": text, "in_account_form": True, **kw}
+
+    found = pipeline._privacy_statement({"actions": [link("Show"), link("Read and accept the data privacy statement.")]})
+    assert found is not None and found["text"].startswith("Read and accept")
+    for text in ("Data privacy policy", "Read our privacy statement", "I accept the privacy statement",
+                 "Read and accept the talent community privacy statement",
+                 "Read and agree to receive job alerts, and the privacy statement"):
+        assert pipeline._privacy_statement({"actions": [link(text)]}) is None, text
+    footer = {"id": "a2", "text": "Read and accept the data privacy statement."}  # not in the account form
+    assert pipeline._privacy_statement({"actions": [footer]}) is None
+    assert pipeline._privacy_statement({"actions": [link(footer["text"], disabled=True)]}) is None
+    notice = pipeline._terms_notice
+    statement = ("Contact the HR Service Team at 100 Example Street, Example City. " * 8
+                 + "Example Corp and its affiliated companies protect your Personal Information. It is not used for "
+                 "marketing. You may ask us to delete it, withdraw your consent, or stop cookies.")
+    assert statement.index("affiliated") > pipeline.NOTICE_OPENING  # (past its opening)
+    assert notice("Data Privacy Consent Statement", statement) == (True, True)
+    assert notice("Before you apply", statement) == (False, False)  # not named in its heading: all of it is read
+    assert notice("Data Privacy Consent Statement",
+                  "By accepting you also agree to receive marketing emails. " + statement) == (False, False)
+    assert notice("Talent Community Privacy Statement", statement) == (False, False)
+    # a legal waiver is never agreed to for the person, however deep in the statement it sits
+    for waiver in ("Any dispute will be resolved by binding arbitration.", "You waive any right to a jury trial.",
+                   "By clicking Accept you also join our Talent Community and receive job alerts."):
+        assert notice("Data Privacy Consent Statement", statement + " " + waiver) == (False, False), waiver
+
+
 def as_test_identity(monkeypatch, job_apply_home, email="sam.rivera@example.com"):
     """The nightly live check's switches on (live_smoke.py --test-identity), with `email` as the test
     identity's: the conftest profile's own makes it the test identity, in practice mode."""
@@ -1369,6 +1499,33 @@ def test_icims_privacy_gate_in_its_frame_takes_the_email_and_phone_and_is_acknow
     assert (sent.get("css_loginName"), sent.get("countryCodeSelect"), sent.get("css_phoneNumber")) == (
         "sam.rivera@example.com", "US", "480-555-0123"), sent
     assert (r.status, r.need) == ("needs_you", "sign_in"), (r.status, r.reason, r.log)
+
+
+@pytest.mark.parametrize("check", ["hCaptcha", "reCAPTCHA"])
+def test_an_agreement_a_bot_check_holds_is_said_to_be_the_persons(srv, monkeypatch, job_apply_home, check):
+    """Charles Schwab's iCIMS in the live check (Oct 2026): "I Acknowledge the Privacy Notice" was pressed
+    for the person, then went blank and greyed out behind the page's hCaptcha, and the desk said it
+    couldn't find the button. It says what it pressed, and that the bot check is theirs."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 1)
+    job = srv.add_job(url=fixture_url("site/icims-privacy-gate.html") + ("?bot=recaptcha" if check == "reCAPTCHA" else "?bot"),
+                      title="Analyst", company="Example Financial")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert any(line.startswith("agreed to Example Financial's “I Acknowledge the Privacy Notice”") for line in r.log), r.log
+    assert (r.status, r.need) == ("needs_you", "stuck"), (r.status, r.reason, r.log)
+    assert "I pressed “I Acknowledge the Privacy Notice” for you" in r.reason and f"({check})" in r.reason, r.reason
+    assert "couldn't find the button" not in r.reason
 
 
 def test_with_manage_accounts_a_refused_saved_password_is_reset(srv, monkeypatch, job_apply_home):
@@ -1884,6 +2041,93 @@ def test_a_reset_the_desk_cant_fill_in_makes_an_account_instead(srv, monkeypatch
     assert "created your account" in log and r.seen_form, (r.reason, r.log)
 
 
+async def brassring_did(page):
+    """What the BrassRing-like page (site/brassring-signin.html) has seen in this tab."""
+    return await page.evaluate("() => Object.fromEntries(Object.entries(sessionStorage).filter(([k]) => "
+                               "k.startsWith('br.')).map(([k, v]) => [k.slice(3), JSON.parse(v)]))")
+
+
+def test_an_email_first_account_step_that_stays_is_pressed_once(srv, monkeypatch, job_apply_home):
+    """BrassRing's Create Account asks for the email first. Where its Continue refuses the email and the
+    step stays, the desk said it had gone on (the step has no view of an Eightfold site's), came back to
+    it and pressed Continue again on each look, each one emailing a passcode. It's pressed once, and
+    what the site said is the person's."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "ACCOUNT_STEP_WAIT", 2)
+    saved_password(monkeypatch)
+    manage_accounts(job_apply_home)
+    watched_inbox(monkeypatch)
+    job = srv.add_job(url=fixture_url("site/brassring-signin.html") + "?refuse", title="Senior Analyst",
+                      company="Example Corp")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r, await brassring_did(r.page)
+        finally:
+            await applier.stop()
+
+    r, did = run(go())
+    assert did.get("accountPresses") == 1, (did, r.log)
+    assert r.need == "sign_in" and "Please enter a valid email address" in r.reason, (r.reason, r.log)
+
+
+@pytest.mark.parametrize("who", ["on", "captcha", "off", "practice"])
+def test_a_reset_with_a_captcha_makes_the_account_instead(srv, monkeypatch, job_apply_home, who):
+    """Edward Jones' BrassRing (live, Oct 2026): the saved password didn't sign in, and its password
+    reset asks for a picture code ("Enter Captcha"). The desk filled in the email, pressed the reset's
+    Continue without the code, and stopped on "One or more fields require your attention. Captcha text
+    Required field". A CAPTCHA is the person's, so that's a reset the desk can't do: with
+    manage_accounts it goes back to the sign-in page (drawn in place at the posting's own address, so
+    the page is loaded again: going to that address left the reset on show) and makes the account
+    through "Don't have an account yet?", whose first step takes the email (its Continue emails a
+    passcode there). The reset's CAPTCHA is never touched, nor its Continue pressed. A CAPTCHA on
+    Create Account too ("captcha") is the person's, and the pause says so. Without manage_accounts,
+    or in practice mode, no reset is asked for, and Create Account's Continue, which begins the
+    account, is the person's (the desk had pressed it, taking it for an application's step)."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    saved_password(monkeypatch)
+    if who in ("on", "captcha"):
+        manage_accounts(job_apply_home)
+    elif who == "practice":
+        manage_accounts(job_apply_home, submit_mode="dry_run")
+    watched_inbox(monkeypatch)
+    url = fixture_url("site/brassring-signin.html") + ("?captcha" if who == "captcha" else "")
+    job = srv.add_job(url=url, title="Senior Analyst", company="Example Corp")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r, await brassring_did(r.page)
+        finally:
+            await applier.stop()
+
+    r, did = run(go())
+    log = "\n".join(r.log)
+    assert "captcha" not in did and "resetPresses" not in did, (did, r.log)  # no CAPTCHA typed in, nor reset sent
+    assert did.get("signIns") == 1, (did, r.log)  # the saved password, once
+    if who in ("off", "practice"):
+        assert "password reset" not in log and "accountEmail" not in did, (did, r.log)
+        assert r.need == "sign_in" and "Making the account is yours" in r.reason, (r.reason, r.log)
+        return
+    assert "asked it to email a password reset" not in log, log
+    assert ("I opened its password reset, which has a CAPTCHA (yours to solve), so I went back to make an account "
+            "there instead") in log, log
+    if who == "captcha":
+        assert "accountEmail" not in did, (did, r.log)
+        assert r.need == "sign_in" and "with a CAPTCHA that's yours to solve" in r.reason, (r.reason, r.log)
+        return
+    assert did.get("accountEmail") == "sam.rivera@example.com", (did, r.log)
+    assert "gave Example Corp's site your email for the new account and pressed “Continue”" in log, log
+    assert r.need == "email_code", (r.reason, r.log)  # its passcode: the inbox's, or the person's
+
+
 def test_a_sign_in_page_good_for_one_visit_is_reached_again_through_the_posting(srv, monkeypatch, job_apply_home):
     """SuccessFactors' sign-in page (career?_s.crb=…) is good for one visit: going back to it after a
     reset the desk couldn't do showed "An error occurred while processing your request" (Arizona
@@ -1910,6 +2154,69 @@ def test_a_sign_in_page_good_for_one_visit_is_reached_again_through_the_posting(
     assert "so I went back to make an account there instead" in log, log
     assert "sign-in page couldn't be opened again, so I opened the job again" in log, log
     assert "created your account" in log and r.seen_form, (r.reason, r.log)
+
+
+# Benchmark's Infor CloudSuite board (data/companies.yaml): a posting, and Infor's sign-in
+INFOR = "https://css-benchmark-prd.inforcloudsuite.com"
+INFOR_POSTING = INFOR + "/hcm/Jobs/form/JobPosting.JobPostingDisplay?csk.JobBoard=EXTERNAL&csk.HROrganization=1"
+
+
+async def _infor_site(srv) -> None:
+    """Benchmark's Infor board from the hand-written pages (site/infor-*.html, and its New Account
+    Registration: register-picture-code.html) at its own address, so its saved password is Infor's as
+    it is live; routed: nothing reaches the real site. Infor's sign-in and its reset are both at
+    /sso/SSOServlet."""
+    site = Path(__file__).parent / "fixtures" / "site"
+    pages = {"/hcm/Jobs/form/JobPosting.JobPostingDisplay": "infor-posting.html", "/sso/SSOServlet": "infor-signin.html",
+             "/hcm/Jobs/form/Candidate.SelfRegistrationForm": "register-picture-code.html"}
+
+    async def handler(route):
+        url = urlparse(route.request.url)
+        name = "infor-reset.html" if "_action=PWDRESET" in url.query else pages.get(url.path)
+        await route.fulfill(status=200 if name else 404, content_type="text/html",
+                            body=(site / name).read_text(encoding="utf-8") if name else "<html><body>not found</body></html>")
+
+    await srv.browser.page()
+    await srv.browser._ctx.route(INFOR + "/**", handler)
+
+
+def test_infors_sign_in_opened_again_by_its_address_is_reached_through_the_posting(srv, monkeypatch, job_apply_home):
+    """Benchmark's Infor board (live, Oct 2026): the saved password didn't sign in, the password
+    reset's button stayed greyed out with the email filled in, and the desk went back to the sign-in
+    page's address to make an account there. But its form had been sent to /sso/SSOServlet, and that
+    address opened again is Infor's own sign-in, with no "Register" (nor "Forgot password?"): the desk
+    stopped there. It opens the posting again, whose Apply leads to a fresh sign-in with its "Register",
+    and fills in the board's New Account Registration; its picture code is the person's, and so is
+    its Submit."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setenv("JOB_APPLY_SECRET_INFOR_PASSWORD", "not-a-real-password")
+    manage_accounts(job_apply_home)
+    watched_inbox(monkeypatch)
+    job = srv.add_job(url=INFOR_POSTING, title="Field Service Technician", company="Benchmark Electronics")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        await _infor_site(srv)
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r, await r.page.evaluate("() => [window.result ? window.result() : location.href, window.created, "
+                                            "sessionStorage.getItem('infor.logins')]")
+        finally:
+            await applier.stop()
+
+    r, (filled, created, logins) = run(go())
+    assert filled == {"first": "Sam", "last": "Rivera", "email": "sam.rivera@example.com", "same": True, "code": "",
+                      "upload": "", "files": 0, "nores": False}, (filled, r.reason, r.log)
+    assert (created, logins) == (0, "1"), (created, logins, r.log)  # (one sign-in, never a second)
+    assert r.need == "sign_in" and "Create Account form" in r.reason and "CAPTCHA is yours to solve" in r.reason, r.reason
+    log = "\n".join(r.log)
+    assert "couldn't press its button, so I went back to make an account there instead" in log, log
+    assert "Infor's sign-in page, opened again, had no way to a new account or a password reset, so I opened the " \
+           "job again" in log, log
+    assert "your saved password didn't sign in, so I opened Create Account" in log, log
+    assert not any(line.startswith(("pressed “Submit”", "created your account")) for line in r.log), log
 
 
 # Kforce's Taleo career section, on Kforce's own address (data/lists/phoenix-metro.yaml)
@@ -2134,6 +2441,41 @@ def test_a_workday_account_is_said_made_only_once_its_sign_in_gets_in(srv, monke
     pressed = [line for line in r.log[:signed_in] if line.startswith("pressed \u201cCreate Account\u201d")]
     assert len(pressed) == 1 and "after ticking \u201cYes, I confirm that I have read the privacy notice.\u201d" in pressed[0]
     assert r.seen_form, (r.reason, r.log)
+
+
+@pytest.mark.parametrize("company, ticked", [("Example Fab", True), ("Intel", False)])
+def test_a_workday_create_account_says_a_new_candidate_from_the_profile(srv, monkeypatch, job_apply_home, company, ticked):
+    """Banner Health's Workday (live, Oct 2026) made no account, and said nothing, until its "Yes, I am a
+    new candidate and not a current employee" box was ticked (not marked required). It's ticked when
+    the profile has no current job at the employer (an old one there doesn't count: Example Fab
+    Services ended in 2021); someone who works there now (Intel, in the test profile) is left to it,
+    and the card names the box."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "ACCOUNT_WAIT", 2)  # (a form that says nothing is waited on that long)
+    saved_password(monkeypatch)
+    manage_accounts(job_apply_home)
+    job = srv.add_job(url=fixture_url("site/workday-account.html") + "?candidate", title="FSE", company=company)["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r, await workday_did(r.page)
+        finally:
+            await applier.stop()
+
+    r, did = run(go())
+    assert (did["candidate"], did["privacy"], did.get("created")) == (ticked, True, 1 if ticked else None), (did, r.log)
+    pressed = next(line for line in r.log if line.startswith("pressed \u201cCreate Account\u201d"))
+    if ticked:
+        assert "\u201cYes, I am a new candidate and not a current employee\u201d" in pressed, r.log
+        assert any(line.startswith("created your account on") for line in r.log) and r.seen_form, (r.reason, r.log)
+    else:
+        assert "new candidate" not in pressed, r.log
+        assert r.need == "sign_in" and "\u201cYes, I am a new candidate and not a current employee\u201d isn't ticked" in r.reason, (
+            r.reason, r.log)
 
 
 def test_a_workday_create_account_that_doesnt_sign_in_goes_to_a_reset_not_round_again(srv, monkeypatch, job_apply_home):
@@ -2919,6 +3261,33 @@ def test_a_create_account_form_is_filled_from_the_profile(srv, monkeypatch, page
     user = " (your email as its user name)" if "username" in page else ""
     assert "filled the Create Account form with your details and saved password" + user in r.log, r.log
     assert srv.tracker().get(job["id"])["status"] != "ready"
+
+
+def test_with_manage_accounts_a_create_account_with_a_picture_code_is_left_to_the_person(srv, monkeypatch,
+                                                                                          job_apply_home):
+    """Benchmark's Infor registration asks for a picture code ("Enter the text in image above"), a
+    CAPTCHA the site draws itself. The desk took only a check's own frame for a CAPTCHA, so with
+    manage_accounts it pressed the form's Submit with the code empty. A CAPTCHA is the person's: the
+    form is filled in and left to them, and the pause says the CAPTCHA is theirs."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    saved_password(monkeypatch)
+    manage_accounts(job_apply_home)
+    job = srv.add_job(url=fixture_url("site/register-picture-code.html"), title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r, await r.page.evaluate("() => [window.created, window.result().code]")
+        finally:
+            await applier.stop()
+
+    r, (created, code) = run(go())
+    assert (created, code) == (0, ""), (created, code, r.log)
+    assert r.need == "sign_in" and "Its CAPTCHA is yours to solve" in r.reason, (r.reason, r.log)
+    assert not any(line.startswith("pressed") for line in r.log), r.log
 
 
 def test_follows_an_application_that_opens_in_a_new_tab_late(srv, monkeypatch):
@@ -5293,17 +5662,53 @@ def test_with_manage_accounts_an_email_first_site_makes_the_account_with_the_ema
     assert r.status != "submitted", (r.status, r.reason)
 
 
-def test_with_manage_accounts_a_choice_to_be_considered_for_other_jobs_stays_the_persons(srv, monkeypatch,
-                                                                                        job_apply_home):
-    """Northrop Grumman's agreement step also asks for its required "Contact Consent": "I understand that
-    I may be considered for other open positions in my country". Being considered for other jobs is
-    never chosen for the person (as a talent community isn't): the desk ticks the Privacy Policy box,
-    stops for them naming the choice, and once they've chosen it and pressed Submit, makes the account
-    with the email and the emailed code by itself, and carries on."""
+@pytest.mark.parametrize("contact", ["required", "optional", "required&late"])
+def test_with_manage_accounts_a_required_choice_to_be_considered_for_other_jobs_is_given(srv, monkeypatch,
+                                                                                       job_apply_home, contact):
+    """Northrop Grumman's agreement step also asks for its "Contact Consent": "I understand that I may be
+    considered for other open positions in my country", and won't go on without it ("You must select
+    one option"; not marked required). The owner's call (Oct 10): a consent like that is given for the
+    person when the site won't make the account without it. The desk ticks the Privacy Policy box and
+    presses Submit; refused, it chooses the consent, says so, presses Submit again and makes the account
+    with the email and the emailed code. Where the site goes on without it, it's never chosen. Live, its
+    Submit was drawn a moment after its boxes, and the desk said it couldn't find the button (late)."""
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
     manage_accounts(job_apply_home)
     inbox_with_code(monkeypatch)
-    job = srv.add_job(url=fixture_url(EIGHTFOLD) + "?contact=required", title="Financial Analyst",
+    job = srv.add_job(url=fixture_url(EIGHTFOLD) + f"?contact={contact}", title="Financial Analyst",
+                      company="Example Corp")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.need == "questions" or r.status == "ready", about=state(r))  # nobody touched it
+            return r, await r.page.evaluate("() => sessionStorage.getItem('account')")
+        finally:
+            await applier.stop()
+
+    r, account = run(go())
+    assert account == "sam.rivera@example.com" and "/site/" in r.url and "eightfold" not in r.url, (account, r.url, r.log)
+    log = "\n".join(r.log)
+    assert "ticked “I have read and agree to the Privacy Policy” to make your account" in log, log
+    chose = [line for line in r.log if line.startswith("chose “Contact Consent: I understand that I may be considered "
+                                                        "for other open positions")]
+    if contact.startswith("required"):
+        assert len(chose) == 1 and "as it wouldn't go on without it (settings.manage_accounts)" in chose[0], log
+    else:
+        assert not chose, log
+    assert any(line.startswith("created your account on") for line in r.log), log
+
+
+def test_a_refused_agreement_with_another_choice_left_never_gives_the_consent_for_it(srv, monkeypatch, job_apply_home):
+    """The agreement step refused ("You must select one option"), and besides the consent to be considered
+    for other open positions it has another choice left empty, one that's the person's. The refusal may be
+    about that one: the consent isn't given on it, and the step is theirs, naming both."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    manage_accounts(job_apply_home)
+    inbox_with_code(monkeypatch)
+    job = srv.add_job(url=fixture_url(EIGHTFOLD) + "?contact=required&question", title="Financial Analyst",
                       company="Example Corp")["job"]
     applier = Applier(srv)
 
@@ -5312,23 +5717,52 @@ def test_with_manage_accounts_a_choice_to_be_considered_for_other_jobs_stays_the
         try:
             r = applier.enqueue(job["id"])
             await until(lambda: r.status not in ("queued", "running"), about=state(r))
-            first = (r.status, r.need, r.reason)
-            boxes = await r.page.evaluate("() => [document.getElementById('consent-checkbox').checked, "
-                                          "document.getElementById('contact-consent-choice-0').checked]")
-            await r.page.check("#contact-consent-choice-0")  # the person chooses it, and presses Submit
-            await r.page.click("#agree")
-            await until(lambda: r.need == "questions" or r.status == "ready", about=state(r))
-            return r, first, boxes, await r.page.evaluate("() => sessionStorage.getItem('account')")
+            return r, await r.page.evaluate("() => document.getElementById('contact-consent-choice-0').checked")
         finally:
             await applier.stop()
 
-    r, (status, need, reason), boxes, account = run(go())
-    assert (status, need) == ("needs_you", "sign_in"), (status, need, reason)
-    assert boxes == [True, False], boxes  # the Privacy Policy ticked; the other choice left to the person
-    assert "“Contact Consent: I understand that I may be considered for other open positions" in reason, reason
-    assert "the desk never chooses for you" in reason and "You must select one option" in reason, reason
-    assert account == "sam.rivera@example.com" and "/site/" in r.url and "eightfold" not in r.url, (account, r.url, r.log)
-    assert any(line.startswith("created your account on") for line in r.log), r.log
+    r, consented = run(go())
+    assert (r.status, r.need, consented) == ("needs_you", "sign_in", False), (r.status, r.reason, r.log)
+    assert not any(line.startswith("chose “Contact Consent") for line in r.log), r.log
+    assert "Preferred contact method" in r.reason and "the desk never chooses for you" in r.reason, r.reason
+
+
+def test_an_account_forms_boxes_and_steps_never_take_in_a_sign_up(job_apply_home):
+    """What an account form's boxes and steps are told from: a privacy box that also has the person
+    considered for other open positions isn't a plain terms box; a page asking only for an email is an
+    account's first step only under an account heading, never a talent community's; and a "new candidate,
+    not a current employee" box is ticked only where the profile says where the person works."""
+    import yaml
+
+    both = {"id": "b", "kind": "checkbox", "label": "I agree to the Privacy Policy and understand I may be considered "
+            "for other open positions", "value": False}
+    assert pipeline._terms_boxes({"fields": [both]}) == []
+    email = {"id": "e", "kind": "text", "label": "Email address", "value": ""}
+    assert pipeline._email_first_account({"headings": ["Let's Get Started", "Account Information"], "fields": [email]})
+    assert not pipeline._email_first_account({"headings": ["Join our Talent Community"], "fields": [email]})
+    assert not pipeline._email_first_account({"headings": ["Get job alerts"], "fields": [email]})
+    new = {"id": "n", "kind": "checkbox", "label": "Yes, I am a new candidate and not a current employee", "value": False}
+    assert pipeline._new_candidate_boxes({"fields": [new]}, "Example Health") == [new]
+    path = job_apply_home / "profile.yaml"
+    profile = yaml.safe_load(path.read_text(encoding="utf-8"))
+    profile.pop("work_history", None)
+    path.write_text(yaml.safe_dump(profile), encoding="utf-8")
+    assert pipeline._new_candidate_boxes({"fields": [new]}, "Example Health") == []
+
+
+def test_a_consent_to_other_positions_is_given_only_on_its_own():
+    """What counts as a consent to be considered for other open positions: on its own, as a box or a
+    group's one choice. Never one that also signs the person up for job alerts, a newsletter or a
+    talent pool, nor a group asking yes or no."""
+    said = "I understand that I may be considered for other open positions in my country"
+    assert pipeline._other_positions_consent({"kind": "checkbox", "label": said}) is True
+    assert pipeline._other_positions_consent({"kind": "radio_group", "label": "Contact Consent", "options": [said]}) == said
+    assert pipeline._other_positions_consent({"kind": "checkbox_group", "label": "", "options": [said]}) == [said]
+    for label in [said + " and to receive job alerts", said + " and to join the talent community",
+                  "Consider me for other opportunities and send me the newsletter", "I agree to the privacy policy"]:
+        assert pipeline._other_positions_consent({"kind": "checkbox", "label": label}) is None, label
+    assert pipeline._other_positions_consent({"kind": "radio_group", "label": "May we consider you for other positions?",
+                                              "options": ["Yes", "No"]}) is None
 
 
 def test_without_manage_accounts_an_email_first_sites_account_steps_stay_the_persons(srv, monkeypatch):

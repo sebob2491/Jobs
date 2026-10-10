@@ -204,7 +204,9 @@ card, save one password for a job system: Workday (13 of the employers), Success
 (Edwards, Qorvo, Amkor), iCIMS (Daifuku), ApplicantStack (SCREEN), UKG Pro (Nikon
 Precision) or Infor (Benchmark). The desk then creates your account at each of that system's
 employers (your email, the password, and your name and country from the profile; it ticks
-their terms, never a newsletter, and presses the button; a picture code stays yours) and
+their terms, never a newsletter, and a consent to be considered for other open positions only
+where the site won't make the account without it, then presses the button; a picture code stays
+yours) and
 signs you in after that (pressing the sign-in form's own button, even one that reads
 "Submit"). When the password doesn't sign in at an employer, the desk tries it once, then,
 with the email app password below saved, resets that employer's password to the saved one

@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Career Opportunities: Create an Account</title>
+<style>
+  .hiddenAria { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  #overlay { position: fixed; inset: 0; background: rgba(0, 0, 0, .4); z-index: 10; }
+  #dlg { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); width: 600px; max-width: 90vw;
+         background: #fff; border: 1px solid #888; z-index: 11; }
+  #dlg[hidden], #overlay[hidden] { display: none; }
+  #dlg .body { max-height: 386px; overflow: auto; padding: 0 12px; }
+  #dlg .close::before { content: "\00d7"; }
+</style>
+</head>
+<body>
+<!-- like SuccessFactors' Create Account (career4.successfactors.com, login_ns=register; APS's, live, Oct 10, 2026):
+     Email and Retype Email, Choose and Retype Password (each with a Show button, and hints under them: "Password
+     accepted", "Password matches"), names, Country/Region of Residence, a "Notification" box already ticked and
+     a "Hear more about career opportunities" box (marketing) left empty, and "Terms of Use:*" with a link, "Read
+     and accept the data privacy statement.". The site makes no account without that statement accepted: its
+     link opens it in a dialog over the page ("Data Privacy Consent Statement": the employer's own long text,
+     then Accept, Decline and Print, and a Close icon), but only once a country is chosen, and the page behind
+     it is hidden (aria-hidden) while it's open. Create Account, pressed before, stays on the page: it says why
+     in a message the form reader doesn't see. Once it's made, the live site sends a code by email (not
+     modelled): here, on to the application.
+     What happened is kept for the tab (sessionStorage's sf.* keys): opened (the link pressed with a country
+     chosen), statement ("accepted"), declined, closed, presses (Create Account), created.
+     ?slow: the statement is drawn a moment after its link is pressed (the live site fetches it first).
+     ?marketing: its opening says that accepting also signs the person up for marketing emails and job alerts. -->
+<div id="outershell">
+<h1>Career Opportunities: Create an Account</h1>
+<p>Already a registered user? <a href="#signin">Please sign in</a> Login credentials are case sensitive</p>
+<p><span class="required">*</span>indicates a required field.</p>
+<form id="careerform" novalidate>
+  <div id="msgContainer"></div>
+  <table><tbody>
+    <tr><td><label for="fbclc_userName">Email Address: <span>*</span></label></td>
+        <td><input id="fbclc_userName" type="text" aria-required="true"></td></tr>
+    <tr><td><label for="fbclc_emailConf">Retype Email Address: <span>*</span></label></td>
+        <td><input id="fbclc_emailConf" type="text" aria-required="true"></td></tr>
+    <tr><td><label for="fbclc_pwd">Choose Password: <span>*</span></label></td>
+        <td><input id="fbclc_pwd" type="password" aria-required="true">
+            <input type="button" id="show_button" value="Show">
+            <ul><li>Password must be at least 8 characters long.</li>
+                <li>Password must contain at least one upper case and one lower case letter.</li></ul></td></tr>
+    <tr><td><label for="fbclc_pwdConf">Retype Password: <span>*</span></label></td>
+        <td><input id="fbclc_pwdConf" type="password" aria-required="true">
+            <input type="button" id="show_conf_button" value="Show">
+            <div id="pwHint" aria-live="assertive"></div></td></tr>
+    <tr><td><label for="fbclc_fName">First Name: <span>*</span></label></td>
+        <td><input id="fbclc_fName" type="text" aria-required="true"></td></tr>
+    <tr><td><label for="fbclc_lName">Last Name: <span>*</span></label></td>
+        <td><input id="fbclc_lName" type="text" aria-required="true"></td></tr>
+    <tr><td><label for="fbclc_country">Country/Region of Residence:<span>*</span></label></td>
+        <td><select id="fbclc_country" aria-required="true">
+              <option value="">- Select -</option><option>Canada</option><option>Mexico</option>
+              <option>United Kingdom</option><option>United States</option></select>
+            <div id="countryError" aria-live="assertive"></div></td></tr>
+    <tr><td><label>Notification:</label></td>
+        <td><input id="fbclc_emailEnabled" type="checkbox" checked>
+            <label for="fbclc_emailEnabled">Receive new job posting notifications</label></td></tr>
+    <tr><td></td>
+        <td><input id="fbclc_campaignEmailEnabled" type="checkbox">
+            <label for="fbclc_campaignEmailEnabled">Hear more about career opportunities</label></td></tr>
+    <tr><td><label for="dataPrivacyId">Terms of Use:<span>*</span></label></td>
+        <td class="dpcsHyperlink">
+          <a id="dataPrivacyId" role="button" tabindex="0" style="cursor:pointer">Read and accept the data privacy statement.</a>
+          <input type="hidden" id="fbclc_dpcsId" value=""></td></tr>
+    <tr><td></td><td><button type="submit" id="fbclc_createAccountButton">Create Account</button></td></tr>
+  </tbody></table>
+</form>
+</div>
+
+<div id="overlay" hidden></div>
+<div id="dlg" role="dialog" aria-labelledby="dlgTitle" hidden>
+  <div class="header">
+    <span class="hiddenAria">Press the ESC key to close the dialog.</span>
+    <h2 id="dlgTitle">Data Privacy Consent Statement</h2>
+    <button type="button" id="closeIconBtn" class="close" aria-label="Close"></button>
+  </div>
+  <div class="body" id="dlgBody">
+    <h3>Company Privacy Notice for Employee Applicants</h3>
+    <p id="opening" hidden>By accepting this statement you also agree to receive marketing emails and job alerts from
+       Example Corp.</p>
+    <div>Effective: January 1, 2020</div>
+    <div>For additional information contact:</div>
+    <div>FOR EMPLOYEE APPLICANT: HR Service Team, 100 Example Street, Example City, EX 00000.
+         Telephone: 000-000-0000. Email: hr@example.com</div>
+    <div>Or FOR CONTRACTOR: Contingent Labor Team. Phone: 000-000-0001. Email: contractors@example.com</div>
+    <p><b>I. INTRODUCTION</b><br>Example Corp and its affiliated companies (&ldquo;Company&rdquo;) is committed to
+       handling your Personal Information responsibly and in compliance with Company standards and applicable data
+       protection laws. This Notice describes how the Company collects, uses and handles Personal Information that it
+       collects about prospective Personnel for management, human resources, payroll and other legitimate purposes.</p>
+    <p><b>II. PERSONAL INFORMATION COLLECTED</b><br>The Company may collect identifying information, such as a real
+       name, postal address, email address and account name, and the information you give in an application.</p>
+    <p><b>III. YOUR CHOICES</b><br>The Company does not use your Personal Information for marketing. You may ask it
+       to delete your Personal Information, or withdraw your consent, and it retains Personal Information only as
+       long as it needs to. How cookies are used is described in the Company's Cookie Notice.</p>
+  </div>
+  <div class="footer">
+    <button type="button" id="accept">Accept</button>
+    <button type="button" id="decline">Decline</button>
+    <button type="button" id="print">Print</button>
+  </div>
+</div>
+
+<script>
+  const q = new URLSearchParams(location.search);
+  const $ = (id) => document.getElementById(id);
+  const got = (k, d) => JSON.parse(sessionStorage.getItem('sf.' + k) || JSON.stringify(d));
+  const put = (k, v) => sessionStorage.setItem('sf.' + k, JSON.stringify(v));
+  const bump = (k) => put(k, got(k, 0) + 1);
+
+  $('opening').hidden = !q.has('marketing');
+  const hint = () => {
+    const pw = $('fbclc_pwd').value, again = $('fbclc_pwdConf').value;
+    $('pwHint').textContent = pw && again ? (pw === again ? 'Password accepted; Password matches' : 'Passwords do not match') : '';
+  };
+  $('fbclc_pwd').addEventListener('input', hint);
+  $('fbclc_pwdConf').addEventListener('input', hint);
+
+  function show(open) {
+    $('dlg').hidden = $('overlay').hidden = !open;
+    if (open) $('outershell').setAttribute('aria-hidden', 'true'); else $('outershell').removeAttribute('aria-hidden');
+  }
+  $('dataPrivacyId').addEventListener('click', () => {
+    if (!$('fbclc_country').value) {  // the statement is the country's: it can't be shown before one is chosen
+      $('countryError').textContent = 'Country/Region of Residence is required';
+      return;
+    }
+    bump('opened');
+    setTimeout(() => show(true), q.has('slow') ? 1500 : 0);
+  });
+  $('accept').addEventListener('click', () => {
+    put('statement', 'accepted');
+    $('fbclc_dpcsId').value = 'accepted';
+    show(false);
+    const done = document.createElement('div');
+    done.setAttribute('role', 'status');
+    done.setAttribute('aria-live', 'polite');
+    done.textContent = 'Data privacy statement has been accepted.';
+    document.querySelector('.dpcsHyperlink').appendChild(done);
+  });
+  $('decline').addEventListener('click', () => { bump('declined'); show(false); });
+  $('closeIconBtn').addEventListener('click', () => { bump('closed'); show(false); });
+
+  $('careerform').addEventListener('submit', (e) => {
+    e.preventDefault();
+    bump('presses');
+    const email = $('fbclc_userName').value, pw = $('fbclc_pwd').value;
+    if (!email || email !== $('fbclc_emailConf').value || !pw || pw !== $('fbclc_pwdConf').value
+        || !$('fbclc_fName').value || !$('fbclc_lName').value || !$('fbclc_country').value) {
+      $('msgContainer').textContent = 'Please complete all required fields and re-submit.';
+      return;
+    }
+    if (!$('fbclc_dpcsId').value) {  // said in a message the form reader doesn't see
+      $('msgContainer').textContent = 'Please complete all required fields and re-submit. The following fields '
+        + 'require a valid input: Please open the data privacy agreement to accept the terms';
+      return;
+    }
+    bump('created');
+    put('campaign', $('fbclc_campaignEmailEnabled').checked);
+    location.href = 'step1.html';
+  });
+</script>
+</body>
+</html>

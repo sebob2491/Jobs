@@ -1,0 +1,123 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Senior Analyst | Example Corp Careers</title></head>
+<body>
+<!-- like Edward Jones' BrassRing (TGnewUI, live, Oct 2026): one page that draws the posting, its sign-in,
+     the password reset and Create Account in place, all at the posting's address (with its #jobDetails=…),
+     so going to that address again leaves the page as it is; a reload shows the posting. "Apply to job"
+     shows "Choose your sign in option" (Email address and Password; Back, Sign in with LinkedIn, Forgot
+     Username or Password?, Sign in, Don't have an account yet?), where no password signs in ("Email or
+     Username incorrect.", "Password incorrect."). Its reset asks for the email and a picture code ("Enter
+     Captcha"), and its Continue without the code says "One or more fields require your attention. Captcha
+     text Required field". Its Create Account ("Let's Get Started") asks for the email first, then emails a
+     passcode to it. ?captcha: a picture code on Create Account too. ?refuse: its Continue refuses the email
+     ("Please enter a valid email address.") and stays. What happened is kept for the tab
+     (sessionStorage's br.* keys), so a reload doesn't lose it: signIns, resetPresses, captcha (anything
+     typed in a picture code), accountEmail (the email Create Account's Continue sent) -->
+<header><a href="javascript:void(0)" id="top-sign-in">Sign In</a> <a href="javascript:void(0)">Example Corp Careers</a></header>
+<main id="view"></main>
+<footer><a href="javascript:void(0)">Contact Us</a> <a href="javascript:void(0)">Privacy Policy</a></footer>
+<script>
+  const q = new URLSearchParams(location.search);
+  const got = (k, d) => JSON.parse(sessionStorage.getItem('br.' + k) || JSON.stringify(d));
+  const put = (k, v) => sessionStorage.setItem('br.' + k, JSON.stringify(v));
+  const bump = (k) => put(k, got(k, 0) + 1);
+  const view = document.getElementById('view');
+  const $ = (id) => document.getElementById(id);
+  if (!location.hash) history.replaceState(null, '', '#jobDetails=1427502_5374');
+  const picture = (id) => '<img alt="" src="data:image/gif;base64,R0lGODlhAQABAAAAACw=" width="200" height="50">'
+    + '<button type="button">Refresh captcha</button> <button type="button">Audio captcha</button>'
+    + '<input id="' + id + '" type="text" placeholder="Enter Captcha">';
+  const watch = (id) => { if ($(id)) $(id).addEventListener('input', () => put('captcha', $(id).value)); };
+
+  function posting() {
+    document.title = 'Senior Analyst | Example Corp Careers';
+    view.innerHTML = '<h1>Senior Analyst</h1><p>Opportunity Overview</p><p>Analyzes financial results and '
+      + 'reconciliations.</p><button type="button" id="apply">Apply to job</button> <button type="button">Save</button>';
+    $('apply').addEventListener('click', signIn);
+  }
+
+  function signIn() {
+    document.title = 'Sign In';
+    view.innerHTML = '<button type="button" id="back">Back</button>'
+      + '<h2>Choose your sign in option</h2><p>You can sign in using social media or with your Email address and password.</p>'
+      + '<button type="button">Sign in with LinkedIn</button><p>Or</p>'
+      + '<form id="signin" novalidate><p>Sign in using username and password</p>'
+      + '<label for="em">*Email address</label><input id="em" type="text" required>'
+      + '<label for="pw">*Password</label><input id="pw" type="password" required>'
+      + '<a href="javascript:void(0)" id="forgot">Forgot Username or Password?</a>'
+      + '<button type="submit">Sign in</button>'
+      + '<div id="err" role="alert"></div>'
+      + '<a href="javascript:void(0)" id="create">Don\'t have an account yet?</a></form>';
+    $('signin').addEventListener('submit', (e) => {
+      e.preventDefault();
+      bump('signIns');
+      $('err').innerHTML = '<p>Email or Username incorrect.</p><p>Password incorrect.</p>';
+    });
+    $('back').addEventListener('click', posting);
+    $('forgot').addEventListener('click', forgot);
+    $('create').addEventListener('click', create);
+  }
+
+  function forgot() {
+    document.title = 'Forgot Username or Password';
+    view.innerHTML = '<h1>Forgot password</h1><button type="button" id="back">Back</button>'
+      + '<h2>Having Trouble Signing In?</h2><form id="reset" novalidate>'
+      + '<label><input type="radio" name="trouble" checked> I don\'t know my password.</label>'
+      + '<label><input type="radio" name="trouble"> I don\'t know my username.</label>'
+      + '<h3>Enter the email associated with your account</h3>'
+      + '<label for="rem">*Email</label><input id="rem" type="text" required>' + picture('code')
+      + '<button type="submit">Continue</button> <a href="javascript:void(0)" id="cancel">Cancel</a>'
+      + '<div id="err" role="alert"></div></form>';
+    watch('code');
+    $('reset').addEventListener('submit', (e) => {
+      e.preventDefault();
+      bump('resetPresses');
+      if (!$('code').value) {
+        $('err').innerHTML = '<p>One or more fields require your attention.</p><a href="#code">Captcha text Required field</a>';
+        return;
+      }
+      $('err').textContent = 'Invalid captcha. Please try again.';
+    });
+    $('back').addEventListener('click', signIn);
+    $('cancel').addEventListener('click', signIn);
+  }
+
+  function create() {
+    document.title = 'Create new account';
+    view.innerHTML = '<button type="button" id="back">Back</button><h2>Let\'s Get Started</h2>'
+      + '<p>To create an account, use a social network login or create a new login.</p>'
+      + '<div role="tablist"><span role="tab">Social network</span> <span role="tab" aria-selected="true">Create new '
+      + 'account</span></div>'
+      + '<form id="account" novalidate><h3>Account Information</h3>'
+      + '<label for="aem">*Email address</label><input id="aem" type="text" required>'
+      + (q.has('captcha') ? picture('acode') : '')
+      + '<button type="submit">Continue</button> <a href="javascript:void(0)" id="cancel">Cancel</a>'
+      + '<div id="err" role="alert"></div></form>';
+    watch('acode');
+    $('account').addEventListener('submit', (e) => {
+      e.preventDefault();
+      bump('accountPresses');
+      if (q.has('refuse')) {
+        $('err').innerHTML = '<p>Please enter a valid email address.</p>';
+        return;
+      }
+      if (!$('aem').value || q.has('captcha') && !$('acode').value) {
+        $('err').innerHTML = '<p>One or more fields require your attention.</p>';
+        return;
+      }
+      put('accountEmail', $('aem').value);
+      view.innerHTML = '<h2>Let\'s Get Started</h2><p>We’ve sent a passcode to validate your email address to '
+        + $('aem').value + ', with the subject “Your Passcode”, which will expire in 10 minutes.</p>'
+        + '<label for="pc">Enter your passcode:</label><input id="pc" type="text">'
+        + '<button type="button">Verify Passcode</button>';
+    });
+    $('back').addEventListener('click', signIn);
+    $('cancel').addEventListener('click', signIn);
+  }
+
+  $('top-sign-in').addEventListener('click', signIn);
+  posting();
+</script>
+</body>
+</html>

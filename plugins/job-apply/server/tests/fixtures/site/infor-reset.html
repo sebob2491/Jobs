@@ -1,0 +1,37 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Infor - Password Reset</title></head>
+<body>
+<!-- like Infor CloudSuite's password reset (Benchmark's, live, Oct 2026: what its sign-in's "Forgot
+     password?" opens, /sso/SSOServlet with _action=PWDRESET): "Reset Password", "Enter your
+     username:", a "User Name" box, "Reset" and "Go Back". "Reset" is greyed out until a key is let go
+     in the box (its script listens for keyup), so a box filled in without typing leaves it greyed
+     out: the desk filled in the email there and couldn't press it. Presses are counted in
+     sessionStorage's infor.resets. Served by the tests at Benchmark's address (routed). -->
+<section class="signin" role="main">
+  <h1>Reset Password</h1>
+  <form method="POST" action="/sso/SSOServlet" name="resetForm" onsubmit="return false;">
+    <div class="field">
+      <label id="resetMessage">Enter your username:</label>
+      <div id="resetFields">
+        <label class="inforLabel" for="usertext">User Name</label><input type="text" name="_ssoUser" id="usertext">
+      </div>
+    </div>
+    <div class="field" id="resetBtnField">
+      <button id="resetBtn" name="_ssoReset" type="button" class="btn-primary" disabled>Reset</button>
+    </div>
+    <input type="hidden" name="_action" value="PWDRESET">
+    <input type="hidden" name="_resetStep" value="1">
+  </form>
+  <div class="field"><button class="btn-primary" onclick="history.back(-1)">Go Back</button></div>
+</section>
+<script>
+  const box = document.getElementById('usertext');
+  const reset = document.getElementById('resetBtn');
+  box.addEventListener('keyup', () => { reset.disabled = box.value === ''; });
+  reset.addEventListener('click', () => {
+    sessionStorage.setItem('infor.resets', String(Number(sessionStorage.getItem('infor.resets') || 0) + 1));
+  });
+</script>
+</body>
+</html>

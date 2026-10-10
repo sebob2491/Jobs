@@ -1201,7 +1201,7 @@ async def check_pipeline(company: dict[str, Any], out: Path, rec: dict[str, Any]
                 "markup": await _question_markup(run),
                 "page": run.page_info,
             })
-            if run.need == "stuck":
+            if run.need in ("stuck", "sign_in"):  # (an account's step it stopped on, too: UKG Pro's, Oct 2026)
                 await print_shot(company["name"], run.page)
             if run.status == "needs_you" and run.need == "questions":
                 for q in run.questions:

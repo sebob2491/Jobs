@@ -93,6 +93,12 @@ the scrubber (`python -m job_apply.fixtures`) before they become test fixtures.
   (never a newsletter), and resets a saved password the site refuses, through the site's own
   "Forgot password" and its emailed link. A CAPTCHA or security question on the way stays the
   person's. With it off, it never creates one.
+  - From the profile, it also ticks a "new candidate, not a current employee" box (Banner's) where
+    the profile says where the person works and it isn't there.
+  - A consent to be considered for other open positions too (Northrop's "Contact Consent") is given
+    only when the site won't make the account without it (marked required, or refused until it's
+    given: the owner's call, Oct 10); never when its words also sign the person up for job alerts,
+    a newsletter, a talent community or marketing.
   - The live check's test identity (the owner's call, Oct 10) is the one exception to "never in
     practice mode", for accounts and notices alike: a clearly fake applicant ("Jobdesk Test")
     with its own inbox, at one or two employers per job system, which never submits. It's on
