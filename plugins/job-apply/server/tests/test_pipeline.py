@@ -3592,12 +3592,14 @@ def test_apply_online_and_a_page_with_only_a_captcha():
     assert classify({**gate, "fields": [{"id": "f", "kind": "text", "label": "Email"}]}, "") == "form"
 
 
-def test_a_site_that_turns_the_browser_away_holds_nothing_up(srv, monkeypatch):
-    """Valleywise Health's postings answer the desk's browser with a bare "403 Forbidden" (live,
-    Oct 2026). There's nothing to solve: the person applies in their own browser, and the
-    queue isn't held for it as for a bot check."""
+@pytest.mark.parametrize("page, said", [("forbidden.html", "403 Forbidden"), ("not-acceptable.html", "406 Not Acceptable")])
+def test_a_site_that_turns_the_browser_away_holds_nothing_up(srv, monkeypatch, page, said):
+    """Valleywise Health's postings answer the desk's browser with a bare "403 Forbidden", and
+    Deloitte's sign-in a headless one with "406 Not Acceptable" (live, Oct 2026; the desk said it
+    couldn't find the button). There's nothing to solve: the person applies in their own browser,
+    and the queue isn't held for it as for a bot check."""
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
-    job = srv.add_job(url=fixture_url("site/forbidden.html"), title="Analyst", company="Example Health")["job"]
+    job = srv.add_job(url=fixture_url("site/" + page), title="Analyst", company="Example Health")["job"]
     applier = Applier(srv)
 
     async def go():
@@ -3611,7 +3613,7 @@ def test_a_site_that_turns_the_browser_away_holds_nothing_up(srv, monkeypatch):
 
     r = run(go())
     assert r.need == "stuck" and not r.blocking, (r.need, r.reason)
-    assert "turned the desk's browser away (403 Forbidden)" in r.reason
+    assert f"turned the desk's browser away ({said})" in r.reason
 
 
 def test_a_page_that_doesnt_move_on_says_its_next_is_greyed_out(srv, monkeypatch):
