@@ -60,6 +60,19 @@ history:
   employee_ids: {}            # your ID at an employer you've worked for, e.g. {Example Fab: "123456"}:
                               # filled only on that employer's forms ("Employee ID", "WWID")
 
+# The yes/no questions many employers ask, answered once (true or false). A false answers them
+# however they're worded and whatever time they cover; a true leaves each one to you on the
+# desk, as its dates or details differ.
+background:
+  relatives_at_employer: ~    # a relative or close friend working at the company you apply to?
+  government_employee: ~      # a federal, state or local government employee now or in the last 5 years?
+  military: ~                 # have you served in the armed forces?
+  defense_department: ~       # employed by the US Department of Defense, now or before?
+  restrictive_agreement: ~    # a non-compete, non-solicitation or other agreement limiting where you work?
+  intellectual_property: ~    # do you own or control patents, trademarks or copyrights?
+  outside_work: ~             # will you keep another job or a business of your own if hired?
+  board_member: ~             # do you, or will you, sit on a board of directors?
+
 # Jobs, most recent first. Fills Workday's "Work Experience 1, 2, ..." blocks (and
 # similar repeated sections elsewhere). Dates: "2021-03", "03/2021" or "Mar 2021";
 # end: present for your current job.

@@ -317,11 +317,29 @@ class Profile:
     def profile_gaps(self) -> list[str]:
         """What the profile could hold for fewer stops, short of what's required: the jobs
         without a start or end month, which Workday asks for every job (someone who doesn't
-        remember an old job's months can still apply where they aren't asked)."""
+        remember an old job's months can still apply where they aren't asked); the schools
+        without a degree written ("Some college (no degree)" where none was finished: Workday's
+        Degree box asks); and the background questions not answered yet."""
         from .autofill import undated_jobs  # (autofill reads profiles: imported when asked)
 
+        gaps = []
         undated = undated_jobs(self)
-        return ["work_history dates: " + "; ".join(undated)] if undated else []
+        if undated:
+            gaps.append("work_history dates: " + "; ".join(undated))
+        entries = self.get("education_history")
+        schools = [str(e.get("school") or "a school").strip() for e in entries if isinstance(e, dict)
+                   and not str(e.get("degree") or "").strip()] if isinstance(entries, list) else []
+        if schools:
+            gaps.append("education_history degree: " + "; ".join(schools))
+        unsaid = [k for k in BACKGROUND_KEYS if self.get(f"background.{k}") is None]
+        if unsaid:
+            gaps.append("background: " + ", ".join(unsaid))
+        return gaps
+
+
+# The yes/no questions many employers ask, answered once in the profile's background: section
+BACKGROUND_KEYS = ("relatives_at_employer", "government_employee", "military", "defense_department",
+                   "restrictive_agreement", "intellectual_property", "outside_work", "board_member")
 
 
 def get_secret(name: str) -> str | None:

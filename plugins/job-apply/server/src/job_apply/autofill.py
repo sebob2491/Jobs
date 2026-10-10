@@ -533,6 +533,69 @@ def _previously_employed(prof: Profile, job: dict, label: str = "") -> str | Non
     return "Yes, currently" if any(_same_employer(c, company) for c in now if c) else "Yes, previously"
 
 
+def _said_no(prof: Profile, key: str) -> bool:
+    v = prof.get(f"background.{key}")
+    return v is False or isinstance(v, str) and norm(v) in ("no", "false", "none", "never")
+
+
+# Another organization named as where something happened ("a partner at <a firm>", "employed by
+# <a firm>"): not "us", "this company", any government or the Department of Defense
+_ELSEWHERE = re.compile(r"\b(at|by|of|with|for) (?!(us|this|our|the (company|organization|firm|business|employer)|any|an?|"
+                        r"one|these|those|the (u s|us|federal|state|local)|federal|state|local|government|department|dod|"
+                        r"military|armed)\b)[a-z]")
+
+
+def _background(key: str, *, unless: str | None = None) -> Getter:
+    """A recurring yes/no question about the person's past or plans (background.<key>, which
+    setup asks once). A "no" answers it however it's worded and whatever time it covers ("in
+    the past 5 years", "on or after January 28, 2008"); a "yes" needs details only the person
+    has, so the question is theirs. `unless`: words that make it another question."""
+    def g(prof: Profile, job: dict, label: str = "") -> Any:
+        asked = norm(label)
+        if unless and re.search(unless, asked):
+            return None
+        return "No" if _said_no(prof, key) else None
+
+    g.reads_question = True  # type: ignore[attr-defined]
+    return g
+
+
+def _relatives(prof: Profile, job: dict, label: str = "") -> Any:
+    """"Do you have any friends or relatives currently employed by <the employer>?" Never one
+    about another organization ("an immediate family member of a partner at <a firm>") or a
+    government official."""
+    asked = norm(label)
+    company = norm(job.get("company"))
+    first = company.split()[0] if company else ""
+    if re.search(r"government|official|public office|politic", asked):
+        return None
+    named = _ELSEWHERE.search(asked)
+    if named and not (first and re.search(rf"\b(at|by|of|with|for) (the )?{re.escape(first)}\b", asked)):
+        return None
+    return "No" if _said_no(prof, "relatives_at_employer") else None
+
+
+def _government(prof: Profile, job: dict, label: str = "") -> Any:
+    """A government employee now or lately (federal, state or local; the military counted in
+    some): "No" only where the profile says neither."""
+    asked = norm(label)
+    if re.search(r"\b(military|armed forces|uniformed)\b", asked) and not _said_no(prof, "military"):
+        return None
+    return "No" if _said_no(prof, "government_employee") else None
+
+
+def _plans_none(field: dict, prof: Profile) -> Any:
+    """"If hired, do you intend to (select all that apply): keep another job or business / sit on
+    a board / Neither": its "Neither" where the profile says no to both."""
+    options = field.get("options") or []
+    plans = [o for o in options if re.search(r"secondary|outside|second job|other (employment|business)|business activit|"
+                                             r"moonlight|board of (directors|advisors)|governing body", norm(o))]
+    neither = [o for o in options if re.match(r"^(neither|none)( of (the|these)( above)?)?\b", norm(o))]
+    if not plans or len(neither) != 1 or len(plans) + 1 != len(options):
+        return None
+    return [neither[0]] if _said_no(prof, "outside_work") and _said_no(prof, "board_member") else None
+
+
 def _employee_id(prof: Profile, job: dict) -> str | None:
     """The person's ID at the employer applied to (history.employee_ids, by employer), for its
     "Employee ID (if applicable)" or "please provide your WWID": never another employer's."""
@@ -903,7 +966,16 @@ _CONTACT_RULES = {"email", "first_name", "middle_name", "last_name", "preferred_
                   "county", "state", "country"}
 
 # Getters that read the question itself, not only the profile
-_READS_QUESTION = {_travel, _previously_employed, _no_sponsorship, _sponsorship, _UNDER_18, _OVER_18, _phone,
+# A background question's answer is a choice: a text box with its words is a follow-up ("If yes,
+# list the names of relatives employed here", "Branch of military service"), never "No"
+_YES_NO_KINDS = {"select", "listbox", "combobox", "radio_group"}
+
+
+def _reads_question(getter: Getter) -> bool:
+    return getter in _READS_QUESTION or bool(getattr(getter, "reads_question", False))
+
+
+_READS_QUESTION = {_relatives, _government, _travel, _previously_employed, _no_sponsorship, _sponsorship, _UNDER_18, _OVER_18, _phone,
                    _local_or_relocate, _lives_in, _veteran, _has_degree}
 
 # (rule name, label regex, getter, max label length or None, allowed kinds or None)
@@ -1039,6 +1111,25 @@ RULES: list[tuple[str, str, Getter, int | None, set[str] | None]] = [
                    # to start work, not for an interview
                    r"when (would|could|will) you be available( to (start|begin)| for (work|employment)| if .{0,10}offer\b.*)?$|"
                    r"soonest .{0,30}(start|begin)\b", _p("preferences.earliest_start"), None, None),
+    # background: recurring yes/no questions setup asks once (a "no" answers any wording of them)
+    ("dod_employee", r"\b(department of defense|dod)\b.{0,80}\b(employee|employed|employment)|\b(employee|employed) "
+     r"(of|by|with) (the )?(u s |us )?(department of defense|dod)\b", _background("defense_department"), None, _YES_NO_KINDS),
+    ("government_employee", r"\b(are|were|have) you\b.{0,80}\b(government|federal|state or local|public sector)\b.{0,60}"
+     r"\b(employee|employed|official|worker)|\b(employ\w*|work\w*) (by|for) (a |the |any )?(u s |us |federal |state |local |"
+     r"city |county )?(government|public agency)\b", _government, None, _YES_NO_KINDS),
+    ("relatives", r"\b(relatives?|related|family members?|friends?|spouse|in laws?)\b.{0,80}\b(employ\w*|work\w*)\b|"
+     r"\b(employ\w*|work\w*)\b.{0,60}\b(relatives?|family members?)\b", _relatives, None, _YES_NO_KINDS),
+    ("restrictive_agreement", r"\bnon ?(compet\w*|solicit\w*)\b|restrictive covenant|\bagreements?\b.{0,160}\b(impact|interfere|"
+     r"restrict|limit|prevent|prohibit)\w*", _background("restrictive_agreement", unless=r"\b(willing|sign|agree to)\b"), None,
+     _YES_NO_KINDS),
+    ("intellectual_property", r"\b(own|control|hold)\b.{0,60}\b(intellectual property|patents?|trademarks?|copyrights?)|"
+     r"\b(intellectual property|patents?)\b.{0,60}\b(own|interest)", _background("intellectual_property"), None, _YES_NO_KINDS),
+    ("outside_work", r"\b(secondary|outside|second|additional) (employment|job|business)|\bmoonlight", _background("outside_work"),
+     None, _YES_NO_KINDS),
+    ("board_member", r"\bboard of (directors|advisors)\b|\bboard member\b|governing body", _background("board_member"), None,
+     _YES_NO_KINDS),
+    ("military", r"\b(served|serve|serving|service) in (the |any )?(u s |us )?(military|armed forces)|\bmilitary service\b",
+     _background("military", unless=r"\b(spouse|family|parent|relative)\b"), None, _YES_NO_KINDS),
     ("employee_id", r"\b(employee|worker|associate|staff|badge) ?(id|number|no\b|#)|\bwwid\b", _employee_id, 160, {"text"}),
     ("previous_employee", r"(previously|ever|formerly) (been )?(employed|worked)|former employee|have you (ever )?worked (for|at)|worked .{0,40} before|"
      r"have you (ever )?been hired\b",
@@ -1422,6 +1513,8 @@ def resolve_field(field: dict, prof: Profile, job: dict | None = None, file_inpu
         return Answer(_today_for(field), "signed_date")
     someone_else = _SOMEONE_ELSE.search(f"{label} {section}") or _OTHER_PARTY_LABEL.search(label) \
         or _OTHER_PARTY_SECTION.search(section)
+    if ans is None and kind == "checkbox_group" and (none := _plans_none(field, prof)):
+        return Answer(none, "background.plans")  # (one of its own choices, as it reads)
     if ans is None:
         # a self-identification question is its own topic's, whatever else its notice's words match
         own = _self_identification(label, field)
@@ -1437,7 +1530,7 @@ def resolve_field(field: dict, prof: Profile, job: dict | None = None, file_inpu
             if own or re.search(pattern, label):
                 if name in _WORK_RULES and (_OTHER_COUNTRIES.search(label) or _OTHER_THAN.search(label)):
                     return None  # another country's question: the profile's facts are the United States'
-                value = getter(prof, job, raw_label) if getter in _READS_QUESTION else getter(prof, job)  # type: ignore[call-arg]  # these take the question too
+                value = getter(prof, job, raw_label) if _reads_question(getter) else getter(prof, job)  # type: ignore[call-arg]  # these take the question too
                 if value is None or value == "":
                     return None  # recognised but the profile has no answer
                 ans = Answer(value, name)

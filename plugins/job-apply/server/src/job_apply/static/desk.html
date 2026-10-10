@@ -281,8 +281,15 @@ const profileField = (k) => {
   const gone = /^documents\.resume \(file not found: (.*)\)$/.exec(k);
   if (gone) return `your resume file (nothing is at ${gone[1]})`;
   const undated = /^work_history dates: (.*)$/.exec(k);
-  return undated ? `the start and end months of your jobs (${undated[1]}): ask Claude to "add the start and end months `
-    + `of my jobs from my resume to my profile"` : PROFILE_FIELDS[k] || k;
+  if (undated) return `the start and end months of your jobs (${undated[1]}): ask Claude to "add the start and end months `
+    + `of my jobs from my resume to my profile"`;
+  const degree = /^education_history degree: (.*)$/.exec(k);
+  if (degree) return `the degree you earned at each school (${degree[1]}; "Some college (no degree)" where you took classes `
+    + `without finishing one)`;
+  if (/^background: /.test(k)) return `your answers to the yes/no questions most employers ask (government, military or `
+    + `Defense work, relatives at the company, a non-compete, patents, another job or a board seat): ask Claude to "ask me `
+    + `the Job Desk's background questions"`;
+  return PROFILE_FIELDS[k] || k;
 };
 const inWords = (xs) => xs.length < 2 ? xs.join("") : `${xs.slice(0, -1).join(", ")} and ${xs[xs.length - 1]}`;
 // Job links come from employers' and job boards' data: only web addresses become links.
