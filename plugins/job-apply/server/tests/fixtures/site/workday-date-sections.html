@@ -1,0 +1,76 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Workday-style date sections</title>
+<style>
+  fieldset { border: 0; margin: 0 0 12px; padding: 0; }
+  .part { position: relative; display: inline-block; }
+  .part input { width: 4em; }
+  /* each part's display ("MM", "02") is drawn over its input, and takes a click meant for it */
+  .part [aria-hidden="true"] { position: absolute; inset: 0; background: #fff; }
+</style>
+</head>
+<body>
+<!-- Workday's date boxes as the live test found them (issue #112, note 13, Oct 2026): every job's month
+     came out 02 (its year right), and the self-identify "Date" 02/02/2006. Modelled here: a date's digits
+     go to the part the date itself counts as current, not to whichever part has focus. That part starts at
+     the first one, moves on by itself once a part is full (and focus with it), changes on a press of a
+     part, and goes back to the first part whenever focus leaves the date. A year of fewer than four digits
+     is read as this century's ("6" is 2006, "019" 2019). Each part's input holds no value: its number is
+     its aria-valuenow, and its display shows it padded. -->
+<h2>My Experience</h2>
+<label for="title">Job Title</label><input id="title" type="text">
+<div id="from"></div>
+<div id="to"></div>
+<h2>Voluntary Self-Identification of Disability</h2>
+<label for="name">Name</label><input id="name" type="text">
+<div id="signed"></div>
+<script>
+  const KINDS = { Month: [12, 'MM', 2], Day: [31, 'DD', 2], Year: [9999, 'YYYY', 4] };
+  function date(host, id, title, kinds) {
+    host.innerHTML = `<fieldset><legend><label><span>${title}</span></label></legend>
+      <div id="${id}" role="group" data-automation-id="dateInputWrapper">` + kinds.map((k) => `
+        <div id="${id}-dateSection${k}" class="part" tabindex="-1">
+          <div aria-hidden="true" data-automation-id="dateSection${k}-display">${KINDS[k][1]}</div>
+          <input role="spinbutton" aria-label="${k}" aria-valuemin="1" aria-valuemax="${KINDS[k][0]}"
+                 id="${id}-dateSection${k}-input" data-automation-id="dateSection${k}-input">
+        </div>`).join('<div>/</div>') + '</div></fieldset>';
+    const group = host.querySelector('[role=group]');
+    const inputs = [...group.querySelectorAll('input')];
+    const typed = kinds.map(() => '');
+    let current = 0;
+    const show = (i) => {
+      const [, hint, width] = KINDS[kinds[i]];
+      let n = typed[i] ? Number(typed[i]) : null;
+      if (n !== null && kinds[i] === 'Year' && typed[i].length < 4) n = 2000 + (n % 100);
+      inputs[i].setAttribute('aria-valuenow', n === null ? '' : String(n));
+      inputs[i].setAttribute('aria-valuetext', n === null ? hint : String(n));
+      group.querySelectorAll('[aria-hidden=true]')[i].textContent = n === null ? hint : String(n).padStart(width, '0');
+    };
+    inputs.forEach((input, i) => {
+      input.value = '';
+      input.addEventListener('keydown', (e) => {
+        if (!/^\d$/.test(e.key)) return;
+        e.preventDefault();
+        const kind = kinds[current], [max, , width] = KINDS[kind];
+        let next = typed[current].length >= width ? e.key : typed[current] + e.key;
+        if (next.length === 1 && width === 2 && Number(next) * 10 > max) next = '0' + next;
+        typed[current] = next;
+        show(current);
+        if (next.length >= width && current < kinds.length - 1) {
+          current += 1;
+          inputs[current].focus();
+        }
+      });
+      input.addEventListener('input', () => { input.value = ''; });
+      group.querySelectorAll('[aria-hidden=true]')[i].addEventListener('mousedown', (e) => {
+        e.preventDefault(); current = i; typed[i] = ''; inputs[i].focus();
+      });
+    });
+    group.addEventListener('focusout', (e) => { if (!group.contains(e.relatedTarget)) current = 0; });
+  }
+  date(document.getElementById('from'), 'workExperience-1--startDate', 'From', ['Month', 'Year']);
+  date(document.getElementById('to'), 'workExperience-1--endDate', 'To', ['Month', 'Year']);
+  date(document.getElementById('signed'), 'selfIdentifiedDisabilityData--dateSignedOn', 'Date', ['Month', 'Day', 'Year']);
+</script>
+</body>
+</html>
