@@ -1657,9 +1657,12 @@ class Applier:
                 and _may_accept_notices()
             # (a form with no button at all yet is a step still being drawn too: KLA's Workday showed only the last
             # step's resume box for a while, its questions and Save and Continue drawn after, live run 9, Oct 11)
-            bare_form = kind == "form" and not any(not a.get("disabled") and not a.get("cookie")
-                                                   and _STEPISH.search(final_text(a.get("text") or ""))
-                                                   for a in data.get("actions") or [])
+            bare_form = (kind == "form" and not any(not a.get("disabled") and not a.get("cookie")
+                                                    and _STEPISH.search(final_text(a.get("text") or ""))
+                                                    for a in data.get("actions") or [])
+                         # (not one whose stop is explained: an agreement to press, a bot check)
+                         and _agreement_button(data) is None and not data.get("captcha")
+                         and not _BOT_BADGE.search(" ".join([text[:3000], *(a.get("text") or "" for a in data.get("actions") or [])])))
             if action is None and (kind == "page" or bare_form) and not waited and not gate_now:
                 waited = True  # slow pages (Intel's Workday, Eightfold forms) draw their buttons late
                 if bare_form:

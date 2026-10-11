@@ -5331,6 +5331,8 @@ def test_the_page_a_job_stops_on_is_saved_for_its_report_scrubbed(srv, monkeypat
     its HTML)."""
     from job_apply import report
 
+    monkeypatch.setattr(pipeline, "STEP_LOAD_WAIT", 2)  # (a form with no button is waited on that long)
+
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
     monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 1)
     job = srv.add_job(url=fixture_url("site/stuck-filled.html"), title="Technician", company="Example Fab")["job"]
