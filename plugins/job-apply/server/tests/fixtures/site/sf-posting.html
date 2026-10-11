@@ -10,7 +10,8 @@
 <script>
   document.getElementById('apply').addEventListener('click', (e) => {
     e.preventDefault();
-    location.href = 'signin-submit.html?reset=odd&s=' + Math.random().toString(36).slice(2);
+    const home = new URLSearchParams(location.search).has('home') ? '&home' : '';
+    location.href = 'signin-submit.html?reset=odd' + home + '&s=' + Math.random().toString(36).slice(2);
   });
 </script>
 </body>

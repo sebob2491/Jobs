@@ -2640,7 +2640,8 @@ class Applier:
         identity, live Oct 2026: "An error occurred while processing your request"), or its address
         alone doesn't bring it back (Benchmark's Infor sign-in, live Oct 2026: a refused sign-in answers
         at /sso/SSOServlet, where its form is sent, and that address opened again is Infor's own
-        sign-in, with no "Register" or "Forgot password?"), the job's posting is opened again in its
+        sign-in, with no "Register" or "Forgot password?"), or it leads elsewhere with no sign-in (Edwards'
+        SuccessFactors to its careers search home, its session gone), the job's posting is opened again in its
         tab instead: its Apply leads to a fresh sign-in page. Where the reset was drawn in its place,
         at the same address and fragment (BrassRing's #jobDetails=…, live, Oct 2026), going there again
         leaves the reset on show: the page is loaded again (BrassRing's shows the posting, whose Apply
@@ -2657,6 +2658,11 @@ class Applier:
         elif (any(f.get("kind") == "password" for f in fields) and _forgot_action(actions) is None
               and _account_way(actions) is None):
             gone = ", opened again, had no way to a new account or a password reset"
+        elif (_bare(run.page.url) != _bare(run.reset_from) and not any(f.get("kind") == "password" for f in fields)
+              and _account_way(actions) is None and not _application_like(data)):
+            # its session gone, it led elsewhere: SuccessFactors' to the company's careers search home (Edwards
+            # Vacuum's, after three minutes waiting on a reset email, the plus probe Oct 11), with only a Sign In
+            gone = ", opened again, led to the site's job search, not its sign-in"
         else:
             return
         self._log(run, f"{_site(run, data)}'s sign-in page{gone}, so I opened the job again")

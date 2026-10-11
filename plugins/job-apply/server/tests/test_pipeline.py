@@ -2447,16 +2447,21 @@ def test_whose_mail_a_workday_job_reads_a_reset_from(srv):
     assert not mailbox.sender_allowed("noreply@workday.intel.com", senders)
 
 
-def test_a_sign_in_page_good_for_one_visit_is_reached_again_through_the_posting(srv, monkeypatch, job_apply_home):
+@pytest.mark.parametrize("gone", ["error", "home"])
+def test_a_sign_in_page_good_for_one_visit_is_reached_again_through_the_posting(srv, monkeypatch, job_apply_home,
+                                                                                 gone):
     """SuccessFactors' sign-in page (career?_s.crb=…) is good for one visit: going back to it after a
     reset the desk couldn't do showed "An error occurred while processing your request" (Arizona
-    Public Service, the test identity, live Oct 2026). The desk opens the job's posting again, whose
-    Apply leads to a fresh sign-in page, and makes the account there."""
+    Public Service, the test identity, live Oct 2026), or led to the company's careers search home, with
+    no sign-in on it (Edwards Vacuum's, after three minutes waiting on a reset email, the plus probe Oct 11).
+    The desk opens the job's posting again, whose Apply leads to a fresh sign-in page, and makes the account
+    there."""
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
     saved_password(monkeypatch)
     manage_accounts(job_apply_home)
     watched_inbox(monkeypatch)
-    job = srv.add_job(url=fixture_url("site/sf-posting.html"), title="Energy Analyst", company="Example Utility")["job"]
+    posting = fixture_url("site/sf-posting.html") + ("?home" if gone == "home" else "")
+    job = srv.add_job(url=posting, title="Energy Analyst", company="Example Utility")["job"]
     applier = Applier(srv)
 
     async def go():
@@ -2471,7 +2476,8 @@ def test_a_sign_in_page_good_for_one_visit_is_reached_again_through_the_posting(
     r = run(go())
     log = "\n".join(r.log)
     assert "so I went back to make an account there instead" in log, log
-    assert "sign-in page couldn't be opened again, so I opened the job again" in log, log
+    said = " couldn't be opened again" if gone == "error" else ", opened again, led to the site's job search, not its sign-in"
+    assert f"sign-in page{said}, so I opened the job again" in log, log
     assert "created your account" in log and r.seen_form, (r.reason, r.log)
 
 
