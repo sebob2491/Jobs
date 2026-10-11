@@ -12,6 +12,7 @@ from urllib.parse import urlparse
 import pytest
 from conftest import browser_available, fixture_url, run
 
+import job_apply.browser as browser_module
 import job_apply.pipeline as pipeline
 from job_apply import config, mailbox
 from job_apply.pipeline import Applier, Run, classify, pick_next, question_key
@@ -1326,6 +1327,23 @@ def test_with_manage_accounts_a_data_privacy_statement_is_opened_and_accepted_fo
     assert any("“My Information”" in line for line in r.log), log  # on to the application
 
 
+def test_an_emailed_passcode_in_a_password_box_takes_the_inbox_code_never_the_saved_password(
+        srv, monkeypatch, job_apply_home):
+    """APS's SuccessFactors (live run 9, Oct 11): once the account was made it asked for the code it emailed,
+    "*Passcode:", in a password box, and the desk put the saved password there ("pressed Continue with your
+    saved password"; "The passcode entered is incorrect"). A password box named for a code is an emailed
+    code's: the inbox's code goes in, and the account goes on to the application."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    saved_password(monkeypatch)
+    manage_accounts(job_apply_home)
+    inbox_with_code(monkeypatch)
+    r, kept, _ = create_account_on_sf(srv, "?passcode", watch=8)
+    log = "\n".join(r.log)
+    assert kept.get("passcode") == "123456", (kept, log)
+    assert not any("Continue” with your saved password" in line for line in r.log), log
+    assert "entered the code from your email" in log and any("“My Information”" in line for line in r.log), log
+
+
 @pytest.mark.parametrize("how", ["notices-off", "practice"])
 def test_a_data_privacy_statement_is_the_persons_without_accept_notices(srv, monkeypatch, job_apply_home, how):
     """Without settings.accept_notices (or in practice mode, which never makes an account) the desk fills
@@ -1919,14 +1937,16 @@ def test_a_form_page_that_thanks_the_person_isnt_taken_for_a_confirmation(srv, m
     assert srv.tracker().get(job["id"])["status"] != "applied"
 
 
-def test_a_step_still_loading_its_questions_is_waited_for(srv, monkeypatch):
+@pytest.mark.parametrize("query", ["", "?bare"])
+def test_a_step_still_loading_its_questions_is_waited_for(srv, monkeypatch, query):
     """KLA's Workday (live, Oct 2026): past My Experience, its Application Questions step showed its
     loading dots where the questions go and a greyed-out Save and Continue the form reader found no
     button for, beside the previous step's resume box, and the desk stopped at once: "I couldn't find
-    the button that moves this application on." A step still loading is waited for."""
+    the button that moves this application on." A step still loading is waited for. In live run 9 (bare)
+    it showed only the resume box, no dots and no button at all: a form with no button yet is waited on too."""
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
     monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 1)
-    job = srv.add_job(url=fixture_url("site/workday-questions-loading.html"), title="Customer Service Engineer",
+    job = srv.add_job(url=fixture_url("site/workday-questions-loading.html") + query, title="Customer Service Engineer",
                       company="Example Fab")["job"]
     applier = Applier(srv)
 
@@ -2237,7 +2257,7 @@ def test_a_reset_with_a_captcha_makes_the_account_instead(srv, monkeypatch, job_
     assert r.need == "email_code", (r.reason, r.log)  # its passcode: the inbox's, or the person's
 
 
-@pytest.mark.parametrize("query", ["", "?stay"])
+@pytest.mark.parametrize("query", ["", "?stay", "?keys"])
 def test_brassrings_six_box_passcode_is_entered_from_the_inbox_and_verified(srv, monkeypatch, job_apply_home, query):
     """Edward Jones' BrassRing (the live check's test identity, Oct 2026): its Create Account emails a
     passcode and asks for it in six boxes ("Enter 1st digit of your passcode" ... "Enter 6th digit of
@@ -2282,16 +2302,15 @@ def test_a_code_the_page_wouldnt_take_is_said_in_the_log_and_tried_again(srv, mo
     saved_password(monkeypatch)
     as_test_identity(monkeypatch, job_apply_home)
     inbox_with_code(monkeypatch)
-    real, refused = srv.fill_form, []
+    real, refused = srv.browser.type_code, []
 
-    async def fill_form(values):
-        if len(values) == 6 and len(refused) < 2:  # (the code's six boxes: refused twice)
-            refused.append(values)
-            return {"ok": False, "results": [{"id": values[0]["id"], "ok": False,
-                                               "error": "DialogOpen: “Notice” is open over the page"}]}
-        return await real(values)
+    async def type_code(ids, code):
+        if len(ids) == 6 and len(refused) < 2:  # (the code's six boxes: refused twice)
+            refused.append(ids)
+            raise browser_module.DialogOpen("“Notice” is open over the page")
+        return await real(ids, code)
 
-    monkeypatch.setattr(srv, "fill_form", fill_form)
+    monkeypatch.setattr(srv.browser, "type_code", type_code)
     job = srv.add_job(url=fixture_url("site/brassring-signin.html"), title="Senior Analyst",
                       company="Example Corp")["job"]
     applier = Applier(srv)
@@ -4960,18 +4979,18 @@ def test_an_emailed_code_put_in_between_jobs_gives_the_tools_back(srv, monkeypat
     applier = Applier(srv)
     sent = {"yet": False}
     held_by = []
-    real_fill = srv.fill_form
+    real_type = srv.browser.type_code
 
     def inbox(address, password, since, senders, want, allowed_link, before=None, look_back=None):
         return pipeline.mailbox.Found("code", "123456", "careers.example.com", time.time()) if sent["yet"] else None
 
-    async def fill_form(fills, *args, **kwargs):
-        if any(f.get("value") == "123456" for f in fills):
+    async def type_code(ids, code):
+        if code == "123456":
             held_by.append(applier.current)
-        return await real_fill(fills, *args, **kwargs)
+        return await real_type(ids, code)
 
     monkeypatch.setattr(pipeline.mailbox, "search", inbox)
-    monkeypatch.setattr(srv, "fill_form", fill_form)
+    monkeypatch.setattr(srv.browser, "type_code", type_code)
 
     async def go():
         applier.start()
@@ -5311,6 +5330,8 @@ def test_the_page_a_job_stops_on_is_saved_for_its_report_scrubbed(srv, monkeypat
     holds it, without the person's details or what was filled in (a React site writes that into
     its HTML)."""
     from job_apply import report
+
+    monkeypatch.setattr(pipeline, "STEP_LOAD_WAIT", 2)  # (a form with no button is waited on that long)
 
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
     monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 1)
@@ -5686,6 +5707,30 @@ def test_a_schools_missing_degree_is_asked_for_as_a_degree_never_as_dates(srv):
 
 
 WORKDAY_DEGREES = ["High School", "GED", "Associates", "Bachelors", "Masters", "Doctorate", "PH.D"]
+
+
+def test_a_degree_list_without_the_profiles_degree_says_so_not_that_the_profile_lacks_it(srv):
+    """Live test 2 (issue #112, note 16): a Degree list of Certificate, Foundation, Associate, Bachelor,
+    Master, Doctor, Ph.D., Others, Some College and No degree has no high school or GED choice. The card
+    said "your profile doesn't have this for them", though the profile has degree: GED for that school.
+    It says the list has no choice for the GED, and that the pick (an honest one, such as "Others") is the
+    person's."""
+    import yaml
+
+    path = config.profile_path()
+    profile = yaml.safe_load(path.read_text())
+    school = profile["education_history"][0]["school"]
+    profile["education_history"][0]["degree"] = "GED"
+    path.write_text(yaml.safe_dump(profile))
+    applier = Applier(srv)
+    degree = {"id": "a", "label": "Degree*", "section": "Education 1", "required": True, "kind": "listbox",
+              "options": ["Certificate", "Foundation", "Associate", "Bachelor", "Master", "Doctor", "Ph.D.", "Others",
+                          "Some College", "No degree (Dropped out)"]}
+    said, rest = applier._entry_gaps(Run(1, "Technician", "Example Litho"),
+                                     {"url": "https://example.wd1.myworkdayjobs.com/x"}, [degree])
+    assert f"The Degree list has no choice for your GED ({school} in Education 1)" in said, said
+    assert "doesn't have this for them" not in said and "Others" in said, said
+    assert rest == []
 
 
 def test_a_degree_list_with_nothing_for_classes_leaves_the_pick_to_the_person(srv):

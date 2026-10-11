@@ -25,7 +25,10 @@
      What happened is kept for the tab (sessionStorage's sf.* keys): opened (the link pressed with a country
      chosen), statement ("accepted"), declined, closed, presses (Create Account), created.
      ?slow: the statement is drawn a moment after its link is pressed (the live site fetches it first).
-     ?marketing: its opening says that accepting also signs the person up for marketing emails and job alerts. -->
+     ?marketing: its opening says that accepting also signs the person up for marketing emails and job alerts.
+     ?passcode: once made, the account asks for the code it emailed (123456), as the live site does (APS's, Oct 11):
+     "*Passcode:" in a password box and Continue; a wrong one is "The passcode entered is incorrect. Please try
+     again." (kept: passcode, the last one typed). -->
 <div id="outershell">
 <h1>Career Opportunities: Create an Account</h1>
 <p>Already a registered user? <a href="#signin">Please sign in</a> Login credentials are case sensitive</p>
@@ -161,7 +164,16 @@
     }
     bump('created');
     put('campaign', $('fbclc_campaignEmailEnabled').checked);
-    location.href = 'step1.html';
+    if (!q.has('passcode')) { location.href = 'step1.html'; return; }
+    document.getElementById('outershell').innerHTML = '<h1>Career Opportunities: Create an Account</h1>'
+      + '<form id="pc" onsubmit="return false"><label for="passcode">*Passcode:</label>'
+      + '<input id="passcode" type="password" required><button type="submit" id="pcgo">Continue</button></form>'
+      + '<div id="pcerr" role="alert"></div>';
+    $('pcgo').addEventListener('click', () => {
+      put('passcode', $('passcode').value);
+      if ($('passcode').value === '123456') location.href = 'step1.html';
+      else $('pcerr').textContent = 'The passcode entered is incorrect. Please try again.';
+    });
   });
 </script>
 </body>

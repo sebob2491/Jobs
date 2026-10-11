@@ -75,6 +75,7 @@ _DECLINES = re.compile(r"reject|decline|necessary|essential|required only|only r
 # password box's type and value
 _INPUT_TAG = re.compile(r'<input\b(?:[^>"]|"[^"]*")*>', re.I)
 _PASSWORD_TYPE = re.compile(r'\stype="password"', re.I)
+_ONE_TIME_CODE = re.compile(r"passcode|one[- ]time (?:pass(?:word|code)|code)|verification code|security code|\botp\b", re.I)
 _VALUE_ATTR = re.compile(r'\svalue="[^"]*"', re.I)
 
 
@@ -147,6 +148,7 @@ LOST_FILL_TRIES = 3  # times a box is typed again on a page, at most (one the pa
 BLOCK_DRAW_WAIT = 6000  # ms for blocks just added (Workday's Education 2) to draw their boxes, at most
 # How long a click may wait for its button to become clickable, in ms.
 CLICK_TIMEOUT = 8000
+CONFIRM_WAIT = 12  # seconds a submit's confirmation is watched for after its page goes quiet
 # How long a box under an overlay (or being drawn again) may take to take the focus, in ms: not
 # Playwright's 30 s for each of Workday's 16 date parts on My Experience
 FOCUS_TIMEOUT = 5000
@@ -196,6 +198,27 @@ DATE_PARTS_JS = """
   return parts.length;
 }
 """
+
+
+def _bare_choice(text: str) -> str:
+    """A list's choice without the arrow that says it opens a list of its own ("Employee Referral ›")."""
+    return re.sub(r"\s*[\u203a>\u276f\u25b8\u25b6]+\s*$", "", text or "").strip()
+
+
+def _inner_choice(value: Any, picked: str, inner: list[str], names: bool = False) -> str | None:
+    """The choice to pick in the list a choice opened: the answer, if it's there; else the one named as
+    the choice picked; else the only one (Workday's "<employer> website ›" opens a list of one, named
+    alike: live test 2, issue #112, note 15)."""
+    entry = choose_option(value, inner, names=names)
+    if entry is not None:
+        return entry
+    # (never just any lone entry: "Job Board ›" opening ["Indeed"] isn't the profile's answer)
+    picked_name = norm(_bare_choice(picked))
+    same = [o for o in inner if norm(_bare_choice(o)) == picked_name]
+    if len(same) == 1:
+        return same[0]
+    alike = [o for o in inner if picked_name and picked_name in norm(_bare_choice(o))]
+    return alike[0] if len(inner) == 1 and alike else None
 
 
 async def _covered(loc: Locator) -> bool:
@@ -1201,6 +1224,32 @@ class BrowserSession:
             if not again:
                 return
 
+    async def type_code(self, field_ids: list[str], code: str) -> list[str]:
+        """An emailed code typed key by key, as the person would: a digit into each box of a box-per-digit
+        code, or the whole code into its one box. Edward Jones' BrassRing (live run 9, Oct 11) took a digit
+        only from a key pressed in its box: a value put in by the page's script left the boxes empty, and
+        Verify Passcode with them. What each box reads after."""
+        async with self._lock:
+            page = await self.page()
+            await self._clear_of_dialogs(page, {"id": field_ids[0]})  # (never typed behind a dialog)
+            per_box = len(field_ids) > 1
+            for i, field_id in enumerate(field_ids):
+                loc = self._locator(page, field_id)
+                # (focus within its own document isn't enough: a frame keeps its activeElement after focus left it)
+                if not await loc.evaluate("el => el.ownerDocument.hasFocus() && el === el.ownerDocument.activeElement",
+                                          timeout=FOCUS_TIMEOUT):
+                    try:
+                        await loc.click(timeout=2000)
+                    except PlaywrightTimeout:
+                        await loc.focus(timeout=FOCUS_TIMEOUT)
+                if await loc.evaluate("el => !!el.value", timeout=FOCUS_TIMEOUT):
+                    await loc.fill("", timeout=FOCUS_TIMEOUT)
+                await page.keyboard.type(code[i] if per_box else code, delay=60)
+            await page.wait_for_timeout(150)
+            return [await self._locator(page, field_id).evaluate(
+                "el => el.value !== undefined ? String(el.value) : (el.innerText || '')", timeout=FOCUS_TIMEOUT)
+                for field_id in field_ids]
+
     async def fill_secret(self, field_id: str, secret: str, site_ok: Callable[[str], bool] | None = None) -> None:
         """Type a secret into a password box, on a page `site_ok` accepts (by its frame's
         address): never into a text box, where the next inspect_form would read it back."""
@@ -1254,7 +1303,8 @@ class BrowserSession:
     async def _fill_one(self, page: Page, field: dict, value: Any) -> str:
         kind = field["kind"]
         loc = self._locator(page, field["id"])
-        if kind == "password":
+        if kind == "password" and not _ONE_TIME_CODE.search(field.get("label") or ""):
+            # (but an emailed code drawn in a password box, SuccessFactors' "*Passcode:", is no password)
             raise PermissionError("Passwords are only filled with fill_secret")
         if kind == "file":
             path = config.expand(str(value))
@@ -1446,6 +1496,14 @@ class BrowserSession:
             try:
                 await self._confirm_choice(page, loc, choice)
             except ValueError:
+                # a choice that opened a list of its own (Workday's "How Did You Hear About Us?": "<employer>
+                # website ›" > "<employer> website", live test 2, issue #112, note 15): picked inside it
+                inner = await self._new_options(page, field["id"], loc, options, 1500)
+                entry = _inner_choice(value, choice, inner, names) if inner and inner != options else None
+                if entry is not None:
+                    await self._click_option(page, field["id"], entry)
+                    await self._confirm_choice(page, loc, entry)
+                    return f"selected {_bare_choice(choice)} > {entry}"
                 if attempt:
                     raise
                 await self._close_menus(page)  # a pick that didn't land: once more, from a menu opened afresh
@@ -1546,7 +1604,7 @@ class BrowserSession:
             await self._confirm_choice(page, loc, choice)
         except ValueError:
             inner = await self._new_options(page, field["id"], loc, options, 1500)
-            entry = choose_option(text, inner, names=names) if inner and inner != options else None
+            entry = _inner_choice(text, choice, inner, names) if inner and inner != options else None
             if entry is not None:  # the answer is in the group it opened (Onto's "ONTO Website" > "ONTO Website")
                 await self._click_option(page, field["id"], entry)
                 await self._confirm_choice(page, loc, entry)
@@ -1776,12 +1834,20 @@ class BrowserSession:
             except PlaywrightTimeout:
                 pass
             await page.wait_for_timeout(1500)
-            page = await self.page()
-            text = await self._page_text(page)
-            data = await self._extract(page)
-            # a thank-you that wasn't there before, on a page that doesn't say what's wrong with the form
-            new = confirmations(text) - confirmations(before)
-            sent_back = any(_FORM_ERROR.search(e or "") for e in data["errors"])
+            # A thank-you that wasn't there before, on a page that doesn't say what's wrong with the form. Watched
+            # for a while: Workday draws its "Application Submitted" dialog over the candidate home a few seconds
+            # after the page has gone quiet (live test 2, issue #112, note 19)
+            waited = 0.0
+            while True:
+                page = await self.page()
+                text = await self._page_text(page)
+                data = await self._extract(page)
+                new = confirmations(text) - confirmations(before)
+                sent_back = any(_FORM_ERROR.search(e or "") for e in data["errors"])
+                if new or sent_back or waited >= CONFIRM_WAIT:
+                    break
+                await page.wait_for_timeout(1000)
+                waited += 1
             return {
                 "url": page.url,
                 "confirmed": bool(new) and not sent_back,

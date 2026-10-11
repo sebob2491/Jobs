@@ -13,7 +13,9 @@
      passcode to it. ?captcha: a picture code on Create Account too. ?refuse: its Continue refuses the email
      ("Please enter a valid email address.") and stays. ?stay: the passcode step is drawn below the email step,
      whose Email address and Continue stay (live, Oct 2026: a press of that Continue sends another passcode,
-     and the boxes are emptied). What happened is kept for the tab
+     and the boxes are emptied). ?keys: each digit box takes a digit only from a key pressed in it, and moves on to
+     the next box; a value set by a script is wiped (live run 9, Oct 11: the code went in and Verify Passcode was
+     pressed, and the step stayed with its boxes empty). What happened is kept for the tab
      (sessionStorage's br.* keys), so a reload doesn't lose it: signIns, resetPresses, captcha (anything
      typed in a picture code), accountEmail (the email Create Account's Continue sent) -->
 <header><a href="javascript:void(0)" id="top-sign-in">Sign In</a> <a href="javascript:void(0)">Example Corp Careers</a></header>
@@ -127,10 +129,22 @@
     if (q.has('stay')) view.insertAdjacentHTML('beforeend', step);
     else view.innerHTML = '<h2>Let\'s Get Started</h2>' + step;
     const boxes = [...document.querySelectorAll('.digit')];
-    boxes.forEach((box, i) => box.addEventListener('input', () => {
-      box.value = box.value.replace(/\D/g, '').slice(0, 1);
-      if (box.value && boxes[i + 1]) boxes[i + 1].focus();
-    }));
+    if (q.has('keys')) {
+      boxes.forEach((box, i) => {
+        box.addEventListener('keydown', (e) => {
+          if (!/^\d$/.test(e.key)) return;
+          e.preventDefault();
+          box.value = e.key;
+          if (boxes[i + 1]) boxes[i + 1].focus();
+        });
+        box.addEventListener('input', () => { box.value = ''; });  // not from a key: the model never saw it
+      });
+    } else {
+      boxes.forEach((box, i) => box.addEventListener('input', () => {
+        box.value = box.value.replace(/\D/g, '').slice(0, 1);
+        if (box.value && boxes[i + 1]) boxes[i + 1].focus();
+      }));
+    }
     $('verify').addEventListener('click', () => {
       const typed = boxes.map((b) => b.value).join('');
       bump('verifies');

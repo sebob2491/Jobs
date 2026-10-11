@@ -32,7 +32,8 @@ from urllib.parse import parse_qsl, urlparse
 
 from . import config, mailbox, report
 from .ats import ATS_NAMES, detect_ats, shared_system
-from .autofill import (clean_label, entry_of, is_empty_value, no_choice_for_no_degree, norm, plan_autofill,
+from .autofill import (clean_label, degree_not_listed, entry_of, is_empty_value, no_choice_for_no_degree, norm,
+                       plan_autofill,
                        polarity, tailored_document, works_there_now)
 from .browser import (_SENDS_TOO, CONFIRMATION_RE, SubmitBlocked, TabClosed, _accepts_cookies, _cookie_setting,
                       confirmations, declines_cookies, final_text, may_accept_cookies)
@@ -87,6 +88,7 @@ _BOT_TITLE = re.compile(r"just a moment|attention required|access denied|pardon 
 # (Deloitte's sign-in, to a headless browser): the site turns the browser away. There's nothing to
 # solve, so it holds nothing up: the person applies elsewhere
 _RESET_DONE = re.compile(r"\b(?:your )?password (?:has been|was|is) (?:reset|changed|updated)\b", re.I)
+_STEPISH = re.compile(r"\b(next|continue|save|submit|review|apply|finish|done|proceed)\b", re.I)
 _REFRESH_ASKED = re.compile(r"\bsomething went wrong\b.{0,200}\b(?:refresh|reload) (?:the|this) page\b", re.I | re.S)
 _TURNED_AWAY = re.compile(r"^\s*(?:403\s*)?forbidden\s*$|^\s*(?:406\s*)?not acceptable\s*$|"
                           r"^\s*your request has been blocked\.?\s*$", re.I)  # (Workday's, its title empty)
@@ -102,6 +104,15 @@ _CAPTCHA = re.compile(r"i'?m not a robot|i am human|hcaptcha|recaptcha challenge
 _VERIFY_EMAIL = re.compile(r"verif(?:y|ication)\b.{0,40}\b(?:e-?mail|account|link)|check your (?:e-?mail|inbox)", re.I)
 _CODE_FIELD = re.compile(r"verification code|one[- ]time (?:pass)?code|passcode|security code|\bcode\b.{0,40}"
                          r"(?:sent|email)|enter (?:the )?(?:\d-digit )?code|\botp\b", re.I)
+
+
+def _code_box(f: dict[str, Any]) -> bool:
+    """An emailed code's box: a text or number box named for one, or a password box named for one
+    (SuccessFactors' "*Passcode:" after making an account, live, Oct 2026: the desk put the saved
+    password in it). Never the saved password's."""
+    return f.get("kind") in ("text", "number", "password") and bool(
+        _CODE_FIELD.search(f.get("label") or "") or f.get("kind") == "password"
+        and re.search(r"one[- ]time password", f.get("label") or "", re.I))
 _SIGN_IN_ACTION = re.compile(r"^(sign in|log ?in|sign in with email)$", re.I)
 # What else a form holding only the sign-in calls its button (SuccessFactors': "Submit")
 _SIGN_IN_SUBMIT = re.compile(r"^(submit|continue|next|go|enter|log ?on|sign ?on|sign in now|log ?in now)$", re.I)
@@ -387,12 +398,12 @@ def classify(data: dict[str, Any], text: str) -> str:
     if not fields and (_BOT_TITLE.search(data.get("title") or "") or _BOT_TEXT.search(text[:3000])
                        or data.get("captcha")):  # (a page with only a CAPTCHA's box on it, and its button)
         return "bot_check"
-    if any(f["kind"] == "password" for f in fields):
+    if any(f["kind"] == "password" and not _code_box(f) for f in fields):
         return "sign_in"
     actions = [a.get("text", "") for a in data.get("actions", [])]
     if not fields and any(re.match(r"^sign in with ", a, re.I) for a in actions):
         return "sign_in"  # Workday: "Sign in with email / Google / Apple"
-    if any(_CODE_FIELD.search(f.get("label") or "") for f in fields if f["kind"] in ("text", "number")):
+    if any(_code_box(f) for f in fields):
         return "email_code"
     if not fields and _VERIFY_EMAIL.search(text[:3000]) and not any(_ENTRY.match(final_text(a)) for a in actions):
         return "email_code"  # "we sent you a link to verify your account"
@@ -1006,8 +1017,7 @@ class Applier:
         except Exception as e:  # a tab mid-way through loading: looked at again next time
             run.mail_last = f"couldn't read its tab: {type(e).__name__}"
             return
-        boxes = [f for f in data.get("fields") or [] if f.get("kind") in ("text", "number")
-                 and _CODE_FIELD.search(f.get("label") or "")]
+        boxes = [f for f in data.get("fields") or [] if _code_box(f)]
         senders = self._mail_senders(run)
 
         own = {h for h in self._own_hosts(run) | {run.paused_host} if h}
@@ -1093,18 +1103,24 @@ class Applier:
             run.mail_last += "; not typed: its tab couldn't be used"
             return False
         data = await srv.inspect_form(include_dropdown_options=False)
-        boxes = [f for f in data.get("fields") or [] if f.get("kind") in ("text", "number")
-                 and _CODE_FIELD.search(f.get("label") or "")]
+        boxes = [f for f in data.get("fields") or [] if _code_box(f)]
         if not boxes:  # the page moved on meanwhile
             run.mail_last += "; not typed: no code box on the page"
             return False
-        if 1 < len(boxes) == len(found.value):  # a box per digit (Oracle's "Confirm Your Identity")
-            fills = [{"id": box["id"], "value": digit} for box, digit in zip(boxes, found.value)]
-        else:
-            fills = [{"id": boxes[0]["id"], "value": found.value}]
-        out = await srv.fill_form(fills)
-        if not out.get("ok"):  # (looked for again at the next look; said once, so the log says why none went in)
-            why = next((str(r.get("error")) for r in out.get("results") or [] if not r.get("ok")), "")
+        # a box per digit (Oracle's "Confirm Your Identity"), or one box; typed key by key (BrassRing's take a
+        # digit only from a key pressed in them)
+        ids = [box["id"] for box in boxes] if 1 < len(boxes) == len(found.value) else [boxes[0]["id"]]
+        why = ""
+        try:
+            read = re.sub(r"[^0-9A-Za-z]", "", "".join(await srv.browser.type_code(ids, found.value)))
+            # (all of it; or, typed into a first box that moved on by itself to boxes the reader didn't count, its
+            # first digit)
+            if read != re.sub(r"[^0-9A-Za-z]", "", found.value) and not (len(ids) == 1 and read and len(read) == 1
+                                                                        and found.value.startswith(read)):
+                why = f"its boxes read {read or 'nothing'}"
+        except Exception as e:
+            why = f"{type(e).__name__}: {str(e).splitlines()[0] if str(e) else ''}"
+        if why:  # (looked for again at the next look; said once, so the log says why none went in)
             said = f"found the code in your email but couldn't type it into the page ({why[:160]}); I'll try again"
             if said not in run.log[-3:]:
                 self._log(run, said)
@@ -1154,7 +1170,7 @@ class Applier:
                 and _email_account_view(data) == "code" and _may_manage_accounts()):
             return None
         fields = [f for f in data.get("fields") or [] if not f.get("disabled") and not f.get("aside")]
-        if not all(f.get("kind") in ("text", "number") and _CODE_FIELD.search(f.get("label") or "") for f in fields):
+        if not all(_code_box(f) for f in fields):
             return None
         return self._account_button(data.get("actions") or [], _CODE_SENDS)
 
@@ -1389,7 +1405,7 @@ class Applier:
                                    "steps of making one are yours: finish them in the browser window (or sign in with "
                                    "the email you use there); the desk carries on by itself after that.", seen=data)
             if (kind == "sign_in" and not account_waited and not _account_and_application(data)
-                    and sum(f.get("kind") == "password" for f in data.get("fields") or []) >= 2):
+                    and sum(f.get("kind") == "password" and not _code_box(f) for f in data.get("fields") or []) >= 2):
                 # A Create Account form: Qorvo's draws its application below it a moment later
                 account_waited = True
                 await self._wait_for_application()
@@ -1439,7 +1455,7 @@ class Applier:
                     sign_ins["submitted"] = sign_ins["wants_account"] = 1
                     continue
             if (kind == "sign_in" and manage and sign_ins.get("made") and _VERIFY_EMAIL.search(said_exists)
-                    and sum(f.get("kind") == "password" for f in data.get("fields") or []) == 1):
+                    and sum(f.get("kind") == "password" and not _code_box(f) for f in data.get("fields") or []) == 1):
                 # the account just made says it emailed a link to verify it (Banner Health's Workday, live,
                 # Oct 2026): its Sign In takes no password before the link is opened
                 return await self._await_verify_email(run, data)
@@ -1529,7 +1545,7 @@ class Applier:
                 await self._bring_forward(run)
                 watching = (" Your email app password is saved, so the desk is also watching your inbox for it."
                             if self.mail_login() else "")
-                if any(_CODE_FIELD.search(f.get("label") or "") for f in data.get("fields") or []):
+                if any(_code_box(f) for f in data.get("fields") or []):
                     return self._pause(run, "email_code", "The site emailed you a code. Enter it in the browser "
                                        "window; the desk carries on by itself after that." + watching, seen=data)
                 # The link opens in the person's own browser, which leaves this tab where it is
@@ -1642,11 +1658,24 @@ class Applier:
             gate_now = action is None and (button := _agreement_button(data)) is not None \
                 and f"{_page_key(data)} {button['text'].strip()}" not in agreed and _terms_gate(button, data) \
                 and _may_accept_notices()
-            if action is None and kind == "page" and not waited and not gate_now:
+            # (a form with no button at all yet is a step still being drawn too: KLA's Workday showed only the last
+            # step's resume box for a while, its questions and Save and Continue drawn after, live run 9, Oct 11)
+            # (a greyed-out step button, or a page busy loading, is the branch below's)
+            bare_form = (kind == "form" and not data.get("busy") and not any(
+                             not a.get("cookie") and _STEPISH.search(final_text(a.get("text") or ""))
+                             for a in data.get("actions") or []) and not _greyed_step(data)
+                         # (not one whose stop is explained: an agreement to press, a bot check)
+                         and _agreement_button(data) is None and not data.get("captcha")
+                         and not _BOT_BADGE.search(" ".join([text[:3000], *(a.get("text") or "" for a in data.get("actions") or [])])))
+            if action is None and (kind == "page" or bare_form) and not waited and not gate_now:
                 waited = True  # slow pages (Intel's Workday, Eightfold forms) draw their buttons late
-                wait = SIGN_IN_STEP_WAIT if sign_in_step else BLANK_PAGE_WAIT if blank else LATE_BUTTONS_WAIT
-                if await self._wait_for_progress(wait):
-                    continue
+                if bare_form:
+                    if await self._wait_for_step(STEP_LOAD_WAIT, data):
+                        continue
+                else:
+                    wait = SIGN_IN_STEP_WAIT if sign_in_step else BLANK_PAGE_WAIT if blank else LATE_BUTTONS_WAIT
+                    if await self._wait_for_progress(wait):
+                        continue
             drawn = (_page_key(data), _boxes(data))  # a page that has drawn more since is waited on again
             loading = bool(data.get("busy")) and not gate_now
             if action is None and drawn not in step_waited and (loading or kind == "form" and _greyed_step(data)):
@@ -1963,6 +1992,7 @@ class Applier:
         missing: dict[str, dict[str, list[str]]] = {"work": {}, "education": {}, "extra": {}}
         refused: dict[str, list[str]] = {}  # the profile has it; the page didn't take it
         no_choice: list[str] = []  # Degree lists with nothing for classes without a degree
+        unlisted: dict[str, str] = {}  # Degree lists with nothing for the profile's degree (a GED's)
         rest = []
         for q in pending:
             found = entry_of(q, prof)
@@ -1976,6 +2006,9 @@ class Applier:
             if no_choice_for_no_degree(q, prof):
                 if name not in no_choice:
                     no_choice.append(name)
+                continue
+            if (degree := degree_not_listed(q, prof)) is not None:
+                unlisted.setdefault(name, degree)
                 continue
             what = clean_label(q.get("label") or "").strip() or "a box"
             into = refused if q.get("error") else missing[kind]
@@ -2019,9 +2052,16 @@ class Applier:
             # "Some college (no degree)" in the profile can't go there, and coursework is never a degree
             said.append(f"The Degree list for {'; '.join(no_choice)} has no choice for classes without a degree, so "
                         "that box is yours (the desk never picks a degree you didn't earn): choose in the browser, "
-                        "then press Resume. If you did finish a degree there, add it to that school under "
-                        "education_history in profile.yaml (degree: the one you earned), and the desk fills it in "
-                        "from then on.")
+                        "or delete that school's block with its Delete button where the site doesn't need it (your "
+                        "resume still shows the classes), then press Resume. If you did finish a degree there, add it "
+                        "to that school under education_history in profile.yaml (degree: the one you earned), and the "
+                        "desk fills it in from then on.")
+        if unlisted:
+            # the profile has it; the list doesn't (no high school or GED choice: issue #112, note 16)
+            said.append("The Degree list has no choice for " + "; ".join(f"your {degree} ({name})" for name, degree in
+                                                                         unlisted.items())
+                        + ", so that box is yours: choose the closest honest one in the browser (“Others” or "
+                        "the like, where it's there; never a degree you didn't earn), then press Resume.")
         return " ".join(said), rest
 
     @staticmethod
@@ -2579,7 +2619,7 @@ class Applier:
         person's (a picture code, or a password the site turned down); None for any other page."""
         srv = self.srv
         fields = [f for f in data.get("fields") or [] if not re.match(r"f\d+-", str(f.get("id")))]
-        passwords = [f for f in fields if f.get("kind") == "password"]
+        passwords = [f for f in fields if f.get("kind") == "password" and not _code_box(f)]
         named = [f for f in fields if f.get("kind") in ("text", "email")
                  and re.search(r"e-?mail|user ?name|login", f.get("label") or "", re.I)]
         new = len(passwords) >= 2 or any(_NEW_PASSWORD.search(f.get("label") or "") for f in passwords)
@@ -2827,7 +2867,7 @@ class Applier:
                 return None
             await srv.click(email_button["id"])
             return "email_step"
-        passwords = [f for f in fields if f["kind"] == "password"]
+        passwords = [f for f in fields if f["kind"] == "password" and not _code_box(f)]
         create = _account_way(actions)
         # Where the way to a new account led: a form with one password box (UKG Pro's "Create
         # your account") is the new account's, as it no longer offers a way to one.
@@ -3481,7 +3521,7 @@ def _email_account_view(data: dict[str, Any]) -> str | None:
 
     None for any other page (its application, or its sign-in again)."""
     fields = [f for f in data.get("fields") or [] if not f.get("disabled") and not f.get("aside")]
-    if any(f.get("kind") in ("text", "number") and _CODE_FIELD.search(f.get("label") or "") for f in fields):
+    if any(_code_box(f) for f in fields):
         return "code"
     if not fields:
         offered = any(_ONE_TIME_CODE.match(final_text(a["text"]).strip()) and not a.get("disabled")
@@ -3650,8 +3690,7 @@ def _code_only_submit(data: dict[str, Any]) -> dict[str, Any] | None:
     code and nothing else, so it's pressed after the code, as a "Verify" is (and only where the step's own
     words don't speak of an application: Applier._code_only_submit)."""
     fields = [f for f in data.get("fields") or [] if not f.get("disabled") and not f.get("aside")]
-    if not fields or not all(f.get("kind") in ("text", "number") and _CODE_FIELD.search(f.get("label") or "")
-                             for f in fields):
+    if not fields or not all(_code_box(f) for f in fields):
         return None
     return next((a for a in data.get("actions") or [] if not a.get("disabled") and not a.get("cookie")
                  and not a.get("aside") and _CODE_SENDS.match(final_text(a.get("text") or "").strip())), None)

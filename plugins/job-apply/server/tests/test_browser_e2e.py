@@ -549,6 +549,43 @@ def test_final_apply_button_honeypot_and_enter(srv, monkeypatch):
     assert done["submitted"] and done["confirmed"]
 
 
+def test_a_choice_that_opens_a_list_of_its_own_is_picked_inside_it(srv):
+    """Workday's "How Did You Hear About Us?" (live test 2, issue #112, note 15): every choice opens a
+    second list, here with one choice of the same name ("<employer> website" > "<employer> website"). The
+    desk picked the first level and stopped ("Picked ... but the field didn't take it"). Inside the list
+    it opens, the choice of the same name (or the only one) is picked."""
+    run(srv.browser.goto(fixture_url("site/workday-two-level-list.html")))
+    field = next(f for f in run(srv.inspect_form(include_dropdown_options=False))["fields"]
+                 if f["label"].startswith("How Did You Hear"))
+    out = run(srv.fill_form([{"id": field["id"], "value": "Example Fab website"}]))
+    assert out["results"][0].get("ok"), out["results"]
+    page = run(srv.browser.page())
+    assert run(page.evaluate("() => document.getElementById('source').textContent")) == "Example Fab website"
+
+
+def test_inside_a_list_a_choice_opens_only_the_answer_or_its_namesake_is_picked():
+    """The list a choice opens: the answer, or the entry named like the choice ("<employer> website ›" opens
+    "<employer> website"); never a lone entry that's something else ("Job Board ›" opening only "Indeed" isn't
+    the profile's "Job Board")."""
+    from job_apply.browser import _inner_choice
+
+    assert _inner_choice("Company Website", "Example Fab website \u203a", ["Example Fab website"]) == "Example Fab website"
+    assert _inner_choice("Job Board", "Job Board / Social Network \u203a", ["Indeed"]) is None
+    assert _inner_choice("LinkedIn", "Job Board / Social Network \u203a", ["Indeed", "LinkedIn"]) == "LinkedIn"
+
+
+def test_a_confirmation_drawn_a_few_seconds_after_submit_is_seen(srv):
+    """Workday (live test 2, issue #112, note 19): both applications the person had the desk submit went
+    in, and Workday showed "Application Submitted / Congratulations! Thank you for submitting your
+    application!" in a dialog over its candidate home a few seconds later. The desk had already looked,
+    and said "no confirmation showed". It watches for one a while longer."""
+    job = srv.add_job(url=fixture_url("site/workday-review.html"), title="FSE", company="Example Fab")["job"]
+    run(srv.open_application(job_id=job["id"]))
+    done = run(srv.submit_application(job_id=job["id"], user_confirmed=True))
+    assert done["submitted"] and done["confirmed"], done
+    assert srv.get_job(job["id"])["job"]["status"] == "applied"
+
+
 def test_click_finds_a_replaced_button_and_checks_it_again(srv, monkeypatch):
     """Oracle's pages swap a button out between reading it and clicking it."""
     import job_apply.browser as browser_module

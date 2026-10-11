@@ -1,0 +1,28 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Field Service Engineer</title></head>
+<body>
+<!-- like a Workday site's Review step and what follows its Submit (live test 2, issue #112, note 19, Oct 2026):
+     the candidate home, with "Application Submitted" / "Congratulations! Thank you for submitting your
+     application!" in a dialog drawn over it a few seconds later (3 s here). -->
+<div data-automation-id="progressBarActiveStep">Review</div>
+<h2>Review</h2>
+<p>My Information</p>
+<button type="button" data-automation-id="pageFooterBackButton">Back</button>
+<button type="button" data-automation-id="pageFooterNextButton" id="submit">Submit</button>
+<script>
+  document.getElementById('submit').addEventListener('click', () => {
+    document.body.innerHTML = '<h2>Candidate Home</h2><h3>My Applications</h3><p>Active</p><p>Field Service Engineer</p>';
+    history.replaceState(null, '', location.pathname + '#jobTasks/completed/application');
+    setTimeout(() => {
+      const d = document.createElement('div');
+      d.setAttribute('role', 'dialog');
+      d.setAttribute('aria-modal', 'true');
+      d.innerHTML = '<h2>Application Submitted</h2><p>Congratulations! Thank you for submitting your application!</p>'
+        + '<button type="button">Done</button>';
+      document.body.appendChild(d);
+    }, 3000);
+  });
+</script>
+</body>
+</html>
