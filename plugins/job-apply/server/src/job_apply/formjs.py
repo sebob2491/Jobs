@@ -177,7 +177,18 @@ EXTRACT_JS = r"""
     const row = el.closest('.input-row');
     if (row && row.querySelector('.input-row__label--required')) return true;
     const ff = el.closest('[data-automation-id^="formField"]');
-    return !!(ff && ff.querySelector('abbr[title*="equired"], [class*="required" i]'));
+    if (ff && ff.querySelector('abbr[title*="equired"], [class*="required" i]')) return true;
+    // a file box the group around it says is required ("Your resume/CV is required - upload your document here":
+    // EMD's, live run 19, Oct 11), when what it names is the box's own (not an attachments box beside it)
+    if (el.type === 'file') {
+      let up = el.parentElement;
+      for (let i = 0; up && i < 4; i++, up = up.parentElement) {
+        const said = (up.innerText || up.textContent || '').slice(0, 400);
+        const m = said.match(/\b(resume|cv|cover letter|transcript)s?\b[^.!?\n]{0,40}\b(?:is|are) required\b/i);
+        if (m) return new RegExp('\\b' + m[1] + '\\b', 'i').test(label || '') && !/optional/i.test(label || '');
+      }
+    }
+    return false;
   };
   const optionLabel = (el) => {
     const l = labelEl(el);

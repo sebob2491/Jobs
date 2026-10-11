@@ -1404,3 +1404,14 @@ def test_a_box_that_isnt_there_to_type_in_is_given_up_on_in_seconds(srv):
 
     took = run(go())
     assert took < 2 + browser_module.FOCUS_TIMEOUT / 1000 + 3, took
+
+
+def test_a_resume_box_whose_group_says_it_is_required_is_required(srv):
+    """EMD Electronics' own application (live run 19, Oct 11): its resume box isn't marked required, but the group
+    around it says "Your resume/CV is required"; the desk pressed Next twice and said only "The page didn't move
+    on". The box counts as required (so a missing resume is said as such); the attachments box beside it doesn't."""
+    run(srv.open_application(url=fixture_url("site/resume-required-header.html")))
+    fields = run(srv.inspect_form(include_dropdown_options=False))["fields"]
+    assert by_label(fields, "Upload Resume/CV")["required"]
+    assert not by_label(fields, "Upload Additional Attachments")["required"]
+    assert not by_label(fields, "Second resume (optional)")["required"]  # (nor one that says it's optional)

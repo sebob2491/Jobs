@@ -1,0 +1,25 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Apply</title></head>
+<body>
+<!-- like EMD Electronics' own application (live run 19, Oct 11): its resume box isn't marked required; the
+     group around it says so in its header, "Your resume/CV is required - upload your document here to get
+     started!*". Beside it, an attachments box that isn't required. -->
+<h2>My information</h2>
+<div class="options-block resume-group">
+  <div class="cloud-options" role="group" aria-labelledby="sr">
+    <div class="resume_info"><span id="sr" class="sr-only">Upload options</span>
+      <div class="resume-header"><p>Your resume/CV is required – upload your document here to get started!<span style="color: red;">*</span></p>
+        <p>Upload either DOC, DOCX, PDF or TXT file types (3MB max)</p></div>
+    </div>
+    <label for="cv">Upload Resume/CV</label><input id="cv" type="file">
+  </div>
+  <label for="more">Upload Additional Attachments</label><input id="more" type="file">
+  <div><p>Resume is required for every applicant.</p><label for="spare">Second resume (optional)</label><input id="spare" type="file"></div>
+</div>
+<form onsubmit="return false">
+  <label for="first">First Name *</label><input id="first" required>
+  <button type="button">Next</button>
+</form>
+</body>
+</html>

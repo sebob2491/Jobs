@@ -4826,7 +4826,9 @@ def test_a_job_picked_up_again_carries_on_with_the_form_in_its_tab(srv, monkeypa
         said = {"crashed": "its tab crashed", "closed": "its tab was closed",
                 "browser": "the browser had closed", "home": "its tab had gone back to the site's careers home"}[how]
         assert r.page is not tab and loads.count(posting) == 2, (loads, r.log)
-        assert any(line.startswith(said) for line in since), r.log
+        # (in full, as a string: a list is cut short in pytest's report, and on Windows CI this has failed now and
+        # then with the line that says why cut off, Oct 11)
+        assert any(line.startswith(said) for line in since), "\n".join(since)
         if how == "home":  # the person's to look at still
             assert not tab.is_closed() and tab.url == f"{EXAMPLE_CORP}/careers"
         else:
