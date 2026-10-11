@@ -232,6 +232,13 @@ _TERMS = re.compile(r"\bprivacy\b|\bdata protection\b|\bterms (?:of (?:use|servi
                     r"\b(?:gdpr|ccpa)\b", re.I)
 _ACCEPTS = re.compile(r"\b(?:agree|accept|acknowledge|consent|have read|understand)\b", re.I)
 _TAKES_IN = re.compile(r"^(?:ok|okay|got it|continue|proceed)$", re.I)
+# A dialog that offers how to start an application's profile (Eightfold's "Profile Bootstrapping", Northrop
+# Grumman's, live, Oct 2026: "Create your profile with existing information"): a button to upload the resume,
+# with its file box in the dialog, and one to enter the information by hand. A choice, not an agreement
+_UPLOAD_RESUME = re.compile(r"^(?:upload|attach|choose|select)(?: (?:your|my|a|the))? (?:resume|cv|résumé)"
+                            r"(?: ?/ ?(?:resume|cv|résumé))?(?: file)?$", re.I)
+_ENTER_INFO = re.compile(r"^(?:(?:enter|fill in|add)(?: (?:your|my|the))? (?:information|info|details|profile)"
+                         r"(?: manually| myself)?|(?:enter|fill in) manually)$", re.I)
 # A Create Account form's link that opens the site's data privacy statement to be read and accepted: the site
 # makes no account without it (SuccessFactors', live, Oct 10, 2026: "Read and accept the data privacy statement.",
 # which opens the statement in a dialog with Accept and Decline). Its words accept a privacy notice or terms
@@ -1484,7 +1491,7 @@ class Applier:
                                    + watching, seen=data)
             if (notice := _notice(data)) is not None:  # the boxes behind it are filled once it's answered
                 said = await self._answer_notice(run, data, notice, agreed, over_form=kind == "form")
-                if said == "agreed":
+                if said in ("agreed", "started"):
                     continue
                 if said == "paused":
                     return
@@ -1529,7 +1536,7 @@ class Applier:
                 run.page_info = _page_info(data)  # what the person sees on the desk: the page as filled
                 if (notice := _notice(data)) is not None:  # one the fills brought up (Eightfold's, as the resume went up)
                     said = await self._answer_notice(run, data, notice, agreed, over_form=True)
-                    if said == "agreed":
+                    if said in ("agreed", "started"):
                         continue
                     if said == "paused":
                         return
@@ -2575,8 +2582,12 @@ class Applier:
         """A dialog open over the page that nothing else answers (_notice). An employer's notice about
         AI screening of the application is agreed to for the person where they allow it
         (settings.accept_notices; never in practice mode), once a pass, and said in the log: "agreed".
-        Any other one over a form is theirs, as the boxes behind it don't fill: "paused". None:
-        nothing done (on a page with nothing to fill, its buttons are the way on as before)."""
+        Any other one over a form is theirs, as the boxes behind it don't fill: "paused". A dialog
+        that offers how to start the application's profile is answered from the profile (_start_profile):
+        "started". None: nothing done (on a page with nothing to fill, its buttons are the way on as
+        before)."""
+        if (started := await self._start_profile(run, data, notice, agreed)) is not None:
+            return started
         heading = _notice_name(notice)
         said = f"{heading} {notice.get('text') or ''}"
         # about AI screening of applications, or the employer's privacy notice or terms of use (whose
@@ -2612,6 +2623,41 @@ class Applier:
                         and not allowed else ""))
         return "paused"
 
+    async def _start_profile(self, run: Run, data: dict[str, Any], notice: dict[str, Any],
+                             agreed: set[str]) -> str | None:
+        """A dialog that offers how to start the application's profile (_profile_start: Eightfold's
+        "Profile Bootstrapping", Northrop Grumman's, live, Oct 2026: "Upload your resume" or "Enter
+        information"). It's no agreement and no question, but a choice of how to begin: its "Enter
+        information" is pressed, and the form is filled from the profile as usual. Never its resume
+        upload: the site's reading of a resume would fill the boxes with its own guesses (a degree
+        from some college classes), which the desk never overwrites and never claims; the resume
+        goes in where the application asks for it. Nothing else in the dialog is touched. Said in
+        the log. "started": on to the page behind it; "paused": it stayed open after that (once a
+        pass); None: no such dialog, or its button wouldn't take the press."""
+        enter = _profile_start(notice)
+        if enter is None:
+            return None
+        heading = _notice_name(notice)
+        said = enter["text"].strip()
+        if f"{heading}: {said}" in agreed:  # pressed on this pass, and it stayed open
+            await self._bring_forward(run)
+            self._pause(run, "stuck", f"I pressed “{said}” in the “{_short(heading)}” dialog on {_site(run, data)}, and "
+                        "it stayed open. Look at it in the browser window, then press Resume.")
+            return "paused"
+        try:
+            pressed = await self.srv.click(enter["id"])
+        except KeyError:  # the dialog went by itself meanwhile: looked at again
+            return "started"
+        if not pressed.get("clicked"):
+            self._log(run, f"the click on “{said}” didn't go through: {pressed.get('blocked')}")
+            return None
+        whose = f"{run.company}'s" if run.company else "the site's"
+        self._log(run, f"pressed “{said}” in {whose} “{_short(heading)}” dialog, to fill the application from your "
+                  "profile (your resume goes in where it asks for one)")
+        agreed.add(f"{heading}: {said}")
+        await self._notice_closed(heading)
+        return "started"
+
     async def _press_agreement(self, element_id: str) -> dict[str, Any]:
         """Press a button found to agree for the person (settings.accept_notices: a terms gate's way
         on, a notice's agree), as the click tool does. Saying so lets the live check's test identity
@@ -2621,10 +2667,10 @@ class Applier:
         except SubmitBlocked as e:
             return {"clicked": False, "blocked": str(e)}
 
-    async def _notice_closed(self, heading: str) -> None:
+    async def _notice_closed(self, heading: str, wait: float = NOTICE_WAIT) -> None:
         """After a notice's agree button: until the notice has gone. One fading out is read a
         moment longer, and looked at that soon, it would be taken for one that stayed."""
-        deadline = time.monotonic() + NOTICE_WAIT
+        deadline = time.monotonic() + wait
         while time.monotonic() < deadline:
             data = await self.srv.inspect_form(include_dropdown_options=False)
             if not any(_notice_name(d) == heading for d in data.get("dialogs") or []):
@@ -2966,6 +3012,16 @@ def _notice(data: dict[str, Any]) -> dict[str, Any] | None:
                                            for t in texts):
             return d
     return None
+
+
+def _profile_start(notice: dict[str, Any]) -> dict[str, Any] | None:
+    """A dialog's "Enter information" button, where the dialog offers how to start the application's
+    profile: a button to upload the resume and one to enter the information by hand (Eightfold's
+    "Create your profile with existing information"). Known by that offer, not by a site's name."""
+    buttons = [b for b in notice.get("buttons") or [] if not b.get("disabled")]
+    if not any(_UPLOAD_RESUME.match(final_text(b.get("text") or "")) for b in buttons):
+        return None
+    return next((b for b in buttons if _ENTER_INFO.match(final_text(b.get("text") or ""))), None)
 
 
 def _notice_name(notice: dict[str, Any]) -> str:

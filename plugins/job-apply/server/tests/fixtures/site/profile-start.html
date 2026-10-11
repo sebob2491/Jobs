@@ -1,0 +1,68 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Apply - Example Corp</title>
+<style>
+  .backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.4); display: flex; align-items: center; justify-content: center; }
+  .backdrop[hidden], form[hidden] { display: none; }
+  .box { background: #fff; padding: 20px; max-width: 600px; }
+</style>
+</head>
+<body>
+<!-- like the application page of an Eightfold careers site for a new account (Northrop Grumman's,
+     live, Oct 2026): nothing on it but its footer link, and over it a modal dialog headed "Profile
+     Bootstrapping" ("Create your profile with existing information") with two ways on: "Upload your
+     resume", a button that opens the chooser of a file box hidden inside the dialog (display: none,
+     labelled "Resume"), and "Enter information". The application's form (its boxes, empty) comes once
+     a way is chosen. Eightfold reads an uploaded resume into the form's boxes; this page can't, and
+     keeps the dialog open a moment ("Reading your resume") as that does.
+     State, for the tests, in sessionStorage: started ("upload" or "enter"), file (the one chosen),
+     uploads (how many files were put in) and pressed (the dialog's buttons pressed, by id).
+     ?stays: the dialog stays open whichever way is chosen (the site didn't take it). -->
+<form id="app" novalidate hidden>
+  <h2>Equipment Technician</h2>
+  <fieldset>
+    <legend>Contact Information</legend>
+    <label for="first">First name</label><input id="first" aria-required="true">
+    <label for="last">Last name</label><input id="last" aria-required="true">
+    <label for="email">Email</label><input id="email" aria-required="true">
+  </fieldset>
+  <button type="submit">Submit application</button>
+</form>
+<footer><a href="#" id="powered">Powered by eightfold.ai #WhatsNextForYou</a></footer>
+<div aria-labelledby="bootstrap-title" aria-modal="true" role="dialog" class="backdrop" id="bootstrap">
+  <div class="box">
+    <h2 id="bootstrap-title">Profile Bootstrapping</h2>
+    <p>Create your profile with existing information</p>
+    <p id="reading" hidden>Reading your resume&hellip;</p>
+    <input accept=".pdf,.doc,.docx" type="file" id="resume-file" aria-label="Resume" style="display: none">
+    <button type="button" id="upload">Upload your resume</button>
+    <button type="button" id="enter">Enter information</button>
+  </div>
+</div>
+<script>
+  const dialog = document.getElementById('bootstrap');
+  const file = document.getElementById('resume-file');
+  const start = (how) => {
+    sessionStorage.setItem('started', how);
+    if (location.search.includes('stays')) return;
+    dialog.remove();  // (gone from the page, as a React modal is once closed: its file box too)
+    document.getElementById('app').hidden = false;
+  };
+  const pressed = (id) => sessionStorage.setItem('pressed', [sessionStorage.getItem('pressed'), id].filter(Boolean).join(','));
+  document.getElementById('upload').addEventListener('click', () => { pressed('upload'); file.click(); });
+  document.getElementById('enter').addEventListener('click', () => { pressed('enter'); start('enter'); });
+  file.addEventListener('change', () => {
+    if (!file.files.length) return;
+    sessionStorage.setItem('uploads', String(Number(sessionStorage.getItem('uploads') || 0) + 1));
+    sessionStorage.setItem('file', file.files[0].name);
+    document.getElementById('reading').hidden = false;
+    setTimeout(() => start('upload'), 800);
+  });
+  if (sessionStorage.getItem('started')) start(sessionStorage.getItem('started'));
+  document.getElementById('app').addEventListener('submit', (e) => {
+    e.preventDefault();
+    document.body.innerHTML = '<h1>Thanks for applying!</h1>';
+  });
+</script>
+</body>
+</html>

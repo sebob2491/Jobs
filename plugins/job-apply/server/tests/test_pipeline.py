@@ -930,6 +930,91 @@ def test_a_privacy_dialog_over_the_form_is_agreed_and_another_is_the_persons(srv
         assert "“Privacy Policy of Example Corp”" in r.reason and "accept_notices: true" in r.reason, r.reason
 
 
+PROFILE_START = "site/profile-start.html"
+PROFILE_DIALOG = "“Profile Bootstrapping” dialog"
+
+
+def profile_run(srv, query="", tailored=None):
+    """A job on the Eightfold-like page whose dialog offers how to start the profile (`tailored`: the name
+    of a resume made for this job, in its folder); the run, and what the page recorded: how the profile was
+    started, the file put in and how many times, the dialog's buttons pressed, and its form's boxes."""
+    job = srv.add_job(url=fixture_url(PROFILE_START) + query, title="Equipment Technician",
+                      company="Example Corp")["job"]
+    if tailored:
+        folder = Path(srv.tracker().get(job["id"])["folder"])
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / tailored).write_bytes(b"%PDF-1.4\n")
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r, await r.page.evaluate(
+                "() => ({started: sessionStorage.getItem('started'), file: sessionStorage.getItem('file'), "
+                "uploads: Number(sessionStorage.getItem('uploads') || 0), pressed: sessionStorage.getItem('pressed') || '', "
+                "first: document.getElementById('first').value, email: document.getElementById('email').value})")
+        finally:
+            await applier.stop()
+
+    return run(go())
+
+
+@pytest.mark.parametrize("have", ["resume", "none"])
+def test_a_dialog_offering_to_start_the_profile_is_answered_by_entering_the_information(srv, monkeypatch,
+                                                                                       job_apply_home, have):
+    """Eightfold's "Profile Bootstrapping" dialog ("Create your profile with existing information",
+    with "Upload your resume" and "Enter information") opened over Northrop Grumman's application
+    (live check, Oct 2026), and the desk stopped for the person as for a notice only they can answer.
+    It's no agreement but a choice of how to start the profile: "Enter information" is pressed and the
+    form filled from the profile, with a resume in the profile or not. Never the resume upload: the
+    site's reading of it would fill the boxes with its guesses. Nothing else is pressed. Said in the log."""
+    import yaml
+
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    if have == "none":
+        path = job_apply_home / "profile.yaml"
+        prof = yaml.safe_load(path.read_text(encoding="utf-8"))
+        prof["documents"] = {"resume": None}
+        path.write_text(yaml.safe_dump(prof), encoding="utf-8")
+    r, shown = profile_run(srv)
+    assert r.status == "ready", (r.status, r.reason, r.log)
+    assert shown["first"] == "Sam" and shown["email"] == "sam.rivera@example.com", shown  # the form, filled as usual
+    assert (shown["started"], shown["file"], shown["uploads"], shown["pressed"]) == ("enter", None, 0, "enter"), shown
+    assert (f"pressed “Enter information” in Example Corp's {PROFILE_DIALOG}, to fill the application from your "
+            "profile (your resume goes in where it asks for one)") in r.log, r.log
+
+
+def test_a_profile_dialog_that_stays_open_is_the_persons(srv, monkeypatch):
+    """The dialog stayed open after "Enter information" (the site didn't take it): the desk says what it
+    did and leaves it to the person, without pressing it again."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    r, shown = profile_run(srv, "?stays")
+    assert (r.status, r.need) == ("needs_you", "stuck"), (r.status, r.reason, r.log)
+    assert r.reason.startswith(f"I pressed “Enter information” in the {PROFILE_DIALOG} on Example Corp's site, and it "
+                               "stayed open. Look at it in the browser window, then press Resume."), r.reason
+    assert (shown["started"], shown["uploads"], shown["pressed"], shown["first"]) == ("enter", 0, "enter", ""), shown
+
+
+def test_a_profile_dialog_is_known_by_its_offer_not_its_name():
+    """What makes a dialog the one that offers how to start a profile: a button to upload the resume and
+    one to enter the information by hand, whatever the site calls it. Not one with only one of them,
+    nor any other dialog's buttons."""
+    def dialog(*texts, **kw):
+        return {"heading": "Anything", "buttons": [{"id": str(i), "text": t, **kw} for i, t in enumerate(texts)]}
+
+    start = pipeline._profile_start
+    assert start(dialog("Upload your resume", "Enter information"))["text"] == "Enter information"
+    assert start(dialog("Upload Resume/CV", "Enter manually"))["text"] == "Enter manually"
+    assert start(dialog("Attach your CV", "Fill in my details"))["text"] == "Fill in my details"
+    assert start(dialog("Upload your resume")) is None
+    assert start(dialog("Enter information")) is None
+    assert start(dialog("Upload your resume", "Cancel")) is None
+    assert start(dialog("Cancel", "I Agree")) is None
+    assert start(dialog("Upload your resume", "Enter information", disabled=True)) is None
+
+
 @pytest.mark.parametrize("settings", [{}, {"accept_notices": False}], ids=["on", "off"])
 def test_a_privacy_agreement_before_the_application_is_accepted_for_the_person(srv, monkeypatch, job_apply_home,
                                                                                 settings):
