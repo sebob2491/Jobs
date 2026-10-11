@@ -42,6 +42,7 @@ NEW_TAB_WAIT = 4  # seconds to wait for a tab opened late by a click before call
 ONCE_SETTLE = 1.0  # seconds after filling the person's answers before checking they stayed in
 MAX_STEPS = 15
 LATE_BUTTONS_WAIT = 10  # seconds for a page's buttons to be drawn
+STEP_SAVE_WAIT = 20  # for a step pressed three times that's still saving (KLA's Workday), before it counts as stuck
 STEP_LOAD_WAIT = 30  # for a step still loading its questions, its loading dots on show (KLA's Workday)
 BLANK_PAGE_WAIT = 30  # for a page with nothing on it yet to draw (Infineon's application, now and then)
 SIGN_IN_STEP_WAIT = 25  # Workday's sign-in step can take longer to draw its buttons (Applied's)
@@ -1304,6 +1305,7 @@ class Applier:
         stalls, entries_done, waited, refilled, dismissed = 0, set(), False, set(), set()
         step_waited: set[tuple[Any, ...]] = set()  # pages (as drawn) waited on for a greyed-out step button
         retyped: set[tuple[Any, ...]] = set()  # pages whose lost boxes were typed again (once a page)
+        saved_waited: set[tuple[Any, ...]] = set()  # steps waited on as still saving (once a step)
         account_waited = False
         sign_ins: dict[str, int] = {}  # what the saved password was used for on this pass
         pressed: list[tuple[Any, ...]] = []  # (page, button) for each button pressed on this pass
@@ -1787,6 +1789,14 @@ class Applier:
                 return self._pause(run, "stuck", f"I pressed \u201c{action['text'].strip()}\u201d three times on "
                                    f"{_where(data)} and no application opened. Have a look in the browser, then press "
                                    "Resume.")
+            if kind == "form" and pressed[-3:] == [key] * 3 and key not in saved_waited:
+                # a step still saving: KLA's Workday took a while over its Application Questions 2 of 2 (live run
+                # 11, Oct 11: the desk stopped after the fourth press, and the next step was there a little later).
+                # Waited on once, with nothing said wrong, before the step counts as stuck
+                saved_waited.add(key)
+                if not any(_ERRORISH.search(e) for e in data.get("errors") or []) and \
+                        await self._wait_for_step_change(key, STEP_SAVE_WAIT):
+                    continue
             if kind == "form" and pressed[-3:] == [key] * 3:
                 # the same step button pressed three times on the same step: Cornerstone's (Matheson's,
                 # under load, Oct 10) redraws its page a little after each press, so no single press
@@ -1919,6 +1929,16 @@ class Applier:
             data = await self.srv.inspect_form(include_dropdown_options=False)
             if (pick_next(data.get("actions") or [], in_form=True) or _boxes(data) > had
                     or before.get("busy") and not data.get("busy")):
+                return True
+        return False
+
+    async def _wait_for_step_change(self, key: tuple[Any, ...], seconds: float) -> bool:
+        """Wait for the page to go on from a step (its address or headings no longer `key`'s)."""
+        deadline = time.monotonic() + seconds
+        while time.monotonic() < deadline:
+            await asyncio.sleep(1)
+            data, _ = await self._look()
+            if (data.get("url"), tuple(data.get("headings") or [])) != key[:2]:
                 return True
         return False
 

@@ -1960,6 +1960,30 @@ def test_boxes_the_pages_errors_say_are_empty_though_filled_are_typed_again(srv,
     assert any(line.startswith("typed again") and "Address 1" in line for line in r.log), r.log
 
 
+def test_a_step_still_saving_after_three_presses_is_waited_on(srv, monkeypatch):
+    """KLA's Workday (live run 11, Oct 11): every box of Application Questions 2 of 2 answered, its Save and
+    Continue took a while to go on, and the desk stopped after its presses ("The page didn't move on"); the next
+    step was there a little later. A step still saving, with nothing said wrong, is waited on once."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    job = srv.add_job(url=fixture_url("site/workday-slow-save.html"), title="Customer Service Engineer",
+                      company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        r = applier.enqueue(job["id"])
+        r.seen_form = True
+        r.once["are you willing to travel"] = "Yes"
+        applier.start()
+        try:
+            await until(lambda: r.status not in ("queued", "running"), timeout=90, about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert r.status == "ready", (r.status, r.need, r.reason, r.log)
+
+
 @pytest.mark.parametrize("query", ["", "?bare"])
 def test_a_step_still_loading_its_questions_is_waited_for(srv, monkeypatch, query):
     """KLA's Workday (live, Oct 2026): past My Experience, its Application Questions step showed its
