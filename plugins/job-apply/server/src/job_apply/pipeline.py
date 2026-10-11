@@ -112,6 +112,7 @@ _AFTER_CODE = re.compile(r"^(verify|confirm|continue|next)( ((?:pass)?code|e-?ma
 _ACCOUNT_ON = re.compile(r"^(submit|continue|next|agree|i agree|accept|create(?: an| my| a new)? account)$", re.I)
 _ONE_TIME_CODE = re.compile(r"^(?:use an? )?(?:one[- ]time (?:pass)?code|e-?mail (?:me )?an? code)(?: instead)?$", re.I)
 _CODE_SENDS = re.compile(r"^submit$", re.I)
+_APPLICATION_WORD = re.compile(r"\bapplication\b|\bapply\b", re.I)
 _TRY_LATER = re.compile(r"\btoo many\b.{0,30}\b(?:attempts|requests|tries)\b|\btry again (?:later|in \d+)|\brate[- ]limit",
                         re.I)
 _CREATE_ACCOUNT = re.compile(r"^(?:proceed to |continue to )?(create (?:an |your |a new )?account|sign up|register)"
@@ -1109,7 +1110,7 @@ class Applier:
         press = next((a for a in data.get("actions") or [] if not a.get("disabled")
                       and _AFTER_CODE.match(a.get("text", "").strip())), None)
         made = press is None and (press := self._account_code_button(run, data)) is not None
-        mine = made or (press is None and (press := _code_only_submit(data)) is not None)
+        mine = made or (press is None and (press := await self._code_only_submit(data)) is not None)
         try:
             if mine and press is not None:  # (the code step's own "Submit": it sends the code only)
                 pressed = (await srv.browser.click(press["id"], allow_submit=True)).get("clicked") is not False
@@ -1126,6 +1127,17 @@ class Applier:
             run.reason = ("I entered the code from your email. Press the page's button to carry on; "
                           "the desk continues after that.")
         return True
+
+    async def _code_only_submit(self, data: dict[str, Any]) -> dict[str, Any] | None:
+        """_code_only_submit's button, unless the code step's own words (the block around its button and
+        boxes, not the application behind a sign-in pop-up) speak of an application: a code that sends one
+        ("Enter the code we emailed to submit your application") is the person's to send (or Submit for
+        me's), and in practice mode never sent."""
+        press = _code_only_submit(data)
+        if press is None:
+            return None
+        words = await self.srv.browser.words_around(press["id"])
+        return press if words is not None and not _APPLICATION_WORD.search(words) else None
 
     def _account_code_button(self, run: Run, data: dict[str, Any]) -> dict[str, Any] | None:
         """The "Submit" of the emailed code's step of an account the desk is making (an Eightfold site's,
@@ -3583,7 +3595,8 @@ def _page_key(data: dict[str, Any]) -> tuple:
 def _code_only_submit(data: dict[str, Any]) -> dict[str, Any] | None:
     """The "Submit" of a page whose only boxes are an emailed code's (Northrop Grumman's Eightfold sign-in,
     live, Oct 2026: "Check your email", six "Please enter OTP character" boxes and "Submit"): it sends the
-    code and nothing else, so it's pressed after the code, as a "Verify" is."""
+    code and nothing else, so it's pressed after the code, as a "Verify" is (and only where the step's own
+    words don't speak of an application: Applier._code_only_submit)."""
     fields = [f for f in data.get("fields") or [] if not f.get("disabled") and not f.get("aside")]
     if not fields or not all(f.get("kind") in ("text", "number") and _CODE_FIELD.search(f.get("label") or "")
                              for f in fields):

@@ -6061,6 +6061,23 @@ def test_with_manage_accounts_an_email_first_site_makes_the_account_with_the_ema
     assert r.status != "submitted", (r.status, r.reason)
 
 
+@pytest.mark.parametrize("words, pressed", [("Check your email. We sent a code to your email.", True),
+                                            ("Enter the code we emailed you to submit your application.", False)])
+def test_a_code_steps_submit_is_never_pressed_where_it_may_send_the_application(srv, words, pressed):
+    """A step holding only an emailed code's boxes has its Submit pressed after the code ("Check your
+    email"), but never one whose own words speak of an application ("Enter the code we emailed you to
+    submit your application"): that Submit may send it, which stays the person's. The page behind a
+    sign-in pop-up (an application's) doesn't count."""
+    run(srv.open_application(url=fixture_url("jsonld_posting.html")))
+    page = run(srv.browser.page())
+    run(page.set_content(f"""<h1>Field Service Engineer: apply now</h1><p>Your application</p>
+      <div role="dialog"><p>{words}</p><label for="c">Verification code</label><input id="c">
+        <button type="button">Submit</button></div>"""))
+    data = run(srv.inspect_form(include_dropdown_options=False))
+    press = run(Applier(srv)._code_only_submit(data))
+    assert (press is not None and press["text"] == "Submit") is pressed, (press, data["actions"])
+
+
 def test_an_emailed_code_that_signs_in_gets_its_submit_pressed(srv, monkeypatch, job_apply_home):
     """Northrop Grumman's Eightfold sign-in, for an email that already has an account (live, Oct 2026):
     "Check your email", six "Please enter OTP character" boxes and a "Submit" that sends the code and

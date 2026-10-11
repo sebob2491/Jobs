@@ -750,7 +750,8 @@ async def add_entries(section: str, count: int | None = None) -> dict[str, Any]:
         result["note"] = "No Add button found for this section on the current page."
     elif result.get("add_button_covered"):
         result["note"] = ("The section's Add button is covered by something on the page (a note or a dialog), so it "
-                          "wasn't pressed; close what covers it, or add the blocks in the browser window.")
+                          + (f"was pressed {result['clicks']} time(s) and then " if result["clicks"] else "")
+                          + "wasn't pressed (again); close what covers it, or add the blocks in the browser window.")
     return result
 
 

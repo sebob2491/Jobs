@@ -732,6 +732,8 @@ ELEMENT_INFO_JS = r"""
   const names = (n) => `${n.id || ''} ${typeof n.className === 'string' ? n.className : ''} ${n.getAttribute('aria-label') || ''}`;
   const named = (n) => /cookie|onetrust|cybot|truste|gdpr/i.test(names(n));
   const words = (n) => (n.innerText || n.textContent || n.value || n.getAttribute('aria-label') || '').replace(/\s+/g, ' ').trim();
+  const under = el.getAttribute('role') === 'button' && !(el.innerText || el.textContent || '').trim() && el.nextElementSibling;
+  const covers = under && under.matches('button[aria-hidden="true"]') && (under.innerText || under.textContent || '').trim() ? under : null;
   const page = (n) => n === document.body || n === document.documentElement;
   // the whole banner: the outermost cookie/consent box around it (OneTrust's accept button is
   // a box of its own by its id, inside the banner holding its "Reject All")
@@ -744,9 +746,11 @@ ELEMENT_INFO_JS = r"""
   const top = cookie ? document.elementFromPoint(innerWidth / 2, innerHeight / 2) : null;
   const over = top && top.closest(BOX);
   return {
-    label: [el.innerText || el.textContent || el.value || '', el.getAttribute('aria-label') || ''].join(' ').replace(/\s+/g, ' ').trim(),
+    // (Workday's cover over a hidden button reads as the button it covers, as EXTRACT_JS reads it)
+    label: (covers ? words(covers)
+      : [el.innerText || el.textContent || el.value || '', el.getAttribute('aria-label') || ''].join(' ')).replace(/\s+/g, ' ').trim(),
     // its words as the page script reads them: an icon-only button's are its aria-label
-    text: words(el),
+    text: covers ? words(covers) : words(el),
     formSubmit: el.type === 'submit' && !!formOf(el),
     // in a cookie banner (OneTrust, Cookiebot, TrustArc and the like)
     cookie,

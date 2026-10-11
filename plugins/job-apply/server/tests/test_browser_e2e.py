@@ -755,6 +755,24 @@ def test_capture_json_takes_the_keyword_search_and_enlarges_it(srv):
     assert run(srv.browser.page()).url == "about:blank"  # the search tab didn't take over
 
 
+def test_a_workday_cover_is_the_submit_found_not_its_hidden_button(srv):
+    """Workday draws a form's own button hidden (aria-hidden) under a div of its own that takes the
+    click (data-automation-id="click_filter"). Over a final Submit, the cover is the button found to
+    submit with, and reads as that button; the hidden one, which does nothing, isn't."""
+    run(srv.open_application(url=fixture_url("jsonld_posting.html")))
+    page = run(srv.browser.page())
+    run(page.set_content("""
+      <form><label for="n">Name</label><input id="n">
+        <div style="position: relative; width: 200px; height: 40px">
+          <div role="button" tabindex="0" data-automation-id="click_filter" style="position: absolute; inset: 0"></div>
+          <button type="submit" aria-hidden="true" tabindex="-2" style="width: 100%; height: 100%">Submit</button>
+        </div></form>"""))
+    found = run(srv.browser.find_submit())
+    assert [(a["text"], bool(a.get("covered"))) for a in found] == [("Submit", False)], found
+    info = run(srv.browser.element_info(found[0]["id"]))
+    assert info is not None and info["label"] == "Submit", info
+
+
 def test_a_menu_left_over_the_next_field_isnt_its_options(srv):
     """Micron: the availability question's menu stayed open over the next question and was
     drawn afresh when focus moved, so its options were read as the next question's."""

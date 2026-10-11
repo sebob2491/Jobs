@@ -1633,7 +1633,22 @@ class BrowserSession:
             page = await self.page()
             data = await self._extract(page)
             # not a footer's job-alerts "Submit" (marked aside): pressing it sends no application
-            return [a for a in data["actions"] if a.get("is_submit") and not a.get("disabled") and not a.get("aside")]
+            # nor Workday's hidden button under the cover that takes the click (covered): pressing it does nothing
+            return [a for a in data["actions"] if a.get("is_submit") and not a.get("disabled") and not a.get("aside")
+                    and not a.get("covered")]
+
+    async def words_around(self, element_id: str) -> str | None:
+        """The words of the smallest block around an element that also holds a text box (a code
+        step's Submit: the step's own words, not the page's behind its pop-up), or None once it's gone."""
+        async with self._lock:
+            page = await self.page()
+            try:
+                return await self._locator(page, element_id).evaluate(
+                    "el => { for (let n = el.parentElement; n; n = n.parentElement) {"
+                    " if (n.querySelector('input:not([type=hidden]):not([type=checkbox]):not([type=radio])'))"
+                    " return (n.innerText || '').slice(0, 3000); } return ''; }", timeout=3000)
+            except (PlaywrightError, PlaywrightTimeout):
+                return None
 
     async def element_info(self, element_id: str) -> dict[str, Any] | None:
         """ELEMENT_INFO_JS's facts about an element on the page (a cookie banner's button: the
