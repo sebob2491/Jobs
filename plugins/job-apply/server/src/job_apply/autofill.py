@@ -207,6 +207,23 @@ def _containing(want: str, normed: list[tuple[str, str]]) -> str | None:
     return contained[0] if len(contained) == 1 and not contains else None
 
 
+# A degree's kind within its level, each as written in full or abbreviated (on norm()'s text: "B.S." is "b s")
+_DEGREE_KINDS = [
+    ("bfa", r"bachelor of fine arts|\bb ?fa\b"), ("bba", r"bachelor of business administration|\bb ?ba\b"),
+    ("mba", r"master of business administration|\bm ?ba\b"),
+    ("aas", r"associate (degree )?of applied science|\ba ?a ?s\b"),
+    ("bs", r"bachelor (degree )?of science|\bb ?sc?\b|\bbs[a-z]{1,3}\b"), ("ba", r"bachelor (degree )?of arts|\bb ?a\b"),
+    ("ms", r"master (degree )?of science|\bm ?sc?\b|\bms[a-z]{1,3}\b"), ("ma", r"master (degree )?of arts|\bm ?a\b"),
+    ("as", r"associate (degree )?of science|\ba ?s\b"), ("aa", r"associate (degree )?of arts|\ba ?a\b"),
+]
+
+
+def degree_kind(s: str) -> str | None:
+    """A degree's kind (bs, ba, ms, mba ...) when its words name one; a bare "Bachelor's Degree" names none."""
+    n = norm(s)
+    return next((kind for kind, pattern in _DEGREE_KINDS if re.search(pattern, n)), None)
+
+
 def degree_key(s: str) -> str | None:
     n = norm(s)
     for key, pattern in _DEGREES:
@@ -376,6 +393,15 @@ def choose_option(desired: Any, options: list[str], exact_only: bool = False, na
         same = [(o, n) for o, n in normed if degree_key(n) == dk]
         if len(same) == 1:
             return same[0][0]
+        # several of that level ("Bachelor of Arts", "Bachelor of Science"): the kind the answer names, however
+        # each writes it ("Bachelor of Science" is "BS", "B.S." or "Bachelor's - BS"); none named, none picked
+        kind = degree_kind(want)
+        if kind and len(same) > 1:
+            of_kind = [o for o, n in same if degree_kind(n) == kind]
+            if len(of_kind) == 1:
+                return of_kind[0]
+        if not kind and len({degree_kind(n) for _, n in same} - {None}) > 1:
+            return None  # a bare "Bachelor's Degree" among "Bachelor's - BS" and "Bachelor's - BA": the person's to say
         if same:
             normed = same
 
@@ -1584,6 +1610,17 @@ def degree_not_listed(field: dict, prof: Profile) -> str | None:
     if not said or no_choice_for_no_degree(field, prof):
         return None
     return said if choose_option(said, field["options"]) is None else None
+
+
+def degree_kinds_listed(field: dict, degree: str) -> list[str]:
+    """A Degree list's choices of the profile's degree level, when it has several kinds of it and the
+    profile's degree names none ("Bachelor of Arts", "Bachelor of Science" for "Bachelor's Degree":
+    Onto's Workday, nightly live check Oct 11). Empty otherwise."""
+    level = degree_key(degree)
+    if not level or degree_kind(degree):
+        return []
+    same = [o for o in field.get("options") or [] if isinstance(o, str) and degree_key(o) == level]
+    return same if len({degree_kind(o) for o in same} - {None}) > 1 else []
 
 
 def _resolve_entry(field: dict, prof: Profile) -> tuple[bool, Answer | None]:

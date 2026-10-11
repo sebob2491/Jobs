@@ -5834,6 +5834,30 @@ def test_a_degree_list_without_the_profiles_degree_says_so_not_that_the_profile_
     assert rest == []
 
 
+def test_a_degree_list_with_several_kinds_of_the_profiles_degree_says_so(srv):
+    """Onto Innovation's Workday (nightly live check, Oct 11): its Degree list has a Bachelor of Arts and a Bachelor
+    of Science, and the profile says "Bachelor's Degree". The desk can't say which was earned, so the box is the
+    person's, but the card said the list had no choice for it. It says the list has several kinds of it, and how to
+    name the one earned in the profile."""
+    import yaml
+
+    path = config.profile_path()
+    profile = yaml.safe_load(path.read_text())
+    school = profile["education_history"][0]["school"]
+    profile["education_history"][0]["degree"] = "Bachelor's Degree"
+    path.write_text(yaml.safe_dump(profile))
+    applier = Applier(srv)
+    degree = {"id": "a", "label": "Degree*", "section": "Education 1", "required": True, "kind": "listbox",
+              "options": ["High School", "Associate of Science", "Bachelor of Arts", "Bachelor of Science",
+                          "Master of Science"]}
+    said, rest = applier._entry_gaps(Run(1, "Technician", "Example Litho"),
+                                     {"url": "https://example.wd1.myworkdayjobs.com/x"}, [degree])
+    assert (f"The Degree list for {school} in Education 1 has several kinds of Bachelor's Degree (Bachelor of Arts, "
+            "Bachelor of Science)") in said, said
+    assert "has no choice for" not in said and "degree: Bachelor of Science" in said, said
+    assert rest == []
+
+
 def test_a_degree_list_with_nothing_for_classes_leaves_the_pick_to_the_person(srv):
     """A Workday site's Degree list holds High School, GED, Associates and up, and nothing for
     classes without a degree (live, Oct 2026). For a second block of one school, where the person
