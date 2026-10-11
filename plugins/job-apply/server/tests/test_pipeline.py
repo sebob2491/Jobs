@@ -1326,6 +1326,23 @@ def test_with_manage_accounts_a_data_privacy_statement_is_opened_and_accepted_fo
     assert any("“My Information”" in line for line in r.log), log  # on to the application
 
 
+def test_an_emailed_passcode_in_a_password_box_takes_the_inbox_code_never_the_saved_password(
+        srv, monkeypatch, job_apply_home):
+    """APS's SuccessFactors (live run 9, Oct 11): once the account was made it asked for the code it emailed,
+    "*Passcode:", in a password box, and the desk put the saved password there ("pressed Continue with your
+    saved password"; "The passcode entered is incorrect"). A password box named for a code is an emailed
+    code's: the inbox's code goes in, and the account goes on to the application."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    saved_password(monkeypatch)
+    manage_accounts(job_apply_home)
+    inbox_with_code(monkeypatch)
+    r, kept, _ = create_account_on_sf(srv, "?passcode", watch=8)
+    log = "\n".join(r.log)
+    assert kept.get("passcode") == "123456", (kept, log)
+    assert not any("Continue” with your saved password" in line for line in r.log), log
+    assert "entered the code from your email" in log and any("“My Information”" in line for line in r.log), log
+
+
 @pytest.mark.parametrize("how", ["notices-off", "practice"])
 def test_a_data_privacy_statement_is_the_persons_without_accept_notices(srv, monkeypatch, job_apply_home, how):
     """Without settings.accept_notices (or in practice mode, which never makes an account) the desk fills

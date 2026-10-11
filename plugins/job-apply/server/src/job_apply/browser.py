@@ -75,6 +75,7 @@ _DECLINES = re.compile(r"reject|decline|necessary|essential|required only|only r
 # password box's type and value
 _INPUT_TAG = re.compile(r'<input\b(?:[^>"]|"[^"]*")*>', re.I)
 _PASSWORD_TYPE = re.compile(r'\stype="password"', re.I)
+_ONE_TIME_CODE = re.compile(r"passcode|one[- ]time (?:pass(?:word|code)|code)|verification code|security code|\botp\b", re.I)
 _VALUE_ATTR = re.compile(r'\svalue="[^"]*"', re.I)
 
 
@@ -1273,7 +1274,8 @@ class BrowserSession:
     async def _fill_one(self, page: Page, field: dict, value: Any) -> str:
         kind = field["kind"]
         loc = self._locator(page, field["id"])
-        if kind == "password":
+        if kind == "password" and not _ONE_TIME_CODE.search(field.get("label") or ""):
+            # (but an emailed code drawn in a password box, SuccessFactors' "*Passcode:", is no password)
             raise PermissionError("Passwords are only filled with fill_secret")
         if kind == "file":
             path = config.expand(str(value))

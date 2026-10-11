@@ -102,6 +102,15 @@ _CAPTCHA = re.compile(r"i'?m not a robot|i am human|hcaptcha|recaptcha challenge
 _VERIFY_EMAIL = re.compile(r"verif(?:y|ication)\b.{0,40}\b(?:e-?mail|account|link)|check your (?:e-?mail|inbox)", re.I)
 _CODE_FIELD = re.compile(r"verification code|one[- ]time (?:pass)?code|passcode|security code|\bcode\b.{0,40}"
                          r"(?:sent|email)|enter (?:the )?(?:\d-digit )?code|\botp\b", re.I)
+
+
+def _code_box(f: dict[str, Any]) -> bool:
+    """An emailed code's box: a text or number box named for one, or a password box named for one
+    (SuccessFactors' "*Passcode:" after making an account, live, Oct 2026: the desk put the saved
+    password in it). Never the saved password's."""
+    return f.get("kind") in ("text", "number", "password") and bool(
+        _CODE_FIELD.search(f.get("label") or "") or f.get("kind") == "password"
+        and re.search(r"one[- ]time password", f.get("label") or "", re.I))
 _SIGN_IN_ACTION = re.compile(r"^(sign in|log ?in|sign in with email)$", re.I)
 # What else a form holding only the sign-in calls its button (SuccessFactors': "Submit")
 _SIGN_IN_SUBMIT = re.compile(r"^(submit|continue|next|go|enter|log ?on|sign ?on|sign in now|log ?in now)$", re.I)
@@ -387,12 +396,12 @@ def classify(data: dict[str, Any], text: str) -> str:
     if not fields and (_BOT_TITLE.search(data.get("title") or "") or _BOT_TEXT.search(text[:3000])
                        or data.get("captcha")):  # (a page with only a CAPTCHA's box on it, and its button)
         return "bot_check"
-    if any(f["kind"] == "password" for f in fields):
+    if any(f["kind"] == "password" and not _code_box(f) for f in fields):
         return "sign_in"
     actions = [a.get("text", "") for a in data.get("actions", [])]
     if not fields and any(re.match(r"^sign in with ", a, re.I) for a in actions):
         return "sign_in"  # Workday: "Sign in with email / Google / Apple"
-    if any(_CODE_FIELD.search(f.get("label") or "") for f in fields if f["kind"] in ("text", "number")):
+    if any(_code_box(f) for f in fields):
         return "email_code"
     if not fields and _VERIFY_EMAIL.search(text[:3000]) and not any(_ENTRY.match(final_text(a)) for a in actions):
         return "email_code"  # "we sent you a link to verify your account"
@@ -1006,8 +1015,7 @@ class Applier:
         except Exception as e:  # a tab mid-way through loading: looked at again next time
             run.mail_last = f"couldn't read its tab: {type(e).__name__}"
             return
-        boxes = [f for f in data.get("fields") or [] if f.get("kind") in ("text", "number")
-                 and _CODE_FIELD.search(f.get("label") or "")]
+        boxes = [f for f in data.get("fields") or [] if _code_box(f)]
         senders = self._mail_senders(run)
 
         own = {h for h in self._own_hosts(run) | {run.paused_host} if h}
@@ -1093,8 +1101,7 @@ class Applier:
             run.mail_last += "; not typed: its tab couldn't be used"
             return False
         data = await srv.inspect_form(include_dropdown_options=False)
-        boxes = [f for f in data.get("fields") or [] if f.get("kind") in ("text", "number")
-                 and _CODE_FIELD.search(f.get("label") or "")]
+        boxes = [f for f in data.get("fields") or [] if _code_box(f)]
         if not boxes:  # the page moved on meanwhile
             run.mail_last += "; not typed: no code box on the page"
             return False
@@ -1154,7 +1161,7 @@ class Applier:
                 and _email_account_view(data) == "code" and _may_manage_accounts()):
             return None
         fields = [f for f in data.get("fields") or [] if not f.get("disabled") and not f.get("aside")]
-        if not all(f.get("kind") in ("text", "number") and _CODE_FIELD.search(f.get("label") or "") for f in fields):
+        if not all(_code_box(f) for f in fields):
             return None
         return self._account_button(data.get("actions") or [], _CODE_SENDS)
 
@@ -1529,7 +1536,7 @@ class Applier:
                 await self._bring_forward(run)
                 watching = (" Your email app password is saved, so the desk is also watching your inbox for it."
                             if self.mail_login() else "")
-                if any(_CODE_FIELD.search(f.get("label") or "") for f in data.get("fields") or []):
+                if any(_code_box(f) for f in data.get("fields") or []):
                     return self._pause(run, "email_code", "The site emailed you a code. Enter it in the browser "
                                        "window; the desk carries on by itself after that." + watching, seen=data)
                 # The link opens in the person's own browser, which leaves this tab where it is
@@ -2827,7 +2834,7 @@ class Applier:
                 return None
             await srv.click(email_button["id"])
             return "email_step"
-        passwords = [f for f in fields if f["kind"] == "password"]
+        passwords = [f for f in fields if f["kind"] == "password" and not _code_box(f)]
         create = _account_way(actions)
         # Where the way to a new account led: a form with one password box (UKG Pro's "Create
         # your account") is the new account's, as it no longer offers a way to one.
@@ -3481,7 +3488,7 @@ def _email_account_view(data: dict[str, Any]) -> str | None:
 
     None for any other page (its application, or its sign-in again)."""
     fields = [f for f in data.get("fields") or [] if not f.get("disabled") and not f.get("aside")]
-    if any(f.get("kind") in ("text", "number") and _CODE_FIELD.search(f.get("label") or "") for f in fields):
+    if any(_code_box(f) for f in fields):
         return "code"
     if not fields:
         offered = any(_ONE_TIME_CODE.match(final_text(a["text"]).strip()) and not a.get("disabled")
@@ -3650,8 +3657,7 @@ def _code_only_submit(data: dict[str, Any]) -> dict[str, Any] | None:
     code and nothing else, so it's pressed after the code, as a "Verify" is (and only where the step's own
     words don't speak of an application: Applier._code_only_submit)."""
     fields = [f for f in data.get("fields") or [] if not f.get("disabled") and not f.get("aside")]
-    if not fields or not all(f.get("kind") in ("text", "number") and _CODE_FIELD.search(f.get("label") or "")
-                             for f in fields):
+    if not fields or not all(_code_box(f) for f in fields):
         return None
     return next((a for a in data.get("actions") or [] if not a.get("disabled") and not a.get("cookie")
                  and not a.get("aside") and _CODE_SENDS.match(final_text(a.get("text") or "").strip())), None)
