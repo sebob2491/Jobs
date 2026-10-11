@@ -1126,6 +1126,9 @@ def test_a_bare_job_title_beside_a_profile_employers_company_gets_that_jobs_titl
     for company in ("Somewhere Else", ""):
         plan = plan_autofill(row(company), p, {})
         assert "t" not in {t["id"] for t in plan["to_fill"]}, (company, plan)
+    # nor a reference's position, who may well work where the person does
+    reference = [{"id": "n", "label": "Reference Name", "kind": "text", "value": "Pat Example"}] + row("Example Fab")
+    assert "t" not in {t["id"] for t in plan_autofill(reference, p, {})["to_fill"]}
 
 
 def test_a_list_still_on_its_not_specified_first_choice_is_filled():

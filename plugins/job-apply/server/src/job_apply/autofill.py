@@ -2176,6 +2176,7 @@ _OTHER_CREDENTIAL = re.compile(r"\b(high school|ged|diploma|secondary)\b")
 
 
 _BARE_TITLE = re.compile(r"(job |position |work )?title|position|role")
+_SOMEONE_ELSE = re.compile(r"\b(references?|supervisor|manager|relationship|relative|emergency|referr\w*|contact name)\b")
 _COMPANY_BOX = re.compile(r"company( name)?|employer( name)?|organi[sz]ation( name)?")
 
 
@@ -2194,6 +2195,10 @@ def _title_beside_its_company(fields: list[dict], to_fill: list[dict], needs_inp
             continue
         if not _BARE_TITLE.fullmatch(norm(clean_label(f.get("label") or ""))):
             continue
+        around = fields[max(0, i - 4):i + 5]
+        if any(_SOMEONE_ELSE.search(norm(f"{g.get('section') or ''} {clean_label(g.get('label') or '')}"))
+               for g in around):
+            continue  # a reference's or a supervisor's row: their position, not the person's
         near = [g for g in fields[max(0, i - 2):i] + fields[i + 1:i + 3]
                 if _COMPANY_BOX.fullmatch(norm(clean_label(g.get("label") or "")))]
         if len(near) != 1:
