@@ -1951,9 +1951,10 @@ class Applier:
                         # quickly one after another, and says nothing). The required boxes typed again, key by key,
                         # once a page, and the step pressed again
                         retyped.add(looked)
-                        shown = seen_now or (await self._look())[0]
+                        shown = (await self._look())[0]  # (as it is after the wait above)
                         boxes = [f["id"] for f in shown.get("fields") or [] if f.get("kind") == "text"
-                                 and f.get("required") and not f.get("disabled") and not is_empty_value(f.get("value"))]
+                                 and f.get("required") and not f.get("disabled") and not is_empty_value(f.get("value"))
+                                 and len(str(f.get("value"))) <= 80]  # (not a long answer: typed key by key)
                         if boxes and await srv.browser.retype(boxes):
                             self._log(run, f"typed {len(boxes)} required box(es) again: the page may have lost what "
                                       "was typed in them")

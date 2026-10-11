@@ -1962,7 +1962,7 @@ def test_boxes_the_pages_errors_say_are_empty_though_filled_are_typed_again(srv,
     r = run(go())
     assert "review.html" in r.url, (r.url, r.reason, r.log)
     if query == "?silent":
-        assert any(line.startswith("typed 5 required box(es) again") for line in r.log), r.log
+        assert any(line.startswith("typed ") and "required box(es) again" in line for line in r.log), r.log
     elif query:  # (wiped: filled from the profile again, as in live run 12)
         assert any(line.startswith("filled again") for line in r.log), r.log
     else:

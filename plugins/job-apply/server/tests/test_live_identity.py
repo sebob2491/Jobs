@@ -141,6 +141,18 @@ def test_the_broad_check_gives_the_test_inbox_only_where_example_com_is_refused(
     assert li.INBOX_AT <= listed
 
 
+def test_a_saved_pages_pictures_are_dropped(tmp_path):
+    tmp_path = tmp_path / "snapshot"  # (beside the run's home)
+    """Masking reads text, and a screenshot can show the test inbox's address in a filled box (review,
+    Oct 11): the saved page keeps its text, masked, and loses its pictures."""
+    (tmp_path / "frames").mkdir(parents=True)
+    for name in ("screenshot.jpg", "frames/shot.PNG", "page.html", "snapshot.json"):
+        (tmp_path / name).write_text("x", encoding="utf-8")
+    assert li.drop_images(tmp_path) == 2
+    assert sorted(p.relative_to(tmp_path).as_posix() for p in tmp_path.rglob("*") if p.is_file()) == \
+        ["page.html", "snapshot.json"]
+
+
 def test_the_test_resume_is_one_page_that_says_what_it_is(tmp_path):
     profile = li.identity_profile(BASE, EMAIL, tmp_path / li.RESUME_NAME)
     pdf = li.resume_pdf(profile)

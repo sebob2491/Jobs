@@ -213,6 +213,20 @@ def mask_files(folder: Path, mask: Callable[[str], str]) -> None:
                 path.write_text(masked, encoding="utf-8", errors="surrogateescape")
 
 
+IMAGE_SUFFIXES = (".jpg", ".jpeg", ".png", ".webp", ".gif")
+
+
+def drop_images(folder: Path) -> int:
+    """A saved page's pictures removed: masking reads text, and a screenshot can show the test
+    inbox's address in a filled box. The number removed."""
+    gone = 0
+    for path in folder.rglob("*"):
+        if path.is_file() and path.suffix.lower() in IMAGE_SUFFIXES:
+            path.unlink()
+            gone += 1
+    return gone
+
+
 def load_employers(path: Path = EMPLOYERS_FILE) -> list[dict[str, str]]:
     """The employers the test identity applies at: [{name, list, role, system, why}], in the file's order."""
     data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
