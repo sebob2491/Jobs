@@ -657,6 +657,12 @@ function renderHeader() {
   if (waiting) notes.push({cls: "waiting", html: `<strong>Waiting for you in the browser window:</strong>
     <span>${esc(waiting.title)} (${esc(waiting.company)}). The other jobs wait until it's done, or until nothing happens in it for 5 minutes; what to do is under Needs you.</span>
     <button data-job="${waiting.job_id}" data-job-act="show">Show me</button>`});
+  // Bot checks wait in their tabs while the queue goes on: one banner, and a round that takes the person to each
+  const checks = botChecks();
+  if (checks.length) notes.push({cls: "waiting", html: `<strong>${checks.length} bot check${checks.length === 1 ? "" : "s"} to solve.</strong>
+    <span>${botRound ? "Solve the one in the browser window; the next comes up by itself." : "The other jobs carry on meanwhile. Solve them in one go when you're ready; each job carries on by itself after."}</span>
+    ${botRound ? `<button data-act="bot-stop">Stop</button>` : `<button class="primary" data-act="bot-round">Solve them</button>`}
+    ${alertsOn() || !("Notification" in window) ? "" : `<button class="link" data-act="alerts">Alert me when one comes up</button>`}`});
   const needing = allRuns().filter((r) => r.status === "needs_you").length;
   document.title = needing ? `(${needing}) Needs you · Job Desk` : "Job Desk";
   if (state.tailoring) notes.push({cls: "waiting", html: `<strong>${state.tailoring} job${state.tailoring === 1 ? "" : "s"} waiting for a tailored resume.</strong>
@@ -691,6 +697,21 @@ function renderHeader() {
   }
 }
 
+// The bot checks waiting, oldest first; and the round that brings each one's tab up in turn (the person solves it:
+// the desk never does), the next as soon as the one shown is past its check
+let botRound = false, botShown = null;
+const botChecks = () => allRuns().filter((r) => r.status === "needs_you" && r.need === "bot_check")
+  .sort((a, b) => (a.paused_at || 0) - (b.paused_at || 0));
+function botStep() {
+  if (!botRound) return;
+  const checks = botChecks();
+  if (botShown !== null && checks.some((r) => r.job_id === botShown)) return;  // still on this one
+  const next = checks[0];
+  if (!next) { botRound = false; botShown = null; return; }
+  botShown = next.job_id;
+  api(`/api/job/${next.job_id}/show`, {}).catch(() => {});
+}
+
 // Desktop alerts, so the desk can work in the background: one when a job needs you (a
 // sign-in, a CAPTCHA, questions) or is ready to submit. Only for what happens after the page
 // opens, and only once per job and step.
@@ -721,7 +742,7 @@ function announce() {
   if (announced !== null && alertsOn()) {
     for (const r of due) {
       if (announced.has(`${r.job_id}:${r.status}:${r.need || ""}`)) continue;
-      const head = r.status === "ready" ? "ready to submit" : "needs you";
+      const head = r.status === "ready" ? "ready to submit" : r.need === "bot_check" ? "has a bot check to solve" : "needs you";
       try {
         const n = new Notification(`${r.company || "A job"} ${head}`, {body: `${r.title}: ${r.reason || ""}`.slice(0, 180),
                                                                      tag: `jobdesk-${r.job_id}`});
@@ -758,6 +779,7 @@ function render() {
   renderHeader();
   renderRows();
   renderSide();
+  botStep();
   renderBank();
   renderAlerts();
   renderNotes();
@@ -851,6 +873,8 @@ document.addEventListener("click", (e) => {
   const a = t.dataset.act, job = t.dataset.job, jobAct = t.dataset.jobAct;
   if (!state && (a || jobAct)) return;  // the page hasn't loaded yet
   if (a === "find") act(() => api("/api/search", {}));
+  if (a === "bot-round") { botRound = true; botShown = null; botStep(); renderHeader(); }
+  if (a === "bot-stop") { botRound = false; botShown = null; renderHeader(); }
   if (a === "dismiss") { dismiss(t.dataset.tip); renderHeader(); }
   if (a === "report-close") $("report").close();
   if (a === "notes") {

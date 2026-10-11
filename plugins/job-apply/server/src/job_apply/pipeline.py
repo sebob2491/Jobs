@@ -49,8 +49,11 @@ BLANK_PAGE_WAIT = 30  # for a page with nothing on it yet to draw (Infineon's ap
 SIGN_IN_STEP_WAIT = 25  # Workday's sign-in step can take longer to draw its buttons (Applied's)
 LEFT_SIGN_IN_SETTLE = 3  # seconds before a sign-in page that led elsewhere is taken for one with no sign-in
 ACCOUNT_DRAW_WAIT = 4  # for the application below a Create Account form to be drawn (Qorvo's)
-HANDS_ON = {"bot_check", "sign_in", "email_code"}
-# A pause that needs the person holds the queue while they're at it. Nothing done in its tab
+HANDS_ON = {"sign_in", "email_code"}
+# A bot check never holds the queue (the owner's call, Oct 11): its job waits in its tab, watched, while the other
+# jobs go on, and the person solves the checks waiting in a round of their own from the desk ("Bot checks"); each
+# job carries on by itself once its tab is past the check. The desk never solves one.
+# A pause that needs the person (a sign-in, an emailed code) holds the queue while they're at it. Nothing done in its tab
 # for HANDS_ON_IDLE (no one's at the browser) and the other jobs go ahead; it's watched still,
 # and carried on with once its tab is past the pause.
 HANDS_ON_IDLE = 5 * 60
@@ -447,8 +450,9 @@ def _fingerprint(page: dict[str, Any]) -> tuple:
 
 _TAILOR_SAYS = ("Waiting for a resume written for this job. In Claude Code, say \u201ctailor my resumes\u201d; the "
                 "desk carries on with this job as soon as its resume is ready. Or use your usual resume.")
-_BOT_CHECK_SAYS = ("The site is checking that you're a person (a bot check or CAPTCHA). Solve it in the browser "
-                   "window; the desk carries on by itself after that.")
+_BOT_CHECK_SAYS = ("The site is checking that you're a person (a bot check or CAPTCHA). It waits in its tab while "
+                   "the other jobs go on: solve it there (the desk's Bot checks round takes you to each) and the desk "
+                   "carries on with it by itself.")
 _ERROR_COUNT = re.compile(r"^\d+ errors? found\.?$", re.I)  # a section's count, not what's wrong
 _ROBOT = re.compile(r"not a robot|captcha|verify (?:that )?you(?:'re| are) (?:a )?human", re.I)
 _ERRORISH = re.compile(r"error|required|invalid|please|must|enter |select |missing|problem|fix|can'?t be blank", re.I)
@@ -1218,7 +1222,7 @@ class Applier:
         run.questions = questions or []
         run.blocking = need in HANDS_ON
         run.paused_at = run.active_at = time.time()
-        run.tab_mark, run.left, run.moved_since = 0, False, 0.0
+        run.tab_mark, run.left, run.moved_since = 0, need == "bot_check", 0.0  # (a bot check: watched, the queue on)
         run.mail_checked, run.mail_done, run.verifying = 0.0, False, False
         run.paused_site = _site_key(run.url)
         run.paused_host = urlparse(run.url).hostname or ""

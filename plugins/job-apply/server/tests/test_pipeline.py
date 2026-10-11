@@ -173,38 +173,11 @@ def test_one_button_apply_walks_the_whole_flow(srv, monkeypatch):
     assert "Thank you for applying" in run(srv.page_text())
 
 
-def test_bot_check_holds_the_queue_until_the_person_passes_it(srv, monkeypatch):
+def test_a_bot_check_waits_in_its_tab_while_the_other_jobs_go_ahead(srv, monkeypatch):
+    """A bot check never holds the queue (the owner's call, Oct 11): its job waits in its tab, watched, and the
+    other jobs go ahead at once. When the person passes the check (the desk's Bot checks round takes them to
+    it), the desk carries on with it by itself. The desk never solves one."""
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
-    checked = srv.add_job(url=fixture_url("site/botcheck.html"), title="FSE", company="Example Fab")["job"]
-    other = srv.add_job(url=fixture_url("generic_form.html"), title="Technician", company="Example Litho")["job"]
-    applier = Applier(srv)
-
-    async def go():
-        try:
-            await check()
-        finally:
-            await applier.stop()
-
-    async def check():
-        applier.start()
-        first = applier.enqueue(checked["id"])
-        second = applier.enqueue(other["id"])
-        await until(lambda: first.status == "needs_you")
-        assert first.need == "bot_check" and first.blocking
-        await asyncio.sleep(1.5)
-        assert second.status == "queued"  # waits while the person deals with the check
-        await first.page.click("#human")  # passes it
-        await until(lambda: first.need == "sign_in")  # carried on by itself, up to the sign-in
-
-    run(go())
-
-
-def test_with_no_one_at_the_browser_the_other_jobs_go_ahead(srv, monkeypatch):
-    """Apply pressed on a batch, then the person walks away. A job that needs them (a bot
-    check) holds the queue only while something happens in its tab; then the other jobs go
-    ahead. When the person gets past the check later, the desk carries on with it by itself."""
-    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
-    monkeypatch.setattr(pipeline, "HANDS_ON_IDLE", 2)
     checked = srv.add_job(url=fixture_url("site/botcheck.html"), title="FSE", company="Example Fab")["job"]
     other = srv.add_job(url=fixture_url("generic_form.html"), title="Technician", company="Example Litho")["job"]
     applier = Applier(srv)
@@ -215,13 +188,12 @@ def test_with_no_one_at_the_browser_the_other_jobs_go_ahead(srv, monkeypatch):
             first = applier.enqueue(checked["id"])
             second = applier.enqueue(other["id"])
             await until(lambda: first.status == "needs_you")
-            assert first.need == "bot_check" and first.blocking
-            await until(lambda: second.status not in ("queued", "running"))  # went ahead
-            assert first.status == "needs_you" and first.need == "bot_check" and not first.blocking
-            assert "nothing happened in its tab for" in first.reason and "carries on with it" in first.reason
-            await first.page.click("#human")  # the person, back, passes the check
+            assert first.need == "bot_check" and not first.blocking and first.left
+            await until(lambda: second.status not in ("queued", "running"))  # went ahead, no wait
+            assert first.status == "needs_you" and first.need == "bot_check"
+            assert "botcheck.html" in first.page.url  # (still on the check: the desk never solves one)
+            await first.page.click("#human")  # the person passes it
             await until(lambda: first.need == "sign_in")  # carried on by itself, up to the sign-in
-            return first
         finally:
             await applier.stop()
 
@@ -332,7 +304,7 @@ def test_a_captcha_challenge_after_a_click_waits_for_the_person(srv, monkeypatch
             await applier.stop()
 
     need, reason, log, blocking = run(go())
-    assert need == "bot_check" and blocking, (reason, log)
+    assert need == "bot_check" and not blocking, (reason, log)
     assert "clicked “Next”" in log and "CAPTCHA" in reason
 
 
