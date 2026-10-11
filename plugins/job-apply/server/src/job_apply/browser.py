@@ -148,6 +148,7 @@ LOST_FILL_TRIES = 3  # times a box is typed again on a page, at most (one the pa
 BLOCK_DRAW_WAIT = 6000  # ms for blocks just added (Workday's Education 2) to draw their boxes, at most
 # How long a click may wait for its button to become clickable, in ms.
 CLICK_TIMEOUT = 8000
+FORM_DRAW_TRIES, FORM_DRAW_WAIT = 5, 500  # a page read with no form is read again, each this many ms apart
 UPLOAD_CHOOSER_WAIT = 3000  # ms for a button that opens a site's own upload to open a file chooser
 UPLOAD_SHOWN_WAIT = 15  # seconds for a file given through a site's own upload to show on the page
 CONFIRM_WAIT = 12  # seconds a submit's confirmation is watched for after its page goes quiet
@@ -835,10 +836,10 @@ class BrowserSession:
         async with self._lock:
             page = await self.page()
             data = await self._extract(page)
-            for _ in range(5):  # Oracle can draw the form a moment after the rest of the page
+            for _ in range(FORM_DRAW_TRIES):  # Oracle can draw the form a moment after the rest of the page
                 if data["fields"]:
                     break
-                await page.wait_for_timeout(500)
+                await page.wait_for_timeout(FORM_DRAW_WAIT)
                 data = await self._extract(page)
             if include_dropdown_options:
                 for f in data["fields"]:

@@ -54,6 +54,10 @@ def job_apply_home(tmp_path, monkeypatch):
     (home / "profile.yaml").write_text(yaml.safe_dump(profile))
     monkeypatch.setenv("JOB_APPLY_HOME", str(home))
     monkeypatch.setenv("JOB_APPLY_HEADLESS", "1")
+    # a page read with no form is read again a moment later (Oracle's draw theirs late): in tests, 50 ms apart,
+    # not 500 (about a minute of the suite); test_inspect_waits_for_a_form_drawn_late keeps the real wait
+    from job_apply import browser
+    monkeypatch.setattr(browser, "FORM_DRAW_WAIT", 50)
     monkeypatch.setenv("JOB_APPLY_NO_UPDATE_CHECK", "1")  # no look at GitHub for a newer version
     return home
 

@@ -2600,7 +2600,8 @@ def test_a_postings_register_is_not_pressed_where_the_desk_is_not_making_an_acco
         applier.start()
         try:
             r = applier.enqueue(job["id"])
-            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            # (it takes about 40 s on Linux, waiting out a posting whose Apply goes nowhere: more on Windows CI)
+            await until(lambda: r.status not in ("queued", "running"), timeout=150, about=state(r))
             return r, r.page.url
         finally:
             await applier.stop()
