@@ -1141,6 +1141,24 @@ def test_a_list_the_page_marks_invalid_takes_the_profiles_answer_and_a_required_
     assert plan["to_fill"] == [] and [q["id"] for q in plan["needs_input"]] == ["b"], plan
 
 
+def test_a_work_authorization_question_drawn_as_a_text_area_takes_the_profiles_yes_or_no():
+    """Nikon's UKG Pro (live run 14, Oct 2026) draws "Are you legally authorized to work in the US for any
+    employer?" and "Do you now or in the future require sponsorship...?" as required text areas, and the desk
+    left them (text areas are long answers). A yes/no work question drawn so takes the profile's answer; a long
+    answer, or an unclear one ("Do you require relocation?"), is still the person's."""
+    p = Profile({"work_authorization": {"authorized_to_work": True, "requires_sponsorship": False},
+                 "preferences": {"willing_to_relocate": True}})
+
+    def answer(label):
+        a = resolve_field(f(label, "textarea", required=True), p, {"company": "Nikon"})
+        return a and a.value
+
+    assert polarity(answer("Are you legally authorized to work in the US for any employer?")) is True
+    assert answer("Do you now or in the future require sponsorship for employment visa status?") == "No"
+    assert answer("Do you require relocation?") is None
+    assert answer("Describe your authorization to work in the US.") is None
+
+
 def test_a_decline_finds_the_lists_own_way_to_decline_and_is_never_a_no():
     """Every site words "I'd rather not say" its own way, and so do people. "I don't want to
     answer" wasn't taken for a decline: its "don't" made it a "No", and it went to "I am not a

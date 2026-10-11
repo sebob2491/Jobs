@@ -1716,7 +1716,12 @@ def resolve_field(field: dict, prof: Profile, job: dict | None = None, file_inpu
     if ans is None or ans.value is None or ans.value == "":
         return None
 
-    if kind == "textarea" and not ans.rule.startswith("answers[") and ans.rule not in {"linkedin", "salary", "start_date"}:
+    # (a yes/no question drawn as a text area, as Nikon's UKG Pro draws its work-authorization questions, live run
+    # 14, Oct 2026: the profile's plain Yes or No)
+    yes_no_box = ans.rule in {"authorized", "sponsorship", "no_sponsorship"} and polarity(ans.value) is not None \
+        and bool(re.match(r"(are|do|will|would|can|have|is) you\b", label))
+    if kind == "textarea" and not ans.rule.startswith("answers[") and ans.rule not in {"linkedin", "salary", "start_date"} \
+            and not yes_no_box:
         return None
     if isinstance(ans.value, bool):
         ans.value = "Yes" if ans.value else "No"
