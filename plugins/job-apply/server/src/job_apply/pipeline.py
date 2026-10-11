@@ -1335,7 +1335,9 @@ class Applier:
             entry_here = any(_ENTRY.match(final_text(a["text"])) and not a.get("disabled") for a in actions)
             if kind == "form" and entry_here and not _application_like(data):
                 kind = "page"  # a posting with a "send me similar jobs" box: go in through Apply
-            if kind == "page" and not data.get("fields") and _RESET_DONE.search(text[:2000]):
+            if (kind == "page" and not data.get("fields") and _RESET_DONE.search(text[:2000])
+                    and not _RESET_SENT.search(text[:2000]) and password_for(data.get("url") or "") is not None
+                    and any(re.match(r"^(sign|log) ?in$", a.get("text", "").strip(), re.I) for a in actions)):
                 kind = "sign_in"  # "Password has been reset" and its "Sign In" (Workday's, issue #112, note 14)
             # a step of making an account on the email-first sign-in that had none for the email
             view = (_email_account_view(data) if run.account_page and run.account_page == _bare(data.get("url") or "")
@@ -2854,10 +2856,17 @@ class Applier:
         if not address or not 1 <= len(passwords) <= 2:
             return None
         new_account = len(passwords) == 2 or signing_up
-        if not boxes and new_account:
-            return None
-        # (no box for the email: a sign-in that knows it already, "Signing in as ...", as Workday's after its
-        # own password reset may: the password alone, issue #112, note 14)
+        if not boxes:
+            # No box for the email: the password alone only on a sign-in that shows it knows who's signing in
+            # ("Signing in as <email>", as Workday's after its own password reset may: issue #112, note 14),
+            # with no other box to fill (a "User ID" the reader doesn't know stays the person's) and a box
+            # that isn't a new, old or temporary password's (a reset's, a Create Account's, an emailed one)
+            others = [f for f in fields if f["kind"] not in ("password", "checkbox", "radio", "radio_group",
+                                                               "checkbox_group", "file", "hidden")]
+            label = passwords[0].get("label") or "" if passwords else ""
+            if (new_account or others or len(passwords) != 1 or _NEW_PASSWORD.search(label) or _OLD_PASSWORD.search(label)
+                    or address.lower() not in (await srv.page_text(4000)).lower()):
+                return None
         if new_account:
             # The email in every box that asks for it ("Retype Email Address"; the user name
             # SCREEN's and Taleo's forms ask for is the email too), and the rest from the profile.
@@ -3063,9 +3072,11 @@ def _required_by_errors(result: dict[str, Any], data: dict[str, Any]) -> None:
     said = norm(" ".join(data.get("errors") or []))
     if not said:
         return
+    # (only a label the page has once: one error about "Job Title" isn't about every block's)
+    names = [norm(clean_label(f.get("label") or "")) for f in data.get("fields") or []]
     for f in result.get("needs_input") or []:
         name = norm(clean_label(f.get("label") or ""))
-        if not f.get("required") and len(name) >= 8 and name in said:
+        if not f.get("required") and len(name) >= 8 and name in said and names.count(name) <= 1:
             f["required"] = True
 
 

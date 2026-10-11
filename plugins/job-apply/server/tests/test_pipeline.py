@@ -1614,6 +1614,26 @@ def test_an_agreement_a_bot_check_holds_is_said_to_be_the_persons(srv, monkeypat
     assert "couldn't find the button" not in r.reason
 
 
+@pytest.mark.parametrize("boxes", [
+    '<label for="u">User ID</label><input id="u" type="text"><label for="p">Password</label><input id="p" type="password">',
+    '<p>Signing in as sam.rivera@example.com</p><label for="p">New Password</label><input id="p" type="password">',
+    '<p>Signing in as sam.rivera@example.com</p><label for="p">Temporary Password</label><input id="p" type="password">',
+    '<label for="p">Password</label><input id="p" type="password">'])
+def test_the_password_alone_goes_only_where_the_sign_in_shows_whos_signing_in(srv, monkeypatch, boxes):
+    """A sign-in with no box for the email gets the saved password alone only where it shows the email
+    ("Signing in as ...", Workday's after its own reset). Not beside a box the desk can't fill (a "User
+    ID", which would be sent empty), nor in a new, temporary or unexplained password box."""
+    saved_password(monkeypatch)
+    run(srv.open_application(url=fixture_url("jsonld_posting.html")))
+    page = run(srv.browser.page())
+    run(page.set_content(f"<h2>Sign In</h2><form onsubmit='return false'>{boxes}<button>Sign In</button></form>"))
+    data = run(srv.inspect_form(include_dropdown_options=False))
+    applier = Applier(srv)
+    r = Run(1, "FSE", "Example Fab")
+    assert run(applier._sign_in(r, data, {})) is None
+    assert run(page.evaluate("() => document.getElementById('p').value")) == "", boxes
+
+
 @pytest.mark.parametrize("then", ["", "done", "alone"])
 def test_with_manage_accounts_a_refused_saved_password_is_reset(srv, monkeypatch, job_apply_home, then):
     """The email has an account there, and the saved password isn't its password. With the
