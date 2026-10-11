@@ -47,6 +47,7 @@ STEP_SAVE_WAIT = 20  # for a step pressed three times that's still saving (KLA's
 STEP_LOAD_WAIT = 30  # for a step still loading its questions, its loading dots on show (KLA's Workday)
 BLANK_PAGE_WAIT = 30  # for a page with nothing on it yet to draw (Infineon's application, now and then)
 SIGN_IN_STEP_WAIT = 25  # Workday's sign-in step can take longer to draw its buttons (Applied's)
+LEFT_SIGN_IN_SETTLE = 3  # seconds before a sign-in page that led elsewhere is taken for one with no sign-in
 ACCOUNT_DRAW_WAIT = 4  # for the application below a Create Account form to be drawn (Qorvo's)
 HANDS_ON = {"bot_check", "sign_in", "email_code"}
 # A pause that needs the person holds the queue while they're at it. Nothing done in its tab
@@ -352,6 +353,7 @@ class Run:
     refreshed: bool = False  # reloaded once for a page that asked for it ("Please refresh the page")
     invalid_redone: bool = False  # the review page's invalid lists answered again from the profile (once a job)
     reset_no_mail: bool = False  # and none came in RESET_MAIL_WAIT: no account there, most likely, so one is made
+    reopened_elsewhere: bool = False  # its sign-in page, opened again, led elsewhere: the job opened again (once a job)
     # The job's sign-ins pressed with the saved password, and which password that was (a digest): a Run
     # outlasts Resume and the queue, so these hold for the job, not for one pass at it
     sign_in_tries: int = 0
@@ -388,7 +390,7 @@ class Run:
     def public(self) -> dict[str, Any]:
         return {k: v for k, v in self.__dict__.items() if k not in ("page", "tab_mark", "cookies_asked", "resetting",
                                                                      "reset_asked", "reset_from", "reset_waited",
-                                                                     "reset_no_mail", "sign_in_tries", "sign_in_key",
+                                                                     "reset_no_mail", "reopened_elsewhere", "sign_in_tries", "sign_in_key",
                                                                      "accounts_tried", "account_made", "account_page",
                                                                      "account_finished", "verifying", "mail_looks", "mail_last")}
 
@@ -2658,15 +2660,22 @@ class Applier:
         elif (any(f.get("kind") == "password" for f in fields) and _forgot_action(actions) is None
               and _account_way(actions) is None):
             gone = ", opened again, had no way to a new account or a password reset"
-        elif (_bare(run.page.url) != _bare(run.reset_from) and not any(f.get("kind") == "password" for f in fields)
-              and _account_way(actions) is None and not _application_like(data)):
+        elif not run.reopened_elsewhere and _no_sign_in_here(run, data) and await self._still_no_sign_in(run):
             # its session gone, it led elsewhere: SuccessFactors' to the company's careers search home (Edwards
-            # Vacuum's, after three minutes waiting on a reset email, the plus probe Oct 11), with only a Sign In
+            # Vacuum's, after three minutes waiting on a reset email, the plus probe Oct 11), with only a Sign In.
+            # Still so a moment later (not a sign-in still being drawn), and once a job
+            run.reopened_elsewhere = True
             gone = ", opened again, led to the site's job search, not its sign-in"
         else:
             return
         self._log(run, f"{_site(run, data)}'s sign-in page{gone}, so I opened the job again")
         await self.srv.open_application(job_id=run.job_id)
+
+    async def _still_no_sign_in(self, run: Run) -> bool:
+        """Still no sign-in a moment later (not one still being drawn)?"""
+        await asyncio.sleep(LEFT_SIGN_IN_SETTLE)
+        data, _ = await self._look()
+        return _no_sign_in_here(run, data)
 
     async def _register_from_posting(self, run: Run, looked: tuple) -> bool:
         """The desk is on its way to a new account at a job system (_back_to_sign_in opened the job again
@@ -3633,6 +3642,19 @@ def _new_required(before: dict[str, Any], after: dict[str, Any]) -> bool:
     """Did filling the page bring up required fields that weren't there before?"""
     seen = {f.get("id") for f in before.get("fields") or []}
     return any(f.get("id") not in seen for f in _empty_required(after))
+
+
+def _no_sign_in_here(run: Run, data: dict[str, Any]) -> bool:
+    """The sign-in page a reset was asked from, opened again, led elsewhere with no sign-in on it: another address,
+    no password box, no box for an email or user name (an email-first sign-in's step), no way to an account, and
+    nothing like an application."""
+    fields = data.get("fields") or []
+    return (run.page is not None and _bare(run.page.url) != _bare(run.reset_from or "")
+            and not any(f.get("kind") == "password" or _SIGN_IN_NAME.search(f.get("label") or "") for f in fields)
+            and _account_way(data.get("actions") or []) is None and not _application_like(data))
+
+
+_SIGN_IN_NAME = re.compile(r"e-?mail|user ?name|user ?id|login", re.I)
 
 
 def _bare(url: str) -> str:

@@ -6673,3 +6673,24 @@ def test_a_button_gone_as_it_was_clicked_is_looked_at_again(srv, monkeypatch):
     r = run(go())
     assert len(calls) == 2
     assert "review.html" in r.url, (r.url, r.reason, r.log)
+
+
+def test_a_sign_in_that_led_elsewhere_is_told_from_an_email_first_one():
+    """The review's cases (0.3.117): a sign-in page opened again that led to a job search is one with no sign-in
+    (Edwards'); an email-first sign-in's step (an email box and Next, no password) at another address isn't, nor is
+    the same address, nor a page with a way to an account."""
+    r = Run(1, "Engineer", "Example", url="https://example.com/job/1")
+    r.reset_from = "https://career5.successfactors.eu/career?_s.crb=abc"
+
+    class Page:
+        url = "https://career5.successfactors.eu/careers?company=atlascopcoP"
+    r.page = Page()
+    search = {"fields": [{"kind": "text", "label": "Keywords:"}, {"kind": "text", "label": "Requisition ID:"}],
+              "actions": [{"text": "Sign In"}, {"text": "Search Jobs"}, {"text": "Clear"}]}
+    assert pipeline._no_sign_in_here(r, search)
+    email_first = {"fields": [{"kind": "text", "label": "Email Address"}], "actions": [{"text": "Next"}]}
+    assert not pipeline._no_sign_in_here(r, email_first)
+    with_account = {**search, "actions": [*search["actions"], {"text": "Create Account"}]}
+    assert not pipeline._no_sign_in_here(r, with_account)
+    Page.url = "https://career5.successfactors.eu/career?_s.crb=xyz"
+    assert not pipeline._no_sign_in_here(r, search)  # (the same page: said by the other cases)
