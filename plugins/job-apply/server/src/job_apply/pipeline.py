@@ -1303,6 +1303,7 @@ class Applier:
             return
         stalls, entries_done, waited, refilled, dismissed = 0, set(), False, set(), set()
         step_waited: set[tuple[Any, ...]] = set()  # pages (as drawn) waited on for a greyed-out step button
+        retyped: set[tuple[Any, ...]] = set()  # pages whose lost boxes were typed again (once a page)
         account_waited = False
         sign_ins: dict[str, int] = {}  # what the saved password was used for on this pass
         pressed: list[tuple[Any, ...]] = []  # (page, button) for each button pressed on this pass
@@ -1864,6 +1865,22 @@ class Applier:
                                                f"(it says \u201c{told[:160].rstrip(' .')}\u201d). Create one in the browser "
                                                f"window (its \u201c{create['text'].strip()}\u201d), or sign in with the "
                                                "email you use there; the desk carries on by itself after that.", seen=now)
+                    # boxes the errors name that show a value all the same: the page lost its own record of them
+                    # (Nikon's UKG Pro, live run 10: its resume parse wiped Address 1 and Zip a moment after they
+                    # were typed). Typed again, once a page, and the step pressed again
+                    seen_now = (await self._look())[0] if looked not in retyped else {}
+                    said = norm(" ".join(seen_now.get("errors") or []))
+                    lost = [f for f in seen_now.get("fields") or [] if f.get("kind") == "text" and not f.get("disabled")
+                            and not is_empty_value(f.get("value")) and len(norm(clean_label(f.get("label") or ""))) >= 3
+                            and norm(clean_label(f.get("label") or "")) in said]
+                    if lost and looked not in retyped:
+                        retyped.add(looked)
+                        again = await srv.browser.retype([f["id"] for f in lost])
+                        if again:
+                            names = ", ".join(clean_label(f.get("label") or "") for f in lost if f["id"] in again)
+                            self._log(run, f"typed again what the page said was empty though it showed it: {names}")
+                            stalls = 0
+                            continue
                     errors = "; ".join(problems)[:300].rstrip(" .")
                     return self._pause(run, "stuck", "The page didn't move on" + (f": {errors}." if errors else ".")
                                        + " Fix it in the browser, then press Resume.")

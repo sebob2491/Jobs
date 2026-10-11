@@ -1937,6 +1937,29 @@ def test_a_form_page_that_thanks_the_person_isnt_taken_for_a_confirmation(srv, m
     assert srv.tracker().get(job["id"])["status"] != "applied"
 
 
+def test_boxes_the_pages_errors_say_are_empty_though_filled_are_typed_again(srv, monkeypatch):
+    """Nikon's UKG Pro (live run 10, Oct 11): its resume parse overwrote the page's own record of Address 1 and
+    Zip a moment after the desk typed them, so Save and continue said "Address 1 Please enter an address."
+    beside the filled boxes, and the desk stopped. Boxes the page's errors name, though they show a value, are
+    typed again, once, and the step is pressed again."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    job = srv.add_job(url=fixture_url("site/ukg-prefill.html"), title="Field Service Engineer", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert "review.html" in r.url, (r.url, r.reason, r.log)
+    assert any(line.startswith("typed again") and "Address 1" in line for line in r.log), r.log
+
+
 @pytest.mark.parametrize("query", ["", "?bare"])
 def test_a_step_still_loading_its_questions_is_waited_for(srv, monkeypatch, query):
     """KLA's Workday (live, Oct 2026): past My Experience, its Application Questions step showed its
