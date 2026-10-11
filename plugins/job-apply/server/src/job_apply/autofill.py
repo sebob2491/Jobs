@@ -1616,6 +1616,11 @@ _METRO_SECTION = re.compile(r"\b(metropolitan|metro area|(closest|nearest) (majo
 _METRO_PART = re.compile(r"region|area|city|metro(politan)?( area| city)?")
 
 
+# A box that declines to answer the question it names ("I decline to say Gender")
+_DECLINE_BOX = re.compile(r"^\s*i (?:decline|prefer not|do not wish|don'?t wish) to (?:say|answer|disclose|state|"
+                          r"self-identify|identify)\b[\s:,-]*(\S.{1,150}?)\s*$", re.I)
+
+
 def resolve_field(field: dict, prof: Profile, job: dict | None = None, file_inputs_on_page: int = 1,
                   unmatched: list[Answer] | None = None) -> Answer | None:
     """The answer for a field, or None. A self-identification answer the profile gives but the
@@ -1656,6 +1661,14 @@ def resolve_field(field: dict, prof: Profile, job: dict | None = None, file_inpu
             return Answer(path, "documents.resume") if path else None
         return None
 
+    if kind == "checkbox" and (declined := _DECLINE_BOX.match(clean_label(raw_label))):
+        # a self-identification question's own "I decline to say" box (Nikon's UKG Pro, live run 17: "I decline to
+        # say Gender" beside its Gender list): ticked when the profile's answer to that question is a decline,
+        # which the list itself may not have
+        ans = resolve_field({"kind": "select", "label": declined.group(1), "section": field.get("section")}, prof, job)
+        if ans is not None and ans.rule in _EEO_RULES and is_decline(ans.value):
+            return Answer(True, ans.rule)
+        return None
     if kind == "checkbox":
         # Single checkboxes are usually consents/attestations: leave for a person,
         # except ones the user pre-approved in the answer bank.
@@ -2097,6 +2110,16 @@ def plan_autofill(fields: list[dict], prof: Profile, job: dict | None = None, ov
             needs_input[:] = [q for q in needs_input if q.get("id") != chosen["id"]]
             to_fill.append({"id": chosen["id"], "label": chosen.get("label", ""),
                             "value": _phone(prof, job or {}, norm(clean_label(chosen.get("label") or ""))), "rule": "phone"})
+    # a question whose own "I decline to say" box is ticked (or being ticked) for a profile that declines it is
+    # answered by that box (Nikon's UKG Pro: "Gender" with "I decline to say Gender" beneath it)
+    def declined_by(f: dict) -> str | None:
+        got = _DECLINE_BOX.match(clean_label(f.get("label") or ""))
+        return norm(clean_label(got.group(1))) if got else None
+    ticking = {f["id"] for f in fields if f.get("kind") == "checkbox" and f.get("value") is True} \
+        | {t["id"] for t in to_fill if t["value"] is True and t["rule"] in _EEO_RULES}
+    declined = {d for f in fields if f.get("id") in ticking and (d := declined_by(f))}
+    if declined:
+        needs_input[:] = [q for q in needs_input if norm(clean_label(q.get("label") or "")) not in declined]
     needs_input.sort(key=lambda f: not f.get("required"))
     return {"to_fill": to_fill, "needs_input": needs_input, "already_filled": already}
 

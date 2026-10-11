@@ -1981,3 +1981,29 @@ def test_where_you_are_and_when_you_can_start_among_choices():
     path.write_text(yaml.safe_dump({**data, "preferences": {**data["preferences"], "earliest_start": "1 month"}}))
     assert answer("When are you available to start?", ["Immediate", "2-4 Weeks", "60 Days"]) is None
     assert answer("When are you available to start?", ["Immediate", "1 to 2 months", "30 Days"]) == "30 Days"
+
+
+def test_a_questions_own_decline_box_is_ticked_for_a_profile_that_declines():
+    """Nikon's UKG Pro (live run 17, Oct 11): "Gender" (Choose..., Male, Female), required, with an "I decline to
+    say Gender" box beneath it, and the same for Ethnic Origin and protected veteran. The desk asked all three,
+    though the profile declines them. The box is ticked, and its question isn't asked; a profile with an answer
+    leaves the box alone."""
+    fields = [
+        {"id": "g", "kind": "select", "label": "Gender", "required": True, "value": "",
+         "options": ["Choose...", "Male", "Female"]},
+        {"id": "gd", "kind": "checkbox", "label": "I decline to say Gender", "value": False},
+        {"id": "v", "kind": "select", "label": "Are you a protected veteran?", "required": True, "value": "",
+         "options": ["Choose...", "Yes", "No"]},
+        {"id": "vd", "kind": "checkbox", "label": "I decline to say Are you a protected veteran?", "value": False},
+    ]
+    declines = Profile({"eeo": {"gender": "Decline to self-identify", "veteran": "I don't wish to answer"}})
+    plan = plan_autofill(fields, declines)
+    assert {t["id"]: t["value"] for t in plan["to_fill"]} == {"gd": True, "vd": True}
+    assert not [q for q in plan["needs_input"] if q["id"] in ("g", "v")], plan["needs_input"]
+    answers = Profile({"eeo": {"gender": "Female", "veteran": "I am not a protected veteran"}})
+    plan = plan_autofill(fields, answers)
+    filled = {t["id"]: t["value"] for t in plan["to_fill"]}
+    assert "gd" not in filled and "vd" not in filled and filled.get("g") == "Female" and filled.get("v") == "No"
+    # a decline box for something that isn't a self-identification question is left alone
+    other = [{"id": "p", "kind": "checkbox", "label": "I decline to say my salary expectations", "value": False}]
+    assert not plan_autofill(other, declines)["to_fill"]
