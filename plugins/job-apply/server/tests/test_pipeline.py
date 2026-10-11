@@ -4992,10 +4992,12 @@ def test_apply_online_and_a_page_with_only_a_captcha():
     assert classify({**gate, "fields": [{"id": "f", "kind": "text", "label": "Email"}]}, "") == "form"
 
 
-@pytest.mark.parametrize("page, said", [("forbidden.html", "403 Forbidden"), ("not-acceptable.html", "406 Not Acceptable")])
+@pytest.mark.parametrize("page, said", [("forbidden.html", "403 Forbidden"), ("not-acceptable.html", "406 Not Acceptable"),
+                                        ("request-blocked.html", "Your request has been blocked.")])
 def test_a_site_that_turns_the_browser_away_holds_nothing_up(srv, monkeypatch, page, said):
     """Valleywise Health's postings answer the desk's browser with a bare "403 Forbidden", and
-    Deloitte's sign-in a headless one with "406 Not Acceptable" (live, Oct 2026; the desk said it
+    Deloitte's sign-in a headless one with "406 Not Acceptable", and Banner Health's Workday the live
+    check's with a heading alone, "Your request has been blocked." (live, Oct 2026; the desk said it
     couldn't find the button). There's nothing to solve: the person applies in their own browser,
     and the queue isn't held for it as for a bot check."""
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)

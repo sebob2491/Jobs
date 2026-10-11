@@ -86,7 +86,8 @@ _BOT_TITLE = re.compile(r"just a moment|attention required|access denied|pardon 
 # A bare "403 Forbidden" (Valleywise Health's postings, to the desk's browser) or "406 Not Acceptable"
 # (Deloitte's sign-in, to a headless browser): the site turns the browser away. There's nothing to
 # solve, so it holds nothing up: the person applies elsewhere
-_TURNED_AWAY = re.compile(r"^\s*(?:403\s*)?forbidden\s*$|^\s*(?:406\s*)?not acceptable\s*$", re.I)
+_TURNED_AWAY = re.compile(r"^\s*(?:403\s*)?forbidden\s*$|^\s*(?:406\s*)?not acceptable\s*$|"
+                          r"^\s*your request has been blocked\.?\s*$", re.I)  # (Workday's, its title empty)
 # A posting that has closed: "The job posting you are looking for has expired or the position has
 # already been filled" (Edward Jones' BrassRing), "This job is no longer available"
 _CLOSED = re.compile(
@@ -1313,8 +1314,9 @@ class Applier:
                 return self._pause(run, "stuck", f"The application went on to {where} couldn't be reached, so the page "
                                    "didn't load. Press Resume to try again, or open the posting in your own browser to "
                                    "apply there.")
-            if kind == "page" and not data.get("fields") and _TURNED_AWAY.search(data.get("title") or ""):
-                refusal = re.sub(r"\s+", " ", str(data.get("title"))).strip()
+            refused = next((t for t in [data.get("title") or "", *(data.get("headings") or [])[:1]] if _TURNED_AWAY.search(t)), "")
+            if kind == "page" and not data.get("fields") and refused:
+                refusal = re.sub(r"\s+", " ", refused).strip()
                 return self._pause(run, "stuck", f"{_site(run, data)} turned the desk's browser away ({refusal}). "
                                    "Open the posting in your own browser to apply there.")
             if kind == "bot_check":
@@ -2019,9 +2021,11 @@ class Applier:
         chosen) or isn't one to agree to for them: the person's, left open for them to read."""
         if not _may_accept_notices():
             return False
+        said = link["text"].strip()
         try:
             await self.srv.browser.click(link["id"])
-        except Exception:  # gone, or it won't take a click: the person's, as without the setting
+        except Exception as e:  # gone, or it won't take a click: the person's, as without the setting
+            self._log(run, f"the click on “{said}” failed: {_error_said(e)}")
             return False
         deadline = time.monotonic() + ACCOUNT_STEP_WAIT
         while True:
@@ -2030,8 +2034,13 @@ class Applier:
             if notice is not None or time.monotonic() > deadline:
                 break
             await asyncio.sleep(0.5)
-        run.statement_accepted = notice is not None and await self._answer_notice(run, now, notice, set(),
-                                                                                  over_form=False) == "agreed"
+        # (each way it can fail is said in the log: APS's, live, Oct 2026, failed with no clue why)
+        if notice is None:
+            self._log(run, f"I pressed “{said}”, and no statement opened over the page")
+            return False
+        run.statement_accepted = await self._answer_notice(run, now, notice, set(), over_form=False) == "agreed"
+        if not run.statement_accepted:
+            self._log(run, f"“{_short(_notice_name(notice))}” opened over the page, and I couldn't accept it for you")
         return run.statement_accepted
 
     async def _finish_account(self, run: Run, data: dict[str, Any], button: dict[str, Any]) -> bool:
@@ -2071,8 +2080,7 @@ class Applier:
                     await srv.browser.click(pressable["id"], allow_submit=True)  # (it creates the account)
                 except Exception as e:  # (said in the log: Nikon's UKG Pro, live, Oct 2026, gave no clue why)
                     why = f"“{said}” wouldn't take a click"
-                    self._log(run, f"the click on “{said}” failed: {type(e).__name__}: "
-                              + (str(e).strip().splitlines() or [""])[0][:200])
+                    self._log(run, f"the click on “{said}” failed: {_error_said(e)}")
                 else:
                     run.account_finished = True
                     ticked = ", ".join(f"“{_short(self._choice_said(f))}”" for f in boxes)
@@ -2582,8 +2590,10 @@ class Applier:
         if allowed and agree is not None and heading not in agreed:
             try:
                 clicked = await self._press_agreement(agree["id"])
-            except Exception:  # gone, or it won't take a click: the person's, as without the setting
-                clicked = {"clicked": False}
+            except Exception as e:  # gone, or it won't take a click: the person's, as without the setting
+                clicked = {"clicked": False, "blocked": _error_said(e)}
+            if not clicked.get("clicked"):
+                self._log(run, f"the click on “{agree.get('text') or ''}” didn't go through: {clicked.get('blocked')}")
             if clicked.get("clicked"):
                 agreed.add(heading)
                 whose = f"{run.company}'s" if run.company else "the site's"
@@ -3452,6 +3462,11 @@ def _boxes(data: dict[str, Any]) -> int:
 def _page_key(data: dict[str, Any]) -> tuple:
     """Which page of an application this is: its address and headings."""
     return _bare(data.get("url") or ""), tuple(data.get("headings") or [])
+
+
+def _error_said(e: BaseException) -> str:
+    """An error, as the job's log says it: its kind and its first line (a browser's has a call log after)."""
+    return f"{type(e).__name__}: " + (str(e).strip().splitlines() or [""])[0][:200]
 
 
 def _page_sig(data: dict[str, Any]) -> tuple:
