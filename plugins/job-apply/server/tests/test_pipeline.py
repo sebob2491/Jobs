@@ -489,8 +489,10 @@ def test_a_tab_that_cant_be_read_still_lets_the_queue_go_on(srv, monkeypatch):
         applier.start()
         try:
             r = applier.enqueue(job["id"])
-            await until(lambda: r.status == "needs_you" and r.blocking)
+            await until(lambda: r.status == "needs_you")
+            # (a pause that holds the queue, as a sign-in's does: a bot check waits in its tab since 0.3.119)
             applier._moved_on = broken
+            r.need, r.blocking, r.left = "sign_in", True, False
             await until(lambda: r.left, timeout=15, about=state(r))
             return r
         finally:
