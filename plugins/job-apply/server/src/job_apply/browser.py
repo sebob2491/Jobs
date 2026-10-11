@@ -148,6 +148,8 @@ LOST_FILL_TRIES = 3  # times a box is typed again on a page, at most (one the pa
 BLOCK_DRAW_WAIT = 6000  # ms for blocks just added (Workday's Education 2) to draw their boxes, at most
 # How long a click may wait for its button to become clickable, in ms.
 CLICK_TIMEOUT = 8000
+UPLOAD_CHOOSER_WAIT = 3000  # ms for a button that opens a site's own upload to open a file chooser
+UPLOAD_SHOWN_WAIT = 15  # seconds for a file given through a site's own upload to show on the page
 CONFIRM_WAIT = 12  # seconds a submit's confirmation is watched for after its page goes quiet
 # How long a box under an overlay (or being drawn again) may take to take the focus, in ms: not
 # Playwright's 30 s for each of Workday's 16 date parts on My Experience
@@ -189,6 +191,17 @@ _ANOTHER_PART_CURRENT_JS = """
   const section = el.parentElement, group = el.closest('[role="group"]');
   if (!section || !group || section.getAttribute('tabindex') === '0') return false;
   return [...group.querySelectorAll('[tabindex="0"]')].some((s) => s !== section && s.querySelector('[role="spinbutton"]'));
+}
+"""
+
+
+# Which of its date's parts (marked data-ja-date-part, in order) the date marks current (its section's tabindex
+# 0), or -1 where it marks none
+_CURRENT_PART_JS = """
+(el) => {
+  // (the parts marked for this date alone: a group around only some of them would miscount)
+  const parts = [...el.ownerDocument.querySelectorAll('[data-ja-date-part]')];
+  return parts.findIndex((p) => p.parentElement && p.parentElement.getAttribute('tabindex') === '0');
 }
 """
 
@@ -1362,6 +1375,8 @@ class BrowserSession:
             if await loc.evaluate("(el, k) => el.__jaUploaded === k || (el.ownerDocument.body.innerText || '').includes(k)",
                                   path.name):
                 return "already uploaded on this page"
+            if not await loc.evaluate("el => el.tagName === 'INPUT' && el.type === 'file'"):
+                return await self._upload_through(page, loc, path)
             await loc.set_input_files(str(path))
             with contextlib.suppress(PlaywrightError, PlaywrightTimeout):  # (a box drawn afresh at once is gone)
                 await loc.evaluate("(el, k) => { el.__jaUploaded = k; }", path.name, timeout=1500)
@@ -1412,6 +1427,67 @@ class BrowserSession:
         await loc.fill(text)
         await loc.evaluate("el => el.blur()")
         return "filled"
+
+    async def _upload_through(self, page: Page, button: Locator, path: Path) -> str:
+        """A file given through the button that opens the site's own upload (the older SuccessFactors site's
+        "Upload a Resume", which opens a dialog: APS's, the live check's plus probe Oct 11). Pressed, the file
+        goes to the file chooser it opens, or to the file box its dialog shows (after the dialog's own Browse,
+        where it has one), and that dialog's Upload (or OK) is pressed. Only what the press opened is touched:
+        the dialogs and file boxes already on the page are marked first (a cookie banner's OK is never pressed,
+        another upload's box never given this file). Said when its field doesn't then show the file."""
+        dialogs = '[role="dialog"], [role="alertdialog"], dialog[open]'
+        # (the dialogs on show, and the file boxes outside any dialog: one drawn hidden until it's opened is the press's)
+        await page.evaluate("""(sel) => {
+          for (const d of document.querySelectorAll(sel)) if (d.getClientRects().length) d.setAttribute('data-ja-before', '');
+          for (const b of document.querySelectorAll('input[type="file"]')) if (!b.closest(sel)) b.setAttribute('data-ja-before', '');
+        }""", dialogs)
+        try:
+            async def chosen(press: Locator) -> bool:  # pressed: did a file chooser open, and take the file?
+                try:
+                    async with page.expect_file_chooser(timeout=UPLOAD_CHOOSER_WAIT) as chooser:
+                        await press.click(timeout=3000)
+                    await (await chooser.value).set_files(str(path))
+                    return True
+                except PlaywrightTimeout:
+                    return False
+
+            took = await chosen(button)
+            await page.wait_for_timeout(500)
+            opened = page.locator(", ".join(f"{d}:not([data-ja-before]):visible" for d in dialogs.split(", "))).last
+            dialog = opened if await opened.count() else None
+            if not took:
+                new_box = (dialog or page).locator('input[type="file"]:not([data-ja-before])')
+                browse = dialog.locator('button:visible, [role="button"]:visible, a:visible').filter(
+                    has_text=re.compile(r"^\s*(browse|choose (a )?file|select (a )?file|upload from (my )?(device|computer)"
+                                        r"|from (my )?(device|computer))\b", re.I)) if dialog else None
+                if browse is not None and await browse.count() and await chosen(browse.first):
+                    pass
+                elif await new_box.count():
+                    await new_box.last.set_input_files(str(path))
+                else:
+                    raise ValueError("pressing it opened no way to choose a file; upload it in the browser")
+                await page.wait_for_timeout(500)
+            if dialog is not None and await dialog.count():  # the dialog it opened: its own Upload (or OK, Save, Done)
+                confirm = dialog.locator('button:visible, [role="button"]:visible, input[type="submit"]:visible').filter(
+                    has_text=re.compile(r"^\s*(upload|attach|ok|save|done)\s*$", re.I))
+                if await confirm.count():
+                    await confirm.first.click(timeout=3000)
+        finally:
+            with contextlib.suppress(PlaywrightError):
+                await page.evaluate("() => document.querySelectorAll('[data-ja-before]').forEach("
+                                    "(el) => el.removeAttribute('data-ja-before'))")
+        # shown in its own field: its name, or the upload's tick (not another upload's)
+        shown = """(el, k) => {
+          const field = el.closest('.RCMFormField, [class*="attachmentField" i]') || el.parentElement.parentElement || el;
+          return (field.innerText || '').includes(k)
+            || [...field.querySelectorAll('[class*="attachSuccess" i]')].some((x) => x.getClientRects().length > 0);
+        }"""
+        for _ in range(int(UPLOAD_SHOWN_WAIT * 2)):
+            with contextlib.suppress(PlaywrightError, PlaywrightTimeout):
+                if await button.evaluate(shown, path.name, timeout=2000):
+                    return f"uploaded {path.name}"
+            await page.wait_for_timeout(500)
+        raise ValueError(f"the page didn't show {path.name} after its upload; check it in the browser")
 
     async def _type_date_part(self, page: Page, loc: Locator, text: str) -> str:
         """A date's part (Workday's MM / DD / YYYY), which reacts to keystrokes, not a pasted value.
@@ -1469,7 +1545,15 @@ class BrowserSession:
                             covered = True
                     if covered:
                         await part.focus(timeout=FOCUS_TIMEOUT)
-                if i == start:  # (the part as it was: its digits replaced, as Workday selects a part it's given)
+                if i == start:
+                    # a date that still marks another part current (KLA's, where pressing the display doesn't
+                    # move it, the plus probe Oct 11: the month typed after the year went into the year): moved
+                    # with its arrows, as Workday's date says ("use right and left arrows to navigate spin buttons")
+                    current = await part.evaluate(_CURRENT_PART_JS)
+                    for _ in range(abs(current - i) if current >= 0 else 0):
+                        await page.keyboard.press("ArrowLeft" if current > i else "ArrowRight")
+                        await page.wait_for_timeout(50)
+                    # (the part as it was: its digits replaced, as Workday selects a part it's given)
                     await part.evaluate("el => { try { el.select(); } catch (e) {} }")
                 await page.keyboard.type(want[i], delay=40)
             await loc.evaluate("el => el.ownerDocument.activeElement && el.ownerDocument.activeElement.blur()")
