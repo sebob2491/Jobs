@@ -1307,7 +1307,7 @@ class Applier:
         try:
             await self._drive(run)
         except KeyError as e:
-            if "Nothing clickable matches" not in str(e) or run.status == "skipped":
+            if "Nothing clickable matches" not in str(e) or run.status in ("skipped", "submitted"):
                 raise
             logging.getLogger(__name__).warning("job %s: a button went as it was clicked", run.job_id, exc_info=True)
             self._log(run, "the page changed as I clicked one of its buttons, so I looked at it again")
