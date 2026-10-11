@@ -199,8 +199,8 @@ _ANOTHER_PART_CURRENT_JS = """
 # 0), or -1 where it marks none
 _CURRENT_PART_JS = """
 (el) => {
-  const group = el.closest('[role="group"]') || el.ownerDocument;
-  const parts = [...group.querySelectorAll('[data-ja-date-part]')];
+  // (the parts marked for this date alone: a group around only some of them would miscount)
+  const parts = [...el.ownerDocument.querySelectorAll('[data-ja-date-part]')];
   return parts.findIndex((p) => p.parentElement && p.parentElement.getAttribute('tabindex') === '0');
 }
 """
@@ -1432,44 +1432,60 @@ class BrowserSession:
         """A file given through the button that opens the site's own upload (the older SuccessFactors site's
         "Upload a Resume", which opens a dialog: APS's, the live check's plus probe Oct 11). Pressed, the file
         goes to the file chooser it opens, or to the file box its dialog shows (after the dialog's own Browse,
-        where it has one), and the dialog's Upload (or OK) is pressed. Said when the page doesn't then show it."""
-        boxes = page.locator('input[type="file"]')
-        before = await boxes.count()
+        where it has one), and that dialog's Upload (or OK) is pressed. Only what the press opened is touched:
+        the dialogs and file boxes already on the page are marked first (a cookie banner's OK is never pressed,
+        another upload's box never given this file). Said when its field doesn't then show the file."""
+        dialogs = '[role="dialog"], [role="alertdialog"], dialog[open]'
+        # (the dialogs on show, and the file boxes outside any dialog: one drawn hidden until it's opened is the press's)
+        await page.evaluate("""(sel) => {
+          for (const d of document.querySelectorAll(sel)) if (d.getClientRects().length) d.setAttribute('data-ja-before', '');
+          for (const b of document.querySelectorAll('input[type="file"]')) if (!b.closest(sel)) b.setAttribute('data-ja-before', '');
+        }""", dialogs)
+        try:
+            async def chosen(press: Locator) -> bool:  # pressed: did a file chooser open, and take the file?
+                try:
+                    async with page.expect_file_chooser(timeout=UPLOAD_CHOOSER_WAIT) as chooser:
+                        await press.click(timeout=3000)
+                    await (await chooser.value).set_files(str(path))
+                    return True
+                except PlaywrightTimeout:
+                    return False
 
-        async def chosen(press: Locator) -> bool:  # pressed: did a file chooser open, and take the file?
-            try:
-                async with page.expect_file_chooser(timeout=UPLOAD_CHOOSER_WAIT) as chooser:
-                    await press.click(timeout=3000)
-                await (await chooser.value).set_files(str(path))
-                return True
-            except PlaywrightTimeout:
-                return False
-
-        if not await chosen(button):
+            took = await chosen(button)
             await page.wait_for_timeout(500)
-            dialog = page.locator('[role="dialog"]:visible, [role="alertdialog"]:visible, dialog[open]').last
-            scope = dialog if await dialog.count() else page
-            browse = scope.locator('button:visible, [role="button"]:visible, a:visible').filter(
-                has_text=re.compile(r"^\s*(browse|choose (a )?file|select (a )?file|upload from (my )?(device|computer)"
-                                    r"|from (my )?(device|computer))", re.I))
-            if not (await browse.count() and await chosen(browse.first)):
-                if await boxes.count() <= before and not await scope.locator('input[type="file"]').count():
+            opened = page.locator(", ".join(f"{d}:not([data-ja-before]):visible" for d in dialogs.split(", "))).last
+            dialog = opened if await opened.count() else None
+            if not took:
+                new_box = (dialog or page).locator('input[type="file"]:not([data-ja-before])')
+                browse = dialog.locator('button:visible, [role="button"]:visible, a:visible').filter(
+                    has_text=re.compile(r"^\s*(browse|choose (a )?file|select (a )?file|upload from (my )?(device|computer)"
+                                        r"|from (my )?(device|computer))\b", re.I)) if dialog else None
+                if browse is not None and await browse.count() and await chosen(browse.first):
+                    pass
+                elif await new_box.count():
+                    await new_box.last.set_input_files(str(path))
+                else:
                     raise ValueError("pressing it opened no way to choose a file; upload it in the browser")
-                box = scope.locator('input[type="file"]').last if await scope.locator('input[type="file"]').count() \
-                    else boxes.last
-                await box.set_input_files(str(path))
-            await page.wait_for_timeout(500)
-            if await dialog.count():  # the dialog's own Upload (or OK, Save, Done)
+                await page.wait_for_timeout(500)
+            if dialog is not None and await dialog.count():  # the dialog it opened: its own Upload (or OK, Save, Done)
                 confirm = dialog.locator('button:visible, [role="button"]:visible, input[type="submit"]:visible').filter(
-                    has_text=re.compile(r"^\s*(upload|attach|ok|save|done|submit|continue)\s*$", re.I))
+                    has_text=re.compile(r"^\s*(upload|attach|ok|save|done)\s*$", re.I))
                 if await confirm.count():
                     await confirm.first.click(timeout=3000)
-        # shown on the page: its name, or the upload's tick
+        finally:
+            with contextlib.suppress(PlaywrightError):
+                await page.evaluate("() => document.querySelectorAll('[data-ja-before]').forEach("
+                                    "(el) => el.removeAttribute('data-ja-before'))")
+        # shown in its own field: its name, or the upload's tick (not another upload's)
+        shown = """(el, k) => {
+          const field = el.closest('.RCMFormField, [class*="attachmentField" i]') || el.parentElement.parentElement || el;
+          return (field.innerText || '').includes(k)
+            || [...field.querySelectorAll('[class*="attachSuccess" i]')].some((x) => x.getClientRects().length > 0);
+        }"""
         for _ in range(int(UPLOAD_SHOWN_WAIT * 2)):
-            if await page.evaluate("(k) => (document.body.innerText || '').includes(k) || [...document.querySelectorAll("
-                                   "'[class*=\"attachSuccess\" i]')].some((x) => x.getClientRects().length > 0)",
-                                   path.name):
-                return f"uploaded {path.name}"
+            with contextlib.suppress(PlaywrightError, PlaywrightTimeout):
+                if await button.evaluate(shown, path.name, timeout=2000):
+                    return f"uploaded {path.name}"
             await page.wait_for_timeout(500)
         raise ValueError(f"the page didn't show {path.name} after its upload; check it in the browser")
 

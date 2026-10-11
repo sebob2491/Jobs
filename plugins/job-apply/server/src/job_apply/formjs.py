@@ -464,7 +464,8 @@ EXTRACT_JS = r"""
     // a file there already: its name shown in place of the upload's words, or the upload's tick
     const shown = field ? [...field.querySelectorAll('[id$="_attachDownloadLabelLink"], [class*="attachSuccess" i]')]
       .filter((x) => x.getClientRects().length > 0) : [];
-    const name = shown.map(txt).find((t) => t && !/^upload\b/i.test(t)) || '';
+    const link = field && field.querySelector('[id$="_attachDownloadLabelLink"]');
+    const name = link && link.getClientRects().length > 0 && !/^upload\b/i.test(txt(link)) ? txt(link) : '';
     const f = { id: idOf(b), kind: 'file', label, value: name || (shown.length ? 'uploaded' : ''), opens_dialog: true,
                 required: !!(lab && /\*/.test(lab.textContent || '')) || /\brequired\b/i.test(said) };
     const section = sectionOf(b, label);

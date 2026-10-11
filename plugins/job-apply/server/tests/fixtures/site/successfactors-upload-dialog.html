@@ -21,6 +21,14 @@
   <div id="39:" role="alert">Resume is required</div>
 </div>
 <label for="first">First Name</label><input id="first" type="text">
+<!-- ?others: what an upload must never touch: a cookie banner on show (its OK), another upload's own file box,
+     and the site's "Browse jobs" link -->
+<div id="others" hidden>
+  <a href="#jobs" id="nav">Browse jobs</a>
+  <label for="cover">Cover Letter</label><input type="file" id="cover">
+  <div role="dialog" id="cookies"><p>We use cookies.</p><button type="button" id="cookie-ok"
+    onclick="window.cookieAccepted = true; this.parentElement.hidden = true">OK</button></div>
+</div>
 <div id="dlg" class="dlg" role="dialog" hidden>
   <h3>Upload a Resume</h3>
   <button type="button" id="browse">Browse</button>
@@ -32,6 +40,7 @@
   const q = new URLSearchParams(location.search);
   // (as APS's: no file box anywhere until the button is pressed)
   const dlg = document.getElementById('dlg');
+  if (q.has('others')) document.getElementById('others').hidden = false;
   let pick = null;
   const makePick = () => {
     if (pick) return pick;

@@ -508,7 +508,7 @@ def test_a_resume_uploaded_through_the_sites_own_dialog(srv, tmp_path, how):
     resume.write_bytes(b"%PDF-1.4 test")
     query = "" if how == "dialog" else f"?{how}"
     run(srv.browser.goto(fixture_url("site/successfactors-upload-dialog.html") + query))
-    box = next(f for f in run(srv.inspect_form(include_dropdown_options=False))["fields"] if f["kind"] == "file")
+    box = next(f for f in run(srv.inspect_form(include_dropdown_options=False))["fields"] if f["label"] == "Resume")
     assert (box["label"], box["required"], box["value"], box.get("opens_dialog")) == ("Resume", True, "", True), box
     if how == "dialog":  # as the desk fills it: the profile's resume (the tests' profile has one)
         result = run(srv.autofill())
@@ -518,8 +518,24 @@ def test_a_resume_uploaded_through_the_sites_own_dialog(srv, tmp_path, how):
         out = run(srv.fill_form([{"id": box["id"], "value": str(resume)}]))
         assert out["results"][0].get("ok"), out["results"]
         name = "resume.pdf"
-    again = next(f for f in run(srv.inspect_form(include_dropdown_options=False))["fields"] if f["kind"] == "file")
+    again = next(f for f in run(srv.inspect_form(include_dropdown_options=False))["fields"] if f["label"] == "Resume")
     assert again["value"] == name, again
+
+
+@pytest.mark.parametrize("how", ["dialog", "box"])
+def test_an_upload_through_a_dialog_touches_only_what_it_opened(srv, tmp_path, how):
+    """With a cookie banner on show, another upload's file box on the page and the site's "Browse jobs" link: the
+    resume goes through the dialog its button opened, and nothing else is pressed or given the file (a cookie
+    banner is never accepted for the person)."""
+    resume = tmp_path / "resume.pdf"
+    resume.write_bytes(b"%PDF-1.4 test")
+    run(srv.browser.goto(fixture_url("site/successfactors-upload-dialog.html") + f"?others{'&box' if how == 'box' else ''}"))
+    box = next(f for f in run(srv.inspect_form(include_dropdown_options=False))["fields"] if f["label"] == "Resume")
+    out = run(srv.fill_form([{"id": box["id"], "value": str(resume)}]))
+    assert out["results"][0].get("ok"), out["results"]
+    page = run(srv.browser.page())
+    assert run(page.evaluate("() => [!!window.cookieAccepted, document.getElementById('cover').files.length, "
+                             "location.hash]")) == [False, 0, ""]
 
 
 def test_each_jobs_dates_go_in_its_own_block(srv):
