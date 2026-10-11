@@ -1295,6 +1295,10 @@ def test_previously_employed_by_any_of_the_employers_companies():
     assert resolve_field(asked, prof(), {"company": "Micron"}).value == "No"
     assert resolve_field(f("Have you ever worked for an Intel company?", "radio_group", options=yes_no), prof(),
                          {"company": "Intel Corporation"}).value == "Yes"
+    # onsemi's (live check, Oct 11): worked IN its establishments
+    onsemi = f("Have you ever previously worked in any onsemi establishment, anywhere in the world, whether as a "
+               "full-time or part-time employee, contractor, temporary staff or intern?", "radio_group", options=yes_no)
+    assert resolve_field(onsemi, prof(), {"company": "onsemi"}).value == "No"
 
 
 def test_a_former_employee_question_naming_another_company_is_never_answered_from_this_ones():

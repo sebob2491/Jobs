@@ -528,7 +528,7 @@ def _previously_employed(prof: Profile, job: dict, label: str = "") -> str | Non
         return None
     asked = norm(label)
     first = re.escape(company.split()[0])
-    names_it = re.search(rf"\b(employ\w*|work\w*|intern\w*|contract\w*)( \w+){{0,3}}? (by|for|at|with|of) (the |any |an? )?{first}\b"
+    names_it = re.search(rf"\b(employ\w*|work\w*|intern\w*|contract\w*)( \w+){{0,3}}? (by|for|at|with|of|in) (the |any |an? )?{first}\b"
                          rf"|\b{first}( \w+)? (employee|employment|intern|contractor)s?\b"
                          rf"|\bhired\b.{{0,60}}? (by|with|at) (the )?{first}\b", asked)
     if not (names_it or re.search(r"(employed|worked|hired) (by|for|at|with) (us|this|our|the company)\b|former employee", asked)):
