@@ -34,6 +34,10 @@ PHONE = "480-555-0199"  # a 555 number, as the fake profile's
 RESUME_NOTE = "Automated test resume for the Job Desk live check — not a real applicant"  # (both profiles')
 RESUME_NAME = "jobdesk-test-resume.pdf"
 EMPLOYERS_FILE = Path(__file__).with_name("test_identity_employers.yaml")
+# The broad check's employers whose sites refuse its example.com address (their Workday, live run 19):
+# there it gives the test identity's inbox instead, so the check sees how far it gets. Only the
+# address: it still makes no accounts and reads no mail (the owner's call, Oct 11)
+INBOX_AT = frozenset({"Onto Innovation", "Robert Half"})
 EMAIL_MASK, PASSWORD_MASK = "<test-email>", "***"
 
 
@@ -112,6 +116,13 @@ def resume_pdf(profile: Mapping[str, Any]) -> bytes:
         lines.append((10, f"{school.get('degree')}, {school.get('major')}, {school.get('school')} "
                           f"({school.get('start')} to {school.get('end')})"))
     return tiny_pdf(lines)
+
+
+def broad_email(company: str, env: Mapping[str, str]) -> str | None:
+    """The broad check's email at this employer: the test identity's inbox (LIVE_TEST_EMAIL) where
+    the site refuses example.com, when the run has it; else None, for its own example.com one."""
+    email = (env.get(ENV_EMAIL) or "").strip()
+    return email if email and company in INBOX_AT else None
 
 
 def with_test_resume(profile: Mapping[str, Any], folder: Path) -> dict[str, Any]:

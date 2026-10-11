@@ -127,6 +127,20 @@ def test_the_broad_checks_fake_profile_gets_a_test_resume_too(tmp_path):
     assert {k: v for k, v in profile.items() if k != "documents"} == {k: v for k, v in BASE.items() if k != "documents"}
 
 
+def test_the_broad_check_gives_the_test_inbox_only_where_example_com_is_refused():
+    """Onto Innovation's and Robert Half's Workday refuse the broad check's example.com address (live
+    run 19): there, and only there, it gives the test identity's inbox (the owner's call, Oct 11)."""
+    assert li.broad_email("Onto Innovation", ENV) == ENV[li.ENV_EMAIL].strip()
+    assert li.broad_email("Robert Half", ENV) == ENV[li.ENV_EMAIL].strip()
+    assert li.broad_email("KLA", ENV) is None
+    assert li.broad_email("Onto Innovation", {}) is None  # a run without it keeps its own address
+    assert li.broad_email("Onto Innovation", {li.ENV_EMAIL: "  "}) is None
+    # each named as an employer list spells it
+    listed = {c["name"] for path in search.employer_lists().values()
+              for c in yaml.safe_load(path.read_text(encoding="utf-8"))["companies"]}
+    assert li.INBOX_AT <= listed
+
+
 def test_the_test_resume_is_one_page_that_says_what_it_is(tmp_path):
     profile = li.identity_profile(BASE, EMAIL, tmp_path / li.RESUME_NAME)
     pdf = li.resume_pdf(profile)

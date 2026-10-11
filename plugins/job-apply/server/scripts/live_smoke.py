@@ -25,6 +25,10 @@ that nothing in it is true). It never clicks sign-in, account creation, "Autofil
 Resume", "Next", or third-party apply buttons (LinkedIn, Indeed, SEEK), and LinkedIn and
 Indeed are never contacted.
 
+With LIVE_TEST_EMAIL set (and no --test-identity), the employers whose sites refuse example.com
+(live_identity.INBOX_AT) get the test identity's inbox address instead, masked like the test
+identity's; nothing else of the test identity's (no accounts, no mail read).
+
 --pipeline --test-identity applies as the live check's test identity instead (live_identity.py;
 setting it up: TEST_IDENTITY.md): "Jobdesk Test", a clearly fake applicant with an inbox of its own
 and one password for its job-site accounts, from LIVE_TEST_EMAIL, LIVE_TEST_EMAIL_PASSWORD and
@@ -134,6 +138,7 @@ ROLES: dict[str, dict[str, Any]] = {
 }
 
 
+ROLE = "technician"  # the run's role (--role)
 TEST_IDENTITY = False  # --test-identity: the test identity applies, in place of the throwaway profile
 ROLE_AT: dict[str, str] = {}  # with it, each of its employers' role (test_identity_employers.yaml)
 MAIL_WAIT = 4 * 60  # with it, how long a run waits for the desk to read an emailed code or link
@@ -147,15 +152,19 @@ def _no_mask(text: str) -> str:
 _mask: Callable[[str], str] = _no_mask  # with it, masks its email and passwords
 
 
-def use_role(name: str) -> None:
-    """Search for this role's jobs, as an applicant with its background (this run's home only)."""
-    global QUERY_AZ, QUERY_ANY
+def use_role(name: str, email: str | None = None) -> None:
+    """Search for this role's jobs, as an applicant with its background (this run's home only).
+    `email`: the broad check's address at one employer (live_identity.broad_email), for its own."""
+    global QUERY_AZ, QUERY_ANY, ROLE
+    ROLE = name
     role = ROLES[name]
     QUERY_AZ, QUERY_ANY = role["query_az"], role["query_any"]
     profile = {**FAKE_PROFILE, **{k: role[k] for k in ("work_history", "education_history", "education") if k in role}}
     if TEST_IDENTITY:  # its name and inbox
         profile = live_identity.identity_profile(profile, live_identity.credentials(os.environ)[0],
                                                  _HOME / live_identity.RESUME_NAME)
+    elif email:
+        profile["personal"] = {**profile["personal"], "email": email}
     profile = live_identity.with_test_resume(profile, _HOME)  # a test resume with this role's background
     (_HOME / "profile.yaml").write_text(yaml.safe_dump(profile))
 
@@ -185,6 +194,17 @@ def start_test_identity(announce: bool = True) -> list[dict[str, str]]:
               + ", ".join(f"{e['name']} ({e['system']})" for e in employers)
               + ". Its email and passwords are masked in everything this run prints and writes.", flush=True)
     return employers
+
+
+def mask_broad_email() -> None:
+    """The broad check with LIVE_TEST_EMAIL set (for live_identity.INBOX_AT's employers): that
+    address is masked in everything the run prints and writes, as the test identity's is."""
+    global _mask
+    email = os.environ.get(live_identity.ENV_EMAIL, "").strip()
+    if email and not TEST_IDENTITY:
+        _mask = live_identity.masker(email, [])
+        sys.stdout = live_identity.MaskedStream(sys.stdout, _mask)
+        sys.stderr = live_identity.MaskedStream(sys.stderr, _mask)
 
 
 def _save(path: Path, text: str) -> None:
@@ -829,6 +849,8 @@ async def main() -> int:
     args.out.mkdir(parents=True, exist_ok=True)
     if args.test_identity:
         start_test_identity(announce=not args.shard)
+    else:
+        mask_broad_email()
     use_role(args.role)
     if args.lists and not TEST_IDENTITY:  # as a person's own companies.yaml names them, in this run's own home
         (_HOME / "companies.yaml").write_text(yaml.safe_dump({"lists": [n.strip() for n in args.lists.split(",")
@@ -1234,7 +1256,7 @@ async def check_pipeline(company: dict[str, Any], out: Path, rec: dict[str, Any]
             snap = await server.debug_snapshot(note=f"live pipeline: {company['name']}")
             dest = out / "pipeline" / slug(company["name"])
             shutil.copytree(snap["saved_to"], dest, dirs_exist_ok=True)
-            if TEST_IDENTITY:  # (password boxes are saved empty; the email is masked too)
+            if _mask is not _no_mask:  # (password boxes are saved empty; the test inbox's address is masked too)
                 live_identity.mask_files(dest, _mask)
             if fixtures and (rec.get("rounds") or [{}])[-1].get("need") in ("questions", "stuck"):
                 # the page it stopped on, as a test fixture (the fake applicant's details only)
@@ -1285,6 +1307,8 @@ async def pipeline_main(companies: list[dict[str, Any]], out: Path, fixtures: bo
         rec: dict[str, Any] = {"company": company["name"]}
         if TEST_IDENTITY:  # each of its employers with its own role: its jobs, and a background to match
             use_role(ROLE_AT.get(company["name"], "technician"))
+        else:  # the test inbox's address where a site refuses example.com, else the run's own
+            use_role(ROLE, live_identity.broad_email(company["name"], os.environ))
         try:
             await asyncio.wait_for(check_pipeline(company, out, rec, fixtures), wait)
         except Exception as e:  # noqa: BLE001

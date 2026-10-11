@@ -101,9 +101,10 @@ jobs:
         env:
           CHECK: ${{ matrix.check }}
           ARGS: ${{ matrix.args }}
-          # the test identity's inbox and passwords, for the accounts check only: live_smoke.py masks
-          # them in everything it prints and writes (and GitHub masks secrets in the log too)
-          LIVE_TEST_EMAIL: ${{ matrix.check == 'accounts' && secrets.LIVE_TEST_EMAIL || '' }}
+          # the test identity's inbox and passwords, for the accounts check only (its inbox's address
+          # also for the other checks, at the employers that refuse example.com: live_identity.INBOX_AT):
+          # live_smoke.py masks them in everything it prints and writes (and GitHub masks secrets in the log too)
+          LIVE_TEST_EMAIL: ${{ secrets.LIVE_TEST_EMAIL }}
           LIVE_TEST_EMAIL_PASSWORD: ${{ matrix.check == 'accounts' && secrets.LIVE_TEST_EMAIL_PASSWORD || '' }}
           LIVE_TEST_SITE_PASSWORD: ${{ matrix.check == 'accounts' && secrets.LIVE_TEST_SITE_PASSWORD || '' }}
         run: |
