@@ -6,7 +6,9 @@
      its heading, Workday's loading dots ([data-automation-id="loading"], the apply flow's own) where
      the questions go, and a Save and Continue drawn greyed that the form reader found no button for,
      beside the previous step's resume box. The questions and the button come a few seconds later.
-     ?bare: no loading dots and no greyed Save and Continue either, only the resume box (live run 9, Oct 11). -->
+     ?bare: no loading dots and no greyed Save and Continue either, only the resume box (live run 9, Oct 11).
+     &late: first a page whose Continue is drawn late (as KLA's page reloaded after "Something went wrong" was,
+     live run 17), then the step. -->
 <ol aria-label="Application Progress">
   <li>My Information</li><li>My Experience</li>
   <li data-automation-id="progressBarActiveStep">current step 3 of 6 Application Questions 1 of 2</li>
@@ -35,7 +37,8 @@
     document.getElementById('next').style.display = 'none';
     document.querySelector('#footer button').style.display = 'none';
   }
-  setTimeout(() => {
+  const late = new URLSearchParams(location.search).has('late');
+  const draw = () => setTimeout(() => {
     document.getElementById('questions').innerHTML =
       '<label for="q1">1) As of today\'s date, are you 18 years of age or older?*</label>'
       + '<select id="q1" required><option value="">Select One</option><option>Yes</option><option>No</option></select>';
@@ -49,6 +52,22 @@
     };
     document.getElementById('next').replaceWith(next);
   }, 4000);
+  if (late) {
+    const app = Array.from(document.body.children).filter((el) => el.tagName !== 'SCRIPT');
+    app.forEach((el) => { el.hidden = true; });
+    const wait = document.createElement('p');
+    wait.textContent = 'Loading your application';
+    document.body.prepend(wait);
+    setTimeout(() => {
+      const go = document.createElement('button');
+      go.type = 'button';
+      go.textContent = 'Continue';
+      go.onclick = () => { wait.remove(); go.remove(); app.forEach((el) => { el.hidden = false; }); draw(); };
+      document.body.prepend(go);
+    }, 1500);
+  } else {
+    draw();
+  }
 </script>
 </body>
 </html>

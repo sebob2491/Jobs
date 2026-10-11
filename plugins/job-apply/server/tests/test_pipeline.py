@@ -2020,7 +2020,7 @@ def test_a_step_still_saving_after_three_presses_is_waited_on(srv, monkeypatch, 
     assert r.status == "ready", (r.status, r.need, r.reason, r.log)
 
 
-@pytest.mark.parametrize("query", ["", "?bare"])
+@pytest.mark.parametrize("query", ["", "?bare", "?bare&late"])
 def test_a_step_still_loading_its_questions_is_waited_for(srv, monkeypatch, query):
     """KLA's Workday (live, Oct 2026): past My Experience, its Application Questions step showed its
     loading dots where the questions go and a greyed-out Save and Continue the form reader found no
@@ -6576,3 +6576,36 @@ def test_what_a_filled_page_still_needs_is_said_the_same_way_on_each_path(srv):
         run_.reason
     nothing = Run(2)
     assert not applier._stop_for_what_is_left(nothing, "", [], []) and nothing.status != "needs_you"
+
+
+def test_a_button_gone_as_it_was_clicked_is_looked_at_again(srv, monkeypatch):
+    """APS's SuccessFactors sign-in (live run 17, Oct 11): a button went from the page as it was clicked, with
+    nothing like it to find ("KeyError: Nothing clickable matches 'ewr4'"), and the job failed with "Something
+    went wrong". The job is driven once more, from its tab as it is."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    job = srv.add_job(url=fixture_url("site/ukg-prefill.html"), title="Field Service Engineer",
+                      company="Example Fab")["job"]
+    applier = Applier(srv)
+    drive = Applier._drive
+    calls = []
+
+    async def redrawn(self, run):
+        calls.append(run.job_id)
+        if len(calls) == 1:
+            raise KeyError("Nothing clickable matches 'ewr4'; call inspect_form for ids")
+        await drive(self, run)
+
+    monkeypatch.setattr(Applier, "_drive", redrawn)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert len(calls) == 2
+    assert "review.html" in r.url, (r.url, r.reason, r.log)
