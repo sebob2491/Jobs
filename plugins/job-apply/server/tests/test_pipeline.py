@@ -200,6 +200,47 @@ def test_a_bot_check_waits_in_its_tab_while_the_other_jobs_go_ahead(srv, monkeyp
     run(go())
 
 
+def test_in_the_desks_bot_check_round_no_other_job_starts_and_a_solved_one_goes_on_at_once(srv, monkeypatch):
+    """The review of 0.3.119: while the person is at a bot check in the desk's round, starting another job would
+    open its tab over the one they're solving; and a solved one waited for the job being worked on. In a round the
+    queue holds, and the solved check is noticed straight away; once it's past, the other jobs go on (here once
+    its sign-in, which holds the queue as ever, is left a moment)."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "HANDS_ON_IDLE", 1)
+    checked = srv.add_job(url=fixture_url("site/botcheck.html"), title="FSE", company="Example Fab")["job"]
+    other = srv.add_job(url=fixture_url("generic_form.html"), title="Technician", company="Example Litho")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            first = applier.enqueue(checked["id"])
+            await until(lambda: first.status == "needs_you" and first.need == "bot_check")
+            applier.start_round(checked["id"])  # (the desk's "Solve them" brought its tab up)
+            second = applier.enqueue(other["id"])
+            await asyncio.sleep(1.5)
+            assert second.status == "queued"  # nothing started over the tab the person is at
+            await first.page.click("#human")
+            await until(lambda: first.need == "sign_in", timeout=20, about=state(first))  # noticed at once
+            await until(lambda: second.status not in ("queued", "running"), timeout=30, about=state(second))
+            assert applier.round_job is None
+        finally:
+            await applier.stop()
+
+    run(go())
+
+
+def test_a_bot_check_is_past_only_once_the_page_stops_asking():
+    """A form showing "Please verify you are not a robot" as an error still asks; a reCAPTCHA badge's "protected
+    by reCAPTCHA" in a footer doesn't."""
+    asks = ["Please verify you are not a robot.", "Verify you are human by completing the action below.",
+            "The CAPTCHA is incorrect. Please try again.", "Complete the security check to continue"]
+    assert all(pipeline._STILL_CHECKING.search(t) for t in asks)
+    fine = ["This site is protected by reCAPTCHA and the Google Privacy Policy and Terms of Service apply.",
+            "Application received. Thank you!"]
+    assert not any(pipeline._STILL_CHECKING.search(t) for t in fine)
+
+
 def test_a_job_left_waiting_is_watched_without_taking_over_the_tools(srv, monkeypatch):
     """The desk looks in on a job left waiting for the person while Claude may be using the
     tools: their tab stays Claude's, and what Claude opens there is never driven as that job."""

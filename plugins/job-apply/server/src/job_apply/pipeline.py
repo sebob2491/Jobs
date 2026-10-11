@@ -455,6 +455,11 @@ _BOT_CHECK_SAYS = ("The site is checking that you're a person (a bot check or CA
                    "carries on with it by itself.")
 _ERROR_COUNT = re.compile(r"^\d+ errors? found\.?$", re.I)  # a section's count, not what's wrong
 _ROBOT = re.compile(r"not a robot|captcha|verify (?:that )?you(?:'re| are) (?:a )?human", re.I)
+# A page that still asks the person to prove they're one (not a "protected by reCAPTCHA" badge's words): a bot
+# check waiting on them isn't past it while it does (a form's "please verify you're not a robot" error, say)
+_STILL_CHECKING = re.compile(r"(?:verify|confirm|prove) (?:that )?you(?:'re| are) (?:a )?(?:human|not a robot)|"
+                             r"i'?m not a robot|complete the (?:captcha|security check|challenge)|"
+                             r"captcha (?:is )?(?:required|incorrect|failed)|solve the (?:captcha|puzzle)", re.I)
 _ERRORISH = re.compile(r"error|required|invalid|please|must|enter |select |missing|problem|fix|can'?t be blank", re.I)
 # a note that only asks the person to look over what's there, which nothing on the page is wrong for: Nikon's UKG
 # Pro after its resume parse (live run 16, Oct 11), "jobdesk-test-resume.pdf has been used to pre-fill part of
@@ -520,6 +525,11 @@ class Applier:
         self.auto_submit = False
         self.tailor = False  # hold each job until Claude has written a resume for it
         self.current: int | None = None
+        # The bot check the person is solving in the desk's round (Bot checks: "Solve them"), and since when: while
+        # it waits, no other job is started (nothing opens over the tab they're at), and the solved one is noticed
+        # at once. Not the person's otherwise: bot checks wait in their tabs while the queue goes on.
+        self.round_job: int | None = None
+        self.round_at = 0.0
         self._wake = asyncio.Event()
         self._worker_task: asyncio.Task | None = None
         self.mail_problem: str | None = None  # why the inbox couldn't be read, for the desk page
@@ -756,8 +766,32 @@ class Applier:
             except Exception:  # the worker must outlive any one job's surprise
                 await asyncio.sleep(POLL_SECONDS)
 
+    def start_round(self, job_id: int) -> None:
+        """The person is at this bot check's tab in the desk's round (focus() brought it up)."""
+        self.round_job, self.round_at = job_id, time.time()
+        self._wake.set()
+
+    def end_round(self) -> None:
+        self.round_job = None
+        self._wake.set()
+
+    def _in_round(self) -> bool:
+        """Is the person at a bot check in the desk's round still (it waits on them, for no longer than a
+        sign-in would hold the queue)?"""
+        run = self.runs.get(self.round_job) if self.round_job is not None else None
+        if run is None or run.status != "needs_you" or run.need != "bot_check" \
+                or time.time() - self.round_at > HANDS_ON_TIMEOUT:
+            self.round_job = None
+            return False
+        return True
+
     async def _tick(self) -> None:
         self._resume_tailored()
+        if self._in_round():  # the person at a bot check: nothing else started over it, the solved one noticed
+            await self._pick_up_left()
+            self._wake.clear()
+            await self._sleep(POLL_SECONDS)
+            return
         # A Submit the person pressed goes first, even while the queue holds for a sign-in.
         submit = next((t for t in self.tasks if t[0] == "submit"), None)
         blocker = next((r for r in self.runs.values() if r.blocking), None)
@@ -926,6 +960,8 @@ class Applier:
         if (run.account_page and not run.accounts_tried and _bare(data.get("url") or "") == run.account_page
                 and _email_account_view(data)):
             return False  # still in the steps of making their account, which are theirs (Eightfold's modal)
+        if run.need == "bot_check" and _STILL_CHECKING.search(text[:4000]):
+            return False  # the page still asks them to prove they're a person (an error on a form, say)
         return classify(data, text) != run.need and self._own_place(run, data.get("url") or "")
 
     def _own_place(self, run: Run, url: str, own: set[str] | None = None) -> bool:

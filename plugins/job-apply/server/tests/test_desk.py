@@ -1500,6 +1500,8 @@ def test_the_bot_checks_waiting_are_solved_in_one_round(srv):
         shown.append(job_id)
         return True
     desk.applier.focus = focus
+    rounds = []
+    desk.applier.start_round = rounds.append  # (the worker holds while the person is at one)
 
     async def go():
         await desk.start(port=0, open_browser=False)
@@ -1522,7 +1524,15 @@ def test_the_bot_checks_waiting_are_solved_in_one_round(srv):
                     if len(shown) > 1:
                         break
                     await page.wait_for_timeout(100)
-                assert shown == [jobs[0]["id"], jobs[1]["id"]], shown
+                assert shown == [jobs[0]["id"], jobs[1]["id"]] and rounds == shown, (shown, rounds)
+                ended = []
+                desk.applier.end_round = lambda: ended.append(True)
+                runs[1].status, runs[1].need = "running", ""  # none left: the round ends, and the queue goes on
+                for _ in range(60):
+                    if ended:
+                        break
+                    await page.wait_for_timeout(100)
+                assert ended
                 await browser.close()
         finally:
             await desk.stop()

@@ -282,6 +282,12 @@ class Desk:
             elif action == "show":
                 if not await a.focus(job_id):
                     return JSONResponse({"error": "Its tab is closed. Press Resume to open it again."}, status_code=409)
+            elif action == "round":  # the desk's Bot checks round: this check's tab up, nothing started over it
+                if not await a.focus(job_id):
+                    return JSONResponse({"error": "Its tab is closed. Press Resume to open it again."}, status_code=409)
+                a.start_round(job_id)
+            elif action == "round_end":
+                a.end_round()
             elif action == "usual_resume":
                 a.use_usual_resume(job_id)
             elif action == "applied":
