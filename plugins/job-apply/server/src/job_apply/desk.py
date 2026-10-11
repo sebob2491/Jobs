@@ -31,7 +31,7 @@ from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, Response
 from starlette.routing import Route
 
-from . import config, report
+from . import autofill, config, report
 from .pipeline import DESK_PASSWORDS, Applier, question_key
 from .ats import detect_ats
 from .postings import FetchError, Posting, fetch_posting, finalize, parse_html
@@ -571,8 +571,9 @@ class Desk:
             "listings": rows,
             "others": others,
             "applications": applications,
-            # the common questions, with the person's answers (the patterns stay here)
-            "bank": [{k: v for k, v in q.items() if k != "match"} for q in config.question_bank()],
+            # the common questions, with the person's answers (the patterns stay here); not one the profile answers
+            "bank": [{k: v for k, v in q.items() if k not in ("match", "example")} for q in config.question_bank()
+                     if q.get("answer") not in (None, "") or not _profile_answers(q, prof)],
             "current": self.applier.current,
             "queued": [jid for kind, jid in self.applier.tasks if kind == "apply"],
             "counts": t.counts(),
@@ -582,6 +583,14 @@ class Desk:
 
 # a job the person sent in (or is about to): listed under My applications with where it stands
 APPLICATION_STATUSES = ("ready_to_submit", "applied", "interviewing", "offer", "rejected", "withdrawn")
+
+
+def _profile_answers(q: dict[str, Any], prof: config.Profile) -> bool:
+    """Does the person's profile answer this common question already (its example wording, the bank aside)?"""
+    try:
+        return autofill._resolve_field({"kind": "text", "label": q.get("example") or q["ask"]}, prof) is not None
+    except Exception:  # a profile the rules can't read for it: asked, as before
+        return False
 
 
 def _first_line(e: BaseException) -> str:

@@ -7,36 +7,42 @@
 # job's own requirements, consents to a talent community, texts or marketing (always the person's, each time).
 #
 # Gathered from the nightly live check's questions (scripts/question_bank.py lists the ones no entry covers yet).
-# `match` is a regular expression, searched in the question's words, ignoring case.
+# `match` is a regular expression, searched in the question's words, ignoring case; `example` is one wording of it:
+# the desk doesn't ask a question the person's profile already answers (tried with that wording).
 
 questions:
   - id: heard_about
+    example: "How did you hear about us?"
     ask: How did you hear about jobs there? (Most applications ask; one answer for all.)
-    match: "how did you (?:hear|learn|find out|happen to apply)|where did you (?:hear|see|find)|^source type\\b|referral source|^source$"
+    match: "^(?!.*\\b(?:name|who|whom|e-?mail|employee)\\b).*(?:how did you (?:hear|learn|find out|happen to apply)|where did you (?:hear|see|find)|^source type\\b|^referral source$|^source$)"
     kind: choice
     choices: [Company website, Indeed, LinkedIn, Job board, Friend or family, Other]
     seen: 21
 
   - id: desired_pay
+    example: "What is your desired salary?"
     ask: What pay are you looking for? Write it as the site would ask, e.g. "$28 per hour" or "$60,000 per year".
     match: "(?:desired|expected|expectations?|target)\\b.{0,40}\\b(?:salary|pay|compensation|earnings|wage|hourly rate)|(?:salary|compensation|pay) expectations?"
     kind: text
     seen: 9
 
   - id: start_date
+    example: "When can you start?"
     ask: When could you start after an offer? (e.g. "Two weeks after an offer")
     match: "(?:desired|earliest|preferred) start|when (?:can|could|would) you (?:start|be available)|available to start|availability to start"
     kind: text
     seen: 2
 
   - id: relocate
+    example: "Are you willing to relocate?"
     ask: Would you relocate for a job?
-    match: "(?:willing|open|consider|able)\\b.{0,30}\\breloca"
+    match: "^(?!.*\\b(?:assist\\w*|help|package|expenses?|reimburse\\w*|require)\\b).*(?:willing|open|consider|able)\\b.{0,30}\\breloca"
     kind: choice
     choices: ["Yes", "No"]
     seen: 2
 
   - id: background_check
+    example: "Are you willing to submit to a background check?"
     ask: Would you agree to a background check if offered a job?
     match: "(?:willing|agree|consent)\\b.{0,20}\\b(?:submit to|undergo|complete|to)?\\s*(?:a )?background (?:check|screening|investigation)"
     kind: choice
@@ -44,13 +50,15 @@ questions:
     seen: 1
 
   - id: adult
+    example: "Are you 18 years of age or older?"
     ask: Are you 18 or older?
-    match: "^(?!.*\\bunder\\b).*(?:\\b(?:at least|aged?)\\s+1[68]\\b|\\b1[68] (?:years|or older|or over|\\+))"
+    match: "^(?!.*\\b(?:under|hours?|months?|days?|weeks?)\\b).*(?:\\b(?:at least|aged?)\\s+18\\b|\\b18 (?:years|or older|or over|\\+))"
     kind: choice
     choices: ["Yes", "No"]
     seen: 3
 
   - id: essential_functions
+    example: "Can you perform the essential functions of the job with or without reasonable accommodation?"
     ask: Can you do a job's essential functions, with or without reasonable accommodation?
     match: "essential functions"
     kind: choice
@@ -58,20 +66,23 @@ questions:
     seen: 1
 
   - id: terminated
+    example: "Have you ever been terminated or asked to resign from a job?"
     ask: Have you ever been fired, or asked to resign, from a job?
-    match: "(?:been|ever) (?:terminated|fired|discharged|dismissed)|asked to resign"
+    match: "^(?!.*\\b(?:military|armed forces|service|school|college|universit\\w*|program)\\b).*(?:(?:terminated|fired|discharged|dismissed)\\b.{0,40}\\b(?:employer|employment|job|position|work)|asked to resign)"
     kind: choice
     choices: ["No", "Yes"]
     seen: 1
 
   - id: shift
+    example: "What is your shift preference?"
     ask: Which shifts would you work?
-    match: "shift preference|preferred shift|which shifts?\\b|shifts? (?:are you|would you)"
+    match: "^(?!.*\\bdid you\\b).*(?:shift preference|preferred shift|which shifts? (?:are you|would you|can you|do you prefer)|shifts? (?:are you|would you) (?:available|willing|able))"
     kind: choice
     choices: [Days, Evenings, Nights, Any shift]
     seen: 1
 
   - id: schedule_type
+    example: "What is your desired schedule type?"
     ask: Are you looking for full-time or part-time work?
     match: "desired (?:schedule|employment|work) type|(?:seeking|looking for|want) (?:full|part)[- ]time"
     kind: choice
@@ -79,6 +90,7 @@ questions:
     seen: 1
 
   - id: language
+    example: "Language of application"
     ask: Which language should applications be in?
     match: "language of (?:the )?application|preferred (?:locale|language)"
     kind: choice
@@ -86,6 +98,7 @@ questions:
     seen: 2
 
   - id: community_college
+    example: "Have you ever attended a community college?"
     ask: Have you ever attended a community college or taken classes at one?
     match: "attended (?:a )?community college|classes.{0,30}community college"
     kind: choice
@@ -93,6 +106,7 @@ questions:
     seen: 1
 
   - id: military_spouse
+    example: "Are you a military spouse?"
     ask: Are you a current or former military spouse or domestic partner?
     match: "military spouse"
     kind: choice

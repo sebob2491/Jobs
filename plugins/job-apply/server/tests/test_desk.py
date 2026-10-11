@@ -1449,6 +1449,7 @@ def test_the_common_questions_are_asked_once_on_the_page_and_kept(srv, job_apply
     desk.search.update(status="done", at=time.time())
     bank = desk.state()["bank"]
     assert bank and all("match" not in q for q in bank)
+    assert "heard_about" not in [q["id"] for q in bank]  # (the tests' profile says how it heard of jobs)
 
     async def go():
         await desk.start(port=0, open_browser=False)
@@ -1461,14 +1462,13 @@ def test_the_common_questions_are_asked_once_on_the_page_and_kept(srv, job_apply
                 browser = await pw.chromium.launch(**launch_options())
                 page = await browser.new_page()
                 await page.goto(desk.url)
-                await page.wait_for_selector("#bank-card:not([hidden]) select[data-bank=heard_about]")
-                await page.select_option("select[data-bank=heard_about]", "Indeed")
+                await page.wait_for_selector("#bank-card:not([hidden]) select[data-bank=shift]")
+                await page.select_option("select[data-bank=shift]", "Nights")
                 await page.wait_for_function("document.getElementById('bank-count').textContent.startsWith('1 of')")
-                assert "Indeed" in await page.inner_text("#bank-given") or \
-                    await page.eval_on_selector("#bank-given select", "s => s.value") == "Indeed"
+                assert await page.eval_on_selector("#bank-given select", "s => s.value") == "Nights"
                 await browser.close()
         finally:
             await desk.stop()
 
     run(go())
-    assert {q["id"]: q["answer"] for q in config.question_bank()}["heard_about"] == "Indeed"
+    assert {q["id"]: q["answer"] for q in config.question_bank()}["shift"] == "Nights"

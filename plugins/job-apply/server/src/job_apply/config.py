@@ -522,7 +522,7 @@ def question_bank() -> list[dict[str, Any]]:
             re.compile(str(e["match"]))
         except re.error:
             continue
-        out.append({k: e[k] for k in ("id", "ask", "kind", "choices", "match") if k in e}
+        out.append({k: e[k] for k in ("id", "ask", "kind", "choices", "match", "example") if k in e}
                    | {"answer": given.get(e["id"])})
     return out
 

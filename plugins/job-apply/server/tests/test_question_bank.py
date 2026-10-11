@@ -26,7 +26,7 @@ BANK = {q["id"]: q for q in config.question_bank()}
     ("relocate", "Would you consider relocating, either now or in the future?"),
     ("background_check", "Would you be willing to submit to a background check if a job is offered?"),
     ("adult", "Are you age 18 or over?"),
-    ("adult", "Are you at least 16 years old or older?"),
+    ("adult", "Are you 18 years of age or older?"),
     ("essential_functions", "Are you able to perform the essential functions of the job, with or without reasonable accommodations?"),
     ("terminated", "Have you ever been terminated or asked to resign by any former employer for the following reasons?"),
     ("shift", "What is your shift preference?"),
@@ -54,6 +54,15 @@ def test_each_common_question_covers_the_wordings_employers_asked(bank_id, label
     "Do you have any relatives employed by this organization?",
     "SMS Consent - I consent to Swift Transportation contacting me via text message",
     "Use of your profile: please select Yes if you wish your profile to be kept in our global talent community",
+    # the review's (0.3.118): another question that shares words with one of the bank's
+    "Were you ever discharged from the military?",
+    "Have you ever been dismissed from school?",
+    "Are you able to work at least 16 hours?",
+    "Are you at least 16 years old or older?",  # (16 isn't 18: not the same question)
+    "Which shift did you work?",
+    "Referral source name",
+    "How did you hear about us? (If employee referral, please provide their name)",
+    "Willing to relocate with relocation assistance?",
 ])
 def test_no_common_question_takes_one_that_isnt_the_persons_alone(label):
     """A past job's dates and type, the employer's own (worked there, relatives, a referral), a consent: never the
@@ -68,12 +77,15 @@ def test_an_answer_given_once_fills_every_wording_and_can_be_changed_or_taken_ou
     bank = {q["id"]: q for q in config.question_bank()}
     assert (bank["heard_about"]["answer"], bank["desired_pay"]["answer"], bank["shift"]["answer"]) == \
         ("Company website", "$28 per hour", None)
+    config.save_bank_answer("shift", "Days")
     prof = config.Profile.load()
-    for label, company in (("How Did You Hear About Us?*", "KLA"), ("How did you happen to apply here?", "Linde")):
-        got = autofill.resolve_field({"kind": "select", "label": label,
-                                      "options": ["Select One", "Company Website", "Indeed", "LinkedIn"]},
+    for label, company in (("What is your shift preference?*", "KLA"), ("Preferred Shift", "Linde")):
+        got = autofill.resolve_field({"kind": "select", "label": label, "options": ["Select One", "Days", "Nights"]},
                                      prof, {"company": company})
-        assert got is not None and got.value == "Company Website", (label, got)
+        assert got is not None and got.value == "Days", (label, got)
+    # the tests' profile says how it heard of jobs: that comes first, and the card doesn't ask it
+    heard = autofill.resolve_field({"kind": "text", "label": "How did you hear about us?"}, prof, {"company": "KLA"})
+    assert heard is not None and heard.rule == "how_heard", heard
     pay = autofill.resolve_field({"kind": "text", "label": "What is your desired annual salary?"}, prof, {"company": "X"})
     assert pay is not None and pay.value == "$28 per hour", pay
     with pytest.raises(ValueError):
@@ -82,5 +94,29 @@ def test_an_answer_given_once_fills_every_wording_and_can_be_changed_or_taken_ou
         config.save_bank_answer("no_such_question", "Yes")
     config.save_bank_answer("heard_about", "")
     kept = yaml.safe_load(config.answers_path().read_text(encoding="utf-8"))["answers"]
-    assert [a.get("bank") for a in kept] == ["desired_pay", None], kept
-    assert kept[1]["question"] == "Are you willing to relocate?"
+    assert [a.get("bank") for a in kept] == ["shift", "desired_pay", None], kept
+    assert kept[2]["question"] == "Are you willing to relocate?"
+
+
+def test_a_common_answer_comes_last_and_never_in_a_past_jobs_block(job_apply_home):
+    """The review of 0.3.118: the profile's own rules (desired salary) and an answer the person gave for that exact
+    question come before a common one; a block about one past job or school never takes one."""
+    import yaml as _yaml
+    path = job_apply_home / "profile.yaml"
+    profile = _yaml.safe_load(path.read_text(encoding="utf-8"))
+    profile.setdefault("preferences", {})["desired_salary"] = "65000"
+    path.write_text(_yaml.safe_dump(profile), encoding="utf-8")
+    config.save_bank_answer("desired_pay", "$28 per hour")
+    config.save_bank_answer("shift", "Days")
+    prof = config.Profile.load()
+    pay = autofill.resolve_field({"kind": "text", "label": "Desired Salary"}, prof, {"company": "X"})
+    assert pay is not None and pay.rule != "answers" and "28" not in str(pay.value), pay
+    config.save_answer("What is your shift preference?", "Nights", "X")
+    prof = config.Profile.load()
+    own = autofill.resolve_field({"kind": "text", "label": "What is your shift preference?"}, prof, {"company": "X"})
+    assert own is not None and own.value == "Nights", own
+    common = autofill.resolve_field({"kind": "text", "label": "Preferred shift"}, prof, {"company": "X"})
+    assert common is not None and common.value == "Days", common
+    past = autofill.resolve_field({"kind": "text", "label": "Preferred shift", "section": "Work Experience 2"},
+                                  prof, {"company": "X"})
+    assert past is None or past.value != "Days", past
