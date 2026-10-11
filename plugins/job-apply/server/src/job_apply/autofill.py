@@ -1012,6 +1012,39 @@ def _phone(prof: Profile, job: dict, label: str = "") -> Any:
     return phone
 
 
+# The kinds of phone a form's boxes name (the alias groups of a phone's type, in _COUNTRY_ALIASES)
+_PHONE_KINDS = {"mobile": r"mobile|cell(?:ular)?", "home": r"home|landline", "work": r"work|business|office"}
+_ANY_PHONE_KIND = "|".join(_PHONE_KINDS.values())
+# A box that names its kind: Taleo's "Work Phone Number", "Cellular Number ..." (Kforce's goes on with a
+# notice about its text messages), "Phone (Home)", "Mobile"; not "Phone Number", which names none
+_PHONE_BOX_KIND = re.compile(rf"^(?:(?P<lead>{_ANY_PHONE_KIND})(?: (?:tele)?phone| number| no)\b|"
+                             rf"(?:tele)?phone(?: number| no)? (?P<trail>{_ANY_PHONE_KIND})$|(?P<bare>mobile|cell(?:ular)?)$)")
+# A label that goes on after its box's name for as long as the employer likes, so no matter how long: only
+# a box named by kind (not "Mobile apps you have built"), and never one that asks for consent or signs the
+# person up for marketing, alerts or a newsletter (a notice that its texts are "non-marketing" is no sign-up)
+_PHONE_SIGN_UP = (r"(?<!non )\bmarketing|\bjob alerts?|\bnewsletters?|\bpromotion\w*|\bsubscri\w*|\bopt(?:ing)? in|"
+                  r"\bconsent|\bagree|\bsend me|\bsimilar jobs|\btalent (?:community|network)")
+_LONG_PHONE_BOX = rf"^(?!.*(?:{_PHONE_SIGN_UP}))(?:{_ANY_PHONE_KIND})(?: (?:tele)?phone| number)\b"
+
+
+def _phone_kind_of(word: str) -> str | None:
+    return next((kind for kind, words in _PHONE_KINDS.items() if re.fullmatch(words, word)), None)
+
+
+def _phone_box_kind(label: str) -> str | None:
+    """The kind of phone a box names ("mobile", "home" or "work"), or None for a plain one."""
+    m = _PHONE_BOX_KIND.match(label)
+    return _phone_kind_of(m.group("lead") or m.group("trail") or m.group("bare")) if m else None
+
+
+def _other_kind_of_phone(label: str, prof: Profile) -> bool:
+    """A box for a kind of phone other than the profile's ("Work Phone Number" for a mobile): the
+    profile's one number isn't of that kind, so it's the person's. The profile's phone_type is
+    "Mobile" unless it says otherwise; one that is none of the three fits no box named by kind."""
+    box = _phone_box_kind(label)
+    return box is not None and box != _phone_kind_of(re.sub(r" (?:tele)?phone$", "", norm(prof.get("personal.phone_type", "Mobile"))))
+
+
 _SOMEONE_ELSE = re.compile(r"\b(referen\w*|referee\w*|emergency|next of kin|supervisor\w*|manager\w*|referr\w*|contact person|"
                            r"relatives?|family|spouse)\b")
 # A box for another party's details, by its own words ("Employer Phone", "School Zip Code") or
@@ -1069,6 +1102,9 @@ RULES: list[tuple[str, str, Getter, int | None, set[str] | None]] = [
     # a longer label that goes on to say how to write it ("Phone Number [must include your location code ...]")
     ("phone", r"^((mobile|cell|home|primary) )?(tele)?phone( number)? (must|should|including|incl|with|format|in the format|"
               r"e g|digits|no spaces)\b", _phone, None, {"text"}),
+    # Kforce's Taleo (live, Oct 2026): "Cellular Number Kforce may send non-marketing, employment-related text
+    # messages to any number(s) you submit. Reply STOP any time to cancel." is the application's number box
+    ("phone", _LONG_PHONE_BOX, _phone, None, {"text"}),
     ("address2", r"address line 2|^address 2|apartment|suite|^apt|^unit", _p("personal.address.line2"), 45, None),
     ("address1", r"address line 1|^address 1|^street|^(home |mailing |street )?address$", _p("personal.address.line1"), 45, None),
     ("city", r"^city|town|location city|current city|city of residence|"
@@ -1621,6 +1657,8 @@ def resolve_field(field: dict, prof: Profile, job: dict | None = None, file_inpu
             if own or re.search(pattern, label):
                 if name in _WORK_RULES and (_OTHER_COUNTRIES.search(label) or _OTHER_THAN.search(label)):
                     return None  # another country's question: the profile's facts are the United States'
+                if name == "phone" and _other_kind_of_phone(label, prof):
+                    return None  # a Work Phone for a mobile: the profile's number isn't that kind's
                 value = getter(prof, job, raw_label) if _reads_question(getter) else getter(prof, job)  # type: ignore[call-arg]  # these take the question too
                 if value is None or value == "":
                     return None  # recognised but the profile has no answer
