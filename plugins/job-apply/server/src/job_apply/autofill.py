@@ -2004,6 +2004,14 @@ def plan_autofill(fields: list[dict], prof: Profile, job: dict | None = None, ov
             # don't wish to answer"), so the desk can say why it's empty
             needs_input.append({**_asked(f), **({"unmatched": str(missed[0].value)} if missed else {})})
     _graduation_of_the_school_given(fields, to_fill, needs_input, prof, job, file_inputs)
+    # A form whose one phone box is of another kind than the profile's ("Home Phone" alone, for a mobile):
+    # that box is where the form wants the number, so it's filled, as before boxes had kinds
+    typed = [f for f in fields if f.get("kind") in ("text", "tel") and _phone_box_kind(norm(clean_label(f.get("label") or "")))]
+    lone = typed[0] if len(typed) == 1 and not any(t["rule"] == "phone" for t in to_fill) else None
+    number = _phone(prof, job or {}) if lone is not None else None
+    if lone is not None and number and any(q.get("id") == lone["id"] for q in needs_input):
+        needs_input[:] = [q for q in needs_input if q.get("id") != lone["id"]]
+        to_fill.append({"id": lone["id"], "label": lone.get("label", ""), "value": number, "rule": "phone"})
     needs_input.sort(key=lambda f: not f.get("required"))
     return {"to_fill": to_fill, "needs_input": needs_input, "already_filled": already}
 

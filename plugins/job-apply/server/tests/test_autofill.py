@@ -1342,17 +1342,18 @@ def test_a_phone_goes_in_the_box_of_its_own_type_and_no_other():
 
 
 def test_a_phone_box_of_another_type_is_the_persons_even_when_required():
-    """A required Work box beside a mobile phone isn't filled with a number that isn't a work phone: it's
-    the person's question, put to them as a required one. (The same for the other ways a form names a kind.)"""
-    got, plan = _numbers_in([_KFORCE_WORK], prof(), required=True)
-    assert got == {}
+    """A required Work box beside the mobile's own box isn't filled with a number that isn't a work phone:
+    it's the person's question, put to them as a required one. (The same for the other ways a form names a
+    kind.) A form's one phone box is filled whatever its kind: test_a_forms_one_phone_box_gets_the_number."""
+    got, plan = _numbers_in([_KFORCE_WORK, "Cell Phone"], prof(), required=True)
+    assert got == {"Cell Phone": "480-555-0123"}, got
     assert [(q["label"], q.get("required")) for q in plan["needs_input"]] == [(_KFORCE_WORK, True)]
     for other in ("Home Phone", "Work Phone", "Business Phone", "Office Phone Number", "Phone (Home)", "Phone Number - Work",
                   "Telephone (Work)", "Home Number"):
-        assert _numbers_in([other], prof())[0] == {}, other
+        assert other not in _numbers_in([other, "Cell Phone"], prof())[0], other
     home = Profile({"personal": {"phone": "480-555-0123", "phone_type": "Home"}})
     for other in ("Mobile Phone", "Cell Phone Number", "Mobile", "Cellular", "Phone (Mobile)", "Work Phone Number"):
-        assert _numbers_in([other], home)[0] == {}, other
+        assert other not in _numbers_in([other, "Home Phone"], home)[0], other
 
 
 def test_a_phone_box_that_names_no_type_or_the_profiles_is_filled():
@@ -1388,6 +1389,16 @@ def test_text_messages_notice_is_no_sign_up_but_an_opt_in_or_marketing_is():
                     "Mobile Number Opt in to our newsletter and promotions by text message",
                     "Cell Number I consent to receive automated text messages (SMS) from the employer"):
         assert resolve_field(f(sign_up), prof()) is None, sign_up
+
+
+def test_a_forms_one_phone_box_gets_the_number_whatever_kind_it_names():
+    """A form whose only phone box is of another kind than the profile's ("Home Phone *" alone, for a
+    mobile) wants the number there: it's filled, as before boxes had kinds. With a box of the profile's
+    kind or a plain one beside it, the other kinds stay the person's."""
+    alone = plan_autofill([f("Home Phone *", "text", required=True)], prof(), {})
+    assert [(x["label"], x["rule"]) for x in alone["to_fill"]] == [("Home Phone *", "phone")], alone
+    both = plan_autofill([f("Home Phone *", "text", required=True), {**f("Cell Phone", "text"), "id": "2"}], prof(), {})
+    assert [x["label"] for x in both["to_fill"]] == ["Cell Phone"], both
 
 
 def test_an_expected_graduation_date_is_never_a_past_year():
