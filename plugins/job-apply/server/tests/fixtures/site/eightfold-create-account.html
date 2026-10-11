@@ -48,6 +48,7 @@
     };
     document.getElementById('go').addEventListener('click', () => {
       if (!email) return say('Email cannot be left blank, Please enter a valid email in the format example@example.com');
+      if (!register && params.has('known')) return code();  // ?known: the email has an account: its code signs in
       if (!register) return say("We don't recognize this email. Create a new account");
       if (params.has('exists')) return say('An account already exists with this email.');
       code();

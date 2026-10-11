@@ -1105,7 +1105,8 @@ class Applier:
         self._log(run, f"entered the code from your email ({_sent_from(found)})")
         press = next((a for a in data.get("actions") or [] if not a.get("disabled")
                       and _AFTER_CODE.match(a.get("text", "").strip())), None)
-        mine = press is None and (press := self._account_code_button(run, data)) is not None
+        made = press is None and (press := self._account_code_button(run, data)) is not None
+        mine = made or (press is None and (press := _code_only_submit(data)) is not None)
         try:
             if mine and press is not None:  # (the code step's own "Submit": it sends the code only)
                 pressed = (await srv.browser.click(press["id"], allow_submit=True)).get("clicked") is not False
@@ -1115,7 +1116,7 @@ class Applier:
             pressed = False
         if press is not None and pressed:
             self._log(run, f"pressed \u201c{press['text'].strip()}\u201d")
-            if mine:  # said once the application shows (_drive), as a code turned down leaves it here
+            if made:  # said once the application shows (_drive), as a code turned down leaves it here
                 run.account_made = (f"created your account on {_site(run, data)} with your email and the code it "
                                     "emailed you (manage_accounts: false in profile.yaml leaves this to you)")
         else:  # (a "Confirm" that sends a form is left to the person, as any final button is)
@@ -3570,6 +3571,18 @@ def _boxes(data: dict[str, Any]) -> int:
 def _page_key(data: dict[str, Any]) -> tuple:
     """Which page of an application this is: its address and headings."""
     return _bare(data.get("url") or ""), tuple(data.get("headings") or [])
+
+
+def _code_only_submit(data: dict[str, Any]) -> dict[str, Any] | None:
+    """The "Submit" of a page whose only boxes are an emailed code's (Northrop Grumman's Eightfold sign-in,
+    live, Oct 2026: "Check your email", six "Please enter OTP character" boxes and "Submit"): it sends the
+    code and nothing else, so it's pressed after the code, as a "Verify" is."""
+    fields = [f for f in data.get("fields") or [] if not f.get("disabled") and not f.get("aside")]
+    if not fields or not all(f.get("kind") in ("text", "number") and _CODE_FIELD.search(f.get("label") or "")
+                             for f in fields):
+        return None
+    return next((a for a in data.get("actions") or [] if not a.get("disabled") and not a.get("cookie")
+                 and not a.get("aside") and _CODE_SENDS.match(final_text(a.get("text") or "").strip())), None)
 
 
 def _error_said(e: BaseException) -> str:

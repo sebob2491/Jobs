@@ -6020,6 +6020,34 @@ def test_with_manage_accounts_an_email_first_site_makes_the_account_with_the_ema
     assert r.status != "submitted", (r.status, r.reason)
 
 
+def test_an_emailed_code_that_signs_in_gets_its_submit_pressed(srv, monkeypatch, job_apply_home):
+    """Northrop Grumman's Eightfold sign-in, for an email that already has an account (live, Oct 2026):
+    "Check your email", six "Please enter OTP character" boxes and a "Submit" that sends the code and
+    nothing else. The desk entered the code and stopped there ("Press the page's button to carry on").
+    Now a page holding only the code's boxes has its Submit pressed after the code, and the desk goes on."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    manage_accounts(job_apply_home)
+    inbox_with_code(monkeypatch)
+    job = srv.add_job(url=fixture_url(EIGHTFOLD) + "?known", title="Financial Analyst", company="Example Corp")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.need == "questions" or r.status == "ready", about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    log = "\n".join(r.log)
+    assert "/site/" in r.url and "eightfold" not in r.url, (r.url, log)
+    assert "entered the code from your email" in log and "pressed “Submit”" in log, log
+    assert not any(line.startswith("created your account") for line in r.log), log
+    assert any(line.startswith("filled") for line in r.log), log
+
+
 @pytest.mark.parametrize("contact", ["required", "optional", "required&late"])
 def test_with_manage_accounts_a_required_choice_to_be_considered_for_other_jobs_is_given(srv, monkeypatch,
                                                                                        job_apply_home, contact):
