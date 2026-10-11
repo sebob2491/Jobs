@@ -354,6 +354,9 @@ class Run:
     once_page: dict[str, tuple] = field(default_factory=dict)  # where each this-application answer went in
     mail_checked: float = 0.0  # when the inbox was last looked at for its emailed code or link
     mail_done: bool = False  # the code or link from the inbox went in: no more looking
+    # what the desk's looks in the inbox came to, for the live check's LIVE_INBOX line (not the person's)
+    mail_looks: int = 0
+    mail_last: str = ""
     # This pause waits for the verification email of the account the desk just made (_await_verify_email):
     # a Resume after it, or its link opened from the inbox, means the account is verified: signed in to once
     verifying: bool = False
@@ -369,7 +372,7 @@ class Run:
                                                                      "reset_asked", "reset_from", "reset_waited",
                                                                      "reset_no_mail", "sign_in_tries", "sign_in_key",
                                                                      "accounts_tried", "account_made", "account_page",
-                                                                     "account_finished", "verifying")}
+                                                                     "account_finished", "verifying", "mail_looks", "mail_last")}
 
 
 def classify(data: dict[str, Any], text: str) -> str:
@@ -988,11 +991,13 @@ class Applier:
             return
         login = self.mail_login()
         if login is None or run.page is None or run.page.is_closed():
+            run.mail_last = "no inbox login" if login is None else "its tab is closed"
             return
         run.mail_checked = now
         try:
             data, _ = await self.srv.browser.peek(run.page)
-        except Exception:  # a tab mid-way through loading: looked at again next time
+        except Exception as e:  # a tab mid-way through loading: looked at again next time
+            run.mail_last = f"couldn't read its tab: {type(e).__name__}"
             return
         boxes = [f for f in data.get("fields") or [] if f.get("kind") in ("text", "number")
                  and _CODE_FIELD.search(f.get("label") or "")]
@@ -1036,6 +1041,9 @@ class Applier:
             self.mail_problem = f"The desk couldn't read your email ({type(e).__name__}). It tries again shortly."
             return
         self.mail_problem = None
+        run.mail_looks += 1
+        run.mail_last = (f"looked for a {want}: " + ("none" if found is None else f"found one from {found.sender}")
+                         + f" ({len(boxes)} code box(es) on the page)")
         if found is None or run.status != "needs_you" or run.need != "email_code":
             return
         try:
@@ -1072,13 +1080,16 @@ class Applier:
         press the button that sends it. False when it didn't go in."""
         srv = self.srv
         if run.page is None or run.page.is_closed() or not self._own_place(run, run.page.url):
+            run.mail_last += "; not typed: its tab is elsewhere"
             return False  # its tab has gone on to another page: the code isn't typed there
         if not srv.browser.use_tab(run.page):
+            run.mail_last += "; not typed: its tab couldn't be used"
             return False
         data = await srv.inspect_form(include_dropdown_options=False)
         boxes = [f for f in data.get("fields") or [] if f.get("kind") in ("text", "number")
                  and _CODE_FIELD.search(f.get("label") or "")]
         if not boxes:  # the page moved on meanwhile
+            run.mail_last += "; not typed: no code box on the page"
             return False
         if 1 < len(boxes) == len(found.value):  # a box per digit (Oracle's "Confirm Your Identity")
             fills = [{"id": box["id"], "value": digit} for box, digit in zip(boxes, found.value)]

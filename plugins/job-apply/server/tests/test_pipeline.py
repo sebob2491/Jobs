@@ -3085,18 +3085,20 @@ async def ukg_did(page):
                                "k.startsWith('ukg.')).map(([k, v]) => [k.slice(4), JSON.parse(v)]))")
 
 
-def test_with_manage_accounts_ukg_pros_second_account_step_is_finished(srv, monkeypatch, job_apply_home):
+@pytest.mark.parametrize("query", ["?register", "?register&component"])
+def test_with_manage_accounts_ukg_pros_second_account_step_is_finished(srv, monkeypatch, job_apply_home, query):
     """UKG Pro (Nikon Precision, live, Oct 2026, the test identity): after the sign-up's email,
     password and Continue, its Register page asks for a name and phone, a consent box ("By checking
     this box, I have read and agree to the Consent and Privacy Policy*", its words beside it, not in a
     label) and "Create account", greyed out until the box is ticked. The desk said the account was made
     as that page came up, filled it as an application, and stopped: it couldn't find the button. It
     finishes the account now (the consent ticked, never the text messages box), and says it's made
-    only once the site goes on to the application."""
+    only once the site goes on to the application. Live, "Create account" is a web component whose own
+    "form" property isn't a form, and the click threw ("component")."""
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
     saved_password(monkeypatch)
     manage_accounts(job_apply_home)
-    job = srv.add_job(url=fixture_url("site/signin-signup-link.html") + "?register", title="FSE",
+    job = srv.add_job(url=fixture_url("site/signin-signup-link.html") + query, title="FSE",
                       company="Example Fab")["job"]
     applier = Applier(srv)
 
