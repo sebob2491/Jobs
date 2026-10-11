@@ -22,11 +22,23 @@ name: live-nightly
 # its comparison in the job summary only.
 # The five checks run at once, each on a machine of its own (a fraction of the time they took
 # one after another); the compare job then reads their logs.
+# A manual run can be a probe of a few employers or checks (its inputs): it runs only those, and
+# isn't compared or written to the issue; its artifacts hold the results
+# (scripts/nightly_summary.py --artifacts reads them).
 
 on:
   schedule:
     - cron: "17 10 * * *"  # 3:17 AM in Arizona (UTC-7 all year)
   workflow_dispatch:
+    inputs:
+      companies:
+        description: "Only these employers (comma-separated, as live_smoke.py --companies): a probe, not compared"
+        required: false
+        default: ""
+      checks:
+        description: "Only these checks (comma-separated: pipeline, hr, search, accounts): a probe, not compared"
+        required: false
+        default: ""
 
 concurrency:
   group: live-nightly
@@ -72,10 +84,14 @@ jobs:
         id: setup
         env:
           CHECK: ${{ matrix.check }}
+          CHECKS: ${{ github.event.inputs.checks }}
           # whether the test identity's secrets are there, never what they are
           HAS_SECRETS: ${{ secrets.LIVE_TEST_EMAIL != '' && secrets.LIVE_TEST_EMAIL_PASSWORD != '' && secrets.LIVE_TEST_SITE_PASSWORD != '' }}
         run: |
-          if [ "$CHECK" = accounts ] && [ "$HAS_SECRETS" != true ]; then
+          if [ -n "$CHECKS" ] && ! echo ",${CHECKS// /}," | grep -q ",$CHECK,"; then
+            echo "Not in this probe's checks ($CHECKS)." >> "$GITHUB_STEP_SUMMARY"
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          elif [ "$CHECK" = accounts ] && [ "$HAS_SECRETS" != true ]; then
             said="The accounts check is not set up: the repository has no LIVE_TEST_EMAIL, LIVE_TEST_EMAIL_PASSWORD and LIVE_TEST_SITE_PASSWORD secrets yet (see plugins/job-apply/server/scripts/TEST_IDENTITY.md)."
             echo "::notice::$said"
             echo "$said" >> "$GITHUB_STEP_SUMMARY"
@@ -101,6 +117,7 @@ jobs:
         env:
           CHECK: ${{ matrix.check }}
           ARGS: ${{ matrix.args }}
+          COMPANIES: ${{ github.event.inputs.companies }}
           # the test identity's inbox and passwords, for the accounts check only (its inbox's address
           # also for the other checks, at the employers that refuse example.com: live_identity.INBOX_AT):
           # live_smoke.py masks them in everything it prints and writes (and GitHub masks secrets in the log too)
@@ -111,7 +128,8 @@ jobs:
           set -o pipefail
           mkdir -p "live-$CHECK"
           # (ARGS unquoted: it's the matrix's own list of options)
-          uv run --frozen python scripts/live_smoke.py $ARGS --out "live-$CHECK" 2>&1 | tee "live-$CHECK/run.log"
+          uv run --frozen python scripts/live_smoke.py $ARGS ${COMPANIES:+--companies "$COMPANIES"} --out "live-$CHECK" 2>&1 \
+            | tee "live-$CHECK/run.log"
       - name: Note how it ended
         if: always()
         env:
@@ -131,7 +149,8 @@ jobs:
 
   compare:
     needs: check
-    if: always()
+    # (a probe of a few employers or checks isn't compared: the issue keeps the last full run's results)
+    if: always() && github.event.inputs.companies == '' && github.event.inputs.checks == ''
     runs-on: ubuntu-latest
     timeout-minutes: 15
     defaults:

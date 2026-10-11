@@ -1177,6 +1177,35 @@ _LIST_JS = r"""
 """
 
 
+FINAL_BOXES = 12  # boxes final_form keeps
+FINAL_CHOICES = 30  # choices it keeps of each
+
+
+async def final_form() -> dict[str, Any]:
+    """What the page showed where the desk stopped, so one run is enough to fix from (the run is over; nothing
+    is sent): its errors, its buttons (a disabled one marked), and each box that is required and empty, marked
+    invalid, or named in an error, with the choices of its list (Onto's Degree list, ASML's sign-in, Amkor's
+    privacy link: live check, Oct 11)."""
+    try:
+        data = await asyncio.wait_for(server.inspect_form(include_dropdown_options=True), 90)
+    except Exception as e:  # noqa: BLE001 - a diagnostic; the run's record stands without it
+        return {"error": f"{type(e).__name__}: {str(e)[:200]}"}
+    errors = [str(e)[:200] for e in data.get("errors") or []]
+    said = " ".join(errors).lower()
+
+    def wanted(f: dict[str, Any]) -> bool:
+        label = str(f.get("label") or "").strip(" *").lower()
+        return bool(f.get("invalid") or f.get("error") or (f.get("required") and is_empty_value(f.get("value")))
+                    or (len(label) >= 3 and label in said))
+    boxes = [{k: (f.get(k)[:FINAL_CHOICES] if k == "options" and isinstance(f.get(k), list) else f.get(k))
+              for k in ("label", "kind", "section", "value", "required", "options", "error") if f.get(k) not in (None, "", [])}
+             for f in data.get("fields") or [] if wanted(f)]
+    return {"url": data.get("url"), "errors": errors,
+            "actions": [str(a.get("text"))[:60] + (" (disabled)" if a.get("disabled") else "")
+                        for a in data.get("actions") or []][:60],
+            "fields": boxes[:FINAL_BOXES], "dialogs": [str(d)[:300] for d in data.get("dialogs") or []][:3]}
+
+
 async def list_probe(questions: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """For up to three search boxes whose list the desk couldn't pick from: type the value
     again and record the list that shows (the run is over; nothing is sent)."""
@@ -1304,6 +1333,8 @@ async def check_pipeline(company: dict[str, Any], out: Path, rec: dict[str, Any]
                 rec["fixture"] = f"pipeline-{slug(company['name'])}"
         except Exception as e:  # noqa: BLE001 - the record matters more than the snapshot
             rec["snapshot_error"] = f"{type(e).__name__}: {str(e)[:200]}"
+        if run is not None and (rec.get("rounds") or [{}])[-1].get("status") != "ready":
+            rec["final_form"] = await final_form()  # (after the snapshot: reading lists opens them)
         await server.close_browser()
 
 

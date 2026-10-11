@@ -32,7 +32,8 @@ the scrubber (`python -m job_apply.fixtures`) before they become test fixtures.
 ## Running things (from `plugins/job-apply/server`)
 
 - Tests: `JOB_APPLY_CHROMIUM_PATH=/opt/pw-browsers/chromium uv run pytest -q -p no:cacheprovider -n auto tests`.
-  - The full suite takes about 4 minutes. While iterating, run only the affected test files.
+  - The full suite takes about 4 minutes on CI (6 in two parts), and 13 to 16 on a 4-core session. Locally,
+    run the affected test files, ruff and mypy; the PR's required checks run the full suite.
   - CI runs it in two parts on separate machines: `JOB_APPLY_TEST_SHARD=1/2` (or `2/2`) runs one part.
   - CI also runs it on Windows (`windows (Python 3.13, part n/2)`), the owner's platform. Those checks
     aren't required (a failure doesn't block the merge), so look at them yourself. Windows reads and
@@ -55,6 +56,16 @@ the scrubber (`python -m job_apply.fixtures`) before they become test fixtures.
     `--everywhere`: at every employer on both lists (about 100), a code-sending system's employers in one
     `--parallel` group (one inbox).
   - Compare a run with the previous one per employer. A changed outcome is the signal.
+  - Run live checks from a worktree of their own (`git worktree add ../Jobs-live origin/main`): a branch
+    switch or cherry-pick in the main checkout changes the scripts under a running check.
+- The nightly's results: `uv run python scripts/nightly_summary.py` (counts per check), `--check accounts`
+  (one line per employer), `--changes` (the last run's changes), `--tables` (Where It Stands' employer
+  tables), `--artifacts <zip or folder> --companies "A,B"` (each employer's rounds, questions with their
+  choices, and the page where it stopped). Use it instead of reading the issue's body or a run's logs.
+  A run's artifact downloads with the GitHub tools' artifact link and curl.
+- A probe of a few employers on GitHub (where the test identity's secrets are): run the live-nightly
+  workflow by hand with `companies` (and `checks`, e.g. `accounts`). It runs only those, in a few minutes,
+  and isn't compared or written to the issue: read its artifacts with `nightly_summary.py --artifacts`.
 - Plugin manifests: `claude plugin validate --strict .`, plus the same for each plugin folder.
 
 ## Shipping a change
@@ -63,7 +74,9 @@ the scrubber (`python -m job_apply.fixtures`) before they become test fixtures.
    code: prove it by stashing `src/`.
 2. Bump `plugins/<plugin>/.claude-plugin/plugin.json`'s `version` for every change people
    would notice. Without a bump, their app doesn't update.
-3. Open a PR to `main`, run the code-review skill on it, and fix what it finds.
+3. Open a PR to `main` and fix what a review finds: a read-only review (an agent told not to edit) for a
+   change to how the desk fills, clicks or decides; none for tests, docs or the live check's scripts.
+   Two or three related fixes go in one version and one PR.
 4. Turn on auto-merge (squash).
 5. `main` has a ruleset requiring the `server (Python 3.10)`, `server (Python 3.13)` and
    `plugin manifests` checks, so the PR merges itself when they pass. There's no need to
