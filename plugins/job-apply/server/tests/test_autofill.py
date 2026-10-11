@@ -1148,6 +1148,13 @@ def test_a_list_still_on_its_not_specified_first_choice_is_filled():
     region = {"id": "r", "label": "Region", "kind": "select", "value": "Not Specified",
               "section": "Closest Metropolitan City . Required", "options": ["Not Specified", "Anthem", "Bisbee", "Chandler"]}
     assert resolve_field(region, p).value == "Chandler"
+    # a required self-identification list on it, for a profile that declines and a list without a decline: asked,
+    # without the "Not Specified" that is its empty choice (an answer of it was taken for none, live run 24)
+    decliner = Profile({"eeo": {"gender": "Decline to self-identify"}})
+    birth = {"id": "b", "label": "Birth Assigned Gender", "kind": "select", "value": "Not Specified", "required": True,
+             "options": ["Not Specified", "Male", "Female"]}
+    asked = plan_autofill([birth], decliner, {})["needs_input"]
+    assert [q["options"] for q in asked] == [["Male", "Female"]], asked
     plan = plan_autofill([country, gender, taleo_gender], p, {})
     assert [(t["id"], t["value"]) for t in plan["to_fill"]] == [("c", "United States")], plan
     assert plan["already_filled"] == ["g", "t"], plan

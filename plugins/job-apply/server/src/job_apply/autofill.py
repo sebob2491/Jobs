@@ -2123,7 +2123,10 @@ def plan_autofill(fields: list[dict], prof: Profile, job: dict | None = None, ov
         elif f.get("kind") != "password":
             # with the profile's answer the choices don't have (Qorvo's veteran list has no "I
             # don't wish to answer"), so the desk can say why it's empty
-            needs_input.append({**_asked(f), **({"unmatched": str(missed[0].value)} if missed else {})})
+            # (a list on its "Not Specified" first choice is asked about without it: that choice is the empty one,
+            # and an answer of it was taken for none and asked again, Kforce's Birth Assigned Gender, live run 24)
+            asked = _asked({**f, "options": (f.get("options") or [])[1:]} if unset else f)
+            needs_input.append({**asked, **({"unmatched": str(missed[0].value)} if missed else {})})
     _graduation_of_the_school_given(fields, to_fill, needs_input, prof, job, file_inputs)
     _title_beside_its_company(fields, to_fill, needs_input, prof)
     # A form with no phone box of the profile's kind and no plain one, whose boxes name other kinds ("Home
