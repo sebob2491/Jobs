@@ -142,6 +142,17 @@
 <script>
   // like Intel's Workday (live, Oct 2026): the page opens with a Work Experience block to fill
   document.getElementById('we-add').click();
+  // ?covered: a note of the site's own drawn over Education's Add button, so a click there lands on the
+  // note (Nikon's UKG Pro, live, Oct 2026: "Add Education" timed out after "Add Experience" was pressed)
+  if (new URLSearchParams(location.search).has('covered')) {
+    const add = document.getElementById('ed-add').getBoundingClientRect();
+    const note = document.createElement('div');
+    note.id = 'note';
+    note.textContent = 'Accessibility Note';
+    note.style.cssText = `position: absolute; z-index: 10; background: #ffd; left: ${add.left + scrollX - 20}px; `
+      + `top: ${add.top + scrollY - 10}px; width: ${add.width + 40}px; height: ${add.height + 20}px`;
+    document.body.appendChild(note);
+  }
 </script>
 </body>
 </html>

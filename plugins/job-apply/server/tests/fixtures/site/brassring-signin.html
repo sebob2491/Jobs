@@ -11,7 +11,9 @@
      Captcha"), and its Continue without the code says "One or more fields require your attention. Captcha
      text Required field". Its Create Account ("Let's Get Started") asks for the email first, then emails a
      passcode to it. ?captcha: a picture code on Create Account too. ?refuse: its Continue refuses the email
-     ("Please enter a valid email address.") and stays. What happened is kept for the tab
+     ("Please enter a valid email address.") and stays. ?stay: the passcode step is drawn below the email step,
+     whose Email address and Continue stay (live, Oct 2026: a press of that Continue sends another passcode,
+     and the boxes are emptied). What happened is kept for the tab
      (sessionStorage's br.* keys), so a reload doesn't lose it: signIns, resetPresses, captcha (anything
      typed in a picture code), accountEmail (the email Create Account's Continue sent) -->
 <header><a href="javascript:void(0)" id="top-sign-in">Sign In</a> <a href="javascript:void(0)">Example Corp Careers</a></header>
@@ -115,13 +117,15 @@
 
   function passcode(address) {
     const ordinals = ['1st', '2nd', '3rd', '4th', '5th', '6th'];
-    view.innerHTML = '<h2>Let\'s Get Started</h2><p>We’ve sent a passcode to validate your email address to '
+    const step = '<h2>Verify Passcode</h2><p>We’ve sent a passcode to validate your email address to '
       + address + ', with the subject “Your Passcode”, which will expire in 10 minutes. Be sure to check your '
       + 'Spam or Junk Mail folder if you do not see it in your Inbox, or <a href="javascript:void(0)" '
       + 'id="resend">resend the passcode</a>.</p><div id="digits">'
       + ordinals.map((o) => '<input type="text" inputmode="numeric" maxlength="1" class="digit" '
         + 'aria-label="Enter ' + o + ' digit of your passcode">').join(' ')
-      + '</div><button type="button" id="verify">Verify Passcode</button><div id="err" role="alert"></div>';
+      + '</div><button type="button" id="verify">Verify Passcode</button><div id="perr" role="alert"></div>';
+    if (q.has('stay')) view.insertAdjacentHTML('beforeend', step);
+    else view.innerHTML = '<h2>Let\'s Get Started</h2>' + step;
     const boxes = [...document.querySelectorAll('.digit')];
     boxes.forEach((box, i) => box.addEventListener('input', () => {
       box.value = box.value.replace(/\D/g, '').slice(0, 1);
@@ -132,7 +136,7 @@
       bump('verifies');
       put('passcode', typed);
       if (typed.length < 6) {
-        $('err').innerHTML = '<p>Please enter the 6-digit passcode.</p>';
+        $('perr').innerHTML = '<p>Please enter the 6-digit passcode.</p>';
         return;
       }
       view.innerHTML = '<h2>Let\'s Get Started</h2><p>Your email address has been validated.</p>';

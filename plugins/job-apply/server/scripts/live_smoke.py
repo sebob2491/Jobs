@@ -1213,6 +1213,11 @@ async def check_pipeline(company: dict[str, Any], out: Path, rec: dict[str, Any]
                 continue
             if TEST_IDENTITY and await wait_for_mail(applier, run):
                 continue  # the desk read the emailed code or link, and went on by itself
+            if TEST_IDENTITY and run.need == "email_code" and list(run.log) != rec["rounds"][-1]["log"]:
+                # the wait ended, and the desk did something meanwhile (typed the code, said why it stopped):
+                # its record as it is now, not as it was when it paused
+                rec["rounds"].append({"status": run.status, "need": run.need, "reason": run.reason, "url": run.url,
+                                      "log": list(run.log), "questions": [], "markup": [], "page": run.page_info})
             break
     finally:
         if TEST_IDENTITY and run is not None and (rec.get("rounds") or [{}])[-1].get("need") == "email_code":

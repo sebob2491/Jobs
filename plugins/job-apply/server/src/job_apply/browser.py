@@ -1585,11 +1585,17 @@ class BrowserSession:
             frame = page.main_frame
             state = await frame.evaluate(ENTRIES_JS, kind_pattern)
             before = state["entries"]
-            clicks = 0
+            clicks, covered = 0, False
             while state["entries"] < count and clicks < count + 2:
                 if not state["buttons"]:
                     break
-                await frame.locator(f'[data-ja-id="{state["buttons"][-1]["id"]}"]').click(timeout=5000)
+                try:
+                    await frame.locator(f'[data-ja-id="{state["buttons"][-1]["id"]}"]').click(timeout=5000)
+                except PlaywrightTimeout:
+                    # something drawn over it (Nikon's UKG Pro, live, Oct 2026: the error ended the whole
+                    # application): left as it is, as a press beneath a note or a dialog may not be its
+                    covered = True
+                    break
                 clicks += 1
                 await page.wait_for_timeout(600)
                 new = await frame.evaluate(ENTRIES_JS, kind_pattern)
@@ -1610,7 +1616,8 @@ class BrowserSession:
             if waited:
                 await self._settle(page, timeout=2000)  # the rest of their boxes
             return {"before": before, "after": state["entries"], "clicks": clicks,
-                    "add_button_found": bool(state["buttons"]) or clicks > 0}
+                    "add_button_found": bool(state["buttons"]) or clicks > 0,
+                    **({"add_button_covered": True} if covered else {})}
 
     async def _page_text(self, page: Page) -> str:
         text = ""
@@ -1626,7 +1633,22 @@ class BrowserSession:
             page = await self.page()
             data = await self._extract(page)
             # not a footer's job-alerts "Submit" (marked aside): pressing it sends no application
-            return [a for a in data["actions"] if a.get("is_submit") and not a.get("disabled") and not a.get("aside")]
+            # nor Workday's hidden button under the cover that takes the click (covered): pressing it does nothing
+            return [a for a in data["actions"] if a.get("is_submit") and not a.get("disabled") and not a.get("aside")
+                    and not a.get("covered")]
+
+    async def words_around(self, element_id: str) -> str | None:
+        """The words of the smallest block around an element that also holds a text box (a code
+        step's Submit: the step's own words, not the page's behind its pop-up), or None once it's gone."""
+        async with self._lock:
+            page = await self.page()
+            try:
+                return await self._locator(page, element_id).evaluate(
+                    "el => { for (let n = el.parentElement; n; n = n.parentElement) {"
+                    " if (n.querySelector('input:not([type=hidden]):not([type=checkbox]):not([type=radio])'))"
+                    " return (n.innerText || '').slice(0, 3000); } return ''; }", timeout=3000)
+            except (PlaywrightError, PlaywrightTimeout):
+                return None
 
     async def element_info(self, element_id: str) -> dict[str, Any] | None:
         """ELEMENT_INFO_JS's facts about an element on the page (a cookie banner's button: the

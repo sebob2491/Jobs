@@ -13,7 +13,7 @@ import pytest
 from conftest import browser_available, fixture_url, run
 
 import job_apply.pipeline as pipeline
-from job_apply import config
+from job_apply import config, mailbox
 from job_apply.pipeline import Applier, Run, classify, pick_next, question_key
 
 pytestmark = pytest.mark.skipif(not browser_available(), reason="no Playwright Chromium installed")
@@ -2214,20 +2214,23 @@ def test_a_reset_with_a_captcha_makes_the_account_instead(srv, monkeypatch, job_
     assert r.need == "email_code", (r.reason, r.log)  # its passcode: the inbox's, or the person's
 
 
-def test_brassrings_six_box_passcode_is_entered_from_the_inbox_and_verified(srv, monkeypatch, job_apply_home):
+@pytest.mark.parametrize("query", ["", "?stay"])
+def test_brassrings_six_box_passcode_is_entered_from_the_inbox_and_verified(srv, monkeypatch, job_apply_home, query):
     """Edward Jones' BrassRing (the live check's test identity, Oct 2026): its Create Account emails a
     passcode and asks for it in six boxes ("Enter 1st digit of your passcode" ... "Enter 6th digit of
     your passcode") and a "Verify Passcode" button. The desk paused for it and watched the inbox, but
     "Verify Passcode" isn't one of the buttons it presses after a code (Verify, Confirm, Continue, Next,
     each with "code", "email" or "account"), so the digits went in and the person had to press it. The
     code goes in a digit per box and Verify Passcode is pressed (and the log says the mail was in Spam, where
-    BrassRing's page says to look, when it was)."""
+    BrassRing's page says to look, when it was). Live (?stay), the passcode step is drawn below the email
+    step, whose Continue stays: the desk pressed that, which sent another passcode and emptied the boxes.
+    A button naming the code ("Verify Passcode") goes before a bare "Continue"."""
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
     saved_password(monkeypatch)
     as_test_identity(monkeypatch, job_apply_home)
     asked: list[str] = []
     inbox_with_code(monkeypatch, asked, spam=True)
-    job = srv.add_job(url=fixture_url("site/brassring-signin.html"), title="Senior Analyst",
+    job = srv.add_job(url=fixture_url("site/brassring-signin.html") + query, title="Senior Analyst",
                       company="Example Corp")["job"]
     applier = Applier(srv)
 
@@ -2243,7 +2246,7 @@ def test_brassrings_six_box_passcode_is_entered_from_the_inbox_and_verified(srv,
 
     r, did = run(go())
     assert did.get("accountEmail") == "sam.rivera@example.com", (did, r.log)
-    assert (did.get("passcode"), did.get("verifies")) == ("123456", 1), (did, r.log)
+    assert (did.get("passcode"), did.get("verifies"), did.get("accountPresses")) == ("123456", 1, 1), (did, r.log)
     assert "code" in asked and "link" not in asked, asked
     assert "entered the code from your email (sent from careers.example.com, in your Spam folder)" in r.log, r.log
 
@@ -2297,6 +2300,21 @@ def test_whose_mail_a_brassring_job_reads_a_code_from(srv):
     r = Run(job["id"], "Financial Analyst", "Edward Jones",
             url="https://sjobs.brassring.com/TGnewUI/Search/home/HomeWithPreLoad?partnerid=26235&siteid=5374")
     assert applier._mail_senders(r) == {"edwardjones.com", "brassring.com", "kenexa.com"}
+
+
+def test_whose_mail_a_workday_job_reads_a_reset_from(srv):
+    """KLA's Workday (kla.wd1.myworkdayjobs.com, live, Oct 2026) sent its password reset from its own
+    Workday mail domain, workday.kla.com: the desk never read it ("no password reset email came from
+    Workday in 3 minutes") and made a new account instead. A tenant's own workday.<tenant>.com counts
+    as the site's; no other address at kla.com does, nor another tenant's."""
+    url = "https://kla.wd1.myworkdayjobs.com/Search/job/Phoenix-AZ/Customer-Service-Engineer_2637545"
+    job = srv.add_job(url=url, title="Customer Service Engineer", company="KLA")["job"]
+    r = Run(job["id"], "Customer Service Engineer", "KLA", url=url)
+    senders = Applier(srv)._mail_senders(r)
+    assert senders == {"myworkdayjobs.com", "myworkday.com", "workday.com", "workday.kla.com"}, senders
+    assert mailbox.sender_allowed("Workday <noreply@workday.kla.com>", senders)
+    assert not mailbox.sender_allowed("someone@kla.com", senders)
+    assert not mailbox.sender_allowed("noreply@workday.intel.com", senders)
 
 
 def test_a_sign_in_page_good_for_one_visit_is_reached_again_through_the_posting(srv, monkeypatch, job_apply_home):
@@ -2685,6 +2703,54 @@ def test_a_workday_account_is_said_made_only_once_its_sign_in_gets_in(srv, monke
     pressed = [line for line in r.log[:signed_in] if line.startswith("pressed \u201cCreate Account\u201d")]
     assert len(pressed) == 1 and "after ticking \u201cYes, I confirm that I have read the privacy notice.\u201d" in pressed[0]
     assert r.seen_form, (r.reason, r.log)
+
+
+def test_a_page_that_asks_to_be_refreshed_is_reloaded_once(srv, monkeypatch, job_apply_home):
+    """KLA's Workday, right after the desk signed in (live, Oct 2026): "Something went wrong. Please
+    refresh the page and then try again." The desk stopped there ("couldn't find the button that moves
+    this application on"). It reloads the page, once, says so, and goes on with the application."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    job = srv.add_job(url=fixture_url("site/workday-went-wrong.html"), title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    said = [line for line in r.log if "asked for the page to be refreshed, so I reloaded it" in line]
+    assert len(said) == 1 and r.seen_form and "went-wrong" not in r.url, (r.url, r.reason, r.log)
+
+
+def test_a_workday_sign_in_presses_the_cover_over_its_hidden_button(srv, monkeypatch, job_apply_home):
+    """KLA's Workday (live, Oct 2026) draws its Sign In as a hidden "Sign In" button (aria-hidden) under a
+    div of its own named "Submit" (data-automation-id="click_filter") that takes the click. The desk
+    pressed the hidden button, which does nothing and says nothing, and went on as if the password had
+    been refused: a reset, then a Create Account, every time, though the account signed in fine in the
+    owner's own browser. The cover is read as the button it covers, and pressed."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    saved_password(monkeypatch)
+    manage_accounts(job_apply_home)
+    job = srv.add_job(url=fixture_url("site/workday-account.html") + "?cover", title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r, await workday_did(r.page)
+        finally:
+            await applier.stop()
+
+    r, did = run(go())
+    assert (did.get("created"), did.get("signIns")) == (1, 2), (did, r.log)
+    assert any(line.startswith("pressed \u201cSign In\u201d") for line in r.log) and r.seen_form, (r.reason, r.log)
 
 
 @pytest.mark.parametrize("company, ticked", [("Example Fab", True), ("Intel", False)])
@@ -6018,6 +6084,51 @@ def test_with_manage_accounts_an_email_first_site_makes_the_account_with_the_ema
     assert any(line.startswith("created your account on") and "the code it emailed you" in line for line in r.log), log
     assert any(line.startswith("filled") for line in r.log) and asked and set(asked) == {"code"}, (asked, log)
     assert r.status != "submitted", (r.status, r.reason)
+
+
+@pytest.mark.parametrize("words, pressed", [("Check your email. We sent a code to your email.", True),
+                                            ("Enter the code we emailed you to submit your application.", False)])
+def test_a_code_steps_submit_is_never_pressed_where_it_may_send_the_application(srv, words, pressed):
+    """A step holding only an emailed code's boxes has its Submit pressed after the code ("Check your
+    email"), but never one whose own words speak of an application ("Enter the code we emailed you to
+    submit your application"): that Submit may send it, which stays the person's. The page behind a
+    sign-in pop-up (an application's) doesn't count."""
+    run(srv.open_application(url=fixture_url("jsonld_posting.html")))
+    page = run(srv.browser.page())
+    run(page.set_content(f"""<h1>Field Service Engineer: apply now</h1><p>Your application</p>
+      <div role="dialog"><p>{words}</p><label for="c">Verification code</label><input id="c">
+        <button type="button">Submit</button></div>"""))
+    data = run(srv.inspect_form(include_dropdown_options=False))
+    press = run(Applier(srv)._code_only_submit(data))
+    assert (press is not None and press["text"] == "Submit") is pressed, (press, data["actions"])
+
+
+def test_an_emailed_code_that_signs_in_gets_its_submit_pressed(srv, monkeypatch, job_apply_home):
+    """Northrop Grumman's Eightfold sign-in, for an email that already has an account (live, Oct 2026):
+    "Check your email", six "Please enter OTP character" boxes and a "Submit" that sends the code and
+    nothing else. The desk entered the code and stopped there ("Press the page's button to carry on").
+    Now a page holding only the code's boxes has its Submit pressed after the code, and the desk goes on."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    manage_accounts(job_apply_home)
+    inbox_with_code(monkeypatch)
+    job = srv.add_job(url=fixture_url(EIGHTFOLD) + "?known", title="Financial Analyst", company="Example Corp")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.need == "questions" or r.status == "ready", about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    log = "\n".join(r.log)
+    assert "/site/" in r.url and "eightfold" not in r.url, (r.url, log)
+    assert "entered the code from your email" in log and "pressed “Submit”" in log, log
+    assert not any(line.startswith("created your account") for line in r.log), log
+    assert any(line.startswith("filled") for line in r.log), log
 
 
 @pytest.mark.parametrize("contact", ["required", "optional", "required&late"])

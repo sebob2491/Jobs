@@ -86,6 +86,7 @@ _BOT_TITLE = re.compile(r"just a moment|attention required|access denied|pardon 
 # A bare "403 Forbidden" (Valleywise Health's postings, to the desk's browser) or "406 Not Acceptable"
 # (Deloitte's sign-in, to a headless browser): the site turns the browser away. There's nothing to
 # solve, so it holds nothing up: the person applies elsewhere
+_REFRESH_ASKED = re.compile(r"\bsomething went wrong\b.{0,200}\b(?:refresh|reload) (?:the|this) page\b", re.I | re.S)
 _TURNED_AWAY = re.compile(r"^\s*(?:403\s*)?forbidden\s*$|^\s*(?:406\s*)?not acceptable\s*$|"
                           r"^\s*your request has been blocked\.?\s*$", re.I)  # (Workday's, its title empty)
 # A posting that has closed: "The job posting you are looking for has expired or the position has
@@ -112,6 +113,7 @@ _AFTER_CODE = re.compile(r"^(verify|confirm|continue|next)( ((?:pass)?code|e-?ma
 _ACCOUNT_ON = re.compile(r"^(submit|continue|next|agree|i agree|accept|create(?: an| my| a new)? account)$", re.I)
 _ONE_TIME_CODE = re.compile(r"^(?:use an? )?(?:one[- ]time (?:pass)?code|e-?mail (?:me )?an? code)(?: instead)?$", re.I)
 _CODE_SENDS = re.compile(r"^submit$", re.I)
+_APPLICATION_WORD = re.compile(r"\bapplication\b|\bapply\b", re.I)
 _TRY_LATER = re.compile(r"\btoo many\b.{0,30}\b(?:attempts|requests|tries)\b|\btry again (?:later|in \d+)|\brate[- ]limit",
                         re.I)
 _CREATE_ACCOUNT = re.compile(r"^(?:proceed to |continue to )?(create (?:an |your |a new )?account|sign up|register)"
@@ -333,6 +335,7 @@ class Run:
     reset_asked: bool = False  # (once a job: a reset that didn't get in isn't asked for again)
     reset_from: str = ""  # the sign-in page a reset was asked from: back there once it's done elsewhere
     reset_waited: bool = False  # paused for the reset email (a Resume after that means it's done)
+    refreshed: bool = False  # reloaded once for a page that asked for it ("Please refresh the page")
     reset_no_mail: bool = False  # and none came in RESET_MAIL_WAIT: no account there, most likely, so one is made
     # The job's sign-ins pressed with the saved password, and which password that was (a digest): a Run
     # outlasts Resume and the queue, so these hold for the job, not for one pass at it
@@ -968,12 +971,15 @@ class Applier:
 
     def _mail_senders(self, run: Run) -> set[str]:
         """Who may have sent this job's code or link: the job site it's waiting on, the
-        employer's own site, and the job system they run on."""
+        employer's own site, and the job system they run on (and a Workday tenant's own mail
+        domain: KLA's kla.wd1.myworkdayjobs.com mails from workday.kla.com, live, Oct 2026)."""
         job = self.srv.tracker().get(run.job_id, with_description=False) or {}
         urls = [u for u in (run.url, job.get("url"), job.get("apply_url")) if u]
         allowed = {mailbox.site_domain(urlparse(u).hostname or "") for u in urls}
         for u in urls:
             allowed |= mailbox.ATS_MAIL_DOMAINS.get(detect_ats(u), set())
+            if tenant := re.fullmatch(r"([a-z0-9-]+)\.wd\d+\.myworkdayjobs\.com", (urlparse(u).hostname or "").lower()):
+                allowed.add(f"workday.{tenant.group(1)}.com")
         return {d for d in allowed if d}
 
     async def _check_mail_safely(self, run: Run) -> None:
@@ -1103,9 +1109,14 @@ class Applier:
                 self._log(run, said)
             return False
         self._log(run, f"entered the code from your email ({_sent_from(found)})")
-        press = next((a for a in data.get("actions") or [] if not a.get("disabled")
-                      and _AFTER_CODE.match(a.get("text", "").strip())), None)
-        mine = press is None and (press := self._account_code_button(run, data)) is not None
+        # one naming the code before a bare Continue: Edward Jones' BrassRing (live, Oct 2026) keeps its email
+        # step's Continue above "Verify Passcode", and a press of it sends another passcode and empties the boxes
+        after = [a for a in data.get("actions") or [] if not a.get("disabled")
+                 and _AFTER_CODE.match(a.get("text", "").strip())]
+        press = next((a for a in after if not re.match(r"^(continue|next)$", a["text"].strip(), re.I)),
+                     after[0] if after else None)
+        made = press is None and (press := self._account_code_button(run, data)) is not None
+        mine = made or (press is None and (press := await self._code_only_submit(data)) is not None)
         try:
             if mine and press is not None:  # (the code step's own "Submit": it sends the code only)
                 pressed = (await srv.browser.click(press["id"], allow_submit=True)).get("clicked") is not False
@@ -1115,13 +1126,24 @@ class Applier:
             pressed = False
         if press is not None and pressed:
             self._log(run, f"pressed \u201c{press['text'].strip()}\u201d")
-            if mine:  # said once the application shows (_drive), as a code turned down leaves it here
+            if made:  # said once the application shows (_drive), as a code turned down leaves it here
                 run.account_made = (f"created your account on {_site(run, data)} with your email and the code it "
                                     "emailed you (manage_accounts: false in profile.yaml leaves this to you)")
         else:  # (a "Confirm" that sends a form is left to the person, as any final button is)
             run.reason = ("I entered the code from your email. Press the page's button to carry on; "
                           "the desk continues after that.")
         return True
+
+    async def _code_only_submit(self, data: dict[str, Any]) -> dict[str, Any] | None:
+        """_code_only_submit's button, unless the code step's own words (the block around its button and
+        boxes, not the application behind a sign-in pop-up) speak of an application: a code that sends one
+        ("Enter the code we emailed to submit your application") is the person's to send (or Submit for
+        me's), and in practice mode never sent."""
+        press = _code_only_submit(data)
+        if press is None:
+            return None
+        words = await self.srv.browser.words_around(press["id"])
+        return press if words is not None and not _APPLICATION_WORD.search(words) else None
 
     def _account_code_button(self, run: Run, data: dict[str, Any]) -> dict[str, Any] | None:
         """The "Submit" of the emailed code's step of an account the desk is making (an Eightfold site's,
@@ -1332,6 +1354,16 @@ class Applier:
                 return self._pause(run, "stuck", f"The application went on to {where} couldn't be reached, so the page "
                                    "didn't load. Press Resume to try again, or open the posting in your own browser to "
                                    "apply there.")
+            if (kind == "page" and not data.get("fields") and not run.refreshed and run.page is not None
+                    and _REFRESH_ASKED.search(text)):
+                # KLA's Workday right after its sign-in (live, Oct 2026): "Something went wrong. Please refresh
+                # the page and then try again." Done, once a job
+                run.refreshed = True
+                self._log(run, f"{_site(run, data)} said something went wrong and asked for the page to be "
+                          "refreshed, so I reloaded it")
+                with contextlib.suppress(Exception):
+                    await run.page.reload(wait_until="load")
+                continue
             refused = next((t for t in [data.get("title") or "", *(data.get("headings") or [])[:1]] if _TURNED_AWAY.search(t)), "")
             if kind == "page" and not data.get("fields") and refused:
                 refusal = re.sub(r"\s+", " ", refused).strip()
@@ -1536,6 +1568,9 @@ class Applier:
                         added = await srv.add_entries(section)
                         if added.get("clicks"):
                             self._log(run, f"added {added['clicks']} {section} block(s)")
+                        if added.get("add_button_covered"):
+                            self._log(run, f"couldn't press the {section} section's Add button: something on the page "
+                                      "covers it, so its blocks are left as they are")
                 result = await srv.autofill(job_id=run.job_id)
                 if result["filled"]:
                     self._log(run, f"filled {len(result['filled'])} field(s) on {_where(data)}")
@@ -2831,7 +2866,8 @@ class Applier:
         # The form's own button, after its password box: a "Sign In" in the site's header opens
         # its sign-in page or pop-up instead, and sends nothing (Workday's). Failing that, the
         # button of a form that holds only the sign-in, whatever it reads (SuccessFactors' "Submit").
-        own = [a for a in actions if a.get("after_password") and not _SOCIAL.search(a["text"]) and not a.get("cookie")]
+        own = [a for a in actions if a.get("after_password") and not _SOCIAL.search(a["text"]) and not a.get("cookie")
+               and not a.get("covered")]  # (Workday's hidden button: its cover takes the click)
         button = next((a for a in own if _SIGN_IN_ACTION.match(a["text"].strip())), None) or next(
             (a for a in own if a.get("sign_in_form") and _SIGN_IN_SUBMIT.match(final_text(a["text"]).strip())), None)
         if button is None:
@@ -3570,6 +3606,19 @@ def _boxes(data: dict[str, Any]) -> int:
 def _page_key(data: dict[str, Any]) -> tuple:
     """Which page of an application this is: its address and headings."""
     return _bare(data.get("url") or ""), tuple(data.get("headings") or [])
+
+
+def _code_only_submit(data: dict[str, Any]) -> dict[str, Any] | None:
+    """The "Submit" of a page whose only boxes are an emailed code's (Northrop Grumman's Eightfold sign-in,
+    live, Oct 2026: "Check your email", six "Please enter OTP character" boxes and "Submit"): it sends the
+    code and nothing else, so it's pressed after the code, as a "Verify" is (and only where the step's own
+    words don't speak of an application: Applier._code_only_submit)."""
+    fields = [f for f in data.get("fields") or [] if not f.get("disabled") and not f.get("aside")]
+    if not fields or not all(f.get("kind") in ("text", "number") and _CODE_FIELD.search(f.get("label") or "")
+                             for f in fields):
+        return None
+    return next((a for a in data.get("actions") or [] if not a.get("disabled") and not a.get("cookie")
+                 and not a.get("aside") and _CODE_SENDS.match(final_text(a.get("text") or "").strip())), None)
 
 
 def _error_said(e: BaseException) -> str:
