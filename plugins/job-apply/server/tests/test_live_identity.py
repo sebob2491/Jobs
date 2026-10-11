@@ -204,12 +204,12 @@ SYSTEMS = {"Workday", "SuccessFactors", "iCIMS", "Oracle", "Eightfold", "UKG Pro
            "Cornerstone", "Paycom", "ApplicantStack", "Infor"}
 
 
-def test_its_employers_are_one_or_two_per_job_system_from_the_plugins_lists(job_apply_home):
+def test_its_employers_are_a_few_per_job_system_from_the_plugins_lists(job_apply_home):
     employers = li.load_employers()
     names = [e["name"] for e in employers]
     assert len(names) == len(set(names))
     per_system = Counter(e["system"] for e in employers)
-    assert set(per_system) == SYSTEMS and max(per_system.values()) <= 2, per_system
+    assert set(per_system) == SYSTEMS and max(per_system.values()) <= 6, per_system
     assert {e["role"] for e in employers} <= {"technician", "hr", "finance"}  # (live_smoke.py's ROLES)
     lists = search.employer_lists()
     for e in employers:

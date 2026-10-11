@@ -3,7 +3,7 @@
 The nightly live check normally stops at each job site's sign-in page, because its throwaway
 applicant has no inbox and practice mode never makes accounts. The **test identity** goes further:
 a clearly fake applicant, "Jobdesk Test", with a real inbox of its own. With it, the nightly
-"accounts" check makes an account at one or two employers per job system (the list is in
+"accounts" check makes an account at a few employers per job system, up to six (the list is in
 `test_identity_employers.yaml`, next to this file), reads the codes those sites email, and carries
 on into the application. It **never submits** an application: practice mode stays on.
 
