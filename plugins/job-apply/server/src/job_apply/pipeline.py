@@ -439,6 +439,16 @@ _BOT_CHECK_SAYS = ("The site is checking that you're a person (a bot check or CA
 _ERROR_COUNT = re.compile(r"^\d+ errors? found\.?$", re.I)  # a section's count, not what's wrong
 _ROBOT = re.compile(r"not a robot|captcha|verify (?:that )?you(?:'re| are) (?:a )?human", re.I)
 _ERRORISH = re.compile(r"error|required|invalid|please|must|enter |select |missing|problem|fix|can'?t be blank", re.I)
+# a note that only asks the person to look over what's there, which nothing on the page is wrong for: Nikon's UKG
+# Pro after its resume parse (live run 16, Oct 11), "jobdesk-test-resume.pdf has been used to pre-fill part of
+# your application. Please verify that all of your information is correct."
+_ADVISORY = re.compile(r"has been used to (?:pre-?fill|populate)|^\W*please (?:verify|review|check|confirm) (?:that )?"
+                       r"(?:all (?:of )?)?your (?:information|details) (?:is|are) (?:correct|accurate)\W*$", re.I)
+
+
+def _errorish(said: str) -> bool:
+    """Words the page shows that say something on it is wrong (not a note to look things over)."""
+    return bool(_ERRORISH.search(said)) and not _ADVISORY.search(said)
 
 
 _UNREACHED = [re.compile(p) for p in (r"\bhttps?://([\w.-]+)", r"([\w.-]+\.[a-z]{2,})(?:\u2019|')s server IP address",
@@ -458,7 +468,7 @@ def unreached_host(data: dict[str, Any], text: str) -> str:
 def _flagged(data: dict[str, Any]) -> list[str]:
     """What a page marks as wrong: its error messages, Workday's "Error-Email" links in its
     "Errors Found" box, and fields marked invalid."""
-    out = [e for e in data.get("errors") or [] if _ERRORISH.search(e)]
+    out = [e for e in data.get("errors") or [] if _errorish(e)]
     for a in data.get("actions") or []:
         m = re.match(r"^error\s*-\s*(.+)$", (a if isinstance(a, str) else a.get("text", "")).strip(), re.I)
         if m:
@@ -1701,7 +1711,7 @@ class Applier:
                 greyed = [a for a in data.get("actions") or [] if a.get("is_submit") and a.get("disabled")
                           and not a.get("aside")] or _greyed_step(data)
                 if greyed:
-                    said = "; ".join(e for e in data.get("errors") or [] if _ERRORISH.search(e))[:300] \
+                    said = "; ".join(e for e in data.get("errors") or [] if _errorish(e))[:300] \
                         or _unanswered(data)
                     return self._pause(run, "stuck", f"\u201c{greyed[0]['text']}\u201d is greyed out, so the site still "
                                        "wants something" + (f": {said}" if said else ".") +
@@ -1796,7 +1806,7 @@ class Applier:
                 # 11, Oct 11: the desk stopped after the fourth press, and the next step was there a little later).
                 # Waited on once, with nothing said wrong, before the step counts as stuck
                 saved_waited.add(key)
-                if not any(_ERRORISH.search(e) for e in data.get("errors") or []) and \
+                if not any(_errorish(e) for e in data.get("errors") or []) and \
                         await self._wait_for_step_change(key, STEP_SAVE_WAIT):
                     continue
             if kind == "form" and pressed[-3:] == [key] * 3:
@@ -1846,7 +1856,7 @@ class Applier:
                     sign_ins["create_account"] = sign_ins.get("create_account", 0) + 1
                     stalls = 0
                     continue
-                problems = [e for e in clicked.get("errors") or [] if _ERRORISH.search(e)]
+                problems = [e for e in clicked.get("errors") or [] if _errorish(e)]
                 if problems or stalls >= 2:
                     # say what's wrong: Workday lists it as links ("Error-Email") and marks fields
                     problems = _flagged(clicked)
@@ -1881,7 +1891,7 @@ class Applier:
                     # (Nikon's UKG Pro, live run 10: its resume parse wiped Address 1 and Zip a moment after they
                     # were typed). Typed again, once a page, and the step pressed again
                     seen_now = (await self._look())[0] if looked not in retyped or looked not in refilled_pages else {}
-                    said = norm(" ".join(e for e in seen_now.get("errors") or [] if _ERRORISH.search(e)))
+                    said = norm(" ".join(e for e in seen_now.get("errors") or [] if _errorish(e)))
                     lost = [f for f in seen_now.get("fields") or [] if f.get("kind") == "text" and not f.get("disabled")
                             and not is_empty_value(f.get("value")) and len(norm(clean_label(f.get("label") or ""))) >= 3
                             and re.search(rf"\b{re.escape(norm(clean_label(f.get('label') or '')))}\b", said)]
@@ -3125,7 +3135,7 @@ class Applier:
                 still = bool(await srv.browser.find_submit())
             except Exception:
                 still = False
-            problems = "; ".join(e for e in result.get("errors") or [] if _ERRORISH.search(e))[:300]
+            problems = "; ".join(e for e in result.get("errors") or [] if _errorish(e))[:300]
             if still:  # the form is still there: the site didn't take it
                 return self._pause(run, "submit_failed", "I pressed Submit, but the form is still there"
                                    + (f": {problems}" if problems else ".") + " Fix it in the browser, then press "

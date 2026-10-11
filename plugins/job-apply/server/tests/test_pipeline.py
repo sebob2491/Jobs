@@ -1965,12 +1965,40 @@ def test_boxes_the_pages_errors_say_are_empty_though_filled_are_typed_again(srv,
         assert any(line.startswith("typed again") and "Address 1" in line for line in r.log), r.log
 
 
-def test_a_step_still_saving_after_three_presses_is_waited_on(srv, monkeypatch):
+def test_a_resume_parse_notice_is_not_an_error(srv, monkeypatch):
+    """Nikon's UKG Pro (live run 16, Oct 11): its Skills step took a moment to save, with the resume parse's
+    notice ("... has been used to pre-fill part of your application. Please verify that all of your information
+    is correct.") showing, and the desk stopped at once on it ("The page didn't move on"). The notice asks
+    nothing to be fixed, so the step is looked at again."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    job = srv.add_job(url=fixture_url("site/ukg-prefill.html") + "?slow", title="Field Service Engineer",
+                      company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert "review.html" in r.url, (r.url, r.reason, r.log)
+    assert not pipeline._errorish("x.pdf has been used to pre-fill part of your application. Please verify that "
+                                  "all of your information is correct.")
+    assert pipeline._errorish("Address 1 Please enter an address.")
+
+
+@pytest.mark.parametrize("query", ["", "?quiet"])
+def test_a_step_still_saving_after_three_presses_is_waited_on(srv, monkeypatch, query):
     """KLA's Workday (live run 11, Oct 11): every box of Application Questions 2 of 2 answered, its Save and
     Continue took a while to go on, and the desk stopped after its presses ("The page didn't move on"); the next
-    step was there a little later. A step still saving, with nothing said wrong, is waited on once."""
+    step was there a little later. A step still saving, with nothing said wrong, is waited on once. ?quiet: the
+    page shows nothing while it saves, so two presses in a row seem to do nothing (live run 16)."""
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
-    job = srv.add_job(url=fixture_url("site/workday-slow-save.html"), title="Customer Service Engineer",
+    job = srv.add_job(url=fixture_url("site/workday-slow-save.html") + query, title="Customer Service Engineer",
                       company="Example Fab")["job"]
     applier = Applier(srv)
 

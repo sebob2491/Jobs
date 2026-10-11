@@ -7,7 +7,9 @@
      own record of Address 1 and Zip with nothing, though the boxes still show what was typed. Save and continue
      then says "Address 1 Please enter an address." and "Zip / Postal Code Please enter a valid zip/postal code."
      beside the filled boxes. Typed again after that, they're kept. ?wipe: the parse empties the two boxes too,
-     as Nikon's did in live run 12 (they're kept once filled again). (kept for the tab: ukg.saves) -->
+     as Nikon's did in live run 12 (they're kept once filled again). ?slow: nothing is lost, and Save and continue
+     takes a moment to go on with the parse's notice still showing, as Nikon's Skills did in live run 16 (the
+     notice isn't an error). (kept for the tab: ukg.saves) -->
 <h2>Contact Information</h2>
 <div id="notice" role="alert"></div>
 <form onsubmit="return false">
@@ -22,13 +24,16 @@
 <script>
   const model = {};
   let parsed = false;
+  const slow = new URLSearchParams(location.search).has('slow');
   document.addEventListener('input', (e) => {
     model[e.target.id] = e.target.value;
     if (!parsed && e.target.id === 'address') {
       parsed = true;
       setTimeout(() => {  // the resume parse lands: the page's record of these two is wiped
-        model.address = '';
-        model.zip = '';
+        if (!slow) {
+          model.address = '';
+          model.zip = '';
+        }
         if (new URLSearchParams(location.search).has('wipe')) {
           document.getElementById('address').value = '';
           document.getElementById('zip').value = '';
@@ -44,7 +49,7 @@
     if (!model.address) errs.push('Address 1 Please enter an address.');
     if (!model.zip) errs.push('Zip / Postal Code Please enter a valid zip/postal code.');
     document.getElementById('errors').innerHTML = errs.map((t) => '<p role="alert" class="error">' + t + '</p>').join('');
-    if (!errs.length) location.href = 'review.html';
+    if (!errs.length) setTimeout(() => { location.href = 'review.html'; }, slow ? 1500 : 0);
   });
 </script>
 </body>
