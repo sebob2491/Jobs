@@ -2004,6 +2004,8 @@ def test_a_questions_own_decline_box_is_ticked_for_a_profile_that_declines():
     plan = plan_autofill(fields, answers)
     filled = {t["id"]: t["value"] for t in plan["to_fill"]}
     assert "gd" not in filled and "vd" not in filled and filled.get("g") == "Female" and filled.get("v") == "No"
+    # nor is any box ticked for a profile with no self-identification answers
+    assert not plan_autofill(fields, Profile({}))["to_fill"]
     # a decline box for something that isn't a self-identification question is left alone
     other = [{"id": "p", "kind": "checkbox", "label": "I decline to say my salary expectations", "value": False}]
     assert not plan_autofill(other, declines)["to_fill"]
