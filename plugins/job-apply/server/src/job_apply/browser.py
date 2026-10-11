@@ -147,6 +147,7 @@ LOST_FILL_TRIES = 3  # times a box is typed again on a page, at most (one the pa
 BLOCK_DRAW_WAIT = 6000  # ms for blocks just added (Workday's Education 2) to draw their boxes, at most
 # How long a click may wait for its button to become clickable, in ms.
 CLICK_TIMEOUT = 8000
+CONFIRM_WAIT = 12  # seconds a submit's confirmation is watched for after its page goes quiet
 # How long a box under an overlay (or being drawn again) may take to take the focus, in ms: not
 # Playwright's 30 s for each of Workday's 16 date parts on My Experience
 FOCUS_TIMEOUT = 5000
@@ -1776,12 +1777,20 @@ class BrowserSession:
             except PlaywrightTimeout:
                 pass
             await page.wait_for_timeout(1500)
-            page = await self.page()
-            text = await self._page_text(page)
-            data = await self._extract(page)
-            # a thank-you that wasn't there before, on a page that doesn't say what's wrong with the form
-            new = confirmations(text) - confirmations(before)
-            sent_back = any(_FORM_ERROR.search(e or "") for e in data["errors"])
+            # A thank-you that wasn't there before, on a page that doesn't say what's wrong with the form. Watched
+            # for a while: Workday draws its "Application Submitted" dialog over the candidate home a few seconds
+            # after the page has gone quiet (live test 2, issue #112, note 19)
+            waited = 0.0
+            while True:
+                page = await self.page()
+                text = await self._page_text(page)
+                data = await self._extract(page)
+                new = confirmations(text) - confirmations(before)
+                sent_back = any(_FORM_ERROR.search(e or "") for e in data["errors"])
+                if new or sent_back or waited >= CONFIRM_WAIT:
+                    break
+                await page.wait_for_timeout(1000)
+                waited += 1
             return {
                 "url": page.url,
                 "confirmed": bool(new) and not sent_back,

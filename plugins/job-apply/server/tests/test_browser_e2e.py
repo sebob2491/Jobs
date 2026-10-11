@@ -549,6 +549,18 @@ def test_final_apply_button_honeypot_and_enter(srv, monkeypatch):
     assert done["submitted"] and done["confirmed"]
 
 
+def test_a_confirmation_drawn_a_few_seconds_after_submit_is_seen(srv):
+    """Workday (live test 2, issue #112, note 19): both applications the person had the desk submit went
+    in, and Workday showed "Application Submitted / Congratulations! Thank you for submitting your
+    application!" in a dialog over its candidate home a few seconds later. The desk had already looked,
+    and said "no confirmation showed". It watches for one a while longer."""
+    job = srv.add_job(url=fixture_url("site/workday-review.html"), title="FSE", company="Example Fab")["job"]
+    run(srv.open_application(job_id=job["id"]))
+    done = run(srv.submit_application(job_id=job["id"], user_confirmed=True))
+    assert done["submitted"] and done["confirmed"], done
+    assert srv.get_job(job["id"])["job"]["status"] == "applied"
+
+
 def test_click_finds_a_replaced_button_and_checks_it_again(srv, monkeypatch):
     """Oracle's pages swap a button out between reading it and clicking it."""
     import job_apply.browser as browser_module
