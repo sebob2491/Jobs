@@ -1937,13 +1937,15 @@ def test_a_form_page_that_thanks_the_person_isnt_taken_for_a_confirmation(srv, m
     assert srv.tracker().get(job["id"])["status"] != "applied"
 
 
-@pytest.mark.parametrize("query", ["", "?wipe"])
+@pytest.mark.parametrize("query", ["", "?wipe", "?silent"])
 def test_boxes_the_pages_errors_say_are_empty_though_filled_are_typed_again(srv, monkeypatch, query):
     """Nikon's UKG Pro (live run 10, Oct 11): its resume parse overwrote the page's own record of Address 1 and
     Zip a moment after the desk typed them, so Save and continue said "Address 1 Please enter an address."
     beside the filled boxes, and the desk stopped. Boxes the page's errors name, though they show a value, are
-    typed again, once, and the step is pressed again."""
+    typed again, once, and the step is pressed again. ?silent: EMD's Phenom (live check, Oct 11) lost boxes the
+    same way and said nothing at all; its required boxes are typed again, once, all the same."""
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "STEP_SAVE_WAIT", 1)
     job = srv.add_job(url=fixture_url("site/ukg-prefill.html") + query, title="Field Service Engineer",
                       company="Example Fab")["job"]
     applier = Applier(srv)
@@ -1959,7 +1961,9 @@ def test_boxes_the_pages_errors_say_are_empty_though_filled_are_typed_again(srv,
 
     r = run(go())
     assert "review.html" in r.url, (r.url, r.reason, r.log)
-    if query:  # (wiped: filled from the profile again, as in live run 12)
+    if query == "?silent":
+        assert any(line.startswith("typed 5 required box(es) again") for line in r.log), r.log
+    elif query:  # (wiped: filled from the profile again, as in live run 12)
         assert any(line.startswith("filled again") for line in r.log), r.log
     else:
         assert any(line.startswith("typed again") and "Address 1" in line for line in r.log), r.log
