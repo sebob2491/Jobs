@@ -1614,11 +1614,14 @@ def test_an_agreement_a_bot_check_holds_is_said_to_be_the_persons(srv, monkeypat
     assert "couldn't find the button" not in r.reason
 
 
-def test_with_manage_accounts_a_refused_saved_password_is_reset(srv, monkeypatch, job_apply_home):
+@pytest.mark.parametrize("then", ["", "done", "alone"])
+def test_with_manage_accounts_a_refused_saved_password_is_reset(srv, monkeypatch, job_apply_home, then):
     """The email has an account there, and the saved password isn't its password. With the
     inbox watched, the desk asks for a password reset before trying a new account (the owner's
     choice), opens the emailed link in the job's tab, sets the saved password as the new one,
-    and signs in."""
+    and signs in. Live (issue #112, note 14), the desk stopped after the reset with "Sign in ... in the
+    browser window": the sign-in after it may say "Password has been reset" with only a "Sign In" button
+    (done), or ask for the password alone (alone). It signs in with the new password there too."""
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
     monkeypatch.setattr(pipeline, "MAIL_POLL_SECONDS", 0)
     saved_password(monkeypatch)
@@ -1629,7 +1632,7 @@ def test_with_manage_accounts_a_refused_saved_password_is_reset(srv, monkeypatch
 
     def inbox(address, password, since, senders, want, allowed_link, before=None, look_back=None):
         wanted.append(want)
-        link = fixture_url("site/reset-password.html") + "?token=abc"
+        link = fixture_url("site/reset-password.html") + "?token=abc" + (f"&then={then}" if then else "")
         return pipeline.mailbox.Found(want, link, "careers.example.com", time.time()) if want == "reset" else None
 
     monkeypatch.setattr(pipeline.mailbox, "search", inbox)
