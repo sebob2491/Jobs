@@ -559,7 +559,9 @@ EXTRACT_JS = r"""
     const inMenu = role === 'menuitem' || !!el.closest('[role="menu"]');
     const applyItem = inMenu && !el.closest('[role="menubar"]') && /\bapply\b/i.test(t);  // not the site's top bar
     if (role === 'option' || el.closest('[role="listbox"]') || (inMenu && !applyItem)) continue;
-    if (!t || t.length > 60) continue;
+    // (a link to read a privacy statement or terms may say more: Amkor's SuccessFactors "Please read and accept
+    // the data privacy statement to proceed.", nightly live check Oct 11)
+    if (!t || t.length > 60 && !(t.length <= 120 && /^(please )?(read|view|open)\b.*\b(privacy|terms)\b/i.test(t))) continue;
     if (el.tagName === 'A' && !ACTION.test(t)) continue;
     const full = covers ? t : t + ' ' + (el.getAttribute('aria-label') || '');
     const formSubmit = el.type === 'submit' && !!formOf(el);
