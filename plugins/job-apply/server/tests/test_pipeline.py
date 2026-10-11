@@ -2447,16 +2447,21 @@ def test_whose_mail_a_workday_job_reads_a_reset_from(srv):
     assert not mailbox.sender_allowed("noreply@workday.intel.com", senders)
 
 
-def test_a_sign_in_page_good_for_one_visit_is_reached_again_through_the_posting(srv, monkeypatch, job_apply_home):
+@pytest.mark.parametrize("gone", ["error", "home"])
+def test_a_sign_in_page_good_for_one_visit_is_reached_again_through_the_posting(srv, monkeypatch, job_apply_home,
+                                                                                 gone):
     """SuccessFactors' sign-in page (career?_s.crb=…) is good for one visit: going back to it after a
     reset the desk couldn't do showed "An error occurred while processing your request" (Arizona
-    Public Service, the test identity, live Oct 2026). The desk opens the job's posting again, whose
-    Apply leads to a fresh sign-in page, and makes the account there."""
+    Public Service, the test identity, live Oct 2026), or led to the company's careers search home, with
+    no sign-in on it (Edwards Vacuum's, after three minutes waiting on a reset email, the plus probe Oct 11).
+    The desk opens the job's posting again, whose Apply leads to a fresh sign-in page, and makes the account
+    there."""
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
     saved_password(monkeypatch)
     manage_accounts(job_apply_home)
     watched_inbox(monkeypatch)
-    job = srv.add_job(url=fixture_url("site/sf-posting.html"), title="Energy Analyst", company="Example Utility")["job"]
+    posting = fixture_url("site/sf-posting.html") + ("?home" if gone == "home" else "")
+    job = srv.add_job(url=posting, title="Energy Analyst", company="Example Utility")["job"]
     applier = Applier(srv)
 
     async def go():
@@ -2471,7 +2476,8 @@ def test_a_sign_in_page_good_for_one_visit_is_reached_again_through_the_posting(
     r = run(go())
     log = "\n".join(r.log)
     assert "so I went back to make an account there instead" in log, log
-    assert "sign-in page couldn't be opened again, so I opened the job again" in log, log
+    said = " couldn't be opened again" if gone == "error" else ", opened again, led to the site's job search, not its sign-in"
+    assert f"sign-in page{said}, so I opened the job again" in log, log
     assert "created your account" in log and r.seen_form, (r.reason, r.log)
 
 
@@ -6667,3 +6673,54 @@ def test_a_button_gone_as_it_was_clicked_is_looked_at_again(srv, monkeypatch):
     r = run(go())
     assert len(calls) == 2
     assert "review.html" in r.url, (r.url, r.reason, r.log)
+
+
+def test_a_sign_in_that_led_elsewhere_is_told_from_an_email_first_one():
+    """The review's cases (0.3.117): a sign-in page opened again that led to a job search is one with no sign-in
+    (Edwards'); an email-first sign-in's step (an email box and Next, no password) at another address isn't, nor is
+    the same address, nor a page with a way to an account."""
+    r = Run(1, "Engineer", "Example", url="https://example.com/job/1")
+    r.reset_from = "https://career5.successfactors.eu/career?_s.crb=abc"
+
+    class Page:
+        url = "https://career5.successfactors.eu/careers?company=atlascopcoP"
+    r.page = Page()
+    search = {"fields": [{"kind": "text", "label": "Keywords:"}, {"kind": "text", "label": "Requisition ID:"}],
+              "actions": [{"text": "Sign In"}, {"text": "Search Jobs"}, {"text": "Clear"}]}
+    assert pipeline._no_sign_in_here(r, search)
+    email_first = {"fields": [{"kind": "text", "label": "Email Address"}], "actions": [{"text": "Next"}]}
+    assert not pipeline._no_sign_in_here(r, email_first)
+    with_account = {**search, "actions": [*search["actions"], {"text": "Create Account"}]}
+    assert not pipeline._no_sign_in_here(r, with_account)
+    Page.url = "https://career5.successfactors.eu/career?_s.crb=xyz"
+    assert not pipeline._no_sign_in_here(r, search)  # (the same page: said by the other cases)
+
+
+
+@pytest.mark.parametrize("label, ticked", [
+    ("By checking this box, I agree to create a candidate home account in Workday.", True),  # GCU's
+    ("I agree to creating a Arizona State University Candidate Home Account.", True),
+    ("I agree to creating this account to allow me to apply for positions with HonorHealth", True),
+    ("I agree", True),  # Northern Trust's
+    ("I consent", True),  # Entegris'
+    ("I confirm Hitachi will process my personal data as per the GDPR Notice for Candidates", True),
+    ("You acknowledge having read the documents above. Your agreement is valid for 24 months.", True),  # Air Liquide's
+    ("I agree to receive job alerts and the newsletter", False),
+    ("I agree to create an account and be contacted about other open positions", False),
+    ("I agree to join the talent community", False),
+    ("I am at least 18 years old", False),
+    # the review's: an agreement that takes in more than the account
+    ("I agree that my account and data can be shared with partners", False),
+    ("I agree to receive emails about my account", False),
+    ("I agree to create an account and receive updates", False),
+    ("I consent to receive text updates about my account", False),
+    ("I agree to the processing of my personal data for recruitment and for future vacancies", False),
+    ("I consent to the GDPR retention of my data in the talent pool", False),
+])
+def test_a_workday_create_accounts_own_agreement_is_its_terms(label, ticked):
+    """The first nightly at every employer (Oct 11): nine Workday Create Account forms stopped on a box of their
+    own, never marked required, worded other than "terms": the account itself, a bare "I agree" or "I consent",
+    a GDPR notice, the documents above read. Those are the account's terms (settings.manage_accounts ticks them);
+    never one that also signs the person up for anything (_NOT_TERMS), nor one saying something else."""
+    box = {"id": "t", "kind": "checkbox", "label": label, "value": False}
+    assert (pipeline._terms_boxes({"fields": [box]}) == [box]) is ticked

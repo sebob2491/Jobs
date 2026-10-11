@@ -92,8 +92,10 @@ FAKE_PROFILE = {
             "disability": "I do not want to answer"},
     "work_history": [{"title": "Equipment Technician", "company": "Example Fab", "location": "Chandler, AZ",
                       "start": "2021-03", "end": "present"}],
-    "education_history": [{"school": "Arizona State University", "degree": "Bachelor's Degree",
+    "education_history": [{"school": "Arizona State University", "degree": "Bachelor of Science",
                            "major": "Electrical Engineering", "start": 2016, "end": 2020}],
+    # (its kind named, as setup asks for it: a list with several kinds of a bachelor's, BA and BS, is the
+    # person's to choose from a bare "Bachelor's Degree", and ten employers' stopped there, nightly Oct 11)
     # as setup writes it: the degrees confirmed finished answer "Do you have a Bachelor's degree?"
     "education": {"highest_degree": "Bachelor's Degree",
                   "degrees_earned": [{"level": "high_school"}, {"level": "bachelor", "field": "Electrical Engineering"}]},
@@ -120,7 +122,7 @@ ROLES: dict[str, dict[str, Any]] = {
         "query_any": "human resources | recruiter",
         "work_history": [{"title": "HR Coordinator", "company": "Example Staffing", "location": "Tempe, AZ",
                           "start": "2021-03", "end": "present"}],
-        "education_history": [{"school": "Arizona State University", "degree": "Bachelor's Degree",
+        "education_history": [{"school": "Arizona State University", "degree": "Bachelor of Science",
                                "major": "Business Administration", "start": 2016, "end": 2020}],
         "education": {"highest_degree": "Bachelor's Degree",
                       "degrees_earned": [{"level": "high_school"}, {"level": "bachelor", "field": "Business Administration"}]},
@@ -130,7 +132,7 @@ ROLES: dict[str, dict[str, Any]] = {
         "query_any": "financial analyst | accountant",
         "work_history": [{"title": "Financial Analyst", "company": "Example Bank", "location": "Phoenix, AZ",
                           "start": "2021-03", "end": "present"}],
-        "education_history": [{"school": "Arizona State University", "degree": "Bachelor's Degree",
+        "education_history": [{"school": "Arizona State University", "degree": "Bachelor of Science",
                                "major": "Finance", "start": 2016, "end": 2020}],
         "education": {"highest_degree": "Bachelor's Degree",
                       "degrees_earned": [{"level": "high_school"}, {"level": "bachelor", "field": "Finance"}]},
