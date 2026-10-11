@@ -261,18 +261,20 @@ def everywhere_employers(lists: Mapping[str, Path] | None = None) -> list[dict[s
 
 def arrange(employers: list[dict[str, str]], n: int) -> list[list[str]]:
     """The employers' names in n groups that run at once (--parallel n), as even as can be: a system's
-    employers all in one group (one inbox: two of its codes at once could be taken for each other), except
-    LINKED_SYSTEMS', spread out one by one. The biggest systems are placed first."""
+    employers all in one group (one inbox: two of its codes at once could be taken for each other), placed
+    first, biggest first; then LINKED_SYSTEMS', one by one into the shortest groups."""
     groups: list[list[str]] = [[] for _ in range(max(n, 1))]
     by_system: dict[str, list[str]] = {}
     for e in employers:
         by_system.setdefault(e["system"].lower(), []).append(e["name"])
-    for system, names in sorted(by_system.items(), key=lambda kv: (-len(kv[1]), kv[0])):
+    ordered = sorted(by_system.items(), key=lambda kv: (-len(kv[1]), kv[0]))
+    for system, names in ordered:  # a code-sending system's employers first, whole, biggest first
+        if system not in LINKED_SYSTEMS:
+            min(groups, key=len).extend(names)
+    for system, names in ordered:  # then the others one by one into the shortest groups
         if system in LINKED_SYSTEMS:
             for name in names:
                 min(groups, key=len).append(name)
-        else:
-            min(groups, key=len).extend(names)
     return groups
 
 
