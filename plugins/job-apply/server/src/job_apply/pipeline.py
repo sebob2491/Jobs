@@ -1112,9 +1112,12 @@ class Applier:
         ids = [box["id"] for box in boxes] if 1 < len(boxes) == len(found.value) else [boxes[0]["id"]]
         why = ""
         try:
-            read = await srv.browser.type_code(ids, found.value)
-            if "".join(read).replace(" ", "") != found.value:
-                why = f"its boxes read {''.join(read) or 'nothing'}"
+            read = re.sub(r"[^0-9A-Za-z]", "", "".join(await srv.browser.type_code(ids, found.value)))
+            # (all of it; or, typed into a first box that moved on by itself to boxes the reader didn't count, its
+            # first digit)
+            if read != re.sub(r"[^0-9A-Za-z]", "", found.value) and not (len(ids) == 1 and read and len(read) == 1
+                                                                        and found.value.startswith(read)):
+                why = f"its boxes read {read or 'nothing'}"
         except Exception as e:
             why = f"{type(e).__name__}: {str(e).splitlines()[0] if str(e) else ''}"
         if why:  # (looked for again at the next look; said once, so the log says why none went in)
@@ -1402,7 +1405,7 @@ class Applier:
                                    "steps of making one are yours: finish them in the browser window (or sign in with "
                                    "the email you use there); the desk carries on by itself after that.", seen=data)
             if (kind == "sign_in" and not account_waited and not _account_and_application(data)
-                    and sum(f.get("kind") == "password" for f in data.get("fields") or []) >= 2):
+                    and sum(f.get("kind") == "password" and not _code_box(f) for f in data.get("fields") or []) >= 2):
                 # A Create Account form: Qorvo's draws its application below it a moment later
                 account_waited = True
                 await self._wait_for_application()
@@ -1452,7 +1455,7 @@ class Applier:
                     sign_ins["submitted"] = sign_ins["wants_account"] = 1
                     continue
             if (kind == "sign_in" and manage and sign_ins.get("made") and _VERIFY_EMAIL.search(said_exists)
-                    and sum(f.get("kind") == "password" for f in data.get("fields") or []) == 1):
+                    and sum(f.get("kind") == "password" and not _code_box(f) for f in data.get("fields") or []) == 1):
                 # the account just made says it emailed a link to verify it (Banner Health's Workday, live,
                 # Oct 2026): its Sign In takes no password before the link is opened
                 return await self._await_verify_email(run, data)
@@ -1657,9 +1660,10 @@ class Applier:
                 and _may_accept_notices()
             # (a form with no button at all yet is a step still being drawn too: KLA's Workday showed only the last
             # step's resume box for a while, its questions and Save and Continue drawn after, live run 9, Oct 11)
-            bare_form = (kind == "form" and not any(not a.get("disabled") and not a.get("cookie")
-                                                    and _STEPISH.search(final_text(a.get("text") or ""))
-                                                    for a in data.get("actions") or [])
+            # (a greyed-out step button, or a page busy loading, is the branch below's)
+            bare_form = (kind == "form" and not data.get("busy") and not any(
+                             not a.get("cookie") and _STEPISH.search(final_text(a.get("text") or ""))
+                             for a in data.get("actions") or []) and not _greyed_step(data)
                          # (not one whose stop is explained: an agreement to press, a bot check)
                          and _agreement_button(data) is None and not data.get("captcha")
                          and not _BOT_BADGE.search(" ".join([text[:3000], *(a.get("text") or "" for a in data.get("actions") or [])])))
@@ -2615,7 +2619,7 @@ class Applier:
         person's (a picture code, or a password the site turned down); None for any other page."""
         srv = self.srv
         fields = [f for f in data.get("fields") or [] if not re.match(r"f\d+-", str(f.get("id")))]
-        passwords = [f for f in fields if f.get("kind") == "password"]
+        passwords = [f for f in fields if f.get("kind") == "password" and not _code_box(f)]
         named = [f for f in fields if f.get("kind") in ("text", "email")
                  and re.search(r"e-?mail|user ?name|login", f.get("label") or "", re.I)]
         new = len(passwords) >= 2 or any(_NEW_PASSWORD.search(f.get("label") or "") for f in passwords)

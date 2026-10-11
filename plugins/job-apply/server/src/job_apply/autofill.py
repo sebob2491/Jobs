@@ -1163,7 +1163,10 @@ RULES: list[tuple[str, str, Getter, int | None, set[str] | None]] = [
     ("no_sponsorship", r"\b(no|not|never|without|free of)( (any|visa|employment|immigration|employer|the|a|in|need|needs|of|"
      r"for|requiring|requirement|h ?1 ?b|work))* sponsor|(do not|don t|dont|will not|won t|not|never) (now or in the future |"
      r"currently |ever )?(require|need)\w* .{0,40}sponsor|sponsor\w* (is |are |would be |will be )?(not|never) (be )?"
-     r"(required|needed|necessary)", _no_sponsorship, None, None),
+     r"(required|needed|necessary)|"
+     # (the immigration-case wording, negated: "I will not require the employer to commence an immigration case")
+     r"\b(no|not|never|without|don t|dont|won t)( now or in the future)? requir\w* .{0,60}\b(commence|start|begin|file|"
+     r"initiate)\w* an? (immigration|visa) (case|petition|process)", _no_sponsorship, None, None),
     # (and in other words: "require <employer> to commence an immigration case in order to employ you",
     # live test 2, issue #112, note 17)
     ("sponsorship", r"(require|need|seek)\w* .{0,40}sponsor|sponsor\w* .{0,40}(require|need)|"

@@ -563,6 +563,17 @@ def test_a_choice_that_opens_a_list_of_its_own_is_picked_inside_it(srv):
     assert run(page.evaluate("() => document.getElementById('source').textContent")) == "Example Fab website"
 
 
+def test_inside_a_list_a_choice_opens_only_the_answer_or_its_namesake_is_picked():
+    """The list a choice opens: the answer, or the entry named like the choice ("<employer> website ›" opens
+    "<employer> website"); never a lone entry that's something else ("Job Board ›" opening only "Indeed" isn't
+    the profile's "Job Board")."""
+    from job_apply.browser import _inner_choice
+
+    assert _inner_choice("Company Website", "Example Fab website \u203a", ["Example Fab website"]) == "Example Fab website"
+    assert _inner_choice("Job Board", "Job Board / Social Network \u203a", ["Indeed"]) is None
+    assert _inner_choice("LinkedIn", "Job Board / Social Network \u203a", ["Indeed", "LinkedIn"]) == "LinkedIn"
+
+
 def test_a_confirmation_drawn_a_few_seconds_after_submit_is_seen(srv):
     """Workday (live test 2, issue #112, note 19): both applications the person had the desk submit went
     in, and Workday showed "Application Submitted / Congratulations! Thank you for submitting your

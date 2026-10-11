@@ -212,10 +212,13 @@ def _inner_choice(value: Any, picked: str, inner: list[str], names: bool = False
     entry = choose_option(value, inner, names=names)
     if entry is not None:
         return entry
-    same = [o for o in inner if norm(_bare_choice(o)) == norm(_bare_choice(picked))]
+    # (never just any lone entry: "Job Board ›" opening ["Indeed"] isn't the profile's answer)
+    picked_name = norm(_bare_choice(picked))
+    same = [o for o in inner if norm(_bare_choice(o)) == picked_name]
     if len(same) == 1:
         return same[0]
-    return inner[0] if len(inner) == 1 else None
+    alike = [o for o in inner if picked_name and picked_name in norm(_bare_choice(o))]
+    return alike[0] if len(inner) == 1 and alike else None
 
 
 async def _covered(loc: Locator) -> bool:
@@ -1232,16 +1235,20 @@ class BrowserSession:
             per_box = len(field_ids) > 1
             for i, field_id in enumerate(field_ids):
                 loc = self._locator(page, field_id)
-                if not await loc.evaluate("el => el === el.ownerDocument.activeElement", timeout=FOCUS_TIMEOUT):
+                # (focus within its own document isn't enough: a frame keeps its activeElement after focus left it)
+                if not await loc.evaluate("el => el.ownerDocument.hasFocus() && el === el.ownerDocument.activeElement",
+                                          timeout=FOCUS_TIMEOUT):
                     try:
                         await loc.click(timeout=2000)
                     except PlaywrightTimeout:
                         await loc.focus(timeout=FOCUS_TIMEOUT)
-                if await loc.input_value(timeout=FOCUS_TIMEOUT):
+                if await loc.evaluate("el => !!el.value", timeout=FOCUS_TIMEOUT):
                     await loc.fill("", timeout=FOCUS_TIMEOUT)
                 await page.keyboard.type(code[i] if per_box else code, delay=60)
             await page.wait_for_timeout(150)
-            return [await self._locator(page, field_id).input_value(timeout=FOCUS_TIMEOUT) for field_id in field_ids]
+            return [await self._locator(page, field_id).evaluate(
+                "el => el.value !== undefined ? String(el.value) : (el.innerText || '')", timeout=FOCUS_TIMEOUT)
+                for field_id in field_ids]
 
     async def fill_secret(self, field_id: str, secret: str, site_ok: Callable[[str], bool] | None = None) -> None:
         """Type a secret into a password box, on a page `site_ok` accepts (by its frame's

@@ -1087,6 +1087,10 @@ def test_sponsorship_and_military_asked_in_other_words():
     case = resolve_field(f("Will you now or in the future require Example Fab to commence an immigration case in "
                            "order to employ you?", "select", options=["Yes", "No"]), p, {"company": "Example Fab"})
     assert case is not None and (case.rule, choose_option(case.value, ["Yes", "No"])) == ("sponsorship", "No")
+    # the same wording negated: someone who needs no sponsorship says yes to it
+    negated = resolve_field(f("I will not now or in the future require Example Fab to commence an immigration case in "
+                              "order to employ me.", "select", options=["Yes", "No"]), p, {"company": "Example Fab"})
+    assert negated is not None and choose_option(negated.value, ["Yes", "No"]) == "Yes", negated
     served = resolve_field(f("Do you have previous military experience?", "select", options=["Yes", "No"]), p)
     assert served is not None and (served.rule, choose_option(served.value, ["Yes", "No"])) == ("military", "No")
 
