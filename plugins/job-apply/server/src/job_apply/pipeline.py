@@ -86,6 +86,7 @@ _BOT_TITLE = re.compile(r"just a moment|attention required|access denied|pardon 
 # A bare "403 Forbidden" (Valleywise Health's postings, to the desk's browser) or "406 Not Acceptable"
 # (Deloitte's sign-in, to a headless browser): the site turns the browser away. There's nothing to
 # solve, so it holds nothing up: the person applies elsewhere
+_REFRESH_ASKED = re.compile(r"\bsomething went wrong\b.{0,200}\b(?:refresh|reload) (?:the|this) page\b", re.I | re.S)
 _TURNED_AWAY = re.compile(r"^\s*(?:403\s*)?forbidden\s*$|^\s*(?:406\s*)?not acceptable\s*$|"
                           r"^\s*your request has been blocked\.?\s*$", re.I)  # (Workday's, its title empty)
 # A posting that has closed: "The job posting you are looking for has expired or the position has
@@ -334,6 +335,7 @@ class Run:
     reset_asked: bool = False  # (once a job: a reset that didn't get in isn't asked for again)
     reset_from: str = ""  # the sign-in page a reset was asked from: back there once it's done elsewhere
     reset_waited: bool = False  # paused for the reset email (a Resume after that means it's done)
+    refreshed: bool = False  # reloaded once for a page that asked for it ("Please refresh the page")
     reset_no_mail: bool = False  # and none came in RESET_MAIL_WAIT: no account there, most likely, so one is made
     # The job's sign-ins pressed with the saved password, and which password that was (a digest): a Run
     # outlasts Resume and the queue, so these hold for the job, not for one pass at it
@@ -1107,8 +1109,12 @@ class Applier:
                 self._log(run, said)
             return False
         self._log(run, f"entered the code from your email ({_sent_from(found)})")
-        press = next((a for a in data.get("actions") or [] if not a.get("disabled")
-                      and _AFTER_CODE.match(a.get("text", "").strip())), None)
+        # one naming the code before a bare Continue: Edward Jones' BrassRing (live, Oct 2026) keeps its email
+        # step's Continue above "Verify Passcode", and a press of it sends another passcode and empties the boxes
+        after = [a for a in data.get("actions") or [] if not a.get("disabled")
+                 and _AFTER_CODE.match(a.get("text", "").strip())]
+        press = next((a for a in after if not re.match(r"^(continue|next)$", a["text"].strip(), re.I)),
+                     after[0] if after else None)
         made = press is None and (press := self._account_code_button(run, data)) is not None
         mine = made or (press is None and (press := await self._code_only_submit(data)) is not None)
         try:
@@ -1348,6 +1354,16 @@ class Applier:
                 return self._pause(run, "stuck", f"The application went on to {where} couldn't be reached, so the page "
                                    "didn't load. Press Resume to try again, or open the posting in your own browser to "
                                    "apply there.")
+            if (kind == "page" and not data.get("fields") and not run.refreshed and run.page is not None
+                    and _REFRESH_ASKED.search(text)):
+                # KLA's Workday right after its sign-in (live, Oct 2026): "Something went wrong. Please refresh
+                # the page and then try again." Done, once a job
+                run.refreshed = True
+                self._log(run, f"{_site(run, data)} said something went wrong and asked for the page to be "
+                          "refreshed, so I reloaded it")
+                with contextlib.suppress(Exception):
+                    await run.page.reload(wait_until="load")
+                continue
             refused = next((t for t in [data.get("title") or "", *(data.get("headings") or [])[:1]] if _TURNED_AWAY.search(t)), "")
             if kind == "page" and not data.get("fields") and refused:
                 refusal = re.sub(r"\s+", " ", refused).strip()

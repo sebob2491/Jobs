@@ -2214,20 +2214,23 @@ def test_a_reset_with_a_captcha_makes_the_account_instead(srv, monkeypatch, job_
     assert r.need == "email_code", (r.reason, r.log)  # its passcode: the inbox's, or the person's
 
 
-def test_brassrings_six_box_passcode_is_entered_from_the_inbox_and_verified(srv, monkeypatch, job_apply_home):
+@pytest.mark.parametrize("query", ["", "?stay"])
+def test_brassrings_six_box_passcode_is_entered_from_the_inbox_and_verified(srv, monkeypatch, job_apply_home, query):
     """Edward Jones' BrassRing (the live check's test identity, Oct 2026): its Create Account emails a
     passcode and asks for it in six boxes ("Enter 1st digit of your passcode" ... "Enter 6th digit of
     your passcode") and a "Verify Passcode" button. The desk paused for it and watched the inbox, but
     "Verify Passcode" isn't one of the buttons it presses after a code (Verify, Confirm, Continue, Next,
     each with "code", "email" or "account"), so the digits went in and the person had to press it. The
     code goes in a digit per box and Verify Passcode is pressed (and the log says the mail was in Spam, where
-    BrassRing's page says to look, when it was)."""
+    BrassRing's page says to look, when it was). Live (?stay), the passcode step is drawn below the email
+    step, whose Continue stays: the desk pressed that, which sent another passcode and emptied the boxes.
+    A button naming the code ("Verify Passcode") goes before a bare "Continue"."""
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
     saved_password(monkeypatch)
     as_test_identity(monkeypatch, job_apply_home)
     asked: list[str] = []
     inbox_with_code(monkeypatch, asked, spam=True)
-    job = srv.add_job(url=fixture_url("site/brassring-signin.html"), title="Senior Analyst",
+    job = srv.add_job(url=fixture_url("site/brassring-signin.html") + query, title="Senior Analyst",
                       company="Example Corp")["job"]
     applier = Applier(srv)
 
@@ -2243,7 +2246,7 @@ def test_brassrings_six_box_passcode_is_entered_from_the_inbox_and_verified(srv,
 
     r, did = run(go())
     assert did.get("accountEmail") == "sam.rivera@example.com", (did, r.log)
-    assert (did.get("passcode"), did.get("verifies")) == ("123456", 1), (did, r.log)
+    assert (did.get("passcode"), did.get("verifies"), did.get("accountPresses")) == ("123456", 1, 1), (did, r.log)
     assert "code" in asked and "link" not in asked, asked
     assert "entered the code from your email (sent from careers.example.com, in your Spam folder)" in r.log, r.log
 
@@ -2700,6 +2703,28 @@ def test_a_workday_account_is_said_made_only_once_its_sign_in_gets_in(srv, monke
     pressed = [line for line in r.log[:signed_in] if line.startswith("pressed \u201cCreate Account\u201d")]
     assert len(pressed) == 1 and "after ticking \u201cYes, I confirm that I have read the privacy notice.\u201d" in pressed[0]
     assert r.seen_form, (r.reason, r.log)
+
+
+def test_a_page_that_asks_to_be_refreshed_is_reloaded_once(srv, monkeypatch, job_apply_home):
+    """KLA's Workday, right after the desk signed in (live, Oct 2026): "Something went wrong. Please
+    refresh the page and then try again." The desk stopped there ("couldn't find the button that moves
+    this application on"). It reloads the page, once, says so, and goes on with the application."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    job = srv.add_job(url=fixture_url("site/workday-went-wrong.html"), title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    said = [line for line in r.log if "asked for the page to be refreshed, so I reloaded it" in line]
+    assert len(said) == 1 and r.seen_form and "went-wrong" not in r.url, (r.url, r.reason, r.log)
 
 
 def test_a_workday_sign_in_presses_the_cover_over_its_hidden_button(srv, monkeypatch, job_apply_home):
