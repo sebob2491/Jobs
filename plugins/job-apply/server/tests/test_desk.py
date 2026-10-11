@@ -1393,3 +1393,47 @@ def test_a_skipped_job_isnt_applied_to_until_undone_and_undo_elsewhere_changes_n
     assert [j for _, j in desk.applier.tasks] == [a, b]
     assert desk.applier.runs[b].status == "queued" and srv.get_job(b)["job"]["status"] == "saved"
     assert desk.applier.runs[sent].status == "submitted" and srv.get_job(sent)["job"]["status"] == "applied"
+
+
+def test_the_page_lists_my_applications_folds_an_idle_side_and_closes_a_tip(srv, monkeypatch):
+    """My applications lists each job sent in with where it stands; with nothing needing the person, being
+    worked on or done, one short card stands for the three; a tip closed stays closed; and an opening
+    without a location doesn't say so."""
+    from playwright.async_api import async_playwright
+
+    for i, (company, status) in enumerate([("Intel", "applied"), ("ASML", "rejected"), ("KLA", "saved")]):
+        job = srv.add_job(url=f"https://example.com/jobs/{i}", title="Technician", company=company)["job"]
+        srv.update_job(job["id"], status=status)
+    monkeypatch.setattr(config.Profile, "profile_gaps", lambda self: ["background: government"])
+    desk = Desk(srv)
+    desk.applier.start = lambda: None
+    desk.search.update(status="done", at=time.time())
+    assert sorted((a["company"], a["status"]) for a in desk.state()["applications"]) == [("ASML", "rejected"),
+                                                                                          ("Intel", "applied")]
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with async_playwright() as pw:
+                browser = await pw.chromium.launch(**launch_options())
+                page = await browser.new_page()
+                await page.goto(desk.url)
+                await page.wait_for_selector("#idle-card:not([hidden])")
+                assert await page.locator("#needs").is_hidden() and await page.locator("#work").is_hidden()
+                assert "location not given" not in await page.inner_text("#rows")
+                assert "(2)" in await page.inner_text("[data-filter=mine]")
+                await page.click("[data-filter=mine]")
+                rows = await page.inner_text("#rows")
+                assert "Intel" in rows and "Applied" in rows and "Rejected" in rows and "KLA" not in rows, rows
+                assert await page.locator("#apply").is_hidden()
+                assert "Fewer stops" in await page.inner_text("#notices")
+                await page.click("[data-act=dismiss]")
+                await page.reload()
+                await page.wait_for_selector("#idle-card:not([hidden])")
+                await page.wait_for_timeout(500)
+                assert "Fewer stops" not in await page.inner_text("#notices")
+                await browser.close()
+        finally:
+            await desk.stop()
+
+    run(go())
