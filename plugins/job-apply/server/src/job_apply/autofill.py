@@ -420,6 +420,18 @@ def _p(path: str) -> Getter:
     return lambda prof, job: prof.get(path)
 
 
+def _eeo_gender(prof: Profile, job: dict) -> Any:
+    """The profile's gender, its one-letter forms spelled out ("M" is "Male")."""
+    value = prof.get("eeo.gender")
+    return {"m": "Male", "f": "Female"}.get(norm(value), value) if isinstance(value, str) else value
+
+
+def _eeo_disability(prof: Profile, job: dict) -> Any:
+    """The profile's disability answer, "None" read as no disability."""
+    value = prof.get("eeo.disability")
+    return "No" if isinstance(value, str) and norm(value) in ("none", "no disabilities") else value
+
+
 def _city_state(prof: Profile, job: dict) -> Any:
     """"Where are you currently located?": the address's city and state ("Chandler, AZ")."""
     city, state = prof.get("personal.address.city"), prof.get("personal.address.state")
@@ -1258,13 +1270,13 @@ RULES: list[tuple[str, str, Getter, int | None, set[str] | None]] = [
      _previously_employed, None, None),  # (only about this employer: see _previously_employed)
     # voluntary self-identification
     ("sexual_orientation", r"sexual orientation|\blgbt", _p("eeo.sexual_orientation"), None, None),
-    ("gender", r"\bgender\b|\bsex\b", _p("eeo.gender"), None, None),
+    ("gender", r"\bgender\b|\bsex\b", _eeo_gender, None, None),
     ("hispanic", r"hispanic|latin[oa]", _p("eeo.hispanic_latino"), None, None),
     ("race", r"\brace\b|ethnicity|ethnic", _p("eeo.race"), None, None),
     ("veteran", r"veteran", _veteran, None, None),
     # self-identification only: "Can you perform the essential functions … with or without
     # accommodation?" and "Do you need an accommodation?" are other questions
-    ("disability", r"^(?!.*\b(essential function|accommodat|perform|able to)).*disabilit", _p("eeo.disability"), None, None),
+    ("disability", r"^(?!.*\b(essential function|accommodat|perform|able to)).*disabilit", _eeo_disability, None, None),
     ("pronouns", r"pronoun", _p("personal.pronouns"), None, None),
 ]
 

@@ -2009,3 +2009,25 @@ def test_a_questions_own_decline_box_is_ticked_for_a_profile_that_declines():
     # a decline box for something that isn't a self-identification question is left alone
     other = [{"id": "p", "kind": "checkbox", "label": "I decline to say my salary expectations", "value": False}]
     assert not plan_autofill(other, declines)["to_fill"]
+
+
+@pytest.mark.parametrize("disability", ["No", "None", "No disability", "I don't have a disability", "I do not have a disability"])
+def test_a_profile_without_a_disability_picks_the_no_choice(disability):
+    """Note 18 (live test 2, issue #112): a profile without a disability got Workday's "I do not want to answer".
+    However the profile words it ("None" was read as no answer), the form's "No" choice is picked, never its
+    decline."""
+    options = ["Yes, I have a disability, or have had one in the past",
+               "No, I do not have a disability and have not had one in the past", "I do not want to answer"]
+    field = {"kind": "checkbox_group", "label": "Please check one of the boxes below:*",
+             "section": "Voluntary Self-Identification of Disability", "options": options}
+    ans = resolve_field(field, Profile({"eeo": {"disability": disability}}))
+    assert ans is not None and ans.value == options[1], ans
+
+
+@pytest.mark.parametrize("gender, expected", [("M", "Male"), ("F", "Female"), ("Man", "Male"), ("Woman", "Female")])
+def test_a_profiles_gender_however_short_picks_its_choice(gender, expected):
+    """Note 18: gender left empty on one site. A profile's "M" or "F" is the list's Male or Female."""
+    field = {"kind": "listbox", "label": "Please select your gender.",
+             "options": ["Male", "Female", "I do not wish to self-identify"]}
+    ans = resolve_field(field, Profile({"eeo": {"gender": gender}}))
+    assert ans is not None and ans.value == expected, ans
