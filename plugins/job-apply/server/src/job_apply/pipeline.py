@@ -1366,7 +1366,7 @@ class Applier:
                     if run.reset_no_mail:
                         self._log(run, f"no password reset email came from {_site(run, data)} in "
                                   f"{RESET_MAIL_WAIT // 60} minutes, so I went back to make an account there")
-                        sign_ins["submitted"] = 1
+                        sign_ins["submitted"] = sign_ins["wants_account"] = 1
                     else:  # the saved password is the site's now, as the person was asked: one more sign-in
                         run.sign_in_tries = min(run.sign_in_tries, SIGN_IN_TRIES - 1)
                     continue
@@ -1388,7 +1388,7 @@ class Applier:
                 if asked == "paused":
                     return
                 if asked == "no_account":
-                    sign_ins["submitted"] = 1
+                    sign_ins["submitted"] = sign_ins["wants_account"] = 1
                     continue
             if (kind == "sign_in" and manage and sign_ins.get("made") and _VERIFY_EMAIL.search(said_exists)
                     and sum(f.get("kind") == "password" for f in data.get("fields") or []) == 1):
@@ -1410,7 +1410,7 @@ class Applier:
                 if asked == "paused":
                     return
                 if asked == "no_account":  # back on the sign-in page: its way to a new account, next
-                    sign_ins["submitted"] = 1
+                    sign_ins["submitted"] = sign_ins["wants_account"] = 1
                     continue
                 await self._bring_forward(run)
                 if done in ("prefilled", "filled"):
@@ -1744,6 +1744,14 @@ class Applier:
                     await self._bring_forward(run)
                     return self._pause(run, "bot_check", _BOT_CHECK_SAYS)
                 stalls += 1
+                if (kind == "page" and sign_ins.get("wants_account") and not run.accounts_tried
+                        and _may_manage_accounts() and await self._register_from_posting(run, looked)):
+                    # on its way to a new account (the sign-in page had no way to one: the job was opened
+                    # again), and the posting's Apply goes nowhere
+                    sign_ins.pop("wants_account")
+                    sign_ins["create_account"] = sign_ins.get("create_account", 0) + 1
+                    stalls = 0
+                    continue
                 problems = [e for e in clicked.get("errors") or [] if _ERRORISH.search(e)]
                 if problems or stalls >= 2:
                     # say what's wrong: Workday lists it as links ("Error-Email") and marks fields
@@ -2436,6 +2444,29 @@ class Applier:
             return
         self._log(run, f"{_site(run, data)}'s sign-in page{gone}, so I opened the job again")
         await self.srv.open_application(job_id=run.job_id)
+
+    async def _register_from_posting(self, run: Run, looked: tuple) -> bool:
+        """The desk is on its way to a new account at a job system (_back_to_sign_in opened the job again
+        for the sign-in page's way to one), and the posting's "Apply" went nowhere (Benchmark's Infor, live,
+        Oct 2026: once a sign-in was refused in the tab, Apply no longer opened the sign-in again). The
+        posting's own "Register" (or "Create Account") is the way instead, as the sign-in page's would have
+        been: pressed, and its form read and filled in like any Create Account. Only where the page is
+        still as it was before Apply was pressed (a slow Apply isn't one that went nowhere). True once
+        it's pressed."""
+        data, _ = await self._look()
+        way = _account_way(data.get("actions") or []) if _fingerprint(data) == looked else None
+        if way is None:
+            return False
+        try:
+            clicked = await self.srv.click(way["id"])
+        except KeyError:  # the page changed between looking and clicking
+            return False
+        if clicked.get("clicked") is False:
+            return False
+        run.page = self.srv.browser.current_tab or run.page
+        self._log(run, f"“Apply” on {_site(run, data)}'s posting went nowhere, so I pressed its "
+                  f"“{way['text'].strip()}” to make an account there instead")
+        return True
 
     async def _await_reset_email(self, run: Run, data: dict[str, Any]) -> None:
         watched = self.mail_login() is not None

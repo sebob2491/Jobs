@@ -2331,13 +2331,14 @@ INFOR = "https://css-benchmark-prd.inforcloudsuite.com"
 INFOR_POSTING = INFOR + "/hcm/Jobs/form/JobPosting.JobPostingDisplay?csk.JobBoard=EXTERNAL&csk.HROrganization=1"
 
 
-async def _infor_site(srv) -> None:
+async def _infor_site(srv, posting: str = "infor-posting.html", refused: bool = False) -> None:
     """Benchmark's Infor board from the hand-written pages (site/infor-*.html, and its New Account
     Registration: register-picture-code.html) at its own address, so its saved password is Infor's as
     it is live; routed: nothing reaches the real site. Infor's sign-in and its reset are both at
-    /sso/SSOServlet."""
+    /sso/SSOServlet. `posting`: which of its postings (infor-posting-refused.html's Apply goes nowhere
+    once a sign-in was refused in the tab); `refused`: one was already, as every tab opens."""
     site = Path(__file__).parent / "fixtures" / "site"
-    pages = {"/hcm/Jobs/form/JobPosting.JobPostingDisplay": "infor-posting.html", "/sso/SSOServlet": "infor-signin.html",
+    pages = {"/hcm/Jobs/form/JobPosting.JobPostingDisplay": posting, "/sso/SSOServlet": "infor-signin.html",
              "/hcm/Jobs/form/Candidate.SelfRegistrationForm": "register-picture-code.html"}
 
     async def handler(route):
@@ -2348,6 +2349,9 @@ async def _infor_site(srv) -> None:
 
     await srv.browser.page()
     await srv.browser._ctx.route(INFOR + "/**", handler)
+    if refused:
+        await srv.browser._ctx.add_init_script(f"if (location.origin === '{INFOR}' && !sessionStorage.getItem("
+                                               "'infor.logins')) sessionStorage.setItem('infor.logins', '1');")
 
 
 def test_infors_sign_in_opened_again_by_its_address_is_reached_through_the_posting(srv, monkeypatch, job_apply_home):
@@ -2387,6 +2391,75 @@ def test_infors_sign_in_opened_again_by_its_address_is_reached_through_the_posti
            "job again" in log, log
     assert "your saved password didn't sign in, so I opened Create Account" in log, log
     assert not any(line.startswith(("pressed “Submit”", "created your account")) for line in r.log), log
+
+
+def test_infors_register_is_the_way_to_an_account_when_the_postings_apply_goes_nowhere(srv, monkeypatch, job_apply_home):
+    """Benchmark's Infor board again (live, Oct 10 2026): the desk had gone back for an account, found Infor's
+    sign-in opened by its address bare, and opened the job again, but this time the posting's "Apply" went
+    nowhere (once a sign-in was refused in the tab, Infor's session keeps Apply from opening the sign-in
+    again), and the desk stopped on "The page didn't move on". The posting's header has "Register", the
+    board's New Account Registration: the desk presses that instead (it was on its way to a new account),
+    fills it in from the profile, and leaves its picture code and its Submit to the person."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setenv("JOB_APPLY_SECRET_INFOR_PASSWORD", "not-a-real-password")
+    manage_accounts(job_apply_home)
+    watched_inbox(monkeypatch)
+    job = srv.add_job(url=INFOR_POSTING, title="Field Service Technician", company="Benchmark Electronics")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        await _infor_site(srv, posting="infor-posting-refused.html")
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r, await r.page.evaluate("() => [window.result ? window.result() : location.href, window.created, "
+                                            "sessionStorage.getItem('infor.logins')]")
+        finally:
+            await applier.stop()
+
+    r, (filled, created, logins) = run(go())
+    assert filled == {"first": "Sam", "last": "Rivera", "email": "sam.rivera@example.com", "same": True, "code": "",
+                      "upload": "", "files": 0, "nores": False}, (filled, r.reason, r.log)
+    assert (created, logins) == (0, "1"), (created, logins, r.log)  # (one sign-in, never a second; nothing sent)
+    assert r.need == "sign_in" and "Create Account form" in r.reason and "CAPTCHA is yours to solve" in r.reason, r.reason
+    log = "\n".join(r.log)
+    assert "Infor's sign-in page, opened again, had no way to a new account or a password reset, so I opened the " \
+           "job again" in log, log
+    assert "“Apply” on Infor's posting went nowhere, so I pressed its “Register” to make an account there instead" \
+           in log, log
+    assert not any(line.startswith(("pressed “Submit”", "created your account")) for line in r.log), log
+
+
+@pytest.mark.parametrize("settings", ["on", "off", "practice"])
+def test_a_postings_register_is_not_pressed_where_the_desk_is_not_making_an_account(srv, monkeypatch, job_apply_home,
+                                                                                    settings):
+    """A posting whose "Apply" goes nowhere, on a first look at it (no sign-in refused, no account being made
+    for: the desk only goes in through Apply), is stopped on as before, whatever the settings: its header's
+    "Register" is never pressed, with settings.manage_accounts off or in practice mode (which makes no
+    account) or on."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setenv("JOB_APPLY_SECRET_INFOR_PASSWORD", "not-a-real-password")
+    if settings != "off":
+        manage_accounts(job_apply_home, submit_mode="dry_run" if settings == "practice" else "review")
+    watched_inbox(monkeypatch)
+    job = srv.add_job(url=INFOR_POSTING, title="Field Service Technician", company="Benchmark Electronics")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        await _infor_site(srv, posting="infor-posting-refused.html", refused=True)
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r, r.page.url
+        finally:
+            await applier.stop()
+
+    r, url = run(go())
+    assert r.need == "stuck" and "The page didn't move on" in r.reason, (r.need, r.reason, r.log)
+    assert urlparse(url).path == "/hcm/Jobs/form/JobPosting.JobPostingDisplay", (url, r.log)  # (still on the posting)
+    assert not any("Register" in line or "make an account" in line for line in r.log), r.log
 
 
 # Kforce's Taleo career section, on Kforce's own address (data/lists/phoenix-metro.yaml)

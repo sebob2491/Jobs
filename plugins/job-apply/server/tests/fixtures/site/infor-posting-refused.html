@@ -1,0 +1,29 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Job Posting / Candidate Experience</title></head>
+<body>
+<!-- like infor-posting.html, as Benchmark's Infor board answered once a sign-in had been refused in
+     the tab (live, Oct 10 2026): the header shows "Sign In" and "Register" (the board's New Account
+     Registration: register-picture-code.html), and "Apply" goes nowhere, as the session keeps it from
+     opening the sign-in again. infor-signin.html counts the sign-ins pressed in the tab in
+     sessionStorage's infor.logins; with none, "Apply" goes on to Infor's sign-in as in
+     infor-posting.html. Served by the tests at Benchmark's address (routed: nothing goes to the
+     real site). -->
+<header>Candidate Experience
+  <a href="/sso/SSOServlet?_action=LOGINREQD&_logininst=header&_serviceName=HCM.HCMAPP.JOBS">Sign In</a>
+  <a href="/hcm/Jobs/form/Candidate.SelfRegistrationForm?action=CreateJobsLoginCasual&csk.JobBoard=EXTERNAL">Register</a>
+  <button type="button" aria-label="Toggle Navigation">&#9776;</button></header>
+<h1>Field Service Technician - 10001</h1>
+<p>Arizona:Tempe | Manufacturing / Operations | Full Time</p>
+<button type="button" id="apply">Apply</button> <button type="button">Save</button>
+<h2>Description</h2>
+<p>Installs, maintains and repairs production equipment at customer sites.</p>
+<script>
+  document.getElementById('apply').addEventListener('click', () => {
+    if (sessionStorage.getItem('infor.logins')) return;  // a sign-in was refused here: nothing happens
+    location.href = '/sso/SSOServlet?_action=LOGINREQD&_logininst=' + Math.random().toString(36).slice(2)
+      + '&_serviceName=HCM.HCMAPP.JOBS';
+  });
+</script>
+</body>
+</html>
