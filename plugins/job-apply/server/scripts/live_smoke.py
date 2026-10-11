@@ -1126,7 +1126,9 @@ async def account_form() -> dict[str, Any]:
         return {"error": f"{type(e).__name__}: {str(e)[:200]}"}
 
 
-_NO_MATCH = re.compile(r"nothing in its list matched '(.+)'")
+# (and one it picked from that didn't take the pick: TEL's Workday "How Did You Hear About Us?", Oct 11)
+_NO_MATCH = re.compile(r"nothing in its list matched '(.+)'|Picked '(.+?)' but the field didn't take it|"
+                       r"'(.+?)' doesn't match any suggestion")
 # A search box the desk couldn't pick from: the list it shows once a value is typed. Its
 # markup with only the attributes that say what each part is (the page holds only the fake
 # applicant's details), and how many of each role are showing.
@@ -1148,14 +1150,17 @@ _LIST_JS = r"""
   };
   const shown = (n) => n.getClientRects().length > 0 && getComputedStyle(n).visibility !== 'hidden';
   const ref = el.getAttribute('aria-controls') || el.getAttribute('aria-owns') || '';
-  const box = ref ? document.getElementById(ref.split(/\s+/)[0]) : null;
+  // (a Workday prompt names no list: its open one is the active list container)
+  const box = (ref ? document.getElementById(ref.split(/\s+/)[0]) : null)
+    || [...document.querySelectorAll('[data-automation-id="activeListContainer"], [role="listbox"]')].find(shown) || null;
   const roles = {};
   for (const n of (box || document).querySelectorAll('[role]')) {
     if (shown(n)) roles[n.getAttribute('role')] = (roles[n.getAttribute('role')] || 0) + 1;
   }
   return { controls: ref, box: box ? short(box).slice(0, 3000) : null, box_shown: box ? shown(box) : null,
            roles, value: el.value, expanded: el.getAttribute('aria-expanded'),
-           active: el.getAttribute('aria-activedescendant') };
+           active: el.getAttribute('aria-activedescendant'),
+           around: short(el.closest('[data-automation-id="multiSelectContainer"]') || el.parentElement).slice(0, 1500) };
 }
 """
 
@@ -1177,14 +1182,24 @@ async def list_probe(questions: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 await loc.scroll_into_view_if_needed(timeout=5000)
                 await loc.evaluate("el => el.focus()")
                 await loc.fill("")
-                await loc.press_sequentially(m.group(1), delay=80)
+                typed = m.group(1) or m.group(2) or m.group(3)
+                await loc.press_sequentially(typed, delay=80)
+                if m.group(2) or m.group(3):  # (a Workday prompt lists its matches after Enter)
+                    await loc.press("Enter")
                 await asyncio.sleep(3)
                 info = await page.evaluate(_LIST_JS, str(q["id"])) or {}
                 await print_shot(f"list for {q.get('label')}", page)
+                if m.group(2):  # the entry pressed, and the box as it is a moment after (a pill, a group's list)
+                    entry = page.get_by_role("option", name=typed, exact=True).first
+                    if await entry.count():
+                        await entry.click(timeout=5000)
+                        await asyncio.sleep(2)
+                        info["after_click"] = await page.evaluate(_LIST_JS, str(q["id"])) or {}
+                        await print_shot(f"after picking {typed!r}", page)
                 await page.keyboard.press("Escape")
             except Exception as e:  # noqa: BLE001
                 info = {"error": f"{type(e).__name__}: {str(e)[:200]}"}
-            out.append({"label": q.get("label"), "typed": m.group(1), **info})
+            out.append({"label": q.get("label"), "typed": m.group(1) or m.group(2) or m.group(3), **info})
     except Exception as e:  # noqa: BLE001 - a probe; the run's record stands without it
         out.append({"error": f"{type(e).__name__}: {str(e)[:200]}"})
     return out

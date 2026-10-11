@@ -458,6 +458,23 @@ def test_workday_date_parts_read_back_as_typed_whatever_the_order(srv):
     assert shown == ["10/2019", "03/2021", "10/09/2026"], shown
 
 
+def test_a_workday_date_whose_current_part_stays_put_gets_its_month(srv):
+    """Intel's Workday (nightly live check, Oct 11): the date's current part stays where it was when focus
+    leaves the date, and is marked so; with the year typed first, the month's digits went into the year and the
+    month read MM ("Workday didn't take your profile's answer for ... (From)"). The part typed first is made
+    current with a press of its display whenever the date marks another part current."""
+    run(srv.browser.goto(fixture_url("site/workday-date-sections.html") + "?sticky"))
+    by = {(f.get("section") or f["label"], f.get("sublabel")): f["id"]
+          for f in run(srv.inspect_form(include_dropdown_options=False))["fields"]}
+    values = [(("From", "Year"), "2021"), (("From", "Month"), "3"), (("To", "Year"), "2023"), (("To", "Month"), "11")]
+    out = run(srv.fill_form([{"id": by[key], "value": value} for key, value in values]))
+    assert all(r.get("ok") for r in out["results"]), out["results"]
+    page = run(srv.browser.page())
+    shown = run(page.evaluate("() => [...document.querySelectorAll('[role=group]')].map((g) => "
+                              "[...g.querySelectorAll('[aria-hidden=true]')].map((d) => d.textContent).join('/'))"))
+    assert shown[:2] == ["03/2021", "11/2023"], shown
+
+
 def test_each_jobs_dates_go_in_its_own_block(srv):
     """A Workday site's dates are each a fieldset of their own, with each part's "MM" or "YYYY"
     drawn over its box: the desk filled every job's title, company and description and left all
