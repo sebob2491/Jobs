@@ -1343,7 +1343,14 @@ class BrowserSession:
             if _desk_file(path):
                 raise PermissionError(f"{path.name} is one of the desk's own files (settings, passwords, answers), "
                                       "not a document to upload")
+            # Once a page: UKG Pro (Nikon's, live run 13) empties its upload box once it has the file, so it read as
+            # never uploaded, and each upload set its resume reading going again, which emptied Address 1 and Zip
+            # after they were filled. Remembered in the page itself, so a reloaded page (its form reset) gets it again
+            key = f"{field.get('label') or ''}|{path.name}"
+            if await loc.evaluate("(el, k) => !!(window.__jaUploads || {})[k]", key):
+                return "already uploaded on this page"
             await loc.set_input_files(str(path))
+            await loc.evaluate("(el, k) => { (window.__jaUploads = window.__jaUploads || {})[k] = true; }", key)
             return f"uploaded {path.name}"
         if kind == "checkbox":
             want = value if isinstance(value, bool) else bool(polarity(value))
