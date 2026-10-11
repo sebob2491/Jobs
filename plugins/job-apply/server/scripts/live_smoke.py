@@ -846,12 +846,19 @@ async def main() -> int:
                     help="with --test-identity: at every employer on the semiconductor-az (technician jobs) and "
                          "phoenix-metro (HR jobs) lists, not only test_identity_employers.yaml's (the owner's call, "
                          "Oct 11)")
+    ap.add_argument("--machine", default="",
+                    help="with --test-identity: M/N, this machine's share of the run on N machines at once (0-based): "
+                         "its groups are the M-th of every N of live_identity.arrange's, so a code-sending system's "
+                         "employers stay in one group on one machine")
     ap.add_argument("--test-identity", action="store_true",
                     help="with --pipeline: apply as the test identity (LIVE_TEST_EMAIL, LIVE_TEST_EMAIL_PASSWORD and "
                          "LIVE_TEST_SITE_PASSWORD; scripts/TEST_IDENTITY.md) at the employers in "
                          "scripts/test_identity_employers.yaml: it makes accounts and reads their emailed codes, "
                          "and never submits")
     args = ap.parse_args()
+    if args.machine and not args.test_identity:
+        print("--machine goes with --test-identity. Nothing was run.", file=sys.stderr)
+        return 2
     if args.everywhere and not args.test_identity:
         print("--everywhere goes with --test-identity. Nothing was run.", file=sys.stderr)
         return 2
@@ -883,10 +890,15 @@ async def main() -> int:
     if args.shard:
         i, n = (int(x) for x in args.shard.split("/"))
         if TEST_IDENTITY:  # its groups keep a system's employers together (live_identity.arrange)
-            mine = set(live_identity.arrange(EMPLOYERS, n)[i])
+            m, machines = (int(x) for x in (args.machine or "0/1").split("/"))
+            mine = set(live_identity.arrange(EMPLOYERS, n * machines)[m + i * machines])
             companies = [c for c in companies if c["name"] in mine]
         else:
             companies = companies[i::n]
+    elif TEST_IDENTITY and args.machine:  # one group on this machine
+        m, machines = (int(x) for x in args.machine.split("/"))
+        mine = set(live_identity.arrange(EMPLOYERS, machines)[m])
+        companies = [c for c in companies if c["name"] in mine]
     if args.pipeline:
         if args.fake_passwords and not TEST_IDENTITY:  # (the test identity's own passwords are in place)
             from job_apply.pipeline import DESK_PASSWORDS
@@ -1417,6 +1429,7 @@ async def parallel_main(args: argparse.Namespace) -> int:
               *(["--fake-passwords"] if args.fake_passwords and not args.test_identity else []),
               *(["--test-identity"] if args.test_identity else []),  # (its inbox and passwords: in the environment)
               *(["--everywhere"] if args.everywhere else []),
+              *(["--machine", args.machine] if args.machine else []),
               *(["--lists", args.lists] if args.lists else []), "--role", args.role]
     children = [await asyncio.create_subprocess_exec(
         sys.executable, __file__, *passed, "--shard", f"{i}/{n}", "--out", str(args.out / f"shard-{i}"),

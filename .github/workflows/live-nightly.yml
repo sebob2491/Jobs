@@ -50,9 +50,9 @@ permissions:
 
 jobs:
   check:
-    name: ${{ matrix.check }} check
+    name: ${{ matrix.slot || matrix.check }} check
     runs-on: ubuntu-latest
-    timeout-minutes: ${{ matrix.check == 'accounts' && 150 || 45 }}
+    timeout-minutes: ${{ matrix.check == 'accounts' && 100 || 45 }}
     strategy:
       fail-fast: false  # each check reports on its own; one that fails leaves its employers' last results
       matrix:
@@ -70,9 +70,20 @@ jobs:
           - check: search  # whether each phoenix-metro employer's search works
             args: --lists phoenix-metro --parallel 4
             minutes: 30
-          - check: accounts  # the test identity, its accounts made, at every employer on both lists (the owner's call, Oct 11)
-            args: --pipeline --test-identity --everywhere --parallel 4
-            minutes: 140
+          # the test identity, its accounts made, at every employer on both lists (the owner's call, Oct 11), on three
+          # machines at once, four groups each (a code-sending system's employers stay in one group: one inbox)
+          - check: accounts
+            slot: accounts-0
+            args: --pipeline --test-identity --everywhere --parallel 4 --machine 0/3
+            minutes: 90
+          - check: accounts
+            slot: accounts-1
+            args: --pipeline --test-identity --everywhere --parallel 4 --machine 1/3
+            minutes: 90
+          - check: accounts
+            slot: accounts-2
+            args: --pipeline --test-identity --everywhere --parallel 4 --machine 2/3
+            minutes: 90
     defaults:
       run:
         working-directory: plugins/job-apply/server
@@ -116,6 +127,7 @@ jobs:
         timeout-minutes: ${{ matrix.minutes }}
         env:
           CHECK: ${{ matrix.check }}
+          SLOT: ${{ matrix.slot || matrix.check }}
           ARGS: ${{ matrix.args }}
           COMPANIES: ${{ github.event.inputs.companies }}
           # the test identity's inbox and passwords, for the accounts check only (its inbox's address
@@ -126,25 +138,25 @@ jobs:
           LIVE_TEST_SITE_PASSWORD: ${{ matrix.check == 'accounts' && secrets.LIVE_TEST_SITE_PASSWORD || '' }}
         run: |
           set -o pipefail
-          mkdir -p "live-$CHECK"
+          mkdir -p "live-$SLOT"
           # (ARGS unquoted: it's the matrix's own list of options)
-          uv run --frozen python scripts/live_smoke.py $ARGS ${COMPANIES:+--companies "$COMPANIES"} --out "live-$CHECK" 2>&1 \
-            | tee "live-$CHECK/run.log"
+          uv run --frozen python scripts/live_smoke.py $ARGS ${COMPANIES:+--companies "$COMPANIES"} --out "live-$SLOT" 2>&1 \
+            | tee "live-$SLOT/run.log"
       - name: Note how it ended
         if: always()
         env:
-          CHECK: ${{ matrix.check }}
+          SLOT: ${{ matrix.slot || matrix.check }}
           READY: ${{ steps.setup.outputs.ready }}
           OUTCOME: ${{ steps.run.outcome }}
         run: |
-          mkdir -p "live-$CHECK"
+          mkdir -p "live-$SLOT"
           # not_set_up: the accounts check without its secrets, which the compare job leaves out
-          if [ "$READY" = false ]; then echo not_set_up; else echo "$OUTCOME"; fi > "live-$CHECK/outcome"
+          if [ "$READY" = false ]; then echo not_set_up; else echo "$OUTCOME"; fi > "live-$SLOT/outcome"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: live-${{ matrix.check }}
-          path: plugins/job-apply/server/live-${{ matrix.check }}
+          name: live-${{ matrix.slot || matrix.check }}
+          path: plugins/job-apply/server/live-${{ matrix.slot || matrix.check }}
           retention-days: 7
 
   compare:
@@ -184,6 +196,18 @@ jobs:
           args=(--issues live-compare/issues.json --title "$ISSUE_TITLE" --run-url "$RUN_URL"
                 --body-out live-compare/body.md --comment-out live-compare/comment.md
                 --github-output "$GITHUB_OUTPUT")
+          # the accounts check's machines, as one check: their logs one after another; finished only if all did,
+          # not set up if none was
+          if ls -d live-accounts-* > /dev/null 2>&1; then
+            mkdir -p live-accounts
+            cat live-accounts-*/run.log > live-accounts/run.log 2>/dev/null || true
+            outcomes="$(cat live-accounts-*/outcome 2>/dev/null | sort -u | tr '\n' ' ')"
+            case "$outcomes" in
+              "success ") echo success ;;
+              "not_set_up ") echo not_set_up ;;
+              *) echo failure ;;
+            esac > live-accounts/outcome
+          fi
           unfinished=()
           for check in pipeline hr search accounts; do  # (finance: paused)
             outcome="$(cat "live-$check/outcome" 2>/dev/null)"

@@ -257,6 +257,18 @@ def test_its_groups_keep_a_code_sending_systems_employers_together():
     assert by_name(employers)["ASML"] == "workday"  # (asml.com's own search; its Apply opens Workday)
 
 
+def test_three_machines_of_four_groups_run_every_group_once():
+    """The nightly's accounts check runs on three machines at once, four groups each (--machine M/3,
+    --parallel 4): machine M's group i is arrange's group M + 3i, so every group runs once, on one machine, and
+    a code-sending system's employers stay in one group there."""
+    employers = li.everywhere_employers()
+    groups = li.arrange(employers, 12)
+    taken = sorted(m + i * 3 for m in range(3) for i in range(4))
+    assert taken == list(range(12))
+    assert sorted(n for g in groups for n in g) == sorted(e["name"] for e in employers)
+    assert max(len(g) for g in groups) <= 9, [len(g) for g in groups]  # (about a third of the time 4 groups take)
+
+
 def by_name(employers):
     return {e["name"]: e["system"] for e in employers}
 

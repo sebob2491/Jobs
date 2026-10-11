@@ -42,6 +42,7 @@ NEW_TAB_WAIT = 4  # seconds to wait for a tab opened late by a click before call
 ONCE_SETTLE = 1.0  # seconds after filling the person's answers before checking they stayed in
 MAX_STEPS = 15
 LATE_BUTTONS_WAIT = 10  # seconds for a page's buttons to be drawn
+SIGN_IN_SETTLE = 10  # seconds a sign-in sent, its form still on show, may take before it counts as refused
 STEP_SAVE_WAIT = 20  # for a step pressed three times that's still saving (KLA's Workday), before it counts as stuck
 STEP_LOAD_WAIT = 30  # for a step still loading its questions, its loading dots on show (KLA's Workday)
 BLANK_PAGE_WAIT = 30  # for a page with nothing on it yet to draw (Infineon's application, now and then)
@@ -2945,6 +2946,20 @@ class Applier:
                 self._log(run, f"{what} “{_short(q.get('label') or '')}” for you (settings.accept_notices)")
         return [q for q in pending if q["id"] not in done]
 
+    async def _signing_in_still(self) -> bool:
+        """After a sign-in was sent, its form still on show and nothing said wrong: a site that takes a moment
+        to sign in (Intel's and TEL's Workday took a few seconds, nightly live check Oct 11). True when the
+        password box goes within SIGN_IN_SETTLE seconds: the sign-in went through."""
+        deadline = time.monotonic() + SIGN_IN_SETTLE
+        while time.monotonic() < deadline:
+            await asyncio.sleep(1)
+            data, _ = await self._look()
+            if data.get("errors"):
+                return False
+            if not any(f.get("kind") == "password" and not _code_box(f) for f in data.get("fields") or []):
+                return True
+        return False
+
     async def _sign_in(self, run: Run, data: dict[str, Any], tried: dict[str, int], details: bool = True,
                        reset_first: bool = False) -> str | None:
         """With the profile email and a stored <ats>_password (if the person saved one):
@@ -2989,6 +3004,11 @@ class Applier:
         # Where the way to a new account led: a form with one password box (UKG Pro's "Create
         # your account") is the new account's, as it no longer offers a way to one.
         signing_up = len(passwords) == 1 and bool(tried.get("create_account")) and create is None
+        if (len(passwords) == 1 and tried.get("submitted") and not signing_up and not data.get("errors")
+                and run.sign_in_tries > 0 and not tried.get("settled")):
+            tried["settled"] = 1  # (once a job, and only after a sign-in the desk sent itself)
+            if await self._signing_in_still():
+                return "submitted"  # it was only slow (Intel's and TEL's Workday, nightly live check Oct 11)
         if len(passwords) == 1 and (tried.get("submitted") or run.sign_in_tries >= SIGN_IN_TRIES) and not signing_up:
             # Signed in once already and still asked to: the password didn't get in. Trying it
             # again won't help (and can lock an account: the job's sign-ins are counted across

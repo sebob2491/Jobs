@@ -5807,6 +5807,32 @@ def test_a_schools_missing_degree_is_asked_for_as_a_degree_never_as_dates(srv):
     assert rest == []
 
 
+def test_a_sign_in_that_takes_a_moment_is_waited_for_not_taken_for_a_refused_password(srv, monkeypatch, job_apply_home):
+    """Intel's and TEL's Workday (nightly live check, Oct 11, the test identity's second visit): the saved password
+    was the account's, but the site took a few seconds to sign in, its form still on show. The desk took that for a
+    refused password, opened the password reset, found the application instead and stopped ("opened its password
+    reset, which isn't one I can fill in"). A sign-in whose form is still there is waited for a moment first."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    saved_password(monkeypatch)
+    manage_accounts(job_apply_home)
+    job = srv.add_job(url=fixture_url("site/signin-forgot.html") + "?late=3000", title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), timeout=90, about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    log = "\n".join(r.log)
+    assert r.seen_form and "signin" not in r.url, (r.url, r.reason, r.log)
+    assert "password reset" not in log and "didn't sign in" not in log and "Create Account" not in log, log
+
+
 WORKDAY_DEGREES = ["High School", "GED", "Associates", "Bachelors", "Masters", "Doctorate", "PH.D"]
 
 
