@@ -114,6 +114,9 @@
   const bump = (k) => put(k, got(k, 0) + 1);
 
   $('opening').hidden = !q.has('marketing');
+  // ?long: the link's words as Amkor's older SuccessFactors site has them (nightly live check, Oct 11), longer
+  // than the form reader took a button's to be
+  if (q.has('long')) $('dataPrivacyId').textContent = 'Please read and accept the data privacy statement to proceed.';
   const hint = () => {
     const pw = $('fbclc_pwd').value, again = $('fbclc_pwdConf').value;
     $('pwHint').textContent = pw && again ? (pw === again ? 'Password accepted; Password matches' : 'Passwords do not match') : '';

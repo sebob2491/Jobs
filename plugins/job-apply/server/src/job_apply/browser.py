@@ -183,6 +183,16 @@ DATE_LIKE_JS = """
 """
 
 
+# Does this part's date mark another of its parts as the current one (Workday's section with tabindex 0)?
+_ANOTHER_PART_CURRENT_JS = """
+(el) => {
+  const section = el.parentElement, group = el.closest('[role="group"]');
+  if (!section || !group || section.getAttribute('tabindex') === '0') return false;
+  return [...group.querySelectorAll('[tabindex="0"]')].some((s) => s !== section && s.querySelector('[role="spinbutton"]'));
+}
+"""
+
+
 # A date's parts (Workday's MM / DD / YYYY spinbuttons), in order: those in the nearest box around this one
 # that holds more than one (its date), up to three; this one alone otherwise. Marked for the locator, with
 # this one as "mine"; how many there are.
@@ -1441,9 +1451,11 @@ class BrowserSession:
             for i in range(start, mine + 1):
                 part = parts.nth(i)
                 display = part.locator("xpath=preceding-sibling::*[@aria-hidden='true'][1]")
-                if i == start and start > 0 and await display.count():
-                    # a later part with an earlier one empty: Workday's display over it is pressed, which makes it
-                    # the date's current part (focus alone leaves the first part current)
+                if i == start and await display.count() and (start > 0 or await part.evaluate(_ANOTHER_PART_CURRENT_JS)):
+                    # a later part with an earlier one empty, or a date that marks another of its parts current
+                    # (Intel's keeps it where it was when focus left the date, nightly live check Oct 11: the month
+                    # typed after the year went into the year): Workday's display over it is pressed, which makes it
+                    # the date's current part (focus alone leaves the current part as it is)
                     with contextlib.suppress(PlaywrightError, PlaywrightTimeout):
                         await display.click(timeout=2000)
                 if not await part.evaluate("el => el === el.ownerDocument.activeElement"):
