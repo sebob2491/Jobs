@@ -2063,7 +2063,8 @@ def _own_website(value: Any, options: list[str], job: dict) -> str | None:
     if len(sites) > 1:  # "ONTO Website" over "Other Website": the one naming the employer
         sites = [o for o in sites if employer & set(norm(o).split())] or sites
     if not sites:  # no website among them, but the employer itself (ASML's "ASML", nightly live check Oct 11)
-        sites = [o for o in options if norm(o) and set(norm(o).split()) <= employer]
+        # (its whole name, never a word of it: "Texas" isn't Texas Instruments)
+        sites = [o for o in options if norm(o) and set(norm(o).split()) == employer]
     return sites[0] if len(sites) == 1 else None
 
 

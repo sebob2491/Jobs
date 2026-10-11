@@ -3005,8 +3005,10 @@ class Applier:
         # your account") is the new account's, as it no longer offers a way to one.
         signing_up = len(passwords) == 1 and bool(tried.get("create_account")) and create is None
         if (len(passwords) == 1 and tried.get("submitted") and not signing_up and not data.get("errors")
-                and await self._signing_in_still()):
-            return "submitted"  # it was only slow (Intel's and TEL's Workday, nightly live check Oct 11)
+                and run.sign_in_tries > 0 and not tried.get("settled")):
+            tried["settled"] = 1  # (once a job, and only after a sign-in the desk sent itself)
+            if await self._signing_in_still():
+                return "submitted"  # it was only slow (Intel's and TEL's Workday, nightly live check Oct 11)
         if len(passwords) == 1 and (tried.get("submitted") or run.sign_in_tries >= SIGN_IN_TRIES) and not signing_up:
             # Signed in once already and still asked to: the password didn't get in. Trying it
             # again won't help (and can lock an account: the job's sign-ins are counted across

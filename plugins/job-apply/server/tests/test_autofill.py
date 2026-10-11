@@ -388,6 +388,8 @@ def test_company_website_is_the_employers_own_site():
     prompt = {**f("How Did You Hear About Us?*", "combobox", options=asml), "search": True}
     assert resolve_field(prompt, p, {"company": "ASML"}).value == "ASML"
     assert resolve_field(prompt, p, {"company": "Intel"}).value != "ASML"
+    texas = {**prompt, "options": ["Texas", "Events", "Job Board"]}
+    assert resolve_field(texas, p, {"company": "Texas Instruments"}).value != "Texas"  # a word of the name isn't it
     p.data["preferences"]["how_did_you_hear"] = "LinkedIn"
     assert resolve_field(heard, p, {"company": "Onto Innovation"}) is None  # not on the list: the person picks
     # unless the list is a Workday search prompt's top level: then the fill searches for it
