@@ -1532,6 +1532,22 @@ def no_choice_for_no_degree(field: dict, prof: Profile) -> bool:
     return all(choose_option(words, field["options"]) is None for words in {said, NO_DEGREE} if words)
 
 
+def degree_not_listed(field: dict, prof: Profile) -> str | None:
+    """The profile's degree for a school whose Degree list has no choice for it (a Workday site's list was
+    Certificate, Foundation, Associate, Bachelor ... Some College, No degree, with no high school or GED:
+    live test 2, issue #112, note 16), which isn't the profile missing it. That degree, else None."""
+    slot = _entry_slot(field, prof)
+    if slot is None or slot[0] != "education_history" or slot[3] != "degree" or not field.get("options"):
+        return None
+    _, n, entries, _ = slot
+    if not 0 < n <= len(entries):
+        return None
+    said = str(entries[n - 1].get("degree") or "").strip()
+    if not said or no_choice_for_no_degree(field, prof):
+        return None
+    return said if choose_option(said, field["options"]) is None else None
+
+
 def _resolve_entry(field: dict, prof: Profile) -> tuple[bool, Answer | None]:
     """(handled, answer) for fields inside a numbered block like "Work Experience 2"."""
     slot = _entry_slot(field, prof)

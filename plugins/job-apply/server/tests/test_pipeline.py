@@ -5707,6 +5707,30 @@ def test_a_schools_missing_degree_is_asked_for_as_a_degree_never_as_dates(srv):
 WORKDAY_DEGREES = ["High School", "GED", "Associates", "Bachelors", "Masters", "Doctorate", "PH.D"]
 
 
+def test_a_degree_list_without_the_profiles_degree_says_so_not_that_the_profile_lacks_it(srv):
+    """Live test 2 (issue #112, note 16): a Degree list of Certificate, Foundation, Associate, Bachelor,
+    Master, Doctor, Ph.D., Others, Some College and No degree has no high school or GED choice. The card
+    said "your profile doesn't have this for them", though the profile has degree: GED for that school.
+    It says the list has no choice for the GED, and that the pick (an honest one, such as "Others") is the
+    person's."""
+    import yaml
+
+    path = config.profile_path()
+    profile = yaml.safe_load(path.read_text())
+    school = profile["education_history"][0]["school"]
+    profile["education_history"][0]["degree"] = "GED"
+    path.write_text(yaml.safe_dump(profile))
+    applier = Applier(srv)
+    degree = {"id": "a", "label": "Degree*", "section": "Education 1", "required": True, "kind": "listbox",
+              "options": ["Certificate", "Foundation", "Associate", "Bachelor", "Master", "Doctor", "Ph.D.", "Others",
+                          "Some College", "No degree (Dropped out)"]}
+    said, rest = applier._entry_gaps(Run(1, "Technician", "Example Litho"),
+                                     {"url": "https://example.wd1.myworkdayjobs.com/x"}, [degree])
+    assert f"The Degree list has no choice for your GED ({school} in Education 1)" in said, said
+    assert "doesn't have this for them" not in said and "Others" in said, said
+    assert rest == []
+
+
 def test_a_degree_list_with_nothing_for_classes_leaves_the_pick_to_the_person(srv):
     """A Workday site's Degree list holds High School, GED, Associates and up, and nothing for
     classes without a degree (live, Oct 2026). For a second block of one school, where the person

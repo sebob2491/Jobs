@@ -32,7 +32,8 @@ from urllib.parse import parse_qsl, urlparse
 
 from . import config, mailbox, report
 from .ats import ATS_NAMES, detect_ats, shared_system
-from .autofill import (clean_label, entry_of, is_empty_value, no_choice_for_no_degree, norm, plan_autofill,
+from .autofill import (clean_label, degree_not_listed, entry_of, is_empty_value, no_choice_for_no_degree, norm,
+                       plan_autofill,
                        polarity, tailored_document, works_there_now)
 from .browser import (_SENDS_TOO, CONFIRMATION_RE, SubmitBlocked, TabClosed, _accepts_cookies, _cookie_setting,
                       confirmations, declines_cookies, final_text, may_accept_cookies)
@@ -1984,6 +1985,7 @@ class Applier:
         missing: dict[str, dict[str, list[str]]] = {"work": {}, "education": {}, "extra": {}}
         refused: dict[str, list[str]] = {}  # the profile has it; the page didn't take it
         no_choice: list[str] = []  # Degree lists with nothing for classes without a degree
+        unlisted: dict[str, str] = {}  # Degree lists with nothing for the profile's degree (a GED's)
         rest = []
         for q in pending:
             found = entry_of(q, prof)
@@ -1997,6 +1999,9 @@ class Applier:
             if no_choice_for_no_degree(q, prof):
                 if name not in no_choice:
                     no_choice.append(name)
+                continue
+            if (degree := degree_not_listed(q, prof)) is not None:
+                unlisted.setdefault(name, degree)
                 continue
             what = clean_label(q.get("label") or "").strip() or "a box"
             into = refused if q.get("error") else missing[kind]
@@ -2040,9 +2045,16 @@ class Applier:
             # "Some college (no degree)" in the profile can't go there, and coursework is never a degree
             said.append(f"The Degree list for {'; '.join(no_choice)} has no choice for classes without a degree, so "
                         "that box is yours (the desk never picks a degree you didn't earn): choose in the browser, "
-                        "then press Resume. If you did finish a degree there, add it to that school under "
-                        "education_history in profile.yaml (degree: the one you earned), and the desk fills it in "
-                        "from then on.")
+                        "or delete that school's block with its Delete button where the site doesn't need it (your "
+                        "resume still shows the classes), then press Resume. If you did finish a degree there, add it "
+                        "to that school under education_history in profile.yaml (degree: the one you earned), and the "
+                        "desk fills it in from then on.")
+        if unlisted:
+            # the profile has it; the list doesn't (no high school or GED choice: issue #112, note 16)
+            said.append("The Degree list has no choice for " + "; ".join(f"your {degree} ({name})" for name, degree in
+                                                                         unlisted.items())
+                        + ", so that box is yours: choose the closest honest one in the browser (“Others” or "
+                        "the like, where it's there; never a degree you didn't earn), then press Resume.")
         return " ".join(said), rest
 
     @staticmethod
