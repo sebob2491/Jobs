@@ -1612,6 +1612,10 @@ def _without_notes(label: str) -> str:
     return " ".join(kept) if len(kept) < len([p for p in parts if p.strip()]) else label
 
 
+_METRO_SECTION = re.compile(r"\b(metropolitan|metro area|(closest|nearest) (major )?city)\b")
+_METRO_PART = re.compile(r"region|area|city|metro(politan)?( area| city)?")
+
+
 def resolve_field(field: dict, prof: Profile, job: dict | None = None, file_inputs_on_page: int = 1,
                   unmatched: list[Answer] | None = None) -> Answer | None:
     """The answer for a field, or None. A self-identification answer the profile gives but the
@@ -1670,6 +1674,12 @@ def resolve_field(field: dict, prof: Profile, job: dict | None = None, file_inpu
         return Answer(_today_for(field), "signed_date")
     someone_else = _SOMEONE_ELSE.search(f"{label} {section}") or _OTHER_PARTY_LABEL.search(label) \
         or _OTHER_PARTY_SECTION.search(section)
+    if ans is None and _METRO_SECTION.search(section) and _METRO_PART.fullmatch(label):
+        # Taleo's "Closest Metropolitan City": its Region list is cities (Kforce's, live run 12, Oct 2026: Anthem,
+        # Bisbee, ... Chandler): the profile's city, not its state, which the list doesn't have
+        city = prof.get("personal.address.city")
+        if city:
+            ans = Answer(city, "personal.address.city")
     if ans is None and kind == "checkbox_group" and (none := _plans_none(field, prof)):
         return Answer(none, "background.plans")  # (one of its own choices, as it reads)
     if ans is None:

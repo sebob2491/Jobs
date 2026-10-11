@@ -1108,6 +1108,10 @@ def test_a_list_still_on_its_not_specified_first_choice_is_filled():
               "options": ["Male", "Female", "Not Specified"]}
     # nor a self-identification list whose first choice is "Not Specified": the person may have chosen it
     taleo_gender = {**gender, "id": "t", "options": ["Not Specified", "Male", "Female"]}
+    # its Region is a list of cities: the profile's city goes there, not its state (live run 12)
+    region = {"id": "r", "label": "Region", "kind": "select", "value": "Not Specified",
+              "section": "Closest Metropolitan City . Required", "options": ["Not Specified", "Anthem", "Bisbee", "Chandler"]}
+    assert resolve_field(region, p).value == "Chandler"
     plan = plan_autofill([country, gender, taleo_gender], p, {})
     assert [(t["id"], t["value"]) for t in plan["to_fill"]] == [("c", "United States")], plan
     assert plan["already_filled"] == ["g", "t"], plan
