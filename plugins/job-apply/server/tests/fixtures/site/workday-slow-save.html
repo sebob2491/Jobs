@@ -4,7 +4,8 @@
 <body>
 <!-- like KLA's Workday Application Questions 2 of 2 (live run 11, Oct 11): every box answered, and its Save and
      Continue takes a while (8 s here, from its first press) to go on to the next step, drawing a "Saving" note
-     afresh at each press meanwhile. (kept for the tab: slow.presses) -->
+     afresh at each press meanwhile. ?quiet: nothing shows while it saves, so each press looks like it did nothing
+     (KLA's, live run 16). (kept for the tab: slow.presses) -->
 <div data-automation-id="progressBarActiveStep">current step 4 of 6 Application Questions 2 of 2</div>
 <h2>Application Questions 2 of 2</h2>
 <form onsubmit="return false">
@@ -19,7 +20,8 @@
     const presses = Number(sessionStorage.getItem('slow.presses') || 0) + 1;
     sessionStorage.setItem('slow.presses', String(presses));
     if (!document.getElementById('q1').value) return;
-    document.getElementById('status').innerHTML = '<button type="button" disabled>Saving (' + presses + ')</button>';
+    if (!new URLSearchParams(location.search).has('quiet'))
+      document.getElementById('status').innerHTML = '<button type="button" disabled>Saving (' + presses + ')</button>';
     if (first) return;
     first = Date.now();
     setTimeout(() => {
