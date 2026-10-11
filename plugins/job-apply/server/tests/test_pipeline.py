@@ -4427,6 +4427,20 @@ def test_a_profile_answer_that_doesnt_go_in_is_asked_only_where_required():
     assert [(q["label"], q["kind"], q["options"]) for q in pending] == [("Country", "combobox", ["No Selection", "Afghanistan"])]
 
 
+def test_a_question_the_pages_errors_name_is_asked_though_not_marked_required():
+    """Workday's veteran question (live test 2, issue #112, note 18) wasn't marked required, so the desk
+    left it empty as optional, pressed Save and Continue three times, and only then stopped. The page's
+    "Errors Found Error-Please indicate your veteran status." says it is: it's asked."""
+    result = {"needs_input": [{"id": "v", "label": "Please indicate your veteran status.", "kind": "listbox",
+                               "unmatched": "I am not a protected veteran"},
+                              {"id": "g", "label": "Please select your gender.", "kind": "listbox"}],
+              "failed": [], "filled": []}
+    pipeline._required_by_errors(result, {"errors": ["Errors Found", "Error-Please indicate your veteran status."]})
+    pending, _ = pipeline._pending(result, {})
+    assert [f["id"] for f in pending] == ["v"], pending
+    assert "isn't one of its choices" in pending[0]["error"], pending
+
+
 def test_a_self_identification_answer_a_list_doesnt_have_is_said_not_left_silently():
     """Qorvo's optional veteran list has no "I don't wish to answer": the desk left it empty and
     said nothing, as if it had filled it. Left empty (no other choice is the person's), and the

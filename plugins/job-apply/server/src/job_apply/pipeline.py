@@ -1577,6 +1577,7 @@ class Applier:
                 result = await srv.autofill(job_id=run.job_id)
                 if result["filled"]:
                     self._log(run, f"filled {len(result['filled'])} field(s) on {_where(data)}")
+                _required_by_errors(result, data)
                 pending, missing_files = _pending(result, once_failed)
                 self._note_skipped(run, result)
                 pending = await self._attest(run, pending)
@@ -3052,6 +3053,20 @@ def _account_and_application(data: dict[str, Any]) -> bool:
     others = [f for f in fields if f.get("kind") not in ("password", "checkbox", "file")
               and not _ACCOUNT_FIELD.search(f.get("label") or "")]
     return len(others) >= 5 and any(_APPLICATION_FIELD.search(f.get("label") or "") for f in others)
+
+
+def _required_by_errors(result: dict[str, Any], data: dict[str, Any]) -> None:
+    """A question left empty as optional that the page's errors name ("Errors Found Error-Please indicate
+    your veteran status.", Workday's, live test 2, issue #112, note 18) is required after all: the page
+    won't go on without it, though nothing on it said so. It's asked, instead of the step button being
+    pressed twice more."""
+    said = norm(" ".join(data.get("errors") or []))
+    if not said:
+        return
+    for f in result.get("needs_input") or []:
+        name = norm(clean_label(f.get("label") or ""))
+        if not f.get("required") and len(name) >= 8 and name in said:
+            f["required"] = True
 
 
 def _pending(result: dict[str, Any], once_failed: dict[str, dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
