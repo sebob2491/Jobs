@@ -1916,6 +1916,14 @@ class Applier:
                             self._log(run, f"filled again {len(again_filled)} field(s) the page had emptied")
                             stalls = 0
                             continue
+                    if not problems and key not in saved_waited:
+                        # nothing said wrong and nothing showing while it works: KLA's Workday saving its
+                        # Application Questions (live run 16, Oct 11: the next step was there a little after the
+                        # desk stopped). Waited on once, as for a step pressed three times
+                        saved_waited.add(key)
+                        if await self._wait_for_step_change(key, STEP_SAVE_WAIT):
+                            stalls = 0
+                            continue
                     errors = "; ".join(problems)[:300].rstrip(" .")
                     return self._pause(run, "stuck", "The page didn't move on" + (f": {errors}." if errors else ".")
                                        + " Fix it in the browser, then press Resume.")
