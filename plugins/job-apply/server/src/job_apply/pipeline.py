@@ -33,7 +33,7 @@ from urllib.parse import parse_qsl, urlparse
 from . import config, mailbox, report
 from .ats import ATS_NAMES, detect_ats, shared_system
 from .autofill import (clean_label, degree_not_listed, entry_of, is_empty_value, no_choice_for_no_degree, norm,
-                       plan_autofill,
+                       plan_autofill, unset_choice,
                        polarity, tailored_document, works_there_now)
 from .browser import (_SENDS_TOO, CONFIRMATION_RE, SubmitBlocked, TabClosed, _accepts_cookies, _cookie_setting,
                       confirmations, declines_cookies, final_text, may_accept_cookies)
@@ -1621,7 +1621,7 @@ class Applier:
                 def answered(q: dict[str, Any]) -> bool:  # (called only in this pass of the loop)
                     same = by_label.get(q.get("label") or "") or []  # noqa: B023
                     f = now.get(q.get("id")) or (same[0] if len(same) == 1 and q.get("label") else None)  # noqa: B023
-                    return f is not None and not is_empty_value(f.get("value"))
+                    return f is not None and not is_empty_value(f.get("value")) and not unset_choice(f)
 
                 def refused(q: dict[str, Any]) -> bool:  # a box lost while being drawn again wasn't turned down
                     return bool(q.get("error")) and not str(q["error"]).startswith("KeyError")
@@ -1869,10 +1869,10 @@ class Applier:
                     # (Nikon's UKG Pro, live run 10: its resume parse wiped Address 1 and Zip a moment after they
                     # were typed). Typed again, once a page, and the step pressed again
                     seen_now = (await self._look())[0] if looked not in retyped else {}
-                    said = norm(" ".join(seen_now.get("errors") or []))
+                    said = norm(" ".join(e for e in seen_now.get("errors") or [] if _ERRORISH.search(e)))
                     lost = [f for f in seen_now.get("fields") or [] if f.get("kind") == "text" and not f.get("disabled")
                             and not is_empty_value(f.get("value")) and len(norm(clean_label(f.get("label") or ""))) >= 3
-                            and norm(clean_label(f.get("label") or "")) in said]
+                            and re.search(rf"\b{re.escape(norm(clean_label(f.get('label') or '')))}\b", said)]
                     if lost and looked not in retyped:
                         retyped.add(looked)
                         again = await srv.browser.retype([f["id"] for f in lost])
@@ -2570,9 +2570,7 @@ class Applier:
         still as it was before Apply was pressed (a slow Apply isn't one that went nowhere). True once
         it's pressed."""
         data, _ = await self._look()
-        # (its address, headings and boxes as they were: a map drawing its own buttons meanwhile isn't Apply going
-        # somewhere, as Benchmark's posting did, live run 10, Oct 11)
-        way = _account_way(data.get("actions") or []) if _fingerprint(data)[:3] == looked[:3] else None
+        way = _account_way(data.get("actions") or []) if _fingerprint(data) == looked else None
         if way is None:
             return False
         try:
@@ -3137,8 +3135,10 @@ def _required_by_errors(result: dict[str, Any], data: dict[str, Any]) -> None:
         name = norm(clean_label(f.get("label") or ""))
         # or its section's (Kforce's "The field Closest Metropolitan City is mandatory." over its Region)
         section = norm(clean_label(str(f.get("section") or "")))
+        # (a section only where the errors say it's mandatory or required, not wherever its name comes up)
         if not f.get("required") and (len(name) >= 8 and name in said and names.count(name) <= 1
-                                      or len(section) >= 8 and section in said):
+                                      or len(section) >= 8 and re.search(
+                                          re.escape(section) + r".{0,24}\b(mandatory|required)\b", said)):
             f["required"] = True
 
 

@@ -1106,9 +1106,11 @@ def test_a_list_still_on_its_not_specified_first_choice_is_filled():
                "section": "Closest Metropolitan City . Required", "options": ["Not Specified", "United States", "Canada"]}
     gender = {"id": "g", "label": "Gender", "kind": "select", "value": "Not Specified",
               "options": ["Male", "Female", "Not Specified"]}
-    plan = plan_autofill([country, gender], p, {})
+    # nor a self-identification list whose first choice is "Not Specified": the person may have chosen it
+    taleo_gender = {**gender, "id": "t", "options": ["Not Specified", "Male", "Female"]}
+    plan = plan_autofill([country, gender, taleo_gender], p, {})
     assert [(t["id"], t["value"]) for t in plan["to_fill"]] == [("c", "United States")], plan
-    assert plan["already_filled"] == ["g"], plan
+    assert plan["already_filled"] == ["g", "t"], plan
 
 
 def test_a_decline_finds_the_lists_own_way_to_decline_and_is_never_a_no():

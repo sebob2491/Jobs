@@ -4507,6 +4507,11 @@ def test_a_question_the_pages_errors_name_is_asked_though_not_marked_required():
                                "section": "Closest Metropolitan City . Required"}], "failed": [], "filled": []}
     pipeline._required_by_errors(region, {"errors": ['The field "Closest Metropolitan City" is mandatory.']})
     assert [f["id"] for f in pipeline._pending(region, {})[0]] == ["r"]
+    # not wherever a section's name comes up ("Please correct the errors in: Personal Information")
+    middle = {"needs_input": [{"id": "m", "label": "Middle Name", "kind": "text", "section": "Personal Information"}],
+              "failed": [], "filled": []}
+    pipeline._required_by_errors(middle, {"errors": ["Please correct the errors in: Personal Information"]})
+    assert pipeline._pending(middle, {})[0] == []
 
 
 def test_a_self_identification_answer_a_list_doesnt_have_is_said_not_left_silently():

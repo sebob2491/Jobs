@@ -2006,7 +2006,7 @@ def _with_context(fields: list[dict]) -> list[dict]:
     return out
 
 
-def _unset_choice(f: dict) -> bool:
+def unset_choice(f: dict) -> bool:
     """A list still on its own first choice, where that says nothing is chosen: Taleo's "Not Specified" (Kforce's
     Closest Metropolitan City: Country, State/Province and Region, live run 10, Oct 2026), read as answered. A
     "Not Specified" picked further down a list (a self-identification's decline) is an answer."""
@@ -2029,12 +2029,17 @@ def plan_autofill(fields: list[dict], prof: Profile, job: dict | None = None, ov
         # menu (Infineon's "Preferred location"): it still takes a choice
         if f.get("disabled") or f.get("readonly") and f.get("kind") not in _CHOICE_KINDS:
             continue
-        has_value = not is_empty_value(f.get("value")) and not _unset_choice(f)
+        unset = unset_choice(f)
+        has_value = not is_empty_value(f.get("value")) and not unset
         if has_value and not overwrite:
             already.append(f["id"])
             continue
         missed: list[Answer] = []
         ans = resolve_field(f, prof, job, file_inputs, unmatched=missed)
+        if unset and not overwrite and ans is not None and is_eeo_rule(ans.rule):
+            # a self-identification list on its "Not Specified" stays as it is (the person may have chosen it)
+            already.append(f["id"])
+            continue
         if ans is not None and ans.value == SKIP:
             continue
         if ans is not None:

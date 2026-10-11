@@ -532,7 +532,7 @@ EXTRACT_JS = r"""
     if (el.getAttribute('aria-haspopup') === 'listbox' || !visible(el)) continue;
     // a Google map's own controls (Benchmark's posting, live, Oct 2026: drawn afresh all the while) are
     // never an application's buttons
-    if (el.closest('.gm-style')) continue;
+    if (el.closest('.gm-style') && !el.closest('.gm-style-iw, .gm-style-iw-c')) continue;  // (not its info window's)
     const role = el.getAttribute('role');
     // Workday draws a form's own button hidden (aria-hidden) under a div of its own that takes the click
     // (data-automation-id="click_filter", role="button"), named for the button or not at all (KLA's Sign

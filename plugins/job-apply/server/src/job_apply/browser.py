@@ -1233,15 +1233,24 @@ class BrowserSession:
             page = await self.page()
             for field_id in field_ids:
                 loc = self._locator(page, field_id)
+                value = ""
                 try:
+                    if await loc.evaluate("el => /^(date|time|datetime-local|month|week)$/i.test(el.type || '')",
+                                          timeout=FOCUS_TIMEOUT):
+                        continue  # (a date's segments take keys their own way)
                     value = await loc.input_value(timeout=FOCUS_TIMEOUT)
                     if not value.strip():
                         continue
                     await loc.fill("", timeout=FOCUS_TIMEOUT)
                     await loc.press_sequentially(value, delay=30, timeout=FOCUS_TIMEOUT * 3)
+                    if await loc.input_value(timeout=FOCUS_TIMEOUT) != value:  # (an autocomplete changed it, say)
+                        await loc.fill(value, timeout=FOCUS_TIMEOUT)
                     await loc.evaluate("el => el.blur()", timeout=FOCUS_TIMEOUT)
                     done.append(field_id)
                 except (PlaywrightError, PlaywrightTimeout):
+                    if value:  # never left emptied or half typed
+                        with contextlib.suppress(PlaywrightError, PlaywrightTimeout):
+                            await loc.fill(value, timeout=FOCUS_TIMEOUT)
                     continue
         return done
 
