@@ -5,7 +5,9 @@
 <!-- like UKG Pro's second Create Account step (Nikon Precision, live, Oct 2026): after the sign-up's
      email, password and Continue, its own Register page asks for a name and phone. The consent box's
      words sit beside it, not in a label, and "Create account" is greyed out until it's ticked. A box
-     for text messages about jobs (never ticked for the person) sits beside it here too. -->
+     for text messages about jobs (never ticked for the person) sits beside it here too. ?component:
+     "Create account" is a web component, as live, whose own "form" property isn't a form (the desk's
+     click threw "el.form.elements is not iterable"). -->
 <div class="note">
   <h3>Accessibility Note:</h3>
   <p>If you need an accommodation to apply, see Accessibility Accommodation for Applicants.</p>
@@ -29,6 +31,24 @@
 <div id="err" role="alert"></div>
 <script>
   const did = (k, v) => sessionStorage.setItem('ukg.' + k, JSON.stringify(v));
+  if (location.search.includes('component')) {
+    customElements.define('ukg-button', class extends HTMLElement {
+      get type() { return 'submit'; }
+      get form() { return { id: 'register' }; }  // (not a form: a component's own property)
+      get disabled() { return this.hasAttribute('disabled'); }
+      set disabled(v) { this.toggleAttribute('disabled', !!v); this.setAttribute('aria-disabled', String(!!v)); }
+      connectedCallback() {
+        this.setAttribute('role', 'button');
+        this.addEventListener('click', () => { if (!this.disabled) document.getElementById('register').requestSubmit(); });
+      }
+    });
+    const old = document.getElementById('create');
+    const button = document.createElement('ukg-button');
+    button.id = 'create';
+    button.textContent = 'Create account';
+    button.disabled = true;
+    old.replaceWith(button);
+  }
   const consent = document.getElementById('consent');
   consent.addEventListener('change', () => { document.getElementById('create').disabled = !consent.checked; });
   document.getElementById('register').addEventListener('submit', (e) => {

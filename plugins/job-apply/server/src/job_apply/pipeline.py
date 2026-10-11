@@ -86,7 +86,8 @@ _BOT_TITLE = re.compile(r"just a moment|attention required|access denied|pardon 
 # A bare "403 Forbidden" (Valleywise Health's postings, to the desk's browser) or "406 Not Acceptable"
 # (Deloitte's sign-in, to a headless browser): the site turns the browser away. There's nothing to
 # solve, so it holds nothing up: the person applies elsewhere
-_TURNED_AWAY = re.compile(r"^\s*(?:403\s*)?forbidden\s*$|^\s*(?:406\s*)?not acceptable\s*$", re.I)
+_TURNED_AWAY = re.compile(r"^\s*(?:403\s*)?forbidden\s*$|^\s*(?:406\s*)?not acceptable\s*$|"
+                          r"^\s*your request has been blocked\.?\s*$", re.I)  # (Workday's, its title empty)
 # A posting that has closed: "The job posting you are looking for has expired or the position has
 # already been filled" (Edward Jones' BrassRing), "This job is no longer available"
 _CLOSED = re.compile(
@@ -104,7 +105,7 @@ _SIGN_IN_ACTION = re.compile(r"^(sign in|log ?in|sign in with email)$", re.I)
 _SIGN_IN_SUBMIT = re.compile(r"^(submit|continue|next|go|enter|log ?on|sign ?on|sign in now|log ?in now)$", re.I)
 # The button pressed once the emailed code is in; one labelled Submit is left to the person (but on
 # the code step of an account the desk is making, with nothing else on it: _account_code_button)
-_AFTER_CODE = re.compile(r"^(verify|confirm|continue|next)( (code|e-?mail|account|my e-?mail))?$", re.I)
+_AFTER_CODE = re.compile(r"^(verify|confirm|continue|next)( ((?:pass)?code|e-?mail|account|my e-?mail))?$", re.I)
 # With settings.manage_accounts, the buttons of an email-first site's steps of making an account (an
 # Eightfold site's: its agreement's "Submit", the email's "Continue", "Use a one-time code" in place of
 # a password, and the code's "Submit")
@@ -231,6 +232,13 @@ _TERMS = re.compile(r"\bprivacy\b|\bdata protection\b|\bterms (?:of (?:use|servi
                     r"\b(?:gdpr|ccpa)\b", re.I)
 _ACCEPTS = re.compile(r"\b(?:agree|accept|acknowledge|consent|have read|understand)\b", re.I)
 _TAKES_IN = re.compile(r"^(?:ok|okay|got it|continue|proceed)$", re.I)
+# A dialog that offers how to start an application's profile (Eightfold's "Profile Bootstrapping", Northrop
+# Grumman's, live, Oct 2026: "Create your profile with existing information"): a button to upload the resume,
+# with its file box in the dialog, and one to enter the information by hand. A choice, not an agreement
+_UPLOAD_RESUME = re.compile(r"^(?:upload|attach|choose|select)(?: (?:your|my|a|the))? (?:resume|cv|résumé)"
+                            r"(?: ?/ ?(?:resume|cv|résumé))?(?: file)?$", re.I)
+_ENTER_INFO = re.compile(r"^(?:(?:enter|fill in|add)(?: (?:your|my|the))? (?:information|info|details|profile)"
+                         r"(?: manually| myself)?|(?:enter|fill in) manually)$", re.I)
 # A Create Account form's link that opens the site's data privacy statement to be read and accepted: the site
 # makes no account without it (SuccessFactors', live, Oct 10, 2026: "Read and accept the data privacy statement.",
 # which opens the statement in a dialog with Accept and Decline). Its words accept a privacy notice or terms
@@ -346,6 +354,12 @@ class Run:
     once_page: dict[str, tuple] = field(default_factory=dict)  # where each this-application answer went in
     mail_checked: float = 0.0  # when the inbox was last looked at for its emailed code or link
     mail_done: bool = False  # the code or link from the inbox went in: no more looking
+    # what the desk's looks in the inbox came to, for the live check's LIVE_INBOX line (not the person's)
+    mail_looks: int = 0
+    mail_last: str = ""
+    # This pause waits for the verification email of the account the desk just made (_await_verify_email):
+    # a Resume after it, or its link opened from the inbox, means the account is verified: signed in to once
+    verifying: bool = False
     # Submit was pressed for this job before and no confirmation showed (its folder keeps the
     # record): it may have gone, so it's never pressed again without the person
     pressed_before: bool = False
@@ -358,7 +372,7 @@ class Run:
                                                                      "reset_asked", "reset_from", "reset_waited",
                                                                      "reset_no_mail", "sign_in_tries", "sign_in_key",
                                                                      "accounts_tried", "account_made", "account_page",
-                                                                     "account_finished")}
+                                                                     "account_finished", "verifying", "mail_looks", "mail_last")}
 
 
 def classify(data: dict[str, Any], text: str) -> str:
@@ -977,11 +991,13 @@ class Applier:
             return
         login = self.mail_login()
         if login is None or run.page is None or run.page.is_closed():
+            run.mail_last = "no inbox login" if login is None else "its tab is closed"
             return
         run.mail_checked = now
         try:
             data, _ = await self.srv.browser.peek(run.page)
-        except Exception:  # a tab mid-way through loading: looked at again next time
+        except Exception as e:  # a tab mid-way through loading: looked at again next time
+            run.mail_last = f"couldn't read its tab: {type(e).__name__}"
             return
         boxes = [f for f in data.get("fields") or [] if f.get("kind") in ("text", "number")
                  and _CODE_FIELD.search(f.get("label") or "")]
@@ -1025,6 +1041,9 @@ class Applier:
             self.mail_problem = f"The desk couldn't read your email ({type(e).__name__}). It tries again shortly."
             return
         self.mail_problem = None
+        run.mail_looks += 1
+        run.mail_last = (f"looked for a {want}: " + ("none" if found is None else f"found one from {found.sender}")
+                         + f" ({len(boxes)} code box(es) on the page)")
         if found is None or run.status != "needs_you" or run.need != "email_code":
             return
         try:
@@ -1042,13 +1061,15 @@ class Applier:
                     return
                 await run.page.goto(found.value, wait_until="domcontentloaded", timeout=45000)
                 run.mail_done = True
-                self._log(run, f"opened the password reset link from your email (sent from {found.sender})")
+                self._log(run, f"opened the password reset link from your email ({_sent_from(found)})")
             else:
                 await self.srv.browser.visit(found.value)
                 run.mail_done = True
-                self._log(run, f"opened the confirmation link from your email (sent from {found.sender})")
+                self._log(run, f"opened the confirmation link from your email ({_sent_from(found)})")
                 if run.page is not None and not run.page.is_closed():
                     await run.page.reload()
+                if run.verifying:  # the account's verified: the Sign In it paused on (the same page, reloaded) is past the pause
+                    run.pause_sig = None
         except Exception as e:  # a slow site or a closed tab: the person finishes it, as without the inbox
             run.mail_done = True
             self._log(run, f"couldn't use the {found.kind} from your email ({type(e).__name__}); "
@@ -1059,22 +1080,29 @@ class Applier:
         press the button that sends it. False when it didn't go in."""
         srv = self.srv
         if run.page is None or run.page.is_closed() or not self._own_place(run, run.page.url):
+            run.mail_last += "; not typed: its tab is elsewhere"
             return False  # its tab has gone on to another page: the code isn't typed there
         if not srv.browser.use_tab(run.page):
+            run.mail_last += "; not typed: its tab couldn't be used"
             return False
         data = await srv.inspect_form(include_dropdown_options=False)
         boxes = [f for f in data.get("fields") or [] if f.get("kind") in ("text", "number")
                  and _CODE_FIELD.search(f.get("label") or "")]
         if not boxes:  # the page moved on meanwhile
+            run.mail_last += "; not typed: no code box on the page"
             return False
         if 1 < len(boxes) == len(found.value):  # a box per digit (Oracle's "Confirm Your Identity")
             fills = [{"id": box["id"], "value": digit} for box, digit in zip(boxes, found.value)]
         else:
             fills = [{"id": boxes[0]["id"], "value": found.value}]
         out = await srv.fill_form(fills)
-        if not out.get("ok"):
+        if not out.get("ok"):  # (looked for again at the next look; said once, so the log says why none went in)
+            why = next((str(r.get("error")) for r in out.get("results") or [] if not r.get("ok")), "")
+            said = f"found the code in your email but couldn't type it into the page ({why[:160]}); I'll try again"
+            if said not in run.log[-3:]:
+                self._log(run, said)
             return False
-        self._log(run, f"entered the code from your email (sent from {found.sender})")
+        self._log(run, f"entered the code from your email ({_sent_from(found)})")
         press = next((a for a in data.get("actions") or [] if not a.get("disabled")
                       and _AFTER_CODE.match(a.get("text", "").strip())), None)
         mine = press is None and (press := self._account_code_button(run, data)) is not None
@@ -1125,7 +1153,7 @@ class Applier:
         run.blocking = need in HANDS_ON
         run.paused_at = run.active_at = time.time()
         run.tab_mark, run.left, run.moved_since = 0, False, 0.0
-        run.mail_checked, run.mail_done = 0.0, False
+        run.mail_checked, run.mail_done, run.verifying = 0.0, False, False
         run.paused_site = _site_key(run.url)
         run.paused_host = urlparse(run.url).hostname or ""
         run.hold_host = ""
@@ -1304,8 +1332,9 @@ class Applier:
                 return self._pause(run, "stuck", f"The application went on to {where} couldn't be reached, so the page "
                                    "didn't load. Press Resume to try again, or open the posting in your own browser to "
                                    "apply there.")
-            if kind == "page" and not data.get("fields") and _TURNED_AWAY.search(data.get("title") or ""):
-                refusal = re.sub(r"\s+", " ", str(data.get("title"))).strip()
+            refused = next((t for t in [data.get("title") or "", *(data.get("headings") or [])[:1]] if _TURNED_AWAY.search(t)), "")
+            if kind == "page" and not data.get("fields") and refused:
+                refusal = re.sub(r"\s+", " ", refused).strip()
                 return self._pause(run, "stuck", f"{_site(run, data)} turned the desk's browser away ({refusal}). "
                                    "Open the posting in your own browser to apply there.")
             if kind == "bot_check":
@@ -1348,7 +1377,7 @@ class Applier:
                     if run.reset_no_mail:
                         self._log(run, f"no password reset email came from {_site(run, data)} in "
                                   f"{RESET_MAIL_WAIT // 60} minutes, so I went back to make an account there")
-                        sign_ins["submitted"] = 1
+                        sign_ins["submitted"] = sign_ins["wants_account"] = 1
                     else:  # the saved password is the site's now, as the person was asked: one more sign-in
                         run.sign_in_tries = min(run.sign_in_tries, SIGN_IN_TRIES - 1)
                     continue
@@ -1370,8 +1399,13 @@ class Applier:
                 if asked == "paused":
                     return
                 if asked == "no_account":
-                    sign_ins["submitted"] = 1
+                    sign_ins["submitted"] = sign_ins["wants_account"] = 1
                     continue
+            if (kind == "sign_in" and manage and sign_ins.get("made") and _VERIFY_EMAIL.search(said_exists)
+                    and sum(f.get("kind") == "password" for f in data.get("fields") or []) == 1):
+                # the account just made says it emailed a link to verify it (Banner Health's Workday, live,
+                # Oct 2026): its Sign In takes no password before the link is opened
+                return await self._await_verify_email(run, data)
             if kind == "sign_in":
                 # With the inbox watched, a refused password is reset before a new account is made (the
                 # owner's choice: an account there already is the likelier, on a second application)
@@ -1387,7 +1421,7 @@ class Applier:
                 if asked == "paused":
                     return
                 if asked == "no_account":  # back on the sign-in page: its way to a new account, next
-                    sign_ins["submitted"] = 1
+                    sign_ins["submitted"] = sign_ins["wants_account"] = 1
                     continue
                 await self._bring_forward(run)
                 if done in ("prefilled", "filled"):
@@ -1468,7 +1502,7 @@ class Applier:
                                    + watching, seen=data)
             if (notice := _notice(data)) is not None:  # the boxes behind it are filled once it's answered
                 said = await self._answer_notice(run, data, notice, agreed, over_form=kind == "form")
-                if said == "agreed":
+                if said in ("agreed", "started"):
                     continue
                 if said == "paused":
                     return
@@ -1513,7 +1547,7 @@ class Applier:
                 run.page_info = _page_info(data)  # what the person sees on the desk: the page as filled
                 if (notice := _notice(data)) is not None:  # one the fills brought up (Eightfold's, as the resume went up)
                     said = await self._answer_notice(run, data, notice, agreed, over_form=True)
-                    if said == "agreed":
+                    if said in ("agreed", "started"):
                         continue
                     if said == "paused":
                         return
@@ -1721,6 +1755,14 @@ class Applier:
                     await self._bring_forward(run)
                     return self._pause(run, "bot_check", _BOT_CHECK_SAYS)
                 stalls += 1
+                if (kind == "page" and sign_ins.get("wants_account") and not run.accounts_tried
+                        and _may_manage_accounts() and await self._register_from_posting(run, looked)):
+                    # on its way to a new account (the sign-in page had no way to one: the job was opened
+                    # again), and the posting's Apply goes nowhere
+                    sign_ins.pop("wants_account")
+                    sign_ins["create_account"] = sign_ins.get("create_account", 0) + 1
+                    stalls = 0
+                    continue
                 problems = [e for e in clicked.get("errors") or [] if _ERRORISH.search(e)]
                 if problems or stalls >= 2:
                     # say what's wrong: Workday lists it as links ("Error-Email") and marks fields
@@ -2005,19 +2047,33 @@ class Applier:
         chosen) or isn't one to agree to for them: the person's, left open for them to read."""
         if not _may_accept_notices():
             return False
-        try:
-            await self.srv.browser.click(link["id"])
-        except Exception:  # gone, or it won't take a click: the person's, as without the setting
+        said = link["text"].strip()
+        notice = None
+        for _ in range(2):  # (live, APS's once opened nothing at the first press: a second press after a moment)
+            try:
+                await self.srv.browser.click(link["id"])
+            except Exception as e:  # gone, or it won't take a click: the person's, as without the setting
+                self._log(run, f"the click on “{said}” failed: {_error_said(e)}")
+                return False
+            deadline = time.monotonic() + ACCOUNT_STEP_WAIT
+            while True:
+                now, _ = await self._look()
+                notice = _notice(now)
+                if notice is not None or time.monotonic() > deadline:
+                    break
+                await asyncio.sleep(0.5)
+            if notice is not None or now.get("dialogs"):
+                break  # (a dialog of another sort opened: not pressed again over it)
+            link = next((a for a in now.get("actions") or [] if a.get("text", "").strip() == said), link)
+        # (each way it can fail is said in the log: APS's, live, Oct 2026, failed with no clue why)
+        if notice is None:
+            told = "; ".join(e for e in now.get("errors") or [] if not _ERROR_COUNT.match(e.strip()))[:200]
+            self._log(run, f"I pressed “{said}” twice, and no statement opened over the page"
+                      + (f" (it says “{told}”)" if told else ""))
             return False
-        deadline = time.monotonic() + ACCOUNT_STEP_WAIT
-        while True:
-            now, _ = await self._look()
-            notice = _notice(now)
-            if notice is not None or time.monotonic() > deadline:
-                break
-            await asyncio.sleep(0.5)
-        run.statement_accepted = notice is not None and await self._answer_notice(run, now, notice, set(),
-                                                                                  over_form=False) == "agreed"
+        run.statement_accepted = await self._answer_notice(run, now, notice, set(), over_form=False) == "agreed"
+        if not run.statement_accepted:
+            self._log(run, f"“{_short(_notice_name(notice))}” opened over the page, and I couldn't accept it for you")
         return run.statement_accepted
 
     async def _finish_account(self, run: Run, data: dict[str, Any], button: dict[str, Any]) -> bool:
@@ -2055,8 +2111,9 @@ class Applier:
             if pressable is not None:
                 try:
                     await srv.browser.click(pressable["id"], allow_submit=True)  # (it creates the account)
-                except Exception:
+                except Exception as e:  # (said in the log: Nikon's UKG Pro, live, Oct 2026, gave no clue why)
                     why = f"“{said}” wouldn't take a click"
+                    self._log(run, f"the click on “{said}” failed: {_error_said(e)}")
                 else:
                     run.account_finished = True
                     ticked = ", ".join(f"“{_short(self._choice_said(f))}”" for f in boxes)
@@ -2406,6 +2463,29 @@ class Applier:
         self._log(run, f"{_site(run, data)}'s sign-in page{gone}, so I opened the job again")
         await self.srv.open_application(job_id=run.job_id)
 
+    async def _register_from_posting(self, run: Run, looked: tuple) -> bool:
+        """The desk is on its way to a new account at a job system (_back_to_sign_in opened the job again
+        for the sign-in page's way to one), and the posting's "Apply" went nowhere (Benchmark's Infor, live,
+        Oct 2026: once a sign-in was refused in the tab, Apply no longer opened the sign-in again). The
+        posting's own "Register" (or "Create Account") is the way instead, as the sign-in page's would have
+        been: pressed, and its form read and filled in like any Create Account. Only where the page is
+        still as it was before Apply was pressed (a slow Apply isn't one that went nowhere). True once
+        it's pressed."""
+        data, _ = await self._look()
+        way = _account_way(data.get("actions") or []) if _fingerprint(data) == looked else None
+        if way is None:
+            return False
+        try:
+            clicked = await self.srv.click(way["id"])
+        except KeyError:  # the page changed between looking and clicking
+            return False
+        if clicked.get("clicked") is False:
+            return False
+        run.page = self.srv.browser.current_tab or run.page
+        self._log(run, f"“Apply” on {_site(run, data)}'s posting went nowhere, so I pressed its "
+                  f"“{way['text'].strip()}” to make an account there instead")
+        return True
+
     async def _await_reset_email(self, run: Run, data: dict[str, Any]) -> None:
         watched = self.mail_login() is not None
         if not watched:
@@ -2422,6 +2502,29 @@ class Applier:
         if watched:  # nothing for the person to do: the queue goes on, and the job is picked up again after
             run.blocking, run.left = False, True
             self._wake.set()
+
+    async def _await_verify_email(self, run: Run, data: dict[str, Any]) -> None:
+        """The Sign In a Workday site goes back to after the desk made the account says it emailed a link
+        to verify it (Banner Health's, live, Oct 2026: "An email has been sent to you. Please verify your
+        account"). The saved password isn't taken until that link is opened (the desk pressed Sign In, was
+        refused and stopped on "your saved password didn't sign in"), so it isn't pressed yet, and a
+        refusal before this, for the same reason, doesn't count against the job's sign-ins. With the inbox
+        watched, the link is opened in this browser when its email comes (_check_mail), and the job goes
+        on to sign in, once; without it the person opens the link, then presses Resume, which signs in once."""
+        run.sign_in_tries = min(run.sign_in_tries, SIGN_IN_TRIES - 1)
+        site = _site(run, data)
+        said = f"{site} emailed you a link to verify your new account, and won't sign in until it's opened."
+        if self.mail_login() is not None:
+            self._pause(run, "email_code", f"{said} The desk is watching your inbox for it: it opens the link, then signs "
+                        "in with your saved password. The other jobs carry on meanwhile.", seen=data)
+            run.blocking, run.left = False, True  # nothing for the person to do: the queue goes on
+            self._wake.set()
+        else:
+            await self._bring_forward(run)
+            self._pause(run, "sign_in", f"{said} Open the link in that email, then press Resume: the desk signs in with "
+                        "your saved password (an email app password saved on the desk lets it open the link itself).",
+                        seen=data)
+        run.verifying = True
 
     def _reset_overdue(self, run: Run) -> bool:
         """Waiting on a reset email, with the inbox watched, that hasn't come in RESET_MAIL_WAIT."""
@@ -2528,8 +2631,12 @@ class Applier:
         """A dialog open over the page that nothing else answers (_notice). An employer's notice about
         AI screening of the application is agreed to for the person where they allow it
         (settings.accept_notices; never in practice mode), once a pass, and said in the log: "agreed".
-        Any other one over a form is theirs, as the boxes behind it don't fill: "paused". None:
-        nothing done (on a page with nothing to fill, its buttons are the way on as before)."""
+        Any other one over a form is theirs, as the boxes behind it don't fill: "paused". A dialog
+        that offers how to start the application's profile is answered from the profile (_start_profile):
+        "started". None: nothing done (on a page with nothing to fill, its buttons are the way on as
+        before)."""
+        if (started := await self._start_profile(run, data, notice, agreed)) is not None:
+            return started
         heading = _notice_name(notice)
         said = f"{heading} {notice.get('text') or ''}"
         # about AI screening of applications, or the employer's privacy notice or terms of use (whose
@@ -2543,8 +2650,10 @@ class Applier:
         if allowed and agree is not None and heading not in agreed:
             try:
                 clicked = await self._press_agreement(agree["id"])
-            except Exception:  # gone, or it won't take a click: the person's, as without the setting
-                clicked = {"clicked": False}
+            except Exception as e:  # gone, or it won't take a click: the person's, as without the setting
+                clicked = {"clicked": False, "blocked": _error_said(e)}
+            if not clicked.get("clicked"):
+                self._log(run, f"the click on “{agree.get('text') or ''}” didn't go through: {clicked.get('blocked')}")
             if clicked.get("clicked"):
                 agreed.add(heading)
                 whose = f"{run.company}'s" if run.company else "the site's"
@@ -2563,6 +2672,44 @@ class Applier:
                         and not allowed else ""))
         return "paused"
 
+    async def _start_profile(self, run: Run, data: dict[str, Any], notice: dict[str, Any],
+                             agreed: set[str]) -> str | None:
+        """A dialog that offers how to start the application's profile (_profile_start: Eightfold's
+        "Profile Bootstrapping", Northrop Grumman's, live, Oct 2026: "Upload your resume" or "Enter
+        information"). It's no agreement and no question, but a choice of how to begin: its "Enter
+        information" is pressed, and the form is filled from the profile as usual. Never its resume
+        upload: the site's reading of a resume would fill the boxes with its own guesses (a degree
+        from some college classes), which the desk never overwrites and never claims; the resume
+        goes in where the application asks for it. Nothing else in the dialog is touched. Said in
+        the log. "started": on to the page behind it; "paused": it stayed open after that (once a
+        pass); None: no such dialog, or its button wouldn't take the press."""
+        enter = _profile_start(notice)
+        if enter is None:
+            return None
+        heading = _notice_name(notice)
+        said = enter["text"].strip()
+        if f"{heading}: {said}" in agreed:  # pressed on this pass, and it stayed open
+            await self._bring_forward(run)
+            self._pause(run, "stuck", f"I pressed “{said}” in the “{_short(heading)}” dialog on {_site(run, data)}, and "
+                        "it stayed open. Look at it in the browser window, then press Resume.")
+            return "paused"
+        try:
+            pressed = await self.srv.click(enter["id"])
+        except KeyError:  # the dialog went by itself meanwhile: looked at again
+            return "started"
+        except Exception as e:  # (still drawing, covered): said, and the dialog is the person's as before
+            self._log(run, f"the click on “{said}” failed: {_error_said(e)}")
+            return None
+        if not pressed.get("clicked"):
+            self._log(run, f"the click on “{said}” didn't go through: {pressed.get('blocked')}")
+            return None
+        whose = f"{run.company}'s" if run.company else "the site's"
+        self._log(run, f"pressed “{said}” in {whose} “{_short(heading)}” dialog, to fill the application from your "
+                  "profile (your resume goes in where it asks for one)")
+        agreed.add(f"{heading}: {said}")
+        await self._notice_closed(heading)
+        return "started"
+
     async def _press_agreement(self, element_id: str) -> dict[str, Any]:
         """Press a button found to agree for the person (settings.accept_notices: a terms gate's way
         on, a notice's agree), as the click tool does. Saying so lets the live check's test identity
@@ -2572,10 +2719,10 @@ class Applier:
         except SubmitBlocked as e:
             return {"clicked": False, "blocked": str(e)}
 
-    async def _notice_closed(self, heading: str) -> None:
+    async def _notice_closed(self, heading: str, wait: float = NOTICE_WAIT) -> None:
         """After a notice's agree button: until the notice has gone. One fading out is read a
         moment longer, and looked at that soon, it would be taken for one that stayed."""
-        deadline = time.monotonic() + NOTICE_WAIT
+        deadline = time.monotonic() + wait
         while time.monotonic() < deadline:
             data = await self.srv.inspect_form(include_dropdown_options=False)
             if not any(_notice_name(d) == heading for d in data.get("dialogs") or []):
@@ -2917,6 +3064,16 @@ def _notice(data: dict[str, Any]) -> dict[str, Any] | None:
                                            for t in texts):
             return d
     return None
+
+
+def _profile_start(notice: dict[str, Any]) -> dict[str, Any] | None:
+    """A dialog's "Enter information" button, where the dialog offers how to start the application's
+    profile: a button to upload the resume and one to enter the information by hand (Eightfold's
+    "Create your profile with existing information"). Known by that offer, not by a site's name."""
+    buttons = [b for b in notice.get("buttons") or [] if not b.get("disabled")]
+    if not any(_UPLOAD_RESUME.match(final_text(b.get("text") or "")) for b in buttons):
+        return None
+    return next((b for b in buttons if _ENTER_INFO.match(final_text(b.get("text") or ""))), None)
 
 
 def _notice_name(notice: dict[str, Any]) -> str:
@@ -3415,6 +3572,11 @@ def _page_key(data: dict[str, Any]) -> tuple:
     return _bare(data.get("url") or ""), tuple(data.get("headings") or [])
 
 
+def _error_said(e: BaseException) -> str:
+    """An error, as the job's log says it: its kind and its first line (a browser's has a call log after)."""
+    return f"{type(e).__name__}: " + (str(e).strip().splitlines() or [""])[0][:200]
+
+
 def _page_sig(data: dict[str, Any]) -> tuple:
     """What a page is, near enough: its address, headings and the questions on it."""
     return (_bare(data.get("url") or ""), tuple(data.get("headings") or []),
@@ -3448,6 +3610,11 @@ def _site(run: Run, data: dict[str, Any]) -> str:
     if ats in ("company_site", ""):
         return f"{run.company}'s site" if run.company else "the site"
     return ATS_NAMES.get(ats, ats)
+
+
+def _sent_from(found: mailbox.Found) -> str:
+    """Whose email a code or link came from, for the log (and where it was, when not the inbox)."""
+    return f"sent from {found.sender}" + (", in your Spam folder" if found.spam else "")
 
 
 def question_key(label: str) -> str:

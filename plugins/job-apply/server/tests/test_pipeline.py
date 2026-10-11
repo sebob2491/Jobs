@@ -930,6 +930,91 @@ def test_a_privacy_dialog_over_the_form_is_agreed_and_another_is_the_persons(srv
         assert "“Privacy Policy of Example Corp”" in r.reason and "accept_notices: true" in r.reason, r.reason
 
 
+PROFILE_START = "site/profile-start.html"
+PROFILE_DIALOG = "“Profile Bootstrapping” dialog"
+
+
+def profile_run(srv, query="", tailored=None):
+    """A job on the Eightfold-like page whose dialog offers how to start the profile (`tailored`: the name
+    of a resume made for this job, in its folder); the run, and what the page recorded: how the profile was
+    started, the file put in and how many times, the dialog's buttons pressed, and its form's boxes."""
+    job = srv.add_job(url=fixture_url(PROFILE_START) + query, title="Equipment Technician",
+                      company="Example Corp")["job"]
+    if tailored:
+        folder = Path(srv.tracker().get(job["id"])["folder"])
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / tailored).write_bytes(b"%PDF-1.4\n")
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r, await r.page.evaluate(
+                "() => ({started: sessionStorage.getItem('started'), file: sessionStorage.getItem('file'), "
+                "uploads: Number(sessionStorage.getItem('uploads') || 0), pressed: sessionStorage.getItem('pressed') || '', "
+                "first: document.getElementById('first').value, email: document.getElementById('email').value})")
+        finally:
+            await applier.stop()
+
+    return run(go())
+
+
+@pytest.mark.parametrize("have", ["resume", "none"])
+def test_a_dialog_offering_to_start_the_profile_is_answered_by_entering_the_information(srv, monkeypatch,
+                                                                                       job_apply_home, have):
+    """Eightfold's "Profile Bootstrapping" dialog ("Create your profile with existing information",
+    with "Upload your resume" and "Enter information") opened over Northrop Grumman's application
+    (live check, Oct 2026), and the desk stopped for the person as for a notice only they can answer.
+    It's no agreement but a choice of how to start the profile: "Enter information" is pressed and the
+    form filled from the profile, with a resume in the profile or not. Never the resume upload: the
+    site's reading of it would fill the boxes with its guesses. Nothing else is pressed. Said in the log."""
+    import yaml
+
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    if have == "none":
+        path = job_apply_home / "profile.yaml"
+        prof = yaml.safe_load(path.read_text(encoding="utf-8"))
+        prof["documents"] = {"resume": None}
+        path.write_text(yaml.safe_dump(prof), encoding="utf-8")
+    r, shown = profile_run(srv)
+    assert r.status == "ready", (r.status, r.reason, r.log)
+    assert shown["first"] == "Sam" and shown["email"] == "sam.rivera@example.com", shown  # the form, filled as usual
+    assert (shown["started"], shown["file"], shown["uploads"], shown["pressed"]) == ("enter", None, 0, "enter"), shown
+    assert (f"pressed “Enter information” in Example Corp's {PROFILE_DIALOG}, to fill the application from your "
+            "profile (your resume goes in where it asks for one)") in r.log, r.log
+
+
+def test_a_profile_dialog_that_stays_open_is_the_persons(srv, monkeypatch):
+    """The dialog stayed open after "Enter information" (the site didn't take it): the desk says what it
+    did and leaves it to the person, without pressing it again."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    r, shown = profile_run(srv, "?stays")
+    assert (r.status, r.need) == ("needs_you", "stuck"), (r.status, r.reason, r.log)
+    assert r.reason.startswith(f"I pressed “Enter information” in the {PROFILE_DIALOG} on Example Corp's site, and it "
+                               "stayed open. Look at it in the browser window, then press Resume."), r.reason
+    assert (shown["started"], shown["uploads"], shown["pressed"], shown["first"]) == ("enter", 0, "enter", ""), shown
+
+
+def test_a_profile_dialog_is_known_by_its_offer_not_its_name():
+    """What makes a dialog the one that offers how to start a profile: a button to upload the resume and
+    one to enter the information by hand, whatever the site calls it. Not one with only one of them,
+    nor any other dialog's buttons."""
+    def dialog(*texts, **kw):
+        return {"heading": "Anything", "buttons": [{"id": str(i), "text": t, **kw} for i, t in enumerate(texts)]}
+
+    start = pipeline._profile_start
+    assert start(dialog("Upload your resume", "Enter information"))["text"] == "Enter information"
+    assert start(dialog("Upload Resume/CV", "Enter manually"))["text"] == "Enter manually"
+    assert start(dialog("Attach your CV", "Fill in my details"))["text"] == "Fill in my details"
+    assert start(dialog("Upload your resume")) is None
+    assert start(dialog("Enter information")) is None
+    assert start(dialog("Upload your resume", "Cancel")) is None
+    assert start(dialog("Cancel", "I Agree")) is None
+    assert start(dialog("Upload your resume", "Enter information", disabled=True)) is None
+
+
 @pytest.mark.parametrize("settings", [{}, {"accept_notices": False}], ids=["on", "off"])
 def test_a_privacy_agreement_before_the_application_is_accepted_for_the_person(srv, monkeypatch, job_apply_home,
                                                                                 settings):
@@ -1212,7 +1297,7 @@ def create_account_on_sf(srv, query="", watch=0):
     return run(go())
 
 
-@pytest.mark.parametrize("how", ["on", "slow", "test-identity"])
+@pytest.mark.parametrize("how", ["on", "slow", "once", "test-identity"])
 def test_with_manage_accounts_a_data_privacy_statement_is_opened_and_accepted_for_the_account(
         srv, monkeypatch, job_apply_home, how):
     """SuccessFactors' Create Account (APS's, live, Oct 10, 2026) makes no account until its data privacy
@@ -1228,14 +1313,15 @@ def test_with_manage_accounts_a_data_privacy_statement_is_opened_and_accepted_fo
     manage_accounts(job_apply_home)
     if how == "test-identity":
         as_test_identity(monkeypatch, job_apply_home)
-    r, kept, _ = create_account_on_sf(srv, "?slow" if how == "slow" else "")
+    r, kept, _ = create_account_on_sf(srv, f"?{how}" if how in ("slow", "once") else "")
     log = "\n".join(r.log)
     agreed = f"agreed to Example Corp's notice “{STATEMENT}” for you (settings.accept_notices)"
     assert agreed in r.log, log
     assert any(line.startswith("created your account on") and "accepted its data privacy statement" in line
                for line in r.log), log
     assert r.log.index(agreed) < next(i for i, line in enumerate(r.log) if line.startswith("pressed “Create Account”")), log
-    assert kept == {"opened": 1, "statement": "accepted", "presses": 1, "created": 1, "campaign": False}, kept
+    opened = 2 if how == "once" else 1  # (once: its first press opened nothing, and it was pressed again)
+    assert kept == {"opened": opened, "statement": "accepted", "presses": 1, "created": 1, "campaign": False}, kept
     assert r.need != "sign_in" and "Create Account" not in r.reason, (r.status, r.reason, log)
     assert any("“My Information”" in line for line in r.log), log  # on to the application
 
@@ -2128,6 +2214,91 @@ def test_a_reset_with_a_captcha_makes_the_account_instead(srv, monkeypatch, job_
     assert r.need == "email_code", (r.reason, r.log)  # its passcode: the inbox's, or the person's
 
 
+def test_brassrings_six_box_passcode_is_entered_from_the_inbox_and_verified(srv, monkeypatch, job_apply_home):
+    """Edward Jones' BrassRing (the live check's test identity, Oct 2026): its Create Account emails a
+    passcode and asks for it in six boxes ("Enter 1st digit of your passcode" ... "Enter 6th digit of
+    your passcode") and a "Verify Passcode" button. The desk paused for it and watched the inbox, but
+    "Verify Passcode" isn't one of the buttons it presses after a code (Verify, Confirm, Continue, Next,
+    each with "code", "email" or "account"), so the digits went in and the person had to press it. The
+    code goes in a digit per box and Verify Passcode is pressed (and the log says the mail was in Spam, where
+    BrassRing's page says to look, when it was)."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    saved_password(monkeypatch)
+    as_test_identity(monkeypatch, job_apply_home)
+    asked: list[str] = []
+    inbox_with_code(monkeypatch, asked, spam=True)
+    job = srv.add_job(url=fixture_url("site/brassring-signin.html"), title="Senior Analyst",
+                      company="Example Corp")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.need == "email_code", about=state(r))  # its passcode: the inbox's
+            await until(lambda: "pressed \u201cVerify Passcode\u201d" in r.log, about=state(r))
+            return r, await brassring_did(r.page)
+        finally:
+            await applier.stop()
+
+    r, did = run(go())
+    assert did.get("accountEmail") == "sam.rivera@example.com", (did, r.log)
+    assert (did.get("passcode"), did.get("verifies")) == ("123456", 1), (did, r.log)
+    assert "code" in asked and "link" not in asked, asked
+    assert "entered the code from your email (sent from careers.example.com, in your Spam folder)" in r.log, r.log
+
+
+def test_a_code_the_page_wouldnt_take_is_said_in_the_log_and_tried_again(srv, monkeypatch, job_apply_home):
+    """The inbox's code was found but didn't go into the page (a dialog open over it, a box that wouldn't
+    take it): the desk looked again at the next poll and said nothing, so a run that ended waiting on its
+    code couldn't say whether it was found. The log says so, once, and the next look types it."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    saved_password(monkeypatch)
+    as_test_identity(monkeypatch, job_apply_home)
+    inbox_with_code(monkeypatch)
+    real, refused = srv.fill_form, []
+
+    async def fill_form(values):
+        if len(values) == 6 and len(refused) < 2:  # (the code's six boxes: refused twice)
+            refused.append(values)
+            return {"ok": False, "results": [{"id": values[0]["id"], "ok": False,
+                                               "error": "DialogOpen: “Notice” is open over the page"}]}
+        return await real(values)
+
+    monkeypatch.setattr(srv, "fill_form", fill_form)
+    job = srv.add_job(url=fixture_url("site/brassring-signin.html"), title="Senior Analyst",
+                      company="Example Corp")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: "pressed “Verify Passcode”" in r.log, about=state(r))
+            return r, await brassring_did(r.page)
+        finally:
+            await applier.stop()
+
+    r, did = run(go())
+    said = [line for line in r.log if line.startswith("found the code in your email but couldn't type it")]
+    assert said == ["found the code in your email but couldn't type it into the page (DialogOpen: “Notice” "
+                    "is open over the page); I'll try again"], r.log
+    assert len(refused) == 2 and (did.get("passcode"), did.get("verifies")) == ("123456", 1), (did, r.log)
+
+
+def test_whose_mail_a_brassring_job_reads_a_code_from(srv):
+    """Edward Jones' posting is on its own careers site and its application on BrassRing: the codes may
+    come from either's domains, and from the job system's own (Kenexa's, too)."""
+    job = srv.add_job(url="https://careers.edwardjones.com/job/12345/financial-analyst", title="Financial Analyst",
+                      company="Edward Jones",
+                      apply_url="https://sjobs.brassring.com/TGnewUI/Search/home/HomeWithPreLoad?partnerid=26235"
+                                "&siteid=5374#jobDetails=1427502_5374")["job"]
+    applier = Applier(srv)
+    r = Run(job["id"], "Financial Analyst", "Edward Jones",
+            url="https://sjobs.brassring.com/TGnewUI/Search/home/HomeWithPreLoad?partnerid=26235&siteid=5374")
+    assert applier._mail_senders(r) == {"edwardjones.com", "brassring.com", "kenexa.com"}
+
+
 def test_a_sign_in_page_good_for_one_visit_is_reached_again_through_the_posting(srv, monkeypatch, job_apply_home):
     """SuccessFactors' sign-in page (career?_s.crb=…) is good for one visit: going back to it after a
     reset the desk couldn't do showed "An error occurred while processing your request" (Arizona
@@ -2161,13 +2332,14 @@ INFOR = "https://css-benchmark-prd.inforcloudsuite.com"
 INFOR_POSTING = INFOR + "/hcm/Jobs/form/JobPosting.JobPostingDisplay?csk.JobBoard=EXTERNAL&csk.HROrganization=1"
 
 
-async def _infor_site(srv) -> None:
+async def _infor_site(srv, posting: str = "infor-posting.html", refused: bool = False) -> None:
     """Benchmark's Infor board from the hand-written pages (site/infor-*.html, and its New Account
     Registration: register-picture-code.html) at its own address, so its saved password is Infor's as
     it is live; routed: nothing reaches the real site. Infor's sign-in and its reset are both at
-    /sso/SSOServlet."""
+    /sso/SSOServlet. `posting`: which of its postings (infor-posting-refused.html's Apply goes nowhere
+    once a sign-in was refused in the tab); `refused`: one was already, as every tab opens."""
     site = Path(__file__).parent / "fixtures" / "site"
-    pages = {"/hcm/Jobs/form/JobPosting.JobPostingDisplay": "infor-posting.html", "/sso/SSOServlet": "infor-signin.html",
+    pages = {"/hcm/Jobs/form/JobPosting.JobPostingDisplay": posting, "/sso/SSOServlet": "infor-signin.html",
              "/hcm/Jobs/form/Candidate.SelfRegistrationForm": "register-picture-code.html"}
 
     async def handler(route):
@@ -2178,6 +2350,9 @@ async def _infor_site(srv) -> None:
 
     await srv.browser.page()
     await srv.browser._ctx.route(INFOR + "/**", handler)
+    if refused:
+        await srv.browser._ctx.add_init_script(f"if (location.origin === '{INFOR}' && !sessionStorage.getItem("
+                                               "'infor.logins')) sessionStorage.setItem('infor.logins', '1');")
 
 
 def test_infors_sign_in_opened_again_by_its_address_is_reached_through_the_posting(srv, monkeypatch, job_apply_home):
@@ -2217,6 +2392,75 @@ def test_infors_sign_in_opened_again_by_its_address_is_reached_through_the_posti
            "job again" in log, log
     assert "your saved password didn't sign in, so I opened Create Account" in log, log
     assert not any(line.startswith(("pressed “Submit”", "created your account")) for line in r.log), log
+
+
+def test_infors_register_is_the_way_to_an_account_when_the_postings_apply_goes_nowhere(srv, monkeypatch, job_apply_home):
+    """Benchmark's Infor board again (live, Oct 10 2026): the desk had gone back for an account, found Infor's
+    sign-in opened by its address bare, and opened the job again, but this time the posting's "Apply" went
+    nowhere (once a sign-in was refused in the tab, Infor's session keeps Apply from opening the sign-in
+    again), and the desk stopped on "The page didn't move on". The posting's header has "Register", the
+    board's New Account Registration: the desk presses that instead (it was on its way to a new account),
+    fills it in from the profile, and leaves its picture code and its Submit to the person."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setenv("JOB_APPLY_SECRET_INFOR_PASSWORD", "not-a-real-password")
+    manage_accounts(job_apply_home)
+    watched_inbox(monkeypatch)
+    job = srv.add_job(url=INFOR_POSTING, title="Field Service Technician", company="Benchmark Electronics")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        await _infor_site(srv, posting="infor-posting-refused.html")
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r, await r.page.evaluate("() => [window.result ? window.result() : location.href, window.created, "
+                                            "sessionStorage.getItem('infor.logins')]")
+        finally:
+            await applier.stop()
+
+    r, (filled, created, logins) = run(go())
+    assert filled == {"first": "Sam", "last": "Rivera", "email": "sam.rivera@example.com", "same": True, "code": "",
+                      "upload": "", "files": 0, "nores": False}, (filled, r.reason, r.log)
+    assert (created, logins) == (0, "1"), (created, logins, r.log)  # (one sign-in, never a second; nothing sent)
+    assert r.need == "sign_in" and "Create Account form" in r.reason and "CAPTCHA is yours to solve" in r.reason, r.reason
+    log = "\n".join(r.log)
+    assert "Infor's sign-in page, opened again, had no way to a new account or a password reset, so I opened the " \
+           "job again" in log, log
+    assert "“Apply” on Infor's posting went nowhere, so I pressed its “Register” to make an account there instead" \
+           in log, log
+    assert not any(line.startswith(("pressed “Submit”", "created your account")) for line in r.log), log
+
+
+@pytest.mark.parametrize("settings", ["on", "off", "practice"])
+def test_a_postings_register_is_not_pressed_where_the_desk_is_not_making_an_account(srv, monkeypatch, job_apply_home,
+                                                                                    settings):
+    """A posting whose "Apply" goes nowhere, on a first look at it (no sign-in refused, no account being made
+    for: the desk only goes in through Apply), is stopped on as before, whatever the settings: its header's
+    "Register" is never pressed, with settings.manage_accounts off or in practice mode (which makes no
+    account) or on."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setenv("JOB_APPLY_SECRET_INFOR_PASSWORD", "not-a-real-password")
+    if settings != "off":
+        manage_accounts(job_apply_home, submit_mode="dry_run" if settings == "practice" else "review")
+    watched_inbox(monkeypatch)
+    job = srv.add_job(url=INFOR_POSTING, title="Field Service Technician", company="Benchmark Electronics")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        await _infor_site(srv, posting="infor-posting-refused.html", refused=True)
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r, r.page.url
+        finally:
+            await applier.stop()
+
+    r, url = run(go())
+    assert r.need == "stuck" and "The page didn't move on" in r.reason, (r.need, r.reason, r.log)
+    assert urlparse(url).path == "/hcm/Jobs/form/JobPosting.JobPostingDisplay", (url, r.log)  # (still on the posting)
+    assert not any("Register" in line or "make an account" in line for line in r.log), r.log
 
 
 # Kforce's Taleo career section, on Kforce's own address (data/lists/phoenix-metro.yaml)
@@ -2638,6 +2882,114 @@ def test_an_account_the_desk_made_is_signed_in_to_after_the_tries_ran_out(srv, m
     assert any(line.startswith("created your account on") for line in r.log) and r.seen_form, (r.reason, r.log)
 
 
+@contextlib.contextmanager
+def served_fixtures():
+    """The fixtures served over http, so that a link opened in another tab reaches this one through its
+    browser's localStorage (a file:// page has none). The address of their folder."""
+    import functools
+    import http.server
+    import threading
+
+    handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=str(Path(__file__).parent / "fixtures"))
+    site = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    threading.Thread(target=site.serve_forever, daemon=True).start()
+    try:
+        yield f"http://127.0.0.1:{site.server_address[1]}/"
+    finally:
+        site.shutdown()
+        site.server_close()
+
+
+@pytest.mark.parametrize("query", ["?verify", "?verify=late"])
+def test_with_the_inbox_a_new_account_to_verify_is_signed_in_to_once_its_link_is_opened(srv, monkeypatch, job_apply_home,
+                                                                                       query):
+    """Banner Health's Workday (live, Oct 2026, the test identity): the saved password didn't sign in, no
+    reset email came, and Create Account went back to Sign In saying "An email has been sent to you.
+    Please verify your account". The desk pressed Sign In at once; the unverified account refused it, and
+    the job stopped on "your saved password didn't sign in". Right after the desk made the account, such a
+    page waits for that email: with the inbox watched, its link (the site's own) is opened in this browser,
+    and then the saved password is pressed, once. &late: the page says so only once Sign In is pressed, so
+    the job's two sign-ins are used up when the link is opened (a refusal for want of the link isn't a
+    wrong password: it doesn't stop the sign-in after the link)."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "RESET_MAIL_WAIT", 4)
+    monkeypatch.setattr(pipeline, "MAIL_POLL_SECONDS", 0)
+    monkeypatch.setenv("JOB_APPLY_SECRET_EMAIL_PASSWORD", "an-app-password")
+    monkeypatch.setattr(pipeline.mailbox, "imap_host", lambda address: "imap.example.com")
+    saved_password(monkeypatch)
+    manage_accounts(job_apply_home)
+    asked = []
+
+    with served_fixtures() as site:
+        link = f"{site}site/workday-verify.html"
+
+        def inbox(address, password, since, senders, want, allowed_link, before=None, look_back=None):
+            asked.append(want)
+            assert allowed_link(link) and not allowed_link("https://elsewhere.example.net/verify?t=1")
+            return pipeline.mailbox.Found(want, link, "myworkday.com", time.time()) if want == "link" else None
+
+        monkeypatch.setattr(pipeline.mailbox, "search", inbox)
+        job = srv.add_job(url=f"{site}site/workday-account.html{query}", title="FSE", company="Example Fab")["job"]
+        applier = Applier(srv)
+
+        async def go():
+            applier.start()
+            try:
+                r = applier.enqueue(job["id"])
+                await until(lambda: r.seen_form and r.status not in ("queued", "running"), about=state(r))
+                return r, await workday_did(r.page)
+            finally:
+                await applier.stop()
+
+        r, did = run(go())
+    log = r.log
+    assert "reset" in asked and "link" in asked, asked
+    # (one refused before the account was made, one for want of the link if the page didn't say so, one after it)
+    assert (did["created"], did["presses"], did["signIns"]) == (1, 1, 2 + query.endswith("late")), (did, log)
+    made = next(i for i, line in enumerate(log) if line.startswith("pressed \u201cCreate Account\u201d"))
+    waited = next(i for i, line in enumerate(log) if "emailed you a link to verify your new account" in line)
+    opened = log.index("opened the confirmation link from your email (sent from myworkday.com)")
+    after = [i for i, line in enumerate(log) if line.startswith("pressed \u201cSign In\u201d") and i > waited]
+    assert made < waited < opened and len(after) == 1 and opened < after[0], log  # (once the wait began: once, after the link)
+    assert sum(line.startswith("created your account on") for line in log) == 1, log
+    assert r.need not in ("sign_in", "email_code"), (r.reason, log)
+
+
+def test_without_the_inbox_a_new_account_to_verify_waits_for_the_person_and_their_resume(srv, monkeypatch, job_apply_home):
+    """The same Workday Sign In, with no inbox to read: the card says to verify the account from the
+    email and press Resume, never that the saved password didn't sign in (it wasn't pressed: the account
+    isn't verified yet, and a refusal then counts against the account's locking). The Resume signs in,
+    once."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    saved_password(monkeypatch)
+    manage_accounts(job_apply_home)
+    monkeypatch.setattr(pipeline.mailbox, "search", lambda *a: pytest.fail("the inbox was read"))
+    job = srv.add_job(url=fixture_url("site/workday-account.html") + "?create&verify", title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            await asyncio.sleep(1.5)  # (the queue's polls: none of them presses Sign In)
+            paused = (r.status, r.need, r.reason, await workday_did(r.page))
+            await r.page.evaluate("() => sessionStorage.setItem('wd.verified', 'true')")  # the link, opened elsewhere
+            applier.resume(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r, paused, await workday_did(r.page)
+        finally:
+            await applier.stop()
+
+    r, (status, need, reason, before), did = run(go())
+    assert (status, need) == ("needs_you", "sign_in"), (reason, r.log)
+    assert "verify your new account" in reason and "press Resume" in reason, reason
+    assert "didn't sign in" not in reason and "locked" not in reason, reason
+    assert (before["created"], before.get("signIns", 0)) == (1, 0), before
+    assert did["signIns"] == 1 and r.seen_form and r.need != "sign_in", (did, r.reason, r.log)
+    assert sum(line.startswith("created your account on") for line in r.log) == 1, r.log
+
+
 @pytest.mark.parametrize("page, query, says", [
     ("create-account-signin.html", "?policy", "it says \u201cYour password must contain at least one symbol\u201d."),
     ("workday-account.html", "?create&adult", "\u201cI am at least 18 years of age\u201d isn't ticked."),
@@ -2734,18 +3086,20 @@ async def ukg_did(page):
                                "k.startsWith('ukg.')).map(([k, v]) => [k.slice(4), JSON.parse(v)]))")
 
 
-def test_with_manage_accounts_ukg_pros_second_account_step_is_finished(srv, monkeypatch, job_apply_home):
+@pytest.mark.parametrize("query", ["?register", "?register&component"])
+def test_with_manage_accounts_ukg_pros_second_account_step_is_finished(srv, monkeypatch, job_apply_home, query):
     """UKG Pro (Nikon Precision, live, Oct 2026, the test identity): after the sign-up's email,
     password and Continue, its Register page asks for a name and phone, a consent box ("By checking
     this box, I have read and agree to the Consent and Privacy Policy*", its words beside it, not in a
     label) and "Create account", greyed out until the box is ticked. The desk said the account was made
     as that page came up, filled it as an application, and stopped: it couldn't find the button. It
     finishes the account now (the consent ticked, never the text messages box), and says it's made
-    only once the site goes on to the application."""
+    only once the site goes on to the application. Live, "Create account" is a web component whose own
+    "form" property isn't a form, and the click threw ("component")."""
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
     saved_password(monkeypatch)
     manage_accounts(job_apply_home)
-    job = srv.add_job(url=fixture_url("site/signin-signup-link.html") + "?register", title="FSE",
+    job = srv.add_job(url=fixture_url("site/signin-signup-link.html") + query, title="FSE",
                       company="Example Fab")["job"]
     applier = Applier(srv)
 
@@ -4799,10 +5153,12 @@ def test_apply_online_and_a_page_with_only_a_captcha():
     assert classify({**gate, "fields": [{"id": "f", "kind": "text", "label": "Email"}]}, "") == "form"
 
 
-@pytest.mark.parametrize("page, said", [("forbidden.html", "403 Forbidden"), ("not-acceptable.html", "406 Not Acceptable")])
+@pytest.mark.parametrize("page, said", [("forbidden.html", "403 Forbidden"), ("not-acceptable.html", "406 Not Acceptable"),
+                                        ("request-blocked.html", "Your request has been blocked.")])
 def test_a_site_that_turns_the_browser_away_holds_nothing_up(srv, monkeypatch, page, said):
     """Valleywise Health's postings answer the desk's browser with a bare "403 Forbidden", and
-    Deloitte's sign-in a headless one with "406 Not Acceptable" (live, Oct 2026; the desk said it
+    Deloitte's sign-in a headless one with "406 Not Acceptable", and Banner Health's Workday the live
+    check's with a heading alone, "Your request has been blocked." (live, Oct 2026; the desk said it
     couldn't find the button). There's nothing to solve: the person applies in their own browser,
     and the queue isn't held for it as for a bot check."""
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
@@ -5607,9 +5963,9 @@ def test_an_email_the_site_has_no_account_for_is_said_so_with_its_way_to_make_on
 EIGHTFOLD = "site/eightfold-create-account.html"
 
 
-def inbox_with_code(monkeypatch, codes=None):
+def inbox_with_code(monkeypatch, codes=None, spam=False):
     """An email app password saved, and an inbox whose sign-up code is 123456 (`codes`: each
-    kind asked for, in turn)."""
+    kind asked for, in turn; `spam`: it's in the Spam folder)."""
     monkeypatch.setattr(pipeline, "MAIL_POLL_SECONDS", 0)
     monkeypatch.setenv("JOB_APPLY_SECRET_EMAIL_PASSWORD", "an-app-password")
     monkeypatch.setattr(pipeline.mailbox, "imap_host", lambda address: "imap.example.com")
@@ -5617,7 +5973,9 @@ def inbox_with_code(monkeypatch, codes=None):
     def inbox(address, password, since, senders, want, allowed_link, before=None, look_back=None):
         if codes is not None:
             codes.append(want)
-        return pipeline.mailbox.Found("code", "123456", "careers.example.com", time.time()) if want == "code" else None
+        found = pipeline.mailbox.Found("code", "123456", "careers.example.com", time.time())
+        found.spam = spam
+        return found if want == "code" else None
 
     monkeypatch.setattr(pipeline.mailbox, "search", inbox)
 

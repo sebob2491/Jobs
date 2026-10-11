@@ -128,6 +128,8 @@
       return;
     }
     bump('opened');
+    // ?once: the first press opens nothing (live, the desk's first press at APS's opened no statement)
+    if (q.has('once') && Number(sessionStorage.getItem('sf.opened')) === 1) return;
     setTimeout(() => show(true), q.has('slow') ? 1500 : 0);
   });
   $('accept').addEventListener('click', () => {

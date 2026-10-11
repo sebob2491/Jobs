@@ -10,6 +10,9 @@ group field whose members are tagged `<group id>.<index>`.
 # ("Remember me"), and the button comes after the password. What it sends is the sign-in, whatever
 # it reads: SuccessFactors' sign-in button is "Submit". Put into EXTRACT_JS and ELEMENT_INFO_JS.
 SIGN_IN_FORM_JS = r"""
+  // an element's form, where it's a real one: a web component's own "form" property can be anything (UKG
+  // Pro's "Create account" button's, live, Oct 2026: no elements to go through, and the click threw)
+  const formOf = (el) => (el.form instanceof HTMLFormElement ? el.form : null);
   const signInForm = (el) => {
     const shown = (e) => e.getClientRects().length > 0 && getComputedStyle(e).visibility !== 'hidden';
     const passwords = (n) => [...n.querySelectorAll('input[type="password"]')].filter(shown);
@@ -499,11 +502,11 @@ EXTRACT_JS = r"""
   const boxesIn = (form) => [...form.elements].filter((e) => /^(INPUT|SELECT|TEXTAREA)$/.test(e.tagName)
     && !/^(hidden|submit|button|image|reset)$/i.test(e.type || '') && e.getClientRects().length > 0);
   const sideBox = (el) => {
-    const boxes = el.form ? boxesIn(el.form) : null;
+    const boxes = formOf(el) ? boxesIn(formOf(el)) : null;
     // one or two boxes, one of them for typing (an email address), and words about alerts
     const small = boxes && boxes.length >= 1 && boxes.length <= 2
       && boxes.some((e) => e.tagName === 'INPUT' && /^(text|email|search|)$/i.test(e.getAttribute('type') || ''));
-    if (small && SIDE_BOX.test(el.form.innerText || '')) return true;
+    if (small && SIDE_BOX.test(formOf(el).innerText || '')) return true;
     const foot = el.closest('footer, [role="contentinfo"]');
     return !!foot && !(boxes && boxes.length > 2) && SIDE_BOX.test(foot.innerText || '');
   };
@@ -537,11 +540,11 @@ EXTRACT_JS = r"""
     if (!t || t.length > 60) continue;
     if (el.tagName === 'A' && !ACTION.test(t)) continue;
     const full = t + ' ' + (el.getAttribute('aria-label') || '');
-    const formSubmit = el.type === 'submit' && !!el.form;
+    const formSubmit = el.type === 'submit' && !!formOf(el);
     // SuccessFactors' older sites show a posting inside a form whose submit is "Apply": with
     // nothing in the form to fill, it opens the application and sends nothing
     const opensApplication = formSubmit && POSTING_PAGE.test(location.href) && /^apply( now)?$/i.test(t)
-      && ![...el.form.elements].some((e) => /^(INPUT|SELECT|TEXTAREA)$/.test(e.tagName)
+      && ![...formOf(el).elements].some((e) => /^(INPUT|SELECT|TEXTAREA)$/.test(e.tagName)
         && !/^(hidden|submit|button|image|reset)$/i.test(e.type || '') && e.getClientRects().length > 0);
     const isSubmit = SUBMIT.test(full) || (formSubmit && FINALISH.test(finalText(t)) && !opensApplication);
     if (actions.length >= 60 && !isSubmit && !formSubmit && !STEP.test(t)) continue;
@@ -556,7 +559,7 @@ EXTRACT_JS = r"""
     if (isSubmit) a.is_submit = true;
     // how many boxes the form around a plain button shows: a page's script can send a
     // name-and-email box from its "Apply" too
-    const around = !formSubmit && (el.form || el.closest('form'));
+    const around = !formSubmit && (formOf(el) || el.closest('form'));
     if (around && boxesIn(around).length) a.form_fields = boxesIn(around).length;
     if (isSubmit && sideBox(el)) a.aside = true;
     // A button after a password box: a sign-in form's own "Sign In", not the one in the
@@ -575,7 +578,7 @@ EXTRACT_JS = r"""
     // A link or plain button after the password boxes, in the very form that holds two of them,
     // whatever it reads: that form's own, which a script sends (ApplicantStack's "Submit", a link
     // whose script calls form.submit()). A form's submit button says so already (form_submit).
-    const ownForm = !formSubmit && a.after_password && (el.form || el.closest('form'));
+    const ownForm = !formSubmit && a.after_password && (formOf(el) || el.closest('form'));
     if (ownForm && ownForm.querySelectorAll('input[type="password"]').length >= 2) a.in_account_form = true;
     if (el.disabled || el.getAttribute('aria-disabled') === 'true') a.disabled = true;
     // A link to something already on show on this page (Phoenix Children's "Apply!" to its form,
@@ -593,7 +596,7 @@ EXTRACT_JS = r"""
   for (const f of fields) {
     const el = fieldEls.get(f);
     if (!el) continue;
-    const form = el.form || null;
+    const form = formOf(el) || null;
     if (form && !formAside.has(form)) {
       const own = [...form.querySelectorAll('button, input[type="submit"], [role="button"]')].map((b) => b.value || txt(b));
       formAside.set(form, !own.some((t) => APPLYISH.test(t.trim())) && sideBox(el));
@@ -735,7 +738,7 @@ ELEMENT_INFO_JS = r"""
     label: [el.innerText || el.textContent || el.value || '', el.getAttribute('aria-label') || ''].join(' ').replace(/\s+/g, ' ').trim(),
     // its words as the page script reads them: an icon-only button's are its aria-label
     text: words(el),
-    formSubmit: el.type === 'submit' && !!el.form,
+    formSubmit: el.type === 'submit' && !!formOf(el),
     // in a cookie banner (OneTrust, Cookiebot, TrustArc and the like)
     cookie,
     // the banner's buttons (is there a way to decline?), and whether it covers the page's middle
@@ -743,7 +746,7 @@ ELEMENT_INFO_JS = r"""
       .filter(shown).map(words).filter((t) => t && t.length <= 60).slice(0, 20) : [],
     cookieBlocking: !!top && (banner.contains(top) || (!!over && !page(over) && named(over))),
     // what its form has to fill in, where it can be seen
-    formFields: el.form ? [...el.form.elements].filter((e) => /^(INPUT|SELECT|TEXTAREA)$/.test(e.tagName)
+    formFields: formOf(el) ? [...formOf(el).elements].filter((e) => /^(INPUT|SELECT|TEXTAREA)$/.test(e.tagName)
       && !/^(hidden|submit|button|image|reset)$/i.test(e.type || '') && e.getClientRects().length > 0).length : 0,
     // a sign-in form's own button, whatever it reads ("Submit"): it sends the sign-in, nothing more
     signInForm: signInForm(el),

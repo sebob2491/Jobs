@@ -51,5 +51,10 @@ stays green. It takes about 15 minutes to set up.
   new one through the site's own "Forgot password" email, where the site lets it.
 - If Google emails the test inbox about a sign-in it blocked, open that email and confirm it was
   you: the check reads the inbox from GitHub's computers.
+- When an employer's run ends still waiting on an emailed code, the log has a `LIVE_INBOX` line:
+  the inbox's mail of the last 15 minutes (its Spam folder too), each as the sender's domain,
+  the subject (any email address shown as `<email>`, long numbers as `<digits>`), the time it
+  arrived, whether the desk's sender check lets it through (`allowed`) and whether the desk can
+  read a code from it (`code`). Never the address, the password or a message's text.
 - To run it on your own computer, from `plugins/job-apply/server`, set the same three names in
   your terminal and run `uv run python scripts/live_smoke.py --pipeline --test-identity`.

@@ -37,6 +37,9 @@ US_STATES = {
 _COUNTRY_ALIASES = [
     # (not only countries: a self-identification form's words for the same answer too)
     {"female", "woman"}, {"male", "man"},
+    # a phone's type: Kforce's Taleo lists "Cellular Phone" for a profile's "Mobile"
+    {"mobile", "cell", "cellular", "mobile phone", "cell phone", "cellular phone"},
+    {"home", "home phone", "landline"}, {"work", "work phone", "business phone", "office phone"},
     {"united states", "united states of america", "usa", "us", "u s", "u s a", "america"},
     {"united kingdom", "uk", "great britain", "england"},
     {"netherlands", "the netherlands", "holland"},
@@ -1009,6 +1012,39 @@ def _phone(prof: Profile, job: dict, label: str = "") -> Any:
     return phone
 
 
+# The kinds of phone a form's boxes name (the alias groups of a phone's type, in _COUNTRY_ALIASES)
+_PHONE_KINDS = {"mobile": r"mobile|cell(?:ular)?", "home": r"home|landline", "work": r"work|business|office"}
+_ANY_PHONE_KIND = "|".join(_PHONE_KINDS.values())
+# A box that names its kind: Taleo's "Work Phone Number", "Cellular Number ..." (Kforce's goes on with a
+# notice about its text messages), "Phone (Home)", "Mobile"; not "Phone Number", which names none
+_PHONE_BOX_KIND = re.compile(rf"^(?:(?P<lead>{_ANY_PHONE_KIND})(?: (?:tele)?phone| number| no)\b|"
+                             rf"(?:tele)?phone(?: number| no)? (?P<trail>{_ANY_PHONE_KIND})$|(?P<bare>mobile|cell(?:ular)?)$)")
+# A label that goes on after its box's name for as long as the employer likes, so no matter how long: only
+# a box named by kind (not "Mobile apps you have built"), and never one that asks for consent or signs the
+# person up for marketing, alerts or a newsletter (a notice that its texts are "non-marketing" is no sign-up)
+_PHONE_SIGN_UP = (r"(?<!non )\bmarketing|\bjob alerts?|\bnewsletters?|\bpromotion\w*|\bsubscri\w*|\bopt(?:ing)? in|"
+                  r"\bconsent|\bagree|\bsend me|\bsimilar jobs|\btalent (?:community|network)")
+_LONG_PHONE_BOX = rf"^(?!.*(?:{_PHONE_SIGN_UP}))(?:{_ANY_PHONE_KIND})(?: (?:tele)?phone| number)\b"
+
+
+def _phone_kind_of(word: str) -> str | None:
+    return next((kind for kind, words in _PHONE_KINDS.items() if re.fullmatch(words, word)), None)
+
+
+def _phone_box_kind(label: str) -> str | None:
+    """The kind of phone a box names ("mobile", "home" or "work"), or None for a plain one."""
+    m = _PHONE_BOX_KIND.match(label)
+    return _phone_kind_of(m.group("lead") or m.group("trail") or m.group("bare")) if m else None
+
+
+def _other_kind_of_phone(label: str, prof: Profile) -> bool:
+    """A box for a kind of phone other than the profile's ("Work Phone Number" for a mobile): the
+    profile's one number isn't of that kind, so it's the person's. The profile's phone_type is
+    "Mobile" unless it says otherwise; one that is none of the three fits no box named by kind."""
+    box = _phone_box_kind(label)
+    return box is not None and box != _phone_kind_of(re.sub(r" (?:tele)?phone$", "", norm(prof.get("personal.phone_type", "Mobile"))))
+
+
 _SOMEONE_ELSE = re.compile(r"\b(referen\w*|referee\w*|emergency|next of kin|supervisor\w*|manager\w*|referr\w*|contact person|"
                            r"relatives?|family|spouse)\b")
 # A box for another party's details, by its own words ("Employer Phone", "School Zip Code") or
@@ -1057,6 +1093,8 @@ RULES: list[tuple[str, str, Getter, int | None, set[str] | None]] = [
     ("preferred_name", r"^preferred (first )?name|^nick ?name", lambda p, j: p.get("personal.preferred_name") or p.get("personal.first_name"), 45, None),
     ("full_name", r"^(full |legal |your |candidate )?(full )?name$|^full (legal )?name|^legal name", _full_name, 45, None),
     ("phone_type", r"phone (device )?type|type of phone", lambda p, j: p.get("personal.phone_type", "Mobile"), 45, None),
+    # Kforce's Taleo: "Primary Number", a choice of Home, Work or Cellular Phone (live, Oct 2026)
+    ("phone_type", r"^primary (phone )?number$", lambda p, j: p.get("personal.phone_type", "Mobile"), 45, _YES_NO_KINDS),
     # (not "Phone Number (including country code)": that's the number, written with its code)
     ("phone_code", r"^(?!.*\b(number|no|incl|including|with)\b).*\b(country|phone|dial(ing)?) (phone )?code\b", _phone_code, 45, None),
     ("phone_ext", r"extension", lambda p, j: None, 45, None),
@@ -1064,6 +1102,9 @@ RULES: list[tuple[str, str, Getter, int | None, set[str] | None]] = [
     # a longer label that goes on to say how to write it ("Phone Number [must include your location code ...]")
     ("phone", r"^((mobile|cell|home|primary) )?(tele)?phone( number)? (must|should|including|incl|with|format|in the format|"
               r"e g|digits|no spaces)\b", _phone, None, {"text"}),
+    # Kforce's Taleo (live, Oct 2026): "Cellular Number Kforce may send non-marketing, employment-related text
+    # messages to any number(s) you submit. Reply STOP any time to cancel." is the application's number box
+    ("phone", _LONG_PHONE_BOX, _phone, None, {"text"}),
     ("address2", r"address line 2|^address 2|apartment|suite|^apt|^unit", _p("personal.address.line2"), 45, None),
     ("address1", r"address line 1|^address 1|^street|^(home |mailing |street )?address$", _p("personal.address.line1"), 45, None),
     ("city", r"^city|town|location city|current city|city of residence|"
@@ -1616,6 +1657,8 @@ def resolve_field(field: dict, prof: Profile, job: dict | None = None, file_inpu
             if own or re.search(pattern, label):
                 if name in _WORK_RULES and (_OTHER_COUNTRIES.search(label) or _OTHER_THAN.search(label)):
                     return None  # another country's question: the profile's facts are the United States'
+                if name == "phone" and _other_kind_of_phone(label, prof):
+                    return None  # a Work Phone for a mobile: the profile's number isn't that kind's
                 value = getter(prof, job, raw_label) if _reads_question(getter) else getter(prof, job)  # type: ignore[call-arg]  # these take the question too
                 if value is None or value == "":
                     return None  # recognised but the profile has no answer
@@ -1961,6 +2004,26 @@ def plan_autofill(fields: list[dict], prof: Profile, job: dict | None = None, ov
             # don't wish to answer"), so the desk can say why it's empty
             needs_input.append({**_asked(f), **({"unmatched": str(missed[0].value)} if missed else {})})
     _graduation_of_the_school_given(fields, to_fill, needs_input, prof, job, file_inputs)
+    # A form with no phone box of the profile's kind and no plain one, whose boxes name other kinds ("Home
+    # Phone" alone, for a mobile): where only one of them is there, or only one is required, that's where
+    # the form wants the number, so it's filled, as before boxes had kinds. Only a box the profile would
+    # fill but for its kind (never a reference's, nor one that signs the person up for texts)
+    if not any(t["rule"] == "phone" for t in to_fill) and prof.get("personal.phone"):
+        def kind_only(f: dict) -> bool:
+            kind = _phone_box_kind(norm(clean_label(f.get("label") or "")))
+            if f.get("kind") != "text" or kind is None:
+                return False
+            as_kind = Profile({**prof.data, "personal": {**(prof.get("personal") or {}), "phone_type": kind}})
+            got = resolve_field(f, as_kind, job or {}, file_inputs)
+            return got is not None and got.rule == "phone"
+        waiting = {q.get("id") for q in needs_input}
+        boxes = [f for f in fields if f.get("id") in waiting and kind_only(f)]
+        required = [f for f in boxes if f.get("required")]
+        chosen = boxes[0] if len(boxes) == 1 else required[0] if len(required) == 1 else None
+        if chosen is not None:
+            needs_input[:] = [q for q in needs_input if q.get("id") != chosen["id"]]
+            to_fill.append({"id": chosen["id"], "label": chosen.get("label", ""),
+                            "value": _phone(prof, job or {}, norm(clean_label(chosen.get("label") or ""))), "rule": "phone"})
     needs_input.sort(key=lambda f: not f.get("required"))
     return {"to_fill": to_fill, "needs_input": needs_input, "already_filled": already}
 

@@ -1293,6 +1293,120 @@ def test_a_family_member_at_the_employer_or_on_its_board_is_a_relatives_question
     assert clean_label(asked).endswith("Board of Directors"), clean_label(asked)
 
 
+def test_a_primary_number_choice_is_the_phones_type():
+    """Kforce's Taleo (live check, Oct 2026): "Primary Number . Required", a choice of "Home Phone", "Work
+    Phone" or "Cellular Phone", stopped the desk. It's the phone's type, from personal.phone_type ("Mobile"
+    unless the profile says otherwise), and a mobile is a cellular phone. A box to type a number in is
+    no such choice."""
+    options = ["Not Specified", "Home Phone", "Work Phone", "Cellular Phone"]
+    asked = f("Primary Number . Required", "select", options=options)
+    got = resolve_field(asked, prof(), {"company": "Kforce"})
+    assert got is not None and (got.rule, got.value) == ("phone_type", "Cellular Phone"), got
+    home = Profile({"personal": {"phone": "480-555-0123", "phone_type": "Home"}})
+    assert resolve_field(asked, home, {"company": "Kforce"}).value == "Home Phone"
+    typed = resolve_field(f("Primary Number"), prof(), {})
+    assert typed is None or typed.rule != "phone_type", typed
+
+
+_KFORCE_WORK = "Work Phone Number"
+_KFORCE_HOME = "Home Phone Number"
+_KFORCE_CELL = ("Cellular Number Kforce may send non-marketing, employment-related text messages to any number(s) "
+                "you submit. Reply STOP any time to cancel.")
+
+
+def _numbers_in(labels, p, **kw):
+    """The plan for phone boxes with these labels (ids 0, 1, ...): {label: the number it gets}, and the plan."""
+    fields = [f(label, id=str(n), **kw) for n, label in enumerate(labels)]
+    plan = plan_autofill(fields, p, {"company": "Kforce"})
+    return {labels[int(item["id"])]: item["value"] for item in plan["to_fill"]}, plan
+
+
+def test_a_phone_goes_in_the_box_of_its_own_type_and_no_other():
+    """Kforce's Taleo (live check, Oct 2026): "Work Phone Number", "Home Phone Number" and "Cellular Number
+    Kforce may send non-marketing, employment-related text messages ..." got the one phone in the first two and
+    nothing in the third, and Taleo refused it: "Cellular Phone" was the primary number, so its number was
+    required. The profile's one phone is of one type (personal.phone_type, "Mobile" unless it says otherwise):
+    it goes in that type's box, however long the box's label, and the other types' boxes are left empty."""
+    labels = [_KFORCE_WORK, _KFORCE_HOME, _KFORCE_CELL]
+    number = "480-555-0123"
+    got, plan = _numbers_in(labels, prof())
+    assert got == {_KFORCE_CELL: number}, got
+    assert [q["label"] for q in plan["needs_input"]] == [_KFORCE_WORK, _KFORCE_HOME]
+    for phone_type, box in (("Home", _KFORCE_HOME), ("Work", _KFORCE_WORK), ("Cell", _KFORCE_CELL),
+                            ("Cellular Phone", _KFORCE_CELL), ("Landline", _KFORCE_HOME), ("Mobile", _KFORCE_CELL)):
+        typed = Profile({"personal": {"phone": number, "phone_type": phone_type}})
+        assert _numbers_in(labels, typed)[0] == {box: number}, phone_type
+    # a type that is none of the three says no box's kind: not the person's number for any of them
+    other = Profile({"personal": {"phone": number, "phone_type": "Pager"}})
+    assert _numbers_in(labels, other)[0] == {}
+
+
+def test_a_phone_box_of_another_type_is_the_persons_even_when_required():
+    """A required Work box beside the mobile's own box isn't filled with a number that isn't a work phone:
+    it's the person's question, put to them as a required one. (The same for the other ways a form names a
+    kind.) A form's one phone box is filled whatever its kind: test_a_forms_one_phone_box_gets_the_number."""
+    got, plan = _numbers_in([_KFORCE_WORK, "Cell Phone"], prof(), required=True)
+    assert got == {"Cell Phone": "480-555-0123"}, got
+    assert [(q["label"], q.get("required")) for q in plan["needs_input"]] == [(_KFORCE_WORK, True)]
+    for other in ("Home Phone", "Work Phone", "Business Phone", "Office Phone Number", "Phone (Home)", "Phone Number - Work",
+                  "Telephone (Work)", "Home Number"):
+        assert other not in _numbers_in([other, "Cell Phone"], prof())[0], other
+    home = Profile({"personal": {"phone": "480-555-0123", "phone_type": "Home"}})
+    for other in ("Mobile Phone", "Cell Phone Number", "Mobile", "Cellular", "Phone (Mobile)", "Work Phone Number"):
+        assert other not in _numbers_in([other, "Home Phone"], home)[0], other
+
+
+def test_a_phone_box_that_names_no_type_or_the_profiles_is_filled():
+    """"Phone", "Phone Number" and "Primary Phone" say no kind: filled as always; so is a box of the
+    profile's own type, long or short, whatever its other words."""
+    number = "480-555-0123"
+    for label in ("Phone", "Phone Number", "Primary Phone", "Telephone", "Phone Number (including country code)"):
+        assert resolve_field(f(label), prof()).value in (number, f"+1 {number}"), label
+    for label in ("Mobile Phone", "Mobile", "Cell Phone", "Cellular Number", "Mobile Number *", "Phone (Mobile)", _KFORCE_CELL,
+                  "Cell Phone Number Please include the area code"):
+        assert resolve_field(f(label), prof()).value == number, label
+    home = Profile({"personal": {"phone": number, "phone_type": "Home phone"}})
+    assert resolve_field(f("Home Phone Number"), home).value == number
+    # a long label is a phone box only when it names one, not when it only starts with a word of a type
+    for label in ("Mobile devices and cell phone systems you have installed or repaired in the last ten years",
+                  "Work history, in your own words, for the last ten years: employer, title and dates"):
+        assert resolve_field(f(label), prof()) is None, label
+
+
+def test_text_messages_notice_is_no_sign_up_but_an_opt_in_or_marketing_is():
+    """Kforce's Cellular box says it "may send non-marketing, employment-related text messages": that is no
+    sign-up, the box is the application's number. A checkbox that agrees to texts is never ticked, and a box
+    that signs the person up for marketing, job alerts or a newsletter, or asks their consent, stays theirs."""
+    assert resolve_field(f(_KFORCE_CELL), prof()).value == "480-555-0123"
+    optin = f("I agree to receive text messages about jobs", "checkbox")
+    assert resolve_field(optin, prof()) is None
+    assert resolve_field({**optin, "value": "", "required": True}, prof()) is None
+    plan = plan_autofill([optin, f(_KFORCE_CELL, id="2")], prof(), {"company": "Kforce"})
+    assert [item["id"] for item in plan["to_fill"]] == ["2"], plan
+    for sign_up in ("Mobile Number Sign up for job alerts by text message",
+                    "Cell Phone Number Send me text messages about similar jobs and other openings at the company",
+                    "Cellular Number By providing it you agree to receive recurring marketing text messages from us",
+                    "Mobile Number Opt in to our newsletter and promotions by text message",
+                    "Cell Number I consent to receive automated text messages (SMS) from the employer"):
+        assert resolve_field(f(sign_up), prof()) is None, sign_up
+
+
+def test_a_forms_one_phone_box_gets_the_number_whatever_kind_it_names():
+    """A form whose only phone box is of another kind than the profile's ("Home Phone *" alone, for a
+    mobile) wants the number there: it's filled, as before boxes had kinds. With a box of the profile's
+    kind or a plain one beside it, the other kinds stay the person's."""
+    alone = plan_autofill([f("Home Phone *", "text", required=True)], prof(), {})
+    assert [(x["label"], x["rule"]) for x in alone["to_fill"]] == [("Home Phone *", "phone")], alone
+    both = plan_autofill([f("Home Phone *", "text", required=True), {**f("Cell Phone", "text"), "id": "2"}], prof(), {})
+    assert [x["label"] for x in both["to_fill"]] == ["Cell Phone"], both
+    # of two boxes of other kinds, the one the form requires
+    two = plan_autofill([f("Home Phone", "text", required=True), {**f("Work Phone", "text"), "id": "2"}], prof(), {})
+    assert [x["label"] for x in two["to_fill"]] == ["Home Phone"], two
+    # never someone else's box, nor one that signs the person up for texts
+    for label in ("Emergency Contact Home Phone", "Home Phone Number - text me job alerts and similar jobs"):
+        assert plan_autofill([f(label, "text", required=True)], prof(), {})["to_fill"] == [], label
+
+
 def test_an_expected_graduation_date_is_never_a_past_year():
     """American Express (live, Oct 2026) asks "What is your expected graduation date:" with
     "I am currently not attending school" among its choices, and the desk typed 2020, the

@@ -30,8 +30,12 @@ The desk is a local web page served by this plugin. It does what the `find-jobs`
     before the application, a privacy dialog's Ok, a required "I agree to the Privacy notice
     and Terms of use" box), and picks an application's attestation that its information is
     true and complete (or consent to the background check that comes with applying), noting
-    each in the job's log. Never a newsletter, job alerts or a talent community. Any other dialog over a form still stops for the user, and cookie banners
-    keep their own rule;
+    each in the job's log. Never a newsletter, job alerts or a talent community. A dialog that
+    offers how to start the application's profile (Eightfold's "Create your profile with
+    existing information": buttons to upload a resume and to enter the information) isn't a
+    notice: its "Enter information" is pressed and the form filled from the profile (never the
+    site's reading of the resume, whose guesses could overstate it). Any other dialog over a form still
+    stops for the user, and cookie banners keep their own rule;
   - sign-ins, bot checks, CAPTCHAs and emailed codes. The user deals with these in the
     browser window, and the desk carries on by itself once the page moves past them. A
     link a site emails to confirm the address opens in the user's usual browser, which
@@ -41,9 +45,9 @@ The desk is a local web page served by this plugin. It does what the `find-jobs`
     its tab is past the pause. With an email app password saved in **Site passwords**
     (`email_password`, for the profile's email address), the desk reads the code or link
     from the inbox itself. It reads only mail from that job's site or its job system,
-    sent after the wait began (or in the two minutes before), read-only, and never
-    presses a button labelled Submit. Never ask for that
-    password in the chat either: it goes into the desk page.
+    sent after the wait began (or in the two minutes before), read-only (the inbox, and its
+    Spam folder when the inbox has none), and never presses a button labelled Submit. Never
+    ask for that password in the chat either: it goes into the desk page.
   - **Alert me** (in the header) turns on desktop notifications for jobs that come to
     need the user or are ready to submit, so the desk can be left in the background.
 - **Notes (N)** (in the header, once there are any) collects the notes the desk takes by
