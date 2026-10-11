@@ -1228,6 +1228,8 @@ async def check_pipeline(company: dict[str, Any], out: Path, rec: dict[str, Any]
         if run is not None and any(_NO_MATCH.search(q.get("error") or "") for q in run.questions):
             rec["lists"] = await list_probe(run.questions)
         try:
+            if run is not None:  # the job's own tab, not whichever the browser was last on (Benchmark's, run 11: blank)
+                server.browser.use_tab(run.page)
             snap = await server.debug_snapshot(note=f"live pipeline: {company['name']}")
             dest = out / "pipeline" / slug(company["name"])
             shutil.copytree(snap["saved_to"], dest, dirs_exist_ok=True)
