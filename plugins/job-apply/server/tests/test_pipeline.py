@@ -6709,6 +6709,13 @@ def test_a_sign_in_that_led_elsewhere_is_told_from_an_email_first_one():
     ("I agree to create an account and be contacted about other open positions", False),
     ("I agree to join the talent community", False),
     ("I am at least 18 years old", False),
+    # the review's: an agreement that takes in more than the account
+    ("I agree that my account and data can be shared with partners", False),
+    ("I agree to receive emails about my account", False),
+    ("I agree to create an account and receive updates", False),
+    ("I consent to receive text updates about my account", False),
+    ("I agree to the processing of my personal data for recruitment and for future vacancies", False),
+    ("I consent to the GDPR retention of my data in the talent pool", False),
 ])
 def test_a_workday_create_accounts_own_agreement_is_its_terms(label, ticked):
     """The first nightly at every employer (Oct 11): nine Workday Create Account forms stopped on a box of their

@@ -158,12 +158,16 @@ _TERMS_ONLY = re.compile(r"terms|conditions|(?:privacy|data protection) (?:polic
                          # the first nightly at every employer, Oct 11, nine stopped on it) the account itself
                          # ("I agree to create(ing) a candidate home account"), a bare "I agree" or "I consent", the
                          # processing of one's personal data (a GDPR notice), the documents above read
-                         r"|\b(?:agree|consent)\w*\b.{0,60}\b(?:creat\w*|account)\b|^\s*(?:yes,? )?i (?:agree|consent|accept)\W*$"
+                         r"|\b(?:agree|consent)\w*\b.{0,40}\bcreat\w*\b.{0,60}\baccount\b|^\s*(?:yes,? )?i (?:agree|consent|accept)\W*$"
                          r"|\bgdpr\b|process\w* (?:of )?my personal data|acknowledge having read", re.I)
 _TERMS_BOX = re.compile(r"terms|conditions|privacy|consent|agree|acknowledge|policy|notice", re.I)
 _NOT_TERMS = re.compile(r"newsletter|marketing|job alerts?|text messages?|\bsms\b|promotion|offers|subscribe|similar jobs|"
                         r"talent (?:community|network)|keep me|stay informed|send me|contact(?:ed)? me|be contacted|"
                         r"share my|other (?:\w+ )?(?:roles|positions|jobs|openings|opportunities)|affiliat", re.I)
+# And on an account's own box, what else its agreement may take in (the review of 0.3.117's wider account terms):
+# a box's words only, never a statement's (whose text names most of these in passing)
+_MORE_THAN_TERMS = re.compile(r"receiv\w*|e-?mails?|updates?|notifications?|messages?|partners?|third[- ]part|future|"
+                              r"talent pool|retain|retention", re.I)
 # A Create Account box that says the person applies from outside, not as one of the employer's staff
 # (Banner Health's Workday, live, Oct 2026: "Yes, I am a new candidate and not a current employee"; no
 # account without it, though it isn't marked required). That and nothing more: a box that says more
@@ -2434,7 +2438,8 @@ class Applier:
         if view == "consent":
             ticked = [f for f in data.get("fields") or [] if f.get("kind") == "checkbox" and not f.get("disabled")
                       and is_empty_value(f.get("value")) and _TERMS_BOX.search(f.get("label") or "")
-                      and not _NOT_TERMS.search(f.get("label") or "") and _TERMS_ONLY.search(f.get("label") or "")]
+                      and not _NOT_TERMS.search(f.get("label") or "") and _TERMS_ONLY.search(f.get("label") or "")
+                      and not _MORE_THAN_TERMS.search(f.get("label") or "")]
             if ticked and not (await srv.fill_form([{"id": f["id"], "value": True} for f in ticked])).get("ok"):
                 return await self._account_theirs(run, data, f"{site} asks you to agree to its terms before making your "
                                             "account, and its box didn't take my tick")
@@ -3755,6 +3760,7 @@ def _terms_boxes(data: dict[str, Any]) -> list[dict[str, Any]]:
     messages' (_NOT_TERMS)."""
     return [f for f in data.get("fields") or [] if f.get("kind") == "checkbox" and is_empty_value(f.get("value"))
             and _TERMS_BOX.search(f.get("label") or "") and not _NOT_TERMS.search(f.get("label") or "")
+            and not _MORE_THAN_TERMS.search(f.get("label") or "")
             and (f.get("required") or _TERMS_ONLY.search(f.get("label") or ""))]
 
 
