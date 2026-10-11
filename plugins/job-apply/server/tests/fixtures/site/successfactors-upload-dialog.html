@@ -1,0 +1,66 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Apply - Example Utility</title>
+<style>.displayNone{display:none} .hiddenAriaContent{position:absolute;clip:rect(0 0 0 0);width:1px;height:1px;overflow:hidden}
+.dlg{border:1px solid #888;padding:12px}</style></head>
+<body>
+<!-- like the older SuccessFactors career site's My Documents (APS's, the live check's plus probe, Oct 11): no file
+     box on the page, only a "+" button whose words say "Upload a Resume Opens a dialog". ?chooser: it opens the
+     browser's file chooser itself. ?box: its dialog shows a file box and an Upload button. Otherwise its dialog has
+     a Browse button (which opens the chooser) and an Upload button. Once uploaded, the file's name is shown. -->
+<h2>My Documents</h2>
+<div class="RCMFormField rcmFormElement attachmentField">
+  <label id="38:" class="rcmFormFieldLabel"><span class="requiredField" aria-hidden="true">*</span>&nbsp;Resume</label>
+  <div id="52:_attachWrapper">
+    <div id="52:_attachSuccess" class="attachSuccessIcon displayNone"><span class="hiddenAriaContent">File is uploaded successfully</span></div>
+    <div id="52:_attachLabel" class="attachmentLabel"><span>Upload a Resume</span></div>
+    <div id="52:_attachDownloadLabel" role="button" tabindex="0" class="displayNone"><span id="52:_attachDownloadLabelLink"></span></div>
+    <div class="attachActions"><span tabindex="0" role="button" aria-labelledby="38: 52:_ariaActionLabel" id="52:_attachIcon"
+      class="addAttachments">+</span><span class="hiddenAriaContent" role="tooltip" id="52:_ariaActionLabel">Upload a Resume Opens a dialog</span></div>
+  </div>
+  <div id="39:" role="alert">Resume is required</div>
+</div>
+<label for="first">First Name</label><input id="first" type="text">
+<div id="dlg" class="dlg" role="dialog" hidden>
+  <h3>Upload a Resume</h3>
+  <button type="button" id="browse">Browse</button>
+  <span id="picked"></span>
+  <button type="button" id="upload">Upload</button>
+  <button type="button" id="cancel">Cancel</button>
+</div>
+<script>
+  const q = new URLSearchParams(location.search);
+  // (as APS's: no file box anywhere until the button is pressed)
+  const dlg = document.getElementById('dlg');
+  let pick = null;
+  const makePick = () => {
+    if (pick) return pick;
+    pick = document.createElement('input');
+    pick.type = 'file';
+    pick.hidden = !q.has('box');
+    (q.has('chooser') ? document.body : dlg).insertBefore(pick, q.has('chooser') ? null : document.getElementById('browse') || document.getElementById('picked'));
+    pick.addEventListener('change', () => {
+      const name = pick.files[0] ? pick.files[0].name : '';
+      if (q.has('chooser')) done(name); else document.getElementById('picked').textContent = name;
+    });
+    return pick;
+  };
+  if (q.has('box')) document.getElementById('browse').remove();
+  const done = (name) => {
+    document.getElementById('52:_attachLabel').classList.add('displayNone');
+    document.getElementById('52:_attachDownloadLabel').classList.remove('displayNone');
+    document.getElementById('52:_attachDownloadLabelLink').textContent = name;
+    document.getElementById('52:_attachSuccess').classList.remove('displayNone');
+    document.getElementById('39:').textContent = '';
+    dlg.hidden = true;
+  };
+  document.getElementById('52:_attachIcon').addEventListener('click', () => {
+    makePick();
+    if (q.has('chooser')) pick.click(); else dlg.hidden = false;
+  });
+  document.getElementById('browse')?.addEventListener('click', () => pick.click());
+  document.getElementById('upload').addEventListener('click', () => { if (pick && pick.files[0]) done(pick.files[0].name); });
+  document.getElementById('cancel').addEventListener('click', () => { dlg.hidden = true; });
+</script>
+</body>
+</html>

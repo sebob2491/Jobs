@@ -148,6 +148,8 @@ LOST_FILL_TRIES = 3  # times a box is typed again on a page, at most (one the pa
 BLOCK_DRAW_WAIT = 6000  # ms for blocks just added (Workday's Education 2) to draw their boxes, at most
 # How long a click may wait for its button to become clickable, in ms.
 CLICK_TIMEOUT = 8000
+UPLOAD_CHOOSER_WAIT = 3000  # ms for a button that opens a site's own upload to open a file chooser
+UPLOAD_SHOWN_WAIT = 15  # seconds for a file given through a site's own upload to show on the page
 CONFIRM_WAIT = 12  # seconds a submit's confirmation is watched for after its page goes quiet
 # How long a box under an overlay (or being drawn again) may take to take the focus, in ms: not
 # Playwright's 30 s for each of Workday's 16 date parts on My Experience
@@ -1373,6 +1375,8 @@ class BrowserSession:
             if await loc.evaluate("(el, k) => el.__jaUploaded === k || (el.ownerDocument.body.innerText || '').includes(k)",
                                   path.name):
                 return "already uploaded on this page"
+            if not await loc.evaluate("el => el.tagName === 'INPUT' && el.type === 'file'"):
+                return await self._upload_through(page, loc, path)
             await loc.set_input_files(str(path))
             with contextlib.suppress(PlaywrightError, PlaywrightTimeout):  # (a box drawn afresh at once is gone)
                 await loc.evaluate("(el, k) => { el.__jaUploaded = k; }", path.name, timeout=1500)
@@ -1423,6 +1427,51 @@ class BrowserSession:
         await loc.fill(text)
         await loc.evaluate("el => el.blur()")
         return "filled"
+
+    async def _upload_through(self, page: Page, button: Locator, path: Path) -> str:
+        """A file given through the button that opens the site's own upload (the older SuccessFactors site's
+        "Upload a Resume", which opens a dialog: APS's, the live check's plus probe Oct 11). Pressed, the file
+        goes to the file chooser it opens, or to the file box its dialog shows (after the dialog's own Browse,
+        where it has one), and the dialog's Upload (or OK) is pressed. Said when the page doesn't then show it."""
+        boxes = page.locator('input[type="file"]')
+        before = await boxes.count()
+
+        async def chosen(press: Locator) -> bool:  # pressed: did a file chooser open, and take the file?
+            try:
+                async with page.expect_file_chooser(timeout=UPLOAD_CHOOSER_WAIT) as chooser:
+                    await press.click(timeout=3000)
+                await (await chooser.value).set_files(str(path))
+                return True
+            except PlaywrightTimeout:
+                return False
+
+        if not await chosen(button):
+            await page.wait_for_timeout(500)
+            dialog = page.locator('[role="dialog"]:visible, [role="alertdialog"]:visible, dialog[open]').last
+            scope = dialog if await dialog.count() else page
+            browse = scope.locator('button:visible, [role="button"]:visible, a:visible').filter(
+                has_text=re.compile(r"^\s*(browse|choose (a )?file|select (a )?file|upload from (my )?(device|computer)"
+                                    r"|from (my )?(device|computer))", re.I))
+            if not (await browse.count() and await chosen(browse.first)):
+                if await boxes.count() <= before and not await scope.locator('input[type="file"]').count():
+                    raise ValueError("pressing it opened no way to choose a file; upload it in the browser")
+                box = scope.locator('input[type="file"]').last if await scope.locator('input[type="file"]').count() \
+                    else boxes.last
+                await box.set_input_files(str(path))
+            await page.wait_for_timeout(500)
+            if await dialog.count():  # the dialog's own Upload (or OK, Save, Done)
+                confirm = dialog.locator('button:visible, [role="button"]:visible, input[type="submit"]:visible').filter(
+                    has_text=re.compile(r"^\s*(upload|attach|ok|save|done|submit|continue)\s*$", re.I))
+                if await confirm.count():
+                    await confirm.first.click(timeout=3000)
+        # shown on the page: its name, or the upload's tick
+        for _ in range(int(UPLOAD_SHOWN_WAIT * 2)):
+            if await page.evaluate("(k) => (document.body.innerText || '').includes(k) || [...document.querySelectorAll("
+                                   "'[class*=\"attachSuccess\" i]')].some((x) => x.getClientRects().length > 0)",
+                                   path.name):
+                return f"uploaded {path.name}"
+            await page.wait_for_timeout(500)
+        raise ValueError(f"the page didn't show {path.name} after its upload; check it in the browser")
 
     async def _type_date_part(self, page: Page, loc: Locator, text: str) -> str:
         """A date's part (Workday's MM / DD / YYYY), which reacts to keystrokes, not a pasted value.

@@ -448,6 +448,31 @@ EXTRACT_JS = r"""
     if (kind === 'password') passwordBoxes.push(el);
   }
 
+  // An upload that's only a button opening the site's own dialog, with no file box on the page ("Upload a Resume
+  // Opens a dialog": the older SuccessFactors site's, APS's, the live check's plus probe Oct 11): read as the file
+  // box it stands for, and filled through its dialog
+  for (const b of document.querySelectorAll('[role="button"], button')) {
+    if (b.getClientRects().length === 0 || b.disabled) continue;
+    const said = clean([labelledBy(b), b.getAttribute('aria-label') || '', txt(b)].join(' '));
+    const m = said.match(/\bupload (?:a |an |your )?(resume|cv|cover letter|transcript)\b/i);
+    if (!m || !/\bopens? a (?:dialog|window)\b/i.test(said)) continue;
+    const field = b.closest('.RCMFormField, [class*="attachmentField" i]') || b.parentElement;
+    if (field && field.querySelector('input[type="file"]')) continue;  // (its own file box is read as itself)
+    const lab = field && field.querySelector('label');
+    const label = clean((lab ? (lab.textContent || '') : m[1]).replace(/^[\s*\u00a0]+/, '')) || m[1];
+    if (fields.some((f) => f.kind === 'file' && f.label === label)) continue;
+    // a file there already: its name shown in place of the upload's words, or the upload's tick
+    const shown = field ? [...field.querySelectorAll('[id$="_attachDownloadLabelLink"], [class*="attachSuccess" i]')]
+      .filter((x) => x.getClientRects().length > 0) : [];
+    const name = shown.map(txt).find((t) => t && !/^upload\b/i.test(t)) || '';
+    const f = { id: idOf(b), kind: 'file', label, value: name || (shown.length ? 'uploaded' : ''), opens_dialog: true,
+                required: !!(lab && /\*/.test(lab.textContent || '')) || /\brequired\b/i.test(said) };
+    const section = sectionOf(b, label);
+    if (section && section !== label) f.section = section;
+    fields.push(f);
+    fieldEls.set(f, b);
+  }
+
   for (const g of groups.values()) {
     const first = g.members[0];
     const checkedOf = (m) => m.checked === true || m.getAttribute('aria-checked') === 'true';
