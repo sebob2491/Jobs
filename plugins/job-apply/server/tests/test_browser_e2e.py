@@ -721,8 +721,10 @@ def test_click_is_not_repeated_on_a_page_that_moved_on(srv, monkeypatch):
     assert run(page.evaluate("() => window.clicks")) == 0
 
 
-def test_inspect_waits_for_a_form_drawn_late(srv):
-    """Oracle's email step draws its form a moment after the page itself."""
+def test_inspect_waits_for_a_form_drawn_late(srv, monkeypatch):
+    """Oracle's email step draws its form a moment after the page itself (with the desk's own wait: the tests'
+    is shorter)."""
+    monkeypatch.setattr(browser_module, "FORM_DRAW_WAIT", 500)
     run(srv.open_application(url=fixture_url("jsonld_posting.html")))
     page = run(srv.browser.page())
     run(page.evaluate("""() => setTimeout(() => {
