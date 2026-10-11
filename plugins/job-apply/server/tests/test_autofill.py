@@ -1,3 +1,5 @@
+import pytest
+
 from job_apply.autofill import (
     choose_option,
     clean_label,
@@ -1060,6 +1062,20 @@ VETERAN = ["I am not a protected veteran", "I identify as one or more of the cla
            "I don't wish to answer"]
 VETERAN_STATUS = ["I am not a veteran", "I identify as one or more of the classifications of protected veteran",
                   "I am a veteran but not a protected veteran", "I do not wish to self-identify"]
+
+
+@pytest.mark.parametrize("military, status, plain", [(False, "I am not a veteran", "I am not a protected veteran"),
+                                                     (None, None, "I am not a protected veteran")])
+def test_someone_who_never_served_is_not_a_veteran_on_every_list(military, status, plain):
+    """Live test 2 (issue #112, note 18, Oct 2026): Workday's "I am not a veteran" list was left empty
+    for "I am not a protected veteran", which doesn't say whether the person served. The profile's
+    background.military: false does: they're not a veteran, on a list that asks that and on one that
+    asks only about protected veterans. Without it, the person is asked, as before."""
+    p = Profile({"eeo": {"veteran": "I am not a protected veteran"}, "background": {"military": military}})
+    status_list = resolve_field(f("Please indicate your veteran status.", "select", options=VETERAN_STATUS), p)
+    assert (status_list and status_list.value and choose_option(status_list.value, VETERAN_STATUS)) == status
+    plain_list = resolve_field(f("Veteran Status", "select", options=VETERAN), p)
+    assert choose_option(plain_list.value, VETERAN) == plain
 
 
 def test_a_decline_finds_the_lists_own_way_to_decline_and_is_never_a_no():
