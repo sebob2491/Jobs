@@ -1305,6 +1305,7 @@ class Applier:
         stalls, entries_done, waited, refilled, dismissed = 0, set(), False, set(), set()
         step_waited: set[tuple[Any, ...]] = set()  # pages (as drawn) waited on for a greyed-out step button
         retyped: set[tuple[Any, ...]] = set()  # pages whose lost boxes were typed again (once a page)
+        refilled_pages: set[tuple[Any, ...]] = set()  # pages whose emptied boxes were filled again (once a page)
         saved_waited: set[tuple[Any, ...]] = set()  # steps waited on as still saving (once a step)
         account_waited = False
         sign_ins: dict[str, int] = {}  # what the saved password was used for on this pass
@@ -1878,7 +1879,7 @@ class Applier:
                     # boxes the errors name that show a value all the same: the page lost its own record of them
                     # (Nikon's UKG Pro, live run 10: its resume parse wiped Address 1 and Zip a moment after they
                     # were typed). Typed again, once a page, and the step pressed again
-                    seen_now = (await self._look())[0] if looked not in retyped else {}
+                    seen_now = (await self._look())[0] if looked not in retyped or looked not in refilled_pages else {}
                     said = norm(" ".join(e for e in seen_now.get("errors") or [] if _ERRORISH.search(e)))
                     lost = [f for f in seen_now.get("fields") or [] if f.get("kind") == "text" and not f.get("disabled")
                             and not is_empty_value(f.get("value")) and len(norm(clean_label(f.get("label") or ""))) >= 3
@@ -1889,6 +1890,18 @@ class Applier:
                         if again:
                             names = ", ".join(clean_label(f.get("label") or "") for f in lost if f["id"] in again)
                             self._log(run, f"typed again what the page said was empty though it showed it: {names}")
+                            stalls = 0
+                            continue
+                    # boxes the errors name that the page has emptied since they were filled (Nikon's resume parse
+                    # cleared Address 1, Zip, Company and Skills, live run 12): filled from the profile again, once
+                    emptied = [f for f in seen_now.get("fields") or [] if f.get("kind") == "text" and not f.get("disabled")
+                               and is_empty_value(f.get("value")) and len(norm(clean_label(f.get("label") or ""))) >= 3
+                               and re.search(rf"\b{re.escape(norm(clean_label(f.get('label') or '')))}\b", said)]
+                    if emptied and looked not in refilled_pages:
+                        refilled_pages.add(looked)
+                        again_filled = (await srv.autofill(job_id=run.job_id)).get("filled") or []
+                        if again_filled:
+                            self._log(run, f"filled again {len(again_filled)} field(s) the page had emptied")
                             stalls = 0
                             continue
                     errors = "; ".join(problems)[:300].rstrip(" .")
