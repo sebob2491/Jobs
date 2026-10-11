@@ -144,6 +144,14 @@ def why(outcome: str, said: str) -> tuple[str, str]:
         return "Step not saved", "Being looked into"
     if "question" in d:
         return "Questions only you can answer", "Answer them once; remembered"
+    if "no application opened" in d:
+        return "Apply opened no application", "Being looked into"
+    if "asks about your past jobs" in d:
+        return "Past jobs' details the profile lacks", "Add them to your profile once"
+    if outcome == "crash":
+        return "The check itself failed", "Being looked into"
+    if outcome.startswith("needs_you"):
+        return "Stopped (see the run)", "Being looked into"
     return outcome, ""
 
 
