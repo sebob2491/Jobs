@@ -292,6 +292,9 @@ def choose_option(desired: Any, options: list[str], exact_only: bool = False, na
     # 1. exact, including aliases (AZ ~ Arizona, USA ~ United States of America), ignoring
     #    dial codes and flags ("🇺🇸 (+1) United States of America")
     exact = _aliases(want)
+    for o, n in normed:  # the same words first, then an alias ("U.S. Citizen" before "U.S. Citizen or National")
+        if n == want:
+            return o
     for o, n in normed:
         if n in exact or _aliases(n) & exact:
             return o
@@ -528,7 +531,10 @@ def _previously_employed(prof: Profile, job: dict, label: str = "") -> str | Non
         return None
     asked = norm(label)
     first = re.escape(company.split()[0])
-    names_it = re.search(rf"\b(employ\w*|work\w*|intern\w*|contract\w*)( \w+){{0,3}}? (by|for|at|with|of|in) (the |any |an? )?{first}\b"
+    names_it = re.search(rf"\b(employ\w*|work\w*|intern\w*|contract\w*)( \w+){{0,3}}? (by|for|at|with|of) (the |any |an? )?{first}\b"
+                         # onsemi's "worked in any onsemi establishment" (never "worked in Arizona": a place)
+                         rf"|\bwork\w* in (any |an? |the )?{first}( \w+)? (establishments?|facilit\w+|sites?|locations?|"
+                         r"compan\w+|offices?|plants?|subsidiar\w+|affiliates?)\b"
                          rf"|\b{first}( \w+)? (employee|employment|intern|contractor)s?\b"
                          rf"|\bhired\b.{{0,60}}? (by|with|at) (the )?{first}\b", asked)
     if not (names_it or re.search(r"(employed|worked|hired) (by|for|at|with) (us|this|our|the company)\b|former employee", asked)):
@@ -1192,7 +1198,8 @@ RULES: list[tuple[str, str, Getter, int | None, set[str] | None]] = [
      r"^(visa |employment |immigration )?sponsorship( status| required| needed)?$|"
      r"\brequire\w* .{0,60}\b(commence|start|begin|file|initiate)\w* an? (immigration|visa) (case|petition|process)|"
      # Linde: "Will you now or in the future require a visa to permit you to legally work in the United States?"
-     r"\b(require|need)\w* an? (work )?visa (to|in order to) .{0,40}\bwork\b",
+     r"\b(require|need)\w* an? (work )?visa (to|in order to) .{0,30}\b(legally work|work (legally |lawfully )?in the "
+     r"(u s|us|united states))\b",
      _sponsorship, None, None),
     # the I-9: "Can you provide verification of both your identity and authorization to work in the
     # United States, to the extent required by law?" (Axon)
@@ -1223,7 +1230,7 @@ RULES: list[tuple[str, str, Getter, int | None, set[str] | None]] = [
     # which option applies to you." among "Citizen or National of the United States", "Alien Authorized
     # to Work", ...: a citizen's is the citizen one
     ("export_status", r"\bexport (control|administration)\b.{0,600}\b(select|choose|indicate|which)\b.{0,40}"
-     r"\b(applies|describes|option)\b",
+     r"\b(applies|describes|option)\b.{0,20}\b(you|yours?)\b",
      lambda p, j: "U.S. Citizen" if p.get("work_authorization.us_citizen") is True else None, None,
      {"select", "listbox", "combobox", "radio_group"}),
     ("citizenship", r"citizenship|country of citizen|are you a (u ?s )?citizen", _p("work_authorization.citizenship"), None, None),

@@ -1103,6 +1103,9 @@ def test_sponsorship_and_military_asked_in_other_words():
     legally = resolve_field(f("Are you authorized to legally work in the United States? If offered employment, you will "
                               "be required to present documentation.*", "radio_group", options=["Yes", "No"]), p)
     assert legally is not None and (legally.rule, choose_option(legally.value, ["Yes", "No"])) == ("authorized", "Yes")
+    # a visa for travel isn't a work visa (review)
+    travel = resolve_field(f("Will you require a visa to travel for work?", "radio_group", options=["Yes", "No"]), p)
+    assert travel is None or travel.rule != "sponsorship", travel
 
 
 def test_a_list_still_on_its_not_specified_first_choice_is_filled():
@@ -1299,6 +1302,10 @@ def test_previously_employed_by_any_of_the_employers_companies():
     onsemi = f("Have you ever previously worked in any onsemi establishment, anywhere in the world, whether as a "
                "full-time or part-time employee, contractor, temporary staff or intern?", "radio_group", options=yes_no)
     assert resolve_field(onsemi, prof(), {"company": "onsemi"}).value == "No"
+    # never a place that starts the employer's name (review): "worked in Arizona" isn't working for ASU
+    for asked in ("Have you ever worked in Arizona?", "Have you ever worked in Arizona State University labs?"):
+        assert resolve_field(f(asked, "radio_group", options=yes_no), prof(),
+                             {"company": "Arizona State University"}) is None, asked
 
 
 def test_a_former_employee_question_naming_another_company_is_never_answered_from_this_ones():
@@ -1855,6 +1862,10 @@ def test_a_citizens_visa_questions():
                    "U.S. Lawful Permanent Resident (Greencard holder)", "Person granted Refugee status in the United States",
                    "None of the above"]
     assert answer(ear, "combobox", ear_options) == "Citizen or National of the United States"
+    # the same words before an alias (review), and a question about the role isn't the person's status
+    assert choose_option("U.S. Citizen", ["U.S. Citizen or National", "U.S. Citizen", "Non-US Citizen"]) == "U.S. Citizen"
+    assert answer("Is this role subject to export control regulations? Select the option that applies", "select",
+                  ["U.S. Citizen", "Not subject"]) is None
     # "Citizenship status" is still the citizenship rule's, from the profile's country
     path.write_text(yaml.safe_dump({**data, "work_authorization": {**data["work_authorization"], "us_citizen": True,
                                                                    "citizenship": "United States"}}))
