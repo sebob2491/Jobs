@@ -6694,3 +6694,26 @@ def test_a_sign_in_that_led_elsewhere_is_told_from_an_email_first_one():
     assert not pipeline._no_sign_in_here(r, with_account)
     Page.url = "https://career5.successfactors.eu/career?_s.crb=xyz"
     assert not pipeline._no_sign_in_here(r, search)  # (the same page: said by the other cases)
+
+
+
+@pytest.mark.parametrize("label, ticked", [
+    ("By checking this box, I agree to create a candidate home account in Workday.", True),  # GCU's
+    ("I agree to creating a Arizona State University Candidate Home Account.", True),
+    ("I agree to creating this account to allow me to apply for positions with HonorHealth", True),
+    ("I agree", True),  # Northern Trust's
+    ("I consent", True),  # Entegris'
+    ("I confirm Hitachi will process my personal data as per the GDPR Notice for Candidates", True),
+    ("You acknowledge having read the documents above. Your agreement is valid for 24 months.", True),  # Air Liquide's
+    ("I agree to receive job alerts and the newsletter", False),
+    ("I agree to create an account and be contacted about other open positions", False),
+    ("I agree to join the talent community", False),
+    ("I am at least 18 years old", False),
+])
+def test_a_workday_create_accounts_own_agreement_is_its_terms(label, ticked):
+    """The first nightly at every employer (Oct 11): nine Workday Create Account forms stopped on a box of their
+    own, never marked required, worded other than "terms": the account itself, a bare "I agree" or "I consent",
+    a GDPR notice, the documents above read. Those are the account's terms (settings.manage_accounts ticks them);
+    never one that also signs the person up for anything (_NOT_TERMS), nor one saying something else."""
+    box = {"id": "t", "kind": "checkbox", "label": label, "value": False}
+    assert (pipeline._terms_boxes({"fields": [box]}) == [box]) is ticked

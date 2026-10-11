@@ -153,7 +153,13 @@ _PICTURE_CODE = re.compile(r"captcha|text in (?:the )?(?:image|picture)", re.I)
 _MAKE_ACCOUNT = re.compile(r"^(create(?: an| my| your| a new)? account|register|sign ?up|create|submit|continue)$", re.I)
 # and the button of its second step, on a page of its own (UKG Pro's "Create account" after a name and phone)
 _ACCOUNT_BUTTON = re.compile(r"^(create(?: an| my| your| a new)? account|register|sign ?up)$", re.I)
-_TERMS_ONLY = re.compile(r"terms|conditions|(?:privacy|data protection) (?:policy|notice|statement)", re.I)
+_TERMS_ONLY = re.compile(r"terms|conditions|(?:privacy|data protection) (?:policy|notice|statement)"
+                         # (and what a Workday Create Account's own box says in their place, never marked required:
+                         # the first nightly at every employer, Oct 11, nine stopped on it) the account itself
+                         # ("I agree to create(ing) a candidate home account"), a bare "I agree" or "I consent", the
+                         # processing of one's personal data (a GDPR notice), the documents above read
+                         r"|\b(?:agree|consent)\w*\b.{0,60}\b(?:creat\w*|account)\b|^\s*(?:yes,? )?i (?:agree|consent|accept)\W*$"
+                         r"|\bgdpr\b|process\w* (?:of )?my personal data|acknowledge having read", re.I)
 _TERMS_BOX = re.compile(r"terms|conditions|privacy|consent|agree|acknowledge|policy|notice", re.I)
 _NOT_TERMS = re.compile(r"newsletter|marketing|job alerts?|text messages?|\bsms\b|promotion|offers|subscribe|similar jobs|"
                         r"talent (?:community|network)|keep me|stay informed|send me|contact(?:ed)? me|be contacted|"
