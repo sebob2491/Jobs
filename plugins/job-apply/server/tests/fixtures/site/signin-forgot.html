@@ -3,7 +3,10 @@
 <head><meta charset="utf-8"><title>Sign In</title></head>
 <body>
 <!-- a job site where the email already has an account, whose password isn't the one saved on
-     the desk: sign-in fails until the password is reset (the reset page sends ?pw= back here) -->
+     the desk: sign-in fails until the password is reset (the reset page sends ?pw= back here).
+     After a reset, as Workday's did in live test 2 (issue #112, note 14, Oct 2026), ?done shows "Password has been
+     reset" and a "Sign In" button that opens the form, and ?alone asks for the password only, the email shown
+     beside it ("Signing in as ..."). -->
 <h2>Sign In</h2>
 <form id="signin" novalidate>
   <label for="em">Email Address</label><input id="em" type="email" required>
@@ -14,7 +17,22 @@
 <p>Don't have an account yet? <button type="button" id="create">Create Account</button></p>
 <div id="err" role="alert"></div>
 <script>
-  const reset = new URLSearchParams(location.search).get('pw');
+  const q = new URLSearchParams(location.search);
+  const reset = q.get('pw');
+  if (reset && q.has('alone')) {
+    document.getElementById('em').parentNode.insertBefore(document.createTextNode('Signing in as sam.rivera@example.com'),
+                                                          document.getElementById('em'));
+    document.querySelector('label[for=em]').remove();
+    document.getElementById('em').remove();
+  }
+  if (reset && q.has('done')) {
+    const form = document.getElementById('signin');
+    form.hidden = true;
+    const note = document.createElement('div');
+    note.innerHTML = '<p>Password has been reset</p><button type="button" id="open">Sign In</button>';
+    form.parentNode.insertBefore(note, form);
+    document.getElementById('open').addEventListener('click', () => { note.remove(); form.hidden = false; });
+  }
   document.getElementById('signin').addEventListener('submit', (e) => {
     e.preventDefault();
     if (reset && document.getElementById('pw').value === reset) location.href = 'step1.html';

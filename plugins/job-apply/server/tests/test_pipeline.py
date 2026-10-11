@@ -1614,11 +1614,34 @@ def test_an_agreement_a_bot_check_holds_is_said_to_be_the_persons(srv, monkeypat
     assert "couldn't find the button" not in r.reason
 
 
-def test_with_manage_accounts_a_refused_saved_password_is_reset(srv, monkeypatch, job_apply_home):
+@pytest.mark.parametrize("boxes", [
+    '<label for="u">User ID</label><input id="u" type="text"><label for="p">Password</label><input id="p" type="password">',
+    '<p>Signing in as sam.rivera@example.com</p><label for="p">New Password</label><input id="p" type="password">',
+    '<p>Signing in as sam.rivera@example.com</p><label for="p">Temporary Password</label><input id="p" type="password">',
+    '<label for="p">Password</label><input id="p" type="password">'])
+def test_the_password_alone_goes_only_where_the_sign_in_shows_whos_signing_in(srv, monkeypatch, boxes):
+    """A sign-in with no box for the email gets the saved password alone only where it shows the email
+    ("Signing in as ...", Workday's after its own reset). Not beside a box the desk can't fill (a "User
+    ID", which would be sent empty), nor in a new, temporary or unexplained password box."""
+    saved_password(monkeypatch)
+    run(srv.open_application(url=fixture_url("jsonld_posting.html")))
+    page = run(srv.browser.page())
+    run(page.set_content(f"<h2>Sign In</h2><form onsubmit='return false'>{boxes}<button>Sign In</button></form>"))
+    data = run(srv.inspect_form(include_dropdown_options=False))
+    applier = Applier(srv)
+    r = Run(1, "FSE", "Example Fab")
+    assert run(applier._sign_in(r, data, {})) is None
+    assert run(page.evaluate("() => document.getElementById('p').value")) == "", boxes
+
+
+@pytest.mark.parametrize("then", ["", "done", "alone"])
+def test_with_manage_accounts_a_refused_saved_password_is_reset(srv, monkeypatch, job_apply_home, then):
     """The email has an account there, and the saved password isn't its password. With the
     inbox watched, the desk asks for a password reset before trying a new account (the owner's
     choice), opens the emailed link in the job's tab, sets the saved password as the new one,
-    and signs in."""
+    and signs in. Live (issue #112, note 14), the desk stopped after the reset with "Sign in ... in the
+    browser window": the sign-in after it may say "Password has been reset" with only a "Sign In" button
+    (done), or ask for the password alone (alone). It signs in with the new password there too."""
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
     monkeypatch.setattr(pipeline, "MAIL_POLL_SECONDS", 0)
     saved_password(monkeypatch)
@@ -1629,7 +1652,7 @@ def test_with_manage_accounts_a_refused_saved_password_is_reset(srv, monkeypatch
 
     def inbox(address, password, since, senders, want, allowed_link, before=None, look_back=None):
         wanted.append(want)
-        link = fixture_url("site/reset-password.html") + "?token=abc"
+        link = fixture_url("site/reset-password.html") + "?token=abc" + (f"&then={then}" if then else "")
         return pipeline.mailbox.Found(want, link, "careers.example.com", time.time()) if want == "reset" else None
 
     monkeypatch.setattr(pipeline.mailbox, "search", inbox)
@@ -4422,6 +4445,20 @@ def test_a_profile_answer_that_doesnt_go_in_is_asked_only_where_required():
          "error": "nothing in its list matched", "kind": "combobox", "required": False, "options": ["Yes", "No"]}]}
     pending, _ = pipeline._pending(result, {})
     assert [(q["label"], q["kind"], q["options"]) for q in pending] == [("Country", "combobox", ["No Selection", "Afghanistan"])]
+
+
+def test_a_question_the_pages_errors_name_is_asked_though_not_marked_required():
+    """Workday's veteran question (live test 2, issue #112, note 18) wasn't marked required, so the desk
+    left it empty as optional, pressed Save and Continue three times, and only then stopped. The page's
+    "Errors Found Error-Please indicate your veteran status." says it is: it's asked."""
+    result = {"needs_input": [{"id": "v", "label": "Please indicate your veteran status.", "kind": "listbox",
+                               "unmatched": "I am not a protected veteran"},
+                              {"id": "g", "label": "Please select your gender.", "kind": "listbox"}],
+              "failed": [], "filled": []}
+    pipeline._required_by_errors(result, {"errors": ["Errors Found", "Error-Please indicate your veteran status."]})
+    pending, _ = pipeline._pending(result, {})
+    assert [f["id"] for f in pending] == ["v"], pending
+    assert "isn't one of its choices" in pending[0]["error"], pending
 
 
 def test_a_self_identification_answer_a_list_doesnt_have_is_said_not_left_silently():

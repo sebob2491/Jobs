@@ -169,6 +169,35 @@ _FORM_ERROR = re.compile(r"required|invalid|error|must be|can'?t be blank|missin
                          r"please (enter|select|provide|fix|correct|complete|review)", re.I)
 
 
+# Is this spinbutton a date's part: one of several in its date, or named a month, day or year?
+DATE_LIKE_JS = """
+(el) => {
+  for (let n = el.parentElement, d = 0; n && d < 6; n = n.parentElement, d++) {
+    const found = n.querySelectorAll('[role="spinbutton"]').length;
+    if (found > 1) return found <= 3;
+  }
+  return /\\b(month|day|year)\\b|^(mm|dd|yyyy)$/i.test(el.getAttribute('aria-label') || el.placeholder || '');
+}
+"""
+
+
+# A date's parts (Workday's MM / DD / YYYY spinbuttons), in order: those in the nearest box around this one
+# that holds more than one (its date), up to three; this one alone otherwise. Marked for the locator, with
+# this one as "mine"; how many there are.
+DATE_PARTS_JS = """
+(el) => {
+  let parts = [el];
+  for (let n = el.parentElement, d = 0; n && d < 6; n = n.parentElement, d++) {
+    const found = [...n.querySelectorAll('[role="spinbutton"]')];
+    if (found.length > 1) { if (found.length <= 3) parts = found; break; }
+  }
+  parts.forEach((p) => p.setAttribute('data-ja-date-part', ''));
+  el.setAttribute('data-ja-date-mine', '');
+  return parts.length;
+}
+"""
+
+
 async def _covered(loc: Locator) -> bool:
     """Is something drawn over this box, so a click can't reach it? Asked for 2 s at most, as a
     click would be: a box Workday is drawing again (after a menu pick) isn't waited on for the
@@ -1272,25 +1301,88 @@ class BrowserSession:
         if isinstance(value, bool):
             text = "Yes" if value else "No"
         if field.get("role") == "spinbutton":
-            # Date parts (Workday's MM / YYYY) react to keystrokes, not a pasted value. Where the
-            # date's "MM/DD/YYYY" hint is drawn over its boxes (Workday's Self Identify), or each
-            # part's own "MM" (My Experience, live, Oct 2026), a click never reaches them: focus
-            # takes the keys just the same. Checked first, so no click timeout is waited out.
-            covered = await _covered(loc)
-            if not covered:
-                try:
-                    await loc.click(timeout=2000)
-                except PlaywrightTimeout:
-                    covered = True
-            if covered:
-                await loc.focus(timeout=FOCUS_TIMEOUT)
-            await loc.fill("", timeout=FOCUS_TIMEOUT)  # (nor Playwright's 30 s for a part drawn again since)
+            if await loc.evaluate(DATE_LIKE_JS, timeout=FOCUS_TIMEOUT):
+                return await self._type_date_part(page, loc, text)
+            # a lone number box drawn as a spinbutton: its value typed as given
+            await loc.fill("", timeout=FOCUS_TIMEOUT)
             await loc.press_sequentially(text, delay=40, timeout=FOCUS_TIMEOUT)
             await loc.evaluate("el => el.blur()", timeout=FOCUS_TIMEOUT)
             return "typed"
         await loc.fill(text)
         await loc.evaluate("el => el.blur()")
         return "filled"
+
+    async def _type_date_part(self, page: Page, loc: Locator, text: str) -> str:
+        """A date's part (Workday's MM / DD / YYYY), which reacts to keystrokes, not a pasted value.
+
+        Workday sends a date's digits to the part the date counts as current, not to the part with
+        focus: that starts at the first part, moves on by itself once a part is full, and goes back to
+        the first whenever focus leaves the date. Typed part by part, with the date left in between,
+        every year went into the month (issue #112, note 13, live, Oct 2026: each job's month 02, its
+        year right; the self-identify date 02/02/2006). So the date's parts are typed in one run from
+        its first part, each padded so it's full (the parts before this one as they read now), focus
+        moved on by hand only where the page didn't move it; then each is read back, and a part that
+        doesn't read as typed is said, not left wrong."""
+        count = await loc.evaluate(DATE_PARTS_JS, timeout=FOCUS_TIMEOUT)  # marks the date's parts in order
+        # (found from this box, so in its own frame: the nearest box around it holding them all)
+        parts = loc if count == 1 else loc.locator(
+            f"xpath=ancestor::*[count(.//*[@data-ja-date-part]) = {count}][1]//*[@data-ja-date-part]")
+        try:
+            # (a part with no aria-valuemax is sized by its name: Month and Day two digits, Year four)
+            infos = [await parts.nth(i).evaluate(
+                "el => ({mine: el.hasAttribute('data-ja-date-mine'), max: Number(el.getAttribute('aria-valuemax'))"
+                " || (/year|yyyy/i.test(el.getAttribute('aria-label') || el.placeholder || '') ? 9999"
+                " : /day|dd/i.test(el.getAttribute('aria-label') || el.placeholder || '') ? 31"
+                " : /month|mm/i.test(el.getAttribute('aria-label') || el.placeholder || '') ? 12 : 0),"
+                " now: el.getAttribute('aria-valuenow') || (el.value || '').replace(/\\D/g, '')})") for i in range(count)]
+            mine = next(i for i, info in enumerate(infos) if info["mine"])
+            digits = re.sub(r"\D", "", text)
+            if not digits:
+                raise ValueError(f"{text!r} isn't a number for a date's part")
+
+            def full(value: str, top: int) -> str:
+                return value.zfill(2) if 0 < top <= 31 else value.zfill(4) if top >= 1000 and len(value) <= 4 else value
+
+            want = [full(digits, infos[i]["max"]) if i == mine else full(str(infos[i]["now"]), infos[i]["max"])
+                    if str(infos[i]["now"]).isdigit() and int(infos[i]["now"]) > 0 else "" for i in range(count)]
+            # from the first part where every part before this one reads a number; else this part alone
+            start = 0 if all(want[:mine]) else mine
+            for i in range(start, mine + 1):
+                part = parts.nth(i)
+                display = part.locator("xpath=preceding-sibling::*[@aria-hidden='true'][1]")
+                if i == start and start > 0 and await display.count():
+                    # a later part with an earlier one empty: Workday's display over it is pressed, which makes it
+                    # the date's current part (focus alone leaves the first part current)
+                    with contextlib.suppress(PlaywrightError, PlaywrightTimeout):
+                        await display.click(timeout=2000)
+                if not await part.evaluate("el => el === el.ownerDocument.activeElement"):
+                    # Where a hint is drawn over the boxes (Workday's "MM/DD/YYYY" or each part's "MM"), a click
+                    # never reaches them: focus takes the keys just the same. Checked first, so no click timeout
+                    covered = await _covered(part)
+                    if not covered:
+                        try:
+                            await part.click(timeout=2000)
+                        except PlaywrightTimeout:
+                            covered = True
+                    if covered:
+                        await part.focus(timeout=FOCUS_TIMEOUT)
+                if i == start:  # (the part as it was: its digits replaced, as Workday selects a part it's given)
+                    await part.evaluate("el => { try { el.select(); } catch (e) {} }")
+                await page.keyboard.type(want[i], delay=40)
+            await loc.evaluate("el => el.ownerDocument.activeElement && el.ownerDocument.activeElement.blur()")
+            await page.wait_for_timeout(100)
+            read = [await parts.nth(i).evaluate(
+                "el => el.getAttribute('aria-valuenow') || (el.value || '').replace(/\\D/g, '')") for i in range(count)]
+        finally:
+            with contextlib.suppress(PlaywrightError):
+                await loc.evaluate("el => el.ownerDocument.querySelectorAll('[data-ja-date-part]').forEach((p) => {"
+                                   " p.removeAttribute('data-ja-date-part'); p.removeAttribute('data-ja-date-mine'); })")
+        wrong = [i for i in range(start, mine + 1)
+                 if want[i] and not (str(read[i]).isdigit() and int(read[i]) == int(want[i]))]
+        if wrong:
+            shown = "/".join(str(r) or "?" for r in read)
+            raise ValueError(f"typed {digits}, but the date reads {shown}; check it in the browser")
+        return "typed"
 
     async def _set_checked(self, loc: Locator, want: bool) -> None:
         try:

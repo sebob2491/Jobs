@@ -86,6 +86,7 @@ _BOT_TITLE = re.compile(r"just a moment|attention required|access denied|pardon 
 # A bare "403 Forbidden" (Valleywise Health's postings, to the desk's browser) or "406 Not Acceptable"
 # (Deloitte's sign-in, to a headless browser): the site turns the browser away. There's nothing to
 # solve, so it holds nothing up: the person applies elsewhere
+_RESET_DONE = re.compile(r"\b(?:your )?password (?:has been|was|is) (?:reset|changed|updated)\b", re.I)
 _REFRESH_ASKED = re.compile(r"\bsomething went wrong\b.{0,200}\b(?:refresh|reload) (?:the|this) page\b", re.I | re.S)
 _TURNED_AWAY = re.compile(r"^\s*(?:403\s*)?forbidden\s*$|^\s*(?:406\s*)?not acceptable\s*$|"
                           r"^\s*your request has been blocked\.?\s*$", re.I)  # (Workday's, its title empty)
@@ -1334,6 +1335,10 @@ class Applier:
             entry_here = any(_ENTRY.match(final_text(a["text"])) and not a.get("disabled") for a in actions)
             if kind == "form" and entry_here and not _application_like(data):
                 kind = "page"  # a posting with a "send me similar jobs" box: go in through Apply
+            if (kind == "page" and not data.get("fields") and _RESET_DONE.search(text[:2000])
+                    and not _RESET_SENT.search(text[:2000]) and password_for(data.get("url") or "") is not None
+                    and any(re.match(r"^(sign|log) ?in$", a.get("text", "").strip(), re.I) for a in actions)):
+                kind = "sign_in"  # "Password has been reset" and its "Sign In" (Workday's, issue #112, note 14)
             # a step of making an account on the email-first sign-in that had none for the email
             view = (_email_account_view(data) if run.account_page and run.account_page == _bare(data.get("url") or "")
                     else None)
@@ -1574,6 +1579,7 @@ class Applier:
                 result = await srv.autofill(job_id=run.job_id)
                 if result["filled"]:
                     self._log(run, f"filled {len(result['filled'])} field(s) on {_where(data)}")
+                _required_by_errors(result, data)
                 pending, missing_files = _pending(result, once_failed)
                 self._note_skipped(run, result)
                 pending = await self._attest(run, pending)
@@ -2813,7 +2819,10 @@ class Applier:
         fields = [f for f in data.get("fields") or [] if not re.match(r"f\d+-", str(f.get("id")))]
         actions = [a for a in data.get("actions") or [] if not a.get("disabled")]
         if not fields:
-            email_button = next((a for a in actions if re.match(r"^sign in with email$", a["text"], re.I)), None)
+            # Workday's "Sign in with email"; or, after its own password reset, its "Password has been reset"
+            # and a "Sign In" that opens the form (issue #112, note 14, live test 2, Oct 2026)
+            email_button = next((a for a in actions if re.match(r"^sign in with email$", a["text"], re.I)), None) or next(
+                (a for a in actions if re.match(r"^(sign|log) ?in$", a["text"].strip(), re.I) and not a.get("cookie")), None)
             if email_button is None or tried.get("email_step", 0) >= 2:
                 return None
             await srv.click(email_button["id"])
@@ -2844,16 +2853,27 @@ class Applier:
         boxes = [f for f in fields if f["kind"] in ("text", "email")
                  and re.search(r"e-?mail|user ?name|login", f.get("label") or "", re.I)]
         address = config.Profile.load().get("personal.email")
-        if not boxes or not address or not 1 <= len(passwords) <= 2:
+        if not address or not 1 <= len(passwords) <= 2:
             return None
         new_account = len(passwords) == 2 or signing_up
+        if not boxes:
+            # No box for the email: the password alone only on a sign-in that shows it knows who's signing in
+            # ("Signing in as <email>", as Workday's after its own password reset may: issue #112, note 14),
+            # with no other box to fill (a "User ID" the reader doesn't know stays the person's) and a box
+            # that isn't a new, old or temporary password's (a reset's, a Create Account's, an emailed one)
+            others = [f for f in fields if f["kind"] not in ("password", "checkbox", "radio", "radio_group",
+                                                               "checkbox_group", "file", "hidden")]
+            label = passwords[0].get("label") or "" if passwords else ""
+            if (new_account or others or len(passwords) != 1 or _NEW_PASSWORD.search(label) or _OLD_PASSWORD.search(label)
+                    or address.lower() not in (await srv.page_text(4000)).lower()):
+                return None
         if new_account:
             # The email in every box that asks for it ("Retype Email Address"; the user name
             # SCREEN's and Taleo's forms ask for is the email too), and the rest from the profile.
             if details:
                 await self._fill_account_details(fields)
             await srv.fill_form([{"id": f["id"], "value": address} for f in boxes])
-        else:
+        elif boxes:
             await srv.fill_form([{"id": boxes[0]["id"], "value": address}])
         for box in passwords:
             if not (await srv.fill_secret(box["id"], secret)).get("ok"):
@@ -3042,6 +3062,22 @@ def _account_and_application(data: dict[str, Any]) -> bool:
     others = [f for f in fields if f.get("kind") not in ("password", "checkbox", "file")
               and not _ACCOUNT_FIELD.search(f.get("label") or "")]
     return len(others) >= 5 and any(_APPLICATION_FIELD.search(f.get("label") or "") for f in others)
+
+
+def _required_by_errors(result: dict[str, Any], data: dict[str, Any]) -> None:
+    """A question left empty as optional that the page's errors name ("Errors Found Error-Please indicate
+    your veteran status.", Workday's, live test 2, issue #112, note 18) is required after all: the page
+    won't go on without it, though nothing on it said so. It's asked, instead of the step button being
+    pressed twice more."""
+    said = norm(" ".join(data.get("errors") or []))
+    if not said:
+        return
+    # (only a label the page has once: one error about "Job Title" isn't about every block's)
+    names = [norm(clean_label(f.get("label") or "")) for f in data.get("fields") or []]
+    for f in result.get("needs_input") or []:
+        name = norm(clean_label(f.get("label") or ""))
+        if not f.get("required") and len(name) >= 8 and name in said and names.count(name) <= 1:
+            f["required"] = True
 
 
 def _pending(result: dict[str, Any], once_failed: dict[str, dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:

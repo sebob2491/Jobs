@@ -731,10 +731,16 @@ def _relocate(prof: Profile, job: dict) -> Any:
 
 def _veteran(prof: Profile, job: dict, label: str = "") -> Any:
     """The EEO veteran answer. "I am not a protected veteran" doesn't say whether the person is
-    a veteran at all: "Are you a veteran?" is then theirs to answer."""
+    a veteran at all: "Are you a veteran?" is then theirs to answer, and a list's "I am not a veteran"
+    isn't it. Unless the profile says they never served (background.military: false): then they're
+    not a veteran, which every list's not-a-veteran or not-a-protected-veteran choice is (live test 2,
+    issue #112, note 18: Workday's "I am not a veteran" list was left empty)."""
     v = prof.get("eeo.veteran")
     if not v:
         return None
+    if (polarity(v) is False and re.search(r"\bprotected\b", norm(v)) and not is_decline(v)
+            and prof.get("background.military") is False):
+        return "I am not a veteran"
     asked = norm(label)
     if re.search(r"\bare you an? (u s |us |military )?veteran\b", asked) and "protected" not in asked \
             and polarity(v) is False and re.search(r"\bprotected\b", norm(v)):

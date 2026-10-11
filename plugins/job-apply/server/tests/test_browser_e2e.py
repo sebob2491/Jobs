@@ -438,6 +438,26 @@ def test_a_covered_add_button_is_left_and_said(srv):
     assert work["clicks"] == 1 and not work.get("add_button_covered"), work
 
 
+def test_workday_date_parts_read_back_as_typed_whatever_the_order(srv):
+    """Workday's date boxes (issue #112, note 13, live test 2, Oct 2026): every job's month came out 02
+    (its year right) and the self-identify "Date" 02/02/2006, on two employers' sites, and the desk said
+    nothing. A date's digits go to the part the date counts as current, which goes back to its first part
+    whenever focus leaves the date: the year typed into a date left between its parts went into the month
+    ("2019": month 02, year 019). Each date's parts are typed in one run from its first part, and read back."""
+    run(srv.browser.goto(fixture_url("site/workday-date-sections.html")))
+    by = {(f.get("section") or f["label"], f.get("sublabel")): f["id"]
+          for f in run(srv.inspect_form(include_dropdown_options=False))["fields"]}
+    values = [(("From", "Month"), "10"), (("To", "Month"), "3"), (("Job Title", None), "Technician"),
+              (("From", "Year"), "2019"), (("To", "Year"), "2021"),
+              (("Date", "Month"), "10"), (("Date", "Day"), "9"), (("Name", None), "Sam Rivera"), (("Date", "Year"), "2026")]
+    out = run(srv.fill_form([{"id": by[key], "value": value} for key, value in values]))
+    assert all(r.get("ok") for r in out["results"]), out["results"]
+    page = run(srv.browser.page())
+    shown = run(page.evaluate("() => [...document.querySelectorAll('[role=group]')].map((g) => "
+                              "[...g.querySelectorAll('[aria-hidden=true]')].map((d) => d.textContent).join('/'))"))
+    assert shown == ["10/2019", "03/2021", "10/09/2026"], shown
+
+
 def test_each_jobs_dates_go_in_its_own_block(srv):
     """A Workday site's dates are each a fieldset of their own, with each part's "MM" or "YYYY"
     drawn over its box: the desk filled every job's title, company and description and left all
