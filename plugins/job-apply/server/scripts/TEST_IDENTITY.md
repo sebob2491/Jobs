@@ -45,7 +45,8 @@ stays green. It takes about 15 minutes to set up.
 
 - The secrets are never printed: the check hides all three in everything it writes, and GitHub
   hides secrets in its logs too. The address can still show up in a screenshot of a form in the
-  run's files, which is one reason it should be an inbox used for nothing else.
+  run's files, which is one reason it should be an inbox used for nothing else. (The broad checks
+  give its address at the two employers that refuse example.com, and save no screenshots there.)
 - To stop the accounts check, delete any one of the three secrets. To use a different job-site
   password later, change `LIVE_TEST_SITE_PASSWORD`: the check resets each site's password to the
   new one through the site's own "Forgot password" email, where the site lets it.

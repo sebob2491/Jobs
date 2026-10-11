@@ -1093,6 +1093,19 @@ def test_sponsorship_and_military_asked_in_other_words():
     assert negated is not None and choose_option(negated.value, ["Yes", "No"]) == "Yes", negated
     served = resolve_field(f("Do you have previous military experience?", "select", options=["Yes", "No"]), p)
     assert served is not None and (served.rule, choose_option(served.value, ["Yes", "No"])) == ("military", "No")
+    # Linde's (live check, Oct 11): "a visa to permit you to legally work", and "authorized to legally work"
+    visa = resolve_field(f("Will you now or in the future require a visa to permit you to legally work in the United "
+                           "States?*", "radio_group", options=["Yes", "No"]), p)
+    assert visa is not None and (visa.rule, choose_option(visa.value, ["Yes", "No"])) == ("sponsorship", "No")
+    no_visa = resolve_field(f("I will not require a visa to work in the United States.", "radio_group",
+                              options=["Yes", "No"]), p)
+    assert no_visa is not None and choose_option(no_visa.value, ["Yes", "No"]) == "Yes", no_visa
+    legally = resolve_field(f("Are you authorized to legally work in the United States? If offered employment, you will "
+                              "be required to present documentation.*", "radio_group", options=["Yes", "No"]), p)
+    assert legally is not None and (legally.rule, choose_option(legally.value, ["Yes", "No"])) == ("authorized", "Yes")
+    # a visa for travel isn't a work visa (review)
+    travel = resolve_field(f("Will you require a visa to travel for work?", "radio_group", options=["Yes", "No"]), p)
+    assert travel is None or travel.rule != "sponsorship", travel
 
 
 def test_a_list_still_on_its_not_specified_first_choice_is_filled():
@@ -1285,6 +1298,14 @@ def test_previously_employed_by_any_of_the_employers_companies():
     assert resolve_field(asked, prof(), {"company": "Micron"}).value == "No"
     assert resolve_field(f("Have you ever worked for an Intel company?", "radio_group", options=yes_no), prof(),
                          {"company": "Intel Corporation"}).value == "Yes"
+    # onsemi's (live check, Oct 11): worked IN its establishments
+    onsemi = f("Have you ever previously worked in any onsemi establishment, anywhere in the world, whether as a "
+               "full-time or part-time employee, contractor, temporary staff or intern?", "radio_group", options=yes_no)
+    assert resolve_field(onsemi, prof(), {"company": "onsemi"}).value == "No"
+    # never a place that starts the employer's name (review): "worked in Arizona" isn't working for ASU
+    for asked in ("Have you ever worked in Arizona?", "Have you ever worked in Arizona State University labs?"):
+        assert resolve_field(f(asked, "radio_group", options=yes_no), prof(),
+                             {"company": "Arizona State University"}) is None, asked
 
 
 def test_a_former_employee_question_naming_another_company_is_never_answered_from_this_ones():
@@ -1833,6 +1854,18 @@ def test_a_citizens_visa_questions():
     assert answer("What is your current visa status?", "select", statuses) == "U.S. Citizen"
     assert answer("Immigration status", "select", ["Citizen of the United States", "Non-US Citizen", "Other"]) == \
         "Citizen of the United States"
+    # ASM's export-control question (live check, Oct 11): which of these applies to you
+    ear = ("ASM may work with technologies subject to U.S. export control regulations. The following questions are "
+           "being asked to comply with the regulation. You may read more about this here: U.S. Export Administration "
+           "Regulation (EAR) 15 C.F.R. \u00a7 730 -774. Please, select which option applies to you.*")
+    ear_options = ["Alien Authorized to Work", "Citizen or National of the United States",
+                   "U.S. Lawful Permanent Resident (Greencard holder)", "Person granted Refugee status in the United States",
+                   "None of the above"]
+    assert answer(ear, "combobox", ear_options) == "Citizen or National of the United States"
+    # the same words before an alias (review), and a question about the role isn't the person's status
+    assert choose_option("U.S. Citizen", ["U.S. Citizen or National", "U.S. Citizen", "Non-US Citizen"]) == "U.S. Citizen"
+    assert answer("Is this role subject to export control regulations? Select the option that applies", "select",
+                  ["U.S. Citizen", "Not subject"]) is None
     # "Citizenship status" is still the citizenship rule's, from the profile's country
     path.write_text(yaml.safe_dump({**data, "work_authorization": {**data["work_authorization"], "us_citizen": True,
                                                                    "citizenship": "United States"}}))
@@ -1840,6 +1873,7 @@ def test_a_citizens_visa_questions():
     path.write_text(yaml.safe_dump({**data, "work_authorization": {**data["work_authorization"], "us_citizen": False}}))
     assert answer("What is your current visa status?", "select", statuses) is None
     assert answer("Do you currently hold an H-1B visa?") is None
+    assert answer(ear, "combobox", ear_options) is None
 
 
 def test_a_drivers_license_question():

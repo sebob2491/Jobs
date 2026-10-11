@@ -115,6 +115,44 @@ def test_the_profile_is_the_test_identity_in_practice_mode(monkeypatch, tmp_path
     assert not s.may_auto_submit("workday")
 
 
+def test_the_broad_checks_fake_profile_gets_a_test_resume_too(tmp_path):
+    """The broad check's fake profile had no resume, so about ten employers stopped at "upload your
+    resume" (live run 19): it now gets the same kind of test resume, made for the run, in its home."""
+    profile = li.with_test_resume(BASE, tmp_path)
+    resume = Path(profile["documents"]["resume"])
+    assert resume == tmp_path / li.RESUME_NAME and BASE["documents"]["resume"] is None  # (the base is left as it was)
+    pdf = resume.read_bytes()
+    assert count_pages(pdf) == 1 and li.RESUME_NOTE.encode("cp1252") in pdf
+    assert b"(Testy McTestface)" in pdf and b"Equipment Technician, Example Fab" in pdf
+    assert {k: v for k, v in profile.items() if k != "documents"} == {k: v for k, v in BASE.items() if k != "documents"}
+
+
+def test_the_broad_check_gives_the_test_inbox_only_where_example_com_is_refused():
+    """Onto Innovation's and Robert Half's Workday refuse the broad check's example.com address (live
+    run 19): there, and only there, it gives the test identity's inbox (the owner's call, Oct 11)."""
+    assert li.broad_email("Onto Innovation", ENV) == ENV[li.ENV_EMAIL].strip()
+    assert li.broad_email("Robert Half", ENV) == ENV[li.ENV_EMAIL].strip()
+    assert li.broad_email("KLA", ENV) is None
+    assert li.broad_email("Onto Innovation", {}) is None  # a run without it keeps its own address
+    assert li.broad_email("Onto Innovation", {li.ENV_EMAIL: "  "}) is None
+    # each named as an employer list spells it
+    listed = {c["name"] for path in search.employer_lists().values()
+              for c in yaml.safe_load(path.read_text(encoding="utf-8"))["companies"]}
+    assert li.INBOX_AT <= listed
+
+
+def test_a_saved_pages_pictures_are_dropped(tmp_path):
+    tmp_path = tmp_path / "snapshot"  # (beside the run's home)
+    """Masking reads text, and a screenshot can show the test inbox's address in a filled box (review,
+    Oct 11): the saved page keeps its text, masked, and loses its pictures."""
+    (tmp_path / "frames").mkdir(parents=True)
+    for name in ("screenshot.jpg", "frames/shot.PNG", "page.html", "snapshot.json"):
+        (tmp_path / name).write_text("x", encoding="utf-8")
+    assert li.drop_images(tmp_path) == 2
+    assert sorted(p.relative_to(tmp_path).as_posix() for p in tmp_path.rglob("*") if p.is_file()) == \
+        ["page.html", "snapshot.json"]
+
+
 def test_the_test_resume_is_one_page_that_says_what_it_is(tmp_path):
     profile = li.identity_profile(BASE, EMAIL, tmp_path / li.RESUME_NAME)
     pdf = li.resume_pdf(profile)

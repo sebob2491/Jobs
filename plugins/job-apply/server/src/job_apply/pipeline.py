@@ -1945,6 +1945,21 @@ class Applier:
                         if await srv.browser.challenge_showing():  # a bot check drawn while it was waited on
                             await self._bring_forward(run)
                             return self._pause(run, "bot_check", _BOT_CHECK_SAYS)
+                    if not problems and looked not in retyped:
+                        # nothing said wrong, and the page didn't move: it may have lost its own record of boxes that
+                        # still show their values (EMD's Phenom, live check Oct 11: it drops some of the boxes filled
+                        # quickly one after another, and says nothing). The required boxes typed again, key by key,
+                        # once a page, and the step pressed again
+                        retyped.add(looked)
+                        shown = (await self._look())[0]  # (as it is after the wait above)
+                        boxes = [f["id"] for f in shown.get("fields") or [] if f.get("kind") == "text"
+                                 and f.get("required") and not f.get("disabled") and not is_empty_value(f.get("value"))
+                                 and len(str(f.get("value"))) <= 80]  # (not a long answer: typed key by key)
+                        if boxes and await srv.browser.retype(boxes):
+                            self._log(run, f"typed {len(boxes)} required box(es) again: the page may have lost what "
+                                      "was typed in them")
+                            stalls = 0
+                            continue
                     errors = "; ".join(problems)[:300].rstrip(" .")
                     return self._pause(run, "stuck", "The page didn't move on" + (f": {errors}." if errors else ".")
                                        + " Fix it in the browser, then press Resume.")
