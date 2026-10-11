@@ -304,6 +304,7 @@ def test_live_smoke_prints_the_inbox_report_as_one_line(tmp_path):
         "    def _mail_senders(self, run): return {'brassring.com'}\n"
         "class Run:\n"
         "    paused_at = 1000.0\n"
+        "    mail_looks, mail_last = 3, 'looked for a code: none (6 code box(es) on the page)'\n"
         "live_smoke.live_identity.inbox_report = lambda env, senders, paused_at: {\n"
         "    'senders_allowed': sorted(senders), 'paused': paused_at, 'messages': []}\n"
         "asyncio.run(live_smoke.report_inbox('Edward Jones', Applier(), Run()))\n")
@@ -315,4 +316,5 @@ def test_live_smoke_prints_the_inbox_report_as_one_line(tmp_path):
     assert len(lines) == 1, out.stdout
     assert json.loads(lines[0].removeprefix("LIVE_INBOX ")) == {
         "company": "Edward Jones", "senders_allowed": ["brassring.com"], "paused": 1000.0, "messages": [],
-        "mail_problem": "it said something"}
+        "mail_problem": "it said something",
+        "desk": {"looks": 3, "last": "looked for a code: none (6 code box(es) on the page)"}}

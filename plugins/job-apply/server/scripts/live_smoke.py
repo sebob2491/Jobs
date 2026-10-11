@@ -1263,7 +1263,7 @@ async def report_inbox(company: str, applier: Any, run: Any) -> None:
         senders = applier._mail_senders(run)  # (who this job's code may come from)
         report.update(await asyncio.to_thread(live_identity.inbox_report, os.environ, senders, run.paused_at))
         report["mail_problem"] = applier.mail_problem  # (what the desk itself said of reading the inbox)
-        report["desk"] = {"looks": run.mail_looks, "last": run.mail_last}  # (and what its own looks came to)
+        report["desk"] = {"looks": getattr(run, "mail_looks", None), "last": getattr(run, "mail_last", None)}  # (its own looks)
     except Exception as e:  # noqa: BLE001 - a diagnostic: the run's record stands without it
         report["error"] = f"{type(e).__name__}: {str(e)[:200]}"
     print("LIVE_INBOX " + json.dumps(report, default=str), flush=True)
