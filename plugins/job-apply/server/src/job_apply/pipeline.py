@@ -448,7 +448,8 @@ _ADVISORY = re.compile(r"has been used to (?:pre-?fill|populate)|^\W*please (?:v
 
 def _errorish(said: str) -> bool:
     """Words the page shows that say something on it is wrong (not a note to look things over)."""
-    return bool(_ERRORISH.search(said)) and not _ADVISORY.search(said)
+    # sentence by sentence, so a real error in the same message as the note still counts
+    return any(_ERRORISH.search(part) and not _ADVISORY.search(part) for part in re.split(r"(?<=[.!?])\s+", said))
 
 
 _UNREACHED = [re.compile(p) for p in (r"\bhttps?://([\w.-]+)", r"([\w.-]+\.[a-z]{2,})(?:\u2019|')s server IP address",
@@ -1924,6 +1925,9 @@ class Applier:
                         if await self._wait_for_step_change(key, STEP_SAVE_WAIT):
                             stalls = 0
                             continue
+                        if await srv.browser.challenge_showing():  # a bot check drawn while it was waited on
+                            await self._bring_forward(run)
+                            return self._pause(run, "bot_check", _BOT_CHECK_SAYS)
                     errors = "; ".join(problems)[:300].rstrip(" .")
                     return self._pause(run, "stuck", "The page didn't move on" + (f": {errors}." if errors else ".")
                                        + " Fix it in the browser, then press Resume.")
