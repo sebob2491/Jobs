@@ -143,7 +143,8 @@ ROLE = "technician"  # the run's role (--role)
 # (The test identity keeps its own, for the accounts check: TEST_IDENTITY.md says its address can show there)
 INBOX_IN_PROFILE = False
 TEST_IDENTITY = False  # --test-identity: the test identity applies, in place of the throwaway profile
-ROLE_AT: dict[str, str] = {}  # with it, each of its employers' role (test_identity_employers.yaml)
+ROLE_AT: dict[str, str] = {}  # with it, each of its employers' role (test_identity_employers.yaml, or --everywhere's)
+EMPLOYERS: list[dict[str, str]] = []  # with it, its employers (name, list, role, system, why)
 MAIL_WAIT = 4 * 60  # with it, how long a run waits for the desk to read an emailed code or link
 MAIL_ROUNDS = 2  # and how many times, on top of the rounds of questions
 
@@ -173,7 +174,7 @@ def use_role(name: str, email: str | None = None) -> None:
     (_HOME / "profile.yaml").write_text(yaml.safe_dump(profile))
 
 
-def start_test_identity(announce: bool = True) -> list[dict[str, str]]:
+def start_test_identity(announce: bool = True, everywhere: bool = False) -> list[dict[str, str]]:
     """--test-identity: from here on, everything the run prints has the identity's email and
     passwords masked; its passwords are the desk's saved ones for this run (in the environment,
     which the groups --parallel starts share: never in a file); and its employers' lists are
@@ -183,7 +184,7 @@ def start_test_identity(announce: bool = True) -> list[dict[str, str]]:
     _mask = live_identity.masker(email, [site, inbox, *(os.environ[k] for k in live_identity.ENV_VARS[1:])])
     sys.stdout = live_identity.MaskedStream(sys.stdout, _mask)
     sys.stderr = live_identity.MaskedStream(sys.stderr, _mask)
-    employers = live_identity.load_employers()
+    employers = live_identity.everywhere_employers() if everywhere else live_identity.load_employers()
     unknown = [e["role"] for e in employers if e["role"] not in ROLES]
     if unknown:
         raise ValueError(f"{live_identity.EMPLOYERS_FILE.name}: no role named {unknown[0]!r}; roles: {', '.join(ROLES)}")
@@ -841,12 +842,19 @@ async def main() -> int:
                                                 "(default: semiconductor-az; e.g. phoenix-metro,semiconductor-az)")
     ap.add_argument("--role", choices=sorted(ROLES), default="technician",
                     help="the kind of job to look for, with a fake applicant to match (default: technician)")
+    ap.add_argument("--everywhere", action="store_true",
+                    help="with --test-identity: at every employer on the semiconductor-az (technician jobs) and "
+                         "phoenix-metro (HR jobs) lists, not only test_identity_employers.yaml's (the owner's call, "
+                         "Oct 11)")
     ap.add_argument("--test-identity", action="store_true",
                     help="with --pipeline: apply as the test identity (LIVE_TEST_EMAIL, LIVE_TEST_EMAIL_PASSWORD and "
                          "LIVE_TEST_SITE_PASSWORD; scripts/TEST_IDENTITY.md) at the employers in "
                          "scripts/test_identity_employers.yaml: it makes accounts and reads their emailed codes, "
                          "and never submits")
     args = ap.parse_args()
+    if args.everywhere and not args.test_identity:
+        print("--everywhere goes with --test-identity. Nothing was run.", file=sys.stderr)
+        return 2
     if args.test_identity:  # before anything else: without its inbox and passwords, nothing runs
         problem = live_identity.env_problem(os.environ) if args.pipeline else \
             "--test-identity goes with --pipeline. Nothing was run."
@@ -855,7 +863,7 @@ async def main() -> int:
             return 2
     args.out.mkdir(parents=True, exist_ok=True)
     if args.test_identity:
-        start_test_identity(announce=not args.shard)
+        EMPLOYERS[:] = start_test_identity(announce=not args.shard, everywhere=args.everywhere)
     else:
         mask_broad_email()
     use_role(args.role)
@@ -874,7 +882,11 @@ async def main() -> int:
     companies = [c for c in pool if not wanted or any(w in c["name"].lower() for w in wanted)]
     if args.shard:
         i, n = (int(x) for x in args.shard.split("/"))
-        companies = companies[i::n]
+        if TEST_IDENTITY:  # its groups keep a system's employers together (live_identity.arrange)
+            mine = set(live_identity.arrange(EMPLOYERS, n)[i])
+            companies = [c for c in companies if c["name"] in mine]
+        else:
+            companies = companies[i::n]
     if args.pipeline:
         if args.fake_passwords and not TEST_IDENTITY:  # (the test identity's own passwords are in place)
             from job_apply.pipeline import DESK_PASSWORDS
@@ -1165,6 +1177,35 @@ _LIST_JS = r"""
 """
 
 
+FINAL_BOXES = 12  # boxes final_form keeps
+FINAL_CHOICES = 30  # choices it keeps of each
+
+
+async def final_form() -> dict[str, Any]:
+    """What the page showed where the desk stopped, so one run is enough to fix from (the run is over; nothing
+    is sent): its errors, its buttons (a disabled one marked), and each box that is required and empty, marked
+    invalid, or named in an error, with the choices of its list (Onto's Degree list, ASML's sign-in, Amkor's
+    privacy link: live check, Oct 11)."""
+    try:
+        data = await asyncio.wait_for(server.inspect_form(include_dropdown_options=True), 90)
+    except Exception as e:  # noqa: BLE001 - a diagnostic; the run's record stands without it
+        return {"error": f"{type(e).__name__}: {str(e)[:200]}"}
+    errors = [str(e)[:200] for e in data.get("errors") or []]
+    said = " ".join(errors).lower()
+
+    def wanted(f: dict[str, Any]) -> bool:
+        label = str(f.get("label") or "").strip(" *").lower()
+        return bool(f.get("invalid") or f.get("error") or (f.get("required") and is_empty_value(f.get("value")))
+                    or (len(label) >= 3 and label in said))
+    boxes = [{k: (f.get(k)[:FINAL_CHOICES] if k == "options" and isinstance(f.get(k), list) else f.get(k))
+              for k in ("label", "kind", "section", "value", "required", "options", "error") if f.get(k) not in (None, "", [])}
+             for f in data.get("fields") or [] if wanted(f)]
+    return {"url": data.get("url"), "errors": errors,
+            "actions": [str(a.get("text"))[:60] + (" (disabled)" if a.get("disabled") else "")
+                        for a in data.get("actions") or []][:60],
+            "fields": boxes[:FINAL_BOXES], "dialogs": [str(d)[:300] for d in data.get("dialogs") or []][:3]}
+
+
 async def list_probe(questions: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """For up to three search boxes whose list the desk couldn't pick from: type the value
     again and record the list that shows (the run is over; nothing is sent)."""
@@ -1292,6 +1333,8 @@ async def check_pipeline(company: dict[str, Any], out: Path, rec: dict[str, Any]
                 rec["fixture"] = f"pipeline-{slug(company['name'])}"
         except Exception as e:  # noqa: BLE001 - the record matters more than the snapshot
             rec["snapshot_error"] = f"{type(e).__name__}: {str(e)[:200]}"
+        if run is not None and (rec.get("rounds") or [{}])[-1].get("status") != "ready":
+            rec["final_form"] = await final_form()  # (after the snapshot: reading lists opens them)
         await server.close_browser()
 
 
@@ -1373,6 +1416,7 @@ async def parallel_main(args: argparse.Namespace) -> int:
               *(["--pipeline"] if args.pipeline else []),
               *(["--fake-passwords"] if args.fake_passwords and not args.test_identity else []),
               *(["--test-identity"] if args.test_identity else []),  # (its inbox and passwords: in the environment)
+              *(["--everywhere"] if args.everywhere else []),
               *(["--lists", args.lists] if args.lists else []), "--role", args.role]
     children = [await asyncio.create_subprocess_exec(
         sys.executable, __file__, *passed, "--shard", f"{i}/{n}", "--out", str(args.out / f"shard-{i}"),

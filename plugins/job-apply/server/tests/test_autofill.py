@@ -1108,6 +1108,23 @@ def test_sponsorship_and_military_asked_in_other_words():
     assert travel is None or travel.rule != "sponsorship", travel
 
 
+def test_a_degree_of_one_kind_is_picked_however_the_list_writes_it_and_a_bare_one_never_picks_a_kind():
+    """Workday Degree lists (Onto's, nightly live check, Oct 11) list a level's kinds: "Bachelor of Arts" and
+    "Bachelor of Science", or "BA" / "BS", "B.S.", "Bachelor's - BS". A profile's "Bachelor of Science" (or
+    "BSEE") is the BS however it's written; a bare "Bachelor's Degree" says no kind, so none is picked (it
+    was "Bachelor's - BS", a kind the profile never said)."""
+    lists = [["Bachelor of Arts", "Bachelor of Science"], ["BA", "BS"], ["B.S.", "B.A."],
+             ["Bachelor of Science (BS)", "Bachelor of Arts (BA)"], ["Bachelor's - BS", "Bachelor's - BA"]]
+    for options in lists:
+        bs = next(o for o in options if "S" in o.replace("Bachelor's", "").replace("Bachelor", "").replace("Arts", ""))
+        for said in ("Bachelor of Science", "BSEE", "BS Electrical Engineering"):
+            assert choose_option(said, options) == bs, (said, options)
+        assert choose_option("Bachelor's Degree", options) is None, options
+    # one of the level, or the same words: as before
+    assert choose_option("Bachelor's Degree", ["Associates", "Bachelors", "Masters"]) == "Bachelors"
+    assert choose_option("Bachelor's Degree", ["Bachelor's Degree", "Master of Science"]) == "Bachelor's Degree"
+
+
 def test_a_bare_job_title_beside_a_profile_employers_company_gets_that_jobs_title():
     """Cornerstone's resume reader (Linde's and Matheson's, live check Oct 11) adds an experience row with its
     Company filled in and its Job Title empty, under a heading the form reader doesn't tie to the boxes: the

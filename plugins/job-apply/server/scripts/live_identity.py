@@ -227,6 +227,55 @@ def drop_images(folder: Path) -> int:
     return gone
 
 
+# --everywhere: each list's employers with the role their jobs are looked for in (finance is paused)
+LIST_ROLES = {"semiconductor-az": "technician", "phoenix-metro": "hr"}
+# Job systems whose emailed link names the employer's own site, so the desk tells one employer's mail from
+# another's (pipeline.own_link): their employers may wait on mail at the same time. Every other system's
+# employers wait one after another (one inbox; a code from the same sender is anyone's)
+LINKED_SYSTEMS = {"workday"}
+# A search's name for the job system its applications run on, where they differ (SuccessFactors' older sites,
+# its Recruiting Marketing pages; asml.com's own search, whose Apply opens Workday)
+SYSTEM_OF_SEARCH = {"sfclassic": "successfactors", "rmk": "successfactors", "sitecore": "workday"}
+
+
+def everywhere_employers(lists: Mapping[str, Path] | None = None) -> list[dict[str, str]]:
+    """--everywhere (the owner's call, Oct 11: "lets have practice runs make one"): the test identity at
+    every employer with a search on LIST_ROLES' lists, each with its list's role and its search's system
+    (the first key of its search: workday, eightfold, oracle ...), in the lists' order, each employer once."""
+    from job_apply import search
+
+    paths = lists if lists is not None else search.employer_lists()
+    out: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for name, role in LIST_ROLES.items():
+        data = yaml.safe_load(paths[name].read_text(encoding="utf-8")) or {}
+        for c in data.get("companies") or []:
+            if not isinstance(c, dict) or not isinstance(c.get("search"), dict) or not c["search"] or c["name"] in seen:
+                continue
+            seen.add(c["name"])
+            out.append({"name": c["name"], "list": name, "role": role, "system": SYSTEM_OF_SEARCH.get(str(next(iter(c["search"]))),
+                                                                          str(next(iter(c["search"])))),
+                        "why": "every employer on the lists (the owner's call, Oct 11)"})
+    return out
+
+
+def arrange(employers: list[dict[str, str]], n: int) -> list[list[str]]:
+    """The employers' names in n groups that run at once (--parallel n), as even as can be: a system's
+    employers all in one group (one inbox: two of its codes at once could be taken for each other), except
+    LINKED_SYSTEMS', spread out one by one. The biggest systems are placed first."""
+    groups: list[list[str]] = [[] for _ in range(max(n, 1))]
+    by_system: dict[str, list[str]] = {}
+    for e in employers:
+        by_system.setdefault(e["system"].lower(), []).append(e["name"])
+    for system, names in sorted(by_system.items(), key=lambda kv: (-len(kv[1]), kv[0])):
+        if system in LINKED_SYSTEMS:
+            for name in names:
+                min(groups, key=len).append(name)
+        else:
+            min(groups, key=len).extend(names)
+    return groups
+
+
 def load_employers(path: Path = EMPLOYERS_FILE) -> list[dict[str, str]]:
     """The employers the test identity applies at: [{name, list, role, system, why}], in the file's order."""
     data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
