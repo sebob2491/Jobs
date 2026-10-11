@@ -45,6 +45,10 @@ _COUNTRY_ALIASES = [
     {"netherlands", "the netherlands", "holland"},
     {"south korea", "korea republic of", "republic of korea", "korea"},
     {"taiwan", "taiwan province of china", "chinese taipei"},
+    # a U.S. citizen, as export-control lists word it (ASM's "Citizen or National of the United States")
+    {"u s citizen", "us citizen", "united states citizen", "citizen of the united states",
+     "citizen or national of the united states", "u s citizen or national", "us citizen or national",
+     "united states citizen or national"},
 ]
 # "-- Please Select --" may have a value of its own ("0"); iCIMS's dashes are long ("— Make a Selection —")
 _PLACEHOLDER_VALUES = re.compile(
@@ -675,7 +679,7 @@ def _expected_graduation(prof: Profile, job: dict) -> Any:
     return "Not currently attending school"
 
 
-_AUTHORIZED = r"authori[sz]ed to work|eligible to work|eligibility to work|eligible for employment|legally (able|permitted|allowed) to work|right to work|" \
+_AUTHORIZED = r"authori[sz]ed to ((legally|lawfully) )?work|eligible to ((legally|lawfully) )?work|eligibility to work|eligible for employment|legally (able|permitted|allowed) to work|right to work|" \
               r"work authori[sz]ation|employment eligibility|unrestricted authori[sz]ation"
 
 
@@ -1178,12 +1182,17 @@ RULES: list[tuple[str, str, Getter, int | None, set[str] | None]] = [
      r"(required|needed|necessary)|"
      # (the immigration-case wording, negated: "I will not require the employer to commence an immigration case")
      r"\b(no|not|never|without|don t|dont|won t)( now or in the future)? requir\w* .{0,60}\b(commence|start|begin|file|"
-     r"initiate)\w* an? (immigration|visa) (case|petition|process)", _no_sponsorship, None, None),
+     r"initiate)\w* an? (immigration|visa) (case|petition|process)|"
+     # (and a visa, negated: "I will not require a visa to work in the United States")
+     r"\b(do not|don t|dont|will not|won t|not|never)( now or in the future| currently)? (require|need)\w* an? (work )?visa\b",
+     _no_sponsorship, None, None),
     # (and in other words: "require <employer> to commence an immigration case in order to employ you",
     # live test 2, issue #112, note 17)
     ("sponsorship", r"(require|need|seek)\w* .{0,40}sponsor|sponsor\w* .{0,40}(require|need)|"
      r"^(visa |employment |immigration )?sponsorship( status| required| needed)?$|"
-     r"\brequire\w* .{0,60}\b(commence|start|begin|file|initiate)\w* an? (immigration|visa) (case|petition|process)",
+     r"\brequire\w* .{0,60}\b(commence|start|begin|file|initiate)\w* an? (immigration|visa) (case|petition|process)|"
+     # Linde: "Will you now or in the future require a visa to permit you to legally work in the United States?"
+     r"\b(require|need)\w* an? (work )?visa (to|in order to) .{0,40}\bwork\b",
      _sponsorship, None, None),
     # the I-9: "Can you provide verification of both your identity and authorization to work in the
     # United States, to the extent required by law?" (Axon)
@@ -1210,6 +1219,13 @@ RULES: list[tuple[str, str, Getter, int | None, set[str] | None]] = [
     # ("Citizenship status" keeps the citizenship rule, from the profile's country)
     ("citizen_status", r"^(what is )?(your )?(current )?(visa|immigration) status$",
      lambda p, j: "U.S. Citizen" if p.get("work_authorization.us_citizen") is True else None, 80, None),
+    # ASM's export-control question: "... U.S. Export Administration Regulation (EAR) ... Please, select
+    # which option applies to you." among "Citizen or National of the United States", "Alien Authorized
+    # to Work", ...: a citizen's is the citizen one
+    ("export_status", r"\bexport (control|administration)\b.{0,600}\b(select|choose|indicate|which)\b.{0,40}"
+     r"\b(applies|describes|option)\b",
+     lambda p, j: "U.S. Citizen" if p.get("work_authorization.us_citizen") is True else None, None,
+     {"select", "listbox", "combobox", "radio_group"}),
     ("citizenship", r"citizenship|country of citizen|are you a (u ?s )?citizen", _p("work_authorization.citizenship"), None, None),
     ("clearance", r"security clearance|active clearance", _p("work_authorization.security_clearance"), None, None),
     # "do you live nearby or are you willing to relocate?": a local applicant isn't relocating

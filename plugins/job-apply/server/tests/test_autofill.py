@@ -1093,6 +1093,16 @@ def test_sponsorship_and_military_asked_in_other_words():
     assert negated is not None and choose_option(negated.value, ["Yes", "No"]) == "Yes", negated
     served = resolve_field(f("Do you have previous military experience?", "select", options=["Yes", "No"]), p)
     assert served is not None and (served.rule, choose_option(served.value, ["Yes", "No"])) == ("military", "No")
+    # Linde's (live check, Oct 11): "a visa to permit you to legally work", and "authorized to legally work"
+    visa = resolve_field(f("Will you now or in the future require a visa to permit you to legally work in the United "
+                           "States?*", "radio_group", options=["Yes", "No"]), p)
+    assert visa is not None and (visa.rule, choose_option(visa.value, ["Yes", "No"])) == ("sponsorship", "No")
+    no_visa = resolve_field(f("I will not require a visa to work in the United States.", "radio_group",
+                              options=["Yes", "No"]), p)
+    assert no_visa is not None and choose_option(no_visa.value, ["Yes", "No"]) == "Yes", no_visa
+    legally = resolve_field(f("Are you authorized to legally work in the United States? If offered employment, you will "
+                              "be required to present documentation.*", "radio_group", options=["Yes", "No"]), p)
+    assert legally is not None and (legally.rule, choose_option(legally.value, ["Yes", "No"])) == ("authorized", "Yes")
 
 
 def test_a_list_still_on_its_not_specified_first_choice_is_filled():
@@ -1833,6 +1843,14 @@ def test_a_citizens_visa_questions():
     assert answer("What is your current visa status?", "select", statuses) == "U.S. Citizen"
     assert answer("Immigration status", "select", ["Citizen of the United States", "Non-US Citizen", "Other"]) == \
         "Citizen of the United States"
+    # ASM's export-control question (live check, Oct 11): which of these applies to you
+    ear = ("ASM may work with technologies subject to U.S. export control regulations. The following questions are "
+           "being asked to comply with the regulation. You may read more about this here: U.S. Export Administration "
+           "Regulation (EAR) 15 C.F.R. \u00a7 730 -774. Please, select which option applies to you.*")
+    ear_options = ["Alien Authorized to Work", "Citizen or National of the United States",
+                   "U.S. Lawful Permanent Resident (Greencard holder)", "Person granted Refugee status in the United States",
+                   "None of the above"]
+    assert answer(ear, "combobox", ear_options) == "Citizen or National of the United States"
     # "Citizenship status" is still the citizenship rule's, from the profile's country
     path.write_text(yaml.safe_dump({**data, "work_authorization": {**data["work_authorization"], "us_citizen": True,
                                                                    "citizenship": "United States"}}))
@@ -1840,6 +1858,7 @@ def test_a_citizens_visa_questions():
     path.write_text(yaml.safe_dump({**data, "work_authorization": {**data["work_authorization"], "us_citizen": False}}))
     assert answer("What is your current visa status?", "select", statuses) is None
     assert answer("Do you currently hold an H-1B visa?") is None
+    assert answer(ear, "combobox", ear_options) is None
 
 
 def test_a_drivers_license_question():
