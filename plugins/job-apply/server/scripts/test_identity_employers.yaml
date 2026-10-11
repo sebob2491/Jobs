@@ -3,8 +3,8 @@
 # "Jobdesk Test", with an inbox of its own: it makes an account on each of these sites, reads the
 # codes they email, and goes on past sign-in to the application, but never submits one.
 #
-# One or two employers per job system, and no more: each is an account in a fake applicant's name
-# on a real employer's site. An employer is here because the nightly check with the throwaway
+# A few employers per job system (the owner's call, Oct 11: up to six, to see further than the first
+# one or two did), and no more: each is an account in a fake applicant's name on a real employer's site. An employer is here because the nightly check with the throwaway
 # profile stops at its sign-in (or at a step only an account or a resume gets past), so this check
 # tests what comes after.
 #
@@ -17,8 +17,8 @@
 # a sales role), as the job system is what's tested here.
 #
 # The order matters: with --parallel 2, employers 1, 3, 5, ... run in one group and 2, 4, 6, ... in
-# the other, at the same time. Two employers on the same job system go in the same group (here
-# both Workday ones are odd), so one inbox is never waiting on two codes from the same sender.
+# the other, at the same time. Employers on the same job system go in the same group (here the
+# Workday ones are all odd), so one inbox is never waiting on two codes from the same sender.
 
 employers:
   - name: KLA
@@ -36,51 +36,91 @@ employers:
     role: hr
     system: Workday
     why: a second Workday site (another tenant, as an HR applicant), whose forms differ from KLA's
+  - name: Ultra Clean Holdings (UCT)
+    list: semiconductor-az
+    role: technician
+    system: UKG Pro
+    why: a second UKG Pro tenant
+  - name: Applied Materials
+    list: semiconductor-az
+    role: technician
+    system: Workday
+    why: Workday at one of the owner's own target employers (the owner's call, Oct 11, to see further)
   - name: Arizona Public Service
     list: phoenix-metro
     role: technician
     system: SuccessFactors
     why: SAP SuccessFactors' Create Account form (its newer career site), then its application
-  - name: Charles Schwab
-    list: phoenix-metro
-    role: hr
-    system: iCIMS
-    why: iCIMS; its "I Acknowledge the Privacy Notice" step is agreed to with accept_notices
-  - name: onsemi
+  - name: ASML
     list: semiconductor-az
     role: technician
-    system: Oracle
-    why: Oracle Recruiting Cloud, which signs in with an emailed code and wants a resume uploaded
+    system: Workday
+    why: Workday reached from asml.com's own Apply Now (a new tab), an owner's target
+  - name: Amkor Technology
+    list: semiconductor-az
+    role: technician
+    system: SuccessFactors
+    why: SAP SuccessFactors' Create Account form on its older career site
+  - name: Tokyo Electron (TEL)
+    list: semiconductor-az
+    role: technician
+    system: Workday
+    why: Workday with two-level lists and a GED degree choice (live test 2), an owner's target
+  - name: Edwards Vacuum
+    list: semiconductor-az
+    role: technician
+    system: SuccessFactors
+    why: SuccessFactors' searchable lists (live test 2, note 21), an owner's target
+  - name: Intel
+    list: semiconductor-az
+    role: technician
+    system: Workday
+    why: Workday's 'Application Submitted' and job dates (live test 2), an owner's target
   - name: Northrop Grumman
     list: phoenix-metro
     role: hr
     system: Eightfold
     why: Eightfold's "create a new account" for an email it doesn't know yet
-  - name: Kforce
-    list: phoenix-metro
-    role: technician
-    system: Taleo
-    why: Taleo; its "I Accept" step is agreed to with accept_notices, then its account
   - name: Edward Jones
     list: phoenix-metro
     role: hr
     system: BrassRing
     why: BrassRing's sign-in and account steps
+  - name: Micron
+    list: semiconductor-az
+    role: technician
+    system: Eightfold
+    why: Eightfold's AI-screening notice and terms, agreed to with accept_notices (live test 2, notes 6-8)
   - name: Linde
     list: semiconductor-az
     role: technician
     system: Cornerstone
     why: Cornerstone's application and account steps
+  - name: Charles Schwab
+    list: phoenix-metro
+    role: hr
+    system: iCIMS
+    why: iCIMS; its "I Acknowledge the Privacy Notice" step is agreed to with accept_notices
   - name: Ebara Technologies
     list: semiconductor-az
     role: technician
     system: Paycom
     why: Paycom, whose form needs a resume uploaded before it goes on
+  - name: onsemi
+    list: semiconductor-az
+    role: technician
+    system: Oracle
+    why: Oracle Recruiting Cloud, which signs in with an emailed code and wants a resume uploaded
   - name: SCREEN SPE USA
     list: semiconductor-az
     role: technician
     system: ApplicantStack
     why: ApplicantStack's Create Account form, then its application
+  - name: Kforce
+    list: phoenix-metro
+    role: technician
+    system: Taleo
+    why: Taleo; its "I Accept" step is agreed to with accept_notices, then its account
   - name: Benchmark Electronics
     list: semiconductor-az
     role: technician

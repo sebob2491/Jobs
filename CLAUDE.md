@@ -104,7 +104,7 @@ the scrubber (`python -m job_apply.fixtures`) before they become test fixtures.
     a newsletter, a talent community or marketing.
   - The live check's test identity (the owner's call, Oct 10) is the one exception to "never in
     practice mode", for accounts and notices alike: a clearly fake applicant ("Jobdesk Test")
-    with its own inbox, at one or two employers per job system, which never submits. It's on
+    with its own inbox, at a few employers per job system (up to six: the owner's call, Oct 11), which never submits. It's on
     only with `JOB_APPLY_LIVE_TEST_IDENTITY=1` and `JOB_APPLY_NEVER_SUBMIT=1` set and the
     profile's email being `LIVE_TEST_EMAIL` (`config.live_test_identity`), so a person's own
     profile never turns it on; Submit stays refused in it.

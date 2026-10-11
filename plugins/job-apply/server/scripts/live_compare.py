@@ -21,7 +21,7 @@ The outcomes:
   finance   (... --role finance): the same, for finance jobs, as a finance applicant.
   accounts  (live_smoke.py --pipeline --test-identity): the same, as the test identity, a clearly
             fake applicant with an inbox of its own whose accounts are made and signed in to, at
-            one or two employers per job system (scripts/test_identity_employers.yaml). Only once
+            a few employers per job system (scripts/test_identity_employers.yaml). Only once
             the repository has the test identity's secrets (scripts/TEST_IDENTITY.md): until then
             the nightly leaves it out, and it isn't compared.
   search    (live_smoke.py without --pipeline): whether the employer's search ran without an

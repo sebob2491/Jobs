@@ -33,7 +33,7 @@ identity's; nothing else of the test identity's (no accounts, no mail read).
 setting it up: TEST_IDENTITY.md): "Jobdesk Test", a clearly fake applicant with an inbox of its own
 and one password for its job-site accounts, from LIVE_TEST_EMAIL, LIVE_TEST_EMAIL_PASSWORD and
 LIVE_TEST_SITE_PASSWORD (it refuses to start without them). Only at the employers in
-test_identity_employers.yaml (one or two per job system, each with its role; --companies narrows
+test_identity_employers.yaml (a few per job system, each with its role; --companies narrows
 them): the desk makes the accounts, reads their emailed codes, agrees to notices and uploads a test
 resume made for the run, and still never submits (practice mode and JOB_APPLY_NEVER_SUBMIT stay on).
 The three values are masked in everything it prints and writes. --fake-passwords, --lists and

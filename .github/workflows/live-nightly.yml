@@ -10,7 +10,7 @@ name: live-nightly
 #   - the search check on the phoenix-metro list: whether each employer's search works
 #     (how many openings it finds changes daily, and is never compared);
 #   - the accounts check: the pipeline as the test identity (a clearly fake applicant with an
-#     inbox of its own; the owner's call, Oct 10) at one or two employers per job system
+#     inbox of its own; the owner's call, Oct 10) at a few employers per job system
 #     (scripts/test_identity_employers.yaml): it makes their accounts and reads their emailed
 #     codes, and never submits. It runs only once the repository has the test identity's three
 #     secrets (scripts/TEST_IDENTITY.md); until then it says "not set up" and stays green.
@@ -58,7 +58,7 @@ jobs:
           - check: search  # whether each phoenix-metro employer's search works
             args: --lists phoenix-metro --parallel 4
             minutes: 30
-          - check: accounts  # the test identity, its accounts made, at one or two employers per job system
+          - check: accounts  # the test identity, its accounts made, at a few employers per job system
             args: --pipeline --test-identity --parallel 2
             minutes: 40
     defaults:

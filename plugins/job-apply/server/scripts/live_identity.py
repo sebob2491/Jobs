@@ -2,7 +2,7 @@
 so it can be tested without that script's start-up (a home of its own, the server) or a browser.
 
 The owner's call (Oct 10): a clearly fake applicant, "Jobdesk Test", with an inbox of its own, so
-the nightly check can make accounts, read their emailed codes and get past sign-in, at one or two
+the nightly check can make accounts, read their emailed codes and get past sign-in, at a few
 employers per job system (test_identity_employers.yaml). It never submits: practice mode and
 JOB_APPLY_NEVER_SUBMIT=1 stay on, and job_apply.config lets accounts and notices through in
 practice mode only for this identity (config.live_test_identity). Setting it up: TEST_IDENTITY.md.
