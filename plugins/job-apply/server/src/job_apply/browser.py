@@ -199,6 +199,24 @@ DATE_PARTS_JS = """
 """
 
 
+def _bare_choice(text: str) -> str:
+    """A list's choice without the arrow that says it opens a list of its own ("Employee Referral ›")."""
+    return re.sub(r"\s*[\u203a>\u276f\u25b8\u25b6]+\s*$", "", text or "").strip()
+
+
+def _inner_choice(value: Any, picked: str, inner: list[str], names: bool = False) -> str | None:
+    """The choice to pick in the list a choice opened: the answer, if it's there; else the one named as
+    the choice picked; else the only one (Workday's "<employer> website ›" opens a list of one, named
+    alike: live test 2, issue #112, note 15)."""
+    entry = choose_option(value, inner, names=names)
+    if entry is not None:
+        return entry
+    same = [o for o in inner if norm(_bare_choice(o)) == norm(_bare_choice(picked))]
+    if len(same) == 1:
+        return same[0]
+    return inner[0] if len(inner) == 1 else None
+
+
 async def _covered(loc: Locator) -> bool:
     """Is something drawn over this box, so a click can't reach it? Asked for 2 s at most, as a
     click would be: a box Workday is drawing again (after a menu pick) isn't waited on for the
@@ -1447,6 +1465,14 @@ class BrowserSession:
             try:
                 await self._confirm_choice(page, loc, choice)
             except ValueError:
+                # a choice that opened a list of its own (Workday's "How Did You Hear About Us?": "<employer>
+                # website ›" > "<employer> website", live test 2, issue #112, note 15): picked inside it
+                inner = await self._new_options(page, field["id"], loc, options, 1500)
+                entry = _inner_choice(value, choice, inner, names) if inner and inner != options else None
+                if entry is not None:
+                    await self._click_option(page, field["id"], entry)
+                    await self._confirm_choice(page, loc, entry)
+                    return f"selected {_bare_choice(choice)} > {entry}"
                 if attempt:
                     raise
                 await self._close_menus(page)  # a pick that didn't land: once more, from a menu opened afresh
@@ -1547,7 +1573,7 @@ class BrowserSession:
             await self._confirm_choice(page, loc, choice)
         except ValueError:
             inner = await self._new_options(page, field["id"], loc, options, 1500)
-            entry = choose_option(text, inner, names=names) if inner and inner != options else None
+            entry = _inner_choice(text, choice, inner, names) if inner and inner != options else None
             if entry is not None:  # the answer is in the group it opened (Onto's "ONTO Website" > "ONTO Website")
                 await self._click_option(page, field["id"], entry)
                 await self._confirm_choice(page, loc, entry)

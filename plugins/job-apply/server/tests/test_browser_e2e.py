@@ -549,6 +549,20 @@ def test_final_apply_button_honeypot_and_enter(srv, monkeypatch):
     assert done["submitted"] and done["confirmed"]
 
 
+def test_a_choice_that_opens_a_list_of_its_own_is_picked_inside_it(srv):
+    """Workday's "How Did You Hear About Us?" (live test 2, issue #112, note 15): every choice opens a
+    second list, here with one choice of the same name ("<employer> website" > "<employer> website"). The
+    desk picked the first level and stopped ("Picked ... but the field didn't take it"). Inside the list
+    it opens, the choice of the same name (or the only one) is picked."""
+    run(srv.browser.goto(fixture_url("site/workday-two-level-list.html")))
+    field = next(f for f in run(srv.inspect_form(include_dropdown_options=False))["fields"]
+                 if f["label"].startswith("How Did You Hear"))
+    out = run(srv.fill_form([{"id": field["id"], "value": "Example Fab website"}]))
+    assert out["results"][0].get("ok"), out["results"]
+    page = run(srv.browser.page())
+    assert run(page.evaluate("() => document.getElementById('source').textContent")) == "Example Fab website"
+
+
 def test_a_confirmation_drawn_a_few_seconds_after_submit_is_seen(srv):
     """Workday (live test 2, issue #112, note 19): both applications the person had the desk submit went
     in, and Workday showed "Application Submitted / Congratulations! Thank you for submitting your

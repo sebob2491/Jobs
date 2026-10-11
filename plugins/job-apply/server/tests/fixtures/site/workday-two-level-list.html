@@ -1,0 +1,64 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>My Information</title>
+<style>
+  button[aria-haspopup] { min-width: 220px; height: 30px; text-align: left; }
+  #popup { position: absolute; z-index: 5; background: #fff; border: 1px solid #999; list-style: none; margin: 0;
+           padding: 0; width: 260px; }
+  #popup[hidden] { display: none; }
+  #popup li { height: 30px; line-height: 30px; padding: 0 6px; }
+</style>
+</head>
+<body>
+<!-- like a Workday "How Did You Hear About Us?" (live test 2, issue #112, note 15, Oct 2026): every choice
+     has a "›" and opens a list of its own, headed by a back arrow and the choice's name, here with one
+     choice of the same name. Only a choice in that second list is the answer; the button shows "Select
+     One" until then. -->
+<div data-automation-id="progressBarActiveStep">My Information</div>
+<h2>My Information</h2>
+<div data-automation-id="formField-source">
+  <label for="source">How Did You Hear About Us?<abbr title="required">*</abbr></label>
+  <button type="button" id="source" aria-haspopup="listbox">Select One</button>
+</div>
+<ul role="listbox" id="popup" hidden></ul>
+<button type="button" data-automation-id="pageFooterNextButton">Save and Continue</button>
+<script>
+  const popup = document.getElementById('popup');
+  const btn = document.getElementById('source');
+  const groups = { 'Colleges & Universities': ['Arizona State University', 'Other College'],
+                   'Employee Referral': ['Employee Referral'], 'Job Board / Social Network': ['Indeed', 'LinkedIn'],
+                   'Example Fab website': ['Example Fab website'] };
+  function item(text, onPick) {
+    const li = document.createElement('li');
+    li.setAttribute('role', 'option');
+    li.textContent = text;
+    li.addEventListener('click', (e) => { e.stopPropagation(); onPick(); });
+    return li;
+  }
+  function topLevel() {
+    popup.innerHTML = '';
+    for (const name of Object.keys(groups)) popup.append(item(name + ' ›', () => inner(name)));
+  }
+  function inner(name) {
+    popup.innerHTML = '';
+    const back = document.createElement('div');
+    back.textContent = '← ' + name;
+    back.addEventListener('click', (e) => { e.stopPropagation(); topLevel(); });
+    popup.append(back);
+    for (const choice of groups[name]) popup.append(item(choice, () => {
+      btn.textContent = choice;
+      popup.hidden = true;
+    }));
+  }
+  btn.addEventListener('click', () => setTimeout(() => {
+    topLevel();
+    const r = btn.getBoundingClientRect();
+    popup.style.top = `${r.bottom + scrollY + 2}px`;
+    popup.style.left = `${r.left + scrollX}px`;
+    popup.hidden = false;
+  }, 150));
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') popup.hidden = true; });
+  document.addEventListener('click', (e) => { if (!popup.contains(e.target) && e.target !== btn) popup.hidden = true; });
+</script>
+</body>
+</html>
