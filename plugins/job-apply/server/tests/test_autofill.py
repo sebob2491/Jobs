@@ -1130,11 +1130,15 @@ def test_a_list_the_page_marks_invalid_takes_the_profiles_answer_and_a_required_
             "required": True, "options": codes}
     birth = {"id": "b", "label": "3. Birth Assigned Gender . Required", "kind": "select", "value": "Not Specified",
              "required": True, "options": ["Not Specified", "Male", "Female"]}
-    plan = plan_autofill([code, birth], p, {})
+    plan = plan_autofill([code, birth], p, {}, redo={"c"})  # (the review step's, once a job)
     got = {t["id"]: t["value"] for t in plan["to_fill"]}
     assert set(got) == {"c", "b"} and got["b"] == "Male", plan
-    # the same box not marked invalid is left as it is
-    assert plan_autofill([{**code, "invalid": False}], p, {})["already_filled"] == ["c"]
+    # never on an ordinary pass (the person may have chosen it), nor for a box not named
+    assert plan_autofill([code], p, {})["already_filled"] == ["c"]
+    # a decline in the profile never gets the list's own "Not Specified" placeholder back: it's asked
+    declined = Profile({"eeo": {"gender": "I choose not to disclose"}})
+    plan = plan_autofill([birth], declined, {})
+    assert plan["to_fill"] == [] and [q["id"] for q in plan["needs_input"]] == ["b"], plan
 
 
 def test_a_decline_finds_the_lists_own_way_to_decline_and_is_never_a_no():

@@ -349,6 +349,7 @@ class Run:
     reset_from: str = ""  # the sign-in page a reset was asked from: back there once it's done elsewhere
     reset_waited: bool = False  # paused for the reset email (a Resume after that means it's done)
     refreshed: bool = False  # reloaded once for a page that asked for it ("Please refresh the page")
+    invalid_redone: bool = False  # the review page's invalid lists answered again from the profile (once a job)
     reset_no_mail: bool = False  # and none came in RESET_MAIL_WAIT: no account there, most likely, so one is made
     # The job's sign-ins pressed with the saved password, and which password that was (a digest): a Run
     # outlasts Resume and the queue, so these hold for the job, not for one pass at it
@@ -1899,7 +1900,8 @@ class Applier:
                                and re.search(rf"\b{re.escape(norm(clean_label(f.get('label') or '')))}\b", said)]
                     if emptied and looked not in refilled_pages:
                         refilled_pages.add(looked)
-                        again_filled = (await srv.autofill(job_id=run.job_id)).get("filled") or []
+                        again_filled = [f for f in (await srv.autofill(job_id=run.job_id)).get("filled") or []
+                                        if f.get("id") in {e["id"] for e in emptied}]
                         if again_filled:
                             self._log(run, f"filled again {len(again_filled)} field(s) the page had emptied")
                             stalls = 0
@@ -3058,11 +3060,15 @@ class Applier:
             return self._pause(run, "captcha", "Filled. The form has a CAPTCHA: tick it in the browser, then "
                                "press Submit here.")
         shown = "; ".join(e for e in _flagged(data) if not _ERROR_COUNT.match(e))[:300].rstrip(" .")
-        if shown and any(f.get("invalid") and f.get("kind") in ("select", "listbox", "combobox", "radio_group")
-                         for f in data.get("fields") or []):
+        invalid = [f["id"] for f in data.get("fields") or [] if f.get("invalid")
+                   and f.get("kind") in ("select", "listbox", "combobox", "radio_group")]
+        if shown and invalid and not run.invalid_redone:
             # a list the page marks invalid, on a choice it made itself (Northrop's phone "Country code" on Mexico,
-            # live run 13): the profile's answer, once, then the page is read again
-            again = (await srv.autofill(job_id=run.job_id)).get("filled") or []
+            # live run 13): the profile's answer, once a job (never again after the person has had the page), then
+            # the page is read again
+            run.invalid_redone = True
+            again = [f for f in (await srv.autofill(job_id=run.job_id, redo=invalid)).get("filled") or []
+                     if f.get("id") in invalid]
             if again:
                 self._log(run, f"filled again {len(again)} field(s) the page marked invalid")
                 data, text = await self._look()
