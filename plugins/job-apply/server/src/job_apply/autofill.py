@@ -2040,15 +2040,23 @@ def plan_autofill(fields: list[dict], prof: Profile, job: dict | None = None, ov
         if f.get("disabled") or f.get("readonly") and f.get("kind") not in _CHOICE_KINDS:
             continue
         unset = unset_choice(f)
-        has_value = not is_empty_value(f.get("value")) and not unset
+        # a list the page marks invalid, on a choice the page made (Northrop's Eightfold phone "Country code" on
+        # Mexico, live run 13, Oct 2026): the profile's answer, where it's another
+        rejected = bool(f.get("invalid")) and f.get("kind") in _CHOICE_KINDS and not is_empty_value(f.get("value"))
+        has_value = not is_empty_value(f.get("value")) and not unset and not rejected
         if has_value and not overwrite:
             already.append(f["id"])
             continue
         missed: list[Answer] = []
         ans = resolve_field(f, prof, job, file_inputs, unmatched=missed)
-        if unset and not overwrite and ans is not None and is_eeo_rule(ans.rule):
-            # a self-identification list on its "Not Specified" stays as it is (the person may have chosen it)
+        if unset and not overwrite and ans is not None and is_eeo_rule(ans.rule) and not f.get("required"):
+            # an optional self-identification list on its "Not Specified" stays as it is (the person may have
+            # chosen it); a required one is answered (Kforce's "Birth Assigned Gender", live run 13)
             already.append(f["id"])
+            continue
+        if rejected and not overwrite and (ans is None or ans.value == SKIP or is_eeo_rule(ans.rule)
+                                           or choose_option(str(ans.value), [str(f.get("value"))]) is not None):
+            already.append(f["id"])  # (nothing else to give it, or the same answer: left to the person)
             continue
         if ans is not None and ans.value == SKIP:
             continue

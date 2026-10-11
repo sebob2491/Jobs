@@ -3058,6 +3058,15 @@ class Applier:
             return self._pause(run, "captcha", "Filled. The form has a CAPTCHA: tick it in the browser, then "
                                "press Submit here.")
         shown = "; ".join(e for e in _flagged(data) if not _ERROR_COUNT.match(e))[:300].rstrip(" .")
+        if shown and any(f.get("invalid") and f.get("kind") in ("select", "listbox", "combobox", "radio_group")
+                         for f in data.get("fields") or []):
+            # a list the page marks invalid, on a choice it made itself (Northrop's phone "Country code" on Mexico,
+            # live run 13): the profile's answer, once, then the page is read again
+            again = (await srv.autofill(job_id=run.job_id)).get("filled") or []
+            if again:
+                self._log(run, f"filled again {len(again)} field(s) the page marked invalid")
+                data, text = await self._look()
+                shown = "; ".join(e for e in _flagged(data) if not _ERROR_COUNT.match(e))[:300].rstrip(" .")
         if shown and run.submit and self.auto_submit:  # Insight's review page lists what's still missing
             return self._pause(run, "stuck", f"The review page shows errors: {shown}. Fix them in the browser, then "
                                "press Submit.")

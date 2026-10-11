@@ -1117,6 +1117,26 @@ def test_a_list_still_on_its_not_specified_first_choice_is_filled():
     assert plan["already_filled"] == ["g", "t"], plan
 
 
+def test_a_list_the_page_marks_invalid_takes_the_profiles_answer_and_a_required_self_id_is_answered():
+    """Live run 13 (Oct 2026). Northrop's Eightfold drew its phone "Country code" on Mexico (+52) and marked it
+    invalid ("Enter a valid phone number and country code"); the desk left it, as a box with a value. A list
+    the page marks invalid takes the profile's answer where it's another. Kforce's required "Birth Assigned
+    Gender" sat on its first choice "Not Specified" and was left as a self-identification the person may have
+    chosen; a required one is answered."""
+    p = Profile({"personal": {"phone": "480-555-0199", "phone_country_code": "+1",
+                              "address": {"country": "United States"}}, "eeo": {"gender": "Male"}})
+    codes = ["\U0001F1FA\U0001F1F8 (+1) United States", "\U0001F1F2\U0001F1FD (+52) Mexico", "\U0001F1E8\U0001F1E6 (+1) Canada"]
+    code = {"id": "c", "label": "Country code", "kind": "combobox", "value": codes[1], "invalid": True,
+            "required": True, "options": codes}
+    birth = {"id": "b", "label": "3. Birth Assigned Gender . Required", "kind": "select", "value": "Not Specified",
+             "required": True, "options": ["Not Specified", "Male", "Female"]}
+    plan = plan_autofill([code, birth], p, {})
+    got = {t["id"]: t["value"] for t in plan["to_fill"]}
+    assert set(got) == {"c", "b"} and got["b"] == "Male", plan
+    # the same box not marked invalid is left as it is
+    assert plan_autofill([{**code, "invalid": False}], p, {})["already_filled"] == ["c"]
+
+
 def test_a_decline_finds_the_lists_own_way_to_decline_and_is_never_a_no():
     """Every site words "I'd rather not say" its own way, and so do people. "I don't want to
     answer" wasn't taken for a decline: its "don't" made it a "No", and it went to "I am not a
