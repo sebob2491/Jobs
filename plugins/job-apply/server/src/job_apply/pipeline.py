@@ -784,7 +784,7 @@ class Applier:
         run = self.runs[job_id]
         held = self._hold_tools(job_id)
         try:
-            await self._strict(self._submit(run) if kind == "submit" else self._drive(run))
+            await self._strict(self._submit(run) if kind == "submit" else self._drive_again_if_redrawn(run))
             await self._strict(self._save_stop(run))
         except TabClosed:
             if run.status != "skipped":
@@ -798,6 +798,7 @@ class Applier:
                 if run.page is not None and self.srv.browser.lost(run.page) == "crashed":  # (Playwright: "Page crashed")
                     run.reason = "Its tab crashed. Press Resume to start this application again."
                 self._log(run, run.reason)
+                logging.getLogger(__name__).warning("job %s stopped on an error", run.job_id, exc_info=True)
         finally:
             self._give_back_tools(held)
             if run.status == "running":  # the desk was stopped part-way
@@ -1299,6 +1300,19 @@ class Applier:
         self._log(run, run.reason)
         return True
 
+    async def _drive_again_if_redrawn(self, run: Run) -> None:
+        """Drive the job, and once more, from its tab as it is, when a button went from the page as it was
+        clicked and nothing like it was there to find (APS's SuccessFactors sign-in, live run 17, Oct 11:
+        "KeyError: Nothing clickable matches 'ewr4'")."""
+        try:
+            await self._drive(run)
+        except KeyError as e:
+            if "Nothing clickable matches" not in str(e) or run.status in ("skipped", "submitted"):
+                raise
+            logging.getLogger(__name__).warning("job %s: a button went as it was clicked", run.job_id, exc_info=True)
+            self._log(run, "the page changed as I clicked one of its buttons, so I looked at it again")
+            await self._drive(run)
+
     async def _drive(self, run: Run) -> None:
         srv = self.srv
         if self._already_done(run):
@@ -1319,6 +1333,7 @@ class Applier:
         retyped: set[tuple[Any, ...]] = set()  # pages whose lost boxes were typed again (once a page)
         refilled_pages: set[tuple[Any, ...]] = set()  # pages whose emptied boxes were filled again (once a page)
         saved_waited: set[tuple[Any, ...]] = set()  # steps waited on as still saving (once a step)
+        bare_waited: set[tuple[Any, ...]] = set()  # forms with no step button yet, waited on to be drawn (once a page)
         account_waited = False
         sign_ins: dict[str, int] = {}  # what the saved password was used for on this pass
         pressed: list[tuple[Any, ...]] = []  # (page, button) for each button pressed on this pass
@@ -1683,15 +1698,17 @@ class Applier:
                          # (not one whose stop is explained: an agreement to press, a bot check)
                          and _agreement_button(data) is None and not data.get("captcha")
                          and not _BOT_BADGE.search(" ".join([text[:3000], *(a.get("text") or "" for a in data.get("actions") or [])])))
-            if action is None and (kind == "page" or bare_form) and not waited and not gate_now:
+            if action is None and bare_form and _page_key(data) not in bare_waited and not gate_now:
+                # once a step, whatever was waited on before it on this pass (KLA's page reloaded after "Something
+                # went wrong" drew its buttons late too, and its bare step after it went unwaited: live run 17)
+                bare_waited.add(_page_key(data))
+                if await self._wait_for_step(STEP_LOAD_WAIT, data):
+                    continue
+            elif action is None and kind == "page" and not waited and not gate_now:
                 waited = True  # slow pages (Intel's Workday, Eightfold forms) draw their buttons late
-                if bare_form:
-                    if await self._wait_for_step(STEP_LOAD_WAIT, data):
-                        continue
-                else:
-                    wait = SIGN_IN_STEP_WAIT if sign_in_step else BLANK_PAGE_WAIT if blank else LATE_BUTTONS_WAIT
-                    if await self._wait_for_progress(wait):
-                        continue
+                wait = SIGN_IN_STEP_WAIT if sign_in_step else BLANK_PAGE_WAIT if blank else LATE_BUTTONS_WAIT
+                if await self._wait_for_progress(wait):
+                    continue
             drawn = (_page_key(data), _boxes(data))  # a page that has drawn more since is waited on again
             loading = bool(data.get("busy")) and not gate_now
             if action is None and drawn not in step_waited and (loading or kind == "form" and _greyed_step(data)):
