@@ -185,7 +185,7 @@ EXTRACT_JS = r"""
       for (let i = 0; up && i < 4; i++, up = up.parentElement) {
         const said = (up.innerText || up.textContent || '').slice(0, 400);
         const m = said.match(/\b(resume|cv|cover letter|transcript)s?\b[^.!?\n]{0,40}\b(?:is|are) required\b/i);
-        if (m) return new RegExp('\\b' + m[1] + '\\b', 'i').test(label || '');
+        if (m) return new RegExp('\\b' + m[1] + '\\b', 'i').test(label || '') && !/optional/i.test(label || '');
       }
     }
     return false;

@@ -1414,3 +1414,4 @@ def test_a_resume_box_whose_group_says_it_is_required_is_required(srv):
     fields = run(srv.inspect_form(include_dropdown_options=False))["fields"]
     assert by_label(fields, "Upload Resume/CV")["required"]
     assert not by_label(fields, "Upload Additional Attachments")["required"]
+    assert not by_label(fields, "Second resume (optional)")["required"]  # (nor one that says it's optional)
