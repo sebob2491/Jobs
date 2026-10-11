@@ -213,6 +213,22 @@ def mask_broad_email() -> None:
         sys.stderr = live_identity.MaskedStream(sys.stderr, _mask)
 
 
+FIXTURE_DIR = Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "live"
+
+
+def make_fixture(snapshot: Path, name: str, out: Path) -> str:
+    """A page the run stopped on, scrubbed (job_apply.fixtures) into the tests' live fixtures, and a copy in
+    the run's own folder (out/fixtures), so a run on GitHub carries them in its artifact for
+    nightly_summary.py --import-fixtures. Its name."""
+    written = convert(snapshot, name, FIXTURE_DIR)
+    (out / "fixtures").mkdir(parents=True, exist_ok=True)
+    for path in written:
+        # the test identity's email and passwords, masked here too (the scrubber takes out the profile's)
+        path.write_text(_mask(path.read_text(encoding="utf-8")), encoding="utf-8")
+        shutil.copy2(path, out / "fixtures" / path.name)
+    return name
+
+
 def _save(path: Path, text: str) -> None:
     """A file the run writes, with the test identity's email and passwords masked, as they are
     in everything it prints."""
@@ -339,9 +355,7 @@ async def check_company(company: dict[str, Any], out: Path, fixtures: bool, rec:
         live_identity.drop_images(dest)
     rec["snapshot_kb"] = sum(p.stat().st_size for p in dest.iterdir()) // 1024
     if fixtures and form["fields"]:
-        fixture_dir = Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "live"
-        convert(dest, f"live-{slug(company['name'])}", fixture_dir)
-        rec["fixture"] = f"live-{slug(company['name'])}"
+        rec["fixture"] = make_fixture(dest, f"live-{slug(company['name'])}", out)
 
 
 # Career pages whose job data comes from a call we haven't pinned down yet: record what
@@ -1340,9 +1354,7 @@ async def check_pipeline(company: dict[str, Any], out: Path, rec: dict[str, Any]
                 live_identity.drop_images(dest)
             if fixtures and (rec.get("rounds") or [{}])[-1].get("need") in ("questions", "stuck"):
                 # the page it stopped on, as a test fixture (the fake applicant's details only)
-                fixture_dir = Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "live"
-                convert(dest, f"pipeline-{slug(company['name'])}", fixture_dir)
-                rec["fixture"] = f"pipeline-{slug(company['name'])}"
+                rec["fixture"] = make_fixture(dest, f"pipeline-{slug(company['name'])}", out)
         except Exception as e:  # noqa: BLE001 - the record matters more than the snapshot
             rec["snapshot_error"] = f"{type(e).__name__}: {str(e)[:200]}"
         if run is not None and (rec.get("rounds") or [{}])[-1].get("status") != "ready":

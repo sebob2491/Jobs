@@ -119,8 +119,11 @@ def by_label(fields, text):
 async def check_fixture_extraction(server, html: Path, expect: dict) -> list[str]:
     """Open a saved page and report expected fields that are no longer extracted."""
     await server.browser.goto(html.resolve().as_uri())
-    got = (await server.browser.inspect(include_dropdown_options=False))["fields"]
+    data = await server.browser.inspect(include_dropdown_options=False)
+    got = data["fields"]
     problems = []
+    texts = {str(a.get("text") or "").strip() for a in data.get("actions") or []}
+    problems += [f"missing button {t!r}" for t in expect.get("actions") or [] if t not in texts]
     for want in expect["fields"]:
         same = [f for f in got if f.get("label") == want["label"] and f.get("kind") == want["kind"]]
         if not same:

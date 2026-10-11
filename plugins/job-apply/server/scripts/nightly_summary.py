@@ -3,12 +3,17 @@ whole body or a run's logs.
 
     uv run python scripts/nightly_summary.py                       # each check's outcomes, counted
     uv run python scripts/nightly_summary.py --check accounts      # one line per employer of a check
-    uv run python scripts/nightly_summary.py --changes             # the last run's changes (its comment)
+    uv run python scripts/nightly_summary.py --changes             # the last run's changes, sorted: better,
+        # expected (a site's or the rules': a bot check, an account step practice runs never take, a site
+        # error, no openings), and to look at (likely the desk's: read these first)
     uv run python scripts/nightly_summary.py --tables              # Where It Stands' employer tables (markdown)
     uv run python scripts/nightly_summary.py --artifacts DIR_OR_ZIP [--companies "KLA,Intel"]
         # each named employer's steps from a run's saved results (a live-* artifact, unzipped or not):
         # every round's status, reason, last log lines, questions (with their choices) and the page's
         # errors, its buttons and its unanswered boxes (live_smoke.py's "final_form")
+    uv run python scripts/nightly_summary.py --import-fixtures DIR_OR_ZIP [--companies "KLA"] [--replace]
+        # the pages a run stopped on, already scrubbed (its fixtures/ folders), into tests/fixtures/live:
+        # tests/test_live_fixtures.py then checks every night's stops offline
 
 The issue ("Nightly live check", #54) is read over GitHub's public API, no sign-in needed; `--issue-file`
 reads a saved copy instead. A run's artifacts need a signed-in download (the GitHub tools' artifact link,
@@ -172,6 +177,50 @@ def tables(state: dict[str, dict[str, str]], detail: dict[str, dict[str, str]]) 
     return "\n".join(out)
 
 
+# --- the last run's changes, sorted ---------------------------------------------------------
+
+_CHANGE = re.compile(r"^- (.+?): (?:`(.+?)`|\*new\*) \u2192 `(.+?)` \(`(.*)`\)\s*$")
+# where a stop is a site's or the rules' doing, not the desk's: no fix of the desk's moves it on
+_EXPECTED = re.compile(r"^(Bot check|No opening found|Site blocks automated browsers|Site error|Account needed|"
+                       r"Account form \(.+\) with a CAPTCHA|Account made as you apply|Cookie banner with no decline|"
+                       r"AI or privacy notice|Privacy notice to accept)")
+_FURTHER = {"ready", "needs_you your_submit"}  # as far as a run goes: the person's own Submit (or Apply) is next
+_BROKEN = {"failed", "crash"}
+
+
+def _check_of(heading: str) -> str:
+    """A changes comment's heading as its check's short name."""
+    h = heading.lower()
+    return ("accounts" if "test identity" in h else "hr" if "(hr jobs)" in h else "finance" if "finance" in h
+            else "pipeline" if "semiconductor" in h else "search" if "search" in h else h[:20])
+
+
+def triage(comment: str) -> dict[str, list[str]]:
+    """The last run's changes (live_compare.py's comment) in three lists: "better" (an employer got further),
+    "expected" (it stops where a site or the product's rules stop it: a bot check, an account step a practice
+    run never takes, a site's error, no openings), and "look" (likely the desk's: the ones to read first).
+    Each line: "<check>: <employer>: <old> -> <new>: <where it stops>"."""
+    out: dict[str, list[str]] = {"look": [], "expected": [], "better": []}
+    check = ""
+    for line in comment.splitlines():
+        if line.startswith("**"):
+            check = _check_of(line.strip("*"))
+            continue
+        m = _CHANGE.match(line)
+        if not m:
+            continue
+        name, old, new, detail = m.group(1), m.group(2) or "new", m.group(3), m.group(4)
+        where, _ = why(new, detail)
+        said = f"{check}: {name}: {old} -> {new}: {where}"
+        if new in _FURTHER or (old in _BROKEN and new not in _BROKEN):
+            out["better"].append(said)
+        elif _EXPECTED.match(where):
+            out["expected"].append(said)
+        else:
+            out["look"].append(said)
+    return out
+
+
 # --- a run's saved results ------------------------------------------------------------------
 
 def records(where: Path) -> Iterator[dict[str, Any]]:
@@ -220,6 +269,37 @@ def steps(rec: dict[str, Any], log_lines: int = 6) -> str:
     return "\n".join(out)
 
 
+LIVE_FIXTURES = Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "live"
+
+
+def import_fixtures(where: Path, wanted: list[str], into: Path = LIVE_FIXTURES, replace: bool = False) -> list[str]:
+    """The scrubbed pages in a run's fixtures/ folders (a zip or a folder, its groups' too) copied into the
+    tests' live fixtures: each one's files (<name>.html, its frames, <name>.expect.json). A fixture already
+    there is left as it is unless `replace`. The names copied."""
+    files: dict[str, bytes] = {}
+    if where.is_file() and where.suffix == ".zip":
+        with zipfile.ZipFile(where) as z:
+            for n in z.namelist():
+                if "/fixtures/" in f"/{n}" and not n.endswith("/"):
+                    files.setdefault(Path(n).name, z.read(n))
+    else:
+        for path in sorted(where.rglob("fixtures/*")):
+            if path.is_file():
+                files.setdefault(path.name, path.read_bytes())
+    names = sorted({n.split(".", 1)[0] for n in files if n.endswith(".expect.json")})
+    names = [n for n in names if not wanted or any(w in n for w in wanted)]
+    copied = []
+    into.mkdir(parents=True, exist_ok=True)
+    for name in names:
+        if (into / f"{name}.expect.json").exists() and not replace:
+            continue
+        for fname, data in files.items():
+            if fname.split(".", 1)[0] == name:
+                (into / fname).write_bytes(data)
+        copied.append(name)
+    return copied
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--issue-file", help="a saved copy of the issue (its API JSON), instead of fetching it")
@@ -227,8 +307,16 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--changes", action="store_true", help="the last run's changes (the issue's last comment)")
     ap.add_argument("--tables", action="store_true", help="Where It Stands' employer tables, in markdown")
     ap.add_argument("--artifacts", type=Path, help="a run's live-* artifact (zip or unzipped folder)")
-    ap.add_argument("--companies", default="", help="with --artifacts: these employers only (comma-separated)")
+    ap.add_argument("--companies", default="",
+                    help="with --artifacts or --import-fixtures: these employers only (comma-separated)")
+    ap.add_argument("--import-fixtures", type=Path, help="a run's artifact: copy its scrubbed stop pages into the tests")
+    ap.add_argument("--replace", action="store_true", help="with --import-fixtures: replace fixtures already there")
     args = ap.parse_args(argv)
+    if args.import_fixtures:
+        wanted = [re.sub(r"[^a-z0-9]+", "-", w.strip().lower()).strip("-") for w in args.companies.split(",") if w.strip()]
+        for name in import_fixtures(args.import_fixtures, wanted, replace=args.replace):
+            print(name)
+        return 0
     if args.artifacts:
         wanted = [w.strip().lower() for w in args.companies.split(",") if w.strip()]
         for rec in records(args.artifacts):
@@ -236,7 +324,12 @@ def main(argv: list[str] | None = None) -> int:
                 print(steps(rec))
         return 0
     if args.changes:
-        print(last_comment())
+        sorted_ = triage(last_comment())
+        for key, title in (("look", "Look at (likely the desk's)"), ("expected", "Expected (a site's or the rules')"),
+                           ("better", "Better")):
+            print(f"{title}: {len(sorted_[key])}")
+            for said in sorted_[key]:
+                print(f"  {said}")
         return 0
     body = issue_body(args.issue_file)
     state = live_compare.read_state(body) or {}

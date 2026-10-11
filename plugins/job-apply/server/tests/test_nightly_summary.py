@@ -74,3 +74,53 @@ def test_a_runs_saved_results_say_each_employers_rounds_and_where_it_stopped(tmp
     assert "== Onto Innovation: Field Service Engineer" in said
     assert "Q: Degree* (listbox) ['BA', 'BS']" in said and "errors: ['Email needs fixing']" in said
     assert "buttons: ['Next', 'Back']" in said and "box: {'label': 'Email*', 'kind': 'text'}" in said
+
+
+COMMENT = """6 changes since the last nightly live check ([run](https://example.com/run/2)):
+
+**Apply pipeline, Phoenix list (HR jobs): where it ended on one posting per employer**
+
+- BDO: `needs_you questions` → `needs_you stuck` (`Senior Associate · Oracle Recruiting Cloud says “Something went wrong. Try again later.” Leave this job for a…`)
+- Axon: `needs_you sign_in` → `ready` (`Recruiter · Filled and waiting on the review page. Check it in the browser, then press Submit.`)
+
+**Apply pipeline with the test identity (accounts made and signed in): where it ended**
+
+- Intel: `needs_you stuck` → `needs_you sign_in` (`Engineer · Your saved password didn't sign in on Workday, and I opened its password reset, which isn't…`)
+- Edward Jones: `needs_you sign_in` → `needs_you stuck` (`Designer · Edward Jones's site turned the desk's browser away (403 Forbidden). Open the posting in you…`)
+- Micron: *new* → `needs_you bot_check` (`Technician · The site is checking that you're a person (a bot check or CAPTCHA). Solve it…`)
+- KLA: `crash` → `needs_you questions` (`Technician · 1 question(s) your profile doesn't answer. Answer them here and the desk fills them in`)
+"""
+
+
+def test_the_last_runs_changes_are_sorted_into_the_desks_the_sites_and_the_better():
+    """A session reads "look" first: the changes likely the desk's. A bot check, a site's error or a site that
+    turns automated browsers away is a site's doing; an employer that got further, or out of a crash, is better."""
+    out = ns.triage(COMMENT)
+    assert out["look"] == ["accounts: Intel: needs_you stuck -> needs_you sign_in: Sign-in failed after the account was made"]
+    assert sorted(out["expected"]) == [
+        "accounts: Edward Jones: needs_you sign_in -> needs_you stuck: Site blocks automated browsers",
+        "accounts: Micron: new -> needs_you bot_check: Bot check",
+        'hr: BDO: needs_you questions -> needs_you stuck: Site error ("Something went wrong")']
+    assert sorted(out["better"]) == ["accounts: KLA: crash -> needs_you questions: Questions only you can answer",
+                                     "hr: Axon: needs_you sign_in -> ready: Review page"]
+
+
+def test_a_runs_scrubbed_stop_pages_are_imported_into_the_tests(tmp_path):
+    """live_smoke.py --fixtures leaves each page a run stopped on, scrubbed, in its folder's fixtures/: imported
+    into tests/fixtures/live, test_live_fixtures.py checks every night's stops offline. One already there stays
+    unless replaced."""
+    run_dir = tmp_path / "live-accounts-0" / "shard-1" / "fixtures"
+    run_dir.mkdir(parents=True)
+    for name, body in (("pipeline-kla.html", "<p>new</p>"), ("pipeline-kla.frame-1.html", "<p>frame</p>"),
+                       ("pipeline-kla.expect.json", '{"fields": []}'), ("pipeline-onsemi.html", "<p>o</p>"),
+                       ("pipeline-onsemi.expect.json", '{"fields": []}')):
+        (run_dir / name).write_text(body, encoding="utf-8")
+    into = tmp_path / "live"
+    into.mkdir()
+    (into / "pipeline-onsemi.expect.json").write_text('{"old": true}', encoding="utf-8")
+    assert ns.import_fixtures(tmp_path, ["kla"], into) == ["pipeline-kla"]
+    assert sorted(p.name for p in into.iterdir()) == ["pipeline-kla.expect.json", "pipeline-kla.frame-1.html",
+                                                      "pipeline-kla.html", "pipeline-onsemi.expect.json"]
+    assert ns.import_fixtures(tmp_path, [], into) == []  # (onsemi's is there already)
+    assert ns.import_fixtures(tmp_path, [], into, replace=True) == ["pipeline-kla", "pipeline-onsemi"]
+    assert (into / "pipeline-onsemi.expect.json").read_text(encoding="utf-8") == '{"fields": []}'
