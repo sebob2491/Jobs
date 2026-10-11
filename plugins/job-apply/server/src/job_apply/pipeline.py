@@ -968,12 +968,15 @@ class Applier:
 
     def _mail_senders(self, run: Run) -> set[str]:
         """Who may have sent this job's code or link: the job site it's waiting on, the
-        employer's own site, and the job system they run on."""
+        employer's own site, and the job system they run on (and a Workday tenant's own mail
+        domain: KLA's kla.wd1.myworkdayjobs.com mails from workday.kla.com, live, Oct 2026)."""
         job = self.srv.tracker().get(run.job_id, with_description=False) or {}
         urls = [u for u in (run.url, job.get("url"), job.get("apply_url")) if u]
         allowed = {mailbox.site_domain(urlparse(u).hostname or "") for u in urls}
         for u in urls:
             allowed |= mailbox.ATS_MAIL_DOMAINS.get(detect_ats(u), set())
+            if tenant := re.fullmatch(r"([a-z0-9-]+)\.wd\d+\.myworkdayjobs\.com", (urlparse(u).hostname or "").lower()):
+                allowed.add(f"workday.{tenant.group(1)}.com")
         return {d for d in allowed if d}
 
     async def _check_mail_safely(self, run: Run) -> None:
@@ -2832,7 +2835,8 @@ class Applier:
         # The form's own button, after its password box: a "Sign In" in the site's header opens
         # its sign-in page or pop-up instead, and sends nothing (Workday's). Failing that, the
         # button of a form that holds only the sign-in, whatever it reads (SuccessFactors' "Submit").
-        own = [a for a in actions if a.get("after_password") and not _SOCIAL.search(a["text"]) and not a.get("cookie")]
+        own = [a for a in actions if a.get("after_password") and not _SOCIAL.search(a["text"]) and not a.get("cookie")
+               and not a.get("covered")]  # (Workday's hidden button: its cover takes the click)
         button = next((a for a in own if _SIGN_IN_ACTION.match(a["text"].strip())), None) or next(
             (a for a in own if a.get("sign_in_form") and _SIGN_IN_SUBMIT.match(final_text(a["text"]).strip())), None)
         if button is None:

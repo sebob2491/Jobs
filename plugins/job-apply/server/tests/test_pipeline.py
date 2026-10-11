@@ -13,7 +13,7 @@ import pytest
 from conftest import browser_available, fixture_url, run
 
 import job_apply.pipeline as pipeline
-from job_apply import config
+from job_apply import config, mailbox
 from job_apply.pipeline import Applier, Run, classify, pick_next, question_key
 
 pytestmark = pytest.mark.skipif(not browser_available(), reason="no Playwright Chromium installed")
@@ -2299,6 +2299,21 @@ def test_whose_mail_a_brassring_job_reads_a_code_from(srv):
     assert applier._mail_senders(r) == {"edwardjones.com", "brassring.com", "kenexa.com"}
 
 
+def test_whose_mail_a_workday_job_reads_a_reset_from(srv):
+    """KLA's Workday (kla.wd1.myworkdayjobs.com, live, Oct 2026) sent its password reset from its own
+    Workday mail domain, workday.kla.com: the desk never read it ("no password reset email came from
+    Workday in 3 minutes") and made a new account instead. A tenant's own workday.<tenant>.com counts
+    as the site's; no other address at kla.com does, nor another tenant's."""
+    url = "https://kla.wd1.myworkdayjobs.com/Search/job/Phoenix-AZ/Customer-Service-Engineer_2637545"
+    job = srv.add_job(url=url, title="Customer Service Engineer", company="KLA")["job"]
+    r = Run(job["id"], "Customer Service Engineer", "KLA", url=url)
+    senders = Applier(srv)._mail_senders(r)
+    assert senders == {"myworkdayjobs.com", "myworkday.com", "workday.com", "workday.kla.com"}, senders
+    assert mailbox.sender_allowed("Workday <noreply@workday.kla.com>", senders)
+    assert not mailbox.sender_allowed("someone@kla.com", senders)
+    assert not mailbox.sender_allowed("noreply@workday.intel.com", senders)
+
+
 def test_a_sign_in_page_good_for_one_visit_is_reached_again_through_the_posting(srv, monkeypatch, job_apply_home):
     """SuccessFactors' sign-in page (career?_s.crb=…) is good for one visit: going back to it after a
     reset the desk couldn't do showed "An error occurred while processing your request" (Arizona
@@ -2685,6 +2700,32 @@ def test_a_workday_account_is_said_made_only_once_its_sign_in_gets_in(srv, monke
     pressed = [line for line in r.log[:signed_in] if line.startswith("pressed \u201cCreate Account\u201d")]
     assert len(pressed) == 1 and "after ticking \u201cYes, I confirm that I have read the privacy notice.\u201d" in pressed[0]
     assert r.seen_form, (r.reason, r.log)
+
+
+def test_a_workday_sign_in_presses_the_cover_over_its_hidden_button(srv, monkeypatch, job_apply_home):
+    """KLA's Workday (live, Oct 2026) draws its Sign In as a hidden "Sign In" button (aria-hidden) under a
+    div of its own named "Submit" (data-automation-id="click_filter") that takes the click. The desk
+    pressed the hidden button, which does nothing and says nothing, and went on as if the password had
+    been refused: a reset, then a Create Account, every time, though the account signed in fine in the
+    owner's own browser. The cover is read as the button it covers, and pressed."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    saved_password(monkeypatch)
+    manage_accounts(job_apply_home)
+    job = srv.add_job(url=fixture_url("site/workday-account.html") + "?cover", title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r, await workday_did(r.page)
+        finally:
+            await applier.stop()
+
+    r, did = run(go())
+    assert (did.get("created"), did.get("signIns")) == (1, 2), (did, r.log)
+    assert any(line.startswith("pressed \u201cSign In\u201d") for line in r.log) and r.seen_form, (r.reason, r.log)
 
 
 @pytest.mark.parametrize("company, ticked", [("Example Fab", True), ("Intel", False)])

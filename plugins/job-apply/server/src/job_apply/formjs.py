@@ -531,7 +531,15 @@ EXTRACT_JS = r"""
   for (const el of document.querySelectorAll(BUTTONS)) {
     if (el.getAttribute('aria-haspopup') === 'listbox' || !visible(el)) continue;
     const role = el.getAttribute('role');
-    const t = clean(txt(el) || el.value || el.getAttribute('aria-label') || '');
+    // Workday draws a form's own button hidden (aria-hidden) under a div of its own that takes the click
+    // (data-automation-id="click_filter", role="button"), named for the button or not at all (KLA's Sign
+    // In's is "Submit", live, Oct 2026). The cover reads as the button it covers, and the hidden button,
+    // which does nothing when pressed, says it's covered.
+    const under = role === 'button' && !txt(el) && el.nextElementSibling;
+    const covers = under && under.matches('button[aria-hidden="true"]') && clean(txt(under)) ? under : null;
+    const coverOf = el.getAttribute('aria-hidden') === 'true' && el.previousElementSibling;
+    const covered = !!coverOf && coverOf.getAttribute('role') === 'button' && !txt(coverOf) && visible(coverOf);
+    const t = covers ? clean(txt(covers)) : clean(txt(el) || el.value || el.getAttribute('aria-label') || '');
     // A menu's entries are mostly site navigation, left out, but an open menu of ways to
     // apply (Qorvo's "Apply now ▾": Apply Now, Start apply with LinkedIn) holds the way in.
     const inMenu = role === 'menuitem' || !!el.closest('[role="menu"]');
@@ -539,7 +547,7 @@ EXTRACT_JS = r"""
     if (role === 'option' || el.closest('[role="listbox"]') || (inMenu && !applyItem)) continue;
     if (!t || t.length > 60) continue;
     if (el.tagName === 'A' && !ACTION.test(t)) continue;
-    const full = t + ' ' + (el.getAttribute('aria-label') || '');
+    const full = covers ? t : t + ' ' + (el.getAttribute('aria-label') || '');
     const formSubmit = el.type === 'submit' && !!formOf(el);
     // SuccessFactors' older sites show a posting inside a form whose submit is "Apply": with
     // nothing in the form to fill, it opens the application and sends nothing
@@ -557,6 +565,7 @@ EXTRACT_JS = r"""
     if (box && box !== document.body && box !== document.documentElement) a.cookie = true;
     if (formSubmit) a.form_submit = true;
     if (isSubmit) a.is_submit = true;
+    if (covered) a.covered = true;
     // how many boxes the form around a plain button shows: a page's script can send a
     // name-and-email box from its "Apply" too
     const around = !formSubmit && (formOf(el) || el.closest('form'));
