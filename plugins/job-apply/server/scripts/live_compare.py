@@ -19,9 +19,9 @@ The outcomes:
   hr        (live_smoke.py --pipeline --lists phoenix-metro --role hr): the same, for HR jobs on
             the Phoenix list, as an applicant with an HR background.
   finance   (... --role finance): the same, for finance jobs, as a finance applicant.
-  accounts  (live_smoke.py --pipeline --test-identity): the same, as the test identity, a clearly
+  accounts  (live_smoke.py --pipeline --test-identity --everywhere): the same, as the test identity, a clearly
             fake applicant with an inbox of its own whose accounts are made and signed in to, at
-            a few employers per job system (scripts/test_identity_employers.yaml). Only once
+            every employer on both lists (--everywhere: the owner's call, Oct 11). Only once
             the repository has the test identity's secrets (scripts/TEST_IDENTITY.md): until then
             the nightly leaves it out, and it isn't compared.
   search    (live_smoke.py without --pipeline): whether the employer's search ran without an

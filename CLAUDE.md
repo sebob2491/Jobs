@@ -51,7 +51,9 @@ the scrubber (`python -m job_apply.fixtures`) before they become test fixtures.
     and reads their emailed codes, and still never submits. It needs `LIVE_TEST_EMAIL`,
     `LIVE_TEST_EMAIL_PASSWORD` and `LIVE_TEST_SITE_PASSWORD` in the environment (setting them up:
     `scripts/TEST_IDENTITY.md`), refuses to start without them, and masks them in all it prints
-    and writes. The nightly's `accounts` check runs it once the repository has them as secrets.
+    and writes. The nightly's `accounts` check runs it once the repository has them as secrets, with
+    `--everywhere`: at every employer on both lists (about 100), a code-sending system's employers in one
+    `--parallel` group (one inbox).
   - Compare a run with the previous one per employer. A changed outcome is the signal.
 - Plugin manifests: `claude plugin validate --strict .`, plus the same for each plugin folder.
 
@@ -104,7 +106,8 @@ the scrubber (`python -m job_apply.fixtures`) before they become test fixtures.
     a newsletter, a talent community or marketing.
   - The live check's test identity (the owner's call, Oct 10) is the one exception to "never in
     practice mode", for accounts and notices alike: a clearly fake applicant ("Jobdesk Test")
-    with its own inbox, at a few employers per job system (up to six: the owner's call, Oct 11), which never submits. It's on
+    with its own inbox, at the employers in `test_identity_employers.yaml`, or (the nightly's accounts check, `--everywhere`:
+    the owner's call, Oct 11) at every employer on both lists, and which never submits. It's on
     only with `JOB_APPLY_LIVE_TEST_IDENTITY=1` and `JOB_APPLY_NEVER_SUBMIT=1` set and the
     profile's email being `LIVE_TEST_EMAIL` (`config.live_test_identity`), so a person's own
     profile never turns it on; Submit stays refused in it.

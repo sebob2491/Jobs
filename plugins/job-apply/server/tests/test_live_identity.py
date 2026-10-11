@@ -223,6 +223,44 @@ def test_its_employers_are_a_few_per_job_system_from_the_plugins_lists(job_apply
         assert len({i % 2 for i, e in enumerate(employers) if e["system"] == system}) == 1, system
 
 
+def test_everywhere_is_every_employer_on_the_lists_with_its_role_and_system():
+    """--everywhere (the owner's call, Oct 11: "lets have practice runs make one"): the test identity at every
+    employer with a search on the semiconductor list (technician jobs) and the Phoenix list (HR jobs), once each,
+    with its search's system."""
+    employers = li.everywhere_employers()
+    names = [e["name"] for e in employers]
+    assert len(names) == len(set(names)) and len(names) > 80, len(names)
+    assert set(li.LIST_ROLES) == {e["list"] for e in employers}
+    by = {e["name"]: e for e in employers}
+    assert (by["KLA"]["role"], by["KLA"]["system"]) == ("technician", "workday")
+    assert by["Axon"]["role"] == "hr" and by["Lam Research"]["system"] == "eightfold"
+    assert "TSMC Arizona" not in by  # (no search: it's searched by hand)
+    assert all(e["why"] and e["system"] for e in employers)
+
+
+def test_its_groups_keep_a_code_sending_systems_employers_together():
+    """With --parallel n each group runs at once, all reading one inbox: two of one system's emailed codes at once
+    could be taken for each other, so a system's employers wait one after another in one group. Workday's emailed
+    links name the employer's own site, so its employers spread out. Every employer is in exactly one group."""
+    employers = li.everywhere_employers()
+    groups = li.arrange(employers, 4)
+    assert sorted(n for g in groups for n in g) == sorted(e["name"] for e in employers)
+    where = {n: i for i, g in enumerate(groups) for n in g}
+    for system in {e["system"] for e in employers} - li.LINKED_SYSTEMS:
+        assert len({where[e["name"]] for e in employers if e["system"] == system}) == 1, system
+    workday = {where[e["name"]] for e in employers if e["system"] == "workday"}
+    assert len(workday) == 4, workday  # spread over every group
+    sizes = sorted(len(g) for g in groups)
+    assert sizes[-1] - sizes[0] <= max(len([e for e in employers if e["system"] == s]) for s in
+                                       {e["system"] for e in employers} - li.LINKED_SYSTEMS), sizes
+    assert sorted(li.arrange(employers[:3], 1)[0]) == sorted(e["name"] for e in employers[:3])
+    assert by_name(employers)["ASML"] == "workday"  # (asml.com's own search; its Apply opens Workday)
+
+
+def by_name(employers):
+    return {e["name"]: e["system"] for e in employers}
+
+
 def test_an_employer_without_its_reasons_is_refused(tmp_path):
     path = tmp_path / "employers.yaml"
     path.write_text(yaml.safe_dump({"employers": [{"name": "KLA", "list": "semiconductor-az", "role": "technician"}]}))
