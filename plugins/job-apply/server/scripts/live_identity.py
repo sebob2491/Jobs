@@ -191,14 +191,19 @@ def masker(email: str, passwords: Iterable[str]) -> Callable[[str], str]:
             masks.update({v.lower(): PASSWORD_MASK for v in _spellings(password)})
     if email:
         masks.update({v.lower(): EMAIL_MASK for v in _spellings(email.strip())})
-        # and the inbox's own name, so its "+tag" addresses (--plus) are masked too
-        local = email.strip().partition("@")[0]
-        if len(local) >= 6:
-            masks.setdefault(local.lower(), EMAIL_MASK)
     if not masks:
         return lambda text: text
     found = re.compile("|".join(re.escape(v) for v in sorted(masks, key=len, reverse=True)), re.I)
-    return lambda text: found.sub(lambda m: masks[m.group().lower()], text)
+    plus = None
+    if email and "@" in email:  # and the inbox's own "+tag" addresses (--plus), however short its name
+        local, _, domain = email.strip().partition("@")
+        plus = re.compile(rf"{re.escape(local)}\+[a-z0-9-]+@{re.escape(domain)}", re.I)
+
+    def mask(text: str) -> str:
+        if plus is not None:
+            text = plus.sub(EMAIL_MASK, text)
+        return found.sub(lambda m: masks[m.group().lower()], text)
+    return mask
 
 
 class MaskedStream:

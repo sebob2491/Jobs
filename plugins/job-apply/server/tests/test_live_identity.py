@@ -425,3 +425,5 @@ def test_the_plus_probe_applies_with_the_inboxs_own_plus_address_and_nothing_els
     assert mailbox.login_address(plus) == EMAIL and mailbox.login_address("a+b@example.com") == "a+b@example.com"
     mask = li.masker(EMAIL, [])
     assert "jobdesk_test_not_real" not in mask(f"signed up as {plus} and {plus.upper()}").lower()
+    short = li.masker("ab@gmail.com", [])  # (an inbox with a short name: its plus addresses too)
+    assert short("as ab+kla@gmail.com, then AB+X@GMAIL.COM") == f"as {li.EMAIL_MASK}, then {li.EMAIL_MASK}"
