@@ -1346,11 +1346,15 @@ class BrowserSession:
             # Once a page: UKG Pro (Nikon's, live run 13) empties its upload box once it has the file, so it read as
             # never uploaded, and each upload set its resume reading going again, which emptied Address 1 and Zip
             # after they were filled. Remembered on the box, so a reloaded page (its form reset) gets it again
-            # (on the box itself: another box, or a step a single-page app draws afresh, gets its own)
-            if await loc.evaluate("(el, k) => el.__jaUploaded === k", path.name):
+            # (on the box itself: another box, or a step a single-page app draws afresh, gets its own). UKG draws its box
+            # afresh too, losing that, but names the file it has ("<file> has been used to pre-fill part of your
+            # application", live run 15): a file the page names is there already
+            if await loc.evaluate("(el, k) => el.__jaUploaded === k || (el.ownerDocument.body.innerText || '').includes(k)",
+                                  path.name):
                 return "already uploaded on this page"
             await loc.set_input_files(str(path))
-            await loc.evaluate("(el, k) => { el.__jaUploaded = k; }", path.name)
+            with contextlib.suppress(PlaywrightError, PlaywrightTimeout):  # (a box drawn afresh at once is gone)
+                await loc.evaluate("(el, k) => { el.__jaUploaded = k; }", path.name, timeout=1500)
             return f"uploaded {path.name}"
         if kind == "checkbox":
             want = value if isinstance(value, bool) else bool(polarity(value))
