@@ -1221,6 +1221,28 @@ class BrowserSession:
             if not again:
                 return
 
+    async def type_code(self, field_ids: list[str], code: str) -> list[str]:
+        """An emailed code typed key by key, as the person would: a digit into each box of a box-per-digit
+        code, or the whole code into its one box. Edward Jones' BrassRing (live run 9, Oct 11) took a digit
+        only from a key pressed in its box: a value put in by the page's script left the boxes empty, and
+        Verify Passcode with them. What each box reads after."""
+        async with self._lock:
+            page = await self.page()
+            await self._clear_of_dialogs(page, {"id": field_ids[0]})  # (never typed behind a dialog)
+            per_box = len(field_ids) > 1
+            for i, field_id in enumerate(field_ids):
+                loc = self._locator(page, field_id)
+                if not await loc.evaluate("el => el === el.ownerDocument.activeElement", timeout=FOCUS_TIMEOUT):
+                    try:
+                        await loc.click(timeout=2000)
+                    except PlaywrightTimeout:
+                        await loc.focus(timeout=FOCUS_TIMEOUT)
+                if await loc.input_value(timeout=FOCUS_TIMEOUT):
+                    await loc.fill("", timeout=FOCUS_TIMEOUT)
+                await page.keyboard.type(code[i] if per_box else code, delay=60)
+            await page.wait_for_timeout(150)
+            return [await self._locator(page, field_id).input_value(timeout=FOCUS_TIMEOUT) for field_id in field_ids]
+
     async def fill_secret(self, field_id: str, secret: str, site_ok: Callable[[str], bool] | None = None) -> None:
         """Type a secret into a password box, on a page `site_ok` accepts (by its frame's
         address): never into a text box, where the next inspect_form would read it back."""

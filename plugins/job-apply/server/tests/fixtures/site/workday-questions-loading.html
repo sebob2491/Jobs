@@ -5,7 +5,8 @@
 <!-- A Workday site's Application Questions step still loading its questions (KLA's, live, Oct 2026):
      its heading, Workday's loading dots ([data-automation-id="loading"], the apply flow's own) where
      the questions go, and a Save and Continue drawn greyed that the form reader found no button for,
-     beside the previous step's resume box. The questions and the button come a few seconds later. -->
+     beside the previous step's resume box. The questions and the button come a few seconds later.
+     ?bare: no loading dots and no greyed Save and Continue either, only the resume box (live run 9, Oct 11). -->
 <ol aria-label="Application Progress">
   <li>My Information</li><li>My Experience</li>
   <li data-automation-id="progressBarActiveStep">current step 3 of 6 Application Questions 1 of 2</li>
@@ -29,6 +30,11 @@
   <span id="next" style="color: #bbb">Save and Continue</span>
 </div>
 <script>
+  if (new URLSearchParams(location.search).has('bare')) {
+    document.querySelector('[data-automation-id="loading"]').remove();
+    document.getElementById('next').style.display = 'none';
+    document.querySelector('#footer button').style.display = 'none';
+  }
   setTimeout(() => {
     document.getElementById('questions').innerHTML =
       '<label for="q1">1) As of today\'s date, are you 18 years of age or older?*</label>'

@@ -12,6 +12,7 @@ from urllib.parse import urlparse
 import pytest
 from conftest import browser_available, fixture_url, run
 
+import job_apply.browser as browser_module
 import job_apply.pipeline as pipeline
 from job_apply import config, mailbox
 from job_apply.pipeline import Applier, Run, classify, pick_next, question_key
@@ -1936,14 +1937,16 @@ def test_a_form_page_that_thanks_the_person_isnt_taken_for_a_confirmation(srv, m
     assert srv.tracker().get(job["id"])["status"] != "applied"
 
 
-def test_a_step_still_loading_its_questions_is_waited_for(srv, monkeypatch):
+@pytest.mark.parametrize("query", ["", "?bare"])
+def test_a_step_still_loading_its_questions_is_waited_for(srv, monkeypatch, query):
     """KLA's Workday (live, Oct 2026): past My Experience, its Application Questions step showed its
     loading dots where the questions go and a greyed-out Save and Continue the form reader found no
     button for, beside the previous step's resume box, and the desk stopped at once: "I couldn't find
-    the button that moves this application on." A step still loading is waited for."""
+    the button that moves this application on." A step still loading is waited for. In live run 9 (bare)
+    it showed only the resume box, no dots and no button at all: a form with no button yet is waited on too."""
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
     monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 1)
-    job = srv.add_job(url=fixture_url("site/workday-questions-loading.html"), title="Customer Service Engineer",
+    job = srv.add_job(url=fixture_url("site/workday-questions-loading.html") + query, title="Customer Service Engineer",
                       company="Example Fab")["job"]
     applier = Applier(srv)
 
@@ -2254,7 +2257,7 @@ def test_a_reset_with_a_captcha_makes_the_account_instead(srv, monkeypatch, job_
     assert r.need == "email_code", (r.reason, r.log)  # its passcode: the inbox's, or the person's
 
 
-@pytest.mark.parametrize("query", ["", "?stay"])
+@pytest.mark.parametrize("query", ["", "?stay", "?keys"])
 def test_brassrings_six_box_passcode_is_entered_from_the_inbox_and_verified(srv, monkeypatch, job_apply_home, query):
     """Edward Jones' BrassRing (the live check's test identity, Oct 2026): its Create Account emails a
     passcode and asks for it in six boxes ("Enter 1st digit of your passcode" ... "Enter 6th digit of
@@ -2299,16 +2302,15 @@ def test_a_code_the_page_wouldnt_take_is_said_in_the_log_and_tried_again(srv, mo
     saved_password(monkeypatch)
     as_test_identity(monkeypatch, job_apply_home)
     inbox_with_code(monkeypatch)
-    real, refused = srv.fill_form, []
+    real, refused = srv.browser.type_code, []
 
-    async def fill_form(values):
-        if len(values) == 6 and len(refused) < 2:  # (the code's six boxes: refused twice)
-            refused.append(values)
-            return {"ok": False, "results": [{"id": values[0]["id"], "ok": False,
-                                               "error": "DialogOpen: “Notice” is open over the page"}]}
-        return await real(values)
+    async def type_code(ids, code):
+        if len(ids) == 6 and len(refused) < 2:  # (the code's six boxes: refused twice)
+            refused.append(ids)
+            raise browser_module.DialogOpen("“Notice” is open over the page")
+        return await real(ids, code)
 
-    monkeypatch.setattr(srv, "fill_form", fill_form)
+    monkeypatch.setattr(srv.browser, "type_code", type_code)
     job = srv.add_job(url=fixture_url("site/brassring-signin.html"), title="Senior Analyst",
                       company="Example Corp")["job"]
     applier = Applier(srv)
@@ -4977,18 +4979,18 @@ def test_an_emailed_code_put_in_between_jobs_gives_the_tools_back(srv, monkeypat
     applier = Applier(srv)
     sent = {"yet": False}
     held_by = []
-    real_fill = srv.fill_form
+    real_type = srv.browser.type_code
 
     def inbox(address, password, since, senders, want, allowed_link, before=None, look_back=None):
         return pipeline.mailbox.Found("code", "123456", "careers.example.com", time.time()) if sent["yet"] else None
 
-    async def fill_form(fills, *args, **kwargs):
-        if any(f.get("value") == "123456" for f in fills):
+    async def type_code(ids, code):
+        if code == "123456":
             held_by.append(applier.current)
-        return await real_fill(fills, *args, **kwargs)
+        return await real_type(ids, code)
 
     monkeypatch.setattr(pipeline.mailbox, "search", inbox)
-    monkeypatch.setattr(srv, "fill_form", fill_form)
+    monkeypatch.setattr(srv.browser, "type_code", type_code)
 
     async def go():
         applier.start()

@@ -87,6 +87,7 @@ _BOT_TITLE = re.compile(r"just a moment|attention required|access denied|pardon 
 # (Deloitte's sign-in, to a headless browser): the site turns the browser away. There's nothing to
 # solve, so it holds nothing up: the person applies elsewhere
 _RESET_DONE = re.compile(r"\b(?:your )?password (?:has been|was|is) (?:reset|changed|updated)\b", re.I)
+_STEPISH = re.compile(r"\b(next|continue|save|submit|review|apply|finish|done|proceed)\b", re.I)
 _REFRESH_ASKED = re.compile(r"\bsomething went wrong\b.{0,200}\b(?:refresh|reload) (?:the|this) page\b", re.I | re.S)
 _TURNED_AWAY = re.compile(r"^\s*(?:403\s*)?forbidden\s*$|^\s*(?:406\s*)?not acceptable\s*$|"
                           r"^\s*your request has been blocked\.?\s*$", re.I)  # (Workday's, its title empty)
@@ -1105,13 +1106,17 @@ class Applier:
         if not boxes:  # the page moved on meanwhile
             run.mail_last += "; not typed: no code box on the page"
             return False
-        if 1 < len(boxes) == len(found.value):  # a box per digit (Oracle's "Confirm Your Identity")
-            fills = [{"id": box["id"], "value": digit} for box, digit in zip(boxes, found.value)]
-        else:
-            fills = [{"id": boxes[0]["id"], "value": found.value}]
-        out = await srv.fill_form(fills)
-        if not out.get("ok"):  # (looked for again at the next look; said once, so the log says why none went in)
-            why = next((str(r.get("error")) for r in out.get("results") or [] if not r.get("ok")), "")
+        # a box per digit (Oracle's "Confirm Your Identity"), or one box; typed key by key (BrassRing's take a
+        # digit only from a key pressed in them)
+        ids = [box["id"] for box in boxes] if 1 < len(boxes) == len(found.value) else [boxes[0]["id"]]
+        why = ""
+        try:
+            read = await srv.browser.type_code(ids, found.value)
+            if "".join(read).replace(" ", "") != found.value:
+                why = f"its boxes read {''.join(read) or 'nothing'}"
+        except Exception as e:
+            why = f"{type(e).__name__}: {str(e).splitlines()[0] if str(e) else ''}"
+        if why:  # (looked for again at the next look; said once, so the log says why none went in)
             said = f"found the code in your email but couldn't type it into the page ({why[:160]}); I'll try again"
             if said not in run.log[-3:]:
                 self._log(run, said)
@@ -1649,11 +1654,20 @@ class Applier:
             gate_now = action is None and (button := _agreement_button(data)) is not None \
                 and f"{_page_key(data)} {button['text'].strip()}" not in agreed and _terms_gate(button, data) \
                 and _may_accept_notices()
-            if action is None and kind == "page" and not waited and not gate_now:
+            # (a form with no button at all yet is a step still being drawn too: KLA's Workday showed only the last
+            # step's resume box for a while, its questions and Save and Continue drawn after, live run 9, Oct 11)
+            bare_form = kind == "form" and not any(not a.get("disabled") and not a.get("cookie")
+                                                   and _STEPISH.search(final_text(a.get("text") or ""))
+                                                   for a in data.get("actions") or [])
+            if action is None and (kind == "page" or bare_form) and not waited and not gate_now:
                 waited = True  # slow pages (Intel's Workday, Eightfold forms) draw their buttons late
-                wait = SIGN_IN_STEP_WAIT if sign_in_step else BLANK_PAGE_WAIT if blank else LATE_BUTTONS_WAIT
-                if await self._wait_for_progress(wait):
-                    continue
+                if bare_form:
+                    if await self._wait_for_step(STEP_LOAD_WAIT, data):
+                        continue
+                else:
+                    wait = SIGN_IN_STEP_WAIT if sign_in_step else BLANK_PAGE_WAIT if blank else LATE_BUTTONS_WAIT
+                    if await self._wait_for_progress(wait):
+                        continue
             drawn = (_page_key(data), _boxes(data))  # a page that has drawn more since is waited on again
             loading = bool(data.get("busy")) and not gate_now
             if action is None and drawn not in step_waited and (loading or kind == "form" and _greyed_step(data)):
