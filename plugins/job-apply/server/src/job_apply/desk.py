@@ -138,6 +138,7 @@ class Desk:
             r("/api/settings", self.settings_view, methods=["POST"]),
             r("/api/password", self.password_view, methods=["POST"]),
             r("/api/add", self.add_view, methods=["POST"]),
+            r("/api/bank", self.bank_view, methods=["POST"]),
         ])
 
     async def start(self, port: int = DEFAULT_PORT, open_browser: bool = True) -> str:
@@ -332,6 +333,21 @@ class Desk:
         if "auto_submit" in body or "tailor_resumes" in body:
             self._save_settings()
         return JSONResponse({"auto_submit": self.applier.auto_submit, "tailor_resumes": self.applier.tailor})
+
+    async def bank_view(self, request: Request) -> Response:
+        """An answer to one of the common questions (data/question_bank.yaml), kept in answers.yaml for
+        every application that asks it; an empty one takes it out."""
+        if not self._allowed(request, api=True):
+            return self._forbidden()
+        try:
+            body = await self._body(request)
+            answer = body.get("answer")
+            if answer is not None and not isinstance(answer, str):
+                raise ValueError("An answer is a few words")
+            config.save_bank_answer(str(body.get("id") or ""), answer)
+        except (ValueError, OSError) as e:
+            return self._bad(e)
+        return JSONResponse({"ok": True})
 
     async def password_view(self, request: Request) -> Response:
         """A career-site password typed into the page goes straight to secrets.yaml. It is
@@ -555,6 +571,8 @@ class Desk:
             "listings": rows,
             "others": others,
             "applications": applications,
+            # the common questions, with the person's answers (the patterns stay here)
+            "bank": [{k: v for k, v in q.items() if k != "match"} for q in config.question_bank()],
             "current": self.applier.current,
             "queued": [jid for kind, jid in self.applier.tasks if kind == "apply"],
             "counts": t.counts(),

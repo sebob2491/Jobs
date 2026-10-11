@@ -501,6 +501,62 @@ def question_pattern(label: str) -> str:
     return r"\s+".join(re.escape(w) for w in text.split())
 
 
+QUESTION_BANK = PLUGIN_ROOT / "data" / "question_bank.yaml"
+
+
+def question_bank() -> list[dict[str, Any]]:
+    """The questions most applications ask that a profile doesn't answer (data/question_bank.yaml), each
+    with the person's answer from answers.yaml where they gave one ("answer"). A bank that can't be
+    read is no bank: the desk goes on without it."""
+    try:
+        with QUESTION_BANK.open(encoding="utf-8") as f:
+            entries = (yaml.safe_load(f) or {}).get("questions") or []
+    except (OSError, yaml.YAMLError, AttributeError):
+        return []
+    given = {a.get("bank"): a.get("answer") for a in saved_answers() if a.get("bank")}
+    out = []
+    for e in entries:
+        if not isinstance(e, dict) or not e.get("id") or not e.get("match") or not e.get("ask"):
+            continue
+        try:
+            re.compile(str(e["match"]))
+        except re.error:
+            continue
+        out.append({k: e[k] for k in ("id", "ask", "kind", "choices", "match") if k in e}
+                   | {"answer": given.get(e["id"])})
+    return out
+
+
+def save_bank_answer(bank_id: str, answer: Any) -> None:
+    """Keep the person's answer to one of the question bank's questions in answers.yaml, with the bank's
+    pattern, so it fills every wording of that question at every employer; an empty answer takes it out.
+    Everything else in answers.yaml stays."""
+    entry = next((e for e in question_bank() if e["id"] == bank_id), None)
+    if entry is None:
+        raise ValueError(f"No common question {bank_id!r}")
+    if isinstance(answer, str):
+        answer = answer.strip()
+    if entry.get("kind") == "choice" and answer not in (None, "") and answer not in (entry.get("choices") or []):
+        raise ValueError(f"{answer!r} isn't one of that question's choices")
+    data = _answers_file()
+    old = data.get("answers")
+    entries = [a for a in (old if isinstance(old, list) else []) if not (isinstance(a, dict) and a.get("bank") == bank_id)]
+    if answer not in (None, ""):
+        entries.insert(0, {"match": entry["match"], "answer": answer, "bank": bank_id})
+    _write_answers(data, entries)
+
+
+def _write_answers(data: dict[str, Any], entries: list[Any]) -> None:
+    ensure_home()
+    header = ("# Answers you gave in the Job Desk. Each one fills the same question on later\n"
+              "# applications; edit or delete entries freely. profile.yaml's own answers come after these.\n")
+    path = answers_path()
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(header + yaml.safe_dump({**data, "answers": entries}, sort_keys=False, allow_unicode=True),
+                   encoding="utf-8")
+    os.replace(tmp, path)  # all or nothing: a crash mid-write can't leave half a file
+
+
 def save_answer(label: str, answer: Any, source: str = "") -> dict[str, Any]:
     """Remember the answer to a question for every later application that asks it.
     Everything else in answers.yaml stays; a file that doesn't parse is left untouched
@@ -515,12 +571,5 @@ def save_answer(label: str, answer: Any, source: str = "") -> dict[str, Any]:
     if source:
         entry["from"] = source
     entries.insert(0, entry)
-    ensure_home()
-    header = ("# Answers you gave in the Job Desk. Each one fills the same question on later\n"
-              "# applications; edit or delete entries freely. profile.yaml's own answers come after these.\n")
-    path = answers_path()
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(header + yaml.safe_dump({**data, "answers": entries}, sort_keys=False, allow_unicode=True),
-                   encoding="utf-8")
-    os.replace(tmp, path)  # all or nothing: a crash mid-write can't leave half a file
+    _write_answers(data, entries)
     return entry
