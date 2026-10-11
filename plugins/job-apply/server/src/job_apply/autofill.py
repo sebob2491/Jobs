@@ -2006,6 +2006,16 @@ def _with_context(fields: list[dict]) -> list[dict]:
     return out
 
 
+def _unset_choice(f: dict) -> bool:
+    """A list still on its own first choice, where that says nothing is chosen: Taleo's "Not Specified" (Kforce's
+    Closest Metropolitan City: Country, State/Province and Region, live run 10, Oct 2026), read as answered. A
+    "Not Specified" picked further down a list (a self-identification's decline) is an answer."""
+    options = f.get("options") or []
+    value = norm(f.get("value"))
+    return f.get("kind") == "select" and bool(options) and value in ("not specified", "unspecified") \
+        and norm(options[0]) == value
+
+
 def plan_autofill(fields: list[dict], prof: Profile, job: dict | None = None, overwrite: bool = False) -> dict[str, Any]:
     """Split fields into ones we can fill and ones that need a decision. Not a sign-up's boxes
     beside the application (a talent community's email and consent: the form reader's aside)."""
@@ -2019,7 +2029,7 @@ def plan_autofill(fields: list[dict], prof: Profile, job: dict | None = None, ov
         # menu (Infineon's "Preferred location"): it still takes a choice
         if f.get("disabled") or f.get("readonly") and f.get("kind") not in _CHOICE_KINDS:
             continue
-        has_value = not is_empty_value(f.get("value"))
+        has_value = not is_empty_value(f.get("value")) and not _unset_choice(f)
         if has_value and not overwrite:
             already.append(f["id"])
             continue

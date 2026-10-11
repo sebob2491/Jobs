@@ -4502,6 +4502,12 @@ def test_a_question_the_pages_errors_name_is_asked_though_not_marked_required():
     assert [f["id"] for f in pending] == ["v"], pending
     assert "isn't one of its choices" in pending[0]["error"], pending
 
+    # or the section the page's errors name (Kforce's "The field Closest Metropolitan City is mandatory.")
+    region = {"needs_input": [{"id": "r", "label": "Region", "kind": "select",
+                               "section": "Closest Metropolitan City . Required"}], "failed": [], "filled": []}
+    pipeline._required_by_errors(region, {"errors": ['The field "Closest Metropolitan City" is mandatory.']})
+    assert [f["id"] for f in pipeline._pending(region, {})[0]] == ["r"]
+
 
 def test_a_self_identification_answer_a_list_doesnt_have_is_said_not_left_silently():
     """Qorvo's optional veteran list has no "I don't wish to answer": the desk left it empty and

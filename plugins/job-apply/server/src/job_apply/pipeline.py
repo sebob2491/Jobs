@@ -3135,7 +3135,10 @@ def _required_by_errors(result: dict[str, Any], data: dict[str, Any]) -> None:
     names = [norm(clean_label(f.get("label") or "")) for f in data.get("fields") or []]
     for f in result.get("needs_input") or []:
         name = norm(clean_label(f.get("label") or ""))
-        if not f.get("required") and len(name) >= 8 and name in said and names.count(name) <= 1:
+        # or its section's (Kforce's "The field Closest Metropolitan City is mandatory." over its Region)
+        section = norm(clean_label(str(f.get("section") or "")))
+        if not f.get("required") and (len(name) >= 8 and name in said and names.count(name) <= 1
+                                      or len(section) >= 8 and section in said):
             f["required"] = True
 
 
