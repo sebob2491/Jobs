@@ -177,15 +177,17 @@ def tables(state: dict[str, dict[str, str]], detail: dict[str, dict[str, str]]) 
 def records(where: Path) -> Iterator[dict[str, Any]]:
     """Every employer record in a run's saved results: a live-* artifact's zip or folder (its
     pipeline.json files, shards too)."""
+    # (a --parallel run's own pipeline.json holds its groups' records: then theirs aren't read again)
     if where.is_file() and where.suffix == ".zip":
         with zipfile.ZipFile(where) as z:
-            for name in z.namelist():
-                if name.endswith("pipeline.json") and "/pipeline/" not in name:
-                    yield from _listed(json.loads(z.read(name)))
+            names = [n for n in z.namelist() if n.endswith("pipeline.json") and "/pipeline/" not in n]
+            for name in ["pipeline.json"] if "pipeline.json" in names else names:
+                yield from _listed(json.loads(z.read(name)))
         return
-    for path in sorted(where.rglob("pipeline.json")):
-        if path.parent.name != "pipeline":
-            yield from _listed(json.loads(path.read_text(encoding="utf-8")))
+    paths = [where / "pipeline.json"] if (where / "pipeline.json").is_file() else \
+        [p for p in sorted(where.rglob("pipeline.json")) if p.parent.name != "pipeline"]
+    for path in paths:
+        yield from _listed(json.loads(path.read_text(encoding="utf-8")))
 
 
 def _listed(data: Any) -> list[dict[str, Any]]:

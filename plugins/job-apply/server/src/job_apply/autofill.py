@@ -2059,9 +2059,11 @@ def _own_website(value: Any, options: list[str], job: dict) -> str | None:
     if not re.search(r"\b(company|employer|career|careers|corporate)\b.*\b(web ?site|site|page)\b", str(value), re.I):
         return None
     sites = [o for o in options if _WEBSITE.search(o)]
+    employer = set(norm(job.get("company") or "").split()) - {"inc", "corp", "corporation", "co", "ltd", "llc"}
     if len(sites) > 1:  # "ONTO Website" over "Other Website": the one naming the employer
-        employer = set(norm(job.get("company") or "").split()) - {"inc", "corp", "corporation", "co", "ltd", "llc"}
         sites = [o for o in sites if employer & set(norm(o).split())] or sites
+    if not sites:  # no website among them, but the employer itself (ASML's "ASML", nightly live check Oct 11)
+        sites = [o for o in options if norm(o) and set(norm(o).split()) <= employer]
     return sites[0] if len(sites) == 1 else None
 
 

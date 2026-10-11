@@ -62,8 +62,10 @@ def test_a_runs_saved_results_say_each_employers_rounds_and_where_it_stopped(tmp
     (tmp_path / "shard-0").mkdir()
     (tmp_path / "shard-0" / "pipeline.json").write_text(json.dumps([rec]), encoding="utf-8")
     (tmp_path / "pipeline.json").write_text(json.dumps([{**rec, "company": "KLA"}]), encoding="utf-8")
-    names = [r["company"] for r in ns.records(tmp_path)]
-    assert sorted(names) == ["KLA", "Onto Innovation"]
+    # a --parallel run's own pipeline.json holds every group's records: its groups' aren't read again
+    assert [r["company"] for r in ns.records(tmp_path)] == ["KLA"]
+    (tmp_path / "pipeline.json").unlink()
+    assert [r["company"] for r in ns.records(tmp_path)] == ["Onto Innovation"]
     zipped = tmp_path / "run.zip"
     with zipfile.ZipFile(zipped, "w") as z:
         z.write(tmp_path / "shard-0" / "pipeline.json", "shard-0/pipeline.json")
