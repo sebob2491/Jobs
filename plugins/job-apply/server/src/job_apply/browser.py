@@ -1224,6 +1224,36 @@ class BrowserSession:
             if not again:
                 return
 
+    async def retype(self, field_ids: list[str]) -> list[str]:
+        """Type again, key by key, what text boxes show: emptied first (a framework ignores a box set to the value
+        it already shows), then blurred. For boxes the page says are empty though they show a value (its own
+        record of them was lost). The ids typed again."""
+        done = []
+        async with self._lock:
+            page = await self.page()
+            for field_id in field_ids:
+                loc = self._locator(page, field_id)
+                value = ""
+                try:
+                    if await loc.evaluate("el => /^(date|time|datetime-local|month|week)$/i.test(el.type || '')",
+                                          timeout=FOCUS_TIMEOUT):
+                        continue  # (a date's segments take keys their own way)
+                    value = await loc.input_value(timeout=FOCUS_TIMEOUT)
+                    if not value.strip():
+                        continue
+                    await loc.fill("", timeout=FOCUS_TIMEOUT)
+                    await loc.press_sequentially(value, delay=30, timeout=FOCUS_TIMEOUT * 3)
+                    if await loc.input_value(timeout=FOCUS_TIMEOUT) != value:  # (an autocomplete changed it, say)
+                        await loc.fill(value, timeout=FOCUS_TIMEOUT)
+                    await loc.evaluate("el => el.blur()", timeout=FOCUS_TIMEOUT)
+                    done.append(field_id)
+                except (PlaywrightError, PlaywrightTimeout):
+                    if value:  # never left emptied or half typed
+                        with contextlib.suppress(PlaywrightError, PlaywrightTimeout):
+                            await loc.fill(value, timeout=FOCUS_TIMEOUT)
+                    continue
+        return done
+
     async def type_code(self, field_ids: list[str], code: str) -> list[str]:
         """An emailed code typed key by key, as the person would: a digit into each box of a box-per-digit
         code, or the whole code into its one box. Edward Jones' BrassRing (live run 9, Oct 11) took a digit

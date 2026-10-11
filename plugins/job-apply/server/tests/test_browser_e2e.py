@@ -830,6 +830,20 @@ def test_a_workday_cover_is_the_submit_found_not_its_hidden_button(srv):
     assert info is not None and info["label"] == "Submit", info
 
 
+def test_a_maps_own_controls_are_not_the_pages_buttons(srv):
+    """Benchmark's Infor posting (live run 10, Oct 11) holds a Google map whose controls ("Keyboard shortcuts",
+    "Map camera controls", "Show satellite imagery") are drawn afresh all the while, so the page never looked
+    the same twice, and the desk didn't see its Apply go nowhere. A map's own controls aren't read as the
+    page's buttons."""
+    run(srv.open_application(url=fixture_url("jsonld_posting.html")))
+    page = run(srv.browser.page())
+    run(page.set_content("""<h1>Field Service Technician</h1><button type="button">Apply</button>
+      <div class="gm-style"><button type="button">Keyboard shortcuts</button>
+        <button type="button">Map camera controls</button><button type="button">Show satellite imagery</button></div>"""))
+    texts = [a["text"] for a in run(srv.inspect_form(include_dropdown_options=False))["actions"]]
+    assert texts == ["Apply"], texts
+
+
 def test_a_menu_left_over_the_next_field_isnt_its_options(srv):
     """Micron: the availability question's menu stayed open over the next question and was
     drawn afresh when focus moved, so its options were read as the next question's."""

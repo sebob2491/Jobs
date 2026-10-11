@@ -1,0 +1,46 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Field Service Engineer | Apply</title></head>
+<body>
+<!-- like Nikon's UKG Pro application (live run 10, Oct 11): a moment after its boxes are typed in, its resume
+     parse ("jobdesk-test-resume.pdf has been used to pre-fill part of your application") overwrites the page's
+     own record of Address 1 and Zip with nothing, though the boxes still show what was typed. Save and continue
+     then says "Address 1 Please enter an address." and "Zip / Postal Code Please enter a valid zip/postal code."
+     beside the filled boxes. Typed again after that, they're kept. (kept for the tab: ukg.saves) -->
+<h2>Contact Information</h2>
+<div id="notice" role="alert"></div>
+<form onsubmit="return false">
+  <label for="first">First Name *</label><input id="first" required>
+  <label for="last">Last Name *</label><input id="last" required>
+  <label for="address">Address 1 *</label><input id="address" required>
+  <label for="city">City *</label><input id="city" required>
+  <label for="zip">Zip / Postal Code *</label><input id="zip" required>
+  <div id="errors"></div>
+  <button type="button" id="save">Save and continue</button>
+</form>
+<script>
+  const model = {};
+  let parsed = false;
+  document.addEventListener('input', (e) => {
+    model[e.target.id] = e.target.value;
+    if (!parsed && e.target.id === 'address') {
+      parsed = true;
+      setTimeout(() => {  // the resume parse lands: the page's record of these two is wiped
+        model.address = '';
+        model.zip = '';
+        document.getElementById('notice').textContent =
+          'resume.pdf has been used to pre-fill part of your application. Please verify that all of your information is correct.';
+      }, 400);
+    }
+  });
+  document.getElementById('save').addEventListener('click', () => {
+    sessionStorage.setItem('ukg.saves', String(Number(sessionStorage.getItem('ukg.saves') || 0) + 1));
+    const errs = [];
+    if (!model.address) errs.push('Address 1 Please enter an address.');
+    if (!model.zip) errs.push('Zip / Postal Code Please enter a valid zip/postal code.');
+    document.getElementById('errors').innerHTML = errs.map((t) => '<p role="alert" class="error">' + t + '</p>').join('');
+    if (!errs.length) location.href = 'review.html';
+  });
+</script>
+</body>
+</html>

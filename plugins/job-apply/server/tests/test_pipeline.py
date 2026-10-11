@@ -1937,6 +1937,53 @@ def test_a_form_page_that_thanks_the_person_isnt_taken_for_a_confirmation(srv, m
     assert srv.tracker().get(job["id"])["status"] != "applied"
 
 
+def test_boxes_the_pages_errors_say_are_empty_though_filled_are_typed_again(srv, monkeypatch):
+    """Nikon's UKG Pro (live run 10, Oct 11): its resume parse overwrote the page's own record of Address 1 and
+    Zip a moment after the desk typed them, so Save and continue said "Address 1 Please enter an address."
+    beside the filled boxes, and the desk stopped. Boxes the page's errors name, though they show a value, are
+    typed again, once, and the step is pressed again."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    job = srv.add_job(url=fixture_url("site/ukg-prefill.html"), title="Field Service Engineer", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert "review.html" in r.url, (r.url, r.reason, r.log)
+    assert any(line.startswith("typed again") and "Address 1" in line for line in r.log), r.log
+
+
+def test_a_step_still_saving_after_three_presses_is_waited_on(srv, monkeypatch):
+    """KLA's Workday (live run 11, Oct 11): every box of Application Questions 2 of 2 answered, its Save and
+    Continue took a while to go on, and the desk stopped after its presses ("The page didn't move on"); the next
+    step was there a little later. A step still saving, with nothing said wrong, is waited on once."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    job = srv.add_job(url=fixture_url("site/workday-slow-save.html"), title="Customer Service Engineer",
+                      company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        r = applier.enqueue(job["id"])
+        r.seen_form = True
+        r.once["are you willing to travel"] = "Yes"
+        applier.start()
+        try:
+            await until(lambda: r.status not in ("queued", "running"), timeout=90, about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert r.status == "ready", (r.status, r.need, r.reason, r.log)
+
+
 @pytest.mark.parametrize("query", ["", "?bare"])
 def test_a_step_still_loading_its_questions_is_waited_for(srv, monkeypatch, query):
     """KLA's Workday (live, Oct 2026): past My Experience, its Application Questions step showed its
@@ -4478,6 +4525,17 @@ def test_a_question_the_pages_errors_name_is_asked_though_not_marked_required():
     pending, _ = pipeline._pending(result, {})
     assert [f["id"] for f in pending] == ["v"], pending
     assert "isn't one of its choices" in pending[0]["error"], pending
+
+    # or the section the page's errors name (Kforce's "The field Closest Metropolitan City is mandatory.")
+    region = {"needs_input": [{"id": "r", "label": "Region", "kind": "select",
+                               "section": "Closest Metropolitan City . Required"}], "failed": [], "filled": []}
+    pipeline._required_by_errors(region, {"errors": ['The field "Closest Metropolitan City" is mandatory.']})
+    assert [f["id"] for f in pipeline._pending(region, {})[0]] == ["r"]
+    # not wherever a section's name comes up ("Please correct the errors in: Personal Information")
+    middle = {"needs_input": [{"id": "m", "label": "Middle Name", "kind": "text", "section": "Personal Information"}],
+              "failed": [], "filled": []}
+    pipeline._required_by_errors(middle, {"errors": ["Please correct the errors in: Personal Information"]})
+    assert pipeline._pending(middle, {})[0] == []
 
 
 def test_a_self_identification_answer_a_list_doesnt_have_is_said_not_left_silently():

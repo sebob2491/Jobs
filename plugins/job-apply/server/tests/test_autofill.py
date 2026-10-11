@@ -1095,6 +1095,24 @@ def test_sponsorship_and_military_asked_in_other_words():
     assert served is not None and (served.rule, choose_option(served.value, ["Yes", "No"])) == ("military", "No")
 
 
+def test_a_list_still_on_its_not_specified_first_choice_is_filled():
+    """Kforce's Taleo (live run 10, Oct 2026): its required "Closest Metropolitan City" is three lists, Country,
+    State/Province and Region, each on its first choice "Not Specified", which read as answered, so none was
+    filled ("The field Closest Metropolitan City is mandatory"). A list on that first choice is filled; a
+    "Not Specified" chosen further down a list (a self-identification's decline) is left as it is."""
+    p = Profile({"personal": {"address": {"country": "United States", "state": "AZ", "city": "Chandler"}},
+                 "eeo": {"gender": "Male"}})
+    country = {"id": "c", "label": "Country", "kind": "select", "value": "Not Specified",
+               "section": "Closest Metropolitan City . Required", "options": ["Not Specified", "United States", "Canada"]}
+    gender = {"id": "g", "label": "Gender", "kind": "select", "value": "Not Specified",
+              "options": ["Male", "Female", "Not Specified"]}
+    # nor a self-identification list whose first choice is "Not Specified": the person may have chosen it
+    taleo_gender = {**gender, "id": "t", "options": ["Not Specified", "Male", "Female"]}
+    plan = plan_autofill([country, gender, taleo_gender], p, {})
+    assert [(t["id"], t["value"]) for t in plan["to_fill"]] == [("c", "United States")], plan
+    assert plan["already_filled"] == ["g", "t"], plan
+
+
 def test_a_decline_finds_the_lists_own_way_to_decline_and_is_never_a_no():
     """Every site words "I'd rather not say" its own way, and so do people. "I don't want to
     answer" wasn't taken for a decline: its "don't" made it a "No", and it went to "I am not a

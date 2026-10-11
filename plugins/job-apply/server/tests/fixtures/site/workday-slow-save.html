@@ -1,0 +1,32 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Apply</title></head>
+<body>
+<!-- like KLA's Workday Application Questions 2 of 2 (live run 11, Oct 11): every box answered, and its Save and
+     Continue takes a while (8 s here, from its first press) to go on to the next step, drawing a "Saving" note
+     afresh at each press meanwhile. (kept for the tab: slow.presses) -->
+<div data-automation-id="progressBarActiveStep">current step 4 of 6 Application Questions 2 of 2</div>
+<h2>Application Questions 2 of 2</h2>
+<form onsubmit="return false">
+  <label for="q1">Are you willing to travel?*</label>
+  <select id="q1" required><option value="">Select One</option><option>Yes</option><option>No</option></select>
+</form>
+<div id="status"></div>
+<button type="button" data-automation-id="pageFooterNextButton" id="next">Save and Continue</button>
+<script>
+  let first = 0;
+  document.getElementById('next').addEventListener('click', () => {
+    const presses = Number(sessionStorage.getItem('slow.presses') || 0) + 1;
+    sessionStorage.setItem('slow.presses', String(presses));
+    if (!document.getElementById('q1').value) return;
+    document.getElementById('status').innerHTML = '<button type="button" disabled>Saving (' + presses + ')</button>';
+    if (first) return;
+    first = Date.now();
+    setTimeout(() => {
+      document.body.innerHTML = '<div>current step 5 of 6 Review</div><h2>Review</h2>'
+        + '<form onsubmit="return false"><button type="submit">Submit</button></form>';
+    }, 8000);
+  });
+</script>
+</body>
+</html>
