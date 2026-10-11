@@ -1164,8 +1164,12 @@ RULES: list[tuple[str, str, Getter, int | None, set[str] | None]] = [
      r"for|requiring|requirement|h ?1 ?b|work))* sponsor|(do not|don t|dont|will not|won t|not|never) (now or in the future |"
      r"currently |ever )?(require|need)\w* .{0,40}sponsor|sponsor\w* (is |are |would be |will be )?(not|never) (be )?"
      r"(required|needed|necessary)", _no_sponsorship, None, None),
+    # (and in other words: "require <employer> to commence an immigration case in order to employ you",
+    # live test 2, issue #112, note 17)
     ("sponsorship", r"(require|need|seek)\w* .{0,40}sponsor|sponsor\w* .{0,40}(require|need)|"
-     r"^(visa |employment |immigration )?sponsorship( status| required| needed)?$", _sponsorship, None, None),
+     r"^(visa |employment |immigration )?sponsorship( status| required| needed)?$|"
+     r"\brequire\w* .{0,60}\b(commence|start|begin|file|initiate)\w* an? (immigration|visa) (case|petition|process)",
+     _sponsorship, None, None),
     # the I-9: "Can you provide verification of both your identity and authorization to work in the
     # United States, to the extent required by law?" (Axon)
     ("work_proof", r"^can you (provide|furnish|submit|present) (proof|verification|documentation|documents?) (of|for|showing) "
@@ -1242,7 +1246,8 @@ RULES: list[tuple[str, str, Getter, int | None, set[str] | None]] = [
     ("board_member", r"\bboard of (directors|advisors)\b|\bboard member\b|governing body",
      _background("board_member", unless=r"\b(family|relatives?|spouse|friends?)\b"), None,
      _YES_NO_KINDS),
-    ("military", r"\b(served|serve|serving|service) in (the |any )?(u s |us )?(military|armed forces)|\bmilitary service\b",
+    ("military", r"\b(served|serve|serving|service) in (the |any )?(u s |us )?(military|armed forces)|\bmilitary service\b|"
+     r"\b(previous|prior|any) (u s |us )?(military|armed forces) (experience|service|background)\b",
      _background("military", unless=r"\b(spouse|family|parent|relative)\b"), None, _YES_NO_KINDS),
     ("employee_id", r"\b(employee|worker|associate|staff|badge) ?(id|number|no\b|#)|\bwwid\b", _employee_id, 160, {"text"}),
     ("previous_employee", r"(previously|ever|formerly) (been )?(employed|worked)|former employee|have you (ever )?worked (for|at)|worked .{0,40} before|"

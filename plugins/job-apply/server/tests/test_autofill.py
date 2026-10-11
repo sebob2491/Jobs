@@ -1078,6 +1078,19 @@ def test_someone_who_never_served_is_not_a_veteran_on_every_list(military, statu
     assert choose_option(plain_list.value, VETERAN) == plain
 
 
+def test_sponsorship_and_military_asked_in_other_words():
+    """Live test 2 (issue #112, note 17): Workday's "Will you now or in the future require <employer> to
+    commence an immigration case in order to employ you?" is the sponsorship question, and "Do you have
+    previous military experience?" the military one; both were asked though the profile answers them."""
+    p = Profile({"work_authorization": {"authorized_to_work": True, "requires_sponsorship": False},
+                 "background": {"military": False}})
+    case = resolve_field(f("Will you now or in the future require Example Fab to commence an immigration case in "
+                           "order to employ you?", "select", options=["Yes", "No"]), p, {"company": "Example Fab"})
+    assert case is not None and (case.rule, choose_option(case.value, ["Yes", "No"])) == ("sponsorship", "No")
+    served = resolve_field(f("Do you have previous military experience?", "select", options=["Yes", "No"]), p)
+    assert served is not None and (served.rule, choose_option(served.value, ["Yes", "No"])) == ("military", "No")
+
+
 def test_a_decline_finds_the_lists_own_way_to_decline_and_is_never_a_no():
     """Every site words "I'd rather not say" its own way, and so do people. "I don't want to
     answer" wasn't taken for a decline: its "don't" made it a "No", and it went to "I am not a
