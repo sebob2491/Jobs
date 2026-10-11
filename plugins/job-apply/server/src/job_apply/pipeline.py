@@ -2553,7 +2553,9 @@ class Applier:
         still as it was before Apply was pressed (a slow Apply isn't one that went nowhere). True once
         it's pressed."""
         data, _ = await self._look()
-        way = _account_way(data.get("actions") or []) if _fingerprint(data) == looked else None
+        # (its address, headings and boxes as they were: a map drawing its own buttons meanwhile isn't Apply going
+        # somewhere, as Benchmark's posting did, live run 10, Oct 11)
+        way = _account_way(data.get("actions") or []) if _fingerprint(data)[:3] == looked[:3] else None
         if way is None:
             return False
         try:
