@@ -1108,9 +1108,55 @@ def test_a_list_still_on_its_not_specified_first_choice_is_filled():
               "options": ["Male", "Female", "Not Specified"]}
     # nor a self-identification list whose first choice is "Not Specified": the person may have chosen it
     taleo_gender = {**gender, "id": "t", "options": ["Not Specified", "Male", "Female"]}
+    # its Region is a list of cities: the profile's city goes there, not its state (live run 12)
+    region = {"id": "r", "label": "Region", "kind": "select", "value": "Not Specified",
+              "section": "Closest Metropolitan City . Required", "options": ["Not Specified", "Anthem", "Bisbee", "Chandler"]}
+    assert resolve_field(region, p).value == "Chandler"
     plan = plan_autofill([country, gender, taleo_gender], p, {})
     assert [(t["id"], t["value"]) for t in plan["to_fill"]] == [("c", "United States")], plan
     assert plan["already_filled"] == ["g", "t"], plan
+
+
+def test_a_list_the_page_marks_invalid_takes_the_profiles_answer_and_a_required_self_id_is_answered():
+    """Live run 13 (Oct 2026). Northrop's Eightfold drew its phone "Country code" on Mexico (+52) and marked it
+    invalid ("Enter a valid phone number and country code"); the desk left it, as a box with a value. A list
+    the page marks invalid takes the profile's answer where it's another. Kforce's required "Birth Assigned
+    Gender" sat on its first choice "Not Specified" and was left as a self-identification the person may have
+    chosen; a required one is answered."""
+    p = Profile({"personal": {"phone": "480-555-0199", "phone_country_code": "+1",
+                              "address": {"country": "United States"}}, "eeo": {"gender": "Male"}})
+    codes = ["\U0001F1FA\U0001F1F8 (+1) United States", "\U0001F1F2\U0001F1FD (+52) Mexico", "\U0001F1E8\U0001F1E6 (+1) Canada"]
+    code = {"id": "c", "label": "Country code", "kind": "combobox", "value": codes[1], "invalid": True,
+            "required": True, "options": codes}
+    birth = {"id": "b", "label": "3. Birth Assigned Gender . Required", "kind": "select", "value": "Not Specified",
+             "required": True, "options": ["Not Specified", "Male", "Female"]}
+    plan = plan_autofill([code, birth], p, {}, redo={"c"})  # (the review step's, once a job)
+    got = {t["id"]: t["value"] for t in plan["to_fill"]}
+    assert set(got) == {"c", "b"} and got["b"] == "Male", plan
+    # never on an ordinary pass (the person may have chosen it), nor for a box not named
+    assert plan_autofill([code], p, {})["already_filled"] == ["c"]
+    # a decline in the profile never gets the list's own "Not Specified" placeholder back: it's asked
+    declined = Profile({"eeo": {"gender": "I choose not to disclose"}})
+    plan = plan_autofill([birth], declined, {})
+    assert plan["to_fill"] == [] and [q["id"] for q in plan["needs_input"]] == ["b"], plan
+
+
+def test_a_work_authorization_question_drawn_as_a_text_area_takes_the_profiles_yes_or_no():
+    """Nikon's UKG Pro (live run 14, Oct 2026) draws "Are you legally authorized to work in the US for any
+    employer?" and "Do you now or in the future require sponsorship...?" as required text areas, and the desk
+    left them (text areas are long answers). A yes/no work question drawn so takes the profile's answer; a long
+    answer, or an unclear one ("Do you require relocation?"), is still the person's."""
+    p = Profile({"work_authorization": {"authorized_to_work": True, "requires_sponsorship": False},
+                 "preferences": {"willing_to_relocate": True}})
+
+    def answer(label):
+        a = resolve_field(f(label, "textarea", required=True), p, {"company": "Nikon"})
+        return a and a.value
+
+    assert polarity(answer("Are you legally authorized to work in the US for any employer?")) is True
+    assert answer("Do you now or in the future require sponsorship for employment visa status?") == "No"
+    assert answer("Do you require relocation?") is None
+    assert answer("Describe your authorization to work in the US.") is None
 
 
 def test_a_decline_finds_the_lists_own_way_to_decline_and_is_never_a_no():

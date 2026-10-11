@@ -663,7 +663,7 @@ _NOT_IN_LIST = re.compile(r"doesn't match any (suggestion|option)|nothing in its
 
 
 @tool(drives=True)
-async def autofill(job_id: int | None = None, overwrite: bool = False) -> dict[str, Any]:
+async def autofill(job_id: int | None = None, overwrite: bool = False, redo: list[str] | None = None) -> dict[str, Any]:
     """Fill every field on the current page that the profile answers with confidence
     (contact details, address, work authorization, sponsorship, EEO choices, resume upload,
     saved answers). Returns what was filled and the fields still needing a decision —
@@ -671,7 +671,7 @@ async def autofill(job_id: int | None = None, overwrite: bool = False) -> dict[s
     job = _job_here(job_id) if (job_id is not None or browser.current_job_id is not None) else {}
     data = await browser.inspect(include_dropdown_options=True)
     prof = config.Profile.load()
-    plan = plan_autofill(data["fields"], prof, job, overwrite=overwrite)
+    plan = plan_autofill(data["fields"], prof, job, overwrite=overwrite, redo=set(redo or []))
     results = await browser.fill([{"id": f["id"], "value": f["value"], "names": is_name_rule(f.get("rule") or ""),
                                    "near": place_words(f.get("rule") or "", prof),
                                    "pick_only": is_eeo_rule(f.get("rule") or "")}

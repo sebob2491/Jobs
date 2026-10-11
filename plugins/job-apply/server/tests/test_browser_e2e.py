@@ -830,6 +830,44 @@ def test_a_workday_cover_is_the_submit_found_not_its_hidden_button(srv):
     assert info is not None and info["label"] == "Submit", info
 
 
+def test_a_resume_goes_into_a_page_once_though_its_box_empties(srv, job_apply_home):
+    """Nikon's UKG Pro (live run 13, Oct 2026) empties its upload box once it has the file, so each pass read it
+    as never uploaded and uploaded the resume again; each upload set its resume reading going, which emptied
+    Address 1 and Zip after they were filled. A file goes into a page once; a reloaded page gets it again."""
+    run(srv.open_application(url=fixture_url("jsonld_posting.html")))
+    page = run(srv.browser.page())
+    resume = job_apply_home / "resume-once.pdf"
+    resume.write_bytes(b"%PDF-1.4 test")
+
+    async def upload_page():
+        await page.set_content("""<label for="cv">Upload Resume</label><input id="cv" type="file">
+          <script>window.uploads = 0; document.getElementById('cv').addEventListener('change', (e) => {
+            window.uploads += 1; e.target.value = ''; });</script>""")
+
+    run(upload_page())
+    for _ in range(2):
+        box = next(f for f in run(srv.inspect_form(include_dropdown_options=False))["fields"] if f["kind"] == "file")
+        assert run(srv.fill_form([{"id": box["id"], "value": str(resume)}]))["results"][0]["ok"]
+    assert run(page.evaluate("() => window.uploads")) == 1
+    # its box drawn afresh after the upload (UKG's, live run 15), with the file named on the page: not uploaded again
+    run(page.goto(fixture_url("jsonld_posting.html")))
+    run(page.set_content("""<label for="cv">Upload Resume</label><div id="w"><input id="cv" type="file"></div><p id="n"></p>
+      <script>window.uploads = 0; function arm() { document.getElementById('cv').addEventListener('change', (e) => {
+        window.uploads += 1; document.getElementById('n').textContent = e.target.files[0].name
+          + ' has been used to pre-fill part of your application.';
+        document.getElementById('w').innerHTML = '<input id="cv" type="file">'; arm(); }); } arm();</script>"""))
+    for _ in range(2):
+        box = next(f for f in run(srv.inspect_form(include_dropdown_options=False))["fields"] if f["kind"] == "file")
+        out = run(srv.fill_form([{"id": box["id"], "value": str(resume)}]))["results"][0]
+        assert out["ok"], out
+    assert run(page.evaluate("() => window.uploads")) == 1
+    run(page.goto(fixture_url("jsonld_posting.html")))  # a page loaded afresh: uploaded again
+    run(upload_page())
+    box = next(f for f in run(srv.inspect_form(include_dropdown_options=False))["fields"] if f["kind"] == "file")
+    run(srv.fill_form([{"id": box["id"], "value": str(resume)}]))
+    assert run(page.evaluate("() => window.uploads")) == 1  # (its own count: one upload on this page)
+
+
 def test_a_maps_own_controls_are_not_the_pages_buttons(srv):
     """Benchmark's Infor posting (live run 10, Oct 11) holds a Google map whose controls ("Keyboard shortcuts",
     "Map camera controls", "Show satellite imagery") are drawn afresh all the while, so the page never looked

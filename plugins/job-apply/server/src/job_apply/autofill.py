@@ -1612,6 +1612,10 @@ def _without_notes(label: str) -> str:
     return " ".join(kept) if len(kept) < len([p for p in parts if p.strip()]) else label
 
 
+_METRO_SECTION = re.compile(r"\b(metropolitan|metro area|(closest|nearest) (major )?city)\b")
+_METRO_PART = re.compile(r"region|area|city|metro(politan)?( area| city)?")
+
+
 def resolve_field(field: dict, prof: Profile, job: dict | None = None, file_inputs_on_page: int = 1,
                   unmatched: list[Answer] | None = None) -> Answer | None:
     """The answer for a field, or None. A self-identification answer the profile gives but the
@@ -1670,6 +1674,13 @@ def resolve_field(field: dict, prof: Profile, job: dict | None = None, file_inpu
         return Answer(_today_for(field), "signed_date")
     someone_else = _SOMEONE_ELSE.search(f"{label} {section}") or _OTHER_PARTY_LABEL.search(label) \
         or _OTHER_PARTY_SECTION.search(section)
+    if ans is None and _METRO_SECTION.search(section) and _METRO_PART.fullmatch(label) and not someone_else \
+            and not re.search(r"\b(prefer|desired|willing|like to work|relocat)", f"{section} {label}"):
+        # Taleo's "Closest Metropolitan City": its Region list is cities (Kforce's, live run 12, Oct 2026: Anthem,
+        # Bisbee, ... Chandler): the profile's city, not its state, which the list doesn't have
+        city = prof.get("personal.address.city")
+        if city:
+            ans = Answer(city, "personal.address.city")
     if ans is None and kind == "checkbox_group" and (none := _plans_none(field, prof)):
         return Answer(none, "background.plans")  # (one of its own choices, as it reads)
     if ans is None:
@@ -1705,7 +1716,12 @@ def resolve_field(field: dict, prof: Profile, job: dict | None = None, file_inpu
     if ans is None or ans.value is None or ans.value == "":
         return None
 
-    if kind == "textarea" and not ans.rule.startswith("answers[") and ans.rule not in {"linkedin", "salary", "start_date"}:
+    # (a yes/no question drawn as a text area, as Nikon's UKG Pro draws its work-authorization questions, live run
+    # 14, Oct 2026: the profile's plain Yes or No)
+    yes_no_box = ans.rule in {"authorized", "sponsorship", "no_sponsorship"} and polarity(ans.value) is not None \
+        and bool(re.match(r"(are|do|will|would|can|have|is) you\b", label))
+    if kind == "textarea" and not ans.rule.startswith("answers[") and ans.rule not in {"linkedin", "salary", "start_date"} \
+            and not yes_no_box:
         return None
     if isinstance(ans.value, bool):
         ans.value = "Yes" if ans.value else "No"
@@ -2016,7 +2032,8 @@ def unset_choice(f: dict) -> bool:
         and norm(options[0]) == value
 
 
-def plan_autofill(fields: list[dict], prof: Profile, job: dict | None = None, overwrite: bool = False) -> dict[str, Any]:
+def plan_autofill(fields: list[dict], prof: Profile, job: dict | None = None, overwrite: bool = False,
+                  redo: set[str] | None = None) -> dict[str, Any]:
     """Split fields into ones we can fill and ones that need a decision. Not a sign-up's boxes
     beside the application (a talent community's email and consent: the form reader's aside)."""
     fields = _with_context([f for f in fields if not f.get("aside")])
@@ -2030,15 +2047,26 @@ def plan_autofill(fields: list[dict], prof: Profile, job: dict | None = None, ov
         if f.get("disabled") or f.get("readonly") and f.get("kind") not in _CHOICE_KINDS:
             continue
         unset = unset_choice(f)
-        has_value = not is_empty_value(f.get("value")) and not unset
+        # `redo`: lists the page marks invalid on a choice it made itself, which the desk may answer again (Northrop's
+        # Eightfold phone "Country code" on Mexico, live run 13, Oct 2026: the review step's, once a job)
+        rejected = f["id"] in (redo or set()) and f.get("kind") in ("select", "listbox", "combobox", "radio_group") \
+            and not is_empty_value(f.get("value"))
+        has_value = not is_empty_value(f.get("value")) and not unset and not rejected
         if has_value and not overwrite:
             already.append(f["id"])
             continue
         missed: list[Answer] = []
-        ans = resolve_field(f, prof, job, file_inputs, unmatched=missed)
-        if unset and not overwrite and ans is not None and is_eeo_rule(ans.rule):
-            # a self-identification list on its "Not Specified" stays as it is (the person may have chosen it)
+        # (a list on its own "Not Specified" first choice: answered from the others, never that placeholder again)
+        ans = resolve_field({**f, "options": (f.get("options") or [])[1:]} if unset else f, prof, job, file_inputs,
+                            unmatched=missed)
+        if unset and not overwrite and ans is not None and is_eeo_rule(ans.rule) and not f.get("required"):
+            # an optional self-identification list on its "Not Specified" stays as it is (the person may have
+            # chosen it); a required one is answered (Kforce's "Birth Assigned Gender", live run 13)
             already.append(f["id"])
+            continue
+        if rejected and not overwrite and (ans is None or ans.value == SKIP or is_eeo_rule(ans.rule)
+                                           or choose_option(str(ans.value), [str(f.get("value"))]) is not None):
+            already.append(f["id"])  # (nothing else to give it, or the same answer: left to the person)
             continue
         if ans is not None and ans.value == SKIP:
             continue
