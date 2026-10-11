@@ -1989,6 +1989,9 @@ def test_a_resume_parse_notice_is_not_an_error(srv, monkeypatch):
     assert not pipeline._errorish("x.pdf has been used to pre-fill part of your application. Please verify that "
                                   "all of your information is correct.")
     assert pipeline._errorish("Address 1 Please enter an address.")
+    # (a real error beside the notice, in the same message, still counts)
+    assert pipeline._errorish("x.pdf has been used to pre-fill part of your application. Please enter a valid "
+                              "phone number.")
 
 
 @pytest.mark.parametrize("query", ["", "?quiet"])
