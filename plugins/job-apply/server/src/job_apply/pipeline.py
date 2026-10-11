@@ -2048,21 +2048,28 @@ class Applier:
         if not _may_accept_notices():
             return False
         said = link["text"].strip()
-        try:
-            await self.srv.browser.click(link["id"])
-        except Exception as e:  # gone, or it won't take a click: the person's, as without the setting
-            self._log(run, f"the click on “{said}” failed: {_error_said(e)}")
-            return False
-        deadline = time.monotonic() + ACCOUNT_STEP_WAIT
-        while True:
-            now, _ = await self._look()
-            notice = _notice(now)
-            if notice is not None or time.monotonic() > deadline:
+        notice = None
+        for _ in range(2):  # (live, APS's once opened nothing at the first press: a second press after a moment)
+            try:
+                await self.srv.browser.click(link["id"])
+            except Exception as e:  # gone, or it won't take a click: the person's, as without the setting
+                self._log(run, f"the click on “{said}” failed: {_error_said(e)}")
+                return False
+            deadline = time.monotonic() + ACCOUNT_STEP_WAIT
+            while True:
+                now, _ = await self._look()
+                notice = _notice(now)
+                if notice is not None or time.monotonic() > deadline:
+                    break
+                await asyncio.sleep(0.5)
+            if notice is not None:
                 break
-            await asyncio.sleep(0.5)
+            link = next((a for a in now.get("actions") or [] if a.get("text", "").strip() == said), link)
         # (each way it can fail is said in the log: APS's, live, Oct 2026, failed with no clue why)
         if notice is None:
-            self._log(run, f"I pressed “{said}”, and no statement opened over the page")
+            told = "; ".join(e for e in now.get("errors") or [] if not _ERROR_COUNT.match(e.strip()))[:200]
+            self._log(run, f"I pressed “{said}” twice, and no statement opened over the page"
+                      + (f" (it says “{told}”)" if told else ""))
             return False
         run.statement_accepted = await self._answer_notice(run, now, notice, set(), over_form=False) == "agreed"
         if not run.statement_accepted:

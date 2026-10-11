@@ -1297,7 +1297,7 @@ def create_account_on_sf(srv, query="", watch=0):
     return run(go())
 
 
-@pytest.mark.parametrize("how", ["on", "slow", "test-identity"])
+@pytest.mark.parametrize("how", ["on", "slow", "once", "test-identity"])
 def test_with_manage_accounts_a_data_privacy_statement_is_opened_and_accepted_for_the_account(
         srv, monkeypatch, job_apply_home, how):
     """SuccessFactors' Create Account (APS's, live, Oct 10, 2026) makes no account until its data privacy
@@ -1313,14 +1313,15 @@ def test_with_manage_accounts_a_data_privacy_statement_is_opened_and_accepted_fo
     manage_accounts(job_apply_home)
     if how == "test-identity":
         as_test_identity(monkeypatch, job_apply_home)
-    r, kept, _ = create_account_on_sf(srv, "?slow" if how == "slow" else "")
+    r, kept, _ = create_account_on_sf(srv, f"?{how}" if how in ("slow", "once") else "")
     log = "\n".join(r.log)
     agreed = f"agreed to Example Corp's notice “{STATEMENT}” for you (settings.accept_notices)"
     assert agreed in r.log, log
     assert any(line.startswith("created your account on") and "accepted its data privacy statement" in line
                for line in r.log), log
     assert r.log.index(agreed) < next(i for i, line in enumerate(r.log) if line.startswith("pressed “Create Account”")), log
-    assert kept == {"opened": 1, "statement": "accepted", "presses": 1, "created": 1, "campaign": False}, kept
+    opened = 2 if how == "once" else 1  # (once: its first press opened nothing, and it was pressed again)
+    assert kept == {"opened": opened, "statement": "accepted", "presses": 1, "created": 1, "campaign": False}, kept
     assert r.need != "sign_in" and "Create Account" not in r.reason, (r.status, r.reason, log)
     assert any("“My Information”" in line for line in r.log), log  # on to the application
 
