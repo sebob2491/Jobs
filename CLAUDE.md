@@ -26,6 +26,9 @@ the scrubber (`python -m job_apply.fixtures`) before they become test fixtures.
 - `data/companies.yaml` is the default employer list (`semiconductor-az`), and
   `data/lists/*.yaml` holds the others (`phoenix-metro`). A person's own
   `~/.job-apply/companies.yaml` names lists under `lists:`.
+- `data/question_bank.yaml`: the common questions the desk's "Common questions" card asks once (answers go to the
+  person's own `answers.yaml` with the entry's pattern). `scripts/question_bank.py <run's artifacts>` lists the
+  questions a nightly asked that no entry covers yet. Only questions whose answer is the person's own everywhere.
 - `skills/`: the plugin's skills (setup, apply, find-jobs, desk, track-responses,
   interview-prep). `templates/`: profile and companies templates.
 

@@ -116,6 +116,10 @@ ul.rows { list-style: none; margin: 0; padding: 0; }
 .small { font-size: 13px; color: var(--muted); }
 .counts { display: flex; flex-wrap: wrap; gap: 6px; padding: 12px 14px; }
 .pw { padding: 2px 14px 14px; }
+.bankq { display: grid; gap: 4px; padding: 10px 14px; border-top: 1px solid var(--line); }
+.bankq:first-child { border-top: 0; }
+.bankq > span { font-size: 14px; }
+.bankq select, .bankq input { font: inherit; width: 100%; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--text); }
 .pw-row { display: flex; gap: 8px; margin-top: 8px; }
 /* (width 0: a choice as long as "SuccessFactors: TSMC Arizona, ..." doesn't widen the page) */
 .pw-row select { flex: 1; min-width: 0; width: 0; font: inherit; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--text); }
@@ -192,6 +196,14 @@ footer { max-width: 1240px; margin: 0 auto; padding: 0 16px 24px; color: var(--m
       <div class="card-head"><h2 id="done-h">Ready and done</h2></div>
       <div id="done"></div>
       <div class="counts" id="counts"></div>
+    </section>
+    <!-- the questions most applications ask that a profile doesn't answer: answered once, kept in answers.yaml -->
+    <section class="card" aria-labelledby="bank-h" id="bank-card" hidden>
+      <div class="card-head"><h2 id="bank-h">Common questions</h2><span class="pill" id="bank-count"></span></div>
+      <p class="small" style="margin: 10px 14px 0">Most applications ask these, and your profile doesn't say. Answer once:
+        the desk fills them in at every employer from then on (kept in <code>~/.job-apply/answers.yaml</code>).</p>
+      <div id="bank"></div>
+      <details id="bank-done" hidden><summary>Your answers</summary><div id="bank-given"></div></details>
     </section>
     <section class="card" aria-labelledby="pw-h">
       <div class="card-head"><h2 id="pw-h">Site passwords</h2><span class="pill" id="pw-count"></span></div>
@@ -583,6 +595,26 @@ function renderSide() {
   for (const id of ["needs-h", "work-h", "done-h"]) $(id).closest("section").hidden = idle;
 }
 
+// The common questions: unanswered first (each saved as it's chosen or typed), then the answers given, to change
+function bankQuestion(q) {
+  const input = q.kind === "choice"
+    ? `<select data-bank="${esc(q.id)}"><option value=""></option>${(q.choices || []).map((c) =>
+        `<option${c === q.answer ? " selected" : ""}>${esc(c)}</option>`).join("")}</select>`
+    : `<input type="text" data-bank="${esc(q.id)}" value="${esc(q.answer || "")}" autocomplete="off" placeholder="Type, then press Enter">`;
+  return {key: `${q.id}:${q.answer || ""}`, html: `<label class="bankq"><span>${esc(q.ask)}</span>${input}</label>`};
+}
+
+function renderBank() {
+  const bank = state.bank || [];
+  $("bank-card").hidden = !bank.length;
+  const open = bank.filter((q) => q.answer == null || q.answer === ""), given = bank.filter((q) => !open.includes(q));
+  $("bank-count").textContent = `${given.length} of ${bank.length} answered`;
+  $("bank-count").className = "pill " + (open.length ? "warn" : "good");
+  patch($("bank"), open.map(bankQuestion));
+  $("bank-done").hidden = !given.length;
+  patch($("bank-given"), given.map(bankQuestion));
+}
+
 function renderHeader() {
   const p = state.profile, s = state.settings;
   $("who").textContent = p.name ? `for ${p.name}` : "";
@@ -726,6 +758,7 @@ function render() {
   renderHeader();
   renderRows();
   renderSide();
+  renderBank();
   renderAlerts();
   renderNotes();
   announce();
@@ -924,6 +957,7 @@ document.addEventListener("change", (e) => {
     act(() => api("/api/settings", {auto_submit: t.checked}));
   }
   if (t.id === "tailor") act(() => api("/api/settings", {tailor_resumes: t.checked}));
+  if (t.dataset.bank) act(() => api("/api/bank", {id: t.dataset.bank, answer: t.value}));
   if (t.id === "report-anonymous" && reportShown) makeReport(reportShown.job, true);
 });
 

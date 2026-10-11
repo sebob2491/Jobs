@@ -1344,10 +1344,14 @@ def _bare_question(text: str) -> str:
     return " ".join(re.sub(r"\(required\)|\*", " ", text or "", flags=re.I).strip(" :?.").split()).lower()
 
 
-def _answer_bank(prof: Profile, label: str, job: dict | None = None) -> Answer | None:
+def _answer_bank(prof: Profile, label: str, job: dict | None = None, common: bool = False) -> Answer | None:
+    """The person's own answers (answers.yaml, profile.yaml's answers:) to this question; with `common`, only the
+    common questions' (the question bank's), which resolve_field tries last."""
     company = norm((job or {}).get("company"))
     for item in _listed(prof.get("answers")):
         if not isinstance(item, dict) or not item.get("match") or item.get("answer") in (None, ""):
+            continue
+        if bool(item.get("bank")) != common:
             continue
         if item.get("question"):
             # answered in the Job Desk: that question, worded the same. "I agree" isn't "I agree
@@ -1696,7 +1700,24 @@ _DECLINE_BOX = re.compile(r"^\s*i (?:decline|prefer not|do not wish|don'?t wish)
 def resolve_field(field: dict, prof: Profile, job: dict | None = None, file_inputs_on_page: int = 1,
                   unmatched: list[Answer] | None = None) -> Answer | None:
     """The answer for a field, or None. A self-identification answer the profile gives but the
-    field's choices don't have is added to `unmatched`, so it can be said rather than skipped."""
+    field's choices don't have is added to `unmatched`, so it can be said rather than skipped.
+    The common questions' answers (the question bank's, in answers.yaml) come last: only where nothing
+    else answers, and never in a block about a past job or a school."""
+    ans = _resolve_field(field, prof, job, file_inputs_on_page, unmatched)
+    if ans is None and field.get("kind", "text") not in ("checkbox", "file", "password") \
+            and not _PAST_BLOCK.search(norm(field.get("section"))):
+        ans = _answer_bank(prof, _without_notes(field.get("label") or field.get("name") or ""), job, common=True)
+    return ans
+
+
+# A form's block about one past job or school, whose questions are that job's or school's, never the person's
+# answers in general ("Were you terminated?", "Which shift did you work?" in Work Experience 2)
+_PAST_BLOCK = re.compile(r"experience|employment|employer|work history|job \d|position \d|education|school|"
+                         r"college|universit|training|licen[cs]e|certification", re.I)
+
+
+def _resolve_field(field: dict, prof: Profile, job: dict | None = None, file_inputs_on_page: int = 1,
+                   unmatched: list[Answer] | None = None) -> Answer | None:
     job = job or {}
     kind = field.get("kind", "text")
     raw_label = _without_notes(field.get("label") or field.get("name") or "")

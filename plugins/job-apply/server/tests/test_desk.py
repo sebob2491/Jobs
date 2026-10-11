@@ -1437,3 +1437,38 @@ def test_the_page_lists_my_applications_folds_an_idle_side_and_closes_a_tip(srv,
             await desk.stop()
 
     run(go())
+
+
+def test_the_common_questions_are_asked_once_on_the_page_and_kept(srv, job_apply_home):
+    """The question bank's card: each unanswered question asked; a choice made is saved to answers.yaml with the
+    bank's pattern at once, and the card counts it; a choice that isn't one of its own is turned away."""
+    from playwright.async_api import async_playwright
+
+    desk = Desk(srv)
+    desk.applier.start = lambda: None
+    desk.search.update(status="done", at=time.time())
+    bank = desk.state()["bank"]
+    assert bank and all("match" not in q for q in bank)
+    assert "heard_about" not in [q["id"] for q in bank]  # (the tests' profile says how it heard of jobs)
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with _client(desk) as c:
+                r = await c.post("/api/bank", json={"id": "relocate", "answer": "Maybe"},
+                                 headers={"x-desk-token": desk.token})
+                assert r.status_code == 400
+            async with async_playwright() as pw:
+                browser = await pw.chromium.launch(**launch_options())
+                page = await browser.new_page()
+                await page.goto(desk.url)
+                await page.wait_for_selector("#bank-card:not([hidden]) select[data-bank=shift]")
+                await page.select_option("select[data-bank=shift]", "Nights")
+                await page.wait_for_function("document.getElementById('bank-count').textContent.startsWith('1 of')")
+                assert await page.eval_on_selector("#bank-given select", "s => s.value") == "Nights"
+                await browser.close()
+        finally:
+            await desk.stop()
+
+    run(go())
+    assert {q["id"]: q["answer"] for q in config.question_bank()}["shift"] == "Nights"
