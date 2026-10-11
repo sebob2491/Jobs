@@ -87,6 +87,18 @@ class Found:
     spam: bool = False  # it was in the Spam (Junk) folder, not the inbox
 
 
+# Providers that deliver "name+tag@" to "name@" (plus addressing): that inbox is signed in to as "name@"
+PLUS_ADDRESSING = {"gmail.com", "googlemail.com", "icloud.com", "me.com"}
+
+
+def login_address(address: str) -> str:
+    """The address an inbox is signed in to with: a profile's "name+jobs@gmail.com" is "name@gmail.com"'s."""
+    local, _, domain = address.strip().rpartition("@")
+    if local and domain.lower() in PLUS_ADDRESSING and "+" in local:
+        return f"{local.split('+', 1)[0]}@{domain}"
+    return address.strip()
+
+
 def imap_host(address: str) -> str | None:
     return IMAP_HOSTS.get(address.rsplit("@", 1)[-1].lower().strip()) if "@" in address else None
 

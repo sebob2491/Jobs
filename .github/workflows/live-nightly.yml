@@ -39,6 +39,11 @@ on:
         description: "Only these checks (comma-separated: pipeline, hr, search, accounts): a probe, not compared"
         required: false
         default: ""
+      plus:
+        description: "The accounts check with the test inbox's own +employer address at each employer (which sites take one): a probe, not compared"
+        type: boolean
+        required: false
+        default: false
 
 concurrency:
   group: live-nightly
@@ -58,10 +63,10 @@ jobs:
       matrix:
         include:
           - check: pipeline  # the Job Desk pipeline, semiconductor list
-            args: --pipeline --fake-passwords --parallel 4
+            args: --pipeline --fake-passwords --parallel 4 --fixtures
             minutes: 20
           - check: hr  # HR jobs, phoenix-metro list
-            args: --pipeline --fake-passwords --parallel 4 --lists phoenix-metro --role hr
+            args: --pipeline --fake-passwords --parallel 4 --lists phoenix-metro --role hr --fixtures
             minutes: 30
           # finance jobs, phoenix-metro list: paused (the owner's call, Oct 10). To resume, put back:
           # - check: finance
@@ -74,15 +79,15 @@ jobs:
           # machines at once, four groups each (a code-sending system's employers stay in one group: one inbox)
           - check: accounts
             slot: accounts-0
-            args: --pipeline --test-identity --everywhere --parallel 4 --machine 0/3
+            args: --pipeline --test-identity --everywhere --parallel 4 --machine 0/3 --fixtures
             minutes: 90
           - check: accounts
             slot: accounts-1
-            args: --pipeline --test-identity --everywhere --parallel 4 --machine 1/3
+            args: --pipeline --test-identity --everywhere --parallel 4 --machine 1/3 --fixtures
             minutes: 90
           - check: accounts
             slot: accounts-2
-            args: --pipeline --test-identity --everywhere --parallel 4 --machine 2/3
+            args: --pipeline --test-identity --everywhere --parallel 4 --machine 2/3 --fixtures
             minutes: 90
     defaults:
       run:
@@ -130,6 +135,7 @@ jobs:
           SLOT: ${{ matrix.slot || matrix.check }}
           ARGS: ${{ matrix.args }}
           COMPANIES: ${{ github.event.inputs.companies }}
+          PLUS: ${{ matrix.check == 'accounts' && github.event.inputs.plus == 'true' && '--plus' || '' }}
           # the test identity's inbox and passwords, for the accounts check only (its inbox's address
           # also for the other checks, at the employers that refuse example.com: live_identity.INBOX_AT):
           # live_smoke.py masks them in everything it prints and writes (and GitHub masks secrets in the log too)
@@ -140,7 +146,7 @@ jobs:
           set -o pipefail
           mkdir -p "live-$SLOT"
           # (ARGS unquoted: it's the matrix's own list of options)
-          uv run --frozen python scripts/live_smoke.py $ARGS ${COMPANIES:+--companies "$COMPANIES"} --out "live-$SLOT" 2>&1 \
+          uv run --frozen python scripts/live_smoke.py $ARGS $PLUS ${COMPANIES:+--companies "$COMPANIES"} --out "live-$SLOT" 2>&1 \
             | tee "live-$SLOT/run.log"
       - name: Note how it ended
         if: always()
@@ -162,7 +168,7 @@ jobs:
   compare:
     needs: check
     # (a probe of a few employers or checks isn't compared: the issue keeps the last full run's results)
-    if: always() && github.event.inputs.companies == '' && github.event.inputs.checks == ''
+    if: always() && github.event.inputs.companies == '' && github.event.inputs.checks == '' && github.event.inputs.plus != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     defaults:

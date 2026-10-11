@@ -511,8 +511,12 @@ class Desk:
                 "notes": item.get("notes") or [], "job_id": jid, "status": job["status"] if job else None,
                 "run": runs.get(jid) if jid is not None else None,
             })
+        tracked = t.list(limit=300)
+        # what the person applied to, and where each stands (the page's My applications)
+        applications = [{k: j.get(k) for k in ("id", "title", "company", "url", "status", "applied_at", "updated_at")}
+                        for j in tracked if j["status"] in APPLICATION_STATUSES]
         # jobs added another way (Claude from Indeed or LinkedIn, or by hand) and not finished yet
-        for brief in t.list(limit=200):
+        for brief in tracked[:200]:
             if brief["id"] in seen or brief["status"] not in ("saved", "in_progress", "ready_to_submit"):
                 continue
             job = t.get(brief["id"]) or brief
@@ -550,11 +554,16 @@ class Desk:
             "search": self.search,
             "listings": rows,
             "others": others,
+            "applications": applications,
             "current": self.applier.current,
             "queued": [jid for kind, jid in self.applier.tasks if kind == "apply"],
             "counts": t.counts(),
             "notes": report.notes_count(),  # notes on the desk's stops, waiting to be filed
         }
+
+
+# a job the person sent in (or is about to): listed under My applications with where it stands
+APPLICATION_STATUSES = ("ready_to_submit", "applied", "interviewing", "offer", "rejected", "withdrawn")
 
 
 def _first_line(e: BaseException) -> str:

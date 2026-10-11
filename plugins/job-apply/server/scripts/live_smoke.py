@@ -143,6 +143,7 @@ ROLE = "technician"  # the run's role (--role)
 # (The test identity keeps its own, for the accounts check: TEST_IDENTITY.md says its address can show there)
 INBOX_IN_PROFILE = False
 TEST_IDENTITY = False  # --test-identity: the test identity applies, in place of the throwaway profile
+PLUS = False  # --plus: with its inbox's own "+employer" address at each employer (which sites take one?)
 ROLE_AT: dict[str, str] = {}  # with it, each of its employers' role (test_identity_employers.yaml, or --everywhere's)
 EMPLOYERS: list[dict[str, str]] = []  # with it, its employers (name, list, role, system, why)
 MAIL_WAIT = 4 * 60  # with it, how long a run waits for the desk to read an emailed code or link
@@ -165,8 +166,9 @@ def use_role(name: str, email: str | None = None) -> None:
     role = ROLES[name]
     QUERY_AZ, QUERY_ANY = role["query_az"], role["query_any"]
     profile = {**FAKE_PROFILE, **{k: role[k] for k in ("work_history", "education_history", "education") if k in role}}
-    if TEST_IDENTITY:  # its name and inbox
-        profile = live_identity.identity_profile(profile, live_identity.credentials(os.environ)[0],
+    if TEST_IDENTITY:  # its name and inbox (with --plus, `email` is the employer: the inbox's "+employer" address)
+        inbox = live_identity.credentials(os.environ)[0]
+        profile = live_identity.identity_profile(profile, live_identity.plus_address(inbox, email) if email else inbox,
                                                  _HOME / live_identity.RESUME_NAME)
     elif email:
         profile["personal"] = {**profile["personal"], "email": email}
@@ -211,6 +213,22 @@ def mask_broad_email() -> None:
         _mask = live_identity.masker(email, [])
         sys.stdout = live_identity.MaskedStream(sys.stdout, _mask)
         sys.stderr = live_identity.MaskedStream(sys.stderr, _mask)
+
+
+FIXTURE_DIR = Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "live"
+
+
+def make_fixture(snapshot: Path, name: str, out: Path) -> str:
+    """A page the run stopped on, scrubbed (job_apply.fixtures) into the tests' live fixtures, and a copy in
+    the run's own folder (out/fixtures), so a run on GitHub carries them in its artifact for
+    nightly_summary.py --import-fixtures. Its name."""
+    written = convert(snapshot, name, FIXTURE_DIR)
+    (out / "fixtures").mkdir(parents=True, exist_ok=True)
+    for path in written:
+        # the test identity's email and passwords, masked here too (the scrubber takes out the profile's)
+        path.write_text(_mask(path.read_text(encoding="utf-8")), encoding="utf-8")
+        shutil.copy2(path, out / "fixtures" / path.name)
+    return name
 
 
 def _save(path: Path, text: str) -> None:
@@ -339,9 +357,7 @@ async def check_company(company: dict[str, Any], out: Path, fixtures: bool, rec:
         live_identity.drop_images(dest)
     rec["snapshot_kb"] = sum(p.stat().st_size for p in dest.iterdir()) // 1024
     if fixtures and form["fields"]:
-        fixture_dir = Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "live"
-        convert(dest, f"live-{slug(company['name'])}", fixture_dir)
-        rec["fixture"] = f"live-{slug(company['name'])}"
+        rec["fixture"] = make_fixture(dest, f"live-{slug(company['name'])}", out)
 
 
 # Career pages whose job data comes from a call we haven't pinned down yet: record what
@@ -842,6 +858,9 @@ async def main() -> int:
                                                 "(default: semiconductor-az; e.g. phoenix-metro,semiconductor-az)")
     ap.add_argument("--role", choices=sorted(ROLES), default="technician",
                     help="the kind of job to look for, with a fake applicant to match (default: technician)")
+    ap.add_argument("--plus", action="store_true",
+                    help="with --test-identity: its inbox's own \"+employer\" address at each employer, to see which "
+                         "sites take one (a probe: Gmail delivers them all to the one inbox)")
     ap.add_argument("--everywhere", action="store_true",
                     help="with --test-identity: at every employer on the semiconductor-az (technician jobs) and "
                          "phoenix-metro (HR jobs) lists, not only test_identity_employers.yaml's (the owner's call, "
@@ -862,6 +881,9 @@ async def main() -> int:
     if args.everywhere and not args.test_identity:
         print("--everywhere goes with --test-identity. Nothing was run.", file=sys.stderr)
         return 2
+    if args.plus and not args.test_identity:
+        print("--plus goes with --test-identity. Nothing was run.", file=sys.stderr)
+        return 2
     if args.test_identity:  # before anything else: without its inbox and passwords, nothing runs
         problem = live_identity.env_problem(os.environ) if args.pipeline else \
             "--test-identity goes with --pipeline. Nothing was run."
@@ -871,6 +893,8 @@ async def main() -> int:
     args.out.mkdir(parents=True, exist_ok=True)
     if args.test_identity:
         EMPLOYERS[:] = start_test_identity(announce=not args.shard, everywhere=args.everywhere)
+        global PLUS
+        PLUS = args.plus
     else:
         mask_broad_email()
     use_role(args.role)
@@ -1340,9 +1364,7 @@ async def check_pipeline(company: dict[str, Any], out: Path, rec: dict[str, Any]
                 live_identity.drop_images(dest)
             if fixtures and (rec.get("rounds") or [{}])[-1].get("need") in ("questions", "stuck"):
                 # the page it stopped on, as a test fixture (the fake applicant's details only)
-                fixture_dir = Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "live"
-                convert(dest, f"pipeline-{slug(company['name'])}", fixture_dir)
-                rec["fixture"] = f"pipeline-{slug(company['name'])}"
+                rec["fixture"] = make_fixture(dest, f"pipeline-{slug(company['name'])}", out)
         except Exception as e:  # noqa: BLE001 - the record matters more than the snapshot
             rec["snapshot_error"] = f"{type(e).__name__}: {str(e)[:200]}"
         if run is not None and (rec.get("rounds") or [{}])[-1].get("status") != "ready":
@@ -1388,7 +1410,7 @@ async def pipeline_main(companies: list[dict[str, Any]], out: Path, fixtures: bo
         started = time.time()
         rec: dict[str, Any] = {"company": company["name"]}
         if TEST_IDENTITY:  # each of its employers with its own role: its jobs, and a background to match
-            use_role(ROLE_AT.get(company["name"], "technician"))
+            use_role(ROLE_AT.get(company["name"], "technician"), company["name"] if PLUS else None)
         else:  # the test inbox's address where a site refuses example.com, else the run's own
             use_role(ROLE, live_identity.broad_email(company["name"], os.environ))
         try:
@@ -1428,7 +1450,7 @@ async def parallel_main(args: argparse.Namespace) -> int:
               *(["--pipeline"] if args.pipeline else []),
               *(["--fake-passwords"] if args.fake_passwords and not args.test_identity else []),
               *(["--test-identity"] if args.test_identity else []),  # (its inbox and passwords: in the environment)
-              *(["--everywhere"] if args.everywhere else []),
+              *(["--everywhere"] if args.everywhere else []), *(["--plus"] if args.plus else []),
               *(["--machine", args.machine] if args.machine else []),
               *(["--lists", args.lists] if args.lists else []), "--role", args.role]
     children = [await asyncio.create_subprocess_exec(

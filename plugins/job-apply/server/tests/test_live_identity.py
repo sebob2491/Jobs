@@ -406,3 +406,24 @@ def test_live_smoke_prints_the_inbox_report_as_one_line(tmp_path):
         "company": "Edward Jones", "senders_allowed": ["brassring.com"], "paused": 1000.0, "messages": [],
         "mail_problem": "it said something",
         "desk": {"looks": 3, "last": "looked for a code: none (6 code box(es) on the page)"}}
+
+
+def test_the_plus_probe_applies_with_the_inboxs_own_plus_address_and_nothing_else(monkeypatch):
+    """--plus (which sites take a "+tag" address?): the test identity applies as its inbox's own
+    "name+employer@", which Gmail delivers to the one inbox. Only that inbox's plus addresses count as the
+    test identity; the inbox is signed in to without the tag; and the plus address is masked like the rest."""
+    plus = li.plus_address(EMAIL, "Ultra Clean Holdings (UCT)")
+    assert plus == "jobdesk_test_not_real+ultra-clean-holdings-uct@gmail.com"
+    for key, value in {**ENV, "JOB_APPLY_NEVER_SUBMIT": "1", li.IDENTITY_SWITCH: "1"}.items():
+        monkeypatch.setenv(key, value)
+    assert config.live_test_identity(plus) and config.live_test_identity(EMAIL.upper())
+    for other in ("someone+jobdesk_test_not_real@gmail.com", "jobdesk_test_not_real+x@yahoo.com",
+                  "jobdesk_test_not_realx+a@gmail.com", "jobdesk_test_not_real+a+b@gmail.com", "x" + EMAIL):
+        assert not config.live_test_identity(other), other
+    monkeypatch.delenv("JOB_APPLY_NEVER_SUBMIT")
+    assert not config.live_test_identity(plus)  # (never without the hard switch)
+    assert mailbox.login_address(plus) == EMAIL and mailbox.login_address("a+b@example.com") == "a+b@example.com"
+    mask = li.masker(EMAIL, [])
+    assert "jobdesk_test_not_real" not in mask(f"signed up as {plus} and {plus.upper()}").lower()
+    short = li.masker("ab@gmail.com", [])  # (an inbox with a short name: its plus addresses too)
+    assert short("as ab+kla@gmail.com, then AB+X@GMAIL.COM") == f"as {li.EMAIL_MASK}, then {li.EMAIL_MASK}"

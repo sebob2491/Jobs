@@ -80,6 +80,14 @@ def _env_key(name: str) -> str:
     return "JOB_APPLY_SECRET_" + re.sub(r"[^A-Z0-9]", "_", name.upper())  # (as config.get_secret spells it)
 
 
+def plus_address(email: str, employer: str) -> str:
+    """The test inbox's own address for one employer (Gmail delivers "name+tag@" to "name@"): the --plus
+    probe's, to see which sites take one."""
+    local, _, domain = email.strip().partition("@")
+    tag = re.sub(r"[^a-z0-9]+", "-", employer.lower()).strip("-")[:40] or "x"
+    return f"{local}+{tag}@{domain}"
+
+
 def identity_profile(base: Mapping[str, Any], email: str, resume: Path | str) -> dict[str, Any]:
     """The fake profile as the test identity: its name and inbox, the fake 555 phone and the fake
     profile's address, the test resume, and accounts and notices on (practice mode stays)."""
@@ -186,7 +194,16 @@ def masker(email: str, passwords: Iterable[str]) -> Callable[[str], str]:
     if not masks:
         return lambda text: text
     found = re.compile("|".join(re.escape(v) for v in sorted(masks, key=len, reverse=True)), re.I)
-    return lambda text: found.sub(lambda m: masks[m.group().lower()], text)
+    plus = None
+    if email and "@" in email:  # and the inbox's own "+tag" addresses (--plus), however short its name
+        local, _, domain = email.strip().partition("@")
+        plus = re.compile(rf"{re.escape(local)}\+[a-z0-9-]+@{re.escape(domain)}", re.I)
+
+    def mask(text: str) -> str:
+        if plus is not None:
+            text = plus.sub(EMAIL_MASK, text)
+        return found.sub(lambda m: masks[m.group().lower()], text)
+    return mask
 
 
 class MaskedStream:

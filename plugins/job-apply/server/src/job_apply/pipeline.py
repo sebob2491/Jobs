@@ -994,7 +994,7 @@ class Applier:
             self.mail_problem = (f"The desk can't read mail for {address.rsplit('@', 1)[1]} addresses, so it can't "
                                  "watch your inbox for sign-up codes.")
             return None
-        return address, password
+        return mailbox.login_address(address), password
 
     def _mail_senders(self, run: Run) -> set[str]:
         """Who may have sent this job's code or link: the job site it's waiting on, the

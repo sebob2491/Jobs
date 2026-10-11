@@ -411,6 +411,11 @@ def clean_html(raw: str, secrets: list[str], frame_map: dict[str, str] | None = 
     return str(soup)
 
 
+# Buttons a fixture's expectation keeps: the ones that move an application on, not a site's navigation
+_STEP_WORDS = re.compile(r"\b(next|continue|submit|apply|sign ?in|log ?in|create|account|save|accept|agree|"
+                         r"acknowledge|read|upload|review|start)\b", re.I)
+
+
 def convert(snapshot: Path, name: str, out_dir: Path = DEFAULT_DIR, prof: Profile | None = None,
             secrets: list[str] | None = None) -> list[Path]:
     """Scrub a saved snapshot into `out_dir`: `{name}.html`, its frames, and `{name}.expect.json`.
@@ -441,6 +446,10 @@ def convert(snapshot: Path, name: str, out_dir: Path = DEFAULT_DIR, prof: Profil
             for f in meta.get("fields", [])
             if f.get("label")
         ],
+        # the buttons that move an application on, as the form reader read them (a privacy statement's link
+        # Amkor's site drew longer than it took a button's words to be went unread, live check Oct 11)
+        "actions": sorted({str(a.get("text") or "").strip() for a in meta.get("actions", [])
+                           if _STEP_WORDS.search(str(a.get("text") or "")) and len(str(a.get("text") or "")) <= 120}),
     }
     expect_path = out_dir / f"{name}.expect.json"
     # written with its letters as they are ("José", not "Jos\\u00e9"), so the redaction finds them

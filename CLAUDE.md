@@ -59,10 +59,14 @@ the scrubber (`python -m job_apply.fixtures`) before they become test fixtures.
   - Run live checks from a worktree of their own (`git worktree add ../Jobs-live origin/main`): a branch
     switch or cherry-pick in the main checkout changes the scripts under a running check.
 - The nightly's results: `uv run python scripts/nightly_summary.py` (counts per check), `--check accounts`
-  (one line per employer), `--changes` (the last run's changes), `--tables` (Where It Stands' employer
+  (one line per employer), `--changes` (the last run's changes, sorted: "look at" first, likely the desk's; then a site's or the
+  rules'; then the better), `--tables` (Where It Stands' employer
   tables), `--artifacts <zip or folder> --companies "A,B"` (each employer's rounds, questions with their
   choices, and the page where it stopped). Use it instead of reading the issue's body or a run's logs.
   A run's artifact downloads with the GitHub tools' artifact link and curl.
+  `--import-fixtures <zip or folder> [--companies "A,B"] [--replace]` copies the scrubbed pages a run
+  stopped on into `tests/fixtures/live` (one already there stays unless replaced), so the offline tests
+  check them; look each over before committing it (the repo is public).
 - A probe of a few employers on GitHub (where the test identity's secrets are): run the live-nightly
   workflow by hand with `companies` (and `checks`, e.g. `accounts`). It runs only those, in a few minutes,
   and isn't compared or written to the issue: read its artifacts with `nightly_summary.py --artifacts`.

@@ -175,10 +175,15 @@ LIVE_TEST_EMAIL_ENV = "LIVE_TEST_EMAIL"
 def live_test_identity(email: Any) -> bool:
     """Is this profile the live check's test identity? Only with JOB_APPLY_LIVE_TEST_IDENTITY=1
     and the hard switch JOB_APPLY_NEVER_SUBMIT=1 in the environment, and the profile's email
-    being the environment's LIVE_TEST_EMAIL: a person's own profile never turns it on."""
+    being the environment's LIVE_TEST_EMAIL (or that inbox's own "+tag" address, which Gmail delivers to it:
+    the live check's --plus probe): a person's own profile never turns it on."""
     wanted = os.environ.get(LIVE_TEST_EMAIL_ENV, "").strip().lower()
-    return (os.environ.get(LIVE_TEST_IDENTITY_ENV) == "1" and never_submit() and "@" in wanted
-            and isinstance(email, str) and email.strip().lower() == wanted)
+    if not (os.environ.get(LIVE_TEST_IDENTITY_ENV) == "1" and never_submit() and "@" in wanted
+            and isinstance(email, str)):
+        return False
+    given = email.strip().lower()
+    local, _, domain = wanted.partition("@")
+    return given == wanted or re.fullmatch(rf"{re.escape(local)}\+[a-z0-9-]{{1,40}}@{re.escape(domain)}", given) is not None
 
 
 # Account handling's default, where a profile doesn't say (settings.manage_accounts)

@@ -17,12 +17,14 @@
     --bad: #ff7b72; --bad-bg: #3a1716; --info-bg: #15223a; --chip: #232a33; --shadow: none; }
 }
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.45 var(--body); }
 header { position: sticky; top: 0; z-index: 5; background: var(--surface); border-bottom: 1px solid var(--line); }
 .bar { max-width: 1240px; margin: 0 auto; padding: 12px 16px; display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; }
 h1 { font-size: 18px; margin: 0; }
 .who { color: var(--muted); font-size: 14px; }
 .spacer { flex: 1; }
+.links { display: inline-flex; gap: 12px; }
 .pill { display: inline-block; font-size: 12px; font-weight: 600; padding: 3px 9px; border-radius: 999px; background: var(--chip); color: var(--muted); white-space: nowrap; }
 .pill.good { background: var(--good-bg); color: var(--good); }
 .pill.warn { background: var(--warn-bg); color: var(--warn); }
@@ -50,7 +52,7 @@ main { max-width: 1240px; margin: 0 auto; padding: 16px; display: grid; grid-tem
   main { grid-template-columns: minmax(0, 1fr); }
   main > .side { display: contents; }
   #notices { order: -4; }
-  [aria-labelledby="needs-h"] { order: -3; }
+  [aria-labelledby="needs-h"], [aria-labelledby="idle-h"] { order: -3; }
   [aria-labelledby="work-h"] { order: -2; }
   [aria-labelledby="done-h"] { order: -1; }
   [aria-labelledby="pw-h"] { order: 1; }
@@ -63,6 +65,9 @@ section.card { background: var(--surface); border: 1px solid var(--line); border
 .tabs button[aria-pressed="true"] { background: var(--chip); border-color: var(--muted); }
 .notice { margin: 0 0 16px; padding: 10px 14px; border-radius: 10px; background: var(--warn-bg); color: var(--text); grid-column: 1 / -1; }
 .notice code { font-size: 13px; }
+.notice.tip { display: flex; align-items: flex-start; gap: 12px; }
+.notice.tip > span { flex: 1; }
+.notice .close { color: var(--muted); font-size: 16px; line-height: 1; }
 .waiting { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin: 0; padding: 12px 14px; border-radius: 10px;
   background: var(--warn-bg); border: 1px solid var(--warn); grid-column: 1 / -1; }
 .waiting strong { color: var(--warn); }
@@ -76,6 +81,8 @@ ul.rows { list-style: none; margin: 0; padding: 0; }
 .row:first-child { border-top: 0; }
 @media (max-width: 600px) { .row { grid-template-columns: auto auto minmax(0, 1fr); } .row > div:last-child { grid-column: 3; } }
 .row.done { opacity: .6; }
+.row.app, .row.app:first-child { grid-template-columns: minmax(0, 1fr) auto; }
+@media (max-width: 600px) { .row.app > div:last-child { grid-column: auto; } }
 .row input[type=checkbox] { margin-top: 4px; width: 17px; height: 17px; }
 .row .state { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
 .score { min-width: 38px; text-align: center; font-weight: 700; font-size: 14px; padding: 3px 0; border-radius: 8px; background: var(--chip); }
@@ -112,6 +119,8 @@ ul.rows { list-style: none; margin: 0; padding: 0; }
 .pw-row { display: flex; gap: 8px; margin-top: 8px; }
 /* (width 0: a choice as long as "SuccessFactors: TSMC Arizona, ..." doesn't widen the page) */
 .pw-row select { flex: 1; min-width: 0; width: 0; font: inherit; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--text); }
+.pw details { padding: 8px 0 0; border-top: 0; }
+.pw details p { margin: 6px 0 0; }
 .pills { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 0; }
 .pw-row input { flex: 1; min-width: 0; font: inherit; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--text); }
 details { padding: 10px 14px; border-top: 1px solid var(--line); font-size: 13px; color: var(--muted); }
@@ -143,26 +152,34 @@ footer { max-width: 1240px; margin: 0 auto; padding: 0 16px 24px; color: var(--m
       <div class="tabs" role="group" aria-label="Which openings">
         <button data-filter="recommended" aria-pressed="true">Recommended</button>
         <button data-filter="all" aria-pressed="false">All</button>
+        <button data-filter="mine" aria-pressed="false">My applications <span id="mine-count"></span></button>
       </div>
       <span class="spacer"></span>
-      <button class="link" data-act="select-recommended">Select recommended</button>
-      <button class="link" data-act="select-none">Clear</button>
+      <span class="openings-only links"><button class="link" data-act="select-recommended">Select recommended</button>
+      <button class="link" data-act="select-none">Clear</button></span>
     </div>
-    <form class="addbar" id="add-form">
+    <form class="addbar openings-only" id="add-form">
       <input type="text" id="add-links" placeholder="Paste job links: LinkedIn, Indeed or a company site" aria-label="Job links to add" autocomplete="off">
       <button type="submit" id="add-btn">Add</button>
     </form>
-    <div class="applybar">
+    <div class="applybar openings-only">
       <button class="primary" id="apply" data-act="apply" disabled>Apply to selected</button>
+      <span class="hint" id="apply-hint"></span>
       <label><input type="checkbox" id="auto"> Submit for me when nothing needs me</label>
       <span class="hint" id="auto-hint"></span>
       <label><input type="checkbox" id="tailor"> Tailor my resume for each job</label>
       <span class="hint" id="tailor-hint"></span>
     </div>
     <ul class="rows" id="rows"></ul>
-    <div id="skipped-sites"></div>
+    <div id="skipped-sites" class="openings-only"></div>
   </section>
   <div class="side">
+    <!-- while nothing needs the person, nothing's being filled and nothing's done this visit: one card for all three -->
+    <section class="card" aria-labelledby="idle-h" id="idle-card" hidden>
+      <div class="card-head"><h2 id="idle-h">Nothing needs you</h2></div>
+      <p class="small" style="margin: 12px 14px 0">The desk is idle. Tick openings and press Apply, and what it's working on and what needs you show up here.</p>
+      <div class="counts" id="idle-counts"></div>
+    </section>
     <section class="card" aria-labelledby="needs-h">
       <div class="card-head"><h2 id="needs-h">Needs you</h2><span class="pill" id="needs-count">0</span></div>
       <div id="needs"></div>
@@ -177,14 +194,10 @@ footer { max-width: 1240px; margin: 0 auto; padding: 0 16px 24px; color: var(--m
       <div class="counts" id="counts"></div>
     </section>
     <section class="card" aria-labelledby="pw-h">
-      <div class="card-head"><h2 id="pw-h">Site passwords</h2></div>
+      <div class="card-head"><h2 id="pw-h">Site passwords</h2><span class="pill" id="pw-count"></span></div>
       <form class="pw" id="pw-form" autocomplete="off">
-        <p class="small">Each employer has its own account on its job site. Save one password for a job system and the
-          desk creates your account at each of that system's employers (agreeing to its terms for you) and signs you in,
-          on that system's own sites only; when a site turns the password down, it resets that account's password to this
-          one through the site's "Forgot password" email (unless your profile says <code>manage_accounts: false</code>).
-          It stays on this computer, in <code>~/.job-apply/secrets.yaml</code>, and Claude never sees it. Use passwords you
-          don't use anywhere else.</p>
+        <p class="small">One password per job system: the desk makes your account at each of its employers and signs
+          you in. It stays on this computer; Claude never sees it.</p>
         <div class="pw-row">
           <select id="pw-site" aria-label="Job system">
             <option value="workday">Workday: Intel, Applied, KLA and 10 more</option>
@@ -197,13 +210,21 @@ footer { max-width: 1240px; margin: 0 auto; padding: 0 16px 24px; color: var(--m
             <option value="email">Your email: an app password, to read sign-up codes and password resets</option>
           </select>
         </div>
-        <p class="small">Your email: with an app password for the address in your profile (for Gmail, make one at
-          <a href="https://myaccount.google.com/apppasswords" target="_blank" rel="noopener">myaccount.google.com/apppasswords</a>;
-          it needs 2-Step Verification), a job waiting on an emailed code or link gets it from your inbox: only mail from
-          that job's site that arrived after it began waiting, read without marking anything read.</p>
         <div class="pw-row"><input type="password" id="pw" autocomplete="new-password" aria-label="Password">
           <button class="primary" type="submit">Save</button></div>
         <p class="pills" id="pw-state"></p>
+        <details><summary>How this works</summary>
+        <p>Each employer has its own account on its job site. Save one password for a job system and the
+          desk creates your account at each of that system's employers (agreeing to its terms for you) and signs you in,
+          on that system's own sites only; when a site turns the password down, it resets that account's password to this
+          one through the site's "Forgot password" email (unless your profile says <code>manage_accounts: false</code>).
+          It stays on this computer, in <code>~/.job-apply/secrets.yaml</code>, and Claude never sees it. Use passwords you
+          don't use anywhere else.</p>
+        <p>Your email: with an app password for the address in your profile (for Gmail, make one at
+          <a href="https://myaccount.google.com/apppasswords" target="_blank" rel="noopener">myaccount.google.com/apppasswords</a>;
+          it needs 2-Step Verification), a job waiting on an emailed code or link gets it from your inbox: only mail from
+          that job's site that arrived after it began waiting, read without marking anything read.</p>
+        </details>
       </form>
     </section>
   </div>
@@ -278,6 +299,15 @@ function rememberSeen(urls) {
     localStorage.setItem(SEEN_KEY, JSON.stringify([...all].slice(-3000)));
   } catch (e) {}
 }
+// Tips the person closed, kept in this browser only: a tip comes back once what it says changes
+const DISMISSED_KEY = "desk-dismissed";
+function dismissed() {
+  try { return new Set(JSON.parse(localStorage.getItem(DISMISSED_KEY) || "[]")); } catch (e) { return new Set(); }
+}
+function dismiss(key) {
+  try { localStorage.setItem(DISMISSED_KEY, JSON.stringify([...dismissed(), key].slice(-50))); } catch (e) {}
+}
+
 const isNew = (r) => !firstVisit && seenBefore && !seenBefore.has(r.url) && !r.run && !DONE.has(r.status);
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
@@ -385,10 +415,30 @@ function statusPill(row) {
   return text ? `<span class="pill ${cls}">${esc(text)}</span>` : "";
 }
 
+const RECOMMEND_AT = 60;  // recommend.RECOMMEND_AT
 function scoreClass(s) { return s >= 75 ? "s4" : s >= 60 ? "s3" : s >= 40 ? "s2" : "s1"; }
+
+const shownDay = (t) => String(t || "").slice(0, 10);
+
+// My applications: each job sent in (or filled and waiting on its review page), newest first, with where it stands
+function renderApps() {
+  const entries = (state.applications || []).map((j) => {
+    const [text, cls] = STATUS[j.status] || [j.status, ""];
+    const when = j.applied_at ? `applied ${esc(shownDay(j.applied_at))}` : `updated ${esc(shownDay(j.updated_at))}`;
+    return {key: "app" + j.id, html: `<li class="row app">
+      <div>${link(j.url, esc(j.title || "Untitled job"), "title")}<div class="meta">${esc(j.company || "")} · <span class="nowrap">${when}</span></div></div>
+      <div class="state"><span class="pill ${cls}">${esc(text)}</span></div></li>`};
+  });
+  if (!entries.length) entries.push({key: "empty", html: `<li class="empty">No applications yet. Each one you send in shows up here with where it stands.</li>`});
+  patch($("rows"), entries);
+}
 
 function renderRows() {
   if (!state) return;
+  const mine = filter === "mine";
+  document.querySelectorAll(".openings-only").forEach((el) => { el.hidden = mine; });
+  $("mine-count").textContent = (state.applications || []).length ? `(${state.applications.length})` : "";
+  if (mine) { renderApps(); return; }
   // links the person added (here, or through Claude) always show: they picked those themselves
   const rows = (state.listings || []).filter((r) => filter === "all" || r.added || (r.fit && r.fit.recommended) || r.run);
   const entries = rows.map((r) => {
@@ -405,9 +455,10 @@ function renderRows() {
       ? `<button class="link" data-job="${r.job_id}" data-job-act="unskip" title="Put this job back where it was before you skipped it">Undo</button>` : "";
     return {key: r.url, html: `<li class="row ${DONE.has(r.status) ? "done" : ""}">
       <input type="checkbox" data-pick="${esc(r.url)}" ${checked} ${done ? "disabled" : ""} aria-label="Select ${esc(r.title)}">
-      <span class="score ${scoreClass(fit.score)}" title="Fit score">${esc(fit.score)}</span>
+      <span class="score ${scoreClass(fit.score)}" title="How well it fits your profile, out of 100 (${RECOMMEND_AT} or more is recommended). The tags below say why.">${esc(fit.score)}</span>
       <div>${link(r.url, esc(r.title), "title")}
-        <div class="meta">${esc(r.company)} · <span title="${esc(r.location)}">${esc(places(r.location) || "location not given")}</span>${r.posted ? ` · <span class="nowrap">${esc(shownDate(r.posted))}</span>` : ""}</div>
+        <div class="meta">${[esc(r.company), r.location ? `<span title="${esc(r.location)}">${esc(places(r.location))}</span>` : "",
+          r.posted ? `<span class="nowrap">${esc(shownDate(r.posted))}</span>` : ""].filter(Boolean).join(" · ")}</div>
         <div class="chips">${chips}</div></div>
       <div class="state">${statusPill(r)}${undo}</div></li>`};
   });
@@ -421,6 +472,7 @@ function renderRows() {
   const n = [...selected].filter(selectable).length;
   $("apply").disabled = n === 0;
   $("apply").textContent = n ? `Apply to ${n} selected` : "Apply to selected";
+  $("apply-hint").textContent = n || !rows.some((r) => selectable(r.url)) ? "" : "Tick the jobs to apply to.";
 }
 
 function question(jobId, q, i, repeated = false) {
@@ -522,8 +574,13 @@ function renderSide() {
   if (!doneEntries.length) doneEntries.push({key: "none", html: `<div class="empty">Nothing yet.</div>`});
   patch($("done"), doneEntries);
   const c = state.counts || {};
-  $("counts").innerHTML = ["applied", "ready_to_submit", "interviewing", "offer"].filter((k) => c[k])
+  const counts = ["applied", "ready_to_submit", "interviewing", "offer"].filter((k) => c[k])
     .map((k) => `<span class="pill ${STATUS[k][1]}">${esc(STATUS[k][0])}: ${c[k]}</span>`).join("") || `<span class="small">No applications tracked yet.</span>`;
+  if ($("counts").dataset.html !== counts) { $("counts").innerHTML = counts; $("idle-counts").innerHTML = counts; $("counts").dataset.html = counts; }
+  // nothing in any of the three: one short card instead of three saying "nothing"
+  const idle = !needs.length && !working.length && !queued && !done.length;
+  $("idle-card").hidden = !idle;
+  for (const id of ["needs-h", "work-h", "done-h"]) $(id).closest("section").hidden = idle;
 }
 
 function renderHeader() {
@@ -557,6 +614,9 @@ function renderHeader() {
     pick.value = [...pick.options].some((o) => o.value === chosen) ? chosen : pick.options[0].value;
     pick.dataset.named = named;
   }
+  const pws = Object.entries(state.passwords || {});
+  $("pw-count").textContent = `${pws.filter(([, saved]) => saved).length} of ${pws.length} saved`;
+  $("pw-count").className = "pill " + (pws.some(([, saved]) => saved) ? "good" : "");
   $("pw-state").innerHTML = Object.entries(state.passwords || {}).map(([site, saved]) =>
     `<span class="pill ${saved ? "good" : ""}" data-site="${esc(site)}">${esc(systems[site] || site)}: ${saved ? "saved" : "not saved"}</span>`).join(" ");
   const notes = [];
@@ -570,9 +630,9 @@ function renderHeader() {
   if (state.tailoring) notes.push({cls: "waiting", html: `<strong>${state.tailoring} job${state.tailoring === 1 ? "" : "s"} waiting for a tailored resume.</strong>
     <span>In Claude Code, say \u201ctailor my resumes\u201d. Each job carries on as soon as its resume is ready.</span>`});
   if (p.missing && p.missing.length) notes.push({cls: "notice", html: `Your profile still needs: ${esc(inWords(p.missing.map(profileField)))}. Run <code>/job-apply:setup</code> in Claude Code, or edit <code>${esc(p.path)}</code>.`});
-  if (p.gaps && p.gaps.length) notes.push({cls: "notice", html: `Fewer stops: your profile could also hold ${esc(inWords(p.gaps.map(profileField)))}.`});
+  if (p.gaps && p.gaps.length) notes.push({cls: "notice", tip: "gaps:" + p.gaps.join(","), html: `Fewer stops: your profile could also hold ${esc(inWords(p.gaps.map(profileField)))}.`});
   // on by default since 0.3.67: said until the profile says either way
-  if (s.manage_accounts && !s.manage_accounts_chosen) notes.push({cls: "notice", html: `The desk now handles your job-site
+  if (s.manage_accounts && !s.manage_accounts_chosen) notes.push({cls: "notice", tip: "accounts", html: `The desk now handles your job-site
     accounts: with a password saved below, it creates the account at each employer (agreeing to its terms for you) and, when
     a site turns your saved password down, resets it to that one through the site's "Forgot password" email. To keep doing
     these yourself, add <code>manage_accounts: false</code> under <code>settings:</code> in <code>${esc(p.path)}</code>;
@@ -585,7 +645,10 @@ function renderHeader() {
   if (state.mail_problem) notes.push({cls: "notice", html: esc(state.mail_problem)});
   if (state.answers_problem) notes.push({cls: "notice", html: `Your saved answers aren't being used: ${esc(state.answers_problem)}.`});
   if (!token) notes.push({cls: "notice", html: "This page needs the address the desk printed (it carries a key). Open it from Claude with “open the job desk”."});
-  patch($("notices"), notes.map((n) => ({key: n.cls + ":" + n.html, html: `<p class="${n.cls}">${n.html}</p>`})));
+  const closed = dismissed();
+  patch($("notices"), notes.filter((n) => !closed.has(n.tip)).map((n) => ({key: n.cls + ":" + n.html, html: n.tip
+    ? `<p class="${n.cls} tip"><span>${n.html}</span><button class="link close" data-act="dismiss" data-tip="${esc(n.tip)}" title="Close this tip" aria-label="Close this tip">✕</button></p>`
+    : `<p class="${n.cls}">${n.html}</p>`})));
   const skipped = sr.browser_only || [], errs = Object.entries(sr.errors || {});
   const sites = skipped.length || errs.length ? `<details><summary>Not searched automatically (${skipped.length + errs.length})</summary>
     ${skipped.map((b) => `<div>${esc(b.company)}: ${link(b.careers_url, "search their site")}</div>`).join("")}
@@ -755,6 +818,7 @@ document.addEventListener("click", (e) => {
   const a = t.dataset.act, job = t.dataset.job, jobAct = t.dataset.jobAct;
   if (!state && (a || jobAct)) return;  // the page hasn't loaded yet
   if (a === "find") act(() => api("/api/search", {}));
+  if (a === "dismiss") { dismiss(t.dataset.tip); renderHeader(); }
   if (a === "report-close") $("report").close();
   if (a === "notes") {
     act(async () => {
