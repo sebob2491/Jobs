@@ -303,7 +303,7 @@ def search(address: str, password: str, since: float, allowed: set[str], want: s
         if found is None:
             try:
                 junk = junk_folder(box)
-                found = _scan(box, quoted(junk), *args) if junk else None
+                found = _scan(box, quoted(junk), *args, signed_only=True) if junk else None
             except imaplib.IMAP4.error:  # a Spam folder that won't open: the inbox's answer (none) stands
                 found = None
             if found is not None:
@@ -315,9 +315,25 @@ def search(address: str, password: str, since: float, allowed: set[str], want: s
         logout(box)
 
 
+def signed_by_sender(head: email.message.Message) -> bool:
+    """Did the mail service find this message really sent from its From address's domain? Its
+    Authentication-Results say dmarc=pass, or dkim=pass for that domain (header.d / header.i)."""
+    domain = email.utils.parseaddr(str(head.get("From") or ""))[1].rsplit("@", 1)[-1].lower()
+    said = " ".join(str(v) for v in head.get_all("Authentication-Results") or []).lower()
+    if not domain or not said:
+        return False
+    if re.search(r"\bdmarc=pass\b", said):
+        return True
+    return any(d == domain or domain.endswith("." + d) or d.endswith("." + domain)
+               for d in re.findall(r"\bdkim=pass\b[^;]*?header\.[di]=@?([a-z0-9.-]+)", said))
+
+
 def _scan(box: imaplib.IMAP4, folder: str, since: float, allowed: set[str], want: str,
-          allowed_link: Callable[[str], bool], before: float | None, look_back: float) -> Found | None:
-    """search's answer from one folder."""
+          allowed_link: Callable[[str], bool], before: float | None, look_back: float,
+          signed_only: bool = False) -> Found | None:
+    """search's answer from one folder. `signed_only` (the Spam folder, where mail that only claims a
+    sender ends up): only mail the mail service found really sent from its sender's domain (DMARC, or
+    DKIM signed by that domain, in its Authentication-Results)."""
     box.select(folder, readonly=True)
     day = time.strftime("%d-%b-%Y", time.gmtime(since - look_back - 86400))
     _, data = box.search(None, "SINCE", day)
@@ -327,8 +343,10 @@ def _scan(box: imaplib.IMAP4, folder: str, since: float, allowed: set[str], want
     # When each arrived and who sent it, in one round trip; the whole message only for the
     # job site's own mail since the wait began
     wanted = []
-    for received, mid, head in headers(box, ids):
+    for received, mid, head in headers(box, ids, "FROM AUTHENTICATION-RESULTS" if signed_only else "FROM"):
         sender = str(head.get("From") or "")
+        if signed_only and not signed_by_sender(head):
+            continue
         if received >= since - look_back and (before is None or received < before) and sender_allowed(sender, allowed):
             wanted.append((received, mid, sender))
     for received, mid, sender in sorted(wanted, key=lambda w: w[0], reverse=True):  # newest first

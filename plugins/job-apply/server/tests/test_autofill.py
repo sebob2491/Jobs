@@ -1399,6 +1399,12 @@ def test_a_forms_one_phone_box_gets_the_number_whatever_kind_it_names():
     assert [(x["label"], x["rule"]) for x in alone["to_fill"]] == [("Home Phone *", "phone")], alone
     both = plan_autofill([f("Home Phone *", "text", required=True), {**f("Cell Phone", "text"), "id": "2"}], prof(), {})
     assert [x["label"] for x in both["to_fill"]] == ["Cell Phone"], both
+    # of two boxes of other kinds, the one the form requires
+    two = plan_autofill([f("Home Phone", "text", required=True), {**f("Work Phone", "text"), "id": "2"}], prof(), {})
+    assert [x["label"] for x in two["to_fill"]] == ["Home Phone"], two
+    # never someone else's box, nor one that signs the person up for texts
+    for label in ("Emergency Contact Home Phone", "Home Phone Number - text me job alerts and similar jobs"):
+        assert plan_autofill([f(label, "text", required=True)], prof(), {})["to_fill"] == [], label
 
 
 def test_an_expected_graduation_date_is_never_a_past_year():

@@ -2062,8 +2062,8 @@ class Applier:
                 if notice is not None or time.monotonic() > deadline:
                     break
                 await asyncio.sleep(0.5)
-            if notice is not None:
-                break
+            if notice is not None or now.get("dialogs"):
+                break  # (a dialog of another sort opened: not pressed again over it)
             link = next((a for a in now.get("actions") or [] if a.get("text", "").strip() == said), link)
         # (each way it can fail is said in the log: APS's, live, Oct 2026, failed with no clue why)
         if notice is None:
@@ -2697,6 +2697,9 @@ class Applier:
             pressed = await self.srv.click(enter["id"])
         except KeyError:  # the dialog went by itself meanwhile: looked at again
             return "started"
+        except Exception as e:  # (still drawing, covered): said, and the dialog is the person's as before
+            self._log(run, f"the click on “{said}” failed: {_error_said(e)}")
+            return None
         if not pressed.get("clicked"):
             self._log(run, f"the click on “{said}” didn't go through: {pressed.get('blocked')}")
             return None

@@ -205,7 +205,7 @@ def load_employers(path: Path = EMPLOYERS_FILE) -> list[dict[str, str]]:
 
 INBOX_WINDOW = 15 * 60  # seconds back inbox_report looks
 _EMAIL_ADDRESS = re.compile(r"[\w.+%'-]+@[\w-]+(?:\.[\w-]+)+")
-_LONG_NUMBER = re.compile(r"\d{4,}")  # (a code, a job's number: not needed to see what the mail is)
+_LONG_NUMBER = re.compile(r"\S*\d\S*")  # (any word with a digit: a code, lettered or short, or a job's number)
 
 
 def inbox_report(env: Mapping[str, str], senders: Iterable[str] = (), paused_at: float | None = None,

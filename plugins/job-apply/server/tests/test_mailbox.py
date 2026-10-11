@@ -383,6 +383,11 @@ def test_a_passcode_email_is_read_as_a_code(imap, body, markup):
     assert mailbox.search("sam@gmail.com", "app-password", since, {"brassring.com"}, "code").value == "482913"
 
 
+def _signed(raw: bytes) -> bytes:
+    """A message as the mail service passed it: its Authentication-Results say DMARC passed."""
+    return b"Authentication-Results: mx.google.com; dkim=pass; spf=pass; dmarc=pass\r\n" + raw
+
+
 def test_a_code_in_the_spam_folder_is_read_when_the_inbox_has_none(imap):
     """BrassRing's page says "Be sure to check your Spam or Junk Mail folder if you do not see it in your
     Inbox": the desk only ever looked in the inbox. Spam is looked in (read-only, as the inbox, and for the
@@ -393,7 +398,9 @@ def test_a_code_in_the_spam_folder_is_read_when_the_inbox_has_none(imap):
     imap.spam = [
         (since - 3600, _message("noreply@brassring.com", "Your Passcode", "Your passcode is 111111")),  # before the wait
         (since + 9, _message("Offers <offers@shop.com>", "Your Passcode", "Your passcode is 333333")),  # not the site
-        (since + 10, _message("Edward Jones <noreply@brassring.com>", "Your Passcode", "Your passcode is 482913")),
+        (since + 10, _signed(_message("Edward Jones <noreply@brassring.com>", "Your Passcode", "Your passcode is 482913"))),
+        # the newest, claiming the site's address, but not passed by the mail service: a forgery, never read
+        (since + 15, _message("noreply@brassring.com", "Your Passcode", "Your passcode is 999999")),
     ]
     found = mailbox.search("sam@gmail.com", "app-password", since, {"brassring.com"}, "code")
     assert (found.kind, found.value, found.sender, found.spam) == ("code", "482913", "brassring.com", True)
@@ -416,7 +423,7 @@ def test_a_code_in_the_spam_folder_is_read_when_the_inbox_has_none(imap):
 def test_the_spam_folder_is_found_by_its_flag_or_its_name(imap, name, flagged):
     imap.junk_name, imap.junk_flagged = name, flagged
     since = time.time()
-    imap.spam = [(since + 10, _message("noreply@brassring.com", "Your Passcode", "Your passcode is 482913"))]
+    imap.spam = [(since + 10, _signed(_message("noreply@brassring.com", "Your Passcode", "Your passcode is 482913")))]
     found = mailbox.search("sam@gmail.com", "app-password", since, {"brassring.com"}, "code")
     assert found is not None and found.value == "482913" and found.spam
     assert ("select", f'"{name}"', True) in imap.instances[0].calls
@@ -437,7 +444,7 @@ def test_a_confirmation_link_in_the_spam_folder_is_found_too(imap):
     since = time.time()
     own = lambda url: url.startswith("https://careers.acme.com/")  # noqa: E731
     verify = "https://careers.acme.com/account/verify?token=abc"
-    imap.spam = [(since + 10, _message("no-reply@careers.acme.com", "Confirm your email",
-                                       f"Confirm your email address: {verify}"))]
+    imap.spam = [(since + 10, _signed(_message("no-reply@careers.acme.com", "Confirm your email",
+                                               f"Confirm your email address: {verify}")))]
     found = mailbox.search("sam@gmail.com", "app-password", since, {"acme.com"}, "link", own)
     assert (found.kind, found.value, found.spam) == ("link", verify, True)

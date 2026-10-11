@@ -2004,14 +2004,26 @@ def plan_autofill(fields: list[dict], prof: Profile, job: dict | None = None, ov
             # don't wish to answer"), so the desk can say why it's empty
             needs_input.append({**_asked(f), **({"unmatched": str(missed[0].value)} if missed else {})})
     _graduation_of_the_school_given(fields, to_fill, needs_input, prof, job, file_inputs)
-    # A form whose one phone box is of another kind than the profile's ("Home Phone" alone, for a mobile):
-    # that box is where the form wants the number, so it's filled, as before boxes had kinds
-    typed = [f for f in fields if f.get("kind") in ("text", "tel") and _phone_box_kind(norm(clean_label(f.get("label") or "")))]
-    lone = typed[0] if len(typed) == 1 and not any(t["rule"] == "phone" for t in to_fill) else None
-    number = _phone(prof, job or {}) if lone is not None else None
-    if lone is not None and number and any(q.get("id") == lone["id"] for q in needs_input):
-        needs_input[:] = [q for q in needs_input if q.get("id") != lone["id"]]
-        to_fill.append({"id": lone["id"], "label": lone.get("label", ""), "value": number, "rule": "phone"})
+    # A form with no phone box of the profile's kind and no plain one, whose boxes name other kinds ("Home
+    # Phone" alone, for a mobile): where only one of them is there, or only one is required, that's where
+    # the form wants the number, so it's filled, as before boxes had kinds. Only a box the profile would
+    # fill but for its kind (never a reference's, nor one that signs the person up for texts)
+    if not any(t["rule"] == "phone" for t in to_fill) and prof.get("personal.phone"):
+        def kind_only(f: dict) -> bool:
+            kind = _phone_box_kind(norm(clean_label(f.get("label") or "")))
+            if f.get("kind") != "text" or kind is None:
+                return False
+            as_kind = Profile({**prof.data, "personal": {**(prof.get("personal") or {}), "phone_type": kind}})
+            got = resolve_field(f, as_kind, job or {}, file_inputs)
+            return got is not None and got.rule == "phone"
+        waiting = {q.get("id") for q in needs_input}
+        boxes = [f for f in fields if f.get("id") in waiting and kind_only(f)]
+        required = [f for f in boxes if f.get("required")]
+        chosen = boxes[0] if len(boxes) == 1 else required[0] if len(required) == 1 else None
+        if chosen is not None:
+            needs_input[:] = [q for q in needs_input if q.get("id") != chosen["id"]]
+            to_fill.append({"id": chosen["id"], "label": chosen.get("label", ""),
+                            "value": _phone(prof, job or {}, norm(clean_label(chosen.get("label") or ""))), "rule": "phone"})
     needs_input.sort(key=lambda f: not f.get("required"))
     return {"to_fill": to_fill, "needs_input": needs_input, "already_filled": already}
 
