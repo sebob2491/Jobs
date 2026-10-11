@@ -1108,6 +1108,29 @@ def test_sponsorship_and_military_asked_in_other_words():
     assert travel is None or travel.rule != "sponsorship", travel
 
 
+def test_a_bare_job_title_beside_a_profile_employers_company_gets_that_jobs_title():
+    """Cornerstone's resume reader (Linde's and Matheson's, live check Oct 11) adds an experience row with its
+    Company filled in and its Job Title empty, under a heading the form reader doesn't tie to the boxes: the
+    title of the profile's job at that company. Never for a company the profile doesn't have."""
+    p = Profile({"work_history": [{"title": "Equipment Technician", "company": "Example Fab", "start": "2021-03",
+                                   "end": "present"},
+                                  {"title": "Field Tech", "company": "Other Semi", "start": "2018-01", "end": "2021-02"}]})
+
+    def row(company):
+        return [{"id": "c", "label": "Company*", "kind": "text", "required": True, "value": company},
+                {"id": "t", "label": "Job Title*", "kind": "text", "required": True, "value": ""},
+                {"id": "s", "label": "Start Date", "kind": "text", "value": "03/2021"}]
+
+    plan = plan_autofill(row("Example Fab Inc."), p, {})
+    assert [(t["id"], t["value"]) for t in plan["to_fill"]] == [("t", "Equipment Technician")], plan
+    for company in ("Somewhere Else", ""):
+        plan = plan_autofill(row(company), p, {})
+        assert "t" not in {t["id"] for t in plan["to_fill"]}, (company, plan)
+    # nor a reference's position, who may well work where the person does
+    reference = [{"id": "n", "label": "Reference Name", "kind": "text", "value": "Pat Example"}] + row("Example Fab")
+    assert "t" not in {t["id"] for t in plan_autofill(reference, p, {})["to_fill"]}
+
+
 def test_a_list_still_on_its_not_specified_first_choice_is_filled():
     """Kforce's Taleo (live run 10, Oct 2026): its required "Closest Metropolitan City" is three lists, Country,
     State/Province and Region, each on its first choice "Not Specified", which read as answered, so none was

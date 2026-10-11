@@ -2125,6 +2125,7 @@ def plan_autofill(fields: list[dict], prof: Profile, job: dict | None = None, ov
             # don't wish to answer"), so the desk can say why it's empty
             needs_input.append({**_asked(f), **({"unmatched": str(missed[0].value)} if missed else {})})
     _graduation_of_the_school_given(fields, to_fill, needs_input, prof, job, file_inputs)
+    _title_beside_its_company(fields, to_fill, needs_input, prof)
     # A form with no phone box of the profile's kind and no plain one, whose boxes name other kinds ("Home
     # Phone" alone, for a mobile): where only one of them is there, or only one is required, that's where
     # the form wants the number, so it's filled, as before boxes had kinds. Only a box the profile would
@@ -2172,6 +2173,42 @@ def is_school_rule(rule: str) -> bool:
     return bool(_SCHOOL_FROM_ENTRY.fullmatch(rule or "")) or rule == "school"
 # a box about another credential than the school given: its own year, education.graduation_year
 _OTHER_CREDENTIAL = re.compile(r"\b(high school|ged|diploma|secondary)\b")
+
+
+_BARE_TITLE = re.compile(r"(job |position |work )?title|position|role")
+_SOMEONE_ELSE = re.compile(r"\b(references?|supervisor|manager|relationship|relative|emergency|referr\w*|contact name)\b")
+_COMPANY_BOX = re.compile(r"company( name)?|employer( name)?|organi[sz]ation( name)?")
+
+
+def _title_beside_its_company(fields: list[dict], to_fill: list[dict], needs_input: list[dict],
+                              prof: Profile) -> None:
+    """A bare "Job Title" with no numbered block around it, beside a Company box that holds one of
+    the profile's employers: that job's title. Cornerstone's resume reader (Linde's, Matheson's,
+    live check Oct 11) adds an experience row with the company filled in and its title empty, under
+    a heading the form reader doesn't tie to the boxes. Never when the company is none of the
+    profile's, or two of its jobs were there."""
+    asked = {q.get("id") for q in needs_input}
+    planned = {t["id"]: t["value"] for t in to_fill}
+    entries = [e for e in _listed(prof.get("work_history")) if isinstance(e, dict)]
+    for i, f in enumerate(fields):
+        if f.get("id") not in asked or f.get("kind") != "text":
+            continue
+        if not _BARE_TITLE.fullmatch(norm(clean_label(f.get("label") or ""))):
+            continue
+        around = fields[max(0, i - 4):i + 5]
+        if any(_SOMEONE_ELSE.search(norm(f"{g.get('section') or ''} {clean_label(g.get('label') or '')}"))
+               for g in around):
+            continue  # a reference's or a supervisor's row: their position, not the person's
+        near = [g for g in fields[max(0, i - 2):i] + fields[i + 1:i + 3]
+                if _COMPANY_BOX.fullmatch(norm(clean_label(g.get("label") or "")))]
+        if len(near) != 1:
+            continue
+        company = norm(planned.get(near[0]["id"], near[0].get("value")))
+        jobs = [e for e in entries if company and _same_employer(norm(e.get("company")), company)]
+        title = str(jobs[0].get("title") or "").strip() if len(jobs) == 1 else ""
+        if title:
+            needs_input[:] = [q for q in needs_input if q.get("id") != f["id"]]
+            to_fill.append({"id": f["id"], "label": f.get("label", ""), "value": title, "rule": "work_title"})
 
 
 def _graduation_of_the_school_given(fields: list[dict], to_fill: list[dict], needs_input: list[dict], prof: Profile,
