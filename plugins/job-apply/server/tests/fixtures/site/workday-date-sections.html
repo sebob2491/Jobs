@@ -18,7 +18,9 @@
      is read as this century's ("6" is 2006, "019" 2019). Each part's input holds no value: its number is
      its aria-valuenow, and its display shows it padded. ?sticky: as Intel's Workday (live check, Oct 11): the
      current part stays where it was when focus leaves the date, and is marked (its section's tabindex 0), so
-     a month typed after its year went into the year. -->
+     a month typed after its year went into the year. ?arrows (with ?sticky): as KLA's (live check, Oct 11):
+     pressing a part's display doesn't make it current; only the left and right arrows move the current part
+     ("use right and left arrows to navigate spin buttons"). -->
 <h2>My Experience</h2>
 <label for="title">Job Title</label><input id="title" type="text">
 <div id="from"></div>
@@ -41,6 +43,7 @@
     const typed = kinds.map(() => '');
     let current = 0;
     const sticky = new URLSearchParams(location.search).has('sticky');
+    const arrows = new URLSearchParams(location.search).has('arrows');
     const sections = [...group.querySelectorAll('.part')];
     const mark = () => sections.forEach((s, i) => s.setAttribute('tabindex', sticky && i === current ? '0' : '-1'));
     mark();
@@ -55,6 +58,13 @@
     inputs.forEach((input, i) => {
       input.value = '';
       input.addEventListener('keydown', (e) => {
+        if (arrows && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+          e.preventDefault();
+          current = Math.max(0, Math.min(kinds.length - 1, current + (e.key === 'ArrowLeft' ? -1 : 1)));
+          mark();
+          inputs[current].focus();
+          return;
+        }
         if (!/^\d$/.test(e.key)) return;
         e.preventDefault();
         const kind = kinds[current], [max, , width] = KINDS[kind];
@@ -70,7 +80,9 @@
       });
       input.addEventListener('input', () => { input.value = ''; });
       group.querySelectorAll('[aria-hidden=true]')[i].addEventListener('mousedown', (e) => {
-        e.preventDefault(); current = i; typed[i] = ''; mark(); inputs[i].focus();
+        e.preventDefault();
+        if (!arrows) { current = i; typed[i] = ''; mark(); }
+        inputs[i].focus();
       });
     });
     group.addEventListener('focusout', (e) => { if (!sticky && !group.contains(e.relatedTarget)) current = 0; });

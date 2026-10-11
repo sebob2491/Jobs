@@ -193,6 +193,17 @@ _ANOTHER_PART_CURRENT_JS = """
 """
 
 
+# Which of its date's parts (marked data-ja-date-part, in order) the date marks current (its section's tabindex
+# 0), or -1 where it marks none
+_CURRENT_PART_JS = """
+(el) => {
+  const group = el.closest('[role="group"]') || el.ownerDocument;
+  const parts = [...group.querySelectorAll('[data-ja-date-part]')];
+  return parts.findIndex((p) => p.parentElement && p.parentElement.getAttribute('tabindex') === '0');
+}
+"""
+
+
 # A date's parts (Workday's MM / DD / YYYY spinbuttons), in order: those in the nearest box around this one
 # that holds more than one (its date), up to three; this one alone otherwise. Marked for the locator, with
 # this one as "mine"; how many there are.
@@ -1469,7 +1480,15 @@ class BrowserSession:
                             covered = True
                     if covered:
                         await part.focus(timeout=FOCUS_TIMEOUT)
-                if i == start:  # (the part as it was: its digits replaced, as Workday selects a part it's given)
+                if i == start:
+                    # a date that still marks another part current (KLA's, where pressing the display doesn't
+                    # move it, the plus probe Oct 11: the month typed after the year went into the year): moved
+                    # with its arrows, as Workday's date says ("use right and left arrows to navigate spin buttons")
+                    current = await part.evaluate(_CURRENT_PART_JS)
+                    for _ in range(abs(current - i) if current >= 0 else 0):
+                        await page.keyboard.press("ArrowLeft" if current > i else "ArrowRight")
+                        await page.wait_for_timeout(50)
+                    # (the part as it was: its digits replaced, as Workday selects a part it's given)
                     await part.evaluate("el => { try { el.select(); } catch (e) {} }")
                 await page.keyboard.type(want[i], delay=40)
             await loc.evaluate("el => el.ownerDocument.activeElement && el.ownerDocument.activeElement.blur()")

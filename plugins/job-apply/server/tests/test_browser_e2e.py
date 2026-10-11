@@ -475,6 +475,26 @@ def test_a_workday_date_whose_current_part_stays_put_gets_its_month(srv):
     assert shown[:2] == ["03/2021", "11/2023"], shown
 
 
+@pytest.mark.parametrize("order", ["month first", "year first"])
+def test_a_workday_date_moved_by_its_arrows_gets_its_month(srv, order):
+    """KLA's Workday (the live check's plus probe, Oct 11): pressing a part's display doesn't make it the
+    date's current part there, so with the year current the month's digits went into the year, and the month
+    read MM ("Invalid Date: /2021"). Its date says "use right and left arrows to navigate spin buttons": the
+    current part is moved to the one typed first with those."""
+    run(srv.browser.goto(fixture_url("site/workday-date-sections.html") + "?sticky&arrows"))
+    by = {(f.get("section") or f["label"], f.get("sublabel")): f["id"]
+          for f in run(srv.inspect_form(include_dropdown_options=False))["fields"]}
+    values = [(("From", "Month"), "3"), (("From", "Year"), "2021"), (("To", "Month"), "11"), (("To", "Year"), "2023")]
+    if order == "year first":
+        values = [values[1], values[0], values[3], values[2]]
+    out = run(srv.fill_form([{"id": by[key], "value": value} for key, value in values]))
+    assert all(r.get("ok") for r in out["results"]), out["results"]
+    page = run(srv.browser.page())
+    shown = run(page.evaluate("() => [...document.querySelectorAll('[role=group]')].map((g) => "
+                              "[...g.querySelectorAll('[aria-hidden=true]')].map((d) => d.textContent).join('/'))"))
+    assert shown[:2] == ["03/2021", "11/2023"], shown
+
+
 def test_each_jobs_dates_go_in_its_own_block(srv):
     """A Workday site's dates are each a fieldset of their own, with each part's "MM" or "YYYY"
     drawn over its box: the desk filled every job's title, company and description and left all
