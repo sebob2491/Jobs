@@ -1540,6 +1540,9 @@ class Applier:
                         added = await srv.add_entries(section)
                         if added.get("clicks"):
                             self._log(run, f"added {added['clicks']} {section} block(s)")
+                        if added.get("add_button_covered"):
+                            self._log(run, f"couldn't press the {section} section's Add button: something on the page "
+                                      "covers it, so its blocks are left as they are")
                 result = await srv.autofill(job_id=run.job_id)
                 if result["filled"]:
                     self._log(run, f"filled {len(result['filled'])} field(s) on {_where(data)}")

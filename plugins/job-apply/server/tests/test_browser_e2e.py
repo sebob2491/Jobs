@@ -426,6 +426,18 @@ def test_each_jobs_currently_work_here_box_is_its_own(srv):
         == [True, False]
 
 
+def test_a_covered_add_button_is_left_and_said(srv):
+    """Nikon's UKG Pro (live, Oct 2026): after "Add Experience", the press of "Add Education" timed out
+    (something drawn over it) and the error ended the whole application ("Something went wrong:
+    TimeoutError"). A covered Add button is left as it is, and said; the other section's still works."""
+    run(srv.browser.goto(fixture_url("site/workday-my-experience.html") + "?covered"))
+    education = run(srv.add_entries("education"))
+    assert (education["clicks"], education.get("add_button_covered")) == (0, True), education
+    assert "covered" in education["note"], education
+    work = run(srv.add_entries("work"))
+    assert work["clicks"] == 1 and not work.get("add_button_covered"), work
+
+
 def test_each_jobs_dates_go_in_its_own_block(srv):
     """A Workday site's dates are each a fieldset of their own, with each part's "MM" or "YYYY"
     drawn over its box: the desk filled every job's title, company and description and left all

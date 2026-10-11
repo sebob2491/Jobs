@@ -1585,11 +1585,17 @@ class BrowserSession:
             frame = page.main_frame
             state = await frame.evaluate(ENTRIES_JS, kind_pattern)
             before = state["entries"]
-            clicks = 0
+            clicks, covered = 0, False
             while state["entries"] < count and clicks < count + 2:
                 if not state["buttons"]:
                     break
-                await frame.locator(f'[data-ja-id="{state["buttons"][-1]["id"]}"]').click(timeout=5000)
+                try:
+                    await frame.locator(f'[data-ja-id="{state["buttons"][-1]["id"]}"]').click(timeout=5000)
+                except PlaywrightTimeout:
+                    # something drawn over it (Nikon's UKG Pro, live, Oct 2026: the error ended the whole
+                    # application): left as it is, as a press beneath a note or a dialog may not be its
+                    covered = True
+                    break
                 clicks += 1
                 await page.wait_for_timeout(600)
                 new = await frame.evaluate(ENTRIES_JS, kind_pattern)
@@ -1610,7 +1616,8 @@ class BrowserSession:
             if waited:
                 await self._settle(page, timeout=2000)  # the rest of their boxes
             return {"before": before, "after": state["entries"], "clicks": clicks,
-                    "add_button_found": bool(state["buttons"]) or clicks > 0}
+                    "add_button_found": bool(state["buttons"]) or clicks > 0,
+                    **({"add_button_covered": True} if covered else {})}
 
     async def _page_text(self, page: Page) -> str:
         text = ""
