@@ -1305,6 +1305,19 @@ def test_a_boards_frame_is_read_once_its_page_is_in(srv):
         site.shutdown()
 
 
+async def framed(page, part, timeout=15):
+    """Wait for the page's frame whose address has `part` in it to have loaded."""
+    import time
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        frame = next((f for f in page.frames if part in f.url), None)
+        if frame is not None:
+            await frame.wait_for_load_state("load")
+            return frame
+        await page.wait_for_timeout(100)
+    raise AssertionError(f"no frame at {part} in {timeout} s: {[f.url for f in page.frames]}")
+
+
 def test_a_captcha_on_show_is_said_but_its_frame_isnt_read(srv):
     """A CAPTCHA's own frame isn't read as part of the form (iCIMS's hidden hCaptcha has
     "Verify" and "Refresh Challenge."), but one on show is said, for the user to solve."""
@@ -1322,7 +1335,7 @@ def test_a_captcha_on_show_is_said_but_its_frame_isnt_read(srv):
             f.style.cssText = 'width:304px;height:78px';
             document.body.append(f);
         }""")
-        await page.wait_for_timeout(500)
+        await framed(page, "anchor?k=x")
         shown = await srv.inspect_form(include_dropdown_options=False)
         await page.evaluate("() => { document.querySelector('iframe').style.visibility = 'hidden'; }")
         hidden = await srv.inspect_form(include_dropdown_options=False)
@@ -1331,7 +1344,7 @@ def test_a_captcha_on_show_is_said_but_its_frame_isnt_read(srv):
             f.src = 'https://www.google.com/recaptcha/api2/anchor?k=x&size=invisible';
             f.style.cssText = 'width:256px;height:60px';
         }""")
-        await page.wait_for_timeout(500)
+        await framed(page, "size=invisible")  # (half a second wasn't always enough on Windows CI: the old frame was read)
         badge = await srv.inspect_form(include_dropdown_options=False)
         return shown, hidden, badge
 
