@@ -115,6 +115,18 @@ def test_the_profile_is_the_test_identity_in_practice_mode(monkeypatch, tmp_path
     assert not s.may_auto_submit("workday")
 
 
+def test_the_broad_checks_fake_profile_gets_a_test_resume_too(tmp_path):
+    """The broad check's fake profile had no resume, so about ten employers stopped at "upload your
+    resume" (live run 19): it now gets the same kind of test resume, made for the run, in its home."""
+    profile = li.with_test_resume(BASE, tmp_path)
+    resume = Path(profile["documents"]["resume"])
+    assert resume == tmp_path / li.RESUME_NAME and BASE["documents"]["resume"] is None  # (the base is left as it was)
+    pdf = resume.read_bytes()
+    assert count_pages(pdf) == 1 and li.RESUME_NOTE.encode("cp1252") in pdf
+    assert b"(Testy McTestface)" in pdf and b"Equipment Technician, Example Fab" in pdf
+    assert {k: v for k, v in profile.items() if k != "documents"} == {k: v for k, v in BASE.items() if k != "documents"}
+
+
 def test_the_test_resume_is_one_page_that_says_what_it_is(tmp_path):
     profile = li.identity_profile(BASE, EMAIL, tmp_path / li.RESUME_NAME)
     pdf = li.resume_pdf(profile)

@@ -31,7 +31,7 @@ IDENTITY_SWITCH = "JOB_APPLY_LIVE_TEST_IDENTITY"  # (config.LIVE_TEST_IDENTITY_E
 
 FIRST_NAME, LAST_NAME = "Jobdesk", "Test"
 PHONE = "480-555-0199"  # a 555 number, as the fake profile's
-RESUME_NOTE = "Automated test resume for the Job Desk live check — not a real applicant"
+RESUME_NOTE = "Automated test resume for the Job Desk live check — not a real applicant"  # (both profiles')
 RESUME_NAME = "jobdesk-test-resume.pdf"
 EMPLOYERS_FILE = Path(__file__).with_name("test_identity_employers.yaml")
 EMAIL_MASK, PASSWORD_MASK = "<test-email>", "***"
@@ -90,8 +90,8 @@ def identity_profile(base: Mapping[str, Any], email: str, resume: Path | str) ->
 
 
 def resume_pdf(profile: Mapping[str, Any]) -> bytes:
-    """A one-page resume for the test identity, made at run time: who it is, that it's a test, and
-    the fake profile's jobs and schools."""
+    """A one-page resume for the live check's applicant (the test identity, or the broad check's fake
+    profile), made at run time: who it is, that it's a test, and the profile's jobs and schools."""
     personal = profile.get("personal") or {}
     address = personal.get("address") or {}
     place = ", ".join(str(p) for p in (address.get("city"), address.get("state")) if p)
@@ -100,7 +100,7 @@ def resume_pdf(profile: Mapping[str, Any]) -> bytes:
         (10, " | ".join(str(p) for p in (personal.get("email"), personal.get("phone"), place) if p)),
         (10, ""),
         (12, RESUME_NOTE + "."),
-        (10, "Made by the Job Desk plugin's nightly check (scripts/live_smoke.py --test-identity). Nothing in it is true."),
+        (10, "Made by the Job Desk plugin's live check (scripts/live_smoke.py). Nothing in it is true."),
         (10, ""),
         (13, "Experience"),
     ]
@@ -112,6 +112,17 @@ def resume_pdf(profile: Mapping[str, Any]) -> bytes:
         lines.append((10, f"{school.get('degree')}, {school.get('major')}, {school.get('school')} "
                           f"({school.get('start')} to {school.get('end')})"))
     return tiny_pdf(lines)
+
+
+def with_test_resume(profile: Mapping[str, Any], folder: Path) -> dict[str, Any]:
+    """The profile with a test resume of its own: resume_pdf written into `folder` (the run's
+    home) and the profile's documents pointing to it, so the live check reaches the steps past a
+    form's "upload your resume"."""
+    resume = folder / RESUME_NAME
+    profile = copy.deepcopy(dict(profile))
+    profile["documents"] = {**(profile.get("documents") or {}), "resume": str(resume)}
+    resume.write_bytes(resume_pdf(profile))
+    return profile
 
 
 def tiny_pdf(lines: Iterable[tuple[int, str]]) -> bytes:

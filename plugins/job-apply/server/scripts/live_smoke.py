@@ -19,10 +19,11 @@ fixture (tests/fixtures/live/pipeline-<company>).
 --parallel N runs N groups of employers at once, each in a process (and browser) of its
 own; every site is still visited once. --shard I/N runs only the I-th of N groups.
 
-Safety: JOB_APPLY_NEVER_SUBMIT=1 is forced, so nothing can be submitted. The fake
-profile has no resume, so nothing is uploaded. It never clicks sign-in, account
-creation, "Autofill with Resume", "Next", or third-party apply buttons (LinkedIn,
-Indeed, SEEK), and LinkedIn and Indeed are never contacted.
+Safety: JOB_APPLY_NEVER_SUBMIT=1 is forced, so nothing can be submitted. The only file
+uploaded is a test resume made for the run (live_identity.resume_pdf: it says it's a test and
+that nothing in it is true). It never clicks sign-in, account creation, "Autofill with
+Resume", "Next", or third-party apply buttons (LinkedIn, Indeed, SEEK), and LinkedIn and
+Indeed are never contacted.
 
 --pipeline --test-identity applies as the live check's test identity instead (live_identity.py;
 setting it up: TEST_IDENTITY.md): "Jobdesk Test", a clearly fake applicant with an inbox of its own
@@ -76,7 +77,7 @@ FAKE_PROFILE = {
                     "country": "United States"},
         "linkedin_url": "https://www.linkedin.com/in/example-test-profile", "drivers_license": True,
     },
-    "documents": {"resume": None},
+    "documents": {"resume": None},  # (use_role gives it the run's test resume)
     "work_authorization": {"authorized_to_work": True, "requires_sponsorship": False, "us_person": True,
                            "us_citizen": True, "over_18": True},
     "preferences": {"how_did_you_hear": "Company Website", "willing_to_relocate": True,
@@ -152,10 +153,10 @@ def use_role(name: str) -> None:
     role = ROLES[name]
     QUERY_AZ, QUERY_ANY = role["query_az"], role["query_any"]
     profile = {**FAKE_PROFILE, **{k: role[k] for k in ("work_history", "education_history", "education") if k in role}}
-    if TEST_IDENTITY:  # its name and inbox, and a test resume with this role's background
-        resume = _HOME / live_identity.RESUME_NAME
-        profile = live_identity.identity_profile(profile, live_identity.credentials(os.environ)[0], resume)
-        resume.write_bytes(live_identity.resume_pdf(profile))
+    if TEST_IDENTITY:  # its name and inbox
+        profile = live_identity.identity_profile(profile, live_identity.credentials(os.environ)[0],
+                                                 _HOME / live_identity.RESUME_NAME)
+    profile = live_identity.with_test_resume(profile, _HOME)  # a test resume with this role's background
     (_HOME / "profile.yaml").write_text(yaml.safe_dump(profile))
 
 
