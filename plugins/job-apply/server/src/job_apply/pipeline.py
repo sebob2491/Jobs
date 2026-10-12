@@ -179,6 +179,8 @@ _MORE_THAN_TERMS = re.compile(r"receiv\w*|e-?mails?|updates?|notifications?|mess
 _SIGNS_UP_TOO = re.compile(r"\breceiv\w*\b.{0,40}\b(?:e-?mails?|communications?|updates?|messages?|news\w*|offers|"
                            r"information about|texts?)\b|\b(?:e-?mail|marketing|promotional) communications?\b|"
                            r"\bupdates? (?:about|on|from)\b|\bnewsletter", re.I)
+# A box whose own words say only that the person agrees: what it agrees to is in the words above it
+_BARE_AGREE = re.compile(r"^\W*(?:yes,? )?i (?:agree|consent|accept)\W*$", re.I)
 # A Create Account box that says the person applies from outside, not as one of the employer's staff
 # (Banner Health's Workday, live, Oct 2026: "Yes, I am a new candidate and not a current employee"; no
 # account without it, though it isn't marked required). That and nothing more: a box that says more
@@ -2066,6 +2068,19 @@ class Applier:
             if _account_and_application((await self._look())[0]):
                 return
 
+    async def _said_terms(self, boxes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """A Create Account form's terms boxes, less a bare one ("I agree", "I consent") whose words just above it
+        say what it agrees to and that's more than the site's terms: job alerts, a talent network, texts, marketing
+        (the safety audit of Oct 12). Those are the person's."""
+        kept = []
+        for box in boxes:
+            if _BARE_AGREE.match(box.get("label") or ""):
+                above = await self.srv.browser.words_before(box["id"]) or ""
+                if _NOT_TERMS.search(above) or _SIGNS_UP_TOO.search(above):
+                    continue
+            kept.append(box)
+        return kept
+
     async def _assessment_pause(self, run: Run, data: dict[str, Any], button: str) -> None:
         """A step that won't go on until the applicant takes the employer's assessment: theirs to take."""
         await self._bring_forward(run)
@@ -2294,7 +2309,7 @@ class Applier:
             if not await self._accept_statement(run, data, statement):
                 return False
             data, _ = await self._look()  # (as it is once accepted)
-        terms = _terms_boxes(data)
+        terms = await self._said_terms(_terms_boxes(data))
         boxes = terms + _new_candidate_boxes(data, run.company) + _other_positions_boxes(data)
         own = [a for a in data.get("actions") or [] if a.get("account_form") or a.get("in_account_form")
                or a.get("form_submit") and a.get("after_password")]
@@ -2376,7 +2391,7 @@ class Applier:
         why = ""
         if _may_manage_accounts() and not run.account_finished and not (data.get("captcha") or data.get("challenge")):
             now, _ = await self._look()
-            terms = _terms_boxes(now)
+            terms = await self._said_terms(_terms_boxes(now))
             boxes = terms + _other_positions_boxes(now)
             pressable = None
             if boxes and not (await srv.fill_form([{"id": f["id"], "value": _tick(f)} for f in boxes])).get("ok"):

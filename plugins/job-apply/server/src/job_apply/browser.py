@@ -1998,6 +1998,29 @@ class BrowserSession:
             except (PlaywrightError, PlaywrightTimeout):
                 return None
 
+    async def words_before(self, element_id: str) -> str | None:
+        """The words just before a box: the nearest text before it, its own label's aside, within the few blocks
+        around it (a bare "I agree" whose question is the paragraph above it), or None once it's gone."""
+        async with self._lock:
+            page = await self.page()
+            try:
+                return await self._locator(page, element_id).evaluate("""(el) => {
+                  const own = new Set([...(el.labels || [])].map((l) => (l.innerText || '').trim()));
+                  const boxes = 'input:not([type=hidden]), select, textarea';
+                  for (let n = el, d = 0; n && n !== document.body && d < 4; n = n.parentElement, d++) {
+                    const out = [];
+                    for (let s = n.previousElementSibling; s && out.join(' ').length < 400; s = s.previousElementSibling) {
+                      if (s.matches(boxes) || s.querySelector(boxes)) break;
+                      const t = (s.innerText || '').trim();
+                      if (t && !own.has(t)) out.unshift(t);
+                    }
+                    if (out.join(' ').length > 15) return out.join(' ').slice(-500);
+                  }
+                  return '';
+                }""", timeout=3000)
+            except (PlaywrightError, PlaywrightTimeout):
+                return None
+
     async def element_info(self, element_id: str) -> dict[str, Any] | None:
         """ELEMENT_INFO_JS's facts about an element on the page (a cookie banner's button: the
         banner's other buttons, and whether it covers the page), or None once it's gone."""

@@ -6786,6 +6786,26 @@ def test_a_workday_create_accounts_own_agreement_is_its_terms(label, ticked):
     assert (pipeline._terms_boxes({"fields": [box]}) == [box]) is ticked
 
 
+def test_a_bare_i_agree_is_ticked_only_where_the_words_above_it_are_the_sites_terms(srv, tmp_path):
+    """The safety audit (Oct 12): a Create Account form's bare "I agree" was ticked by its label alone, whatever the
+    paragraph above it asked (joining a talent network, texts). Its words above are read: the site's terms, ticked;
+    anything more, the person's."""
+    page = tmp_path / "account.html"
+    page.write_text('<!doctype html><h2>Create Account</h2><label for="e">Email Address</label><input id="e" type="email">'
+                    '<label for="pw">Password</label><input id="pw" type="password">'
+                    '<div><p>Please review and accept our Terms of Use and Candidate Privacy Policy.</p>'
+                    '<label><input type="checkbox" id="a"> I agree</label></div>'
+                    '<div><p>Join our talent network to hear about new jobs and events by email.</p>'
+                    '<label><input type="checkbox" id="b"> I agree</label></div>'
+                    '<button type="submit">Create Account</button>', encoding="utf-8")
+    run(srv.browser.goto(page.as_uri()))
+    data = run(srv.browser.inspect(include_dropdown_options=False))
+    boxes = pipeline._terms_boxes(data)
+    assert len(boxes) == 2, data["fields"]  # (by their labels alone, both)
+    kept = run(Applier(srv)._said_terms(boxes))
+    assert [b["id"] for b in kept] == [boxes[0]["id"]], (boxes, kept)
+
+
 def test_a_round_holds_while_the_person_is_at_a_review_page_and_ends_once_it_is_sent(srv):
     """The desk's review round (Oct 12): no other job starts while the person checks a page filled to their Submit
     (ready, or the site's own last button); once they've pressed Submit (it's queued to send), or said they sent
