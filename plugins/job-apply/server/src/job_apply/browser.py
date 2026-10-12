@@ -1370,9 +1370,11 @@ class BrowserSession:
             if not await loc.evaluate("el => el.tagName === 'INPUT' && el.type === 'file'"):
                 return await self._upload_through(page, loc, path)
             await loc.set_input_files(str(path))
+            said = await self._send_dialog_upload(page, loc, path)
             with contextlib.suppress(PlaywrightError, PlaywrightTimeout):  # (a box drawn afresh at once is gone)
+                # (only once it's sent: a dialog's Upload that didn't go is pressed again on the next fill)
                 await loc.evaluate("(el, k) => { el.__jaUploaded = k; }", path.name, timeout=1500)
-            return await self._send_dialog_upload(page, loc, path)
+            return said
         if kind == "checkbox":
             want = value if isinstance(value, bool) else bool(polarity(value))
             await self._set_checked(loc, want)
@@ -1423,23 +1425,39 @@ class BrowserSession:
     async def _send_dialog_upload(self, page: Page, box: Locator, path: Path) -> str:
         """A file box inside the site's own upload dialog takes the file only once the dialog's Upload is pressed
         (Amkor's SuccessFactors, the nightly of Oct 12: its "Upload Resume" dialog, open over the profile, kept the
-        file in its box while the desk pressed Next, and the page said "Resume: field is required"). Pressed, and the
-        dialog waited on to close; said if it stays."""
+        file in its box while the desk pressed Next, and the page said "Resume: field is required"). Only a dialog
+        that's an upload's alone: no other box in it (an application drawn as a dialog is left as it is), its
+        Upload or Attach pressed (its OK, Save or Done only where the dialog says it's an upload), through the
+        same guard as every press. A dialog still open after is said in the result, not taken for a failure, and
+        raises only where the press itself failed (so the next fill presses it again)."""
         dialog = box.locator("xpath=ancestor::*[@role='dialog' or @role='alertdialog' or self::dialog][1]")
         if not await dialog.count():
             return f"uploaded {path.name}"
-        send = dialog.locator('button:visible, [role="button"]:visible, input[type="submit"]:visible').filter(
-            has_text=re.compile(r"^\s*(upload|attach|ok|save|done)\s*$", re.I))
+        facts = await dialog.evaluate("""(d) => {
+          const shown = (el) => el.getClientRects().length > 0 && getComputedStyle(el).visibility !== 'hidden';
+          const boxes = [...d.querySelectorAll('input, select, textarea')].filter((el) => el.type !== 'hidden' && shown(el));
+          const named = [d.getAttribute('aria-label') || '', ...(d.getAttribute('aria-labelledby') || '').split(/\\s+/)
+            .map((id) => (document.getElementById(id) || {}).textContent || ''),
+            (d.querySelector('h1, h2, h3, h4, [role="heading"]') || {}).textContent || ''].join(' ');
+          return {others: boxes.filter((el) => el.type !== 'file').length, files: boxes.filter((el) => el.type === 'file').length,
+                  upload: /\\b(upload|attach|resume|cv|file|document)/i.test(named)};
+        }""")
+        if facts["others"] or facts["files"] > 1:
+            return f"uploaded {path.name}"
+        words = r"upload|attach|ok|save|done" if facts["upload"] else r"upload|attach"
+        send = dialog.locator('button:visible, [role="button"]:visible').filter(
+            has_text=re.compile(rf"^\s*({words})\s*$", re.I))
         if not await send.count():
             return f"uploaded {path.name}"
+        self._check_clickable(await send.first.evaluate(ELEMENT_INFO_JS, timeout=3000), page.url)
+        pressed = (await send.first.inner_text()).strip()
         await send.first.click(timeout=3000)
         for _ in range(int(UPLOAD_SHOWN_WAIT * 2)):
             with contextlib.suppress(PlaywrightError, PlaywrightTimeout):
                 if not await dialog.is_visible(timeout=1000):
-                    return f"uploaded {path.name}"
+                    return f"uploaded {path.name} (its dialog's \u201c{pressed}\u201d pressed)"
             await page.wait_for_timeout(500)
-        raise ValueError(f"the site's upload dialog stayed open after its {await send.first.inner_text()}; check "
-                         "it in the browser")
+        return f"uploaded {path.name} (its dialog's \u201c{pressed}\u201d pressed; the dialog is still open)"
 
     async def _upload_through(self, page: Page, button: Locator, path: Path) -> str:
         """A file given through the button that opens the site's own upload (the older SuccessFactors site's

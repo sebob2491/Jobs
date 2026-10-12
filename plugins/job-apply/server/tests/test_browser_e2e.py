@@ -529,6 +529,19 @@ def test_a_file_put_in_the_sites_open_upload_dialog_is_sent_with_its_upload(srv,
     assert run(page.inner_text("#resume")) == "resume.pdf is on file.", run(page.inner_text("body"))
 
 
+def test_a_dialog_that_isnt_an_uploads_alone_is_never_pressed(srv, tmp_path):
+    """The review of the open upload dialog's press: an application drawn as a dialog, its resume box beside a name
+    box and a "Save" that sends it, would have been sent (around the guard every press goes through). Only a dialog
+    holding nothing but its file box is pressed."""
+    resume = tmp_path / "resume.pdf"
+    resume.write_bytes(b"%PDF-1.4 test")
+    run(srv.browser.goto(fixture_url("site/successfactors-open-upload-dialog.html") + "?form"))
+    box = next(f for f in run(srv.inspect_form(include_dropdown_options=False))["fields"] if f["kind"] == "file")
+    out = run(srv.fill_form([{"id": box["id"], "value": str(resume)}]))
+    assert out["results"][0].get("ok"), out["results"]
+    assert run(run(srv.browser.page()).evaluate("() => window.sent")) is False
+
+
 @pytest.mark.parametrize("how", ["dialog", "box", "chooser"])
 def test_a_resume_uploaded_through_the_sites_own_dialog(srv, tmp_path, how):
     """APS's SuccessFactors (the live check's plus probe, Oct 11): its resume is a "+" button that opens a dialog
