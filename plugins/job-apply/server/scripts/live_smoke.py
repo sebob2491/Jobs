@@ -61,6 +61,7 @@ from typing import Any, Callable
 from urllib.parse import urlsplit
 
 os.environ["JOB_APPLY_NEVER_SUBMIT"] = "1"
+os.environ.setdefault("JOB_APPLY_DATE_TRACE", "1")  # each step of a Workday date said in the log (what the site does with it)
 os.environ["JOB_APPLY_HEADLESS"] = "1"
 _HOME = Path(tempfile.mkdtemp(prefix="job-apply-live-"))
 os.environ["JOB_APPLY_HOME"] = str(_HOME)

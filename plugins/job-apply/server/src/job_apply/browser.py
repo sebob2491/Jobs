@@ -12,6 +12,7 @@ import contextlib
 import json
 import os
 import re
+import sys
 import time
 from pathlib import Path
 from typing import Any, Callable
@@ -1522,10 +1523,22 @@ class BrowserSession:
             def full(value: str, top: int) -> str:
                 return value.zfill(2) if 0 < top <= 31 else value.zfill(4) if top >= 1000 and len(value) <= 4 else value
 
+            trace = os.environ.get("JOB_APPLY_DATE_TRACE") == "1"  # (the live check's: each step of a date, said)
+
+            async def said(step: str) -> None:
+                if trace:
+                    with contextlib.suppress(PlaywrightError, PlaywrightTimeout):
+                        now = await parts.evaluate_all(
+                            "ps => ps.map((p) => (p.getAttribute('aria-valuenow') || p.value || '-') + "
+                            "(p.parentElement && p.parentElement.getAttribute('tabindex') === '0' ? '*' : '') + "
+                            "(p === p.ownerDocument.activeElement ? '^' : ''))")
+                        print(f"DATETRACE {step}: {' / '.join(now)}", file=sys.stderr, flush=True)
+
             want = [full(digits, infos[i]["max"]) if i == mine else full(str(infos[i]["now"]), infos[i]["max"])
                     if str(infos[i]["now"]).isdigit() and int(infos[i]["now"]) > 0 else "" for i in range(count)]
             # from the first part where every part before this one reads a number; else this part alone
             start = 0 if all(want[:mine]) else mine
+            await said(f"typing {digits} into part {mine} (want {want}, from part {start})")
             for i in range(start, mine + 1):
                 part = parts.nth(i)
                 display = part.locator("xpath=preceding-sibling::*[@aria-hidden='true'][1]")
@@ -1536,6 +1549,7 @@ class BrowserSession:
                     # the date's current part (focus alone leaves the current part as it is)
                     with contextlib.suppress(PlaywrightError, PlaywrightTimeout):
                         await display.click(timeout=2000)
+                    await said(f"part {i}: its display pressed")
                 if not await part.evaluate("el => el === el.ownerDocument.activeElement"):
                     # Where a hint is drawn over the boxes (Workday's "MM/DD/YYYY" or each part's "MM"), a click
                     # never reaches them: focus takes the keys just the same. Checked first, so no click timeout
@@ -1552,14 +1566,18 @@ class BrowserSession:
                     # move it, the plus probe Oct 11: the month typed after the year went into the year): moved
                     # with its arrows, as Workday's date says ("use right and left arrows to navigate spin buttons")
                     current = await part.evaluate(_CURRENT_PART_JS)
+                    await said(f"part {i}: focused (current {current})")
                     for _ in range(abs(current - i) if current >= 0 else 0):
                         await page.keyboard.press("ArrowLeft" if current > i else "ArrowRight")
                         await page.wait_for_timeout(50)
+                        await said(f"part {i}: {'ArrowLeft' if current > i else 'ArrowRight'}")
                     # (the part as it was: its digits replaced, as Workday selects a part it's given)
                     await part.evaluate("el => { try { el.select(); } catch (e) {} }")
                 await page.keyboard.type(want[i], delay=40)
+                await said(f"part {i}: typed {want[i]}")
             await loc.evaluate("el => el.ownerDocument.activeElement && el.ownerDocument.activeElement.blur()")
             await page.wait_for_timeout(100)
+            await said("left the date")
             read_js = "el => el.getAttribute('aria-valuenow') || (el.value || '').replace(/\\D/g, '')"
             read = [await parts.nth(i).evaluate(read_js) for i in range(count)]
             # A month or day typed that reads a little off (Entegris', Northern Trust's and GCU's Workday, nightly
@@ -1587,6 +1605,7 @@ class BrowserSession:
                     await loc.evaluate("el => el.ownerDocument.activeElement && el.ownerDocument.activeElement.blur()")
                     await page.wait_for_timeout(100)
                 read = [await parts.nth(j).evaluate(read_js) for j in range(count)]  # (read again, whatever happened)
+                await said(f"part {i}: put right by {off}")
         finally:
             with contextlib.suppress(PlaywrightError):
                 await loc.evaluate("el => el.ownerDocument.querySelectorAll('[data-ja-date-part]').forEach((p) => {"
