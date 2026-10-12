@@ -2005,16 +2005,25 @@ class BrowserSession:
             page = await self.page()
             try:
                 return await self._locator(page, element_id).evaluate("""(el) => {
-                  const own = new Set([...(el.labels || [])].map((l) => (l.innerText || '').trim()));
+                  const own = [...(el.labels || [])].map((l) => (l.innerText || '').trim()).filter(Boolean);
                   const boxes = 'input:not([type=hidden]), select, textarea';
+                  const said = (node) => node.nodeType === 3 ? (node.textContent || '').trim()
+                    : node.nodeType === 1 ? (node.innerText || '').trim() : '';
+                  // the text before it, text nodes too ("Join our talent network.<br><label>..."), up to another box
                   for (let n = el, d = 0; n && n !== document.body && d < 4; n = n.parentElement, d++) {
                     const out = [];
-                    for (let s = n.previousElementSibling; s && out.join(' ').length < 400; s = s.previousElementSibling) {
-                      if (s.matches(boxes) || s.querySelector(boxes)) break;
-                      const t = (s.innerText || '').trim();
-                      if (t && !own.has(t)) out.unshift(t);
+                    for (let s = n.previousSibling; s && out.join(' ').length < 400; s = s.previousSibling) {
+                      if (s.nodeType === 1 && (s.matches(boxes) || s.querySelector(boxes))) break;
+                      const t = said(s);
+                      if (t && !own.includes(t)) out.unshift(t);
                     }
                     if (out.join(' ').length > 15) return out.join(' ').slice(-500);
+                  }
+                  // nothing before it: its block's words, less its own label's
+                  for (let n = el.parentElement, d = 0; n && n !== document.body && d < 4; n = n.parentElement, d++) {
+                    let t = (n.innerText || '').trim();
+                    for (const o of own) t = t.replace(o, '').trim();
+                    if (t.length > 15) return t.slice(0, 500);
                   }
                   return '';
                 }""", timeout=3000)

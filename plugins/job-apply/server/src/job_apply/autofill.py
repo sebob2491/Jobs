@@ -1860,7 +1860,8 @@ def _resolve_field(field: dict, prof: Profile, job: dict | None = None, file_inp
         and bool(re.match(r"(are|do|will|would|can|have|is) you\b", label))
     # (and where a person lives, asked as a question in a text area: GCU's "In what city do you live?", the full run
     # of Oct 12)
-    home_box = ans.rule in {"city", "home_state"} and bool(re.match(r"(in )?(what|which) (city|state) do you", label))
+    home_box = ans.rule in {"city", "home_state"} and bool(re.match(
+        r"(in )?(what|which) (city|state) do you(?!.*\b(and|why|explain|describe|tell)\b)", label))
     if kind == "textarea" and not ans.rule.startswith("answers[") and ans.rule not in {"linkedin", "salary", "start_date"} \
             and not yes_no_box and not home_box:
         return None

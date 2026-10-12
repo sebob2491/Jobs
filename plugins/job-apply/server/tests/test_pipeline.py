@@ -1130,6 +1130,11 @@ def test_what_attests_to_an_application_and_what_doesnt():
     assert attestation({"kind": "checkbox", "label": "I certify that the information in this application is true and "
                         "complete, and understand false statements may disqualify me from future opportunities",
                         "required": True}) is True
+    # (the review's: a certification naming affiliates or offers isn't a sign-up; nor emails about the application)
+    assert attestation({"kind": "checkbox", "label": "I certify the information is true and complete and authorize Acme "
+                        "and its affiliates to conduct a background check", "required": True}) is True
+    assert attestation({"kind": "checkbox", "label": "I agree to the privacy policy and to receive emails about my "
+                        "application", "required": True}) is True
     assert attestation({"kind": "radio_group", "label": "Do you accept our applicant privacy notice?", "required": True,
                         "options": ["Yes", "No"]}) is None  # (a radio group isn't one of the kinds it picks in)
     assert attestation({"kind": "select", "label": "Do you accept our applicant privacy notice?", "required": True,
@@ -1152,7 +1157,8 @@ def test_what_attests_to_an_application_and_what_doesnt():
               # the safety audit's (Oct 12): an agreement or attestation that also signs the person up
               {"kind": "checkbox", "label": "I have read and agree to the Privacy Policy and consent to receive email "
                                             "communications from Acme", "required": True},
-              {"kind": "checkbox", "label": "I agree to the terms of use and would like to receive updates",
+              {"kind": "checkbox", "label": "I agree to the terms of use and would like to receive updates "
+                                            "about new jobs",
                "required": True},
               {"kind": "checkbox", "label": "I certify the information is true and complete and agree to receive emails",
                "required": True},
@@ -6815,13 +6821,19 @@ def test_a_bare_i_agree_is_ticked_only_where_the_words_above_it_are_the_sites_te
                     '<label><input type="checkbox" id="a"> I agree</label></div>'
                     '<div><p>Join our talent network to hear about new jobs and events by email.</p>'
                     '<label><input type="checkbox" id="b"> I agree</label></div>'
+                    # the review's: words beside it, not in an element of their own; and a terms paragraph that names
+                    # an email in passing
+                    '<div>Sign me up for job alerts and our newsletter.<br><label><input type="checkbox" id="c"> I agree'
+                    '</label></div>'
+                    '<div><p>Accept our Terms of Use. You will receive an email to verify your account.</p>'
+                    '<label><input type="checkbox" id="d"> I agree</label></div>'
                     '<button type="submit">Create Account</button>', encoding="utf-8")
     run(srv.browser.goto(page.as_uri()))
     data = run(srv.browser.inspect(include_dropdown_options=False))
     boxes = pipeline._terms_boxes(data)
-    assert len(boxes) == 2, data["fields"]  # (by their labels alone, both)
+    assert len(boxes) == 4, data["fields"]  # (by their labels alone, all four)
     kept = run(Applier(srv)._said_terms(boxes))
-    assert [b["id"] for b in kept] == [boxes[0]["id"]], (boxes, kept)
+    assert [b["id"] for b in kept] == [boxes[0]["id"], boxes[3]["id"]], (boxes, kept)
 
 
 def test_a_round_holds_while_the_person_is_at_a_review_page_and_ends_once_it_is_sent(srv):

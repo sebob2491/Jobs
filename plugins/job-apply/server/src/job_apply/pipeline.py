@@ -179,6 +179,23 @@ _MORE_THAN_TERMS = re.compile(r"receiv\w*|e-?mails?|updates?|notifications?|mess
 _SIGNS_UP_TOO = re.compile(r"\breceiv\w*\b.{0,40}\b(?:e-?mails?|communications?|updates?|messages?|news\w*|offers|"
                            r"information about|texts?)\b|\b(?:e-?mail|marketing|promotional) communications?\b|"
                            r"\bupdates? (?:about|on|from)\b|\bnewsletter", re.I)
+
+
+def _signs_up(text: str) -> bool:
+    """Do these words sign the person up for emails or updates (_SIGNS_UP_TOO)? Not those about the application
+    itself ("communications about my application status": the review's)."""
+    return any(not re.match(r"\W*(?:about|regarding|on|concerning) (?:the status of )?(?:my|this|the|your) application",
+                            text[m.end():], re.I)
+               for m in _SIGNS_UP_TOO.finditer(text))
+
+
+# The words above a bare "I agree" that make it a sign-up (a terms paragraph names emails, affiliates and offers in
+# passing: "you'll receive an email to verify your account", the review's)
+_SIGN_UP_ABOVE = re.compile(r"talent (?:community|network|pool)|job alerts?|newsletter|subscribe|marketing|"
+                            r"text messages?|\bsms\b|keep me|stay informed|similar jobs|promotional|"
+                            r"other (?:\w+ )?(?:roles|positions|jobs|openings|opportunities)|"
+                            r"\breceiv\w*\b.{0,40}\b(?:news\w*|offers|updates?|alerts?|promotions?|(?:job|career) "
+                            r"opportunities|marketing)\b", re.I)
 # A box whose own words say only that the person agrees: what it agrees to is in the words above it
 _BARE_AGREE = re.compile(r"^\W*(?:yes,? )?i (?:agree|consent|accept)\W*$", re.I)
 # A Create Account box that says the person applies from outside, not as one of the employer's staff
@@ -2075,8 +2092,9 @@ class Applier:
         kept = []
         for box in boxes:
             if _BARE_AGREE.match(box.get("label") or ""):
-                above = await self.srv.browser.words_before(box["id"]) or ""
-                if _NOT_TERMS.search(above) or _SIGNS_UP_TOO.search(above):
+                above = await self.srv.browser.words_before(box["id"])
+                # (gone, or not read: not ticked; the words of a sign-up, not the terms' passing mentions: the review's)
+                if above is None or _SIGN_UP_ABOVE.search(above):
                     continue
             kept.append(box)
         return kept
@@ -3479,11 +3497,11 @@ def _attestation(q: dict[str, Any]) -> Any:
     if q["kind"] == "checkbox_group":
         # its ticks that accept the terms, and only those: EMD's required pair is its Terms of Use &
         # Data Privacy Statement and its "Email Communications" (marketing, left unticked)
-        agreed = [o for o in choices if _agrees_to_terms(o) and not _SIGNS_UP_TOO.search(o)]
+        agreed = [o for o in choices if _agrees_to_terms(o) and not _signs_up(o)]
         return agreed or None
     if not (_ATTESTS.search(label) and not _NOT_ATTESTED.search(label) or _agrees_to_terms(label)):
         return None
-    if _SIGNS_UP_TOO.search(label) or _NOT_TERMS.search(label):
+    if _signs_up(label):
         return None  # (an agreement that also signs the person up for emails or updates: theirs, the safety audit's)
     if q["kind"] == "checkbox":
         return True

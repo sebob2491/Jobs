@@ -2150,6 +2150,7 @@ def test_where_the_person_lives_and_their_work_authorization_asked_as_questions(
     assert ask("In what city do you live?*") == "Chandler"
     assert ask("In what state do you live? (Please use the state abbreviation format, i.e. AZ)*") == "AZ"
     assert ask("Describe a town you would like to visit") is None
+    assert ask("Which state do you live in, and why do you want to relocate?") is None  # (an essay: the review's)
 
 
 def test_a_degree_still_to_come_is_never_filled_as_one():
