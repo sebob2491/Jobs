@@ -3771,7 +3771,9 @@ def _no_sign_in_here(run: Run, data: dict[str, Any]) -> bool:
     no password box, no box for an email or user name (an email-first sign-in's step), no way to an account, and
     nothing like an application (a job search's boxes aren't)."""
     fields = data.get("fields") or []
-    return (run.page is not None and _bare(run.page.url) != _bare(run.reset_from or "")
+    # (a job search, at any address: Edwards' SuccessFactors draws its search at its sign-in's own address, the probe
+    # of Oct 12)
+    return (run.page is not None and (_bare(run.page.url) != _bare(run.reset_from or "") or _job_search(data))
             and not any(f.get("kind") == "password" or _SIGN_IN_NAME.search(f.get("label") or "") for f in fields)
             and _account_way(data.get("actions") or []) is None
             and (not _application_like(data) or _job_search(data) and not any(

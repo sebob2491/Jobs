@@ -6777,7 +6777,13 @@ def test_a_sign_in_that_led_elsewhere_is_told_from_an_email_first_one():
     with_account = {**search, "actions": [*search["actions"], {"text": "Create Account"}]}
     assert not pipeline._no_sign_in_here(r, with_account)
     Page.url = "https://career5.successfactors.eu/career?_s.crb=xyz"
-    assert not pipeline._no_sign_in_here(r, search)  # (the same page: said by the other cases)
+    spent = {"fields": [], "actions": [{"text": "Back"}]}
+    assert not pipeline._no_sign_in_here(r, spent)  # (the same page: said by the other cases)
+    # a job search at the sign-in's own address (Edwards', the probe of Oct 12: careers?company=atlascopcoP both)
+    r.reset_from = Page.url = "https://career5.successfactors.eu/careers?company=atlascopcoP"
+    assert pipeline._no_sign_in_here(r, filters)
+    assert not pipeline._no_sign_in_here(r, {**filters, "fields": [*filters["fields"],
+                                                                   {"kind": "password", "label": "Password"}]})
 
 
 
