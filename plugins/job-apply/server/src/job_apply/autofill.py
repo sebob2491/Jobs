@@ -235,7 +235,9 @@ def degree_key(s: str) -> str | None:
 # Schooling begun but not finished: "Some High School", "Some College", "Associate's (in
 # progress)", "coursework toward a BSEE"
 _PARTIAL_STUDY = re.compile(r"\b(some|less than|incomplete|partial(ly)?|attended|attending|coursework|toward|towards|"
-                            r"in progress|enrolled|pursuing|unfinished|did not|not completed|no degree)\b")
+                            r"in progress|enrolled|pursuing|unfinished|did not|not completed|no degree|"
+                            # (a degree still to come: "BS (expected 2027)", the safety audit of Oct 12)
+                            r"expected|anticipated|graduating|candidate|pending)\b")
 _STUDY_WORDS = re.compile(r"\b(high school|college|university|degree|diploma|ged|graduate|coursework)\b")
 
 
@@ -672,7 +674,8 @@ def _employee_id(prof: Profile, job: dict) -> str | None:
 
 
 _UNFINISHED = re.compile(r"^(none|n ?a|no|not applicable)$|\b(no degree|not (completed|finished)|incomplete|"
-                         r"unfinished|did not (complete|finish|graduate)|in progress|some|coursework|attended)\b")
+                         r"unfinished|did not (complete|finish|graduate)|in progress|some|coursework|attended|"
+                         r"expected|anticipated|graduating|candidate|pending)\b")
 
 
 def finished_degree(value: Any) -> bool:

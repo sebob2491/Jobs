@@ -2150,3 +2150,17 @@ def test_where_the_person_lives_and_their_work_authorization_asked_as_questions(
     assert ask("In what city do you live?*") == "Chandler"
     assert ask("In what state do you live? (Please use the state abbreviation format, i.e. AZ)*") == "AZ"
     assert ask("Describe a town you would like to visit") is None
+
+
+def test_a_degree_still_to_come_is_never_filled_as_one():
+    """The safety audit (Oct 12): a profile's "BS Electrical Engineering (expected 2027)" picked "Bachelor's Degree" for
+    the highest level of education, as did "graduating", "anticipated" and "candidate". A degree not yet earned is
+    the person's to say; one earned is filled as before."""
+    options = ["High School", "Associate's Degree", "Bachelor's Degree", "Master's Degree"]
+    for degree in ("BS Electrical Engineering (expected 2027)", "Bachelor of Science, graduating 2027",
+                   "BS (anticipated 2026)", "BS candidate", "Bachelor's degree pending"):
+        assert choose_option(degree, options) is None, degree
+        p = Profile({"education": {"highest_degree": degree}})
+        assert resolve_field({"label": "Highest level of education", "kind": "select", "options": options,
+                              "required": True}, p) is None, degree
+    assert choose_option("Bachelor of Science", options) == "Bachelor's Degree"
