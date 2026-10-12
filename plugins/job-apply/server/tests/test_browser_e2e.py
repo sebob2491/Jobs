@@ -515,6 +515,20 @@ def test_a_workday_dates_part_left_empty_isnt_checked_against_one_never_typed(sr
     assert out["results"][0].get("ok"), out["results"]
 
 
+def test_a_file_put_in_the_sites_open_upload_dialog_is_sent_with_its_upload(srv, tmp_path):
+    """Amkor's SuccessFactors (the nightly of Oct 12): its "Upload Resume" dialog is open over the profile, its file
+    box inside. The desk put the resume in the box, pressed Next, and the site said "Resume: field is required": the
+    file counts only once the dialog's own Upload is pressed. It's pressed, and the dialog waited on to close."""
+    resume = tmp_path / "resume.pdf"
+    resume.write_bytes(b"%PDF-1.4 test")
+    run(srv.browser.goto(fixture_url("site/successfactors-open-upload-dialog.html")))
+    box = next(f for f in run(srv.inspect_form(include_dropdown_options=False))["fields"] if f["kind"] == "file")
+    out = run(srv.fill_form([{"id": box["id"], "value": str(resume)}]))
+    assert out["results"][0].get("ok"), out["results"]
+    page = run(srv.browser.page())
+    assert run(page.inner_text("#resume")) == "resume.pdf is on file.", run(page.inner_text("body"))
+
+
 @pytest.mark.parametrize("how", ["dialog", "box", "chooser"])
 def test_a_resume_uploaded_through_the_sites_own_dialog(srv, tmp_path, how):
     """APS's SuccessFactors (the live check's plus probe, Oct 11): its resume is a "+" button that opens a dialog

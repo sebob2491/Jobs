@@ -1372,7 +1372,7 @@ class BrowserSession:
             await loc.set_input_files(str(path))
             with contextlib.suppress(PlaywrightError, PlaywrightTimeout):  # (a box drawn afresh at once is gone)
                 await loc.evaluate("(el, k) => { el.__jaUploaded = k; }", path.name, timeout=1500)
-            return f"uploaded {path.name}"
+            return await self._send_dialog_upload(page, loc, path)
         if kind == "checkbox":
             want = value if isinstance(value, bool) else bool(polarity(value))
             await self._set_checked(loc, want)
@@ -1419,6 +1419,27 @@ class BrowserSession:
         await loc.fill(text)
         await loc.evaluate("el => el.blur()")
         return "filled"
+
+    async def _send_dialog_upload(self, page: Page, box: Locator, path: Path) -> str:
+        """A file box inside the site's own upload dialog takes the file only once the dialog's Upload is pressed
+        (Amkor's SuccessFactors, the nightly of Oct 12: its "Upload Resume" dialog, open over the profile, kept the
+        file in its box while the desk pressed Next, and the page said "Resume: field is required"). Pressed, and the
+        dialog waited on to close; said if it stays."""
+        dialog = box.locator("xpath=ancestor::*[@role='dialog' or @role='alertdialog' or self::dialog][1]")
+        if not await dialog.count():
+            return f"uploaded {path.name}"
+        send = dialog.locator('button:visible, [role="button"]:visible, input[type="submit"]:visible').filter(
+            has_text=re.compile(r"^\s*(upload|attach|ok|save|done)\s*$", re.I))
+        if not await send.count():
+            return f"uploaded {path.name}"
+        await send.first.click(timeout=3000)
+        for _ in range(int(UPLOAD_SHOWN_WAIT * 2)):
+            with contextlib.suppress(PlaywrightError, PlaywrightTimeout):
+                if not await dialog.is_visible(timeout=1000):
+                    return f"uploaded {path.name}"
+            await page.wait_for_timeout(500)
+        raise ValueError(f"the site's upload dialog stayed open after its {await send.first.inner_text()}; check "
+                         "it in the browser")
 
     async def _upload_through(self, page: Page, button: Locator, path: Path) -> str:
         """A file given through the button that opens the site's own upload (the older SuccessFactors site's
