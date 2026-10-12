@@ -478,13 +478,16 @@ def test_a_workday_date_whose_current_part_stays_put_gets_its_month(srv):
     assert shown[:2] == ["03/2021", "11/2023"], shown
 
 
-@pytest.mark.parametrize("order", ["month first", "year first"])
+@pytest.mark.parametrize("order", ["month first", "year first", "slips"])
 def test_a_workday_date_moved_by_its_arrows_gets_its_month(srv, order):
     """KLA's Workday (the live check's plus probe, Oct 11): pressing a part's display doesn't make it the
     date's current part there, so with the year current the month's digits went into the year, and the month
     read MM ("Invalid Date: /2021"). Its date says "use right and left arrows to navigate spin buttons": the
     current part is moved to the one typed first with those."""
-    run(srv.browser.goto(fixture_url("site/workday-date-sections.html") + "?sticky&arrows"))
+    # (slips: the month comes out one short once typed, Entegris', Northern Trust's and GCU's, nightly Oct 12: put
+    # right with its own up arrow)
+    run(srv.browser.goto(fixture_url("site/workday-date-sections.html") + "?sticky&arrows"
+                         + ("&slip" if order == "slips" else "")))
     by = {(f.get("section") or f["label"], f.get("sublabel")): f["id"]
           for f in run(srv.inspect_form(include_dropdown_options=False))["fields"]}
     values = [(("From", "Month"), "3"), (("From", "Year"), "2021"), (("To", "Month"), "11"), (("To", "Year"), "2023")]

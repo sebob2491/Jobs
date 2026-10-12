@@ -148,6 +148,7 @@ LOST_FILL_TRIES = 3  # times a box is typed again on a page, at most (one the pa
 BLOCK_DRAW_WAIT = 6000  # ms for blocks just added (Workday's Education 2) to draw their boxes, at most
 # How long a click may wait for its button to become clickable, in ms.
 CLICK_TIMEOUT = 8000
+DATE_NUDGE_MAX = 3  # a date's month or day this far off, as typed, is put right with its arrows
 FORM_DRAW_TRIES, FORM_DRAW_WAIT = 5, 500  # a page read with no form is read again, each this many ms apart
 UPLOAD_CHOOSER_WAIT = 3000  # ms for a button that opens a site's own upload to open a file chooser
 UPLOAD_SHOWN_WAIT = 15  # seconds for a file given through a site's own upload to show on the page
@@ -1559,8 +1560,31 @@ class BrowserSession:
                 await page.keyboard.type(want[i], delay=40)
             await loc.evaluate("el => el.ownerDocument.activeElement && el.ownerDocument.activeElement.blur()")
             await page.wait_for_timeout(100)
-            read = [await parts.nth(i).evaluate(
-                "el => el.getAttribute('aria-valuenow') || (el.value || '').replace(/\\D/g, '')") for i in range(count)]
+            read_js = "el => el.getAttribute('aria-valuenow') || (el.value || '').replace(/\\D/g, '')"
+            read = [await parts.nth(i).evaluate(read_js) for i in range(count)]
+            # A month or day typed that reads a little off (Entegris', Northern Trust's and GCU's Workday, nightly
+            # Oct 12: the month 02 for 03, its year right): put right with that part's own arrows, as a spinbutton
+            # takes them (up one, down one), at most a few presses; read again, and said below if still off
+            for i in range(start, mine + 1):
+                got, top = str(read[i]), infos[i]["max"]
+                if not (want[i] and got.isdigit() and 0 < top <= 31 and int(got) != int(want[i])):
+                    continue
+                off = int(want[i]) - int(got)
+                if abs(off) > DATE_NUDGE_MAX:
+                    continue
+                part = parts.nth(i)
+                with contextlib.suppress(PlaywrightError, PlaywrightTimeout):
+                    await part.focus(timeout=FOCUS_TIMEOUT)
+                    current = await part.evaluate(_CURRENT_PART_JS)  # (the arrows go to the date's current part)
+                    for _ in range(abs(current - i) if current >= 0 else 0):
+                        await page.keyboard.press("ArrowLeft" if current > i else "ArrowRight")
+                        await page.wait_for_timeout(50)
+                    for _ in range(abs(off)):
+                        await page.keyboard.press("ArrowUp" if off > 0 else "ArrowDown")
+                        await page.wait_for_timeout(50)
+                    await loc.evaluate("el => el.ownerDocument.activeElement && el.ownerDocument.activeElement.blur()")
+                    await page.wait_for_timeout(100)
+                    read = [await parts.nth(j).evaluate(read_js) for j in range(count)]
         finally:
             with contextlib.suppress(PlaywrightError):
                 await loc.evaluate("el => el.ownerDocument.querySelectorAll('[data-ja-date-part]').forEach((p) => {"
