@@ -259,10 +259,27 @@ def render_body(state: dict[str, dict[str, str]], current: dict[str, dict[str, R
     return "\n".join(lines)
 
 
+# as far as an apply check's run goes (the person's own Submit, or Apply, is next)
+REACHED = frozenset({"ready", "needs_you your_submit"})
+_APPLY_CHECKS = frozenset({"pipeline", "hr", "finance", "accounts"})
+
+
+def went_back(changes: list[Change]) -> list[Change]:
+    """The regression alarm: employers an apply check's last run took as far as it goes (their review page)
+    that this run stopped short of it. Not one that left the list (nor a site down: its last outcome is kept)."""
+    return [c for c in changes if c.check in _APPLY_CHECKS and c.before in REACHED
+            and c.after is not None and c.after not in REACHED]
+
+
 def render_comment(changes: list[Change], run_url: str = "") -> str:
     n = len(changes)
     lines = [f"{n} change{'' if n == 1 else 's'} since the last nightly live check"
              + (f" ([run]({run_url}))" if run_url else "") + ":"]
+    back = went_back(changes)
+    if back:  # (one line, not a list: nightly_summary.py --changes reads the list's lines once each)
+        lines += ["", f"**Went backwards:** {len(back)} employer{'' if len(back) == 1 else 's'} no longer "
+                  f"reach{'es' if len(back) == 1 else ''} the review page: "
+                  + ", ".join(f"{c.employer} ({c.check}: {_code(c.after)})" for c in back) + "."]
     for check in dict.fromkeys(c.check for c in changes):
         lines += ["", f"**{_title(check)}**", ""]
         for c in (c for c in changes if c.check == check):
@@ -324,12 +341,15 @@ def main(argv: list[str] | None = None) -> int:
         args.comment_out.unlink()
     for c in changes:
         print(f"changed: {c.check} / {c.employer}: {c.before or '(new)'} -> {c.after or '(no longer checked)'}")
+    back = went_back(changes)
+    for c in back:  # (an annotation on the run, besides the issue's comment)
+        print(f"::warning::{c.employer} ({c.check}) no longer reaches the review page: now {c.after}")
     if not changes:
         print("no changes" + (" (nothing saved to compare with)" if previous is None else ""))
     if args.github_output:
         number, issue_state = (issue.get("number") or "", issue.get("state") or "") if issue else ("", "")
         with args.github_output.open("a", encoding="utf-8") as f:
-            f.write(f"issue={number}\nissue_state={issue_state}\nchanges={len(changes)}\n")
+            f.write(f"issue={number}\nissue_state={issue_state}\nchanges={len(changes)}\nwent_back={len(back)}\n")
     return 0
 
 

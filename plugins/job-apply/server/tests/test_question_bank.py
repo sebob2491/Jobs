@@ -35,6 +35,7 @@ BANK = {q["id"]: q for q in config.question_bank()}
     ("language", "Preferred Locale/Language"),
     ("community_college", "Have you ever attended a community college or taken classes/certifications at a community college?"),
     ("military_spouse", "Are you a current or former military spouse or domestic partner?"),
+    ("proof_of_age", "If hired, can you furnish proof of age?"),
 ])
 def test_each_common_question_covers_the_wordings_employers_asked(bank_id, label):
     hits = [q["id"] for q in BANK.values() if re.search(q["match"], label, re.I)]

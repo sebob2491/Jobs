@@ -1,5 +1,6 @@
 """Drive the MCP tools against local mock application forms in headless Chromium."""
 
+
 from pathlib import Path
 
 import pytest
@@ -478,27 +479,40 @@ def test_a_workday_date_whose_current_part_stays_put_gets_its_month(srv):
     assert shown[:2] == ["03/2021", "11/2023"], shown
 
 
-@pytest.mark.parametrize("order", ["month first", "year first", "slips"])
-def test_a_workday_date_moved_by_its_arrows_gets_its_month(srv, order):
-    """KLA's Workday (the live check's plus probe, Oct 11): pressing a part's display doesn't make it the
-    date's current part there, so with the year current the month's digits went into the year, and the month
-    read MM ("Invalid Date: /2021"). Its date says "use right and left arrows to navigate spin buttons": the
-    current part is moved to the one typed first with those."""
-    # (slips: the month comes out one short once typed, Entegris', Northern Trust's and GCU's, nightly Oct 12: put
-    # right with its own up arrow)
-    run(srv.browser.goto(fixture_url("site/workday-date-sections.html") + "?sticky&arrows"
-                         + ("&slip" if order == "slips" else "")))
+@pytest.mark.parametrize("order", ["month first", "year first", "backwards"])
+def test_a_workday_date_takes_each_part_in_the_one_with_focus(srv, order):
+    """Intel's and Entegris' Workday, traced live (Oct 12): digits go to the part with focus, whatever part the date
+    marks current, and its arrows only move focus, wrapping round. The desk's arrow presses (0.3.116) took focus
+    from the month to the year, so the month went into the year ("2003"), and the year began in the month ("02");
+    seventeen employers stopped on their work history's From. Each part is focused, and typed, with no arrows.
+    And as focus leaves such a date it's read again, a lone number as the year: the month typed with the year still
+    empty came back as the year 2003 (Intel's and U.S. Bank's, traced live Oct 12). A date's parts given together
+    are typed in one run."""
+    run(srv.browser.goto(fixture_url("site/workday-date-sections.html") + "?sticky&arrows"))
     by = {(f.get("section") or f["label"], f.get("sublabel")): f["id"]
           for f in run(srv.inspect_form(include_dropdown_options=False))["fields"]}
-    values = [(("From", "Month"), "3"), (("From", "Year"), "2021"), (("To", "Month"), "11"), (("To", "Year"), "2023")]
+    values = [(("From", "Month"), "3"), (("From", "Year"), "2021"), (("To", "Month"), "11"), (("To", "Year"), "2023"),
+              (("Date", "Month"), "10"), (("Date", "Day"), "9"), (("Date", "Year"), "2026")]
     if order == "year first":
-        values = [values[1], values[0], values[3], values[2]]
+        values = [values[1], values[0], values[3], values[2], values[6], values[4], values[5]]
+    if order == "backwards":
+        values = values[::-1]
     out = run(srv.fill_form([{"id": by[key], "value": value} for key, value in values]))
     assert all(r.get("ok") for r in out["results"]), out["results"]
     page = run(srv.browser.page())
     shown = run(page.evaluate("() => [...document.querySelectorAll('[role=group]')].map((g) => "
                               "[...g.querySelectorAll('[aria-hidden=true]')].map((d) => d.textContent).join('/'))"))
-    assert shown[:2] == ["03/2021", "11/2023"], shown
+    assert shown == ["03/2021", "11/2023", "10/09/2026"], shown
+
+
+def test_a_workday_dates_part_left_empty_isnt_checked_against_one_never_typed(srv):
+    """The review of 0.3.121: a date's Month and Year given with its Day not, the Year wasn't typed with the Month
+    (the empty Day between), yet the Month's fill said the date was wrong for the Year it hadn't typed."""
+    run(srv.browser.goto(fixture_url("site/workday-date-sections.html") + "?sticky"))
+    by = {(f.get("section") or f["label"], f.get("sublabel")): f["id"]
+          for f in run(srv.inspect_form(include_dropdown_options=False))["fields"]}
+    out = run(srv.fill_form([{"id": by[("Date", "Month")], "value": "10"}, {"id": by[("Date", "Year")], "value": "2026"}]))
+    assert out["results"][0].get("ok"), out["results"]
 
 
 @pytest.mark.parametrize("how", ["dialog", "box", "chooser"])

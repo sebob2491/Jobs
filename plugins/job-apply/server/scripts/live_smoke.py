@@ -48,6 +48,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import contextlib
+import datetime
 import json
 import os
 import re
@@ -1060,6 +1061,10 @@ def fake_answer(q: dict[str, Any]) -> Any:
         # "No" where there is one, as most applicants answer "applied before?", "relatives
         # here?" or "terminated?"; a "Yes" brings follow-up questions the run then has to answer
         return next((o for o in options if polarity(o) is False), options[0])
+    part = str(q.get("sublabel") or "").strip().lower()
+    if part in ("month", "day", "year"):  # a date's part (GCU's "... by entering today's date below"): today's
+        today = datetime.date.today()
+        return {"month": f"{today.month:02d}", "day": f"{today.day:02d}", "year": str(today.year)}[part]
     if re.search(r"year|salary|number|how many|zip|postal|\bgpa\b", q.get("label") or "", re.I):
         return "0"
     return "Test answer"

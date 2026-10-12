@@ -50,6 +50,9 @@ SIGN_IN_STEP_WAIT = 25  # Workday's sign-in step can take longer to draw its but
 LEFT_SIGN_IN_SETTLE = 3  # seconds before a sign-in page that led elsewhere is taken for one with no sign-in
 ACCOUNT_DRAW_WAIT = 4  # for the application below a Create Account form to be drawn (Qorvo's)
 HANDS_ON = {"sign_in", "email_code"}
+# What the desk's rounds take the person to, one tab at a time, starting no other job meanwhile: bot checks to solve,
+# and applications filled to the step the person sends (a ready one's review page is "ready", not a need)
+ROUND_NEEDS = {"bot_check", "your_submit", "check_submit", "submit_failed"}
 # A bot check never holds the queue (the owner's call, Oct 11): its job waits in its tab, watched, while the other
 # jobs go on, and the person solves the checks waiting in a round of their own from the desk ("Bot checks"); each
 # job carries on by itself once its tab is past the check. The desk never solves one.
@@ -768,7 +771,8 @@ class Applier:
                 await asyncio.sleep(POLL_SECONDS)
 
     def start_round(self, job_id: int) -> None:
-        """The person is at this bot check's tab in the desk's round (focus() brought it up)."""
+        """The person is at this job's tab in one of the desk's rounds (focus() brought it up): its bot check, or
+        its review page to check before they press Submit."""
         self.round_job, self.round_at = job_id, time.time()
         self._wake.set()
 
@@ -777,18 +781,20 @@ class Applier:
         self._wake.set()
 
     def _in_round(self) -> bool:
-        """Is the person at a bot check in the desk's round still (it waits on them, for no longer than a
-        sign-in would hold the queue)?"""
+        """Is the person at a job in one of the desk's rounds still: its bot check, or its review page waiting on
+        their Submit (it waits on them, for no longer than a sign-in would hold the queue)?"""
         run = self.runs.get(self.round_job) if self.round_job is not None else None
-        if run is None or run.status != "needs_you" or run.need != "bot_check" \
-                or time.time() - self.round_at > HANDS_ON_TIMEOUT:
+        theirs = run is not None and (run.status == "ready" or run.status == "needs_you" and run.need in ROUND_NEEDS)
+        if not theirs or time.time() - self.round_at > HANDS_ON_TIMEOUT:
             self.round_job = None
             return False
         return True
 
     async def _tick(self) -> None:
         self._resume_tailored()
-        if self._in_round():  # the person at a bot check: nothing else started over it, the solved one noticed
+        # the person at a job in a round (a bot check, a review page): nothing else started over it, a solved check
+        # noticed; a Submit they pressed (the round's own "Submit this one") still goes
+        if self._in_round() and not any(t[0] == "submit" for t in self.tasks):
             await self._pick_up_left()
             self._wake.clear()
             await self._sleep(POLL_SECONDS)
@@ -1467,6 +1473,7 @@ class Applier:
                 # KLA's Workday right after its sign-in (live, Oct 2026): "Something went wrong. Please refresh
                 # the page and then try again." Done, once a job
                 run.refreshed = True
+                waited = False  # (a new page: its late buttons waited on, whatever was before it)
                 self._log(run, f"{_site(run, data)} said something went wrong and asked for the page to be "
                           "refreshed, so I reloaded it")
                 with contextlib.suppress(Exception):
@@ -1871,6 +1878,12 @@ class Applier:
                 return self._pause(run, "stuck", f"I went round in a circle ({lap}, then back to {_where(data)}), so "
                                    "the site isn't letting this application on. Have a look in the browser, then press "
                                    "Resume.")
+            test = _assessment_button(data)
+            if test and (kind == "page" and [p[:1] + p[2:] for p in pressed[-2:]] == [key[:1] + key[2:]] * 2
+                         or kind == "form" and pressed[-3:] == [key] * 3):
+                # a step that won't go on until the applicant takes the employer's assessment (Circle K's Workday,
+                # the nightly of Oct 12: "Take Assessment" beside its Save and Continue): a test of the person
+                return await self._assessment_pause(run, data, test)
             if kind == "page" and [p[:1] + p[2:] for p in pressed[-2:]] == [key[:1] + key[2:]] * 2:
                 # "next" on a list of jobs (a link to a search page): its pages differ, but no
                 # application ever opens
@@ -2018,6 +2031,8 @@ class Applier:
                                       "was typed in them")
                             stalls = 0
                             continue
+                    if test := _assessment_button(data):  # (a step waiting on the applicant's assessment)
+                        return await self._assessment_pause(run, data, test)
                     errors = "; ".join(problems)[:300].rstrip(" .")
                     return self._pause(run, "stuck", "The page didn't move on" + (f": {errors}." if errors else ".")
                                        + " Fix it in the browser, then press Resume.")
@@ -2045,6 +2060,13 @@ class Applier:
             await asyncio.sleep(1)
             if _account_and_application((await self._look())[0]):
                 return
+
+    async def _assessment_pause(self, run: Run, data: dict[str, Any], button: str) -> None:
+        """A step that won't go on until the applicant takes the employer's assessment: theirs to take."""
+        await self._bring_forward(run)
+        self._pause(run, "stuck", f"{_site(run, data)} wants you to take its assessment before the application goes "
+                    f"on (its \u201c{button}\u201d), and that's yours to do. Take it in the browser window (the site "
+                    "brings you back after), then press Resume.")
 
     async def _wait_for_step(self, seconds: float, before: dict[str, Any]) -> bool:
         """Wait for a form still being drawn: its step button enabled, or more boxes to fill, or
@@ -3908,6 +3930,16 @@ def _account_wants(left: dict[str, Any], filled: dict[str, Any]) -> str:
     named = [f"\u201c{_short(f['label'])}\u201d " + ("isn't ticked" if f.get("kind") == "checkbox" else "is still empty")
              for f in empty[:3]]
     return "; ".join(named) + "." if named else ""
+
+
+_ASSESSMENT = re.compile(r"^(?:take|start|begin|launch|complete|go to)\s+(?:the\s+|your\s+|an?\s+)?"
+                         r"(?:online\s+)?assessments?$", re.I)
+
+
+def _assessment_button(data: dict[str, Any]) -> str:
+    """The button that starts an employer's assessment of the applicant ("Take Assessment"), if the page has one."""
+    return next((a["text"].strip() for a in data.get("actions") or []
+                 if _ASSESSMENT.match(final_text(a.get("text") or "").strip()) and not a.get("disabled")), "")
 
 
 def _greyed_step(data: dict[str, Any]) -> list[dict[str, Any]]:

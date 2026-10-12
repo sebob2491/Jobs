@@ -1538,3 +1538,121 @@ def test_the_bot_checks_waiting_are_solved_in_one_round(srv):
             await desk.stop()
 
     run(go())
+
+
+def test_the_applications_ready_for_the_persons_submit_are_reviewed_in_one_round(srv):
+    """For a batch (the owner's mega apply, Oct 12): "Review them" brings each application filled to the person's
+    Submit up in turn; "Submit this one" sends the one shown (their press), "I submitted it" says they pressed the
+    site's own last button, and the next comes up once it's gone. Nothing is sent without the person's press."""
+    from playwright.async_api import async_playwright
+
+    from job_apply.pipeline import Run
+
+    desk = Desk(srv)
+    desk.applier.start = lambda: None
+    desk.search.update(status="done", at=time.time())
+    jobs = [srv.add_job(url=f"https://example.com/job/{i}", title="Technician", company=c)["job"]
+            for i, c in enumerate(["Example Fab", "Example Litho"])]
+    first = Run(jobs[0]["id"], "Technician", "Example Fab", status="ready", reason="Filled and waiting on the review page.")
+    second = Run(jobs[1]["id"], "Technician", "Example Litho", status="needs_you", need="your_submit",
+                 reason="Its send button reads Apply.")
+    first.paused_at, second.paused_at = 1000.0, 1001.0
+    desk.applier.runs.update({jobs[0]["id"]: first, jobs[1]["id"]: second})
+    shown, sent, said = [], [], []
+
+    async def focus(job_id):
+        shown.append(job_id)
+        return True
+    desk.applier.focus = focus
+    desk.applier.start_round = lambda job_id: None
+
+    def submit_now(job_id):
+        sent.append(job_id)
+        first.status = "queued"
+        return first
+    desk.applier.submit_now = submit_now
+    desk.applier.mark_applied = lambda job_id: (said.append(job_id), setattr(second, "status", "submitted"))
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with async_playwright() as pw:
+                browser = await pw.chromium.launch(**launch_options())
+                page = await browser.new_page()
+                await page.goto(desk.url)
+                await page.wait_for_selector("#notices [data-act=review-round]")
+                assert "2 applications ready for your Submit" in await page.inner_text("#notices")
+                assert not sent and not said  # (nothing sent before the person's press)
+                await page.click("#notices [data-act=review-round]")
+                await page.wait_for_selector("#notices [data-act=review-submit]")
+                assert shown == [jobs[0]["id"]], shown
+                await page.click("#notices [data-act=review-submit]")
+                await page.wait_for_selector("#notices [data-act=review-applied]")
+                assert sent == [jobs[0]["id"]] and shown == [jobs[0]["id"], jobs[1]["id"]], (sent, shown)
+                await page.click("#notices [data-act=review-applied]")
+                for _ in range(40):
+                    if said:
+                        break
+                    await page.wait_for_timeout(100)
+                assert said == [jobs[1]["id"]]
+                await browser.close()
+        finally:
+            await desk.stop()
+
+    run(go())
+
+
+def test_a_review_rounds_submit_sends_only_the_application_its_banner_names(srv):
+    """The review of the round: a review page whose tab was closed is passed over for the next one, and the banner
+    went on naming the closed one for up to a poll while its Submit would have sent the next, which the person never
+    chose. The banner names the one brought up at once, and its Submit sends only the one it names."""
+    from playwright.async_api import async_playwright
+
+    from job_apply.pipeline import Run
+
+    desk = Desk(srv)
+    desk.applier.start = lambda: None
+    desk.search.update(status="done", at=time.time())
+    names = ["Example Fab", "Example Closed", "Example Litho"]
+    jobs = [srv.add_job(url=f"https://example.com/job/{i}", title="Technician", company=c)["job"]
+            for i, c in enumerate(names)]
+    for i, (job, name) in enumerate(zip(jobs, names)):
+        r = Run(job["id"], "Technician", name, status="ready", reason="Filled and waiting on the review page.")
+        r.paused_at = 1000.0 + i
+        desk.applier.runs[job["id"]] = r
+    shown, sent = [], []
+
+    async def focus(job_id):
+        shown.append(job_id)
+        return job_id != jobs[1]["id"]  # (its tab closed)
+    desk.applier.focus = focus
+    desk.applier.start_round = lambda job_id: None
+    desk.applier.submit_now = lambda job_id: (sent.append(job_id), desk.applier.runs[job_id])[1]
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with async_playwright() as pw:
+                browser = await pw.chromium.launch(**launch_options())
+                page = await browser.new_page()
+                await page.goto(desk.url)
+                await page.click("#notices [data-act=review-round]")
+                await page.wait_for_selector("#notices [data-act=review-submit]")
+                await page.click("#notices [data-act=review-next]")
+                for _ in range(40):
+                    if jobs[2]["id"] in shown:
+                        break
+                    await page.wait_for_timeout(25)
+                await page.wait_for_timeout(100)
+                assert "Reviewing Technician (Example Litho)" in await page.inner_text("#notices")
+                await page.click("#notices [data-act=review-submit]")
+                for _ in range(40):
+                    if sent:
+                        break
+                    await page.wait_for_timeout(50)
+                assert sent == [jobs[2]["id"]], sent
+                await browser.close()
+        finally:
+            await desk.stop()
+
+    run(go())

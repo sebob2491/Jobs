@@ -199,6 +199,15 @@ EXTRACT_JS = r"""
   // first one that holds another box (UKG Pro's Create Account consent, live, Oct 2026: "By checking
   // this box, I have read and agree to the Consent and Privacy Policy*" in a span after the box).
   const CHOICE = CONTROL + ', [role="checkbox"], [role="radio"], [role="switch"]';
+  // a file list's boxes (Taleo's), and the file a row of one is for (its "Select the file: <name>" box's title)
+  const FILE_BOX = /^(select the file:\s*\S.*|(this )?document is (a|the|your) (resume|cv))$/i;
+  const fileOfRow = (row) => {
+    for (const b of row.querySelectorAll('input[type="checkbox"]')) {
+      const m = clean(b.title || '').match(/^select the file:\s*(.+)$/i);
+      if (m) return m[1];
+    }
+    return '';
+  };
   const besideText = (el) => {
     for (let n = el.parentElement, d = 0; n && n !== document.body && d < 3; n = n.parentElement, d++) {
       if ([...n.querySelectorAll(CHOICE)].some((x) => x !== el && !el.contains(x))) return '';
@@ -490,7 +499,19 @@ EXTRACT_JS = r"""
       }
       // still nothing but the box's own value ("", or "on" for one with none): the words beside it
       if (/^(on|off|true|false|[01])?$/i.test(label)) label = besideText(first) || label;
+      // nor beside it: a file list's box, by its title (Kforce's Taleo, the nightly of Oct 12: "Select the file:
+      // resume.pdf" and "Document is a resume", one row a file), with its row's file and how many rows have that file.
+      // Only those: another box's title ("I agree" beside a row's job alerts) isn't its question
+      const titled = /^(on|off|true|false|[01])?$/i.test(label) && FILE_BOX.test(clean(first.title || ''))
+        ? clean(first.title) : '';
+      if (titled) label = titled;
       const single = { id: idOf(first), kind: 'checkbox', label, required: isRequired(first, label), value: checkedOf(first) };
+      const row = titled && first.closest('tr');
+      if (row) {
+        const table = row.closest('table') || row.parentElement;
+        single.row_file = fileOfRow(row);
+        single.same_file_rows = [...table.querySelectorAll('tr')].filter((r) => fileOfRow(r) === single.row_file).length;
+      }
       const section = sectionOf(first);
       if (section && section !== label) single.section = section;
       fields.push(single);

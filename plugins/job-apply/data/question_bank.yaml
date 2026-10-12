@@ -112,3 +112,11 @@ questions:
     kind: choice
     choices: ["No", "Yes", "I do not wish to provide"]
     seen: 1
+
+  - id: proof_of_age
+    example: "If hired, can you furnish proof of age?"
+    ask: If hired, could you show proof of your age?
+    match: "(?:furnish|provide|show|present)\\b.{0,20}\\bproof of (?:your )?age"
+    kind: choice
+    choices: ["Yes", "No"]
+    seen: 1
