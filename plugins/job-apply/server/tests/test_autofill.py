@@ -112,6 +112,9 @@ def test_resolve_files(job_apply_home, tmp_path):
     both = {**f("Upload a file (5MB max)*", "file"), "section": "Resume/CV and Cover Letter"}
     assert resolve_field(both, p, job, 1).value == str(folder / "resume.pdf")
     assert resolve_field(both, p, job, 2).value == str(folder / "cover_letter.pdf")  # (two there: as before)
+    # the review's: a cover letter's section that mentions the resume keeps its cover letter
+    for section in ("Cover Letter (and resume if not uploaded)", "Cover letter. Your resume was already imported"):
+        assert resolve_field({**both, "section": section}, p, job, 1).value == str(folder / "cover_letter.pdf"), section
 
 
 def test_plan_autofill_orders_required_first():

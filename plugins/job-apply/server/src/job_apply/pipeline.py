@@ -3731,7 +3731,8 @@ def _no_sign_in_here(run: Run, data: dict[str, Any]) -> bool:
     return (run.page is not None and _bare(run.page.url) != _bare(run.reset_from or "")
             and not any(f.get("kind") == "password" or _SIGN_IN_NAME.search(f.get("label") or "") for f in fields)
             and _account_way(data.get("actions") or []) is None
-            and (not _application_like(data) or _job_search(data)))
+            and (not _application_like(data) or _job_search(data) and not any(
+                _APPLICATION_FIELD.search(f.get("label") or "") for f in fields)))
 
 
 def _job_search(data: dict[str, Any]) -> bool:

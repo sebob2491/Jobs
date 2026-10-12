@@ -6736,6 +6736,9 @@ def test_a_sign_in_that_led_elsewhere_is_told_from_an_email_first_one():
     filters = {**search, "fields": [*search["fields"], *[{"kind": "text", "label": "Select one or more options"}] * 7,
                                     {"kind": "checkbox", "label": "Exact Match"}]}
     assert pipeline._application_like(filters) and pipeline._no_sign_in_here(r, filters)
+    # the review's: an application with a job search in its header is still one
+    applying = {**filters, "fields": [*filters["fields"], {"kind": "text", "label": "First Name"}]}
+    assert not pipeline._no_sign_in_here(r, applying)
     email_first = {"fields": [{"kind": "text", "label": "Email Address"}], "actions": [{"text": "Next"}]}
     assert not pipeline._no_sign_in_here(r, email_first)
     with_account = {**search, "actions": [*search["actions"], {"text": "Create Account"}]}

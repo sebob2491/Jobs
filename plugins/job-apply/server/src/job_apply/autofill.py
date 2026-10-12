@@ -1754,8 +1754,12 @@ def _resolve_field(field: dict, prof: Profile, job: dict | None = None, file_inp
             return Answer(SKIP, "documents.resume")
         # (a page's one upload, in a section for both, "Resume/CV and Cover Letter": the resume goes in it, as a
         # person would put it there: Arizona State University's Workday, the full run of Oct 12)
+        # (only a section named for both alike, never one for a cover letter that mentions the resume: "Cover Letter
+        # (and resume if not uploaded)", "Your resume was already imported", the review's)
+        section = norm(field.get("section"))
         both = (file_inputs_on_page == 1 and not re.search(r"cover", label)
-                and re.search(r"resume|cv|curriculum", norm(field.get("section"))))
+                and re.search(r"\b(resume|cv)\b (and|or)? ?(cover letter)$|^(resume|cv)( cv)? (and|or) cover letter\b", section)
+                and not re.search(r"\b(if|optional|already|instead|only)\b", section))
         if re.search(r"cover", where) and not both:
             path = _document(prof, job, "cover_letter")
             return Answer(path, "documents.cover_letter") if path else None
