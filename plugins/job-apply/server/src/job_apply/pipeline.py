@@ -367,6 +367,7 @@ class Run:
     invalid_redone: bool = False  # the review page's invalid lists answered again from the profile (once a job)
     reset_no_mail: bool = False  # and none came in RESET_MAIL_WAIT: no account there, most likely, so one is made
     reopened_elsewhere: bool = False  # its sign-in page, opened again, led elsewhere: the job opened again (once a job)
+    reopened: int = 0  # times _back_to_sign_in opened the job again: a press before one is another visit's
     # The job's sign-ins pressed with the saved password, and which password that was (a digest): a Run
     # outlasts Resume and the queue, so these hold for the job, not for one pass at it
     sign_in_tries: int = 0
@@ -403,7 +404,7 @@ class Run:
     def public(self) -> dict[str, Any]:
         return {k: v for k, v in self.__dict__.items() if k not in ("page", "tab_mark", "cookies_asked", "resetting",
                                                                      "reset_asked", "reset_from", "reset_waited",
-                                                                     "reset_no_mail", "reopened_elsewhere", "sign_in_tries", "sign_in_key",
+                                                                     "reset_no_mail", "reopened_elsewhere", "reopened", "sign_in_tries", "sign_in_key",
                                                                      "accounts_tried", "account_made", "account_page",
                                                                      "account_finished", "verifying", "mail_looks", "mail_last")}
 
@@ -1858,7 +1859,9 @@ class Applier:
                 # it, which no live site has had as a way in. Never pressed for the person. (A posting the
                 # site went back to, with no form on it, still has its Apply as the way in.)
                 return await self._theirs_to_send(run, data, action)
-            key = (data.get("url"), tuple(data.get("headings") or []), action["text"].strip().lower())
+            # (and which visit to the job: its Apply pressed again once it's opened again isn't a third press, EY's,
+            # Freeport's and SRP's SuccessFactors, nightly Oct 11: "Apply now", then its menu's "Apply Now", before)
+            key = (data.get("url"), tuple(data.get("headings") or []), action["text"].strip().lower(), run.reopened)
             if key in pressed and pressed[-1] != key:
                 # Round in a circle (Oracle sent its sites back to the posting from "Continue"):
                 # going round again only repeats it, and may email the person another code.
@@ -2720,6 +2723,7 @@ class Applier:
         else:
             return
         self._log(run, f"{_site(run, data)}'s sign-in page{gone}, so I opened the job again")
+        run.reopened += 1
         await self.srv.open_application(job_id=run.job_id)
 
     async def _still_no_sign_in(self, run: Run) -> bool:

@@ -2462,7 +2462,7 @@ def test_whose_mail_a_workday_job_reads_a_reset_from(srv):
     assert not mailbox.sender_allowed("noreply@workday.intel.com", senders)
 
 
-@pytest.mark.parametrize("gone", ["error", "home"])
+@pytest.mark.parametrize("gone", ["error", "home", "menu"])
 def test_a_sign_in_page_good_for_one_visit_is_reached_again_through_the_posting(srv, monkeypatch, job_apply_home,
                                                                                  gone):
     """SuccessFactors' sign-in page (career?_s.crb=…) is good for one visit: going back to it after a
@@ -2475,7 +2475,9 @@ def test_a_sign_in_page_good_for_one_visit_is_reached_again_through_the_posting(
     saved_password(monkeypatch)
     manage_accounts(job_apply_home)
     watched_inbox(monkeypatch)
-    posting = fixture_url("site/sf-posting.html") + ("?home" if gone == "home" else "")
+    # (menu: its "Apply now" opens a menu whose "Apply Now" goes on, EY's: pressed again once the job's opened again,
+    # it isn't a third press)
+    posting = fixture_url("site/sf-posting.html") + {"error": "", "home": "?home", "menu": "?menu"}[gone]
     job = srv.add_job(url=posting, title="Energy Analyst", company="Example Utility")["job"]
     applier = Applier(srv)
 
@@ -2491,7 +2493,7 @@ def test_a_sign_in_page_good_for_one_visit_is_reached_again_through_the_posting(
     r = run(go())
     log = "\n".join(r.log)
     assert "so I went back to make an account there instead" in log, log
-    said = " couldn't be opened again" if gone == "error" else ", opened again, led to the site's job search, not its sign-in"
+    said = ", opened again, led to the site's job search, not its sign-in" if gone == "home" else " couldn't be opened again"
     assert f"sign-in page{said}, so I opened the job again" in log, log
     assert "created your account" in log and r.seen_form, (r.reason, r.log)
 
