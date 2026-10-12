@@ -4697,6 +4697,17 @@ def test_a_question_the_pages_errors_name_is_asked_though_not_marked_required():
     pipeline._required_by_errors(middle, {"errors": ["Please correct the errors in: Personal Information"]})
     assert pipeline._pending(middle, {})[0] == []
 
+    # Baker Tilly's Workday (the probe of Oct 12): its errors read as none, but its error link names the question,
+    # or the page marks the box itself invalid
+    hispanic = "Please indicate if you are Hispanic or Latino?*"
+    for data in ({"errors": [], "actions": [{"text": "Errors Found"}, {"text": "Error-" + hispanic.rstrip("*")}],
+                  "fields": [{"id": "h", "label": hispanic}]},
+                 {"errors": [], "actions": [], "fields": [{"id": "h", "label": hispanic, "invalid": True}]}):
+        asked = {"needs_input": [{"id": "h", "label": hispanic, "kind": "listbox", "unmatched": "Decline to self-identify"}],
+                 "failed": [], "filled": []}
+        pipeline._required_by_errors(asked, data)
+        assert [f["id"] for f in pipeline._pending(asked, {})[0]] == ["h"], data
+
 
 def test_a_self_identification_answer_a_list_doesnt_have_is_said_not_left_silently():
     """Qorvo's optional veteran list has no "I don't wish to answer": the desk left it empty and
