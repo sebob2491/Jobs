@@ -22,7 +22,9 @@
      traced live (Oct 12): digits go to the part with focus, whatever the date marks current (its tabindex 0 starts
      on the last part, and is where focus left from when an arrow moves it); a part full moves focus on; pressing a
      part's display focuses it; the left and right arrows move focus, wrapping round (the first part's left arrow
-     goes to the last); selecting a part's text doesn't focus it. -->
+     goes to the last); selecting a part's text doesn't focus it. As focus leaves the date it reads the date again
+     from its parts with a number, in order, when some are empty: a lone one is the year, two the month and year
+     (Intel's and U.S. Bank's, traced live Oct 12: the month typed with the year empty came back as the year 2003). -->
 <h2>My Experience</h2>
 <label for="title">Job Title</label><input id="title" type="text">
 <div id="from"></div>
@@ -100,7 +102,14 @@
         inputs[i].focus();
       });
     });
-    group.addEventListener('focusout', (e) => { if (!sticky && !group.contains(e.relatedTarget)) current = 0; });
+    group.addEventListener('focusout', (e) => {
+      if (group.contains(e.relatedTarget)) return;
+      if (!sticky) current = 0;
+      const numbers = typed.filter((t) => t);
+      if (!arrows || !numbers.length || numbers.length === kinds.length) return;
+      const into = numbers.length === 1 ? ['Year'] : ['Month', 'Year'];
+      kinds.forEach((k, i) => { const at = into.indexOf(k); typed[i] = at < 0 ? '' : numbers[at] || ''; show(i); });
+    });
   }
   date(document.getElementById('from'), 'workExperience-1--startDate', 'From', ['Month', 'Year']);
   date(document.getElementById('to'), 'workExperience-1--endDate', 'To', ['Month', 'Year']);

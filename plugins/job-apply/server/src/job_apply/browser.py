@@ -1161,6 +1161,7 @@ class BrowserSession:
             await self._close_menus(page)
             results = []
             known = dict(self._fields)  # the boxes as read before filling, by the ids given out then
+            given = {str(item.get("id", "")): item.get("value") for item in values}  # (a date's other parts)
             try:
                 for item in values:
                     fid = str(item.get("id", ""))
@@ -1176,7 +1177,7 @@ class BrowserSession:
                             results.append({"id": fid, "label": field.get("label", ""), "ok": True, "result": "already set"})
                             continue
                         await self._clear_of_dialogs(page, field)
-                        outcome = await self._fill_one(page, field, item.get("value"))
+                        outcome = await self._fill_one(page, field, item.get("value"), given)
                         results.append({"id": fid, "label": field.get("label", ""), "ok": True, "result": outcome})
                         if outcome in ("filled", "typed"):
                             typed = self._typed.setdefault(page.url, set())
@@ -1344,7 +1345,7 @@ class BrowserSession:
             return False
         return norm(current) == norm(str(value)) or choose_option(str(value), [current], exact_only=True) is not None
 
-    async def _fill_one(self, page: Page, field: dict, value: Any) -> str:
+    async def _fill_one(self, page: Page, field: dict, value: Any, given: dict[str, Any] | None = None) -> str:
         kind = field["kind"]
         loc = self._locator(page, field["id"])
         if kind == "password" and not _ONE_TIME_CODE.search(field.get("label") or ""):
@@ -1409,7 +1410,7 @@ class BrowserSession:
             text = "Yes" if value else "No"
         if field.get("role") == "spinbutton":
             if await loc.evaluate(DATE_LIKE_JS, timeout=FOCUS_TIMEOUT):
-                return await self._type_date_part(page, loc, text)
+                return await self._type_date_part(page, loc, text, given)
             # a lone number box drawn as a spinbutton: its value typed as given
             await loc.fill("", timeout=FOCUS_TIMEOUT)
             await loc.press_sequentially(text, delay=40, timeout=FOCUS_TIMEOUT)
@@ -1480,7 +1481,7 @@ class BrowserSession:
             await page.wait_for_timeout(500)
         raise ValueError(f"the page didn't show {path.name} after its upload; check it in the browser")
 
-    async def _type_date_part(self, page: Page, loc: Locator, text: str) -> str:
+    async def _type_date_part(self, page: Page, loc: Locator, text: str, given: dict[str, Any] | None = None) -> str:
         """A date's part (Workday's MM / DD / YYYY), which reacts to keystrokes, not a pasted value.
 
         Some Workday dates send their digits to the part the date counts as current, which starts at the
@@ -1492,7 +1493,10 @@ class BrowserSession:
         as they read now); the first one's display pressed where it's a later part or the date marks another
         current (which makes it both current and focused), each focused where the page didn't move focus on
         to it, and no arrows; then each is read back, and a part that doesn't read as typed is said, not left
-        wrong."""
+        wrong. Those dates also read the whole date again as focus leaves it, from its parts with a number, a lone
+        one as the year (Intel's and U.S. Bank's month, typed with the year still empty, came back as the year
+        2003, traced live Oct 12): the later parts given in the same fill (`given`, by id) are typed in the same
+        run, so the date is never left half typed."""
         count = await loc.evaluate(DATE_PARTS_JS, timeout=FOCUS_TIMEOUT)  # marks the date's parts in order
         # (found from this box, so in its own frame: the nearest box around it holding them all)
         parts = loc if count == 1 else loc.locator(
@@ -1500,7 +1504,7 @@ class BrowserSession:
         try:
             # (a part with no aria-valuemax is sized by its name: Month and Day two digits, Year four)
             infos = [await parts.nth(i).evaluate(
-                "el => ({mine: el.hasAttribute('data-ja-date-mine'), max: Number(el.getAttribute('aria-valuemax'))"
+                "el => ({id: el.getAttribute('data-ja-id'), mine: el.hasAttribute('data-ja-date-mine'), max: Number(el.getAttribute('aria-valuemax'))"
                 " || (/year|yyyy/i.test(el.getAttribute('aria-label') || el.placeholder || '') ? 9999"
                 " : /day|dd/i.test(el.getAttribute('aria-label') || el.placeholder || '') ? 31"
                 " : /month|mm/i.test(el.getAttribute('aria-label') || el.placeholder || '') ? 12 : 0),"
@@ -1526,10 +1530,18 @@ class BrowserSession:
 
             want = [full(digits, infos[i]["max"]) if i == mine else full(str(infos[i]["now"]), infos[i]["max"])
                     if str(infos[i]["now"]).isdigit() and int(infos[i]["now"]) > 0 else "" for i in range(count)]
+            later = {i: re.sub(r"\D", "", str((given or {}).get(infos[i]["id"]) or "")) for i in range(mine + 1, count)
+                     if infos[i]["id"] and infos[i]["id"] in (given or {})}
+            for i, d in later.items():  # the date's later parts given in this fill, typed with this one
+                if d:
+                    want[i] = full(d, infos[i]["max"])
+            end = max([mine] + [i for i, d in later.items() if d])
+            if not all(want[:end + 1]):  # (one left empty between: this part alone, as before)
+                end = mine
             # from the first part where every part before this one reads a number; else this part alone
             start = 0 if all(want[:mine]) else mine
-            await said(f"typing {digits} into part {mine} (want {want}, from part {start})")
-            for i in range(start, mine + 1):
+            await said(f"typing {digits} into part {mine} (want {want}, from part {start} to {end})")
+            for i in range(start, end + 1):
                 part = parts.nth(i)
                 display = part.locator("xpath=preceding-sibling::*[@aria-hidden='true'][1]")
                 if i == start and await display.count() and (start > 0 or await part.evaluate(_ANOTHER_PART_CURRENT_JS)):

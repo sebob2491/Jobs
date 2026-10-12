@@ -484,19 +484,23 @@ def test_a_workday_date_takes_each_part_in_the_one_with_focus(srv, order):
     """Intel's and Entegris' Workday, traced live (Oct 12): digits go to the part with focus, whatever part the date
     marks current, and its arrows only move focus, wrapping round. The desk's arrow presses (0.3.116) took focus
     from the month to the year, so the month went into the year ("2003"), and the year began in the month ("02");
-    seventeen employers stopped on their work history's From. Each part is focused, and typed, with no arrows."""
+    seventeen employers stopped on their work history's From. Each part is focused, and typed, with no arrows.
+    And as focus leaves such a date it's read again, a lone number as the year: the month typed with the year still
+    empty came back as the year 2003 (Intel's and U.S. Bank's, traced live Oct 12). A date's parts given together
+    are typed in one run."""
     run(srv.browser.goto(fixture_url("site/workday-date-sections.html") + "?sticky&arrows"))
     by = {(f.get("section") or f["label"], f.get("sublabel")): f["id"]
           for f in run(srv.inspect_form(include_dropdown_options=False))["fields"]}
-    values = [(("From", "Month"), "3"), (("From", "Year"), "2021"), (("To", "Month"), "11"), (("To", "Year"), "2023")]
+    values = [(("From", "Month"), "3"), (("From", "Year"), "2021"), (("To", "Month"), "11"), (("To", "Year"), "2023"),
+              (("Date", "Month"), "10"), (("Date", "Day"), "9"), (("Date", "Year"), "2026")]
     if order == "year first":
-        values = [values[1], values[0], values[3], values[2]]
+        values = [values[1], values[0], values[3], values[2], values[6], values[4], values[5]]
     out = run(srv.fill_form([{"id": by[key], "value": value} for key, value in values]))
     assert all(r.get("ok") for r in out["results"]), out["results"]
     page = run(srv.browser.page())
     shown = run(page.evaluate("() => [...document.querySelectorAll('[role=group]')].map((g) => "
                               "[...g.querySelectorAll('[aria-hidden=true]')].map((d) => d.textContent).join('/'))"))
-    assert shown[:2] == ["03/2021", "11/2023"], shown
+    assert shown == ["03/2021", "11/2023", "10/09/2026"], shown
 
 
 @pytest.mark.parametrize("how", ["dialog", "box", "chooser"])
