@@ -1764,11 +1764,12 @@ def _resolve_field(field: dict, prof: Profile, job: dict | None = None, file_inp
     if kind == "checkbox" and (_FILE_PICKED.match(raw_label) or _FILE_IS_RESUME.match(raw_label)):
         # a list of the files on the person's record (Kforce's Taleo, the nightly of Oct 12: "You must select at least
         # one relevant file"): the profile's resume is the one for this application, and is the resume; no other file
+        # (its row's file exactly the profile's resume, and the only row with that name: never a file tailored for
+        # another job that shares its name, nor one whose name only holds it)
         path = _document(prof, job, "resume")
-        name = Path(path).name.lower() if path else ""
-        picked = _FILE_PICKED.match(raw_label)
-        named = picked.group(1).strip().lower() if picked else norm(field.get("row") or "")
-        if name and (named == name if picked else norm(name) in named):
+        name = Path(path).name.strip().lower() if path else ""
+        row_file = str(field.get("row_file") or "").strip().lower()
+        if name and row_file == name and field.get("same_file_rows") == 1:
             return Answer(True, "documents.resume")
         return None
     if kind == "checkbox" and (declined := _DECLINE_BOX.match(clean_label(raw_label))):

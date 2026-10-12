@@ -1,0 +1,17 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Customer Service Representative</title></head>
+<body>
+<!-- like Circle K's Workday in the nightly of Oct 12: a step that won't go on until the applicant takes the
+     employer's assessment ("Take Assessment", which opens it); its Save and Continue stays on the step. What was
+     pressed is kept in window.pressed. -->
+<a href="#">Back to Job Posting</a>
+<h2>Customer Service Representative</h2>
+<div>current step 4 of 6 Assessment</div>
+<p>Please complete the assessment. After completion, you will be brought back to this page to finish your application.</p>
+<button type="button" onclick="window.pressed.push('assessment')">Take Assessment</button>
+<button type="button">Back</button>
+<button type="button" onclick="window.pressed.push('save')">Save and Continue</button>
+<script>window.pressed = [];</script>
+</body>
+</html>

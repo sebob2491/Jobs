@@ -2859,6 +2859,29 @@ def test_a_workday_account_is_said_made_only_once_its_sign_in_gets_in(srv, monke
     assert r.seen_form, (r.reason, r.log)
 
 
+def test_an_assessment_step_is_said_to_be_the_applicants(srv, monkeypatch, job_apply_home):
+    """Circle K's Workday (the nightly of Oct 12): a step that won't go on until the applicant takes the employer's
+    assessment. The desk pressed Save and Continue three times and said no application opened. It says the
+    assessment is the person's to take, and never starts it."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    job = srv.add_job(url=fixture_url("site/workday-assessment.html"), title="CSR", company="Example Stores")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r, await r.page.evaluate("() => window.pressed")
+        finally:
+            await applier.stop()
+
+    r, pressed = run(go())
+    assert (r.status, r.need) == ("needs_you", "stuck"), (r.status, r.reason)
+    assert "take its assessment" in r.reason and "\u201cTake Assessment\u201d" in r.reason, r.reason
+    assert "assessment" not in pressed, pressed
+
+
 @pytest.mark.parametrize("late", [False, True])
 def test_a_page_that_asks_to_be_refreshed_is_reloaded_once(srv, monkeypatch, job_apply_home, late):
     """KLA's Workday, right after the desk signed in (live, Oct 2026): "Something went wrong. Please
