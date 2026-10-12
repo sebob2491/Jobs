@@ -3726,13 +3726,23 @@ def _new_required(before: dict[str, Any], after: dict[str, Any]) -> bool:
 def _no_sign_in_here(run: Run, data: dict[str, Any]) -> bool:
     """The sign-in page a reset was asked from, opened again, led elsewhere with no sign-in on it: another address,
     no password box, no box for an email or user name (an email-first sign-in's step), no way to an account, and
-    nothing like an application."""
+    nothing like an application (a job search's boxes aren't)."""
     fields = data.get("fields") or []
     return (run.page is not None and _bare(run.page.url) != _bare(run.reset_from or "")
             and not any(f.get("kind") == "password" or _SIGN_IN_NAME.search(f.get("label") or "") for f in fields)
-            and _account_way(data.get("actions") or []) is None and not _application_like(data))
+            and _account_way(data.get("actions") or []) is None
+            and (not _application_like(data) or _job_search(data)))
 
 
+def _job_search(data: dict[str, Any]) -> bool:
+    """A site's job search (Edwards' SuccessFactors careers home, the nightly of Oct 12: keywords, a requisition ID
+    and seven filters, which read as an application's boxes): its Search button and a box for keywords."""
+    return (any(_JOB_SEARCH_BUTTON.match(final_text(a.get("text") or "")) for a in data.get("actions") or [])
+            and any(_JOB_SEARCH_BOX.search(f.get("label") or "") for f in data.get("fields") or []))
+
+
+_JOB_SEARCH_BUTTON = re.compile(r"^\s*search(?: for)?(?: jobs| openings| positions| careers)?\s*$", re.I)
+_JOB_SEARCH_BOX = re.compile(r"keywords?|requisition id|job id|search jobs", re.I)
 _SIGN_IN_NAME = re.compile(r"e-?mail|user ?name|user ?id|login", re.I)
 
 

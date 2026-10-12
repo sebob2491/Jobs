@@ -6732,6 +6732,10 @@ def test_a_sign_in_that_led_elsewhere_is_told_from_an_email_first_one():
     search = {"fields": [{"kind": "text", "label": "Keywords:"}, {"kind": "text", "label": "Requisition ID:"}],
               "actions": [{"text": "Sign In"}, {"text": "Search Jobs"}, {"text": "Clear"}]}
     assert pipeline._no_sign_in_here(r, search)
+    # as it is live (the nightly of Oct 12): its filters too, enough boxes to read as an application's
+    filters = {**search, "fields": [*search["fields"], *[{"kind": "text", "label": "Select one or more options"}] * 7,
+                                    {"kind": "checkbox", "label": "Exact Match"}]}
+    assert pipeline._application_like(filters) and pipeline._no_sign_in_here(r, filters)
     email_first = {"fields": [{"kind": "text", "label": "Email Address"}], "actions": [{"text": "Next"}]}
     assert not pipeline._no_sign_in_here(r, email_first)
     with_account = {**search, "actions": [*search["actions"], {"text": "Create Account"}]}
