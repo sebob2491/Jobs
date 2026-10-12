@@ -1483,14 +1483,16 @@ class BrowserSession:
     async def _type_date_part(self, page: Page, loc: Locator, text: str) -> str:
         """A date's part (Workday's MM / DD / YYYY), which reacts to keystrokes, not a pasted value.
 
-        Workday sends a date's digits to the part the date counts as current, not to the part with
-        focus: that starts at the first part, moves on by itself once a part is full, and goes back to
-        the first whenever focus leaves the date. Typed part by part, with the date left in between,
-        every year went into the month (issue #112, note 13, live, Oct 2026: each job's month 02, its
-        year right; the self-identify date 02/02/2006). So the date's parts are typed in one run from
-        its first part, each padded so it's full (the parts before this one as they read now), focus
-        moved on by hand only where the page didn't move it; then each is read back, and a part that
-        doesn't read as typed is said, not left wrong."""
+        Some Workday dates send their digits to the part the date counts as current, which starts at the
+        first part, moves on by itself once a part is full, and goes back to the first whenever focus leaves
+        the date: typed part by part, with the date left in between, every year went into the month (issue
+        #112, note 13, live, Oct 2026). Others (Intel's and Entegris', traced live Oct 12) send them to the
+        part with focus, whatever part they mark current, and their arrows only move focus. So the date's
+        parts are typed in one run from its first part, each padded so it's full (the parts before this one
+        as they read now); the first one's display pressed where it's a later part or the date marks another
+        current (which makes it both current and focused), each focused where the page didn't move focus on
+        to it, and no arrows; then each is read back, and a part that doesn't read as typed is said, not left
+        wrong."""
         count = await loc.evaluate(DATE_PARTS_JS, timeout=FOCUS_TIMEOUT)  # marks the date's parts in order
         # (found from this box, so in its own frame: the nearest box around it holding them all)
         parts = loc if count == 1 else loc.locator(

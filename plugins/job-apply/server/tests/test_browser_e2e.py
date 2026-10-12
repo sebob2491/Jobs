@@ -1,10 +1,13 @@
 """Drive the MCP tools against local mock application forms in headless Chromium."""
 
 
+from pathlib import Path
+
 import pytest
 from conftest import browser_available, by_label, fixture_url, run
 
 from job_apply import browser as browser_module
+from job_apply import config
 
 pytestmark = pytest.mark.skipif(not browser_available(), reason="no Playwright Chromium installed")
 
@@ -494,6 +497,46 @@ def test_a_workday_date_takes_each_part_in_the_one_with_focus(srv, order):
     shown = run(page.evaluate("() => [...document.querySelectorAll('[role=group]')].map((g) => "
                               "[...g.querySelectorAll('[aria-hidden=true]')].map((d) => d.textContent).join('/'))"))
     assert shown[:2] == ["03/2021", "11/2023"], shown
+
+
+@pytest.mark.parametrize("how", ["dialog", "box", "chooser"])
+def test_a_resume_uploaded_through_the_sites_own_dialog(srv, tmp_path, how):
+    """APS's SuccessFactors (the live check's plus probe, Oct 11): its resume is a "+" button that opens a dialog
+    ("Upload a Resume Opens a dialog"), with no file box on the page, so the desk never saw it and the site said
+    "Resume is required". It's read as the resume's box, and the file goes in through what the button opens: the
+    browser's file chooser, or the dialog's own file box (after its Browse), then the dialog's Upload."""
+    resume = tmp_path / "resume.pdf"
+    resume.write_bytes(b"%PDF-1.4 test")
+    query = "" if how == "dialog" else f"?{how}"
+    run(srv.browser.goto(fixture_url("site/successfactors-upload-dialog.html") + query))
+    box = next(f for f in run(srv.inspect_form(include_dropdown_options=False))["fields"] if f["label"] == "Resume")
+    assert (box["label"], box["required"], box["value"], box.get("opens_dialog")) == ("Resume", True, "", True), box
+    if how == "dialog":  # as the desk fills it: the profile's resume (the tests' profile has one)
+        result = run(srv.autofill())
+        assert not result["failed"], result["failed"]
+        name = Path(config.Profile.load().get("documents.resume")).name
+    else:
+        out = run(srv.fill_form([{"id": box["id"], "value": str(resume)}]))
+        assert out["results"][0].get("ok"), out["results"]
+        name = "resume.pdf"
+    again = next(f for f in run(srv.inspect_form(include_dropdown_options=False))["fields"] if f["label"] == "Resume")
+    assert again["value"] == name, again
+
+
+@pytest.mark.parametrize("how", ["dialog", "box"])
+def test_an_upload_through_a_dialog_touches_only_what_it_opened(srv, tmp_path, how):
+    """With a cookie banner on show, another upload's file box on the page and the site's "Browse jobs" link: the
+    resume goes through the dialog its button opened, and nothing else is pressed or given the file (a cookie
+    banner is never accepted for the person)."""
+    resume = tmp_path / "resume.pdf"
+    resume.write_bytes(b"%PDF-1.4 test")
+    run(srv.browser.goto(fixture_url("site/successfactors-upload-dialog.html") + f"?others{'&box' if how == 'box' else ''}"))
+    box = next(f for f in run(srv.inspect_form(include_dropdown_options=False))["fields"] if f["label"] == "Resume")
+    out = run(srv.fill_form([{"id": box["id"], "value": str(resume)}]))
+    assert out["results"][0].get("ok"), out["results"]
+    page = run(srv.browser.page())
+    assert run(page.evaluate("() => [!!window.cookieAccepted, document.getElementById('cover').files.length, "
+                             "location.hash]")) == [False, 0, ""]
 
 
 def test_each_jobs_dates_go_in_its_own_block(srv):
