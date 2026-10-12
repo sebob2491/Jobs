@@ -1,0 +1,36 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Career Opportunities: My Candidate Profile</title></head>
+<body>
+<!-- like Amkor's SuccessFactors profile in the nightly of Oct 12: its "Upload Resume" dialog is open over the
+     profile as it loads, its file box inside; the file counts only once the dialog's Upload is pressed (which
+     closes it and puts the resume on file). ?form: the review's: an application drawn as a dialog, a name box beside
+     its resume and a "Save" that sends it (window.sent): never pressed for the person. -->
+<label for="first">*First Name:</label><input id="first" type="text" required>
+<div id="resume"><span>Your Resume is not on file.</span> <span class="red required">Resume: field is required.</span></div>
+<button type="button">Next</button>
+<div id="overlay" style="position: fixed; inset: 0; background: rgba(0,0,0,.3)">
+  <div role="dialog" aria-labelledby="dlg-title" style="background: #fff; margin: 60px auto; width: 420px; padding: 12px">
+    <h2 id="dlg-title">Upload Resume</h2>
+    <label for="file">Choose File</label><input type="file" id="file" name="fileData1">
+    <button type="button" id="upload" title="Upload">Upload</button>
+    <button type="button" onclick="document.getElementById('overlay').remove()">Cancel</button>
+  </div>
+</div>
+<script>
+  window.sent = false;
+  if (new URLSearchParams(location.search).has('form')) {
+    const up = document.getElementById('upload');
+    up.textContent = 'Save';
+    up.insertAdjacentHTML('beforebegin', '<label for="nm">Full name</label><input id="nm" type="text">');
+    up.onclick = () => { window.sent = true; };
+    document.querySelector('#dlg-title').textContent = 'Your application';
+  } else document.getElementById('upload').onclick = () => {
+    const f = document.getElementById('file').files[0];
+    if (!f) return;
+    document.getElementById('resume').textContent = f.name + ' is on file.';
+    document.getElementById('overlay').remove();
+  };
+</script>
+</body>
+</html>

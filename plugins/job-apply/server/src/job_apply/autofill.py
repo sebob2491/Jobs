@@ -235,7 +235,9 @@ def degree_key(s: str) -> str | None:
 # Schooling begun but not finished: "Some High School", "Some College", "Associate's (in
 # progress)", "coursework toward a BSEE"
 _PARTIAL_STUDY = re.compile(r"\b(some|less than|incomplete|partial(ly)?|attended|attending|coursework|toward|towards|"
-                            r"in progress|enrolled|pursuing|unfinished|did not|not completed|no degree)\b")
+                            r"in progress|enrolled|pursuing|unfinished|did not|not completed|no degree|"
+                            # (a degree still to come: "BS (expected 2027)", the safety audit of Oct 12)
+                            r"expected|anticipated|graduating|candidate|pending)\b")
 _STUDY_WORDS = re.compile(r"\b(high school|college|university|degree|diploma|ged|graduate|coursework)\b")
 
 
@@ -672,7 +674,8 @@ def _employee_id(prof: Profile, job: dict) -> str | None:
 
 
 _UNFINISHED = re.compile(r"^(none|n ?a|no|not applicable)$|\b(no degree|not (completed|finished)|incomplete|"
-                         r"unfinished|did not (complete|finish|graduate)|in progress|some|coursework|attended)\b")
+                         r"unfinished|did not (complete|finish|graduate)|in progress|some|coursework|attended|"
+                         r"expected|anticipated|graduating|candidate|pending)\b")
 
 
 def finished_degree(value: Any) -> bool:
@@ -715,7 +718,7 @@ def _expected_graduation(prof: Profile, job: dict) -> Any:
     return "Not currently attending school"
 
 
-_AUTHORIZED = r"authori[sz]ed to ((legally|lawfully) )?work|eligible to ((legally|lawfully) )?work|eligibility to work|eligible for employment|legally (able|permitted|allowed) to work|right to work|" \
+_AUTHORIZED = r"authori[sz]ed to ((legally|lawfully) )?work|^(do|does) you (currently )?(have|hold) (the )?(legal )?authori[sz]ation to work|eligible to ((legally|lawfully) )?work|eligibility to work|eligible for employment|legally (able|permitted|allowed) to work|right to work|" \
               r"work authori[sz]ation|employment eligibility|unrestricted authori[sz]ation"
 
 
@@ -1119,7 +1122,7 @@ _CONTACT_RULES = {"email", "first_name", "middle_name", "last_name", "preferred_
                   "preferred_full_name", "full_name",
                   "phone_type",
                   "phone_code", "phone_ext", "phone", "address1", "address2", "city", "postal_ext", "postal",
-                  "county", "state", "country"}
+                  "county", "state", "home_state", "country"}
 
 # Getters that read the question itself, not only the profile
 # A background question's answer is a choice: a text box with its words is a follow-up ("If yes,
@@ -1176,6 +1179,9 @@ RULES: list[tuple[str, str, Getter, int | None, set[str] | None]] = [
     # (not "State your desired salary", "State ID Number" or "Statement of accuracy")
     ("state", r"^state\b(?! (your|id|identification|licen[cs]e|the|any|why|how|what|whether|if|briefly)\b)|province|^region",
      _state, 45, None),
+    # asked as a question, with a note on how to write it (GCU's "In what state do you live? (Please use the state
+    # abbreviation format, i.e. AZ)", the full run of Oct 12)
+    ("home_state", r"^(in )?(what|which) state do you (currently |presently )?(live|reside)( in)?\b", _state, 120, None),
     # the address's country: not "Country of citizenship / birth" (those are other questions)
     ("country", r"^country\b(?!.*\b(citizen|birth|born|nationalit|passport|origin)\w*)", _p("personal.address.country"), 45, None),
     # "LinkedIn profile (if you do not have one or if you prefer not to provide one, enter N/A)" (GoDaddy)
@@ -1752,7 +1758,15 @@ def _resolve_field(field: dict, prof: Profile, job: dict | None = None, file_inp
         # form from its own reading while the desk fills it, so only the attachment gets it
         if file_inputs_on_page > 1 and re.search(r"\b(import|autofill|auto fill|parse|populate)\b", where):
             return Answer(SKIP, "documents.resume")
-        if re.search(r"cover", where):
+        # (a page's one upload, in a section for both, "Resume/CV and Cover Letter": the resume goes in it, as a
+        # person would put it there: Arizona State University's Workday, the full run of Oct 12)
+        # (only a section named for both alike, never one for a cover letter that mentions the resume: "Cover Letter
+        # (and resume if not uploaded)", "Your resume was already imported", the review's)
+        section = norm(field.get("section"))
+        both = (file_inputs_on_page == 1 and not re.search(r"cover", label)
+                and re.search(r"\b(resume|cv)\b (and|or)? ?(cover letter)$|^(resume|cv)( cv)? (and|or) cover letter\b", section)
+                and not re.search(r"\b(if|optional|already|instead|only)\b", section))
+        if re.search(r"cover", where) and not both:
             path = _document(prof, job, "cover_letter")
             return Answer(path, "documents.cover_letter") if path else None
         named = re.search(r"resume|cv|curriculum", where)
@@ -1844,11 +1858,18 @@ def _resolve_field(field: dict, prof: Profile, job: dict | None = None, file_inp
     # 14, Oct 2026: the profile's plain Yes or No)
     yes_no_box = ans.rule in {"authorized", "sponsorship", "no_sponsorship"} and polarity(ans.value) is not None \
         and bool(re.match(r"(are|do|will|would|can|have|is) you\b", label))
+    # (and where a person lives, asked as a question in a text area: GCU's "In what city do you live?", the full run
+    # of Oct 12)
+    home_box = ans.rule in {"city", "home_state"} and bool(re.match(
+        r"(in )?(what|which) (city|state) do you(?!.*\b(and|why|explain|describe|tell)\b)", label))
     if kind == "textarea" and not ans.rule.startswith("answers[") and ans.rule not in {"linkedin", "salary", "start_date"} \
-            and not yes_no_box:
+            and not yes_no_box and not home_box:
         return None
     if isinstance(ans.value, bool):
         ans.value = "Yes" if ans.value else "No"
+    if ans.rule in {"state", "home_state"} and re.search(r"\babbreviat", label) and not field.get("options"):
+        # ("Please use the state abbreviation format, i.e. AZ")
+        ans.value = next((k for k, v in US_STATES.items() if norm(v) == norm(ans.value)), ans.value)
 
     options = field.get("options")
     if ans.rule == "citizen_status" and options:
@@ -1943,7 +1964,7 @@ def _topic_from_options(options: list[str], prof: Profile, job: dict) -> Answer 
     return None
 
 
-_PLACE_RULES = {"address1", "postal", "city", "state", "county"}
+_PLACE_RULES = {"address1", "postal", "city", "state", "home_state", "county"}
 
 # Arizona's cities by county, for a form's County (Oracle's address block requires one) when the
 # profile names its city but not its county. A city split between counties counts where most of

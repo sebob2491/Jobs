@@ -107,6 +107,14 @@ def test_resolve_files(job_apply_home, tmp_path):
     job = {"folder": str(folder)}
     assert resolve_field(f("Cover Letter", "file"), p, job, 2).value == str(folder / "cover_letter.pdf")
     assert resolve_field(f("Attach", "file"), p, job, 1).value == str(folder / "resume.pdf")  # tailored resume wins
+    # a page's one upload in a section for both (Arizona State University's Workday, the full run of Oct 12): the
+    # resume, which the profile has, where it had looked for a cover letter and said the file was missing
+    both = {**f("Upload a file (5MB max)*", "file"), "section": "Resume/CV and Cover Letter"}
+    assert resolve_field(both, p, job, 1).value == str(folder / "resume.pdf")
+    assert resolve_field(both, p, job, 2).value == str(folder / "cover_letter.pdf")  # (two there: as before)
+    # the review's: a cover letter's section that mentions the resume keeps its cover letter
+    for section in ("Cover Letter (and resume if not uploaded)", "Cover letter. Your resume was already imported"):
+        assert resolve_field({**both, "section": section}, p, job, 1).value == str(folder / "cover_letter.pdf"), section
 
 
 def test_plan_autofill_orders_required_first():
@@ -2124,3 +2132,36 @@ def test_a_profiles_gender_however_short_picks_its_choice(gender, expected):
              "options": ["Male", "Female", "I do not wish to self-identify"]}
     ans = resolve_field(field, Profile({"eeo": {"gender": gender}}))
     assert ans is not None and ans.value == expected, ans
+
+
+def test_where_the_person_lives_and_their_work_authorization_asked_as_questions():
+    """Grand Canyon University's Workday (the full run of Oct 12) asked, and the desk passed to the person: "Do you
+    have authorization to work in the U.S.?", and in text areas "In what city do you live?" and "In what state do
+    you live? (Please use the state abbreviation format, i.e. AZ)". The profile answers all three; an essay box that
+    only mentions a town isn't one of them."""
+    p = Profile({"personal": {"address": {"city": "Chandler", "state": "Arizona"}},
+                 "work_authorization": {"authorized_to_work": True, "requires_sponsorship": False}})
+    def ask(label, kind="textarea", options=None):
+        a = resolve_field({"label": label, "kind": kind, "required": True, **({"options": options} if options else {})}, p)
+        return a and a.value
+    assert ask("Do you have authorization to work in the U.S.?*", "listbox", ["Select One", "Yes", "No"]) == "Yes"
+    assert ask("Will you now or in the future require sponsorship to obtain authorization to work in the U.S.?",
+               "listbox", ["Yes", "No"]) == "No"
+    assert ask("In what city do you live?*") == "Chandler"
+    assert ask("In what state do you live? (Please use the state abbreviation format, i.e. AZ)*") == "AZ"
+    assert ask("Describe a town you would like to visit") is None
+    assert ask("Which state do you live in, and why do you want to relocate?") is None  # (an essay: the review's)
+
+
+def test_a_degree_still_to_come_is_never_filled_as_one():
+    """The safety audit (Oct 12): a profile's "BS Electrical Engineering (expected 2027)" picked "Bachelor's Degree" for
+    the highest level of education, as did "graduating", "anticipated" and "candidate". A degree not yet earned is
+    the person's to say; one earned is filled as before."""
+    options = ["High School", "Associate's Degree", "Bachelor's Degree", "Master's Degree"]
+    for degree in ("BS Electrical Engineering (expected 2027)", "Bachelor of Science, graduating 2027",
+                   "BS (anticipated 2026)", "BS candidate", "Bachelor's degree pending"):
+        assert choose_option(degree, options) is None, degree
+        p = Profile({"education": {"highest_degree": degree}})
+        assert resolve_field({"label": "Highest level of education", "kind": "select", "options": options,
+                              "required": True}, p) is None, degree
+    assert choose_option("Bachelor of Science", options) == "Bachelor's Degree"

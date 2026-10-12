@@ -174,6 +174,37 @@ _NOT_TERMS = re.compile(r"newsletter|marketing|job alerts?|text messages?|\bsms\
 # a box's words only, never a statement's (whose text names most of these in passing)
 _MORE_THAN_TERMS = re.compile(r"receiv\w*|e-?mails?|updates?|notifications?|messages?|partners?|third[- ]part|future|"
                               r"talent pool|retain|retention", re.I)
+# An attestation or privacy agreement that also signs the person up: "... and consent to receive email communications
+# from Acme", "... and would like to receive updates" (the safety audit of Oct 12): never ticked for them
+_SIGNS_UP_TOO = re.compile(r"\breceiv\w*\b.{0,40}\b(?:e-?mails?|communications?|updates?|messages?|news\w*|offers|"
+                           r"information about|texts?)\b|\b(?:e-?mail|marketing|promotional) communications?\b|"
+                           r"\bupdates? (?:about|on|from)\b|\bnewsletter", re.I)
+
+
+def _signs_up(text: str) -> bool:
+    """Do these words sign the person up for emails or updates (_SIGNS_UP_TOO)? Not those about the application
+    itself ("communications about my application status": the review's)."""
+    def about_the_application(tail: str) -> bool:  # (and nothing more: "... and other opportunities" is a sign-up)
+        own = re.match(r"\W*(?:about|regarding|on|concerning) (?:the status of )?(?:my|this|the|your) application"
+                       r"(?: status| process)?(?P<rest>.*)", tail, re.I | re.S)
+        if own is None:
+            return False
+        rest = own["rest"]
+        return not re.match(r"\s*(?:and|or|&|as well)\b", rest, re.I) \
+            and not re.search(r"other|opportunit|jobs|offers|roles|positions|newsletter|events", rest[:120], re.I)
+    return any(not about_the_application(text[m.end():]) for m in _SIGNS_UP_TOO.finditer(text))
+
+
+# The words above a bare "I agree" that make it a sign-up (a terms paragraph names emails, affiliates and offers in
+# passing: "you'll receive an email to verify your account", the review's)
+_SIGN_UP_ABOVE = re.compile(r"talent (?:community|network|pool)|job alerts?|newsletter|subscribe|marketing|"
+                            r"text messages?|\bsms\b|keep me|stay informed|similar jobs|promotion\w*|offers|send me|"
+                            r"contact(?:ed)? me|be contacted|share my|"
+                            r"other (?:\w+ )?(?:roles|positions|jobs|openings|opportunities)|"
+                            r"\breceiv\w*\b.{0,40}\b(?:news\w*|offers|updates?|alerts?|promotions?|(?:job|career) "
+                            r"opportunities|marketing)\b", re.I)
+# A box whose own words say only that the person agrees: what it agrees to is in the words above it
+_BARE_AGREE = re.compile(r"^\W*(?:yes,? )?i (?:agree|consent|accept)\W*$", re.I)
 # A Create Account box that says the person applies from outside, not as one of the employer's staff
 # (Banner Health's Workday, live, Oct 2026: "Yes, I am a new candidate and not a current employee"; no
 # account without it, though it isn't marked required). That and nothing more: a box that says more
@@ -2061,6 +2092,20 @@ class Applier:
             if _account_and_application((await self._look())[0]):
                 return
 
+    async def _said_terms(self, boxes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """A Create Account form's terms boxes, less a bare one ("I agree", "I consent") whose words just above it
+        say what it agrees to and that's more than the site's terms: job alerts, a talent network, texts, marketing
+        (the safety audit of Oct 12). Those are the person's."""
+        kept = []
+        for box in boxes:
+            if _BARE_AGREE.match(box.get("label") or ""):
+                above = await self.srv.browser.words_before(box["id"])
+                # (gone, or not read: not ticked; the words of a sign-up, not the terms' passing mentions: the review's)
+                if not above or _SIGN_UP_ABOVE.search(above):  # (unread, or nothing to read: the person's)
+                    continue
+            kept.append(box)
+        return kept
+
     async def _assessment_pause(self, run: Run, data: dict[str, Any], button: str) -> None:
         """A step that won't go on until the applicant takes the employer's assessment: theirs to take."""
         await self._bring_forward(run)
@@ -2289,7 +2334,7 @@ class Applier:
             if not await self._accept_statement(run, data, statement):
                 return False
             data, _ = await self._look()  # (as it is once accepted)
-        terms = _terms_boxes(data)
+        terms = await self._said_terms(_terms_boxes(data))
         boxes = terms + _new_candidate_boxes(data, run.company) + _other_positions_boxes(data)
         own = [a for a in data.get("actions") or [] if a.get("account_form") or a.get("in_account_form")
                or a.get("form_submit") and a.get("after_password")]
@@ -2371,7 +2416,7 @@ class Applier:
         why = ""
         if _may_manage_accounts() and not run.account_finished and not (data.get("captcha") or data.get("challenge")):
             now, _ = await self._look()
-            terms = _terms_boxes(now)
+            terms = await self._said_terms(_terms_boxes(now))
             boxes = terms + _other_positions_boxes(now)
             pressable = None
             if boxes and not (await srv.fill_form([{"id": f["id"], "value": _tick(f)} for f in boxes])).get("ok"):
@@ -3383,10 +3428,13 @@ def _pending(result: dict[str, Any], once_failed: dict[str, dict[str, Any]]) -> 
                if f.get("required") and f.get("kind") != "file"]
     # the profile's answers that didn't go in, where the site requires one (an optional field
     # is skipped: Qorvo's optional veteran question has no "don't wish to answer")
-    pending += [{"id": f["id"], "label": f.get("label") or "", "kind": f.get("kind") or ("combobox" if f.get("options") else "text"),
+    # (and where the person's own answer was turned down too, theirs is what's said, with the entries it opened:
+    # HonorHealth's and Microchip's "How Did You Hear About Us?", the probe of Oct 12, were asked again and again with
+    # the profile's refusal and the same first list)
+    pending += [{"label": f.get("label") or "", "kind": f.get("kind") or ("combobox" if f.get("options") else "text"),
                  "required": True, "error": f.get("error"),
                  **({"options": f["options"]} if f.get("options") else {}),
-                 **{k: f[k] for k in ("section", "sublabel") if f.get(k)}}
+                 **{k: f[k] for k in ("section", "sublabel") if f.get(k)}, **turned_down(f), "id": f["id"]}
                 for f in result["failed"] if f.get("required", True)]
     # an answer of theirs the page turned down is asked again, even when the box isn't empty
     # (words left in a picker's search box read as an answer), unless the profile's answer
@@ -3456,9 +3504,13 @@ def _attestation(q: dict[str, Any]) -> Any:
     if q["kind"] == "checkbox_group":
         # its ticks that accept the terms, and only those: EMD's required pair is its Terms of Use &
         # Data Privacy Statement and its "Email Communications" (marketing, left unticked)
-        agreed = [o for o in choices if _agrees_to_terms(o)]
+        agreed = [o for o in choices if _agrees_to_terms(o) and not _signs_up(o)]
         return agreed or None
     if not (_ATTESTS.search(label) and not _NOT_ATTESTED.search(label) or _agrees_to_terms(label)):
+        return None
+    # (an agreement that also signs the person up: theirs, the safety audit's; an attestation's passing mention of
+    # the employer's affiliates or its offers of employment isn't one)
+    if _signs_up(label) or _NOT_TERMS.search(re.sub(r"\baffiliat\w*|\boffers? of employment", "", label, flags=re.I)):
         return None
     if q["kind"] == "checkbox":
         return True
@@ -3726,13 +3778,26 @@ def _new_required(before: dict[str, Any], after: dict[str, Any]) -> bool:
 def _no_sign_in_here(run: Run, data: dict[str, Any]) -> bool:
     """The sign-in page a reset was asked from, opened again, led elsewhere with no sign-in on it: another address,
     no password box, no box for an email or user name (an email-first sign-in's step), no way to an account, and
-    nothing like an application."""
+    nothing like an application (a job search's boxes aren't)."""
     fields = data.get("fields") or []
-    return (run.page is not None and _bare(run.page.url) != _bare(run.reset_from or "")
+    # (a job search, at any address: Edwards' SuccessFactors draws its search at its sign-in's own address, the probe
+    # of Oct 12)
+    return (run.page is not None and (_bare(run.page.url) != _bare(run.reset_from or "") or _job_search(data))
             and not any(f.get("kind") == "password" or _SIGN_IN_NAME.search(f.get("label") or "") for f in fields)
-            and _account_way(data.get("actions") or []) is None and not _application_like(data))
+            and _account_way(data.get("actions") or []) is None
+            and (not _application_like(data) or _job_search(data) and not any(
+                _APPLICATION_FIELD.search(f.get("label") or "") for f in fields)))
 
 
+def _job_search(data: dict[str, Any]) -> bool:
+    """A site's job search (Edwards' SuccessFactors careers home, the nightly of Oct 12: keywords, a requisition ID
+    and seven filters, which read as an application's boxes): its Search button and a box for keywords."""
+    return (any(_JOB_SEARCH_BUTTON.match(final_text(a.get("text") or "")) for a in data.get("actions") or [])
+            and any(_JOB_SEARCH_BOX.search(f.get("label") or "") for f in data.get("fields") or []))
+
+
+_JOB_SEARCH_BUTTON = re.compile(r"^\s*search(?: for)?(?: jobs| openings| positions| careers)?\s*$", re.I)
+_JOB_SEARCH_BOX = re.compile(r"keywords?|requisition id|job id|search jobs", re.I)
 _SIGN_IN_NAME = re.compile(r"e-?mail|user ?name|user ?id|login", re.I)
 
 

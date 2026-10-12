@@ -1370,9 +1370,11 @@ class BrowserSession:
             if not await loc.evaluate("el => el.tagName === 'INPUT' && el.type === 'file'"):
                 return await self._upload_through(page, loc, path)
             await loc.set_input_files(str(path))
+            said = await self._send_dialog_upload(page, loc, path)
             with contextlib.suppress(PlaywrightError, PlaywrightTimeout):  # (a box drawn afresh at once is gone)
+                # (only once it's sent: a dialog's Upload that didn't go is pressed again on the next fill)
                 await loc.evaluate("(el, k) => { el.__jaUploaded = k; }", path.name, timeout=1500)
-            return f"uploaded {path.name}"
+            return said
         if kind == "checkbox":
             want = value if isinstance(value, bool) else bool(polarity(value))
             await self._set_checked(loc, want)
@@ -1419,6 +1421,43 @@ class BrowserSession:
         await loc.fill(text)
         await loc.evaluate("el => el.blur()")
         return "filled"
+
+    async def _send_dialog_upload(self, page: Page, box: Locator, path: Path) -> str:
+        """A file box inside the site's own upload dialog takes the file only once the dialog's Upload is pressed
+        (Amkor's SuccessFactors, the nightly of Oct 12: its "Upload Resume" dialog, open over the profile, kept the
+        file in its box while the desk pressed Next, and the page said "Resume: field is required"). Only a dialog
+        that's an upload's alone: no other box in it (an application drawn as a dialog is left as it is), its
+        Upload or Attach pressed (its OK, Save or Done only where the dialog says it's an upload), through the
+        same guard as every press. A dialog still open after is said in the result, not taken for a failure, and
+        raises only where the press itself failed (so the next fill presses it again)."""
+        dialog = box.locator("xpath=ancestor::*[@role='dialog' or @role='alertdialog' or self::dialog][1]")
+        if not await dialog.count():
+            return f"uploaded {path.name}"
+        facts = await dialog.evaluate("""(d) => {
+          const shown = (el) => el.getClientRects().length > 0 && getComputedStyle(el).visibility !== 'hidden';
+          const boxes = [...d.querySelectorAll('input, select, textarea')].filter((el) => el.type !== 'hidden' && shown(el));
+          const named = [d.getAttribute('aria-label') || '', ...(d.getAttribute('aria-labelledby') || '').split(/\\s+/)
+            .map((id) => (document.getElementById(id) || {}).textContent || ''),
+            (d.querySelector('h1, h2, h3, h4, [role="heading"]') || {}).textContent || ''].join(' ');
+          return {others: boxes.filter((el) => el.type !== 'file').length, files: boxes.filter((el) => el.type === 'file').length,
+                  upload: /\\b(upload|attach|resume|cv|file|document)/i.test(named)};
+        }""")
+        if facts["others"] or facts["files"] > 1:
+            return f"uploaded {path.name}"
+        words = r"upload|attach|ok|save|done" if facts["upload"] else r"upload|attach"
+        send = dialog.locator('button:visible, [role="button"]:visible').filter(
+            has_text=re.compile(rf"^\s*({words})\s*$", re.I))
+        if not await send.count():
+            return f"uploaded {path.name}"
+        self._check_clickable(await send.first.evaluate(ELEMENT_INFO_JS, timeout=3000), page.url)
+        pressed = (await send.first.inner_text()).strip()
+        await send.first.click(timeout=3000)
+        for _ in range(int(UPLOAD_SHOWN_WAIT * 2)):
+            with contextlib.suppress(PlaywrightError, PlaywrightTimeout):
+                if not await dialog.is_visible(timeout=1000):
+                    return f"uploaded {path.name} (its dialog's \u201c{pressed}\u201d pressed)"
+            await page.wait_for_timeout(500)
+        return f"uploaded {path.name} (its dialog's \u201c{pressed}\u201d pressed; the dialog is still open)"
 
     async def _upload_through(self, page: Page, button: Locator, path: Path) -> str:
         """A file given through the button that opens the site's own upload (the older SuccessFactors site's
@@ -1815,7 +1854,9 @@ class BrowserSession:
         text, and whatever is found is checked again.
         """
         for _ in range(3):
-            if (loc is None or not await self._present(loc)) and text:
+            # (never for a press allowed to send, a Create Account's or a code's: its own button, or none. Found by its
+            # words it could be any "Submit" on the page, past every check: the safety audit of Oct 12)
+            if (loc is None or not await self._present(loc)) and text and not allow_submit:
                 loc = await self._find_by_text(page, text)
             if loc is None or not await self._present(loc):
                 break
@@ -1954,6 +1995,41 @@ class BrowserSession:
                     "el => { for (let n = el.parentElement; n; n = n.parentElement) {"
                     " if (n.querySelector('input:not([type=hidden]):not([type=checkbox]):not([type=radio])'))"
                     " return (n.innerText || '').slice(0, 3000); } return ''; }", timeout=3000)
+            except (PlaywrightError, PlaywrightTimeout):
+                return None
+
+    async def words_before(self, element_id: str) -> str | None:
+        """The words just before a box: the nearest text before it, its own label's aside, within the few blocks
+        around it (a bare "I agree" whose question is the paragraph above it), or None once it's gone."""
+        async with self._lock:
+            page = await self.page()
+            try:
+                return await self._locator(page, element_id).evaluate("""(el) => {
+                  const own = [...(el.labels || [])].map((l) => (l.innerText || '').trim()).filter(Boolean);
+                  const boxes = 'input:not([type=hidden]), select, textarea';
+                  const said = (node) => node.nodeType === 3 ? (node.textContent || '').trim()
+                    : node.nodeType === 1 ? (node.innerText || '').trim() : '';
+                  // the text before it, text nodes too ("Join our talent network.<br><label>..."), up to another box
+                  for (let n = el, d = 0; n && n !== document.body && d < 4; n = n.parentElement, d++) {
+                    const out = [];
+                    for (let s = n.previousSibling; s && out.join(' ').length < 400; s = s.previousSibling) {
+                      if (s.nodeType === 1 && (s.matches(boxes) || s.querySelector(boxes))) break;
+                      const t = said(s);
+                      if (t && !own.includes(t)) out.unshift(t);
+                    }
+                    if (out.join(' ').length > 15) return out.join(' ').slice(-500);
+                  }
+                  // nothing before it: the widest of the few blocks around it that's still short, less its own label's
+                  // (more words only make the box the person's, never the desk's: the review's)
+                  let wide = '';
+                  for (let n = el.parentElement, d = 0; n && n !== document.body && d < 4; n = n.parentElement, d++) {
+                    let t = (n.innerText || '').trim();
+                    for (const o of own) t = t.replace(o, '').trim();
+                    if (t.length > 1500) break;
+                    if (t.length > 15) wide = t;
+                  }
+                  return wide;
+                }""", timeout=3000)
             except (PlaywrightError, PlaywrightTimeout):
                 return None
 

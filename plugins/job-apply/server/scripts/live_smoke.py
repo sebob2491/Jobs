@@ -1058,6 +1058,10 @@ def fake_answer(q: dict[str, Any]) -> Any:
     if q.get("kind") == "checkbox":
         return "Yes"
     if options:
+        # not a choice the site just refused (a Workday source that opens a list of its own, HonorHealth's and
+        # Microchip's, the probe of Oct 12: picked again and again)
+        refused = re.search(r"Picked '([^']+)'", str(q.get("error") or ""))
+        options = [o for o in options if not refused or o != refused.group(1)] or options
         # "No" where there is one, as most applicants answer "applied before?", "relatives
         # here?" or "terminated?"; a "Yes" brings follow-up questions the run then has to answer
         return next((o for o in options if polarity(o) is False), options[0])
@@ -1065,6 +1069,12 @@ def fake_answer(q: dict[str, Any]) -> Any:
     if part in ("month", "day", "year"):  # a date's part (GCU's "... by entering today's date below"): today's
         today = datetime.date.today()
         return {"month": f"{today.month:02d}", "day": f"{today.day:02d}", "year": str(today.year)}[part]
+    label = q.get("label") or ""
+    # (an answer the site takes: U-Haul's and Baker Tilly's refused "0" hours, "0" salary and "Test answer" pay)
+    if span := re.search(r"between (\d+) and (\d+)", label, re.I):
+        return span.group(2)
+    if re.search(r"salary|pay requirement|compensation|desired pay|wage", label, re.I):
+        return "50000"
     if re.search(r"year|salary|number|how many|zip|postal|\bgpa\b", q.get("label") or "", re.I):
         return "0"
     return "Test answer"
@@ -1298,7 +1308,7 @@ def best_posting(results: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 async def check_pipeline(company: dict[str, Any], out: Path, rec: dict[str, Any], fixtures: bool = False) -> None:
-    from job_apply.pipeline import Applier, question_key
+    from job_apply.pipeline import Applier, placed_key, question_key
 
     found = await server.search_company_jobs(QUERY_AZ, companies=[company["name"]], location="AZ", limit_per_company=5)
     if not found["results"]:
@@ -1340,8 +1350,12 @@ async def check_pipeline(company: dict[str, Any], out: Path, rec: dict[str, Any]
             if run.need in ("stuck", "sign_in"):  # (an account's step it stopped on, too: UKG Pro's, Oct 2026)
                 await print_shot(company["name"], run.page)
             if run.status == "needs_you" and run.need == "questions":
+                labels = [q.get("label") or "" for q in run.questions]
                 for q in run.questions:
-                    run.once[question_key(q.get("label") or "")] = fake_answer(q)
+                    # (as the desk's card keys them: a label more than one box has, a date's Month, Day and Year,
+                    # by its own box, or the year's answer goes in all three and the date is asked again and again)
+                    key = placed_key(q) if labels.count(q.get("label") or "") > 1 else question_key(q.get("label") or "")
+                    run.once[key] = fake_answer(q)
                 applier.enqueue(job["id"], front=True)
                 continue
             if TEST_IDENTITY and await wait_for_mail(applier, run):

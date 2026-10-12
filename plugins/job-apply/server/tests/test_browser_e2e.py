@@ -515,6 +515,54 @@ def test_a_workday_dates_part_left_empty_isnt_checked_against_one_never_typed(sr
     assert out["results"][0].get("ok"), out["results"]
 
 
+def test_a_file_put_in_the_sites_open_upload_dialog_is_sent_with_its_upload(srv, tmp_path):
+    """Amkor's SuccessFactors (the nightly of Oct 12): its "Upload Resume" dialog is open over the profile, its file
+    box inside. The desk put the resume in the box, pressed Next, and the site said "Resume: field is required": the
+    file counts only once the dialog's own Upload is pressed. It's pressed, and the dialog waited on to close."""
+    resume = tmp_path / "resume.pdf"
+    resume.write_bytes(b"%PDF-1.4 test")
+    run(srv.browser.goto(fixture_url("site/successfactors-open-upload-dialog.html")))
+    box = next(f for f in run(srv.inspect_form(include_dropdown_options=False))["fields"] if f["kind"] == "file")
+    out = run(srv.fill_form([{"id": box["id"], "value": str(resume)}]))
+    assert out["results"][0].get("ok"), out["results"]
+    page = run(srv.browser.page())
+    assert run(page.inner_text("#resume")) == "resume.pdf is on file.", run(page.inner_text("body"))
+
+
+def test_a_dialog_that_isnt_an_uploads_alone_is_never_pressed(srv, tmp_path):
+    """The review of the open upload dialog's press: an application drawn as a dialog, its resume box beside a name
+    box and a "Save" that sends it, would have been sent (around the guard every press goes through). Only a dialog
+    holding nothing but its file box is pressed."""
+    resume = tmp_path / "resume.pdf"
+    resume.write_bytes(b"%PDF-1.4 test")
+    run(srv.browser.goto(fixture_url("site/successfactors-open-upload-dialog.html") + "?form"))
+    box = next(f for f in run(srv.inspect_form(include_dropdown_options=False))["fields"] if f["kind"] == "file")
+    out = run(srv.fill_form([{"id": box["id"], "value": str(resume)}]))
+    assert out["results"][0].get("ok"), out["results"]
+    assert run(run(srv.browser.page()).evaluate("() => window.sent")) is False
+
+
+def test_a_press_allowed_to_send_is_never_found_again_by_its_words(srv, tmp_path):
+    """The safety audit (Oct 12): a press the desk makes with allow_submit (a Create Account form's own button) whose
+    button was redrawn was found again by its words, anywhere on the page, and pressed with no check: another form's
+    "Submit". It's refused instead; the desk stops there."""
+    page_file = tmp_path / "redrawn.html"
+    page_file.write_text('<!doctype html><form id="acct" onsubmit="window.sent.push(\'acct\'); return false;">'
+                         '<label for="e">Email</label><input id="e" type="email"><button type="submit">Submit</button></form>'
+                         '<form id="app" onsubmit="window.sent.push(\'app\'); return false;"><label for="n">Name</label>'
+                         '<input id="n"></form><script>window.sent = [];</script>', encoding="utf-8")
+    run(srv.browser.goto(page_file.as_uri()))
+    button = next(a for a in run(srv.inspect_form(include_dropdown_options=False))["actions"] if a["text"] == "Submit")
+    page = run(srv.browser.page())
+    # the account's form redrawn without its button, and the application's own Submit drawn
+    run(page.evaluate("""() => { document.querySelector('#acct button').remove();
+      const b = document.createElement('button'); b.type = 'submit'; b.textContent = 'Submit';
+      document.getElementById('app').append(b); }"""))
+    with pytest.raises(KeyError):
+        run(srv.browser.click(button["id"], allow_submit=True))
+    assert run(page.evaluate("() => window.sent")) == []
+
+
 @pytest.mark.parametrize("how", ["dialog", "box", "chooser"])
 def test_a_resume_uploaded_through_the_sites_own_dialog(srv, tmp_path, how):
     """APS's SuccessFactors (the live check's plus probe, Oct 11): its resume is a "+" button that opens a dialog

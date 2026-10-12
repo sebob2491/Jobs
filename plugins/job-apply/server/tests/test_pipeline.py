@@ -1130,6 +1130,11 @@ def test_what_attests_to_an_application_and_what_doesnt():
     assert attestation({"kind": "checkbox", "label": "I certify that the information in this application is true and "
                         "complete, and understand false statements may disqualify me from future opportunities",
                         "required": True}) is True
+    # (the review's: a certification naming affiliates or offers isn't a sign-up; nor emails about the application)
+    assert attestation({"kind": "checkbox", "label": "I certify the information is true and complete and authorize Acme "
+                        "and its affiliates to conduct a background check", "required": True}) is True
+    assert attestation({"kind": "checkbox", "label": "I agree to the privacy policy and to receive emails about my "
+                        "application", "required": True}) is True
     assert attestation({"kind": "radio_group", "label": "Do you accept our applicant privacy notice?", "required": True,
                         "options": ["Yes", "No"]}) is None  # (a radio group isn't one of the kinds it picks in)
     assert attestation({"kind": "select", "label": "Do you accept our applicant privacy notice?", "required": True,
@@ -1149,6 +1154,23 @@ def test_what_attests_to_an_application_and_what_doesnt():
               {"kind": "checkbox", "label": "I agree to receive text messages about my application (privacy policy)",
                "required": True},
               {"kind": "checkbox", "label": "I accept the cookie and privacy policy", "required": True},
+              # the safety audit's (Oct 12): an agreement or attestation that also signs the person up
+              {"kind": "checkbox", "label": "I have read and agree to the Privacy Policy and consent to receive email "
+                                            "communications from Acme", "required": True},
+              {"kind": "checkbox", "label": "I agree to the terms of use and would like to receive updates "
+                                            "about new jobs",
+               "required": True},
+              {"kind": "checkbox", "label": "I certify the information is true and complete and agree to receive emails",
+               "required": True},
+              {"kind": "checkbox_group", "label": "Consents", "required": True,
+               "options": ["I accept the privacy notice and agree to receive news and offers"]},
+              # the final review's: more than the application, in the same breath
+              {"kind": "checkbox", "label": "I certify the information is true and complete and consent to being "
+                                            "contacted about similar jobs", "required": True},
+              {"kind": "checkbox", "label": "I certify the information is true and send me special offers",
+               "required": True},
+              {"kind": "checkbox", "label": "I agree to the privacy policy and to receive emails about my application "
+                                            "and other opportunities", "required": True},
               {"kind": "checkbox_group", "label": "Consents", "required": True,
                "options": ["Send me job alerts", "Keep my profile for future opportunities (privacy notice)"]},
               # a box that also says something of the person, or a question beside the agreement
@@ -4593,6 +4615,24 @@ def test_a_turned_down_answer_is_asked_again_whatever_the_box_shows():
     assert pipeline._pending(profile_filled, turned_down)[0] == []
 
 
+def test_the_persons_turned_down_answer_is_said_over_the_profiles():
+    """HonorHealth's and Microchip's Workday (the probe of Oct 12): "How Did You Hear About Us?" was asked, the
+    answer given opened a list of its own ("Employee Referral" › its entries), and the profile's answer, tried after
+    it, was refused too. The question came back with the profile's refusal and the same first list, again and again.
+    The person's own answer's refusal is what's said, with the entries it opened."""
+    label = "How Did You Hear About Us?*"
+    theirs = {question_key(label): {"id": "h", "label": label, "kind": "combobox", "required": True,
+                                    "error": "PickedAGroup: 'Employee Referral' is a group; pick one of its entries",
+                                    "options": ["Current Employee", "Former Employee"]}}
+    result = {"needs_input": [], "filled": [],
+              "failed": [{"id": "h", "label": label, "kind": "combobox", "required": True,
+                          "error": "ValueError: 'Company Website' doesn't match any suggestion",
+                          "options": ["Employee Referral", "Job Board", "Other"]}]}
+    pending, _ = pipeline._pending(result, theirs)
+    assert len(pending) == 1 and pending[0]["options"] == ["Current Employee", "Former Employee"], pending
+    assert pending[0]["error"].startswith("PickedAGroup"), pending
+
+
 def test_a_profile_answer_that_doesnt_go_in_is_asked_only_where_required():
     """A required field is asked about with its own choices. An optional one is skipped: Qorvo's
     optional veteran question (no "don't wish to answer") was asked over and over."""
@@ -6732,12 +6772,25 @@ def test_a_sign_in_that_led_elsewhere_is_told_from_an_email_first_one():
     search = {"fields": [{"kind": "text", "label": "Keywords:"}, {"kind": "text", "label": "Requisition ID:"}],
               "actions": [{"text": "Sign In"}, {"text": "Search Jobs"}, {"text": "Clear"}]}
     assert pipeline._no_sign_in_here(r, search)
+    # as it is live (the nightly of Oct 12): its filters too, enough boxes to read as an application's
+    filters = {**search, "fields": [*search["fields"], *[{"kind": "text", "label": "Select one or more options"}] * 7,
+                                    {"kind": "checkbox", "label": "Exact Match"}]}
+    assert pipeline._application_like(filters) and pipeline._no_sign_in_here(r, filters)
+    # the review's: an application with a job search in its header is still one
+    applying = {**filters, "fields": [*filters["fields"], {"kind": "text", "label": "First Name"}]}
+    assert not pipeline._no_sign_in_here(r, applying)
     email_first = {"fields": [{"kind": "text", "label": "Email Address"}], "actions": [{"text": "Next"}]}
     assert not pipeline._no_sign_in_here(r, email_first)
     with_account = {**search, "actions": [*search["actions"], {"text": "Create Account"}]}
     assert not pipeline._no_sign_in_here(r, with_account)
     Page.url = "https://career5.successfactors.eu/career?_s.crb=xyz"
-    assert not pipeline._no_sign_in_here(r, search)  # (the same page: said by the other cases)
+    spent = {"fields": [], "actions": [{"text": "Back"}]}
+    assert not pipeline._no_sign_in_here(r, spent)  # (the same page: said by the other cases)
+    # a job search at the sign-in's own address (Edwards', the probe of Oct 12: careers?company=atlascopcoP both)
+    r.reset_from = Page.url = "https://career5.successfactors.eu/careers?company=atlascopcoP"
+    assert pipeline._no_sign_in_here(r, filters)
+    assert not pipeline._no_sign_in_here(r, {**filters, "fields": [*filters["fields"],
+                                                                   {"kind": "password", "label": "Password"}]})
 
 
 
@@ -6768,6 +6821,34 @@ def test_a_workday_create_accounts_own_agreement_is_its_terms(label, ticked):
     never one that also signs the person up for anything (_NOT_TERMS), nor one saying something else."""
     box = {"id": "t", "kind": "checkbox", "label": label, "value": False}
     assert (pipeline._terms_boxes({"fields": [box]}) == [box]) is ticked
+
+
+def test_a_bare_i_agree_is_ticked_only_where_the_words_above_it_are_the_sites_terms(srv, tmp_path):
+    """The safety audit (Oct 12): a Create Account form's bare "I agree" was ticked by its label alone, whatever the
+    paragraph above it asked (joining a talent network, texts). Its words above are read: the site's terms, ticked;
+    anything more, the person's."""
+    page = tmp_path / "account.html"
+    page.write_text('<!doctype html><h2>Create Account</h2><label for="e">Email Address</label><input id="e" type="email">'
+                    '<label for="pw">Password</label><input id="pw" type="password">'
+                    '<div><p>Please review and accept our Terms of Use and Candidate Privacy Policy.</p>'
+                    '<label><input type="checkbox" id="a"> I agree</label></div>'
+                    '<div><p>Join our talent network to hear about new jobs and events by email.</p>'
+                    '<label><input type="checkbox" id="b"> I agree</label></div>'
+                    # the review's: words beside it, not in an element of their own; and a terms paragraph that names
+                    # an email in passing
+                    '<div>Sign me up for job alerts and our newsletter.<br><label><input type="checkbox" id="c"> I agree'
+                    '</label></div>'
+                    '<div><p>Accept our Terms of Use. You will receive an email to verify your account.</p>'
+                    '<label><input type="checkbox" id="d"> I agree</label></div>'
+                    '<div><p>Get special offers and updates by email.</p><label><input type="checkbox" id="e"> I agree'
+                    '</label></div>'
+                    '<button type="submit">Create Account</button>', encoding="utf-8")
+    run(srv.browser.goto(page.as_uri()))
+    data = run(srv.browser.inspect(include_dropdown_options=False))
+    boxes = pipeline._terms_boxes(data)
+    assert len(boxes) == 5, data["fields"]  # (by their labels alone, all five)
+    kept = run(Applier(srv)._said_terms(boxes))
+    assert [b["id"] for b in kept] == [boxes[0]["id"], boxes[3]["id"]], (boxes, kept)
 
 
 def test_a_round_holds_while_the_person_is_at_a_review_page_and_ends_once_it_is_sent(srv):
