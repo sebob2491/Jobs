@@ -1472,3 +1472,69 @@ def test_the_common_questions_are_asked_once_on_the_page_and_kept(srv, job_apply
 
     run(go())
     assert {q["id"]: q["answer"] for q in config.question_bank()}["shift"] == "Nights"
+
+
+def test_the_bot_checks_waiting_are_solved_in_one_round(srv):
+    """Bot checks wait in their tabs while the queue goes on (the owner's call, Oct 11). The desk says how many wait;
+    "Solve them" brings up the oldest one's tab, and the next one's as soon as it's past its check. The person
+    solves each: the desk only shows them."""
+    from playwright.async_api import async_playwright
+
+    from job_apply.pipeline import Run
+
+    desk = Desk(srv)
+    desk.applier.start = lambda: None
+    desk.search.update(status="done", at=time.time())
+    jobs = [srv.add_job(url=f"https://example.com/job/{i}", title="Technician", company=c)["job"]
+            for i, c in enumerate(["Example Fab", "Example Litho"])]
+    runs = []
+    for i, job in enumerate(jobs):
+        r = Run(job["id"], "Technician", job["company"], status="needs_you", need="bot_check", left=True,
+                reason="The site is checking that you're a person.")
+        r.paused_at = 1000.0 + i
+        desk.applier.runs[job["id"]] = r
+        runs.append(r)
+    shown = []
+
+    async def focus(job_id):
+        shown.append(job_id)
+        return True
+    desk.applier.focus = focus
+    rounds = []
+    desk.applier.start_round = rounds.append  # (the worker holds while the person is at one)
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with async_playwright() as pw:
+                browser = await pw.chromium.launch(**launch_options())
+                page = await browser.new_page()
+                await page.goto(desk.url)
+                await page.wait_for_selector("#notices [data-act=bot-round]")
+                assert "2 bot checks to solve" in await page.inner_text("#notices")
+                await page.click("#notices [data-act=bot-round]")
+                await page.wait_for_function("document.title !== ''")
+                for _ in range(40):
+                    if shown:
+                        break
+                    await page.wait_for_timeout(100)
+                assert shown == [jobs[0]["id"]], shown
+                runs[0].status, runs[0].need = "running", ""  # the person solved it: the desk carries on with it
+                for _ in range(60):
+                    if len(shown) > 1:
+                        break
+                    await page.wait_for_timeout(100)
+                assert shown == [jobs[0]["id"], jobs[1]["id"]] and rounds == shown, (shown, rounds)
+                ended = []
+                desk.applier.end_round = lambda: ended.append(True)
+                runs[1].status, runs[1].need = "running", ""  # none left: the round ends, and the queue goes on
+                for _ in range(60):
+                    if ended:
+                        break
+                    await page.wait_for_timeout(100)
+                assert ended
+                await browser.close()
+        finally:
+            await desk.stop()
+
+    run(go())

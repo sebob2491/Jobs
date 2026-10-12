@@ -173,38 +173,11 @@ def test_one_button_apply_walks_the_whole_flow(srv, monkeypatch):
     assert "Thank you for applying" in run(srv.page_text())
 
 
-def test_bot_check_holds_the_queue_until_the_person_passes_it(srv, monkeypatch):
+def test_a_bot_check_waits_in_its_tab_while_the_other_jobs_go_ahead(srv, monkeypatch):
+    """A bot check never holds the queue (the owner's call, Oct 11): its job waits in its tab, watched, and the
+    other jobs go ahead at once. When the person passes the check (the desk's Bot checks round takes them to
+    it), the desk carries on with it by itself. The desk never solves one."""
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
-    checked = srv.add_job(url=fixture_url("site/botcheck.html"), title="FSE", company="Example Fab")["job"]
-    other = srv.add_job(url=fixture_url("generic_form.html"), title="Technician", company="Example Litho")["job"]
-    applier = Applier(srv)
-
-    async def go():
-        try:
-            await check()
-        finally:
-            await applier.stop()
-
-    async def check():
-        applier.start()
-        first = applier.enqueue(checked["id"])
-        second = applier.enqueue(other["id"])
-        await until(lambda: first.status == "needs_you")
-        assert first.need == "bot_check" and first.blocking
-        await asyncio.sleep(1.5)
-        assert second.status == "queued"  # waits while the person deals with the check
-        await first.page.click("#human")  # passes it
-        await until(lambda: first.need == "sign_in")  # carried on by itself, up to the sign-in
-
-    run(go())
-
-
-def test_with_no_one_at_the_browser_the_other_jobs_go_ahead(srv, monkeypatch):
-    """Apply pressed on a batch, then the person walks away. A job that needs them (a bot
-    check) holds the queue only while something happens in its tab; then the other jobs go
-    ahead. When the person gets past the check later, the desk carries on with it by itself."""
-    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
-    monkeypatch.setattr(pipeline, "HANDS_ON_IDLE", 2)
     checked = srv.add_job(url=fixture_url("site/botcheck.html"), title="FSE", company="Example Fab")["job"]
     other = srv.add_job(url=fixture_url("generic_form.html"), title="Technician", company="Example Litho")["job"]
     applier = Applier(srv)
@@ -215,17 +188,57 @@ def test_with_no_one_at_the_browser_the_other_jobs_go_ahead(srv, monkeypatch):
             first = applier.enqueue(checked["id"])
             second = applier.enqueue(other["id"])
             await until(lambda: first.status == "needs_you")
-            assert first.need == "bot_check" and first.blocking
-            await until(lambda: second.status not in ("queued", "running"))  # went ahead
-            assert first.status == "needs_you" and first.need == "bot_check" and not first.blocking
-            assert "nothing happened in its tab for" in first.reason and "carries on with it" in first.reason
-            await first.page.click("#human")  # the person, back, passes the check
+            assert first.need == "bot_check" and not first.blocking and first.left
+            await until(lambda: second.status not in ("queued", "running"))  # went ahead, no wait
+            assert first.status == "needs_you" and first.need == "bot_check"
+            assert "botcheck.html" in first.page.url  # (still on the check: the desk never solves one)
+            await first.page.click("#human")  # the person passes it
             await until(lambda: first.need == "sign_in")  # carried on by itself, up to the sign-in
-            return first
         finally:
             await applier.stop()
 
     run(go())
+
+
+def test_in_the_desks_bot_check_round_no_other_job_starts_and_a_solved_one_goes_on_at_once(srv, monkeypatch):
+    """The review of 0.3.119: while the person is at a bot check in the desk's round, starting another job would
+    open its tab over the one they're solving; and a solved one waited for the job being worked on. In a round the
+    queue holds, and the solved check is noticed straight away; once it's past, the other jobs go on (here once
+    its sign-in, which holds the queue as ever, is left a moment)."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "HANDS_ON_IDLE", 1)
+    checked = srv.add_job(url=fixture_url("site/botcheck.html"), title="FSE", company="Example Fab")["job"]
+    other = srv.add_job(url=fixture_url("generic_form.html"), title="Technician", company="Example Litho")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            first = applier.enqueue(checked["id"])
+            await until(lambda: first.status == "needs_you" and first.need == "bot_check")
+            applier.start_round(checked["id"])  # (the desk's "Solve them" brought its tab up)
+            second = applier.enqueue(other["id"])
+            await asyncio.sleep(1.5)
+            assert second.status == "queued"  # nothing started over the tab the person is at
+            await first.page.click("#human")
+            await until(lambda: first.need == "sign_in", timeout=20, about=state(first))  # noticed at once
+            await until(lambda: second.status not in ("queued", "running"), timeout=30, about=state(second))
+            assert applier.round_job is None
+        finally:
+            await applier.stop()
+
+    run(go())
+
+
+def test_a_bot_check_is_past_only_once_the_page_stops_asking():
+    """A form showing "Please verify you are not a robot" as an error still asks; a reCAPTCHA badge's "protected
+    by reCAPTCHA" in a footer doesn't."""
+    asks = ["Please verify you are not a robot.", "Verify you are human by completing the action below.",
+            "The CAPTCHA is incorrect. Please try again.", "Complete the security check to continue"]
+    assert all(pipeline._STILL_CHECKING.search(t) for t in asks)
+    fine = ["This site is protected by reCAPTCHA and the Google Privacy Policy and Terms of Service apply.",
+            "Application received. Thank you!"]
+    assert not any(pipeline._STILL_CHECKING.search(t) for t in fine)
 
 
 def test_a_job_left_waiting_is_watched_without_taking_over_the_tools(srv, monkeypatch):
@@ -332,7 +345,7 @@ def test_a_captcha_challenge_after_a_click_waits_for_the_person(srv, monkeypatch
             await applier.stop()
 
     need, reason, log, blocking = run(go())
-    assert need == "bot_check" and blocking, (reason, log)
+    assert need == "bot_check" and not blocking, (reason, log)
     assert "clicked “Next”" in log and "CAPTCHA" in reason
 
 
@@ -476,8 +489,10 @@ def test_a_tab_that_cant_be_read_still_lets_the_queue_go_on(srv, monkeypatch):
         applier.start()
         try:
             r = applier.enqueue(job["id"])
-            await until(lambda: r.status == "needs_you" and r.blocking)
+            await until(lambda: r.status == "needs_you")
+            # (a pause that holds the queue, as a sign-in's does: a bot check waits in its tab since 0.3.119)
             applier._moved_on = broken
+            r.need, r.blocking, r.left = "sign_in", True, False
             await until(lambda: r.left, timeout=15, about=state(r))
             return r
         finally:
@@ -2447,7 +2462,7 @@ def test_whose_mail_a_workday_job_reads_a_reset_from(srv):
     assert not mailbox.sender_allowed("noreply@workday.intel.com", senders)
 
 
-@pytest.mark.parametrize("gone", ["error", "home"])
+@pytest.mark.parametrize("gone", ["error", "home", "menu"])
 def test_a_sign_in_page_good_for_one_visit_is_reached_again_through_the_posting(srv, monkeypatch, job_apply_home,
                                                                                  gone):
     """SuccessFactors' sign-in page (career?_s.crb=…) is good for one visit: going back to it after a
@@ -2460,7 +2475,9 @@ def test_a_sign_in_page_good_for_one_visit_is_reached_again_through_the_posting(
     saved_password(monkeypatch)
     manage_accounts(job_apply_home)
     watched_inbox(monkeypatch)
-    posting = fixture_url("site/sf-posting.html") + ("?home" if gone == "home" else "")
+    # (menu: its "Apply now" opens a menu whose "Apply Now" goes on, EY's: pressed again once the job's opened again,
+    # it isn't a third press)
+    posting = fixture_url("site/sf-posting.html") + {"error": "", "home": "?home", "menu": "?menu"}[gone]
     job = srv.add_job(url=posting, title="Energy Analyst", company="Example Utility")["job"]
     applier = Applier(srv)
 
@@ -2476,7 +2493,7 @@ def test_a_sign_in_page_good_for_one_visit_is_reached_again_through_the_posting(
     r = run(go())
     log = "\n".join(r.log)
     assert "so I went back to make an account there instead" in log, log
-    said = " couldn't be opened again" if gone == "error" else ", opened again, led to the site's job search, not its sign-in"
+    said = ", opened again, led to the site's job search, not its sign-in" if gone == "home" else " couldn't be opened again"
     assert f"sign-in page{said}, so I opened the job again" in log, log
     assert "created your account" in log and r.seen_form, (r.reason, r.log)
 

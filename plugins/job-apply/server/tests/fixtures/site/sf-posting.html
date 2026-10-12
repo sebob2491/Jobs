@@ -7,9 +7,22 @@
 <h1>Energy Analyst</h1>
 <p>Phoenix, AZ. Full time.</p>
 <a href="#" id="apply">Apply now &raquo;</a>
+<!-- ?menu: "Apply now" opens a menu whose own "Apply Now" goes on (EY's, Freeport's and SRP's career sites, nightly
+     Oct 11) -->
+<div id="menu" hidden><a href="#" id="apply-menu">Apply Now</a> <a href="#">Apply With LinkedIn</a></div>
 <script>
+  const go = () => {
+    const home = new URLSearchParams(location.search).has('home') ? '&home' : '';
+    location.href = 'signin-submit.html?reset=odd' + home + '&s=' + Math.random().toString(36).slice(2);
+  };
+  document.getElementById('apply-menu').addEventListener('click', (e) => { e.preventDefault(); go(); });
   document.getElementById('apply').addEventListener('click', (e) => {
     e.preventDefault();
+    if (new URLSearchParams(location.search).has('menu')) {  // (the menu in its place)
+      document.getElementById('menu').hidden = false;
+      document.getElementById('apply').hidden = true;
+      return;
+    }
     const home = new URLSearchParams(location.search).has('home') ? '&home' : '';
     location.href = 'signin-submit.html?reset=odd' + home + '&s=' + Math.random().toString(36).slice(2);
   });
