@@ -3403,10 +3403,13 @@ def _pending(result: dict[str, Any], once_failed: dict[str, dict[str, Any]]) -> 
                if f.get("required") and f.get("kind") != "file"]
     # the profile's answers that didn't go in, where the site requires one (an optional field
     # is skipped: Qorvo's optional veteran question has no "don't wish to answer")
+    # (and where the person's own answer was turned down too, theirs is what's said, with the entries it opened:
+    # HonorHealth's and Microchip's "How Did You Hear About Us?", the probe of Oct 12, were asked again and again with
+    # the profile's refusal and the same first list)
     pending += [{"id": f["id"], "label": f.get("label") or "", "kind": f.get("kind") or ("combobox" if f.get("options") else "text"),
                  "required": True, "error": f.get("error"),
                  **({"options": f["options"]} if f.get("options") else {}),
-                 **{k: f[k] for k in ("section", "sublabel") if f.get(k)}}
+                 **{k: f[k] for k in ("section", "sublabel") if f.get(k)}, **turned_down(f)}
                 for f in result["failed"] if f.get("required", True)]
     # an answer of theirs the page turned down is asked again, even when the box isn't empty
     # (words left in a picker's search box read as an answer), unless the profile's answer

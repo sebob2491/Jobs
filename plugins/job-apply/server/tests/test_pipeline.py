@@ -4602,6 +4602,24 @@ def test_a_turned_down_answer_is_asked_again_whatever_the_box_shows():
     assert pipeline._pending(profile_filled, turned_down)[0] == []
 
 
+def test_the_persons_turned_down_answer_is_said_over_the_profiles():
+    """HonorHealth's and Microchip's Workday (the probe of Oct 12): "How Did You Hear About Us?" was asked, the
+    answer given opened a list of its own ("Employee Referral" › its entries), and the profile's answer, tried after
+    it, was refused too. The question came back with the profile's refusal and the same first list, again and again.
+    The person's own answer's refusal is what's said, with the entries it opened."""
+    label = "How Did You Hear About Us?*"
+    theirs = {question_key(label): {"id": "h", "label": label, "kind": "combobox", "required": True,
+                                    "error": "PickedAGroup: 'Employee Referral' is a group; pick one of its entries",
+                                    "options": ["Current Employee", "Former Employee"]}}
+    result = {"needs_input": [], "filled": [],
+              "failed": [{"id": "h", "label": label, "kind": "combobox", "required": True,
+                          "error": "ValueError: 'Company Website' doesn't match any suggestion",
+                          "options": ["Employee Referral", "Job Board", "Other"]}]}
+    pending, _ = pipeline._pending(result, theirs)
+    assert len(pending) == 1 and pending[0]["options"] == ["Current Employee", "Former Employee"], pending
+    assert pending[0]["error"].startswith("PickedAGroup"), pending
+
+
 def test_a_profile_answer_that_doesnt_go_in_is_asked_only_where_required():
     """A required field is asked about with its own choices. An optional one is skipped: Qorvo's
     optional veteran question (no "don't wish to answer") was asked over and over."""
