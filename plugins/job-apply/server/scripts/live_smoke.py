@@ -1058,6 +1058,10 @@ def fake_answer(q: dict[str, Any]) -> Any:
     if q.get("kind") == "checkbox":
         return "Yes"
     if options:
+        # not a choice the site just refused (a Workday source that opens a list of its own, HonorHealth's and
+        # Microchip's, the probe of Oct 12: picked again and again)
+        refused = re.search(r"Picked '([^']+)'", str(q.get("error") or ""))
+        options = [o for o in options if not refused or o != refused.group(1)] or options
         # "No" where there is one, as most applicants answer "applied before?", "relatives
         # here?" or "terminated?"; a "Yes" brings follow-up questions the run then has to answer
         return next((o for o in options if polarity(o) is False), options[0])
