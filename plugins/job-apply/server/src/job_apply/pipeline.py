@@ -830,6 +830,8 @@ class Applier:
             # with a job left waiting on the person, look at its tab again soon
             await self._sleep(POLL_SECONDS if any(r.left and r.status == "needs_you" for r in self.runs.values()) else 30)
             return
+        if submit is None and self._in_round():
+            return  # a round begun meanwhile (the desk's Solve them): nothing started over the tab the person is at
         task = submit or self.tasks[0]
         self.tasks.remove(task)
         kind, job_id = task
