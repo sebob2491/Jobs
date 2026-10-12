@@ -2170,7 +2170,8 @@ class Applier:
             here = _page_key(data)
             fills = [{"id": fid, "value": run.once[key]} for fid, key in by_id.items()
                      if key in run.once and run.once_page.get(key, here) == here
-                     and is_empty_value(fields[fid].get("value"))]
+                     # (or still on its own "Not Specified", which isn't an answer: Kforce's, the probe of Oct 12)
+                     and (is_empty_value(fields[fid].get("value")) or unset_choice(fields[fid]))]
             if not fills:
                 break
             out = await self.srv.fill_form(fills)
@@ -3398,12 +3399,19 @@ def _required_by_errors(result: dict[str, Any], data: dict[str, Any]) -> None:
     your veteran status.", Workday's, live test 2, issue #112, note 18) is required after all: the page
     won't go on without it, though nothing on it said so. It's asked, instead of the step button being
     pressed twice more."""
-    said = norm(" ".join(data.get("errors") or []))
-    if not said:
+    # (and Workday's error links, "Error-Please indicate if you are Hispanic or Latino?", where its errors read as
+    # none: Baker Tilly's, the probe of Oct 12)
+    links = [a.get("text") or "" for a in data.get("actions") or [] if re.match(r"\s*error\s*[-\u2013:]", a.get("text") or "", re.I)]
+    said = norm(" ".join([*(data.get("errors") or []), *links]))
+    invalid = {f.get("id") for f in data.get("fields") or [] if f.get("invalid")}
+    if not said and not invalid:
         return
     # (only a label the page has once: one error about "Job Title" isn't about every block's)
     names = [norm(clean_label(f.get("label") or "")) for f in data.get("fields") or []]
     for f in result.get("needs_input") or []:
+        if not f.get("required") and f.get("id") in invalid:  # the page marks it wrong as it is, empty
+            f["required"] = True
+            continue
         name = norm(clean_label(f.get("label") or ""))
         # or its section's (Kforce's "The field Closest Metropolitan City is mandatory." over its Region)
         section = norm(clean_label(str(f.get("section") or "")))
