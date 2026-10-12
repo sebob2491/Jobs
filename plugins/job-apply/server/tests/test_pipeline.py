@@ -4574,6 +4574,34 @@ def test_an_answer_the_page_turns_down_is_asked_again(srv, monkeypatch):
     assert run(go()) == ["Sam", "United States", "English", ""]  # the optional veteran question is left
 
 
+def test_a_persons_answer_goes_into_a_list_still_on_not_specified(srv, monkeypatch):
+    """Kforce's Taleo (the probe of Oct 12): a required list that starts on "Not Specified", nothing chosen yet, was
+    asked about (its "Not Specified" isn't an answer), but the person's answer ("Female") went only into an empty
+    box, so it never went in, and the question came back again and again. It goes into a list still on its own
+    "Not Specified"."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    job = srv.add_job(url=fixture_url("site/select-no-placeholder.html"), title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+    gender = question_key("3. Birth Assigned Gender . Required")
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"))
+            assert r.need == "questions" and [q["label"] for q in r.questions] == ["3. Birth Assigned Gender . Required"], \
+                (r.status, r.need, r.reason, r.log)
+            r.once[gender] = "Female"
+            applier.enqueue(job["id"], front=True)
+            await until(lambda: r.status not in ("queued", "running"))
+            return r, await r.page.input_value("#g")
+        finally:
+            await applier.stop()
+
+    r, value = run(go())
+    assert value == "Female" and r.status == "ready", (value, r.status, r.reason)
+
+
 def test_an_answer_that_doesnt_stick_the_first_time_is_filled_again_not_asked_again(srv, monkeypatch):
     """Lam's and Micron's consent questions (Eightfold), live: an answer the person gave didn't
     stick the first time, and the desk asked for it again. It's filled in a second time first."""

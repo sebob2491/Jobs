@@ -2170,7 +2170,8 @@ class Applier:
             here = _page_key(data)
             fills = [{"id": fid, "value": run.once[key]} for fid, key in by_id.items()
                      if key in run.once and run.once_page.get(key, here) == here
-                     and is_empty_value(fields[fid].get("value"))]
+                     # (or still on its own "Not Specified", which isn't an answer: Kforce's, the probe of Oct 12)
+                     and (is_empty_value(fields[fid].get("value")) or unset_choice(fields[fid]))]
             if not fills:
                 break
             out = await self.srv.fill_form(fills)
