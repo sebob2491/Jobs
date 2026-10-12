@@ -198,6 +198,22 @@ def test_the_comment_lists_each_change():
     assert "- Old Co: `works` → *no longer checked*" in comment
 
 
+def test_an_employer_that_no_longer_reaches_its_review_page_is_said_first():
+    """The regression alarm: an employer the last run took to its review page that this one stopped short of
+    opens the comment, apart from the list (so nightly_summary.py --changes reads each change once)."""
+    changes = [Change("pipeline", "KLA", "ready", "needs_you stuck", "Technician"),
+               Change("hr", "Axon", "needs_you your_submit", "needs_you questions"),
+               Change("hr", "Carvana", "needs_you sign_in", "ready"),
+               Change("accounts", "Gone Co", "ready", None),
+               Change("search", "Intel", "works", "error")]
+    assert [c.employer for c in lc.went_back(changes)] == ["KLA", "Axon"]
+    comment = lc.render_comment(changes)
+    head = comment.split("\n\n")[1]
+    assert head.startswith("**Went backwards:** 2 employers no longer reach the review page: "
+                           "KLA (pipeline: `needs_you stuck`), Axon (hr: `needs_you questions`)."), comment
+    assert comment.count("KLA") == 2 and "**Went backwards" not in lc.render_comment(changes[2:])
+
+
 def test_find_issue_takes_the_oldest_with_the_title():
     issues = [{"number": 9, "title": "Nightly live check"}, {"number": 4, "title": "Nightly live check"},
               {"number": 2, "title": "Nightly live check (old notes)"}]
@@ -232,12 +248,12 @@ def test_main_first_night_then_a_change_then_a_quiet_night(tmp_path):
     night1 = [pipeline_rec("ASM"), pipeline_rec("KLA", "needs_you", "sign_in")]
     body, comment, outputs = _run(tmp_path, [], night1, [search_rec("USAA")])
     assert comment is None
-    assert outputs == {"issue": "", "issue_state": "", "changes": "0"}
+    assert outputs == {"issue": "", "issue_state": "", "changes": "0", "went_back": "0"}
     issue = {"number": 7, "title": "Nightly live check", "state": "CLOSED", "body": body}
 
     night2 = [pipeline_rec("ASM"), pipeline_rec("KLA", "needs_you", "stuck")]
     body, comment, outputs = _run(tmp_path, [issue], night2, [search_rec("USAA", az=0, any_=2)])
-    assert outputs == {"issue": "7", "issue_state": "CLOSED", "changes": "1"}
+    assert outputs == {"issue": "7", "issue_state": "CLOSED", "changes": "1", "went_back": "0"}
     assert "- KLA: `needs_you sign_in` → `needs_you stuck`" in comment
     assert "USAA" not in comment  # fewer openings isn't a change
     issue["body"] = body
