@@ -2132,3 +2132,21 @@ def test_a_profiles_gender_however_short_picks_its_choice(gender, expected):
              "options": ["Male", "Female", "I do not wish to self-identify"]}
     ans = resolve_field(field, Profile({"eeo": {"gender": gender}}))
     assert ans is not None and ans.value == expected, ans
+
+
+def test_where_the_person_lives_and_their_work_authorization_asked_as_questions():
+    """Grand Canyon University's Workday (the full run of Oct 12) asked, and the desk passed to the person: "Do you
+    have authorization to work in the U.S.?", and in text areas "In what city do you live?" and "In what state do
+    you live? (Please use the state abbreviation format, i.e. AZ)". The profile answers all three; an essay box that
+    only mentions a town isn't one of them."""
+    p = Profile({"personal": {"address": {"city": "Chandler", "state": "Arizona"}},
+                 "work_authorization": {"authorized_to_work": True, "requires_sponsorship": False}})
+    def ask(label, kind="textarea", options=None):
+        a = resolve_field({"label": label, "kind": kind, "required": True, **({"options": options} if options else {})}, p)
+        return a and a.value
+    assert ask("Do you have authorization to work in the U.S.?*", "listbox", ["Select One", "Yes", "No"]) == "Yes"
+    assert ask("Will you now or in the future require sponsorship to obtain authorization to work in the U.S.?",
+               "listbox", ["Yes", "No"]) == "No"
+    assert ask("In what city do you live?*") == "Chandler"
+    assert ask("In what state do you live? (Please use the state abbreviation format, i.e. AZ)*") == "AZ"
+    assert ask("Describe a town you would like to visit") is None
