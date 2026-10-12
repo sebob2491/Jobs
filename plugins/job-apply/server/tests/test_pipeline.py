@@ -1071,10 +1071,10 @@ def test_a_box_that_wouldnt_fill_is_said_as_that_not_asked(srv, monkeypatch):
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
     fill_one = srv.browser._fill_one
 
-    async def times_out(page, field, value):
+    async def times_out(page, field, value, *given):
         if field.get("label") == "Country of Residence":
             raise PlaywrightTimeout("Locator.evaluate: Timeout 15000ms exceeded.")
-        return await fill_one(page, field, value)
+        return await fill_one(page, field, value, *given)
 
     monkeypatch.setattr(srv.browser, "_fill_one", times_out)
     job = srv.add_job(url=fixture_url("site/ai-notice-form.html") + "?uploaded=1", title="Equipment Technician",
