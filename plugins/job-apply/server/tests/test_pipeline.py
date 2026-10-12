@@ -1149,6 +1149,15 @@ def test_what_attests_to_an_application_and_what_doesnt():
               {"kind": "checkbox", "label": "I agree to receive text messages about my application (privacy policy)",
                "required": True},
               {"kind": "checkbox", "label": "I accept the cookie and privacy policy", "required": True},
+              # the safety audit's (Oct 12): an agreement or attestation that also signs the person up
+              {"kind": "checkbox", "label": "I have read and agree to the Privacy Policy and consent to receive email "
+                                            "communications from Acme", "required": True},
+              {"kind": "checkbox", "label": "I agree to the terms of use and would like to receive updates",
+               "required": True},
+              {"kind": "checkbox", "label": "I certify the information is true and complete and agree to receive emails",
+               "required": True},
+              {"kind": "checkbox_group", "label": "Consents", "required": True,
+               "options": ["I accept the privacy notice and agree to receive news and offers"]},
               {"kind": "checkbox_group", "label": "Consents", "required": True,
                "options": ["Send me job alerts", "Keep my profile for future opportunities (privacy notice)"]},
               # a box that also says something of the person, or a question beside the agreement

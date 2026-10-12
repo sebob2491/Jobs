@@ -174,6 +174,11 @@ _NOT_TERMS = re.compile(r"newsletter|marketing|job alerts?|text messages?|\bsms\
 # a box's words only, never a statement's (whose text names most of these in passing)
 _MORE_THAN_TERMS = re.compile(r"receiv\w*|e-?mails?|updates?|notifications?|messages?|partners?|third[- ]part|future|"
                               r"talent pool|retain|retention", re.I)
+# An attestation or privacy agreement that also signs the person up: "... and consent to receive email communications
+# from Acme", "... and would like to receive updates" (the safety audit of Oct 12): never ticked for them
+_SIGNS_UP_TOO = re.compile(r"\breceiv\w*\b.{0,40}\b(?:e-?mails?|communications?|updates?|messages?|news\w*|offers|"
+                           r"information about|texts?)\b|\b(?:e-?mail|marketing|promotional) communications?\b|"
+                           r"\bupdates? (?:about|on|from)\b|\bnewsletter", re.I)
 # A Create Account box that says the person applies from outside, not as one of the employer's staff
 # (Banner Health's Workday, live, Oct 2026: "Yes, I am a new candidate and not a current employee"; no
 # account without it, though it isn't marked required). That and nothing more: a box that says more
@@ -3456,10 +3461,12 @@ def _attestation(q: dict[str, Any]) -> Any:
     if q["kind"] == "checkbox_group":
         # its ticks that accept the terms, and only those: EMD's required pair is its Terms of Use &
         # Data Privacy Statement and its "Email Communications" (marketing, left unticked)
-        agreed = [o for o in choices if _agrees_to_terms(o)]
+        agreed = [o for o in choices if _agrees_to_terms(o) and not _SIGNS_UP_TOO.search(o)]
         return agreed or None
     if not (_ATTESTS.search(label) and not _NOT_ATTESTED.search(label) or _agrees_to_terms(label)):
         return None
+    if _SIGNS_UP_TOO.search(label) or _NOT_TERMS.search(label):
+        return None  # (an agreement that also signs the person up for emails or updates: theirs, the safety audit's)
     if q["kind"] == "checkbox":
         return True
     if len(choices) == 1:
