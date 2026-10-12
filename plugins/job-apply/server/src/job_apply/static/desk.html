@@ -663,6 +663,17 @@ function renderHeader() {
     <span>${botRound ? "Solve the one in the browser window; the next comes up by itself (Next leaves this one for later). No other job starts meanwhile." : "The other jobs carry on meanwhile. Solve them in one go when you're ready; each job carries on by itself after."}</span>
     ${botRound ? `<button data-act="bot-next">Next</button> <button data-act="bot-stop">Stop</button>` : `<button class="primary" data-act="bot-round">Solve them</button>`}
     ${alertsOn() || !("Notification" in window) ? "" : `<button class="link" data-act="alerts">Alert me when one comes up</button>`}`});
+  // Applications filled to the person's Submit: one banner, and a round that brings each review page up in turn
+  const toSend = reviewWaiting();
+  const shownJob = reviewRound ? toSend.find((r) => r.job_id === reviewShown) : null;
+  if (!botRound && (toSend.length || reviewRound)) notes.push({cls: "waiting", html: reviewRound && shownJob
+    ? `<strong>Reviewing ${esc(shownJob.title)} (${esc(shownJob.company)}).</strong>
+       <span>${shownJob.status === "ready" ? "Check the page in the browser window, then send it, or leave it for later." : "Its last button is the site's own: check the page, press it there, then say so here."} ${toSend.length - 1} more after this one. No other job starts meanwhile.</span>
+       ${shownJob.status === "ready" ? `<button class="primary" data-act="review-submit">Submit this one</button>` : `<button class="primary" data-act="review-applied">I submitted it</button>`}
+       <button data-act="review-next">Next</button> <button data-act="review-stop">Stop</button>`
+    : `<strong>${toSend.length} application${toSend.length === 1 ? "" : "s"} ready for your Submit.</strong>
+       <span>Go through them one by one: each review page comes up in the browser window to check before you send it.</span>
+       <button class="primary" data-act="review-round">Review them</button>`});
   const needing = allRuns().filter((r) => r.status === "needs_you").length;
   document.title = needing ? `(${needing}) Needs you · Job Desk` : "Job Desk";
   if (state.tailoring) notes.push({cls: "waiting", html: `<strong>${state.tailoring} job${state.tailoring === 1 ? "" : "s"} waiting for a tailored resume.</strong>
@@ -717,6 +728,27 @@ function botStep() {
   if (!next) { endRound(); return; }
   botShown = next.job_id;
   api(`/api/job/${next.job_id}/round`, {}).catch(() => { botPassed.add(next.job_id); botStep(); });
+}
+
+// The applications filled to the person's Submit, oldest first; and the round that brings each review page up in turn
+// (the person checks it and presses Submit, or the site's own button and "I submitted it"; Next leaves one for later)
+let reviewRound = false, reviewShown = null;
+const reviewPassed = new Set();
+const SEND_NEEDS = new Set(["your_submit", "check_submit", "submit_failed"]);
+const reviewWaiting = () => allRuns().filter((r) => r.status === "ready" || (r.status === "needs_you" && SEND_NEEDS.has(r.need)))
+  .sort((a, b) => (a.paused_at || 0) - (b.paused_at || 0));
+function endReview() {
+  reviewRound = false; reviewShown = null; reviewPassed.clear();
+  api("/api/job/0/round_end", {}).catch(() => {});
+}
+function reviewStep() {
+  if (!reviewRound) return;
+  const left = reviewWaiting().filter((r) => !reviewPassed.has(r.job_id));
+  if (reviewShown !== null && left.some((r) => r.job_id === reviewShown)) return;  // still on this one
+  const next = left[0];
+  if (!next) { endReview(); return; }
+  reviewShown = next.job_id;
+  api(`/api/job/${next.job_id}/round`, {}).catch(() => { reviewPassed.add(next.job_id); reviewStep(); });
 }
 
 // Desktop alerts, so the desk can work in the background: one when a job needs you (a
@@ -787,6 +819,7 @@ function render() {
   renderRows();
   renderSide();
   botStep();
+  reviewStep();
   renderBank();
   renderAlerts();
   renderNotes();
@@ -880,9 +913,14 @@ document.addEventListener("click", (e) => {
   const a = t.dataset.act, job = t.dataset.job, jobAct = t.dataset.jobAct;
   if (!state && (a || jobAct)) return;  // the page hasn't loaded yet
   if (a === "find") act(() => api("/api/search", {}));
-  if (a === "bot-round") { botRound = true; botShown = null; botPassed.clear(); botStep(); renderHeader(); }
+  if (a === "bot-round") { if (reviewRound) endReview(); botRound = true; botShown = null; botPassed.clear(); botStep(); renderHeader(); }
   if (a === "bot-next" && botShown !== null) { botPassed.add(botShown); botStep(); renderHeader(); }
   if (a === "bot-stop") { endRound(); renderHeader(); }
+  if (a === "review-round") { botRound = false; reviewRound = true; reviewShown = null; reviewPassed.clear(); reviewStep(); renderHeader(); }
+  if (a === "review-next" && reviewShown !== null) { reviewPassed.add(reviewShown); reviewStep(); renderHeader(); }
+  if (a === "review-stop") { endReview(); renderHeader(); }
+  if (a === "review-submit" && reviewShown !== null) act(() => api(`/api/job/${reviewShown}/submit`, {}));  // (their press)
+  if (a === "review-applied" && reviewShown !== null) act(() => api(`/api/job/${reviewShown}/applied`, {}));
   if (a === "dismiss") { dismiss(t.dataset.tip); renderHeader(); }
   if (a === "report-close") $("report").close();
   if (a === "notes") {

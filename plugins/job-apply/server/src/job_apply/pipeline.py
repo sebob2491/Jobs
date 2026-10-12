@@ -50,6 +50,9 @@ SIGN_IN_STEP_WAIT = 25  # Workday's sign-in step can take longer to draw its but
 LEFT_SIGN_IN_SETTLE = 3  # seconds before a sign-in page that led elsewhere is taken for one with no sign-in
 ACCOUNT_DRAW_WAIT = 4  # for the application below a Create Account form to be drawn (Qorvo's)
 HANDS_ON = {"sign_in", "email_code"}
+# What the desk's rounds take the person to, one tab at a time, starting no other job meanwhile: bot checks to solve,
+# and applications filled to the step the person sends (a ready one's review page is "ready", not a need)
+ROUND_NEEDS = {"bot_check", "your_submit", "check_submit", "submit_failed"}
 # A bot check never holds the queue (the owner's call, Oct 11): its job waits in its tab, watched, while the other
 # jobs go on, and the person solves the checks waiting in a round of their own from the desk ("Bot checks"); each
 # job carries on by itself once its tab is past the check. The desk never solves one.
@@ -768,7 +771,8 @@ class Applier:
                 await asyncio.sleep(POLL_SECONDS)
 
     def start_round(self, job_id: int) -> None:
-        """The person is at this bot check's tab in the desk's round (focus() brought it up)."""
+        """The person is at this job's tab in one of the desk's rounds (focus() brought it up): its bot check, or
+        its review page to check before they press Submit."""
         self.round_job, self.round_at = job_id, time.time()
         self._wake.set()
 
@@ -777,18 +781,20 @@ class Applier:
         self._wake.set()
 
     def _in_round(self) -> bool:
-        """Is the person at a bot check in the desk's round still (it waits on them, for no longer than a
-        sign-in would hold the queue)?"""
+        """Is the person at a job in one of the desk's rounds still: its bot check, or its review page waiting on
+        their Submit (it waits on them, for no longer than a sign-in would hold the queue)?"""
         run = self.runs.get(self.round_job) if self.round_job is not None else None
-        if run is None or run.status != "needs_you" or run.need != "bot_check" \
-                or time.time() - self.round_at > HANDS_ON_TIMEOUT:
+        theirs = run is not None and (run.status == "ready" or run.status == "needs_you" and run.need in ROUND_NEEDS)
+        if not theirs or time.time() - self.round_at > HANDS_ON_TIMEOUT:
             self.round_job = None
             return False
         return True
 
     async def _tick(self) -> None:
         self._resume_tailored()
-        if self._in_round():  # the person at a bot check: nothing else started over it, the solved one noticed
+        # the person at a job in a round (a bot check, a review page): nothing else started over it, a solved check
+        # noticed; a Submit they pressed (the round's own "Submit this one") still goes
+        if self._in_round() and not any(t[0] == "submit" for t in self.tasks):
             await self._pick_up_left()
             self._wake.clear()
             await self._sleep(POLL_SECONDS)

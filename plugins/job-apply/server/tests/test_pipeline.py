@@ -6741,3 +6741,17 @@ def test_a_workday_create_accounts_own_agreement_is_its_terms(label, ticked):
     never one that also signs the person up for anything (_NOT_TERMS), nor one saying something else."""
     box = {"id": "t", "kind": "checkbox", "label": label, "value": False}
     assert (pipeline._terms_boxes({"fields": [box]}) == [box]) is ticked
+
+
+def test_a_round_holds_while_the_person_is_at_a_review_page_and_ends_once_it_is_sent(srv):
+    """The desk's review round (Oct 12): no other job starts while the person checks a page filled to their Submit
+    (ready, or the site's own last button); once they've pressed Submit (it's queued to send), or said they sent
+    it, the round lets go."""
+    from job_apply.pipeline import Run
+
+    applier = Applier(srv)
+    for status, need, held in (("ready", "", True), ("needs_you", "your_submit", True),
+                               ("needs_you", "questions", False), ("queued", "", False), ("submitted", "", False)):
+        applier.runs[7] = Run(7, "Technician", "Example Fab", status=status, need=need)
+        applier.start_round(7)
+        assert applier._in_round() is held, (status, need)
