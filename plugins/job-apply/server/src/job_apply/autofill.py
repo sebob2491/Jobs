@@ -402,6 +402,10 @@ def choose_option(desired: Any, options: list[str], exact_only: bool = False, na
                 return of_kind[0]
         if not kind and len({degree_kind(n) for _, n in same} - {None}) > 1:
             return None  # a bare "Bachelor's Degree" among "Bachelor's - BS" and "Bachelor's - BA": the person's to say
+        if len(same) > 1 and all(degree_kind(n) is None for _, n in same):
+            # the level written twice, no kind named in either (ASM's "Bachelors" and "Bachelor's Degree", the second
+            # nightly at every employer, Oct 12): the same answer, so the one that says it's a degree, else the first
+            return next((o for o, n in same if "degree" in n.split()), same[0][0])
         if same:
             normed = same
 

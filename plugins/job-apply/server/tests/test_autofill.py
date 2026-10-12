@@ -1130,6 +1130,11 @@ def test_a_degree_of_one_kind_is_picked_however_the_list_writes_it_and_a_bare_on
     # one of the level, or the same words: as before
     assert choose_option("Bachelor's Degree", ["Associates", "Bachelors", "Masters"]) == "Bachelors"
     assert choose_option("Bachelor's Degree", ["Bachelor's Degree", "Master of Science"]) == "Bachelor's Degree"
+    # the level written twice, no kind named in either (ASM's Workday, the second nightly at every employer, Oct
+    # 12): the kind the profile names isn't there, the level is: the one that says it's a degree
+    asm = ["Associates", "Associate's Degree", "Bachelors", "Bachelor's Degree", "Masters", "Master's Degree", "Other"]
+    for said in ("Bachelor of Science", "Bachelor's Degree", "BSEE"):
+        assert choose_option(said, asm) == "Bachelor's Degree", said
 
 
 def test_a_bare_job_title_beside_a_profile_employers_company_gets_that_jobs_title():

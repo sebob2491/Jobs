@@ -1576,7 +1576,9 @@ class BrowserSession:
                 with contextlib.suppress(PlaywrightError, PlaywrightTimeout):
                     await part.focus(timeout=FOCUS_TIMEOUT)
                     current = await part.evaluate(_CURRENT_PART_JS)  # (the arrows go to the date's current part)
-                    for _ in range(abs(current - i) if current >= 0 else 0):
+                    if current < 0:
+                        continue  # which part they'd go to can't be told: not pressed (said below if still off)
+                    for _ in range(abs(current - i)):
                         await page.keyboard.press("ArrowLeft" if current > i else "ArrowRight")
                         await page.wait_for_timeout(50)
                     for _ in range(abs(off)):
@@ -1584,12 +1586,13 @@ class BrowserSession:
                         await page.wait_for_timeout(50)
                     await loc.evaluate("el => el.ownerDocument.activeElement && el.ownerDocument.activeElement.blur()")
                     await page.wait_for_timeout(100)
-                    read = [await parts.nth(j).evaluate(read_js) for j in range(count)]
+                read = [await parts.nth(j).evaluate(read_js) for j in range(count)]  # (read again, whatever happened)
         finally:
             with contextlib.suppress(PlaywrightError):
                 await loc.evaluate("el => el.ownerDocument.querySelectorAll('[data-ja-date-part]').forEach((p) => {"
                                    " p.removeAttribute('data-ja-date-part'); p.removeAttribute('data-ja-date-mine'); })")
-        wrong = [i for i in range(start, mine + 1)
+        # every part with an answer (one the arrows may have touched, too), not only those typed now
+        wrong = [i for i in range(count)
                  if want[i] and not (str(read[i]).isdigit() and int(read[i]) == int(want[i]))]
         if wrong:
             shown = "/".join(str(r) or "?" for r in read)
