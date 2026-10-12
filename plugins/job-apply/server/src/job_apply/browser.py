@@ -1530,16 +1530,19 @@ class BrowserSession:
 
             want = [full(digits, infos[i]["max"]) if i == mine else full(str(infos[i]["now"]), infos[i]["max"])
                     if str(infos[i]["now"]).isdigit() and int(infos[i]["now"]) > 0 else "" for i in range(count)]
-            later = {i: re.sub(r"\D", "", str((given or {}).get(infos[i]["id"]) or "")) for i in range(mine + 1, count)
-                     if infos[i]["id"] and infos[i]["id"] in (given or {})}
-            for i, d in later.items():  # the date's later parts given in this fill, typed with this one
-                if d:
-                    want[i] = full(d, infos[i]["max"])
-            end = max([mine] + [i for i, d in later.items() if d])
-            if not all(want[:end + 1]):  # (one left empty between: this part alone, as before)
-                end = mine
-            # from the first part where every part before this one reads a number; else this part alone
-            start = 0 if all(want[:mine]) else mine
+            # the date's other parts given in this fill, typed in the same run as this one
+            others = {i: re.sub(r"\D", "", str(given[infos[i]["id"]] or "")) for i in range(count)
+                      if i != mine and given and infos[i]["id"] and infos[i]["id"] in given}
+            filled = [full(others[i], infos[i]["max"]) if others.get(i) else want[i] for i in range(count)]
+            # from the first part where every part before this one has a number; else from this part
+            start = 0 if all(filled[:mine]) else mine
+            # on to the last later part given, while none between is left empty
+            last = max([mine] + [i for i, d in others.items() if d and i > mine])
+            end = mine
+            while end < last and filled[end + 1]:
+                end += 1
+            for i in range(start, end + 1):  # (only the parts typed now take what was given)
+                want[i] = filled[i]
             await said(f"typing {digits} into part {mine} (want {want}, from part {start} to {end})")
             for i in range(start, end + 1):
                 part = parts.nth(i)

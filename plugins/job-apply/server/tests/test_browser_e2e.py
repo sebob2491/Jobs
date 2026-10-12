@@ -479,7 +479,7 @@ def test_a_workday_date_whose_current_part_stays_put_gets_its_month(srv):
     assert shown[:2] == ["03/2021", "11/2023"], shown
 
 
-@pytest.mark.parametrize("order", ["month first", "year first"])
+@pytest.mark.parametrize("order", ["month first", "year first", "backwards"])
 def test_a_workday_date_takes_each_part_in_the_one_with_focus(srv, order):
     """Intel's and Entegris' Workday, traced live (Oct 12): digits go to the part with focus, whatever part the date
     marks current, and its arrows only move focus, wrapping round. The desk's arrow presses (0.3.116) took focus
@@ -495,12 +495,24 @@ def test_a_workday_date_takes_each_part_in_the_one_with_focus(srv, order):
               (("Date", "Month"), "10"), (("Date", "Day"), "9"), (("Date", "Year"), "2026")]
     if order == "year first":
         values = [values[1], values[0], values[3], values[2], values[6], values[4], values[5]]
+    if order == "backwards":
+        values = values[::-1]
     out = run(srv.fill_form([{"id": by[key], "value": value} for key, value in values]))
     assert all(r.get("ok") for r in out["results"]), out["results"]
     page = run(srv.browser.page())
     shown = run(page.evaluate("() => [...document.querySelectorAll('[role=group]')].map((g) => "
                               "[...g.querySelectorAll('[aria-hidden=true]')].map((d) => d.textContent).join('/'))"))
     assert shown == ["03/2021", "11/2023", "10/09/2026"], shown
+
+
+def test_a_workday_dates_part_left_empty_isnt_checked_against_one_never_typed(srv):
+    """The review of 0.3.121: a date's Month and Year given with its Day not, the Year wasn't typed with the Month
+    (the empty Day between), yet the Month's fill said the date was wrong for the Year it hadn't typed."""
+    run(srv.browser.goto(fixture_url("site/workday-date-sections.html") + "?sticky"))
+    by = {(f.get("section") or f["label"], f.get("sublabel")): f["id"]
+          for f in run(srv.inspect_form(include_dropdown_options=False))["fields"]}
+    out = run(srv.fill_form([{"id": by[("Date", "Month")], "value": "10"}, {"id": by[("Date", "Year")], "value": "2026"}]))
+    assert out["results"][0].get("ok"), out["results"]
 
 
 @pytest.mark.parametrize("how", ["dialog", "box", "chooser"])
