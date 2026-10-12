@@ -1676,6 +1676,9 @@ _WORK_RULES = {"no_sponsorship", "sponsorship", "authorized", "work_proof", "us_
                "visa_holder"}
 _OTHER_THAN = re.compile(r"\b(other than|another country|any (other )?country|foreign)\b")
 # Documents other than a resume that a lone file box may ask for
+# a file list's boxes (Taleo's): the file chosen for this application, and the one that's the resume (its row says which)
+_FILE_PICKED = re.compile(r"^\s*select the file:\s*(.+?)\s*$", re.I)
+_FILE_IS_RESUME = re.compile(r"^\s*(?:this )?document is (?:a|the|your) (?:resume|cv)\s*$", re.I)
 _OTHER_DOCUMENT = re.compile(r"\b(degree|diploma|transcripts?|certificat\w*|licen[cs]e|passport|portfolio|writing sample|"
                              r"work sample|recommendation|references?|identification|photo\w*|dd ?214)\b")
 # A date box asking when something else happened, not the date a form is signed
@@ -1758,6 +1761,16 @@ def _resolve_field(field: dict, prof: Profile, job: dict | None = None, file_inp
             return Answer(path, "documents.resume") if path else None
         return None
 
+    if kind == "checkbox" and (_FILE_PICKED.match(raw_label) or _FILE_IS_RESUME.match(raw_label)):
+        # a list of the files on the person's record (Kforce's Taleo, the nightly of Oct 12: "You must select at least
+        # one relevant file"): the profile's resume is the one for this application, and is the resume; no other file
+        path = _document(prof, job, "resume")
+        name = Path(path).name.lower() if path else ""
+        picked = _FILE_PICKED.match(raw_label)
+        named = picked.group(1).strip().lower() if picked else norm(field.get("row") or "")
+        if name and (named == name if picked else norm(name) in named):
+            return Answer(True, "documents.resume")
+        return None
     if kind == "checkbox" and (declined := _DECLINE_BOX.match(clean_label(raw_label))):
         # a self-identification question's own "I decline to say" box (Nikon's UKG Pro, live run 17: "I decline to
         # say Gender" beside its Gender list): ticked when the profile's answer to that question is a decline,

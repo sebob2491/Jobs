@@ -1,0 +1,30 @@
+{
+  "source_url": "https://myhiring.kforce.com/careersection/careersection/candidateacquisition/flow.jsf",
+  "note": "live pipeline: Kforce",
+  "fields": [
+    {
+      "label": "Select the file to attach",
+      "kind": "file",
+      "required": false
+    },
+    {
+      "label": "Comments about the file",
+      "kind": "text",
+      "required": false
+    },
+    {
+      "label": "Select the file: REDACTED-resume.pdf",
+      "kind": "checkbox",
+      "required": false
+    },
+    {
+      "label": "Document is a resume",
+      "kind": "checkbox",
+      "required": false
+    }
+  ],
+  "actions": [
+    "Save and Continue",
+    "Save as Draft"
+  ]
+}

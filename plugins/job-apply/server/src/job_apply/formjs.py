@@ -490,7 +490,13 @@ EXTRACT_JS = r"""
       }
       // still nothing but the box's own value ("", or "on" for one with none): the words beside it
       if (/^(on|off|true|false|[01])?$/i.test(label)) label = besideText(first) || label;
+      // nor beside it: its title, and the table row it's in (Kforce's Taleo, the nightly of Oct 12: a file list's
+      // "Select the file: resume.pdf" and "Document is a resume", one row a file)
+      const titled = /^(on|off|true|false|[01])?$/i.test(label) && first.title ? clean(first.title) : '';
+      if (titled) label = titled;
       const single = { id: idOf(first), kind: 'checkbox', label, required: isRequired(first, label), value: checkedOf(first) };
+      const row = titled && first.closest('tr');
+      if (row) single.row = txt(row).slice(0, 300);
       const section = sectionOf(first);
       if (section && section !== label) single.section = section;
       fields.push(single);
