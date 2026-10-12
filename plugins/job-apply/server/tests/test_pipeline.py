@@ -2484,6 +2484,34 @@ def test_whose_mail_a_workday_job_reads_a_reset_from(srv):
     assert not mailbox.sender_allowed("noreply@workday.intel.com", senders)
 
 
+def test_a_job_search_reached_mid_sign_in_opens_the_job_again_once(srv, monkeypatch, job_apply_home):
+    """Edwards Vacuum's SuccessFactors (the probe of Oct 12): after the wait on a reset email, the site had already
+    left its sign-in for its careers search (its session gone), and the desk, not going back through the sign-in,
+    stopped there ("couldn't find the button"). Mid sign-in, a job search with no way on has the job opened again,
+    once a job."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    job = srv.add_job(url=fixture_url("site/sf-careers-home.html"), title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"))
+            assert "opened the job again" not in "\n".join(r.log)  # (not mid sign-in: as before)
+            r.reset_from = "https://career5.successfactors.eu/careers?company=example&login_ns=signin"
+            applier.enqueue(job["id"], front=True)
+            await until(lambda: r.status not in ("queued", "running"))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    log = "\n".join(r.log)
+    assert log.count("left its sign-in for its job search, so I opened the job again") == 1, log
+    assert r.need == "stuck", (r.need, r.reason)  # (once a job: then said as before)
+
+
 @pytest.mark.parametrize("gone", ["error", "home", "menu"])
 def test_a_sign_in_page_good_for_one_visit_is_reached_again_through_the_posting(srv, monkeypatch, job_apply_home,
                                                                                  gone):

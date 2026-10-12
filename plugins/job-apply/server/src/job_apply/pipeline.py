@@ -1888,6 +1888,15 @@ class Applier:
                     return self._pause(run, "stuck", f"I pressed \u201c{held}\u201d for you (settings.accept_notices), "
                                        "but the page stayed: it may want a box filled or a check passed first. "
                                        "Look at it in the browser window, then press Resume.")
+                if run.reset_from and not run.reopened_elsewhere and _no_sign_in_here(run, data) and _job_search(data):
+                    # mid sign-in, the site's session gone, on its job search with no way on (Edwards' SuccessFactors
+                    # after the reset email's wait, the probe of Oct 12, without the desk going back): the job opened
+                    # again, once a job, whose Apply leads to a fresh sign-in
+                    run.reopened_elsewhere = True
+                    self._log(run, f"{_site(run, data)} left its sign-in for its job search, so I opened the job again")
+                    run.reopened += 1
+                    await srv.open_application(job_id=run.job_id)
+                    continue
                 return self._pause(run, "stuck", "I couldn't find the button that moves this application on. "
                                    "Take it a step further in the browser, then press Resume.")
             if (kind == "form" and action.get("form_fields") == len(data.get("fields") or [])
