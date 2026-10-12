@@ -149,7 +149,6 @@ LOST_FILL_TRIES = 3  # times a box is typed again on a page, at most (one the pa
 BLOCK_DRAW_WAIT = 6000  # ms for blocks just added (Workday's Education 2) to draw their boxes, at most
 # How long a click may wait for its button to become clickable, in ms.
 CLICK_TIMEOUT = 8000
-DATE_NUDGE_MAX = 3  # a date's month or day this far off, as typed, is put right with its arrows
 FORM_DRAW_TRIES, FORM_DRAW_WAIT = 5, 500  # a page read with no form is read again, each this many ms apart
 UPLOAD_CHOOSER_WAIT = 3000  # ms for a button that opens a site's own upload to open a file chooser
 UPLOAD_SHOWN_WAIT = 15  # seconds for a file given through a site's own upload to show on the page
@@ -194,17 +193,6 @@ _ANOTHER_PART_CURRENT_JS = """
   const section = el.parentElement, group = el.closest('[role="group"]');
   if (!section || !group || section.getAttribute('tabindex') === '0') return false;
   return [...group.querySelectorAll('[tabindex="0"]')].some((s) => s !== section && s.querySelector('[role="spinbutton"]'));
-}
-"""
-
-
-# Which of its date's parts (marked data-ja-date-part, in order) the date marks current (its section's tabindex
-# 0), or -1 where it marks none
-_CURRENT_PART_JS = """
-(el) => {
-  // (the parts marked for this date alone: a group around only some of them would miscount)
-  const parts = [...el.ownerDocument.querySelectorAll('[data-ja-date-part]')];
-  return parts.findIndex((p) => p.parentElement && p.parentElement.getAttribute('tabindex') === '0');
 }
 """
 
@@ -1561,17 +1549,11 @@ class BrowserSession:
                             covered = True
                     if covered:
                         await part.focus(timeout=FOCUS_TIMEOUT)
-                if i == start:
-                    # a date that still marks another part current (KLA's, where pressing the display doesn't
-                    # move it, the plus probe Oct 11: the month typed after the year went into the year): moved
-                    # with its arrows, as Workday's date says ("use right and left arrows to navigate spin buttons")
-                    current = await part.evaluate(_CURRENT_PART_JS)
-                    await said(f"part {i}: focused (current {current})")
-                    for _ in range(abs(current - i) if current >= 0 else 0):
-                        await page.keyboard.press("ArrowLeft" if current > i else "ArrowRight")
-                        await page.wait_for_timeout(50)
-                        await said(f"part {i}: {'ArrowLeft' if current > i else 'ArrowRight'}")
-                    # (the part as it was: its digits replaced, as Workday selects a part it's given)
+                # Workday types into the part with focus, whichever its date marks current (a live trace of
+                # Intel's and Entegris', Oct 12: its arrows only moved focus away, wrapping to the year, so the month
+                # went into the year): no arrows, only this part focused before its digits
+                await said(f"part {i}: focused")
+                if i == start:  # (the part as it was: its digits replaced, as Workday selects a part it's given)
                     await part.evaluate("el => { try { el.select(); } catch (e) {} }")
                 await page.keyboard.type(want[i], delay=40)
                 await said(f"part {i}: typed {want[i]}")
@@ -1580,37 +1562,11 @@ class BrowserSession:
             await said("left the date")
             read_js = "el => el.getAttribute('aria-valuenow') || (el.value || '').replace(/\\D/g, '')"
             read = [await parts.nth(i).evaluate(read_js) for i in range(count)]
-            # A month or day typed that reads a little off (Entegris', Northern Trust's and GCU's Workday, nightly
-            # Oct 12: the month 02 for 03, its year right): put right with that part's own arrows, as a spinbutton
-            # takes them (up one, down one), at most a few presses; read again, and said below if still off
-            for i in range(start, mine + 1):
-                got, top = str(read[i]), infos[i]["max"]
-                if not (want[i] and got.isdigit() and 0 < top <= 31 and int(got) != int(want[i])):
-                    continue
-                off = int(want[i]) - int(got)
-                if abs(off) > DATE_NUDGE_MAX:
-                    continue
-                part = parts.nth(i)
-                with contextlib.suppress(PlaywrightError, PlaywrightTimeout):
-                    await part.focus(timeout=FOCUS_TIMEOUT)
-                    current = await part.evaluate(_CURRENT_PART_JS)  # (the arrows go to the date's current part)
-                    if current < 0:
-                        continue  # which part they'd go to can't be told: not pressed (said below if still off)
-                    for _ in range(abs(current - i)):
-                        await page.keyboard.press("ArrowLeft" if current > i else "ArrowRight")
-                        await page.wait_for_timeout(50)
-                    for _ in range(abs(off)):
-                        await page.keyboard.press("ArrowUp" if off > 0 else "ArrowDown")
-                        await page.wait_for_timeout(50)
-                    await loc.evaluate("el => el.ownerDocument.activeElement && el.ownerDocument.activeElement.blur()")
-                    await page.wait_for_timeout(100)
-                read = [await parts.nth(j).evaluate(read_js) for j in range(count)]  # (read again, whatever happened)
-                await said(f"part {i}: put right by {off}")
         finally:
             with contextlib.suppress(PlaywrightError):
                 await loc.evaluate("el => el.ownerDocument.querySelectorAll('[data-ja-date-part]').forEach((p) => {"
                                    " p.removeAttribute('data-ja-date-part'); p.removeAttribute('data-ja-date-mine'); })")
-        # every part with an answer (one the arrows may have touched, too), not only those typed now
+        # every part with an answer, not only those typed now
         wrong = [i for i in range(count)
                  if want[i] and not (str(read[i]).isdigit() and int(read[i]) == int(want[i]))]
         if wrong:

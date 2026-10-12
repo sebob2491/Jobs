@@ -18,11 +18,11 @@
      is read as this century's ("6" is 2006, "019" 2019). Each part's input holds no value: its number is
      its aria-valuenow, and its display shows it padded. ?sticky: as Intel's Workday (live check, Oct 11): the
      current part stays where it was when focus leaves the date, and is marked (its section's tabindex 0), so
-     a month typed after its year went into the year. ?arrows (with ?sticky): as KLA's (live check, Oct 11):
-     pressing a part's display doesn't make it current; only the left and right arrows move the current part
-     ("use right and left arrows to navigate spin buttons"). ?slip (with ?arrows): a month typed comes out one short
-     once focus leaves the date, the first time (Entegris', Northern Trust's and GCU's, nightly Oct 12: 02 for 03);
-     up and down arrows change the current part by one, as a spinbutton's do. -->
+     a month typed after its year went into the year. ?arrows (with ?sticky): as Intel's and Entegris' Workday
+     traced live (Oct 12): digits go to the part with focus, whatever the date marks current (its tabindex 0 starts
+     on the last part, and is where focus left from when an arrow moves it); a part full moves focus on; pressing a
+     part's display focuses it; the left and right arrows move focus, wrapping round (the first part's left arrow
+     goes to the last); selecting a part's text doesn't focus it. -->
 <h2>My Experience</h2>
 <label for="title">Job Title</label><input id="title" type="text">
 <div id="from"></div>
@@ -46,10 +46,9 @@
     let current = 0;
     const sticky = new URLSearchParams(location.search).has('sticky');
     const arrows = new URLSearchParams(location.search).has('arrows');
-    const slip = new URLSearchParams(location.search).has('slip');
-    let slipped = false;
     const sections = [...group.querySelectorAll('.part')];
     const mark = () => sections.forEach((s, i) => s.setAttribute('tabindex', sticky && i === current ? '0' : '-1'));
+    if (arrows) current = kinds.length - 1;  // (the live date marks its last part, focus or none)
     mark();
     const show = (i) => {
       const [, hint, width] = KINDS[kinds[i]];
@@ -61,24 +60,28 @@
     };
     inputs.forEach((input, i) => {
       input.value = '';
+      if (arrows) input.select = () => {};  // (live, selecting a part didn't bring focus back to it)
       input.addEventListener('keydown', (e) => {
         if (arrows && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+          // (focus moves, wrapping round; the date marks the part it left)
           e.preventDefault();
-          current = Math.max(0, Math.min(kinds.length - 1, current + (e.key === 'ArrowLeft' ? -1 : 1)));
+          const n = kinds.length, to = (i + (e.key === 'ArrowLeft' ? n - 1 : 1)) % n;
+          current = i;
           mark();
-          inputs[current].focus();
-          return;
-        }
-        if (slip && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
-          e.preventDefault();
-          const [max, , width] = KINDS[kinds[current]];
-          const n = Math.min(max, Math.max(1, Number(typed[current] || 0) + (e.key === 'ArrowUp' ? 1 : -1)));
-          typed[current] = String(n).padStart(width, '0');
-          show(current);
+          inputs[to].focus();
           return;
         }
         if (!/^\d$/.test(e.key)) return;
         e.preventDefault();
+        if (arrows) {  // the digit goes to this part, the one with focus; full, focus moves on
+          const [max, , width] = KINDS[kinds[i]];
+          let next = typed[i].length >= width ? e.key : typed[i] + e.key;
+          if (next.length === 1 && width === 2 && Number(next) * 10 > max) next = '0' + next;
+          typed[i] = next;
+          show(i);
+          if (next.length >= width && i < kinds.length - 1) inputs[i + 1].focus();
+          return;
+        }
         const kind = kinds[current], [max, , width] = KINDS[kind];
         let next = typed[current].length >= width ? e.key : typed[current] + e.key;
         if (next.length === 1 && width === 2 && Number(next) * 10 > max) next = '0' + next;
@@ -93,19 +96,11 @@
       input.addEventListener('input', () => { input.value = ''; });
       group.querySelectorAll('[aria-hidden=true]')[i].addEventListener('mousedown', (e) => {
         e.preventDefault();
-        if (!arrows) { current = i; typed[i] = ''; mark(); }
+        if (!arrows) { current = i; typed[i] = ''; mark(); } else typed[i] = '';
         inputs[i].focus();
       });
     });
-    group.addEventListener('focusout', (e) => {
-      if (!sticky && !group.contains(e.relatedTarget)) current = 0;
-      const m = kinds.indexOf('Month');
-      if (slip && !slipped && m >= 0 && typed[m].length === 2 && !group.contains(e.relatedTarget)) {
-        slipped = true;
-        typed[m] = String(Math.max(1, Number(typed[m]) - 1)).padStart(2, '0');
-        show(m);
-      }
-    });
+    group.addEventListener('focusout', (e) => { if (!sticky && !group.contains(e.relatedTarget)) current = 0; });
   }
   date(document.getElementById('from'), 'workExperience-1--startDate', 'From', ['Month', 'Year']);
   date(document.getElementById('to'), 'workExperience-1--endDate', 'To', ['Month', 'Year']);
