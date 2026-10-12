@@ -1,0 +1,76 @@
+{
+  "source_url": "https://career8.successfactors.com/portalcareer",
+  "note": "live pipeline: Amkor Technology",
+  "fields": [
+    {
+      "label": "*First Name:",
+      "kind": "text",
+      "required": true
+    },
+    {
+      "label": "Middle Name:",
+      "kind": "text",
+      "required": false
+    },
+    {
+      "label": "*Last Name:",
+      "kind": "text",
+      "required": true
+    },
+    {
+      "label": "*Phone:",
+      "kind": "text",
+      "required": true
+    },
+    {
+      "label": "*Email:",
+      "kind": "text",
+      "required": true
+    },
+    {
+      "label": "*Address 1",
+      "kind": "text",
+      "required": true
+    },
+    {
+      "label": "Address 2",
+      "kind": "text",
+      "required": false
+    },
+    {
+      "label": "*City/Town",
+      "kind": "text",
+      "required": true
+    },
+    {
+      "label": "State/Province",
+      "kind": "combobox",
+      "required": true
+    },
+    {
+      "label": "*Zip Code",
+      "kind": "text",
+      "required": true
+    },
+    {
+      "label": "Country",
+      "kind": "combobox",
+      "required": true
+    },
+    {
+      "label": "Choose File",
+      "kind": "file",
+      "required": false
+    },
+    {
+      "label": "Hear more about career opportunities",
+      "kind": "checkbox",
+      "required": false
+    }
+  ],
+  "actions": [
+    "Next",
+    "Save",
+    "Upload"
+  ]
+}

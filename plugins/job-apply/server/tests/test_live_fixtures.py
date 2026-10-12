@@ -85,3 +85,14 @@ def test_a_boxs_title_is_its_label_only_in_a_file_list(srv, tmp_path):
     run(srv.browser.goto(page.as_uri()))
     boxes = [f for f in run(srv.browser.inspect(include_dropdown_options=False))["fields"] if f["kind"] == "checkbox"]
     assert boxes and not any(b["label"] in ("I agree", "I do not agree") for b in boxes), boxes
+
+
+def test_a_careers_search_home_is_read_as_a_job_search_not_an_application(srv):
+    """Edwards Vacuum's SuccessFactors careers home (the nightly of Oct 12, captured live), where its sign-in opened
+    again led: its keywords, requisition ID and filters read as an application's boxes, and the desk stopped. It's a
+    job search, with no sign-in on it."""
+    from job_apply import pipeline
+
+    run(srv.browser.goto((FIXTURES / "live" / "pipeline-edwards-vacuum.html").resolve().as_uri()))
+    data = run(srv.browser.inspect(include_dropdown_options=False))
+    assert pipeline._job_search(data), (data["fields"], data["actions"])

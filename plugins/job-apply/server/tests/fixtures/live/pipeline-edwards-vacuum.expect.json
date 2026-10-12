@@ -1,0 +1,69 @@
+{
+  "source_url": "https://career5.successfactors.eu/careers",
+  "note": "live pipeline: Edwards Vacuum",
+  "fields": [
+    {
+      "label": "Language",
+      "kind": "listbox",
+      "required": false
+    },
+    {
+      "label": "Keywords",
+      "kind": "text",
+      "required": false
+    },
+    {
+      "label": "Select one or more options",
+      "kind": "text",
+      "required": false
+    },
+    {
+      "label": "Requisition ID",
+      "kind": "text",
+      "required": false
+    },
+    {
+      "label": "Select one or more options",
+      "kind": "text",
+      "required": false
+    },
+    {
+      "label": "Select one or more options",
+      "kind": "text",
+      "required": false
+    },
+    {
+      "label": "Select one or more options",
+      "kind": "text",
+      "required": false
+    },
+    {
+      "label": "Select one or more options",
+      "kind": "text",
+      "required": false
+    },
+    {
+      "label": "Select one or more options",
+      "kind": "text",
+      "required": false
+    },
+    {
+      "label": "Select one or more options",
+      "kind": "text",
+      "required": false
+    },
+    {
+      "label": "Exact Match",
+      "kind": "checkbox",
+      "required": false
+    },
+    {
+      "label": "Keyword search options",
+      "kind": "radio_group",
+      "required": false
+    }
+  ],
+  "actions": [
+    "Sign In"
+  ]
+}
