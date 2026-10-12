@@ -1298,7 +1298,7 @@ def best_posting(results: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 async def check_pipeline(company: dict[str, Any], out: Path, rec: dict[str, Any], fixtures: bool = False) -> None:
-    from job_apply.pipeline import Applier, question_key
+    from job_apply.pipeline import Applier, placed_key, question_key
 
     found = await server.search_company_jobs(QUERY_AZ, companies=[company["name"]], location="AZ", limit_per_company=5)
     if not found["results"]:
@@ -1340,8 +1340,12 @@ async def check_pipeline(company: dict[str, Any], out: Path, rec: dict[str, Any]
             if run.need in ("stuck", "sign_in"):  # (an account's step it stopped on, too: UKG Pro's, Oct 2026)
                 await print_shot(company["name"], run.page)
             if run.status == "needs_you" and run.need == "questions":
+                labels = [q.get("label") or "" for q in run.questions]
                 for q in run.questions:
-                    run.once[question_key(q.get("label") or "")] = fake_answer(q)
+                    # (as the desk's card keys them: a label more than one box has, a date's Month, Day and Year,
+                    # by its own box, or the year's answer goes in all three and the date is asked again and again)
+                    key = placed_key(q) if labels.count(q.get("label") or "") > 1 else question_key(q.get("label") or "")
+                    run.once[key] = fake_answer(q)
                 applier.enqueue(job["id"], front=True)
                 continue
             if TEST_IDENTITY and await wait_for_mail(applier, run):
