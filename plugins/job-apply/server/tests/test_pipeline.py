@@ -1164,6 +1164,13 @@ def test_what_attests_to_an_application_and_what_doesnt():
                "required": True},
               {"kind": "checkbox_group", "label": "Consents", "required": True,
                "options": ["I accept the privacy notice and agree to receive news and offers"]},
+              # the final review's: more than the application, in the same breath
+              {"kind": "checkbox", "label": "I certify the information is true and complete and consent to being "
+                                            "contacted about similar jobs", "required": True},
+              {"kind": "checkbox", "label": "I certify the information is true and send me special offers",
+               "required": True},
+              {"kind": "checkbox", "label": "I agree to the privacy policy and to receive emails about my application "
+                                            "and other opportunities", "required": True},
               {"kind": "checkbox_group", "label": "Consents", "required": True,
                "options": ["Send me job alerts", "Keep my profile for future opportunities (privacy notice)"]},
               # a box that also says something of the person, or a question beside the agreement
@@ -6833,11 +6840,13 @@ def test_a_bare_i_agree_is_ticked_only_where_the_words_above_it_are_the_sites_te
                     '</label></div>'
                     '<div><p>Accept our Terms of Use. You will receive an email to verify your account.</p>'
                     '<label><input type="checkbox" id="d"> I agree</label></div>'
+                    '<div><p>Get special offers and updates by email.</p><label><input type="checkbox" id="e"> I agree'
+                    '</label></div>'
                     '<button type="submit">Create Account</button>', encoding="utf-8")
     run(srv.browser.goto(page.as_uri()))
     data = run(srv.browser.inspect(include_dropdown_options=False))
     boxes = pipeline._terms_boxes(data)
-    assert len(boxes) == 4, data["fields"]  # (by their labels alone, all four)
+    assert len(boxes) == 5, data["fields"]  # (by their labels alone, all five)
     kept = run(Applier(srv)._said_terms(boxes))
     assert [b["id"] for b in kept] == [boxes[0]["id"], boxes[3]["id"]], (boxes, kept)
 

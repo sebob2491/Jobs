@@ -2019,13 +2019,16 @@ class BrowserSession:
                     }
                     if (out.join(' ').length > 15) return out.join(' ').slice(-500);
                   }
-                  // nothing before it: its block's words, less its own label's
+                  // nothing before it: the widest of the few blocks around it that's still short, less its own label's
+                  // (more words only make the box the person's, never the desk's: the review's)
+                  let wide = '';
                   for (let n = el.parentElement, d = 0; n && n !== document.body && d < 4; n = n.parentElement, d++) {
                     let t = (n.innerText || '').trim();
                     for (const o of own) t = t.replace(o, '').trim();
-                    if (t.length > 15) return t.slice(0, 500);
+                    if (t.length > 1500) break;
+                    if (t.length > 15) wide = t;
                   }
-                  return '';
+                  return wide;
                 }""", timeout=3000)
             except (PlaywrightError, PlaywrightTimeout):
                 return None

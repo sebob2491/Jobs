@@ -184,15 +184,22 @@ _SIGNS_UP_TOO = re.compile(r"\breceiv\w*\b.{0,40}\b(?:e-?mails?|communications?|
 def _signs_up(text: str) -> bool:
     """Do these words sign the person up for emails or updates (_SIGNS_UP_TOO)? Not those about the application
     itself ("communications about my application status": the review's)."""
-    return any(not re.match(r"\W*(?:about|regarding|on|concerning) (?:the status of )?(?:my|this|the|your) application",
-                            text[m.end():], re.I)
-               for m in _SIGNS_UP_TOO.finditer(text))
+    def about_the_application(tail: str) -> bool:  # (and nothing more: "... and other opportunities" is a sign-up)
+        own = re.match(r"\W*(?:about|regarding|on|concerning) (?:the status of )?(?:my|this|the|your) application"
+                       r"(?: status| process)?(?P<rest>.*)", tail, re.I | re.S)
+        if own is None:
+            return False
+        rest = own["rest"]
+        return not re.match(r"\s*(?:and|or|&|as well)\b", rest, re.I) \
+            and not re.search(r"other|opportunit|jobs|offers|roles|positions|newsletter|events", rest[:120], re.I)
+    return any(not about_the_application(text[m.end():]) for m in _SIGNS_UP_TOO.finditer(text))
 
 
 # The words above a bare "I agree" that make it a sign-up (a terms paragraph names emails, affiliates and offers in
 # passing: "you'll receive an email to verify your account", the review's)
 _SIGN_UP_ABOVE = re.compile(r"talent (?:community|network|pool)|job alerts?|newsletter|subscribe|marketing|"
-                            r"text messages?|\bsms\b|keep me|stay informed|similar jobs|promotional|"
+                            r"text messages?|\bsms\b|keep me|stay informed|similar jobs|promotion\w*|offers|send me|"
+                            r"contact(?:ed)? me|be contacted|share my|"
                             r"other (?:\w+ )?(?:roles|positions|jobs|openings|opportunities)|"
                             r"\breceiv\w*\b.{0,40}\b(?:news\w*|offers|updates?|alerts?|promotions?|(?:job|career) "
                             r"opportunities|marketing)\b", re.I)
@@ -2094,7 +2101,7 @@ class Applier:
             if _BARE_AGREE.match(box.get("label") or ""):
                 above = await self.srv.browser.words_before(box["id"])
                 # (gone, or not read: not ticked; the words of a sign-up, not the terms' passing mentions: the review's)
-                if above is None or _SIGN_UP_ABOVE.search(above):
+                if not above or _SIGN_UP_ABOVE.search(above):  # (unread, or nothing to read: the person's)
                     continue
             kept.append(box)
         return kept
@@ -3424,10 +3431,10 @@ def _pending(result: dict[str, Any], once_failed: dict[str, dict[str, Any]]) -> 
     # (and where the person's own answer was turned down too, theirs is what's said, with the entries it opened:
     # HonorHealth's and Microchip's "How Did You Hear About Us?", the probe of Oct 12, were asked again and again with
     # the profile's refusal and the same first list)
-    pending += [{"id": f["id"], "label": f.get("label") or "", "kind": f.get("kind") or ("combobox" if f.get("options") else "text"),
+    pending += [{"label": f.get("label") or "", "kind": f.get("kind") or ("combobox" if f.get("options") else "text"),
                  "required": True, "error": f.get("error"),
                  **({"options": f["options"]} if f.get("options") else {}),
-                 **{k: f[k] for k in ("section", "sublabel") if f.get(k)}, **turned_down(f)}
+                 **{k: f[k] for k in ("section", "sublabel") if f.get(k)}, **turned_down(f), "id": f["id"]}
                 for f in result["failed"] if f.get("required", True)]
     # an answer of theirs the page turned down is asked again, even when the box isn't empty
     # (words left in a picker's search box read as an answer), unless the profile's answer
@@ -3501,8 +3508,10 @@ def _attestation(q: dict[str, Any]) -> Any:
         return agreed or None
     if not (_ATTESTS.search(label) and not _NOT_ATTESTED.search(label) or _agrees_to_terms(label)):
         return None
-    if _signs_up(label):
-        return None  # (an agreement that also signs the person up for emails or updates: theirs, the safety audit's)
+    # (an agreement that also signs the person up: theirs, the safety audit's; an attestation's passing mention of
+    # the employer's affiliates or its offers of employment isn't one)
+    if _signs_up(label) or _NOT_TERMS.search(re.sub(r"\baffiliat\w*|\boffers? of employment", "", label, flags=re.I)):
+        return None
     if q["kind"] == "checkbox":
         return True
     if len(choices) == 1:
