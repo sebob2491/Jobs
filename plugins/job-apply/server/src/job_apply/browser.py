@@ -1854,7 +1854,9 @@ class BrowserSession:
         text, and whatever is found is checked again.
         """
         for _ in range(3):
-            if (loc is None or not await self._present(loc)) and text:
+            # (never for a press allowed to send, a Create Account's or a code's: its own button, or none. Found by its
+            # words it could be any "Submit" on the page, past every check: the safety audit of Oct 12)
+            if (loc is None or not await self._present(loc)) and text and not allow_submit:
                 loc = await self._find_by_text(page, text)
             if loc is None or not await self._present(loc):
                 break

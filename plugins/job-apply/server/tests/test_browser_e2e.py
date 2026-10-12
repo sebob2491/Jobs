@@ -542,6 +542,27 @@ def test_a_dialog_that_isnt_an_uploads_alone_is_never_pressed(srv, tmp_path):
     assert run(run(srv.browser.page()).evaluate("() => window.sent")) is False
 
 
+def test_a_press_allowed_to_send_is_never_found_again_by_its_words(srv, tmp_path):
+    """The safety audit (Oct 12): a press the desk makes with allow_submit (a Create Account form's own button) whose
+    button was redrawn was found again by its words, anywhere on the page, and pressed with no check: another form's
+    "Submit". It's refused instead; the desk stops there."""
+    page_file = tmp_path / "redrawn.html"
+    page_file.write_text('<!doctype html><form id="acct" onsubmit="window.sent.push(\'acct\'); return false;">'
+                         '<label for="e">Email</label><input id="e" type="email"><button type="submit">Submit</button></form>'
+                         '<form id="app" onsubmit="window.sent.push(\'app\'); return false;"><label for="n">Name</label>'
+                         '<input id="n"></form><script>window.sent = [];</script>', encoding="utf-8")
+    run(srv.browser.goto(page_file.as_uri()))
+    button = next(a for a in run(srv.inspect_form(include_dropdown_options=False))["actions"] if a["text"] == "Submit")
+    page = run(srv.browser.page())
+    # the account's form redrawn without its button, and the application's own Submit drawn
+    run(page.evaluate("""() => { document.querySelector('#acct button').remove();
+      const b = document.createElement('button'); b.type = 'submit'; b.textContent = 'Submit';
+      document.getElementById('app').append(b); }"""))
+    with pytest.raises(KeyError):
+        run(srv.browser.click(button["id"], allow_submit=True))
+    assert run(page.evaluate("() => window.sent")) == []
+
+
 @pytest.mark.parametrize("how", ["dialog", "box", "chooser"])
 def test_a_resume_uploaded_through_the_sites_own_dialog(srv, tmp_path, how):
     """APS's SuccessFactors (the live check's plus probe, Oct 11): its resume is a "+" button that opens a dialog
