@@ -1473,6 +1473,7 @@ class Applier:
                 # KLA's Workday right after its sign-in (live, Oct 2026): "Something went wrong. Please refresh
                 # the page and then try again." Done, once a job
                 run.refreshed = True
+                waited = False  # (a new page: its late buttons waited on, whatever was before it)
                 self._log(run, f"{_site(run, data)} said something went wrong and asked for the page to be "
                           "refreshed, so I reloaded it")
                 with contextlib.suppress(Exception):

@@ -2859,12 +2859,16 @@ def test_a_workday_account_is_said_made_only_once_its_sign_in_gets_in(srv, monke
     assert r.seen_form, (r.reason, r.log)
 
 
-def test_a_page_that_asks_to_be_refreshed_is_reloaded_once(srv, monkeypatch, job_apply_home):
+@pytest.mark.parametrize("late", [False, True])
+def test_a_page_that_asks_to_be_refreshed_is_reloaded_once(srv, monkeypatch, job_apply_home, late):
     """KLA's Workday, right after the desk signed in (live, Oct 2026): "Something went wrong. Please
     refresh the page and then try again." The desk stopped there ("couldn't find the button that moves
-    this application on"). It reloads the page, once, says so, and goes on with the application."""
+    this application on"). It reloads the page, once, says so, and goes on with the application. And
+    the reloaded page, a new one, is waited on for its late buttons, whatever was waited on before it
+    (the nightly of Oct 12: KLA's drew its application late after the reload, and the desk stopped)."""
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
-    job = srv.add_job(url=fixture_url("site/workday-went-wrong.html"), title="FSE", company="Example Fab")["job"]
+    page = fixture_url("site/workday-went-wrong.html") + ("?late" if late else "")
+    job = srv.add_job(url=page, title="FSE", company="Example Fab")["job"]
     applier = Applier(srv)
 
     async def go():
