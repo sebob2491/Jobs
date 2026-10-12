@@ -107,6 +107,11 @@ def test_resolve_files(job_apply_home, tmp_path):
     job = {"folder": str(folder)}
     assert resolve_field(f("Cover Letter", "file"), p, job, 2).value == str(folder / "cover_letter.pdf")
     assert resolve_field(f("Attach", "file"), p, job, 1).value == str(folder / "resume.pdf")  # tailored resume wins
+    # a page's one upload in a section for both (Arizona State University's Workday, the full run of Oct 12): the
+    # resume, which the profile has, where it had looked for a cover letter and said the file was missing
+    both = {**f("Upload a file (5MB max)*", "file"), "section": "Resume/CV and Cover Letter"}
+    assert resolve_field(both, p, job, 1).value == str(folder / "resume.pdf")
+    assert resolve_field(both, p, job, 2).value == str(folder / "cover_letter.pdf")  # (two there: as before)
 
 
 def test_plan_autofill_orders_required_first():
