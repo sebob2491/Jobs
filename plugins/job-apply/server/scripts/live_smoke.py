@@ -1065,6 +1065,12 @@ def fake_answer(q: dict[str, Any]) -> Any:
     if part in ("month", "day", "year"):  # a date's part (GCU's "... by entering today's date below"): today's
         today = datetime.date.today()
         return {"month": f"{today.month:02d}", "day": f"{today.day:02d}", "year": str(today.year)}[part]
+    label = q.get("label") or ""
+    # (an answer the site takes: U-Haul's and Baker Tilly's refused "0" hours, "0" salary and "Test answer" pay)
+    if span := re.search(r"between (\d+) and (\d+)", label, re.I):
+        return span.group(2)
+    if re.search(r"salary|pay requirement|compensation|desired pay|wage", label, re.I):
+        return "50000"
     if re.search(r"year|salary|number|how many|zip|postal|\bgpa\b", q.get("label") or "", re.I):
         return "0"
     return "Test answer"
