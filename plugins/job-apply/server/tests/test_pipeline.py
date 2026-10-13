@@ -2007,6 +2007,32 @@ def test_boxes_the_pages_errors_say_are_empty_though_filled_are_typed_again(srv,
         assert any(line.startswith("typed again") and "Address 1" in line for line in r.log), r.log
 
 
+def test_a_box_the_page_says_is_wrong_showing_what_it_wrote_itself_takes_the_profiles_answer(srv, monkeypatch):
+    """EMD Electronics' Phenom (live run 41, Oct 12): its resume parse wrote the phone as "4805550199" in a box
+    asking for "+1##########" with no spaces or dashes, and Next called it invalid. The desk had left the box (it
+    showed a value), then typed the page's own digits again, and stopped. A text box the errors name, showing
+    something other than the profile's answer, takes the profile's answer, once a page."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "STEP_SAVE_WAIT", 1)
+    job = srv.add_job(url=fixture_url("site/phenom-parsed-phone.html"), title="Equipment Technician",
+                      company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert "review.html" in r.url, (r.url, r.reason, r.log)
+    assert any(line.startswith("filled from your profile what the page said was wrong: Phone Number")
+               for line in r.log), r.log
+
+
 def test_a_resume_parse_notice_is_not_an_error(srv, monkeypatch):
     """Nikon's UKG Pro (live run 16, Oct 11): its Skills step took a moment to save, with the resume parse's
     notice ("... has been used to pre-fill part of your application. Please verify that all of your information

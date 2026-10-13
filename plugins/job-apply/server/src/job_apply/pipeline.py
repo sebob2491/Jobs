@@ -1425,6 +1425,7 @@ class Applier:
         step_waited: set[tuple[Any, ...]] = set()  # pages (as drawn) waited on for a greyed-out step button
         retyped: set[tuple[Any, ...]] = set()  # pages whose lost boxes were typed again (once a page)
         refilled_pages: set[tuple[Any, ...]] = set()  # pages whose emptied boxes were filled again (once a page)
+        redone_pages: set[tuple[Any, ...]] = set()  # pages whose boxes said wrong were answered again (once a page)
         saved_waited: set[tuple[Any, ...]] = set()  # steps waited on as still saving (once a step)
         bare_waited: set[tuple[Any, ...]] = set()  # forms with no step button yet, waited on to be drawn (once a page)
         account_waited = False
@@ -2019,11 +2020,27 @@ class Applier:
                     # boxes the errors name that show a value all the same: the page lost its own record of them
                     # (Nikon's UKG Pro, live run 10: its resume parse wiped Address 1 and Zip a moment after they
                     # were typed). Typed again, once a page, and the step pressed again
-                    seen_now = (await self._look())[0] if looked not in retyped or looked not in refilled_pages else {}
+                    seen_now = (await self._look())[0] if (looked not in retyped or looked not in refilled_pages
+                                                           or looked not in redone_pages) else {}
                     said = norm(" ".join(e for e in seen_now.get("errors") or [] if _errorish(e)))
                     lost = [f for f in seen_now.get("fields") or [] if f.get("kind") == "text" and not f.get("disabled")
                             and not is_empty_value(f.get("value")) and len(norm(clean_label(f.get("label") or ""))) >= 3
                             and re.search(rf"\b{re.escape(norm(clean_label(f.get('label') or '')))}\b", said)]
+                    if lost and looked not in redone_pages:
+                        # of those, the ones showing something other than the profile's answer: what the page put
+                        # there itself (EMD's Phenom, live run 41, Oct 12: its resume parse wrote the phone as
+                        # 4805550199 in a box asking for +1##########, then called it invalid). The profile's
+                        # answer, once a page; a box already showing it is typed again below
+                        redone_pages.add(looked)
+                        ids = {f["id"] for f in lost}
+                        answered = [f for f in (await srv.autofill(job_id=run.job_id, redo=sorted(ids))).get("filled")
+                                    or [] if f.get("id") in ids]
+                        if answered:
+                            names = ", ".join(clean_label(f.get("label") or "") for f in lost
+                                              if f["id"] in {a.get("id") for a in answered})
+                            self._log(run, f"filled from your profile what the page said was wrong: {names}")
+                            stalls = 0
+                            continue
                     if lost and looked not in retyped:
                         retyped.add(looked)
                         again = await srv.browser.retype([f["id"] for f in lost])

@@ -1221,6 +1221,23 @@ def test_a_list_the_page_marks_invalid_takes_the_profiles_answer_and_a_required_
     assert plan["to_fill"] == [] and [q["id"] for q in plan["needs_input"]] == ["b"], plan
 
 
+def test_a_text_box_the_page_says_is_wrong_takes_the_profiles_answer_only_where_it_differs():
+    """EMD's Phenom (live run 41, Oct 12): its resume parse wrote the phone as bare digits where the box asks for
+    "+1##########", and called it invalid. Named in `redo`, a text box showing another value takes the
+    profile's; one already showing the profile's answer, or one the profile doesn't answer, is left."""
+    p = Profile({"personal": {"phone": "480-555-0199", "phone_country_code": "+1"}})
+    label = 'Phone Number [must include your location code using the "+", (e.g. +1##########), with no spaces or dashes]*'
+    parsed = {"id": "p", "label": label, "kind": "text", "value": "4805550199", "required": True}
+    plan = plan_autofill([parsed], p, {}, redo={"p"})
+    assert [(t["id"], t["value"]) for t in plan["to_fill"]] == [("p", "+14805550199")], plan
+    assert plan_autofill([parsed], p, {})["already_filled"] == ["p"]  # (never on an ordinary pass)
+    same = {**parsed, "value": "+14805550199"}
+    assert plan_autofill([same], p, {}, redo={"p"})["already_filled"] == ["p"]
+    unknown = {"id": "u", "label": "Badge number", "kind": "text", "value": "12", "required": True}
+    plan = plan_autofill([unknown], p, {}, redo={"u"})
+    assert plan["to_fill"] == [] and plan["already_filled"] == ["u"], plan
+
+
 def test_a_work_authorization_question_drawn_as_a_text_area_takes_the_profiles_yes_or_no():
     """Nikon's UKG Pro (live run 14, Oct 2026) draws "Are you legally authorized to work in the US for any
     employer?" and "Do you now or in the future require sponsorship...?" as required text areas, and the desk

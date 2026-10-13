@@ -1,0 +1,29 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Equipment Technician | Apply</title></head>
+<body>
+<!-- like EMD Electronics' Phenom application (live run 41, Oct 12): its resume parse writes the phone into its box
+     as bare digits ("4805550123"), though the box asks for the dial code with a "+" and no spaces or dashes. The desk
+     leaves a box that already shows a value, so Next says the phone is invalid beside the filled box; typed again
+     as it was, it stays invalid. -->
+<h2>My information</h2>
+<form onsubmit="return false">
+  <label for="first">First Name *</label><input id="first" required>
+  <label for="phoneNumber">Phone Number [must include your location code using the "+", (e.g. +1##########), with no spaces or dashes]*</label>
+  <input id="phoneNumber" required autocomplete="tel-national" value="4805550123">
+  <div id="errors"></div>
+  <button type="button" id="next">Next</button>
+</form>
+<script>
+  document.getElementById('next').addEventListener('click', () => {
+    const errs = [];
+    if (!document.getElementById('first').value) errs.push('First Name* Required');
+    if (!/^\+\d{10,15}$/.test(document.getElementById('phoneNumber').value)) {
+      errs.push('Phone Number [must include your location code using the "+", (e.g. +1##########), with no spaces or dashes]* Invalid Phone Number');
+    }
+    document.getElementById('errors').innerHTML = errs.map((t) => '<p role="alert" class="error">' + t + '</p>').join('');
+    if (!errs.length) location.href = 'review.html';
+  });
+</script>
+</body>
+</html>

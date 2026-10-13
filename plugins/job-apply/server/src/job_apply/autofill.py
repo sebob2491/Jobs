@@ -2196,8 +2196,9 @@ def plan_autofill(fields: list[dict], prof: Profile, job: dict | None = None, ov
             continue
         unset = unset_choice(f)
         # `redo`: lists the page marks invalid on a choice it made itself, which the desk may answer again (Northrop's
-        # Eightfold phone "Country code" on Mexico, live run 13, Oct 2026: the review step's, once a job)
-        rejected = f["id"] in (redo or set()) and f.get("kind") in ("select", "listbox", "combobox", "radio_group") \
+        # Eightfold phone "Country code" on Mexico, live run 13, Oct 2026: the review step's, once a job), and text
+        # boxes it says are wrong showing what it wrote itself (EMD's resume parse's phone, live run 41, Oct 12)
+        rejected = f["id"] in (redo or set()) and f.get("kind") in ("select", "listbox", "combobox", "radio_group", "text") \
             and not is_empty_value(f.get("value"))
         has_value = not is_empty_value(f.get("value")) and not unset and not rejected
         if has_value and not overwrite:
@@ -2213,7 +2214,9 @@ def plan_autofill(fields: list[dict], prof: Profile, job: dict | None = None, ov
             already.append(f["id"])
             continue
         if rejected and not overwrite and (ans is None or ans.value == SKIP or is_eeo_rule(ans.rule)
-                                           or choose_option(str(ans.value), [str(f.get("value"))]) is not None):
+                                           or (str(ans.value).strip() == str(f.get("value")).strip()
+                                               if f.get("kind") == "text"
+                                               else choose_option(str(ans.value), [str(f.get("value"))]) is not None)):
             already.append(f["id"])  # (nothing else to give it, or the same answer: left to the person)
             continue
         if ans is not None and ans.value == SKIP:
