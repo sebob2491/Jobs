@@ -2053,6 +2053,30 @@ def test_a_box_the_page_says_is_wrong_showing_what_it_wrote_itself_takes_the_pro
     assert shown == "+14805550000", r.log
 
 
+def test_a_step_waiting_on_a_tax_credit_screening_says_so_and_leaves_it_to_the_person(srv, monkeypatch):
+    """Kforce's Taleo (live run 41, Oct 12): Save and Continue wouldn't go on until the applicant completed its tax
+    credit screening questionnaire ("Complete Tax Credit Screening Questionnaire"), and the desk stopped with the page's
+    raw error list. The screening is questions about the person: the desk says so, names its link, and leaves it."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "STEP_SAVE_WAIT", 1)
+    job = srv.add_job(url=fixture_url("site/taleo-tax-credit.html"), title="Client Specialist",
+                      company="Example Staffing")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert r.status == "needs_you" and r.need == "stuck", (r.status, r.reason, r.log)
+    assert "tax credit screening" in r.reason and "Complete Tax Credit Screening Questionnaire" in r.reason, r.reason
+
+
 def test_a_resume_parse_notice_is_not_an_error(srv, monkeypatch):
     """Nikon's UKG Pro (live run 16, Oct 11): its Skills step took a moment to save, with the resume parse's
     notice ("... has been used to pre-fill part of your application. Please verify that all of your information

@@ -1,0 +1,23 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Client Specialist | Apply</title></head>
+<body>
+<!-- like Kforce's Taleo (live run 41, Oct 12): a step whose Save and Continue won't go on until the applicant
+     completes its tax credit screening questionnaire, opened by a link in its own section. -->
+<h2>Employment Tax Credit Screening</h2>
+<div id="errors"></div>
+<form onsubmit="return false">
+  <label for="first">First Name *</label><input id="first" required>
+  <p><span class="required">. Required</span> <a href="#" id="wotc">Complete Tax Credit Screening Questionnaire</a></p>
+  <button type="button" id="save">Save and Continue</button>
+  <button type="button">Save as Draft</button>
+</form>
+<script>
+  document.getElementById('save').addEventListener('click', () => {
+    document.getElementById('errors').innerHTML = '<p role="alert" class="error">Errors occurred on this page, could '
+      + 'not proceed. You must provide the information requested in the following section: Employment Tax Credit '
+      + 'Screening.</p>';
+  });
+</script>
+</body>
+</html>
