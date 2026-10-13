@@ -1553,6 +1553,7 @@ class Applier:
         account_waited = False
         sign_ins: dict[str, int] = {}  # what the saved password was used for on this pass
         pressed: list[tuple[Any, ...]] = []  # (page, button) for each button pressed on this pass
+        on_pages: set[tuple[Any, ...]] = set()  # of those, the ones pressed on a page with no form (a list of jobs)
         pressed_on: list[str] = []  # and where, in words
         agreed: set[str] = set()  # notices agreed to for the person on this pass (settings.accept_notices)
         since = 0  # where the presses that count for a circle start (after a refresh the site asked for)
@@ -2085,12 +2086,16 @@ class Applier:
                                    "the site isn't letting this application on. Have a look in the browser, then press "
                                    "Resume.")
             test = _assessment_button(data)
-            if test and (kind == "page" and [p[:1] + p[2:] for p in lately[-2:]] == [key[:1] + key[2:]] * 2
-                         or kind == "form" and tries[-3:] == [key] * 3):
+            # "next" on a list of jobs pressed again and again: its pages differ, but no application opens. Only
+            # presses on pages with no form count (Wells Fargo's Workday, run 55: its Application Questions drew its boxes
+            # a moment late, and the two steps' Save and Continue before it, at the same address, read as two such)
+            circling = kind == "page" and [p[:1] + p[2:] for p in lately[-2:]] == [key[:1] + key[2:]] * 2 \
+                and all(p in on_pages for p in lately[-2:])
+            if test and (circling or kind == "form" and tries[-3:] == [key] * 3):
                 # a step that won't go on until the applicant takes the employer's assessment (Circle K's Workday,
                 # the nightly of Oct 12: "Take Assessment" beside its Save and Continue): a test of the person
                 return await self._assessment_pause(run, data, test)
-            if kind == "page" and [p[:1] + p[2:] for p in lately[-2:]] == [key[:1] + key[2:]] * 2:
+            if circling:
                 # "next" on a list of jobs (a link to a search page): its pages differ, but no
                 # application ever opens
                 return self._pause(run, "stuck", f"I pressed \u201c{action['text'].strip()}\u201d three times on "
@@ -2117,6 +2122,8 @@ class Applier:
                 return self._pause(run, "stuck", "The page didn't move on" + (f": {errors}." if errors else ".")
                                    + " Fix it in the browser, then press Resume.")
             pressed.append(key)
+            if kind == "page":
+                on_pages.add(key)
             pressed_on.append(f"\u201c{action['text'].strip()}\u201d on {_page_said(data)}")
             looked = _fingerprint(data)
             try:

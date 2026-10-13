@@ -229,6 +229,11 @@ EXTRACT_JS = r"""
       const role = (node.getAttribute('role') || '').toLowerCase();
       const container = role === 'group' || role === 'region' || node.tagName === 'FIELDSET' || node.tagName === 'SECTION';
       let t = container ? labelledBy(node) : '';
+      // (UKG Pro's blocks: a form region its aria-label numbers, "Work Experience 2", with no heading: Desert
+      // Financial's, run 55)
+      if (!t && role === 'form' && /\b\d+\s*$/.test(clean(node.getAttribute('aria-label') || ''))) {
+        t = clean(node.getAttribute('aria-label'));
+      }
       if (!t) {
         // the last heading before the field: "Work Experience 2" sits beside block 2, after block 1
         const hs = Array.from(node.querySelectorAll(HEADING)).filter((h) => h.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING);
@@ -761,7 +766,14 @@ ENTRIES_JS = r"""
   const visible = (el) => !!el && el.getClientRects().length > 0 && getComputedStyle(el).visibility !== 'hidden';
   const numbered = Array.from(document.querySelectorAll('h1, h2, h3, h4, h5, h6, legend, [role="heading"]'))
     .filter((h) => visible(h) && kind.test(txt(h)) && /\b\d+\s*$/.test(txt(h)));
-  const entries = numbered.length;
+  // and blocks with no heading that a form region's aria-label numbers (UKG Pro's "Work Experience 2": Desert
+  // Financial's, run 55, where a block was added on every pass), each once
+  const named = new Set(numbered.map(txt));
+  const regions = Array.from(document.querySelectorAll('[role="form"][aria-label]')).filter((r) => {
+    const t = clean(r.getAttribute('aria-label'));
+    return visible(r) && kind.test(t) && /\b\d+\s*$/.test(t) && !named.has(t);
+  });
+  const entries = numbered.length + regions.length;
   // Workday draws a new block's heading first and its boxes a moment later: a block's boxes are
   // the ones after its heading, before the next heading
   const follows = (a, b) => !!(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
@@ -771,7 +783,7 @@ ENTRIES_JS = r"""
   const empty = numbered.filter((h) => {
     const next = marks.find((m) => m !== h && !h.contains(m) && follows(h, m));
     return !boxes.some((b) => follows(h, b) && !(next && follows(next, b)));
-  }).length;
+  }).length + regions.filter((r) => !boxes.some((b) => r.contains(b))).length;
   const buttons = [];
   for (const b of document.querySelectorAll('button, [role="button"]')) {
     if (!visible(b)) continue;

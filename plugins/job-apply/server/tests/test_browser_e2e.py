@@ -403,6 +403,21 @@ def test_a_list_that_opens_on_its_placeholder_alone_is_read_once_its_choices_com
     assert "Bachelor's Degree" in (degree.get("options") or []), degree
 
 
+def test_ukg_blocks_named_only_by_their_region_are_counted_and_named(srv):
+    """Desert Financial's UKG Pro (run 55, Oct 13): its blocks are form regions their aria-label numbers ("Work
+    Experience 2"), with no heading, so none was counted and a block was added on every pass (eleven by the end), and
+    their boxes had no block to go with a profile entry. They're counted, and they're the boxes' sections."""
+    job = srv.add_job(url=fixture_url("site/ukg-blocks.html"), title="HR Analyst", company="Example Credit Union")["job"]
+    run(srv.open_application(job_id=job["id"]))
+    work = run(srv.add_entries("work"))
+    assert (work["before"], work["clicks"], work["after"]) == (2, 0, 2), work
+    edu = run(srv.add_entries("education"))
+    assert (edu["before"], edu["clicks"], edu["after"]) == (0, 1, 1), edu
+    sections = {(f.get("section"), f["label"]) for f in run(srv.inspect_form(include_dropdown_options=False))["fields"]}
+    assert {("Work Experience 1", "Job Title"), ("Work Experience 2", "Company / Organization"),
+            ("Education 1", "School")} <= sections, sections
+
+
 def test_workday_experience_entries(srv):
     job = srv.add_job(url=fixture_url("workday_experience.html"), title="FSE", company="Example Litho")["job"]
     run(srv.open_application(job_id=job["id"]))

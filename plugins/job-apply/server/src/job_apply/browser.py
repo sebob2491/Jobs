@@ -1237,6 +1237,8 @@ class BrowserSession:
                             field = {**field, "near": item["near"]}
                         if item.get("pick_only"):  # a self-identification answer: picked from the list, never typed
                             field = {**field, "pick_only": True}
+                        if item.get("again"):  # answered again where the page lost it (a date: cleared first)
+                            field = {**field, "again": True}
                         if not item.get("again") and await self._holds(page, field, item.get("value")):
                             results.append({"id": fid, "label": field.get("label", ""), "ok": True, "result": "already set"})
                             continue
@@ -1476,7 +1478,7 @@ class BrowserSession:
             text = "Yes" if value else "No"
         if field.get("role") == "spinbutton":
             if await loc.evaluate(DATE_LIKE_JS, timeout=FOCUS_TIMEOUT):
-                return await self._type_date_part(page, loc, text, given)
+                return await self._type_date_part(page, loc, text, given, clear=bool(field.get("again")))
             # a lone number box drawn as a spinbutton: its value typed as given
             await loc.fill("", timeout=FOCUS_TIMEOUT)
             await loc.press_sequentially(text, delay=40, timeout=FOCUS_TIMEOUT)
@@ -1584,7 +1586,8 @@ class BrowserSession:
             await page.wait_for_timeout(500)
         raise ValueError(f"the page didn't show {path.name} after its upload; check it in the browser")
 
-    async def _type_date_part(self, page: Page, loc: Locator, text: str, given: dict[str, Any] | None = None) -> str:
+    async def _type_date_part(self, page: Page, loc: Locator, text: str, given: dict[str, Any] | None = None,
+                              clear: bool = False) -> str:
         """A date's part (Workday's MM / DD / YYYY), which reacts to keystrokes, not a pasted value.
 
         Some Workday dates send their digits to the part the date counts as current, which starts at the
@@ -1699,6 +1702,23 @@ class BrowserSession:
             def strays(read: list[Any]) -> list[int]:  # parts not typed that don't read as they did before
                 return [i for i in range(count) if not start <= i <= end and number(read[i]) != number(was[i])]
 
+            if clear:
+                # A date the page lost (`clear`: Tokyo Electron's Workday Self Identify, run 55: "current value is
+                # 10/13/2026" under it, and "The field Date is required" all the same): typed again as it was, it's the
+                # same date, and Workday passes a date on as focus leaves it only where it changed. Its parts typed
+                # now are emptied first, key by key, and the date left; then typed
+                for i in range(start, end + 1):
+                    part = parts.nth(i)
+                    with contextlib.suppress(PlaywrightError, PlaywrightTimeout):
+                        await part.focus(timeout=FOCUS_TIMEOUT)
+                        for _ in range(5):  # (a part's digits, one at a time: never on into the part before it)
+                            if not re.sub(r"\D", "", str(await part.evaluate(read_js))) or not await part.evaluate(
+                                    "el => el === el.ownerDocument.activeElement"):
+                                break
+                            await page.keyboard.press("Backspace")
+                await loc.evaluate("el => el.ownerDocument.activeElement && el.ownerDocument.activeElement.blur()")
+                await page.wait_for_timeout(150)
+                await said("cleared and left")
             read = await type_run(False)
             self._date_typed |= {str(infos[i]["id"]) for i in range(start, end + 1) if infos[i]["id"]}
             wrong = off(read)

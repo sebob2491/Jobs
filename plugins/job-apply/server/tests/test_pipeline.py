@@ -3404,6 +3404,27 @@ def test_a_workday_date_the_page_lost_is_typed_in_again_as_a_date(srv, monkeypat
     assert r.status == "ready" and r.url.endswith("review.html"), (r.status, r.reason, r.log[-4:])
 
 
+def test_a_workday_step_whose_questions_come_late_isnt_a_list_of_jobs(srv, monkeypatch, job_apply_home):
+    """Wells Fargo's Workday (run 55, Oct 13): every step is at the same address, and Application Questions drew its
+    questions a moment after its heading. With no boxes there yet, the two steps' Save and Continue before it read as
+    "next" on a list of jobs pressed again and again, and the desk stopped. Only presses on pages with no form count."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    job = srv.add_job(url=fixture_url("site/workday-late-questions.html"), title="Coordinator", company="Example Bank")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), timeout=120, about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert r.status == "ready" and r.url.endswith("review.html"), (r.status, r.reason, r.log[-3:])
+
+
 def test_each_page_that_draws_its_buttons_late_is_waited_on(srv, monkeypatch, job_apply_home):
     """Baker Tilly's Workday (run 44, Oct 13): the page after its sign-in drew its questions and Save and Continue
     late, and the desk, having waited on an earlier page's late buttons on that pass, stopped at once: "I couldn't
