@@ -1533,6 +1533,7 @@ class Applier:
             return
         stalls, entries_done, refilled, dismissed = 0, set(), set(), set()
         stalled_on: tuple[Any, ...] = ()  # the step (address and headings) the stalls were counted on
+        stalled_in_a_row = 0  # and the stalls since a press last moved a page on, whatever step they were on
         # pages waited on to draw their buttons late, once a page each time it's reached (Baker Tilly's Workday, run 44:
         # the step after its sign-in drew them late too, and once a pass left it unwaited)
         waited: set[tuple[Any, ...]] = set()
@@ -2138,6 +2139,11 @@ class Applier:
                 step = (data.get("url"), tuple(data.get("headings") or []))
                 stalls = stalls + 1 if step == stalled_on else 1
                 stalled_on = step
+                # (and eight in a row stop it wherever they were, a page's retries among them: a step whose headings
+                # change on every look, the review's)
+                stalled_in_a_row += 1
+                if stalled_in_a_row >= 8:
+                    stalls = max(stalls, 2)
                 if (kind == "page" and sign_ins.get("wants_account") and not run.accounts_tried
                         and _may_manage_accounts() and await self._register_from_posting(run, looked)):
                     # on its way to a new account (the sign-in page had no way to one: the job was opened
@@ -2268,7 +2274,7 @@ class Applier:
                     return self._pause(run, "stuck", "The page didn't move on" + (f": {errors}." if errors else ".")
                                        + " Fix it in the browser, then press Resume.")
             else:
-                stalls = 0
+                stalls = stalled_in_a_row = 0
         self._pause(run, "stuck", "This application has more steps than I expected. Have a look in the browser, "
                     "then press Resume.")
 
