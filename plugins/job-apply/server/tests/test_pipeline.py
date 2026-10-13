@@ -6604,6 +6604,10 @@ def test_a_privacy_notice_received_is_ticked_on_create_account_but_never_a_sign_
     assert ticked("I have read and received a copy of the Privacy Policy")
     assert not ticked("I agree to receive emails about new jobs")
     assert not ticked("I have received the Privacy Notice and agree to receive job alerts by email")
+    # (the review's) the notice's own name is still read: one for a talent pool or future openings isn't the terms
+    for label in ("I have received the Talent Pool Privacy Notice.", "I have received the Future Opportunities Privacy Notice.",
+                  "I have received the Third-Party Data Sharing Privacy Statement."):
+        assert not ticked(label), label
 
 
 def test_a_sections_blocks_are_counted_by_their_own_deletes_too(srv):
@@ -6621,6 +6625,9 @@ def test_a_sections_blocks_are_counted_by_their_own_deletes_too(srv):
     assert r.entries_short == {}
     applier._note_short_entries(r, "work", {**covered, "wanted": 2}, ukg)
     assert r.entries_short == {"work": (1, 2)}  # (one of two, still short)
+    spaced = {"actions": [{"id": "s", "text": "Delete Work  Experience\n2"}, {"id": "t", "text": "Delete Work Experience 1"}]}
+    applier._note_short_entries(r, "work", {**covered, "wanted": 2}, spaced)
+    assert "work" not in r.entries_short  # (its spacing is no other block)
     applier._note_short_entries(r, "education", covered, {"actions": [{"id": "e", "text": "Delete resume.pdf"}]})
     assert r.entries_short["education"] == (0, 1)
     # (the review's: another section's Delete, or one inside a block, is no block of this one)
