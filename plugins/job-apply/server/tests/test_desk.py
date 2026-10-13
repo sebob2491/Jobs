@@ -1908,6 +1908,44 @@ def test_jobs_stopped_on_a_bot_check_or_captcha_are_marked_and_a_forms_captcha_i
     run(go())
 
 
+def test_a_question_asked_for_want_of_the_profiles_choice_isnt_remembered_by_default(srv):
+    """A self-identification list without the profile's answer among its choices (a gender list with no decline) is
+    asked about, and what the person picks there is for that site: remembered, it would go in at every later site,
+    where the profile's decline is a choice (the review of 0.3.138). Its "Remember" box starts unticked; another
+    question's starts ticked."""
+    from playwright.async_api import async_playwright
+
+    from job_apply.pipeline import Run
+
+    desk = Desk(srv)
+    desk.applier.start = lambda: None
+    desk.search.update(status="done", at=time.time())
+    job = srv.add_job(url="https://example.com/job/1", title="Technician", company="Example Fab")["job"]
+    desk.applier.runs[job["id"]] = Run(job["id"], "Technician", "Example Fab", status="needs_you", need="questions",
+                                       reason="Waiting.", questions=[
+        {"id": "g", "kind": "select", "label": "Gender", "required": True, "options": ["Male", "Female"],
+         "unmatched": "Decline to self-identify", "error": "your profile's answer isn't one of its choices"},
+        {"id": "c", "kind": "select", "label": "Do you have a clean room certification?", "required": True,
+         "options": ["Yes", "No"]}])
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with async_playwright() as pw:
+                browser = await pw.chromium.launch(**launch_options())
+                page = await browser.new_page()
+                await page.goto(desk.url)
+                await page.wait_for_selector("[data-remember]")
+                ticked = {label: await page.locator(f'[data-remember="{label}"]').is_checked()
+                          for label in ("Gender", "Do you have a clean room certification?")}
+                await browser.close()
+                return ticked
+        finally:
+            await desk.stop()
+
+    assert run(go()) == {"Gender": False, "Do you have a clean room certification?": True}
+
+
 def test_every_card_says_i_submitted_it_already(srv):
     """Issue #112, note 31 (the owner's ask): an application sent on the site itself, whatever the desk's card
     waited on, is marked applied from that card: "I submitted it already" on the questions, sign-in, stuck,
