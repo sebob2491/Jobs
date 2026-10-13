@@ -1,0 +1,47 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Career Opportunities: Sign In</title></head>
+<body>
+<!-- like Edwards Vacuum's SuccessFactors (Atlas Copco's SAP screen set, run 60): after a saved password the site refuses,
+     its "Don't have an account yet?" draws the Create Account form a few seconds later, and a second press while it's
+     coming starts it over. The desk read the sign-in page again at once, pressed the link again, then took the site to
+     have refused the password and its Create Account both. Here the form comes 3 s after the last press; once made,
+     the account goes on to the application (step1.html). -->
+<div id="screen">
+  <h1>Sign In</h1>
+  <form id="signin" onsubmit="return false">
+    <label for="email">Email</label><input id="email" type="text">
+    <label for="pw">Password *</label><input id="pw" type="password">
+    <button type="submit" id="go">Submit</button>
+  </form>
+  <div id="err" role="alert"></div>
+  <a href="#" id="create">Don't have an account yet?</a>
+</div>
+<script>
+  let timer = null;
+  document.getElementById('go').addEventListener('click', () => {
+    document.getElementById('err').textContent = 'Invalid login or password';
+  });
+  document.getElementById('create').addEventListener('click', (e) => {
+    e.preventDefault();
+    sessionStorage.setItem('slow.create', String(Number(sessionStorage.getItem('slow.create') || 0) + 1));
+    clearTimeout(timer);  // (a press while it's coming starts it over)
+    timer = setTimeout(() => {
+      document.title = 'Career Opportunities: Create an Account';
+      document.getElementById('screen').innerHTML = '<h1>Create an Account</h1><form id="reg" onsubmit="return false">'
+        + '<label for="r1">Email</label><input id="r1" type="text">'
+        + '<label for="r2">Password</label><input id="r2" type="password">'
+        + '<label for="r3">Retype password</label><input id="r3" type="password">'
+        + '<label for="r4">First Name</label><input id="r4" type="text">'
+        + '<label for="r5">Last Name</label><input id="r5" type="text">'
+        + '<button type="submit" id="make">Submit</button></form>';
+      document.getElementById('make').addEventListener('click', () => {
+        if (!document.getElementById('r1').value || !document.getElementById('r2').value) return;
+        sessionStorage.setItem('slow.made', '1');
+        location.href = 'step1.html';
+      });
+    }, 3000);
+  });
+</script>
+</body>
+</html>

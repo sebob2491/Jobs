@@ -1738,6 +1738,10 @@ class Applier:
                 done = await self._sign_in(run, data, sign_ins, reset_first=reset_first)
                 if done in ("email_step", "submitted", "create_account"):
                     sign_ins[done] = sign_ins.get(done, 0) + 1
+                    if done == "create_account":
+                        # its form a moment after the press (Edwards Vacuum's SAP screen set, run 60: the sign-in read
+                        # again at once, its link pressed again, which starts it over, and the desk stopped)
+                        await self._wait_for_change(data, LATE_BUTTONS_WAIT)
                     continue
                 if done == "refused":
                     run.account_made = ""  # (its sign-in is refused: no account was made)
@@ -2448,6 +2452,16 @@ class Applier:
             await asyncio.sleep(1)
             data, _ = await self._look()
             if (data.get("url"), tuple(data.get("headings") or [])) != key[:2]:
+                return True
+        return False
+
+    async def _wait_for_change(self, before: dict[str, Any], seconds: float) -> bool:
+        """Wait for the page to be other than `before` (its address, headings or boxes). True once it is."""
+        deadline = time.monotonic() + seconds
+        while time.monotonic() < deadline:
+            await asyncio.sleep(0.5)
+            now, _ = await self._look()
+            if _page_sig(now) != _page_sig(before):
                 return True
         return False
 
@@ -3582,6 +3596,21 @@ class Applier:
         if not address or not 1 <= len(passwords) <= 2:
             return None
         new_account = len(passwords) == 2 or signing_up
+        if new_account and run.account_made and not tried.get("to_sign_in"):
+            # the account made for this job already, its Create Account on show again (Applied Materials' Workday, run
+            # 60: signed out by its "something went wrong" refresh, it showed Create Account, and the desk filled it and
+            # stopped): its own Sign In is the way back in, never a second account
+            way = next((a for a in actions if not a.get("cookie") and re.match(r"^(sign|log) ?in$", a["text"].strip(), re.I)
+                        and not a.get("after_password")), None) or next(
+                (a for a in actions if not a.get("cookie") and re.match(r"^(sign|log) ?in$", a["text"].strip(), re.I)), None)
+            if way is not None:
+                tried["to_sign_in"] = 1
+                try:
+                    await srv.click(way["id"])
+                except KeyError:
+                    return None
+                self._log(run, "your account there is made already, so I went to its Sign In")
+                return "email_step"
         if not boxes:
             # No box for the email: the password alone only on a sign-in that shows it knows who's signing in
             # ("Signing in as <email>", as Workday's after its own password reset may: issue #112, note 14),
