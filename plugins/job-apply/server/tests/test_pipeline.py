@@ -2007,6 +2007,52 @@ def test_boxes_the_pages_errors_say_are_empty_though_filled_are_typed_again(srv,
         assert any(line.startswith("typed again") and "Address 1" in line for line in r.log), r.log
 
 
+def test_a_box_the_page_says_is_wrong_showing_what_it_wrote_itself_takes_the_profiles_answer(srv, monkeypatch):
+    """EMD Electronics' Phenom (live run 41, Oct 12): its resume parse wrote the phone as "4805550199" in a box
+    asking for "+1##########" with no spaces or dashes, and Next called it invalid. The desk had left the box (it
+    showed a value), then typed the page's own digits again, and stopped. A text box the errors name, showing
+    something other than the profile's answer, takes the profile's answer, once a page."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "STEP_SAVE_WAIT", 1)
+    job = srv.add_job(url=fixture_url("site/phenom-parsed-phone.html"), title="Equipment Technician",
+                      company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert "review.html" in r.url, (r.url, r.reason, r.log)
+    assert any(line.startswith("filled from your profile what the page said was wrong: Phone Number")
+               for line in r.log), r.log
+
+    # (the review's) a box an error names while asking for something else, that the page doesn't mark invalid,
+    # keeps what it shows
+    job = srv.add_job(url=fixture_url("site/phenom-parsed-phone.html") + "?valid", title="Equipment Technician",
+                      company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def held():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r, await r.page.evaluate("() => document.getElementById('phoneNumber').value")
+        finally:
+            await applier.stop()
+
+    r, shown = run(held())
+    assert r.status == "needs_you", (r.status, r.reason, r.log)
+    assert not any(line.startswith("filled from your profile") for line in r.log), r.log
+    assert shown == "+14805550000", r.log
+
+
 def test_a_resume_parse_notice_is_not_an_error(srv, monkeypatch):
     """Nikon's UKG Pro (live run 16, Oct 11): its Skills step took a moment to save, with the resume parse's
     notice ("... has been used to pre-fill part of your application. Please verify that all of your information
@@ -6916,13 +6962,34 @@ def test_a_bare_i_agree_is_ticked_only_where_the_words_above_it_are_the_sites_te
                     # the review's: a short sign-up heading just above, a terms sentence further up
                     '<div><p>In order to proceed, you must consent to our Privacy Policy.</p><div><div>Job alerts</div>'
                     '<label><input type="checkbox" id="g"> I agree</label></div></div>'
+                    # Air Liquide's Workday (live run 41, Oct 12): "the documents above", and how long that lasts;
+                    # the same box under a talent community's words is the person's
+                    '<div><p>By creating an account, you recognize that Air Liquide will process your personal data in '
+                    'accordance with the data privacy notice applicable to the job application process.</p>'
+                    '<label><input type="checkbox" id="h"> You acknowledge having read the documents above. Your '
+                    'agreement is valid for any future visits.</label></div>'
+                    '<div><p>Join our talent community to hear about future openings.</p>'
+                    '<label><input type="checkbox" id="i"> You acknowledge having read the documents above. Your '
+                    'agreement is valid for any future visits.</label></div>'
+                    # the review's: a sign-up above in other words (a mailing list, being notified, opting in)
+                    '<div><p>Join our mailing list to hear about new openings.</p>'
+                    '<label><input type="checkbox" id="k"> You acknowledge having read the documents above. Your '
+                    'agreement is valid for any future visits.</label></div>'
+                    '<div><p>Opt in to be notified when new roles open.</p>'
+                    '<label><input type="checkbox" id="l"> I agree</label></div>'
+                    '<div><p>We will email you about roles like this one.</p>'
+                    '<label><input type="checkbox" id="m"> I agree</label></div>'
+                    # never a box whose own words ask for more than the terms, however long that lasts (required, and
+                    # naming the terms: left for its own words alone)
+                    '<label><input type="checkbox" id="j" required> I agree to the terms and to receive future job '
+                    'updates by email. Your agreement is valid for any future visits.</label>'
                     '<button type="submit">Create Account</button>', encoding="utf-8")
     run(srv.browser.goto(page.as_uri()))
     data = run(srv.browser.inspect(include_dropdown_options=False))
     boxes = pipeline._terms_boxes(data)
-    assert len(boxes) == 7, data["fields"]  # (by their labels alone, all seven)
+    assert len(boxes) == 12, data["fields"]  # (by their labels alone, all but the last)
     kept = run(Applier(srv)._said_terms(boxes))
-    assert [b["id"] for b in kept] == [boxes[0]["id"], boxes[3]["id"], boxes[5]["id"]], (boxes, kept)
+    assert [b["id"] for b in kept] == [boxes[0]["id"], boxes[3]["id"], boxes[5]["id"], boxes[7]["id"]], (boxes, kept)
 
 
 def test_a_round_holds_while_the_person_is_at_a_review_page_and_ends_once_it_is_sent(srv):

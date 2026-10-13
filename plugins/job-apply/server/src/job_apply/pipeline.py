@@ -167,13 +167,19 @@ _TERMS_ONLY = re.compile(r"terms|conditions|(?:privacy|data protection) (?:polic
                          r"|\b(?:agree|consent)\w*\b.{0,40}\bcreat\w*\b.{0,60}\baccount\b|^\s*(?:yes,? )?i (?:agree|consent|accept)\W*$"
                          r"|\bgdpr\b|process\w* (?:of )?my personal data|acknowledge having read", re.I)
 _TERMS_BOX = re.compile(r"terms|conditions|privacy|consent|agree|acknowledge|policy|notice", re.I)
-_NOT_TERMS = re.compile(r"newsletter|marketing|job alerts?|text messages?|\bsms\b|promotion|offers|subscribe|similar jobs|"
+_NOT_TERMS = re.compile(r"newsletter|mailing list|marketing|job alerts?|text messages?|\bsms\b|promotion|offers|subscribe|similar jobs|"
                         r"talent (?:community|network)|keep me|stay informed|send me|contact(?:ed)? me|be contacted|"
                         r"share my|other (?:\w+ )?(?:roles|positions|jobs|openings|opportunities)|affiliat", re.I)
 # And on an account's own box, what else its agreement may take in (the review of 0.3.117's wider account terms):
 # a box's words only, never a statement's (whose text names most of these in passing)
 _MORE_THAN_TERMS = re.compile(r"receiv\w*|e-?mails?|updates?|notifications?|messages?|partners?|third[- ]part|future|"
                               r"talent pool|retain|retention", re.I)
+# How long a box's agreement lasts, which is no more than it (Air Liquide's Workday, live run 41, Oct 12: "You
+# acknowledge having read the documents above. Your agreement is valid for any future visits."): not "future" news
+_LASTS = re.compile(r"\byour (?:agreement|consent|acceptance) (?:is|will be|remains) valid for (?:any|all) future visits\b",
+                    re.I)
+# A box whose words say it agrees to the words above it ("the documents above"): what it agrees to is up there
+_READ_ABOVE = re.compile(r"\b(?:documents?|terms|text|information|notices?|statements?|policy|policies) above\b", re.I)
 # An attestation or privacy agreement that also signs the person up: "... and consent to receive email communications
 # from Acme", "... and would like to receive updates" (the safety audit of Oct 12): never ticked for them
 _SIGNS_UP_TOO = re.compile(r"\breceiv\w*\b.{0,40}\b(?:e-?mails?|communications?|updates?|messages?|news\w*|offers|"
@@ -198,6 +204,9 @@ def _signs_up(text: str) -> bool:
 # The words above a bare "I agree" that make it a sign-up (a terms paragraph names emails, affiliates and offers in
 # passing: "you'll receive an email to verify your account", the review's)
 _SIGN_UP_ABOVE = re.compile(r"talent (?:community|network|pool)|job alerts?|newsletter|subscribe|marketing|"
+                            # (the review of 0.3.126's: a mailing list, being notified, opting in, emailed about roles)
+                            r"mailing list|\bnotif(?:y|ied|ications?)\b|\bopt(?:ing)?[- ]in\b|"
+                            r"\be-?mail (?:me|you)\b|"
                             r"text messages?|\bsms\b|keep me|stay informed|similar jobs|promotion\w*|offers|send me|"
                             r"contact(?:ed)? me|be contacted|share my|"
                             r"other (?:\w+ )?(?:roles|positions|jobs|openings|opportunities)|"
@@ -1425,6 +1434,7 @@ class Applier:
         step_waited: set[tuple[Any, ...]] = set()  # pages (as drawn) waited on for a greyed-out step button
         retyped: set[tuple[Any, ...]] = set()  # pages whose lost boxes were typed again (once a page)
         refilled_pages: set[tuple[Any, ...]] = set()  # pages whose emptied boxes were filled again (once a page)
+        redone_pages: set[tuple[Any, ...]] = set()  # pages whose boxes said wrong were answered again (once a page)
         saved_waited: set[tuple[Any, ...]] = set()  # steps waited on as still saving (once a step)
         bare_waited: set[tuple[Any, ...]] = set()  # forms with no step button yet, waited on to be drawn (once a page)
         account_waited = False
@@ -2019,11 +2029,28 @@ class Applier:
                     # boxes the errors name that show a value all the same: the page lost its own record of them
                     # (Nikon's UKG Pro, live run 10: its resume parse wiped Address 1 and Zip a moment after they
                     # were typed). Typed again, once a page, and the step pressed again
-                    seen_now = (await self._look())[0] if looked not in retyped or looked not in refilled_pages else {}
+                    seen_now = (await self._look())[0] if (looked not in retyped or looked not in refilled_pages
+                                                           or looked not in redone_pages) else {}
                     said = norm(" ".join(e for e in seen_now.get("errors") or [] if _errorish(e)))
                     lost = [f for f in seen_now.get("fields") or [] if f.get("kind") == "text" and not f.get("disabled")
                             and not is_empty_value(f.get("value")) and len(norm(clean_label(f.get("label") or ""))) >= 3
                             and re.search(rf"\b{re.escape(norm(clean_label(f.get('label') or '')))}\b", said)]
+                    wrong = [f for f in lost if f.get("invalid")]
+                    if wrong and looked not in redone_pages:
+                        # of those, the ones the page marks invalid themselves (not a box whose label an error about
+                        # another names: the review's) showing something other than the profile's answer: what the
+                        # page put there itself (EMD's Phenom, live run 41, Oct 12: its resume parse wrote the phone
+                        # as 4805550199 in a box asking for +1##########, then called it invalid). The profile's
+                        # answer, once a page; a box already showing it is typed again below
+                        redone_pages.add(looked)
+                        ids = {f["id"] for f in wrong}
+                        given = {f.get("id") for f in (await srv.autofill(job_id=run.job_id, redo=sorted(ids))).get("filled")
+                                 or [] if f.get("id") in ids}
+                        if given:
+                            names = ", ".join(clean_label(f.get("label") or "") for f in wrong if f["id"] in given)
+                            self._log(run, f"filled from your profile what the page said was wrong: {names}")
+                            stalls = 0
+                            continue
                     if lost and looked not in retyped:
                         retyped.add(looked)
                         again = await srv.browser.retype([f["id"] for f in lost])
@@ -2102,12 +2129,13 @@ class Applier:
                 return
 
     async def _said_terms(self, boxes: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        """A Create Account form's terms boxes, less a bare one ("I agree", "I consent") whose words just above it
-        say what it agrees to and that's more than the site's terms: job alerts, a talent network, texts, marketing
-        (the safety audit of Oct 12). Those are the person's."""
+        """A Create Account form's terms boxes, less a bare one ("I agree", "I consent") or one agreeing to "the
+        documents above" (Air Liquide's) whose words just above it say what it agrees to and that's more than the
+        site's terms: job alerts, a talent network, texts, marketing (the safety audit of Oct 12). Those are the
+        person's."""
         kept = []
         for box in boxes:
-            if _BARE_AGREE.match(box.get("label") or ""):
+            if _BARE_AGREE.match(box.get("label") or "") or _READ_ABOVE.search(box.get("label") or ""):
                 above = await self.srv.browser.words_before(box["id"])
                 # (gone, or not read: not ticked; the words of a sign-up, not the terms' passing mentions: the review's)
                 if not above or _SIGN_UP_ABOVE.search(above):  # (unread, or nothing to read: the person's)
@@ -3910,7 +3938,7 @@ def _terms_boxes(data: dict[str, Any]) -> list[dict[str, Any]]:
     messages' (_NOT_TERMS)."""
     return [f for f in data.get("fields") or [] if f.get("kind") == "checkbox" and is_empty_value(f.get("value"))
             and _TERMS_BOX.search(f.get("label") or "") and not _NOT_TERMS.search(f.get("label") or "")
-            and not _MORE_THAN_TERMS.search(f.get("label") or "")
+            and not _MORE_THAN_TERMS.search(_LASTS.sub("", f.get("label") or ""))
             and (f.get("required") or _TERMS_ONLY.search(f.get("label") or ""))]
 
 

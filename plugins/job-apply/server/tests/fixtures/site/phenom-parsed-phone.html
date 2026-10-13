@@ -1,0 +1,36 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Equipment Technician | Apply</title></head>
+<body>
+<!-- like EMD Electronics' Phenom application (live run 41, Oct 12): its resume parse writes the phone into its box
+     as bare digits ("4805550123"), though the box asks for the dial code with a "+" and no spaces or dashes. The desk
+     leaves a box that already shows a value, so Next says the phone is invalid beside the filled box; typed again
+     as it was, it stays invalid. ?valid: the box shows a phone in the right shape (another number than the
+     profile's), not marked invalid, and the page's one error names it while asking for something else. -->
+<h2>My information</h2>
+<form onsubmit="return false">
+  <label for="first">First Name *</label><input id="first" required>
+  <label for="phoneNumber">Phone Number [must include your location code using the "+", (e.g. +1##########), with no spaces or dashes]*</label>
+  <input id="phoneNumber" required autocomplete="tel-national" value="4805550123">
+  <div id="errors"></div>
+  <button type="button" id="next">Next</button>
+</form>
+<script>
+  const valid = new URLSearchParams(location.search).has('valid');
+  const phone = document.getElementById('phoneNumber');
+  if (valid) phone.value = '+14805550000';
+  document.getElementById('next').addEventListener('click', () => {
+    const errs = [];
+    if (!document.getElementById('first').value) errs.push('First Name* Required');
+    const bad = !/^\+\d{10,15}$/.test(phone.value);
+    phone.setAttribute('aria-invalid', String(bad));
+    if (bad) {
+      errs.push('Phone Number [must include your location code using the "+", (e.g. +1##########), with no spaces or dashes]* Invalid Phone Number');
+    }
+    if (valid) errs.push('Phone Number [must include your location code using the "+", (e.g. +1##########), with no spaces or dashes]* also needs a phone type, chosen on your profile page');
+    document.getElementById('errors').innerHTML = errs.map((t) => '<p role="alert" class="error">' + t + '</p>').join('');
+    if (!errs.length) location.href = 'review.html';
+  });
+</script>
+</body>
+</html>
