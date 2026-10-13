@@ -520,6 +520,33 @@ def test_workday_date_parts_read_back_as_typed_whatever_the_order(srv):
     assert shown == ["10/2019", "03/2021", "10/09/2026"], shown
 
 
+def test_a_workday_year_that_reads_back_wrong_is_typed_once_more(srv):
+    """HonorHealth's Workday (run 49, Oct 13; once in run 44 elsewhere): a school's year now and then lost the keys
+    typed as it took focus, and read back 1900 ("typed 2016: 1900"); the desk said so and the job stopped. A date
+    that doesn't read back as typed is typed once more, a little slower, before it's said."""
+    run(srv.browser.goto(fixture_url("site/workday-date-sections.html") + "?drops"))
+    year = next(f for f in run(srv.inspect_form(include_dropdown_options=False))["fields"]
+                if f.get("section") == "First Year Attended" or f["label"] == "First Year Attended")
+    out = run(srv.fill_form([{"id": year["id"], "value": "2016"}]))
+    assert out["results"][0]["ok"], out["results"]
+    page = run(srv.browser.page())
+    assert run(page.evaluate("() => document.getElementById('education-1--firstYearAttended-dateSectionYear-input')"
+                             ".getAttribute('aria-valuenow')")) == "2016"
+
+
+def test_a_dates_second_try_never_takes_a_part_the_first_left_wrong(srv):
+    """The review of 0.3.136: a month typed with its year empty, on a date that reads a lone number as its year as
+    focus leaves it (Intel's and U.S. Bank's), came back as the year 2010. A second try that took the date as it
+    then read typed the month alone and kept that year, which the profile never gave. The second try types the same
+    parts with the same digits, and a part it didn't type must read as it did before: here it's still said."""
+    run(srv.browser.goto(fixture_url("site/workday-date-sections.html") + "?sticky&arrows"))
+    by = {(f.get("section") or f["label"], f.get("sublabel")): f["id"]
+          for f in run(srv.inspect_form(include_dropdown_options=False))["fields"]}
+    out = run(srv.fill_form([{"id": by[("From", "Month")], "value": "10"}]))
+    assert not out["results"][0].get("ok"), out["results"]
+    assert "reads" in out["results"][0]["error"], out["results"]
+
+
 def test_a_workday_date_whose_current_part_stays_put_gets_its_month(srv):
     """Intel's Workday (nightly live check, Oct 11): the date's current part stays where it was when focus
     leaves the date, and is marked so; with the year typed first, the month's digits went into the year and the
@@ -588,7 +615,10 @@ def test_a_file_put_in_the_sites_open_upload_dialog_is_sent_with_its_upload(srv,
 
 
 @pytest.mark.parametrize("page,said", [("phenom-resume-not-kept.html", "resume.pdf"), ("phenom-resume-not-kept.html?kept", None),
-                                       ("upload-cover-letter.html", None)])
+                                       ("upload-cover-letter.html", None),
+                                       # EMD's page as it is (run 49): the resume's box above the form, unnamed
+                                       ("phenom-resume-not-kept.html?outside", "resume.pdf"),
+                                       ("phenom-resume-not-kept.html?outside&kept", None)])
 def test_a_resume_the_site_didnt_keep_is_told_from_any_other_upload(srv, tmp_path, page, said):
     """Issue #112, note 28 and its review: the resume's own file box, its hidden fields beside it all empty, is a
     resume the site didn't keep; a cover letter's box, beside "resume" fields of a save-for-later elsewhere, isn't."""
@@ -1152,6 +1182,24 @@ def test_a_menu_left_over_the_next_field_isnt_its_options(srv, overlap):
     assert by_label(fields, "friends")["options"] == ["Yes", "No"]
 
 
+def test_a_lists_word_that_its_empty_is_never_a_choice(srv):
+    """HonorHealth's Workday (probe 50, Oct 13): its required Skills prompt, nothing typed yet, listed only "No
+    Items.", and the desk asked the person with that as the one choice. A list's word that it's empty is no choice:
+    the question is asked with none, for an answer of the person's own."""
+    run(srv.open_application(url=fixture_url("jsonld_posting.html")))
+    page = run(srv.browser.page())
+    run(page.set_content("""
+      <form><label for="skills">Type to Add Skills *</label>
+        <input id="skills" role="combobox" aria-controls="skills-list" aria-expanded="false" required>
+        <ul id="skills-list" role="listbox" hidden><li role="option">No Items.</li></ul></form>
+      <script>
+        const box = document.getElementById('skills'), list = document.getElementById('skills-list');
+        box.addEventListener('click', () => { list.hidden = false; box.setAttribute('aria-expanded', 'true'); });
+      </script>"""))
+    skills = by_label(run(srv.inspect_form(include_dropdown_options=True))["fields"], "skills")
+    assert not skills.get("options"), skills
+
+
 def test_a_pick_only_dropdown_is_asked_about_and_filled(srv):
     """Infineon: a required read-only dropdown ("Preferred location") was neither filled
     nor asked about, so the application stalled with nothing to answer."""
@@ -1305,6 +1353,25 @@ def test_a_pick_list_with_no_match_is_reported(srv):
     field = run(srv.inspect_form(include_dropdown_options=False))["fields"][0]
     out = run(srv.fill_form([{"id": field["id"], "value": "Atlantis (+999)"}]))
     assert not out["ok"] and "nothing in its list matched 'Atlantis'" in out["results"][0]["error"]
+
+
+def test_a_search_whose_list_says_its_empty_is_asked_about_not_left_typed(srv):
+    """A list's word that it's empty ("No results found") is no choice (0.3.136), but it still says the box is one to
+    pick from: the words typed are cleared and the question asked, not left in the box as an answer (the review)."""
+    run(srv.open_application(url=fixture_url("jsonld_posting.html")))
+    page = run(srv.browser.page())
+    run(page.set_content("""
+      <label for="city">City *</label>
+      <input id="city" role="combobox" aria-autocomplete="list" required>
+      <ul id="city-list" hidden><li role="option">No results found</li></ul>
+      <script>
+        const box = document.getElementById('city'), list = document.getElementById('city-list');
+        box.addEventListener('input', () => { list.hidden = !box.value; });
+      </script>"""))
+    field = run(srv.inspect_form(include_dropdown_options=False))["fields"][0]
+    out = run(srv.fill_form([{"id": field["id"], "value": "Atlantis"}]))
+    assert not out["ok"] and "nothing in its list matched 'Atlantis'" in out["results"][0]["error"], out
+    assert run(page.input_value("#city")) == ""
 
 
 def test_a_picker_is_searched_by_name_not_by_flag_and_code(srv):

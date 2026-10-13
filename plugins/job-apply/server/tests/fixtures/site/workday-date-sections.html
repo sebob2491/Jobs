@@ -29,11 +29,16 @@
 <label for="title">Job Title</label><input id="title" type="text">
 <div id="from"></div>
 <div id="to"></div>
+<div><div><div id="school"></div></div></div>
 <h2>Voluntary Self-Identification of Disability</h2>
 <label for="name">Name</label><input id="name" type="text">
 <div id="signed"></div>
 <script>
   const KINDS = { Month: [12, 'MM', 2], Day: [31, 'DD', 2], Year: [9999, 'YYYY', 4] };
+  // ?drops: the first year box focused loses the keys of its first 100 ms, and a year left part typed reads 1900
+  // (HonorHealth's school years, run 49: "typed 2016: 1900", now and then)
+  const drops = new URLSearchParams(location.search).has('drops');
+  let dropFrom = null, dropUntil = 0;
   function date(host, id, title, kinds) {
     host.innerHTML = `<fieldset><legend><label><span>${title}</span></label></legend>
       <div id="${id}" role="group" data-automation-id="dateInputWrapper">` + kinds.map((k) => `
@@ -62,6 +67,9 @@
     };
     inputs.forEach((input, i) => {
       input.value = '';
+      input.addEventListener('focus', () => {
+        if (drops && dropFrom === null && kinds[i] === 'Year') { dropFrom = input; dropUntil = Date.now() + 100; }
+      });
       if (arrows) input.select = () => {};  // (live, selecting a part didn't bring focus back to it)
       input.addEventListener('keydown', (e) => {
         if (arrows && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
@@ -75,6 +83,7 @@
         }
         if (!/^\d$/.test(e.key)) return;
         e.preventDefault();
+        if (input === dropFrom && Date.now() < dropUntil) return;
         if (arrows) {  // the digit goes to this part, the one with focus; full, focus moves on
           const [max, , width] = KINDS[kinds[i]];
           let next = typed[i].length >= width ? e.key : typed[i] + e.key;
@@ -105,6 +114,7 @@
     group.addEventListener('focusout', (e) => {
       if (group.contains(e.relatedTarget)) return;
       if (!sticky) current = 0;
+      if (drops) kinds.forEach((k, i) => { if (k === 'Year' && typed[i] && typed[i].length < 4) { typed[i] = '1900'; show(i); } });
       const numbers = typed.filter((t) => t);
       if (!arrows || !numbers.length || numbers.length === kinds.length) return;
       const into = numbers.length === 1 ? ['Year'] : ['Month', 'Year'];
@@ -114,6 +124,7 @@
   date(document.getElementById('from'), 'workExperience-1--startDate', 'From', ['Month', 'Year']);
   date(document.getElementById('to'), 'workExperience-1--endDate', 'To', ['Month', 'Year']);
   date(document.getElementById('signed'), 'selfIdentifiedDisabilityData--dateSignedOn', 'Date', ['Month', 'Day', 'Year']);
+  if (drops) date(document.getElementById('school'), 'education-1--firstYearAttended', 'First Year Attended', ['Year']);
 </script>
 </body>
 </html>

@@ -857,20 +857,34 @@ COVERED_JS = r"""
 UPLOAD_NOT_KEPT_JS = r"""
 () => {
   const named = /resume|(^|[_-])cv([_-]|$)/i;
+  // (only the fields an upload is kept in: a save-for-later's "resumeToken" isn't one, the review of 0.3.136's)
+  const kept_in = /resume.?(?:path|name|file|size|bucket|relative|url|id)|^isresume$/i;
   const hidden = Array.from(document.querySelectorAll('input[type="hidden"]'))
-    .filter((el) => named.test(el.id || '') || named.test(el.name || ''));
+    .filter((el) => kept_in.test(el.id || '') || kept_in.test(el.name || ''));
   // (the resume's own file box, and the hidden fields beside it: its form's, or within a few levels of it; not a
   // cover letter's box, nor a "resumeToken" of a save-for-later elsewhere on the page: the review of note 28)
   const near = (box, el) => {
-    if (box.form || el.form) return box.form === el.form;
+    if (box.form) return box.form === el.form;
     for (let n = box.parentElement, d = 0; n && d < 6; n = n.parentElement, d++) if (n.contains(el)) return true;
-    return false;
+    // (a box outside every form, on a page with one: that form's are its fields, EMD's as it is, run 49)
+    return !!el.form && document.forms.length === 1;
+  };
+  // a box that names nothing itself: the words of its own block ("Your resume/CV is required", its "Upload
+  // Resume/CV": EMD's, run 49), the nearest that says anything, and only a short one
+  const block = (box) => {
+    for (let n = box.parentElement, d = 0; n && d < 4; n = n.parentElement, d++) {
+      const t = (n.innerText || n.textContent || '').trim();
+      if (t.length > 400) break;
+      if (t) return t;
+    }
+    return '';
   };
   for (const box of document.querySelectorAll('input[type="file"]')) {
     const file = box.__jaUploaded ? String(box.__jaUploaded) : (box.files && box.files.length ? box.files[0].name : '');
     const said = [box.id, box.name, box.getAttribute('aria-label') || '',
-                  ...Array.from(box.labels || []).map((l) => l.textContent || '')].join(' ');
-    if (!file || !named.test(said)) continue;
+                  ...Array.from(box.labels || []).map((l) => l.textContent || '')].join(' ').trim();
+    const words = said || block(box);
+    if (!file || !named.test(words) || !said && /cover letter|transcript|other documents?|additional/i.test(words)) continue;
     const kept = hidden.filter((el) => near(box, el));
     if (kept.length >= 2 && !kept.some((el) => (el.value || '').trim())) return file;
   }
@@ -963,10 +977,14 @@ FIELD_OPTIONS_JS = r"""
     opts = best;
   }
   for (const o of document.querySelectorAll('[data-ja-opt]')) o.removeAttribute('data-ja-opt');
+  // (never a list's word that it's empty: Workday's "No Items.", which the desk offered HonorHealth's Skills as a
+  // choice, probe 50)
+  const empty = /^(?:no (?:items|results|matches|options|data)(?: found| available)?|nothing found)\.?$/i;
   const out = [];
   for (const o of opts) {
     const t = text(o);
-    if (t && !out.includes(t)) { o.setAttribute('data-ja-opt', t); out.push(t); }
+    if (t && empty.test(t)) el.setAttribute('data-ja-empty', '1');  // (a list to pick from, that said it's empty)
+    if (t && !empty.test(t) && !out.includes(t)) { o.setAttribute('data-ja-opt', t); out.push(t); }
   }
   return out;
 }

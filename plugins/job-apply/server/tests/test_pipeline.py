@@ -3186,6 +3186,45 @@ def test_a_page_that_asks_to_be_refreshed_is_reloaded_once(srv, monkeypatch, job
     assert len(said) == 1 and r.seen_form and "went-wrong" not in r.url, (r.url, r.reason, r.log)
 
 
+def test_a_review_page_whose_submit_is_greyed_while_it_draws_is_waited_on(srv, monkeypatch, job_apply_home):
+    """Wells Fargo's Workday (run 49, Oct 13): its review page drew Submit greyed out for a moment, and the desk
+    stopped with "“Submit” is greyed out, so the site still wants something" though the page wanted nothing. A
+    button greyed out while a page draws is waited on, and the page as it is after the wait is the one read."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 6)
+    job = srv.add_job(url=fixture_url("site/late-submit-step.html"), title="Teller", company="Example Bank")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), timeout=120, about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert r.status == "ready" and r.url.endswith("late-submit-review.html"), (r.status, r.reason, r.log)
+
+
+def test_only_a_greyed_submit_or_step_that_comes_on_ends_the_wait():
+    """The wait on a page drawing late ends when a Submit or step button that was greyed out comes on (Wells Fargo,
+    run 49). Not when another button does, nor one aside from the form, nor a greyed twin of a button already on
+    (Workday draws a covered copy of its Submit)."""
+    def page(*actions):
+        return {"actions": [dict(a) for a in actions]}
+    submit, grey = {"text": "Submit", "is_submit": True}, {"text": "Submit", "is_submit": True, "disabled": True}
+    assert pipeline._came_on(page(grey), page(submit))
+    assert pipeline._came_on(page({"text": "Next", "disabled": True}), page({"text": "Next"}))
+    assert not pipeline._came_on(page(grey), page(grey))
+    assert not pipeline._came_on(page(grey, submit), page(submit))  # (its twin was on already)
+    assert not pipeline._came_on(page({"text": "Download", "disabled": True}), page({"text": "Download"}))
+    aside = {"text": "Submit", "is_submit": True, "aside": True}
+    assert not pipeline._came_on(page(dict(aside, disabled=True)), page(aside))
+    assert not pipeline._came_on(page(), page(submit))  # (a button that wasn't there isn't one that came on)
+
+
 def test_each_page_that_draws_its_buttons_late_is_waited_on(srv, monkeypatch, job_apply_home):
     """Baker Tilly's Workday (run 44, Oct 13): the page after its sign-in drew its questions and Save and Continue
     late, and the desk, having waited on an earlier page's late buttons on that pass, stopped at once: "I couldn't
@@ -6685,6 +6724,16 @@ def test_a_sections_blocks_are_counted_by_their_own_deletes_too(srv):
                           {"id": "a", "text": "Delete Work Experience 1 Attachment 2"}]}
     applier._note_short_entries(r, "work", covered, others)
     assert r.entries_short["work"] == (0, 1)
+    # UKG Pro's saved items (run 49: still "0 of your 1 school" at Nikon, UCT and Desert Financial): each has its own
+    # numbered Edit; a section's own Edit ("Edit Skills") is no block
+    saved = {"actions": [{"id": "x", "text": "Edit Experience Item 1"}, {"id": "y", "text": "Add Education"},
+                         {"id": "z", "text": "Edit Education Item 1"}, {"id": "k", "text": "Edit Skills"}]}
+    r.entries_short = {}
+    for section in ("work", "education"):
+        applier._note_short_entries(r, section, covered, saved)
+    assert r.entries_short == {}
+    applier._note_short_entries(r, "education", covered, {"actions": [{"id": "k", "text": "Edit Skills"}]})
+    assert r.entries_short["education"] == (0, 1)
 
 
 def test_a_reset_form_is_still_showing_only_with_its_own_button_and_no_word_it_went():

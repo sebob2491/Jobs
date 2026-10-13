@@ -5,8 +5,11 @@
 <!-- like EMD Electronics' Phenom application (issue #112, note 28): after the resume goes up the page shows it as
      uploaded (the file's name and Download / Delete links), but the hidden fields it keeps the upload in
      (#isResume, #resumeBucketId, #resumeFileSize, #resumeName, #resumePath) stay empty, and Next does nothing and
-     says nothing. ?kept: the upload is kept (the hidden fields are filled), and Next goes on. -->
+     says nothing. ?kept: the upload is kept (the hidden fields are filled), and Next goes on. ?outside: as EMD's
+     page is (run 49): the resume's file box is above the form, with no name or label of its own, beside "Your
+     resume/CV is required" and its "Upload Resume/CV" button. -->
 <h2>My information</h2>
+<div id="outside"></div>
 <form onsubmit="return false">
   <label for="firstName">First Name *</label><input id="firstName" required>
   <label for="lastName">Last Name *</label><input id="lastName" required>
@@ -25,7 +28,21 @@
 </form>
 <script>
   const kept = new URLSearchParams(location.search).has('kept');
-  document.getElementById('resumeFile').addEventListener('change', (e) => {
+  if (new URLSearchParams(location.search).has('outside')) {
+    const old = document.getElementById('resumeFile');
+    document.querySelector('label[for=resumeFile]').remove();
+    const holder = document.getElementById('outside');
+    holder.innerHTML = '<div class="resume-upload"><p>Your resume/CV is required – upload your document here to get '
+      + 'started!</p><button type="button" class="upload-btn">Upload Resume/CV</button>'
+      + '<input type="file" tabindex="-1" style="display:none"></div>';
+    const box = holder.querySelector('input[type=file]');
+    box.id = 'resumeFile';
+    box.removeAttribute('id');
+    old.remove();
+    box.setAttribute('data-was', 'resumeFile');
+  }
+  const resumeBox = document.querySelector('[data-was=resumeFile]') || document.getElementById('resumeFile');
+  resumeBox.addEventListener('change', (e) => {
     const file = e.target.files[0];
     if (!file) return;
     const info = document.querySelector('.resume-info');

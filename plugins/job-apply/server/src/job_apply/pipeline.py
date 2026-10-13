@@ -1920,7 +1920,7 @@ class Applier:
                 # desk having done something since, is a new visit: its address can be the same)
                 waited.add((_page_key(data), run.logged))
                 wait = SIGN_IN_STEP_WAIT if sign_in_step else BLANK_PAGE_WAIT if blank else LATE_BUTTONS_WAIT
-                if await self._wait_for_progress(wait):
+                if await self._wait_for_progress(wait, data):
                     continue
             drawn = (_page_key(data), _boxes(data))  # a page that has drawn more since is waited on again
             loading = bool(data.get("busy")) and not gate_now
@@ -2302,7 +2302,7 @@ class Applier:
             await asyncio.sleep(1)
             data = await self.srv.inspect_form(include_dropdown_options=False)
             if (pick_next(data.get("actions") or [], in_form=True) or _boxes(data) > had
-                    or before.get("busy") and not data.get("busy")):
+                    or before.get("busy") and not data.get("busy") or _came_on(before, data)):
                 return True
         return False
 
@@ -2316,14 +2316,16 @@ class Applier:
                 return True
         return False
 
-    async def _wait_for_progress(self, seconds: float) -> bool:
+    async def _wait_for_progress(self, seconds: float, before: dict[str, Any] | None = None) -> bool:
         """Wait for a form, a sign-in, a bot check or a button that moves things on to appear
-        (KLA's Workday draws its "Sign in with email" button a few seconds late)."""
+        (KLA's Workday draws its "Sign in with email" button a few seconds late), or one greyed out on
+        `before` to come on (Wells Fargo's review page drew its Submit greyed, run 49)."""
         deadline = time.monotonic() + seconds
         while time.monotonic() < deadline:
             await asyncio.sleep(1)
             data, text = await self._look()
-            if classify(data, text) != "page" or pick_next(data.get("actions") or [], in_form=False):
+            if (classify(data, text) != "page" or pick_next(data.get("actions") or [], in_form=False)
+                    or before is not None and _came_on(before, data)):
                 return True
         return False
 
@@ -4342,6 +4344,18 @@ def _greyed_step(data: dict[str, Any]) -> list[dict[str, Any]]:
     return [a for a in data.get("actions") or [] if a.get("disabled") and _FORWARD.match(final_text(a["text"]))]
 
 
+def _came_on(before: dict[str, Any], data: dict[str, Any]) -> bool:
+    """Has a Submit or step button greyed out on `before` come on? (Wells Fargo's Workday review page drew its
+    Submit greyed for a moment, run 49.) Only those: another button coming on says nothing of the way on."""
+    def way_on(a: dict[str, Any]) -> bool:
+        return not a.get("aside") and bool(a.get("is_submit") or _FORWARD.match(final_text(a.get("text") or "")))
+    # (not a text a button already on had then: a covered Workday twin of a greyed Submit isn't one that came on)
+    was = ({final_text(a.get("text") or "") for a in before.get("actions") or [] if a.get("disabled") and way_on(a)}
+           - {final_text(a.get("text") or "") for a in before.get("actions") or [] if not a.get("disabled") and way_on(a)})
+    return any(not a.get("disabled") and way_on(a) and final_text(a.get("text") or "") in was
+               for a in data.get("actions") or [])
+
+
 def _boxes(data: dict[str, Any]) -> int:
     """How many boxes a page has to fill (not counting file uploads)."""
     return sum(f.get("kind") != "file" and not f.get("disabled") for f in data.get("fields") or [])
@@ -4402,8 +4416,9 @@ _BLOCK_KINDS = {"work": r"(?:work|employment|professional)\s+(?:experience|histo
 
 
 def _blocks_by_delete(data: dict[str, Any], section: str) -> int:
-    """How many of a section's blocks the page shows, by their own numbered Delete ("Delete Education 2")."""
-    kind = re.compile(rf"^(?:delete|remove)\s+(?:{_BLOCK_KINDS.get(section, section)})\s+(\d+)\s*$", re.I)
+    """How many of a section's blocks the page shows, by their own numbered Delete ("Delete Education 2"), or Edit of a
+    saved one (UKG Pro's "Edit Education Item 1": Nikon, UCT and Desert Financial, run 49)."""
+    kind = re.compile(rf"^(?:delete|remove|edit)\s+(?:{_BLOCK_KINDS.get(section, section)})\s+(?:item\s+)?(\d+)\s*$", re.I)
     return len({m.group(1) for a in data.get("actions") or [] if (m := kind.match(final_text(a.get("text") or "")))})
 
 
