@@ -3345,7 +3345,8 @@ class Applier:
         # about AI screening of applications, or the employer's privacy notice or terms of use (whose
         # "Ok" takes it in, beside a Cancel, where its heading names it)
         terms, takes_ok = _terms_notice(heading, notice.get("text") or "")
-        ai = bool(_AI_NOTICE.search(said) and _ABOUT_APPLYING.search(said)) or terms
+        ai = bool(_AI_NOTICE.search(said) and _ABOUT_APPLYING.search(said)) or terms \
+            or _test_identity_agrees(heading, said, _test_identity())
         agree = next((b for b in notice.get("buttons") or [] if not b.get("disabled")
                       and (_AGREES.match(final_text(b.get("text") or ""))
                            or takes_ok and _TAKES_IN.match(final_text(b.get("text") or "")))), None)
@@ -4096,6 +4097,28 @@ def _manage_hint() -> str:
     except ValueError:  # a profile with a typo has chosen nothing
         chosen = False
     return "" if chosen else " (manage_accounts: false in profile.yaml leaves this to you)"
+
+
+# The live check's test identity agrees to the notices a person's desk leaves to them (a waiver of rights in
+# Freeport-McMoRan's data privacy statement on its Create Account, run 56): the owner's call, Oct 13, for the most to
+# fix from. A notice of any of these sorts, never an error's or an existing profile's; and only by an agree button
+# (_AGREES): never a Submit, which stays the person's (Insight Enterprises' notice confirms with one)
+_TEST_NOTICE = re.compile(r"\b(?:privacy|terms|consent|agreement|notice|statement|policy)\b", re.I)
+
+
+def _test_identity_agrees(heading: str, said: str, test_identity: bool) -> bool:
+    """Whether the live check's test identity agrees to a notice the person's own desk leaves to them: only the
+    test identity (config.live_test_identity: never a person's profile), only a notice (_TEST_NOTICE), never a
+    dialog about an error, an overwrite or a deletion (_NOT_A_NOTICE, by its heading)."""
+    return (test_identity and bool(_TEST_NOTICE.search(said)) and not _NOT_A_NOTICE.search(heading)
+            and not re.search(r"\bwent wrong\b|\berror\b", said[:300], re.I))
+
+
+def _test_identity() -> bool:
+    try:
+        return config.Profile.load().settings.test_identity
+    except ValueError:  # a profile with a typo: never the test identity
+        return False
 
 
 def _may_accept_notices() -> bool:

@@ -2777,6 +2777,22 @@ def test_a_code_from_a_shared_sender_naming_another_employer_is_never_this_jobs(
     assert pipeline._another_employers_mail("", frozenset()) is None
 
 
+def test_the_test_identity_agrees_to_the_notices_a_persons_desk_leaves_to_them():
+    """Run 56: Freeport-McMoRan's data privacy statement on its SuccessFactors Create Account (a waiver of rights in it,
+    and its heading not a privacy notice's) is the person's on their own desk. The live check's test identity agrees to
+    it (the owner's call, Oct 13); never a dialog about an error or an existing profile, nor anything but a notice."""
+    heading = "Freeport-McMoRan Consent Statement"
+    text = ("Freeport Data Privacy Statement ... If you are from a jurisdiction outside of the United States, please note "
+            "in particular the waiver of rights provision (bolded) below")
+    assert pipeline._terms_notice(heading, text) == (False, False)  # (the person's own desk: theirs)
+    said = f"{heading} {text}"
+    assert not pipeline._test_identity_agrees(heading, said, False)
+    assert pipeline._test_identity_agrees(heading, said, True)
+    assert not pipeline._test_identity_agrees("Something went wrong", "Something went wrong. Privacy notice failed", True)
+    assert not pipeline._test_identity_agrees("Overwrite your existing profile?", "Your profile and its terms", True)
+    assert not pipeline._test_identity_agrees("Upload your resume", "Choose a file to upload", True)
+
+
 def test_an_employers_mail_domains_are_only_its_own(job_apply_home):
     """The review of 0.3.137: a site several employers on the lists search (Nikon's, UCT's and Desert Financial's UKG
     Pro, recruiting2.ultipro.com) names none of them, so another employer's job there never reads a credit union's mail;

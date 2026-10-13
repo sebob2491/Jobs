@@ -141,7 +141,9 @@ the scrubber (`python -m job_apply.fixtures`) before they become test fixtures.
     with its own inbox, at the employers in `test_identity_employers.yaml`, or (the nightly's accounts check, `--everywhere`:
     the owner's call, Oct 11) at every employer on both lists, and which never submits. It also takes an employer's
     assessment with random answers ("Take Assessment": the owner's call, Oct 13), pressing the assessment's own
-    Submit or Finish only off the application's site; on the person's desk an assessment stays theirs. It's on
+    Submit or Finish only off the application's site; on the person's desk an assessment stays theirs. And it agrees
+    to the notices a person's desk leaves to them (a waiver of rights in Freeport-McMoRan's data privacy statement: the
+    owner's call, Oct 13), by an agree button only, never a Submit (`_test_identity_agrees`). It's on
     only with `JOB_APPLY_LIVE_TEST_IDENTITY=1` and `JOB_APPLY_NEVER_SUBMIT=1` set and the
     profile's email being `LIVE_TEST_EMAIL` (`config.live_test_identity`), so a person's own
     profile never turns it on; Submit stays refused in it.
