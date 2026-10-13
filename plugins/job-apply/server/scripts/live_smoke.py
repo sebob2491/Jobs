@@ -51,6 +51,7 @@ import contextlib
 import datetime
 import json
 import os
+import random
 import re
 import shutil
 import sys
@@ -1584,12 +1585,32 @@ async def _take_assessment(run: Any, steps: list[dict[str, Any]], rec: dict[str,
             return "a CAPTCHA (the rules: never solved)"
         actions = [a for a in data.get("actions") or [] if not a.get("disabled") and not a.get("cookie")
                    and not _NOT_PRESSED.search(a.get("text") or "")]
+        # (a box unticked is a question unanswered too: Circle K's "Answers", run 60, a row of boxes to tick one of)
         fields = [f for f in data.get("fields") or [] if not f.get("disabled") and f.get("kind") not in ("file", "password")
-                  and is_empty_value(f.get("value"))]
-        answers = [{"id": f["id"], "value": v} for f in fields if (v := assessment_answer(f)) is not None]
+                  and (is_empty_value(f.get("value")) or f.get("kind") == "checkbox" and f.get("value") is False)]
+        boxes = [f for f in fields if f.get("kind") == "checkbox" and not _SIGN_UP_BOX.search(f.get("label") or "")]
+        answers = [{"id": f["id"], "value": v} for f in fields if f.get("kind") != "checkbox"
+                   and (v := assessment_answer(f)) is not None]
+        if boxes and not any(f.get("kind") == "checkbox" and f.get("value") is True for f in data.get("fields") or []):
+            answers.append({"id": random.choice(boxes)["id"], "value": True})  # (one of them, as an answer's choice)
         filled = (await server.fill_form(answers))["results"] if answers else []
-        on = next((a for a in actions if _ASSESSMENT_ON.match((a.get("text") or "").strip())), None) \
-            or next((a for a in actions if _ASSESSMENT_DONE.match((a.get("text") or "").strip())), None)
+
+        def way_on(actions: list[dict[str, Any]]) -> dict[str, Any] | None:
+            return next((a for a in actions if _ASSESSMENT_ON.match((a.get("text") or "").strip())), None) \
+                or next((a for a in actions if _ASSESSMENT_DONE.match((a.get("text") or "").strip())), None)
+
+        on = way_on(actions)
+        if on is None and answers:
+            # its way on drawn only once it's answered (Circle K's Next), or the page gone on by itself
+            await page.wait_for_timeout(1500)
+            now = await server.inspect_form(include_dropdown_options=True)
+            on = way_on([a for a in now.get("actions") or [] if not a.get("disabled") and not a.get("cookie")
+                         and not _NOT_PRESSED.search(a.get("text") or "")])
+            if on is None and (now.get("url"), now.get("headings")) != (data.get("url"), data.get("headings")):
+                steps.append({"host": host, "title": (data.get("title") or "")[:80], "answered": sum(
+                    1 for r in filled if r.get("ok")), "pressed": None, "went_on": True})
+                continue
+            data = now if on is not None else data
         steps.append({"host": host, "title": (data.get("title") or "")[:80],
                       "headings": [h[:80] for h in (data.get("headings") or [])[:4]],
                       "kinds": sorted({str(f.get("kind")) for f in data.get("fields") or []}),

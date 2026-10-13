@@ -64,6 +64,13 @@ def test_an_assessment_is_taken_with_random_answers_and_the_application_page_com
     assert pressed[:4] == ["Take Assessment", "Start", "Next", "Submit"], result
     assert result["steps"][2]["answered"] == 3 and result["steps"][3]["answered"] == 2, result
     assert "done=1" in result["back_at"], result  # (the application's page, its assessment done)
+    # Circle K's question page (run 60): a row of boxes to tick one of, its Next drawn only once one is ticked
+    for shape in ("", "=apart"):  # (a group of boxes, or each its own as Circle K's read)
+        boxes = _take("?vendor=" + f"http://localhost:PORT/site/assessment-vendor.html?boxes{shape}".replace("?", "%3F")
+                      .replace("=", "%3D"))
+        assert boxes["end"] == "back on the application", (shape, boxes)
+        assert [s.get("pressed") for s in boxes["steps"]][:4] == ["Take Assessment", "Start", "Next", "Submit"], boxes
+        assert boxes["steps"][2]["answered"] == 1, (shape, boxes)
 
 
 @pytest.mark.skipif(not browser_available(), reason="needs Chromium")
