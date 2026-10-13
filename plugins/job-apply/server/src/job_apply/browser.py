@@ -812,7 +812,9 @@ class BrowserSession:
 
     async def _read_listbox_options(self, page: Page, field: dict) -> list[str]:
         loc = self._locator(page, field["id"])
-        wait = 2000 if field["kind"] == "listbox" else 900  # search pickers often show nothing until typed into
+        # (a list's choices can take seconds after it opens on its placeholder alone: Boeing's Workday veteran list, run
+        # 56, still "Select One" after two; _field_options stops waiting as soon as they come)
+        wait = 5000 if field["kind"] == "listbox" else 900  # search pickers often show nothing until typed into
         try:
             await self._open(page, field["id"], loc)
             options = await self._field_options(page, field["id"], loc, wait)

@@ -75,7 +75,9 @@ _ANSWERING = (r"(answer|respond|reply|disclose|say|state|specify|share|declare|i
 _DECLINE = re.compile(
     r"\bdeclin(e|ed|es|ing)\b"
     rf"|\b(not|don t|dont) (wish|want|care|like) to (be )?{_ANSWERING}"
-    rf"|\b(prefer|preferred|choose|chose|elect|opt|wish|rather) not (to )?{_ANSWERING}"
+    rf"|\b(prefers?|preferred|chooses?|chose|elect|opt|wish|rather) not (to )?{_ANSWERING}"
+    # (SuccessFactors' lists at Pfeiffer Vacuum, run 56: "Prefers not to answer", "Not willing to answer")
+    rf"|\b(not|un)( )?willing to {_ANSWERING}"
     r"|^(not specified|unspecified|not disclosed|undisclosed|not declared|undeclared|no answer|no response)$")
 
 
