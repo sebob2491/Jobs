@@ -424,9 +424,12 @@ const RUN = {
 };
 const DONE = new Set(["applied", "interviewing", "offer", "rejected", "withdrawn", "skipped"]);
 
+// A job stopped on a bot check or CAPTCHA (the person's to solve: the desk never does) says so, in its row and its card
+const stopMark = (r) => r.status !== "needs_you" ? "" : r.need === "bot_check" ? "Bot check" : r.captcha || r.need === "captcha" ? "CAPTCHA" : "";
+
 function statusPill(row) {
   const r = row.run;
-  const [text, cls] = r ? RUN[r.status] || [r.status, ""] : STATUS[row.status] || ["", ""];
+  const [text, cls] = r ? (stopMark(r) ? [stopMark(r), "warn"] : RUN[r.status] || [r.status, ""]) : STATUS[row.status] || ["", ""];
   return text ? `<span class="pill ${cls}">${esc(text)}</span>` : "";
 }
 
@@ -551,7 +554,8 @@ function renderSide() {
   $("needs-count").textContent = needs.length;
   $("needs-count").className = "pill " + (needs.length ? "warn" : "");
   const needEntries = needs.map((r) => {
-    const head = `<h3>${esc(r.title)} <span class="small">· ${esc(r.company)}</span></h3><p>${esc(r.reason)}</p>`;
+    const mark = stopMark(r) ? ` <span class="pill warn">${stopMark(r)}</span>` : "";
+    const head = `<h3>${esc(r.title)} <span class="small">· ${esc(r.company)}</span>${mark}</h3><p>${esc(r.reason)}</p>`;
     let body;
     const qs = r.questions || [];
     const repeated = new Set(qs.map((q) => q.label).filter((l, i, all) => all.indexOf(l) !== i));
@@ -677,10 +681,10 @@ function renderHeader() {
   const shownJob = reviewRound ? toSend.find((r) => r.job_id === reviewShown) : null;
   if (!botRound && (toSend.length || reviewRound)) notes.push({cls: "waiting", html: reviewRound && shownJob
     ? `<strong>Reviewing ${esc(shownJob.title)} (${esc(shownJob.company)}).</strong>
-       <span>${shownJob.status === "ready" ? "Check the page in the browser window, then send it, or leave it for later." : "Its last button is the site's own: check the page, press it there, then say so here."} ${toSend.length - 1} more after this one. No other job starts meanwhile.</span>
-       ${shownJob.status === "ready" ? `<button class="primary" data-act="review-submit" data-review="${shownJob.job_id}">Submit this one</button>` : `<button class="primary" data-act="review-applied" data-review="${shownJob.job_id}">I submitted it</button>`}
+       <span>${shownJob.need === "captcha" && shownJob.status !== "ready" ? "Tick its CAPTCHA in the browser window and check the page, then send it, or leave it for later." : shownJob.status === "ready" ? "Check the page in the browser window, then send it, or leave it for later." : "Its last button is the site's own: check the page, press it there, then say so here."} ${toSend.length - 1} more after this one. No other job starts meanwhile.</span>
+       ${sendable(shownJob) ? `<button class="primary" data-act="review-submit" data-review="${shownJob.job_id}">Submit this one</button>` : `<button class="primary" data-act="review-applied" data-review="${shownJob.job_id}">I submitted it</button>`}
        <button data-act="review-next">Next</button> <button data-act="review-stop">Stop</button>`
-    : `<strong>${toSend.length} application${toSend.length === 1 ? "" : "s"} ready for your Submit.</strong>
+    : `<strong>${toSend.length} application${toSend.length === 1 ? "" : "s"} ready for your Submit${toSend.some((r) => r.need === "captcha" && r.status !== "ready") ? ` (${toSend.filter((r) => r.need === "captcha" && r.status !== "ready").length} with a CAPTCHA to tick first)` : ""}.</strong>
        <span>Go through them one by one: each review page comes up in the browser window to check before you send it.</span>
        <button class="primary" data-act="review-round">Review them</button>`});
   const needing = allRuns().filter((r) => r.status === "needs_you").length;
@@ -743,7 +747,9 @@ function botStep() {
 // (the person checks it and presses Submit, or the site's own button and "I submitted it"; Next leaves one for later)
 let reviewRound = false, reviewShown = null;
 const reviewPassed = new Set();
-const SEND_NEEDS = new Set(["your_submit", "check_submit", "submit_failed"]);
+// (a CAPTCHA before its Submit: the person ticks it, then sends it with the desk's Submit, as a ready one)
+const SEND_NEEDS = new Set(["captcha", "your_submit", "check_submit", "submit_failed"]);
+const sendable = (r) => r.status === "ready" || r.need === "captcha";
 const reviewWaiting = () => allRuns().filter((r) => r.status === "ready" || (r.status === "needs_you" && SEND_NEEDS.has(r.need)))
   .sort((a, b) => (a.paused_at || 0) - (b.paused_at || 0));
 function endReview() {
@@ -790,7 +796,7 @@ function announce() {
   if (announced !== null && alertsOn()) {
     for (const r of due) {
       if (announced.has(`${r.job_id}:${r.status}:${r.need || ""}`)) continue;
-      const head = r.status === "ready" ? "ready to submit" : r.need === "bot_check" ? "has a bot check to solve" : "needs you";
+      const head = r.status === "ready" ? "ready to submit" : r.need === "bot_check" ? "has a bot check to solve" : stopMark(r) ? "has a CAPTCHA to solve" : "needs you";
       try {
         const n = new Notification(`${r.company || "A job"} ${head}`, {body: `${r.title}: ${r.reason || ""}`.slice(0, 180),
                                                                      tag: `jobdesk-${r.job_id}`});
@@ -938,7 +944,7 @@ document.addEventListener("click", (e) => {
   if (a === "review-stop") { endReview(); renderHeader(); }
   // their press, on the application the banner named, still waiting as it showed it: never another one
   const named = Number(t.dataset.review), now = reviewWaiting().find((r) => r.job_id === named);
-  const asShown = now && named === reviewShown && (a === "review-submit" ? now.status === "ready" : now.status === "needs_you");
+  const asShown = now && named === reviewShown && (a === "review-submit" ? sendable(now) : now.status === "needs_you");
   if (a === "review-submit" && asShown) act(() => api(`/api/job/${named}/submit`, {}));
   if (a === "review-applied" && asShown) act(() => api(`/api/job/${named}/applied`, {}));
   if ((a === "review-submit" || a === "review-applied") && !asShown) renderHeader();

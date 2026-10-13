@@ -51,8 +51,9 @@ LEFT_SIGN_IN_SETTLE = 3  # seconds before a sign-in page that led elsewhere is t
 ACCOUNT_DRAW_WAIT = 4  # for the application below a Create Account form to be drawn (Qorvo's)
 HANDS_ON = {"sign_in", "email_code"}
 # What the desk's rounds take the person to, one tab at a time, starting no other job meanwhile: bot checks to solve,
-# and applications filled to the step the person sends (a ready one's review page is "ready", not a need)
-ROUND_NEEDS = {"bot_check", "your_submit", "check_submit", "submit_failed"}
+# and applications filled to the step the person sends (a ready one's review page is "ready", not a need; one with a
+# CAPTCHA before its Submit is "captcha": the person ticks it, then sends it)
+ROUND_NEEDS = {"bot_check", "captcha", "your_submit", "check_submit", "submit_failed"}
 # A bot check never holds the queue (the owner's call, Oct 11): its job waits in its tab, watched, while the other
 # jobs go on, and the person solves the checks waiting in a round of their own from the desk ("Bot checks"); each
 # job carries on by itself once its tab is past the check. The desk never solves one.
@@ -424,6 +425,7 @@ class Run:
     account_finished: bool = False  # pressed the Create Account's second step (UKG Pro's "Almost there!"): never again
     try_later: bool = False  # left on a "Try Again Later" page: only the person's Resume goes on from it
     active_at: float = 0.0  # when its paused tab last changed: someone at work in it
+    captcha: bool = False  # paused on a bot check or CAPTCHA (the person's to solve): marked so on the desk
     tab_mark: int = 0  # what its paused tab looked like then (address and box values)
     left: bool = False  # paused for the person, and the queue went on without it
     moved_since: float = 0.0  # since when every look has found its paused tab past the pause
@@ -1306,6 +1308,8 @@ class Applier:
         run.status, run.need, run.reason = "needs_you", need, reason
         run.questions = questions or []
         run.blocking = need in HANDS_ON
+        # a sign-in's or Create Account's own picture check (Edwards', live) counts too: the page it paused on shows it
+        run.captcha = need in ("bot_check", "captcha") or bool(seen and (seen.get("captcha") or seen.get("challenge")))
         run.paused_at = run.active_at = time.time()
         run.tab_mark, run.left, run.moved_since = 0, need == "bot_check", 0.0  # (a bot check: watched, the queue on)
         run.mail_checked, run.mail_done, run.verifying = 0.0, False, False

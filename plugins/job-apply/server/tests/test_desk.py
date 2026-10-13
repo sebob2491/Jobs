@@ -1657,6 +1657,67 @@ def test_the_applications_ready_for_the_persons_submit_are_reviewed_in_one_round
     run(go())
 
 
+def test_jobs_stopped_on_a_bot_check_or_captcha_are_marked_and_a_forms_captcha_is_reviewed_in_the_round(srv):
+    """The owner (Oct 12): which jobs stopped on a bot check or CAPTCHA? Each says so on its card, and the
+    filled form with a CAPTCHA before its Submit comes up in the "Review them" round with the others ready
+    to send: the person ticks it and presses "Submit this one" (their press; the desk never solves one)."""
+    from playwright.async_api import async_playwright
+
+    from job_apply.pipeline import Run
+
+    desk = Desk(srv)
+    desk.applier.start = lambda: None
+    desk.search.update(status="done", at=time.time())
+    names = ["Example Fab", "Example Litho", "Example Etch", "Example Optics"]
+    jobs = [srv.add_job(url=f"https://example.com/job/{i}", title="Technician", company=c)["job"]
+            for i, c in enumerate(names)]
+    shapes = [dict(need="bot_check", left=True), dict(need="sign_in", captcha=True),
+              dict(need="captcha", captcha=True), dict(need="questions")]
+    for i, (job, name, shape) in enumerate(zip(jobs, names, shapes)):
+        r = Run(job["id"], "Technician", name, status="needs_you", reason="Waiting.", **shape)
+        r.paused_at = 1000.0 + i
+        desk.applier.runs[job["id"]] = r
+    shown, sent = [], []
+
+    async def focus(job_id):
+        shown.append(job_id)
+        return True
+    desk.applier.focus = focus
+    desk.applier.start_round = lambda job_id: None
+    desk.applier.submit_now = lambda job_id: (sent.append(job_id), desk.applier.runs[job_id])[1]
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with async_playwright() as pw:
+                browser = await pw.chromium.launch(**launch_options())
+                page = await browser.new_page()
+                await page.goto(desk.url)
+                await page.wait_for_selector("#needs .task h3 .pill")
+                marks = await page.eval_on_selector_all("#needs .task h3", "hs => hs.map((h) => h.innerText)")
+                marked = {n: m for m in marks for n in names if n in m}
+                assert "Bot check" in marked["Example Fab"] and "CAPTCHA" in marked["Example Litho"], marks
+                assert "CAPTCHA" in marked["Example Etch"], marks
+                assert "CAPTCHA" not in marked["Example Optics"] and "Bot check" not in marked["Example Optics"], marks
+                assert "1 application ready for your Submit (1 with a CAPTCHA to tick first)" in await page.inner_text("#notices")
+                assert not sent
+                await page.click("#notices [data-act=review-round]")
+                await page.wait_for_selector("#notices [data-act=review-submit]")
+                assert shown == [jobs[2]["id"]], shown
+                assert "Tick its CAPTCHA" in await page.inner_text("#notices")
+                await page.click("#notices [data-act=review-submit]")
+                for _ in range(40):
+                    if sent:
+                        break
+                    await page.wait_for_timeout(50)
+                assert sent == [jobs[2]["id"]], sent
+                await browser.close()
+        finally:
+            await desk.stop()
+
+    run(go())
+
+
 def test_a_review_rounds_submit_sends_only_the_application_its_banner_names(srv):
     """The review of the round: a review page whose tab was closed is passed over for the next one, and the banner
     went on naming the closed one for up to a poll while its Submit would have sent the next, which the person never
