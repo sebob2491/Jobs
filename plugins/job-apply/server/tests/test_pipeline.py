@@ -7682,6 +7682,33 @@ def test_a_bare_i_agree_is_ticked_only_where_the_words_above_it_are_the_sites_te
     assert [b["id"] for b in kept] == [boxes[0]["id"], boxes[3]["id"], boxes[5]["id"], boxes[7]["id"]], (boxes, kept)
 
 
+def test_an_agreement_box_is_ticked_only_where_the_words_above_it_name_the_sites_terms(srv, tmp_path):
+    """The review of 0.3.133's: a bare "I agree" was ticked whenever the words above it named no sign-up the desk
+    knew, though they named no terms either ("Join our Careers Community", "Sign up for career alerts", a heading
+    "Email updates" under the password). Its words must name the site's terms, privacy statement or its processing of
+    personal data, and never attest or sign the person up (texts and calls among them)."""
+    page = tmp_path / "account.html"
+    page.write_text('<!doctype html><h2>Create Account</h2><form><label for="e">Email Address</label>'
+                    '<input id="e" type="email"><label for="pw">Password</label><input id="pw" type="password">'
+                    '<div>Email updates</div><label><input type="checkbox" id="a"> I agree</label></form>'
+                    '<div><p>Join our Careers Community to hear about new roles at Acme.</p>'
+                    '<label><input type="checkbox" id="b"> I agree</label></div>'
+                    '<div><p>Sign up for career alerts.</p><label><input type="checkbox" id="c"> I consent</label></div>'
+                    '<div><p>I agree to receive recruiting texts and calls from Acme, as our Privacy Policy describes.</p>'
+                    '<label><input type="checkbox" id="d"> I agree</label></div>'
+                    '<div><p>I certify that my answers are true and complete. See our Privacy Policy.</p>'
+                    '<label><input type="checkbox" id="f"> I agree</label></div>'
+                    '<div><p>Acme processes your personal data to consider your application.</p>'
+                    '<label><input type="checkbox" id="g"> I agree</label></div>'
+                    '<button type="submit">Create Account</button>', encoding="utf-8")
+    run(srv.browser.goto(page.as_uri()))
+    data = run(srv.browser.inspect(include_dropdown_options=False))
+    boxes = pipeline._terms_boxes(data)
+    assert len(boxes) == 6, data["fields"]
+    kept = run(Applier(srv)._said_terms(boxes))
+    assert [b["id"] for b in kept] == [boxes[5]["id"]], (boxes, kept)
+
+
 def test_a_read_and_understood_box_is_ticked_only_under_the_sites_privacy_statement(srv, tmp_path):
     """Avnet's Workday Create Account (run 44, Oct 13): its box says only "Yes, I have read and understood.", under
     the paragraph that names its Applicant Data Protection and Privacy Statement, and no account was made without it.

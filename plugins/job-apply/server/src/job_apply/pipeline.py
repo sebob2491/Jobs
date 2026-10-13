@@ -201,10 +201,14 @@ _READ_ABOVE = re.compile(r"\b(?:documents?|terms|text|information|notices?|state
 # Data Protection and Privacy Statement"): ticked only where those words are the site's terms or privacy statement
 _READ_UNDERSTOOD = re.compile(r"^\W*(?:yes,? )?i have read,? and (?:understood|understand)(?: (?:it|this|them|the above))?\W*$",
                               re.I)
-# what those words must name (never the terms of employment: the review of 0.3.133's), and what they mustn't be
+# What the words above any such box (a bare "I agree", "the documents above", "read and understood") must name for the
+# desk to tick it: the site's terms or privacy statement, or its processing of personal data; never the terms of
+# employment, and never an attestation (the reviews of 0.3.133's: a paragraph that names none of these, "Join our
+# Careers Community", is the person's however it's worded)
 _SITES_TERMS = re.compile(r"\b(?:privacy|data protection)\b[\w ]{0,25}\b(?:policy|notice|statement)\b|"
-                          r"\bterms (?:of (?:use|service)|and conditions)\b", re.I)
-_ATTESTS = re.compile(r"of employment|certif|true and complete|background check", re.I)
+                          r"\bterms (?:of (?:use|service)|and conditions)\b|\bpersonal (?:data|information)\b|\bgdpr\b",
+                          re.I)
+_ATTESTS_ABOVE = re.compile(r"of employment|certif|true and complete|background check", re.I)
 # An attestation or privacy agreement that also signs the person up: "... and consent to receive email communications
 # from Acme", "... and would like to receive updates" (the safety audit of Oct 12): never ticked for them
 _SIGNS_UP_TOO = re.compile(r"\breceiv\w*\b.{0,40}\b(?:e-?mails?|communications?|updates?|messages?|news\w*|offers|"
@@ -239,7 +243,8 @@ _SIGN_UP_ABOVE = re.compile(r"talent (?:community|network|pool)|job alerts?|news
                             r"opportunities|marketing)\b|"
                             # (the review of 0.3.133's: kept for later vacancies, shared with partners or agencies)
                             r"talent database|future (?:\w+ )?vacanc|keep\w* (?:my|your) (?:personal )?data|"
-                            r"share (?:my|your)|partners|staffing|recruit\w* agenc", re.I)
+                            r"share (?:my|your)|partners|staffing|recruit\w* agenc|"
+                            r"careers? (?:community|network)|\balerts?\b|\btexts?\b|\bcalls?\b", re.I)
 # A box whose own words say only that the person agrees: what it agrees to is in the words above it
 _BARE_AGREE = re.compile(r"^\W*(?:yes,? )?i (?:agree|consent|accept)\W*$", re.I)
 # A Create Account box that says the person applies from outside, not as one of the employer's staff
@@ -2276,8 +2281,8 @@ class Applier:
                 # nor anything never agreed to for the person, a waiver among them: the review of 0.3.133's)
                 if not above or _SIGN_UP_ABOVE.search(above) or _NEVER_AGREED.search(above) or _WAIVES.search(above):
                     continue  # (unread, or nothing to read: the person's)
-                if _READ_UNDERSTOOD.match(label) and (not _SITES_TERMS.search(above) or _ATTESTS.search(above)):
-                    continue  # (read and understood anything else: the person's)
+                if not _SITES_TERMS.search(above) or _ATTESTS_ABOVE.search(above):
+                    continue  # (agreed to, or read and understood, anything else: the person's)
             kept.append(box)
         return kept
 
