@@ -149,6 +149,30 @@ def test_workday_2026_search_prompt_is_picked_not_typed(srv):
 
 
 
+def test_a_workday_groups_own_list_drawn_over_the_lists_below_is_read_as_its_own(srv):
+    """Air Products' and Wells Fargo's Workday (run 44; live probe 47, Oct 13): "How Did You Hear About Us?" sits
+    above the Country and Prefix lists. A group's own list, drawn under a header (its back button and name), covers
+    them, nearer the Country list's edge than its own box, so it was taken for the Country list's menu and nothing
+    was read ("Picked 'Website' but the field didn't take it", every time). A menu drawn over another list isn't
+    that list's: the group's entries are read, its entry for the answer picked, or the entries asked about."""
+    run(srv.browser.goto(fixture_url("site/workday-prompt-over-lists.html")))
+    heard = by_label(run(srv.inspect_form(include_dropdown_options=False))["fields"], "how did you hear")
+    out = run(srv.fill_form([{"id": heard["id"], "value": "Company Website"}]))
+    assert out["results"][0]["ok"], out
+    assert by_label(run(srv.inspect_form(include_dropdown_options=False))["fields"], "how did you hear")["value"] == \
+        "Company Website"
+    run(srv.browser.goto(fixture_url("site/workday-prompt-over-lists.html")))
+    heard = by_label(run(srv.inspect_form(include_dropdown_options=False))["fields"], "how did you hear")
+    out = run(srv.fill_form([{"id": heard["id"], "value": "Advert on Job Board"}]))
+    assert not out["results"][0]["ok"] and out["results"][0]["options"] == ["Other"], out
+    # an entry inside a group, searched for: Workday chooses the one it finds at once, and closes the list (live
+    # probe 45): that's the answer taken, not "nothing in its list matched"
+    out = run(srv.fill_form([{"id": heard["id"], "value": "Newspaper"}]))
+    assert out["results"][0]["ok"], out
+    assert by_label(run(srv.inspect_form(include_dropdown_options=False))["fields"], "how did you hear")["value"] == \
+        "Newspaper"
+
+
 def test_self_identification_dropdowns_are_picked_from_their_lists_never_typed_into(srv, job_apply_home):
     """Reported in use (Oct 2026): the desk typed self-identification answers into dropdowns,
     which didn't work. In the live check, onsemi's Oracle Gender lists only Female and Male, and
@@ -1077,9 +1101,12 @@ def test_a_maps_own_controls_are_not_the_pages_buttons(srv):
     assert texts == ["Apply"], texts
 
 
-def test_a_menu_left_over_the_next_field_isnt_its_options(srv):
+@pytest.mark.parametrize("overlap", [0, 1, 3, 8])
+def test_a_menu_left_over_the_next_field_isnt_its_options(srv, overlap):
     """Micron: the availability question's menu stayed open over the next question and was
-    drawn afresh when focus moved, so its options were read as the next question's."""
+    drawn afresh when focus moved, so its options were read as the next question's. Also where
+    the menu is drawn a little over its own box (a joined border, a rounding, or more: the review
+    of 0.3.134's), which never makes it the next question's."""
     run(srv.open_application(url=fixture_url("jsonld_posting.html")))
     page = run(srv.browser.page())
     run(page.set_content("""
@@ -1098,7 +1125,7 @@ def test_a_menu_left_over_the_next_field_isnt_its_options(srv):
           ul.setAttribute('role', 'listbox');
           const r = input.getBoundingClientRect();
           ul.style.left = (r.left + scrollX) + 'px';
-          ul.style.top = (r.bottom + scrollY) + 'px';
+          ul.style.top = (r.bottom + scrollY - OVERLAP) + 'px';
           for (const t of options) {
             const li = document.createElement('li');
             li.setAttribute('role', 'option');
@@ -1111,6 +1138,7 @@ def test_a_menu_left_over_the_next_field_isnt_its_options(srv):
         }
         const AVAIL = ['Immediately after offer acceptance', 'Within 1 month after offer acceptance',
                        'Within 2 months after offer acceptance'];
+        const OVERLAP = %d;
         let availMenu = null;
         avail.addEventListener('click', () => { if (!availMenu) availMenu = menu(avail, AVAIL); });
         // ignores Escape and blur, and draws itself again when focus moves on
@@ -1118,7 +1146,7 @@ def test_a_menu_left_over_the_next_field_isnt_its_options(srv):
         const later = () => setTimeout(() => menu(friends, ['Yes', 'No']), 400);
         friends.addEventListener('click', later);
         friends.addEventListener('keydown', (e) => { if (e.key === 'ArrowDown') later(); });
-      </script>"""))
+      </script>""" % overlap))
     fields = run(srv.inspect_form(include_dropdown_options=True))["fields"]
     assert by_label(fields, "available")["options"][0] == "Immediately after offer acceptance"
     assert by_label(fields, "friends")["options"] == ["Yes", "No"]

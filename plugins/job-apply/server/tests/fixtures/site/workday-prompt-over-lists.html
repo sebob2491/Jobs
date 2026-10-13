@@ -1,0 +1,105 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>My Information</title>
+<style>
+  body { margin: 0; font: 14px sans-serif; }
+  .field { position: absolute; left: 290px; width: 340px; }
+  .field label { display: block; height: 24px; }
+  #wrap { height: 36px; }
+  #source--source { width: 306px; height: 36px; box-sizing: border-box; }
+  button[aria-haspopup] { width: 340px; height: 40px; text-align: left; }
+  #popup { position: absolute; top: 162px; left: 290px; width: 340px; z-index: 5; background: #fff;
+           border: 1px solid #999; }
+  #popup[hidden] { display: none; }
+  #head { height: 41px; box-sizing: border-box; }
+  [role="option"] { height: 32px; line-height: 32px; padding: 0 6px; box-sizing: border-box; }
+  [role="option"] > div { display: flex; justify-content: space-between; align-items: center; }
+  svg { width: 16px; height: 16px; }
+</style>
+</head>
+<body>
+<!-- like Air Products' and Wells Fargo's Workday (live probe 47, Oct 13): "How Did You Hear About Us?" above the
+     Country and Prefix lists. Its prompt opens on the top level, each choice a group (a chevron) that opens its own
+     list under a header (a back button and the group's name), the list's entries radio buttons; the header pushes
+     the list 43px below the box, over the Country list, nearer that list's edge than the box. -->
+<div data-automation-id="progressBarActiveStep">My Information</div>
+<div class="field" style="top: 100px" data-automation-id="formField-source">
+  <label for="source--source">How Did You Hear About Us?<abbr title="required">*</abbr></label>
+  <div data-automation-id="multiSelectContainer" id="ms-source">
+    <div data-automation-id="multiselectInputContainer" id="wrap">
+      <input id="source--source" data-uxi-widget-type="selectinput" placeholder="Search" aria-required="true">
+    </div>
+    <div class="chosen"></div>
+  </div>
+</div>
+<div class="field" style="top: 186px" data-automation-id="formField-country">
+  <label for="country">Country*</label>
+  <button type="button" id="country" aria-haspopup="listbox">United States of America</button>
+</div>
+<div class="field" style="top: 351px" data-automation-id="formField-prefix">
+  <label for="prefix">Prefix</label>
+  <button type="button" id="prefix" aria-haspopup="listbox">Select One</button>
+</div>
+<div id="popup" data-automation-id="responsiveMonikerPrompt" hidden></div>
+<button type="button" data-automation-id="pageFooterNextButton" style="position: absolute; top: 600px">Save and Continue</button>
+<script>
+  const groups = { 'Advertisement': ['Newspaper', 'Radio'], 'Advert on Job Board': ['Other'],
+                   'Website': ['Company Website', 'Other Website'] };
+  const input = document.getElementById('source--source');
+  const popup = document.getElementById('popup');
+  const chosen = document.querySelector('#ms-source .chosen');
+  function item(text, group) {
+    const o = document.createElement('div');
+    o.setAttribute('role', 'option');
+    o.setAttribute('data-automation-id', 'menuItem');
+    o.setAttribute('aria-label', text + ' not checked');
+    o.innerHTML = '<div data-automation-id="promptLeafNode">' + (group ? '' : '<input type="radio" data-automation-id="radioBtn" tabindex="-1">')
+      + '<div data-automation-id="promptOption">' + text + '</div>'
+      + (group ? '<span><svg class="wd-icon-chevron-right-small wd-icon"></svg></span>' : '') + '</div>';
+    o.addEventListener('click', (e) => { e.stopPropagation(); group ? setTimeout(() => show(text), 300) : pick(text); });
+    return o;
+  }
+  function show(group) {
+    popup.innerHTML = '';
+    if (group) {
+      const head = document.createElement('div');
+      head.id = 'head';
+      head.innerHTML = '<span data-automation-id="backButton">&larr;</span> <span data-automation-id="promptTitle">' + group + '</span>';
+      popup.append(head);
+    }
+    const list = document.createElement('div');
+    list.setAttribute('role', 'listbox');
+    list.setAttribute('data-automation-id', 'activeListContainer');
+    for (const t of group ? groups[group] : Object.keys(groups)) list.append(item(t, !group));
+    popup.append(list);
+    popup.hidden = false;
+  }
+  function pick(text) {
+    chosen.innerHTML = '<ul data-automation-id="selectedItemList" role="listbox"><li role="presentation">'
+      + '<div data-automation-id="selectedItem" role="option" aria-label="' + text + ', press delete to clear value.">'
+      + '<p data-automation-id="promptOption">' + text + '</p></div></li></ul>';
+    popup.hidden = true;
+  }
+  input.addEventListener('click', () => setTimeout(() => show(null), 150));
+  // typed words and Enter search every group's entries; one found is chosen at once, as Workday does (live probe 45:
+  // "Disability Related Source" chose "Disability Related Source Other")
+  input.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter') return;
+    const q = input.value.toLowerCase();
+    const found = [].concat(...Object.values(groups)).filter((t) => t.toLowerCase().includes(q));
+    setTimeout(() => {
+      if (found.length === 1) { pick(found[0]); input.value = ''; return; }
+      popup.innerHTML = '';
+      const list = document.createElement('div');
+      list.setAttribute('role', 'listbox');
+      list.setAttribute('data-automation-id', 'activeListContainer');
+      for (const t of found) list.append(item(t, false));
+      popup.append(list);
+      popup.hidden = false;
+    }, 200);
+  });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') popup.hidden = true; });
+  document.addEventListener('click', (e) => { if (!popup.contains(e.target) && e.target !== input) popup.hidden = true; });
+</script>
+</body>
+</html>
