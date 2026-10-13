@@ -735,7 +735,9 @@ EXTRACT_JS = r"""
   // which a step's "2 of 6" bar has)
   const LOADING = '[data-automation-id="loading"], [data-automation-id*="loadingSpinner" i], '
     + '[data-automation-id*="loading-dots" i], [data-automation-id*="loadingDots" i], [data-part="loading-animation-dot"], '
-    + '[aria-busy="true"], [role="progressbar"]:not([aria-valuenow])';
+    + '[aria-busy="true"], [role="progressbar"]:not([aria-valuenow]), '
+    // (and Workday's whole step still loading: its grey bars where a step goes, Baker Tilly's Create Account/Sign In, run 62)
+    + '[data-automation-id="applyFlowLoadingPage"]';
   // and Workday's placeholder for a section still loading: a hidden "Loading" beside its grey bars (Wells Fargo's and
   // Hitachi's My Information after the account's sign-in, run 57: its Address, Email and Phone never came)
   const bones = () => [...document.querySelectorAll('div, span')].some((el) => el.childElementCount === 0

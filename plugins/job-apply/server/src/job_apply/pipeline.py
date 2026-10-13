@@ -2002,10 +2002,25 @@ class Applier:
                 step_waited.add(drawn)
                 if await self._wait_for_step(STEP_LOAD_WAIT if loading else LATE_BUTTONS_WAIT, data):
                     continue
-            if action is None and sign_in_step:
+            # a page still loading that nothing else explains the stop of (an agreement to press, a bot check, a closed
+            # posting or a site down are said for what they are, the review of 0.3.147), and one the desk may reload
+            # (once a job; never after a Submit was pressed, as a reload may send a form again, nor after the person's
+            # own Resume from a stop, as what they typed there would go: Applier.resume)
+            reloadable = loading and _agreement_button(data) is None and not data.get("captcha") and not _BOT_BADGE.search(
+                " ".join([text[:3000], *(a.get("text") or "" for a in data.get("actions") or [])])) \
+                and not _closed_notice(data, text) and not _maintenance_page(data) and not _account_step(data) \
+                and not any(g.startswith(f"{_page_key(data)} ") for g in agreed) \
+                and not any(_errorish(e) for e in data.get("errors") or [])
+            may_reload = reloadable and not run.load_reloaded and not run.pressed_before and run.page is not None
+            if action is None and sign_in_step and not may_reload:
                 # Workday's sign-in step whose sign-in buttons never drew (Applied's, now and then):
-                # read as an ordinary page, so only a change from this one is the person past it
+                # read as an ordinary page, so only a change from this one is the person past it. One still loading
+                # (Baker Tilly's, run 62: the whole step Workday's loading bars) is reloaded first, below
                 await self._bring_forward(run)
+                if loading:
+                    return self._pause(run, "sign_in", f"{_site(run, data)}'s sign-in step hasn't finished loading. "
+                                       "Reload it in the browser window, or sign in there (its Sign In at the top); "
+                                       "the desk carries on by itself after that.", seen=data)
                 return self._pause(run, "sign_in", f"Sign in (or create your account) on {_site(run, data)} in "
                                    "the browser window; the desk carries on by itself after that.", seen=data)
             if action is None:
@@ -2022,20 +2037,12 @@ class Applier:
                     saved_waited.add(just)
                     await self._wait_for_step_change(just, STEP_SAVE_WAIT)
                     continue
-                # (only where nothing else explains the stop: an agreement to press, a bot check, a closed posting or a
-                # site down are said for what they are, the review of 0.3.147)
-                if loading and _agreement_button(data) is None and not data.get("captcha") and not _BOT_BADGE.search(
-                        " ".join([text[:3000], *(a.get("text") or "" for a in data.get("actions") or [])])) \
-                        and not _closed_notice(data, text) and not _maintenance_page(data) and not _account_step(data) \
-                        and not any(g.startswith(f"{_page_key(data)} ") for g in agreed) \
-                        and not any(_errorish(e) for e in data.get("errors") or []):
+                if reloadable:
                     # still loading after the wait (Wells Fargo's and Hitachi's Workday My Information after the account's
                     # sign-in, run 57: its Address, Email and Phone stayed loading placeholders, its Save and Continue
                     # greyed, and the desk said it couldn't find the way on): reloaded once a job, the reload waited on as
-                    # a step of its own, and then said for what it is. Never after a Submit was pressed (a reload may send
-                    # a form again), nor after the person's own Resume from a stop (what they typed there would go:
-                    # Applier.resume)
-                    if not run.load_reloaded and not run.pressed_before and run.page is not None:
+                    # a step of its own, and then said for what it is
+                    if may_reload:
                         run.load_reloaded = True
                         step_waited.discard(drawn)
                         # (a new page: its late buttons waited on, and the steps it goes through again no circle, as

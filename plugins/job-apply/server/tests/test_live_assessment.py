@@ -95,7 +95,7 @@ def test_an_assessment_vendors_page_with_the_applicants_details_is_taken_and_no_
     vendor = "http://localhost:PORT/site/assessment-vendor.html?welcome&email=EMAIL"
     query = "?vendor=" + vendor.replace("?", "%3F").replace("=", "%3D").replace("&", "%26")
     result = _take(query, vendors=("localhost",))
-    assert result["end"] == "back on the application", result
+    assert result["end"] == "back on the application", result  # (its lone "already taken" box never ticked: run 62)
     assert [s.get("pressed") for s in result["steps"]][:4] == ["Take Assessment", "Continue", "Next", "Submit"], result
     other = _take(query)
     assert other["end"] == "it opened no assessment off the application's site", other
@@ -170,3 +170,28 @@ def test_the_test_identity_makes_a_create_account_choice_the_desk_leaves_to_the_
     assert other["did"] == "" and "created" not in other["kept"] and other["kept"]["visibility"] is None, other
     alerts = _finish_account("Submit", "&alerts")  # (a required choice of job alerts too: the person's, never made)
     assert alerts["did"] == "" and "created" not in alerts["kept"] and alerts["kept"]["visibility"] is None, alerts
+
+
+@pytest.mark.skipif(not browser_available(), reason="needs Chromium")
+def test_an_assessments_answer_tiles_are_clicked_and_a_word_list_that_wants_more_gets_more():
+    """Circle K's (run 62): its statements' answers are tiles to click under "Answers" (nothing read as a box but its
+    Auto Advance switch), and the taker found no way on. One is clicked at random, and the page goes on by itself.
+    The Predictive Index's word list (run 62) stayed after its Continue: pressed once and stayed, one more word is
+    ticked, and it goes on."""
+    def take(mode: str) -> dict:
+        vendor = f"http://localhost:PORT/site/assessment-vendor.html?{mode}"
+        return _take("?vendor=" + vendor.replace("?", "%3F").replace("=", "%3D").replace("&", "%26"))
+
+    for mode in ("tiles", "tiles=fixed"):  # (fixed: its heading stays "1 Statement", the review of 0.3.150)
+        tiles = take(mode)
+        assert tiles["end"] == "back on the application", (mode, tiles)
+        clicked = [s for s in tiles["steps"] if s.get("clicked")]
+        assert len(clicked) == 2 and clicked[0]["tiles"] == ["Strongly disagree", "Disagree", "Neutral", "Agree",
+                                                             "Strongly agree"], (mode, tiles)  # (no link, no Help)
+        assert all(not s.get("questions") for s in clicked), tiles  # (its Auto Advance switch is no question to answer)
+    dead = take("tiles=dead")  # (tiles that take no click: three clicks that change nothing end it)
+    assert dead["end"] == "the page didn't move on" and sum(1 for s in dead["steps"] if s.get("clicked")) == 3, dead
+    words = take("words")
+    assert words["end"] == "back on the application", words
+    stayed = next(s for s in words["steps"] if s.get("ticked_more"))
+    assert "Please select at least 2 words." in stayed["errors"] and stayed["chosen"], words

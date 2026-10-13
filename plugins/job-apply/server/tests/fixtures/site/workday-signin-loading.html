@@ -1,0 +1,31 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Apply</title>
+<style>.bone { height: 40px; width: 300px; background: #eee; margin-bottom: 8px; }</style>
+</head>
+<body>
+<!-- like Baker Tilly's Workday (run 62, Oct 13): Apply Manually opened "current step 1 of 7 Create Account/Sign In"
+     with Workday's whole-step loading skeleton (applyFlowLoadingPage: grey bars) and only its header's Sign In, and it
+     never drew the step's sign-in; the desk said "Sign in (or create your account)". ?heal: the page reloaded draws
+     the step (here a form with its Submit); ?late=<ms>: it draws that long after it opens, with no reload. -->
+<header><button type="button" data-automation-id="utilityButtonSignIn">Sign In</button></header>
+<ol aria-label="Application Progress">
+  <li data-automation-id="progressBarActiveStep">current step 1 of 7 Create Account/Sign In</li>
+  <li>My Information</li><li>My Experience</li><li>Review</li>
+</ol>
+<main id="step">
+  <div data-automation-id="applyFlowLoadingPage"><div class="bone"></div><div class="bone"></div><div class="bone"></div></div>
+</main>
+<script>
+  const q = new URLSearchParams(location.search);
+  const healed = q.has('heal') && sessionStorage.getItem('seen') === '1';
+  sessionStorage.setItem('seen', '1');
+  const draw = () => {
+    document.getElementById('step').innerHTML = '<h2>Review</h2><form onsubmit="return false"><label for="fn">First '
+      + 'Name</label><input id="fn"><button type="submit">Submit</button></form>';
+  };
+  if (healed) draw();
+  if (q.has('late')) setTimeout(draw, Number(q.get('late')));
+</script>
+</body>
+</html>
