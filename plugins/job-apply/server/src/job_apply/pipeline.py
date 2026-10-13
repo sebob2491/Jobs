@@ -475,6 +475,7 @@ class Run:
     mail_checked: float = 0.0  # when the inbox was last looked at for its emailed code or link
     mail_done: bool = False  # the code or link from the inbox went in: no more looking
     employer_mail: frozenset[str] | None = None  # the employer's own mail domains, from its list (looked up once)
+    others_mail: Any = False  # _another_employers_mail's answer for this job (False: not looked up yet)
     # what the desk's looks in the inbox came to, for the live check's LIVE_INBOX line (not the person's)
     mail_looks: int = 0
     mail_last: str = ""
@@ -1251,10 +1252,13 @@ class Applier:
         look_back = SHARED_LOOK_BACK if any(t <= run.paused_at for t in others) else mailbox.LOOK_BACK
         try:
             want = "code" if boxes else "reset" if run.resetting else "link"
+            if run.others_mail is False:  # (the lists read once a job, off the event loop)
+                job = self.srv.tracker().get(run.job_id, with_description=False) or {}
+                run.others_mail = await asyncio.to_thread(_another_employers_mail, str(run.company or job.get("company")
+                                                                                       or ""), run.employer_mail or frozenset())
             found = await asyncio.to_thread(mailbox.search, *login, run.paused_at, senders, want, own_link,
                                             min(later) if later else None, look_back,
-                                            others=_another_employers_mail(str(run.company or ""), run.employer_mail
-                                                                           or frozenset()) if want == "code" else None)
+                                            others=run.others_mail if want == "code" else None)
         except mailbox.MailboxError as e:
             if "app password" in str(e):
                 self._mail_refused = login[1]  # not tried again until a new one is saved
@@ -2205,7 +2209,13 @@ class Applier:
                             and re.search(rf"\b{re.escape(norm(clean_label(f.get('label') or '')))}\b", said)]
                     # a date's parts (Workday's Month / Day / Year) are answered again as a date is, in one run: typed
                     # again one by one, each left before the next, they'd go into the wrong part
-                    wrong = [f for f in lost if f.get("invalid") or f.get("role") == "spinbutton"]
+                    # (only a date its label names alone: an "Error-From" on My Experience isn't about every job's From)
+                    blocks: dict[str, set[str]] = {}
+                    for f in seen_now.get("fields") or []:
+                        if f.get("role") == "spinbutton":
+                            blocks.setdefault(norm(clean_label(f.get("label") or "")), set()).add(str(f.get("section") or ""))
+                    wrong = [f for f in lost if f.get("invalid") or f.get("role") == "spinbutton"
+                             and len(blocks.get(norm(clean_label(f.get("label") or "")), ())) <= 1]
                     if wrong and looked not in redone_pages:
                         # of those, the ones the page marks invalid themselves (not a box whose label an error about
                         # another names: the review's) showing something other than the profile's answer: what the
@@ -4599,8 +4609,8 @@ def _another_employers_mail(company: str, own: frozenset[str]) -> Callable[[str,
     employer's own domains, `own`) whose subject names another employer on the person's lists and not this one.
     Oracle mails every employer's code from one address, "onsemi Confirm Your Identity" (run 54: onsemi's code came
     after onsemi's wait ended, and American Express, waiting a minute later, put it in). None when there's nothing
-    to tell by. Employers whose names begin alike (Grand Canyon Education and Grand Canyon University) aren't told
-    apart this way."""
+    to tell by. Employers whose names begin with the same two words (Grand Canyon Education and Grand Canyon
+    University) aren't told apart this way."""
     def names(name: str) -> set[str]:  # "Tokyo Electron (TEL)": the name, and the one in brackets
         return {n for n in (norm(x) for x in (re.sub(r"\(.*?\)", " ", name), *re.findall(r"\((.*?)\)", name)))
                 if len(n) >= 3}
@@ -4610,8 +4620,12 @@ def _another_employers_mail(company: str, own: frozenset[str]) -> Callable[[str,
         theirs = {n for c in every_employer() for n in names(str(c.get("name") or ""))} - mine
     except Exception:  # (an entry of the person's written oddly: told by sender alone, as before)
         return None
-    firsts = {m.split()[0] for m in mine}
-    theirs = {t for t in theirs if t.split()[0] not in firsts and not any(t in m or m in t for m in mine)}
+    # (not told apart where their names begin with the same two words, or one is the other's first word: Grand
+    # Canyon Education's mail may name Grand Canyon University; American Express and American Airlines are)
+    def lead(name: str) -> str:
+        return " ".join(name.split()[:2])
+
+    theirs = {t for t in theirs if lead(t) not in {lead(m) for m in mine} and not any(t in m or m in t for m in mine)}
     if not mine or not theirs:
         return None
 

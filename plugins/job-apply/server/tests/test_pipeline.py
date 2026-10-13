@@ -2760,12 +2760,14 @@ def test_a_code_from_a_shared_sender_naming_another_employer_is_never_this_jobs(
     """Run 54: Oracle mailed onsemi's code from its one shared address ("onsemi Confirm Your Identity") after onsemi's
     wait had ended, and American Express, waiting a minute later on a code from that address too, put it in ("The
     code isn't valid"). Such mail is another job's; the employer's own domain's, or a subject naming this employer
-    (or none on the lists), stays this job's. Employers whose names begin alike aren't told apart by it."""
+    (or none on the lists), stays this job's. Employers whose names begin with the same two words aren't told apart
+    by it."""
     (job_apply_home / "companies.yaml").write_text(yaml.safe_dump({"lists": ["phoenix-metro", "semiconductor-az"]}))
     oracle = "workflow.email.us-phoenix-1.ocs.oraclecloud.com"
     others = pipeline._another_employers_mail("American Express", frozenset({"americanexpress.com"}))
     assert others(oracle, "onsemi Confirm Your Identity")
     assert others(oracle, "Thank you for your interest in Tokyo Electron (TEL)")
+    assert others(oracle, "American Airlines Confirm Your Identity")  # (one word alike isn't enough: the review)
     assert not others(oracle, "American Express Confirm Your Identity")
     assert not others(oracle, "Confirm Your Identity")
     assert not others("recruitment.americanexpress.com", "onsemi Confirm Your Identity")  # (the employer's own)
@@ -6023,7 +6025,8 @@ def test_an_emailed_code_is_read_only_from_its_own_mail_and_its_own_site(srv, mo
                      'your email</label><input id="code" type="text"><button type="button">Verify</button></body></html>'}
     asked = {}
 
-    def search(address, password, since, senders, want, allowed_link, before=None, look_back=pipeline.mailbox.LOOK_BACK):
+    def search(address, password, since, senders, want, allowed_link, before=None, look_back=pipeline.mailbox.LOOK_BACK,
+               others=None):
         asked[since] = (before, look_back, allowed_link)
         return None
 

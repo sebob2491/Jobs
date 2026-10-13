@@ -361,9 +361,9 @@ def _scan(box: imaplib.IMAP4, folder: str, since: float, allowed: set[str], want
         sender = str(head.get("From") or "")
         if signed_only and not signed_by_sender(head):
             continue
-        if others and others(email.utils.parseaddr(sender)[1].rsplit("@", 1)[-1].lower(), str(head.get("Subject") or "")):
-            continue
-        if received >= since - look_back and (before is None or received < before) and sender_allowed(sender, allowed):
+        if received >= since - look_back and (before is None or received < before) and sender_allowed(sender, allowed) \
+                and not (others and others(email.utils.parseaddr(sender)[1].rsplit("@", 1)[-1].lower(),
+                                           str(head.get("Subject") or ""))):
             wanted.append((received, mid, sender))
     for received, mid, sender in sorted(wanted, key=lambda w: w[0], reverse=True):  # newest first
         _, parts = box.fetch(mid, "(BODY.PEEK[])")  # type: ignore[arg-type]  # imaplib takes bytes too
