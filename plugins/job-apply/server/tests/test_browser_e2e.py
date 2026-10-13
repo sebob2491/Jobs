@@ -380,6 +380,16 @@ def test_auto_mode_refuses_incomplete_form(srv, job_apply_home):
     assert srv.get_job(job["id"])["job"]["status"] == "in_progress"
 
 
+def test_saved_blocks_drawn_late_are_counted_before_any_is_added(srv):
+    """Workday's My Experience opened again (Baker Tilly's and U.S. Bank's, run 52, Oct 13) draws the account's saved
+    job a moment after the page: the desk counted none, added a block, and the saved one came beside it ("The page has
+    more blocks than your profile has entries"). Blocks are looked for again a moment before any is added."""
+    job = srv.add_job(url=fixture_url("workday_experience.html") + "?saved=1000", title="FSE", company="Example Litho")["job"]
+    run(srv.open_application(job_id=job["id"]))
+    work = run(srv.add_entries("work"))
+    assert (work["clicks"], work["after"], work["wanted"]) == (0, 2, 2), work
+
+
 def test_workday_experience_entries(srv):
     job = srv.add_job(url=fixture_url("workday_experience.html"), title="FSE", company="Example Litho")["job"]
     run(srv.open_application(job_id=job["id"]))

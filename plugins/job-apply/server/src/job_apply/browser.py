@@ -154,6 +154,7 @@ SETTLE_WAIT = 8  # seconds for a job board's page to stop loading things, at mos
 LOST_FILL_WAIT = 0.5  # seconds after filling for a page to mark the boxes whose answers it lost
 LOST_FILL_TRIES = 3  # times a box is typed again on a page, at most (one the page refuses stays marked)
 BLOCK_DRAW_WAIT = 6000  # ms for blocks just added (Workday's Education 2) to draw their boxes, at most
+SAVED_DRAW_WAIT = 2500  # ms an experience page is given to draw its saved blocks before any is added
 # A section's Add button that a click can't reach (a toast or a re-render drawn over it for a moment, Workday's My
 # Experience, issue #112, note 32): pressed up to this many times, each for this many ms, and between them
 # the page is given a little longer each time (this many ms times the try) to clear
@@ -2023,6 +2024,14 @@ class BrowserSession:
             page = await self.page()
             frame = page.main_frame
             state = await frame.evaluate(ENTRIES_JS, kind_pattern)
+            # a page opened again draws the blocks saved earlier a moment after itself (Baker Tilly's and U.S. Bank's
+            # Workday My Experience, run 52, Oct 13: none counted, one added, and the saved one came beside it): looked
+            # for again a moment before any is added
+            waited = 0
+            while state["entries"] < count and state["buttons"] and waited < SAVED_DRAW_WAIT:
+                await page.wait_for_timeout(500)
+                waited += 500
+                state = await frame.evaluate(ENTRIES_JS, kind_pattern)
             before = state["entries"]
             clicks, covered = 0, False
             while state["entries"] < count and clicks < count + 2:

@@ -74,6 +74,10 @@
     anchor.after(popup);
   }
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') popup.hidden = true; });
+  // ?saved=<ms>: the account's saved jobs (two) drawn that long after the page, as Workday's My Experience opened again
+  // draws them (Baker Tilly's and U.S. Bank's, run 52, Oct 13)
+  const saved = new URLSearchParams(location.search).get('saved');
+  if (saved) setTimeout(() => { const add = document.getElementById('we-add'); add.click(); add.click(); }, Number(saved));
 
   document.getElementById('ed-add').addEventListener('click', (e) => {
     ed += 1;
