@@ -1564,7 +1564,8 @@ class BrowserSession:
             await page.wait_for_timeout(500)
         raise ValueError(f"the page didn't show {path.name} after its upload; check it in the browser")
 
-    async def _type_date_part(self, page: Page, loc: Locator, text: str, given: dict[str, Any] | None = None) -> str:
+    async def _type_date_part(self, page: Page, loc: Locator, text: str, given: dict[str, Any] | None = None,
+                              again: bool = False) -> str:
         """A date's part (Workday's MM / DD / YYYY), which reacts to keystrokes, not a pasted value.
 
         Some Workday dates send their digits to the part the date counts as current, which starts at the
@@ -1579,7 +1580,9 @@ class BrowserSession:
         wrong. Those dates also read the whole date again as focus leaves it, from its parts with a number, a lone
         one as the year (Intel's and U.S. Bank's month, typed with the year still empty, came back as the year
         2003, traced live Oct 12): the later parts given in the same fill (`given`, by id) are typed in the same
-        run, so the date is never left half typed."""
+        run, so the date is never left half typed. A date that doesn't read back as typed is typed once more (`again`),
+        a little slower: HonorHealth's school year now and then lost the keys typed as it took focus, and read 1900
+        (run 49, Oct 13)."""
         count = await loc.evaluate(DATE_PARTS_JS, timeout=FOCUS_TIMEOUT)  # marks the date's parts in order
         # (found from this box, so in its own frame: the nearest box around it holding them all)
         parts = loc if count == 1 else loc.locator(
@@ -1653,9 +1656,11 @@ class BrowserSession:
                 # Intel's and Entegris', Oct 12: its arrows only moved focus away, wrapping to the year, so the month
                 # went into the year): no arrows, only this part focused before its digits
                 await said(f"part {i}: focused")
+                if again:  # (the second time: a moment for the part to take its focus)
+                    await page.wait_for_timeout(250)
                 if i == start:  # (the part as it was: its digits replaced, as Workday selects a part it's given)
                     await part.evaluate("el => { try { el.select(); } catch (e) {} }")
-                await page.keyboard.type(want[i], delay=40)
+                await page.keyboard.type(want[i], delay=80 if again else 40)
                 await said(f"part {i}: typed {want[i]}")
             await loc.evaluate("el => el.ownerDocument.activeElement && el.ownerDocument.activeElement.blur()")
             await page.wait_for_timeout(100)
@@ -1669,6 +1674,8 @@ class BrowserSession:
         # every part with an answer, not only those typed now
         wrong = [i for i in range(count)
                  if want[i] and not (str(read[i]).isdigit() and int(read[i]) == int(want[i]))]
+        if wrong and not again:
+            return await self._type_date_part(page, loc, text, given, again=True)
         if wrong:
             shown = "/".join(str(r) or "?" for r in read)
             raise ValueError(f"typed {digits}, but the date reads {shown}; check it in the browser")

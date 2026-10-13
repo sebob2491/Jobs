@@ -520,6 +520,20 @@ def test_workday_date_parts_read_back_as_typed_whatever_the_order(srv):
     assert shown == ["10/2019", "03/2021", "10/09/2026"], shown
 
 
+def test_a_workday_year_that_reads_back_wrong_is_typed_once_more(srv):
+    """HonorHealth's Workday (run 49, Oct 13; once in run 44 elsewhere): a school's year now and then lost the keys
+    typed as it took focus, and read back 1900 ("typed 2016: 1900"); the desk said so and the job stopped. A date
+    that doesn't read back as typed is typed once more, a little slower, before it's said."""
+    run(srv.browser.goto(fixture_url("site/workday-date-sections.html") + "?drops"))
+    year = next(f for f in run(srv.inspect_form(include_dropdown_options=False))["fields"]
+                if f.get("section") == "First Year Attended" or f["label"] == "First Year Attended")
+    out = run(srv.fill_form([{"id": year["id"], "value": "2016"}]))
+    assert out["results"][0]["ok"], out["results"]
+    page = run(srv.browser.page())
+    assert run(page.evaluate("() => document.getElementById('education-1--firstYearAttended-dateSectionYear-input')"
+                             ".getAttribute('aria-valuenow')")) == "2016"
+
+
 def test_a_workday_date_whose_current_part_stays_put_gets_its_month(srv):
     """Intel's Workday (nightly live check, Oct 11): the date's current part stays where it was when focus
     leaves the date, and is marked so; with the year typed first, the month's digits went into the year and the
