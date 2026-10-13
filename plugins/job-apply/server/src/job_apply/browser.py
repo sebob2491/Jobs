@@ -2011,13 +2011,17 @@ class BrowserSession:
                   const said = (node) => node.nodeType === 3 ? (node.textContent || '').trim()
                     : node.nodeType === 1 ? (node.innerText || '').trim() : '';
                   // the text before it, text nodes too ("Join our talent network.<br><label>..."), up to another box
+                  // (kept across levels: a short "Job alerts" just above it isn't dropped for a longer sentence further up,
+                  // the review's)
+                  const out = [];
                   for (let n = el, d = 0; n && n !== document.body && d < 8; n = n.parentElement, d++) {
-                    const out = [];
-                    for (let s = n.previousSibling; s && out.join(' ').length < 400; s = s.previousSibling) {
+                    const level = [];
+                    for (let s = n.previousSibling; s && level.join(' ').length < 400; s = s.previousSibling) {
                       if (s.nodeType === 1 && (s.matches(boxes) || s.querySelector(boxes))) break;
                       const t = said(s);
-                      if (t && !own.includes(t)) out.unshift(t);
+                      if (t && !own.includes(t)) level.unshift(t);
                     }
+                    out.unshift(...level);
                     if (out.join(' ').length > 15) return out.join(' ').slice(-500);
                   }
                   // nothing before it: the widest of the few blocks around it that's still short, less its own label's
