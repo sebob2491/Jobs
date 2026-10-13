@@ -2274,6 +2274,15 @@ def unset_choice(f: dict) -> bool:
         and norm(options[0]) == value
 
 
+def site_default(f: dict) -> bool:
+    """A list on its first choice that has no empty one to start on (a gender list opening on "Male", a country code
+    on "Afghanistan +93"): the site's own default, which no one chose. Read as answered, it went out as the person's
+    answer, whatever the profile said."""
+    options = [str(o) for o in f.get("options") or []]
+    return f.get("kind") == "select" and len(options) > 1 and norm(f.get("value")) == norm(options[0]) \
+        and not any(is_empty_value(o) for o in options)
+
+
 def plan_autofill(fields: list[dict], prof: Profile, job: dict | None = None, overwrite: bool = False,
                   redo: set[str] | None = None) -> dict[str, Any]:
     """Split fields into ones we can fill and ones that need a decision. Not a sign-up's boxes
@@ -2295,13 +2304,19 @@ def plan_autofill(fields: list[dict], prof: Profile, job: dict | None = None, ov
         rejected = f["id"] in (redo or set()) and f.get("kind") in ("select", "listbox", "combobox", "radio_group", "text") \
             and not is_empty_value(f.get("value"))
         has_value = not is_empty_value(f.get("value")) and not unset and not rejected
-        if has_value and not overwrite:
+        defaulted = has_value and site_default(f)
+        if has_value and not overwrite and not defaulted:
             already.append(f["id"])
             continue
         missed: list[Answer] = []
         # (a list on its own "Not Specified" first choice: answered from the others, never that placeholder again)
         ans = resolve_field({**f, "options": (f.get("options") or [])[1:]} if unset else f, prof, job, file_inputs,
                             unmatched=missed)
+        if defaulted and not overwrite and (ans is None and not missed or ans is not None and (
+                ans.value == SKIP or choose_option(str(ans.value), [str(f.get("value"))]) is not None)):
+            # (the site's first choice, where the profile says nothing else, or says the same: left as it is)
+            already.append(f["id"])
+            continue
         if unset and not overwrite and ans is not None and is_eeo_rule(ans.rule) and not f.get("required"):
             # an optional self-identification list on its "Not Specified" stays as it is (the person may have
             # chosen it); a required one is answered (Kforce's "Birth Assigned Gender", live run 13)
