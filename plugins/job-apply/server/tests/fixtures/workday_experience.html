@@ -96,7 +96,15 @@
       ${date('lastYearAttended', 'To (Actual or Expected)', 'Y')}`;
     document.getElementById('ed-panels').appendChild(panel);
     const dg = panel.querySelector('#dg-' + n);
-    dg.addEventListener('click', () => setTimeout(() => show(degrees, (v) => { dg.textContent = v; }, dg), 120));
+    // ?degrees=<ms>: the Degree list opens on "Select One" alone and gets its choices that long after (BCBS of
+    // Arizona's and KLA's Workday, run 53, Oct 13)
+    const late = Number(new URLSearchParams(location.search).get('degrees') || 0);
+    dg.addEventListener('click', () => setTimeout(() => {
+      const pick = (v) => { dg.textContent = v; };
+      if (!late) return show(degrees, pick, dg);
+      show(['Select One'], pick, dg);
+      setTimeout(() => { if (!popup.hidden) show(['Select One', ...degrees], pick, dg); }, late);
+    }, 120));
     const fs = panel.querySelector('#fs-' + n);
     fs.addEventListener('keydown', (ev) => {
       if (ev.key !== 'Enter') return;

@@ -41,7 +41,7 @@ from .browser import (_SENDS_TOO, CONFIRMATION_RE, SubmitBlocked, TabClosed, _ac
 
 NEW_TAB_WAIT = 4  # seconds to wait for a tab opened late by a click before calling it a stall
 ONCE_SETTLE = 1.0  # seconds after filling the person's answers before checking they stayed in
-MAX_STEPS = 15
+MAX_STEPS = 30  # passes over a job's pages (Avnet's Workday, run 53: an account and seven steps took 15)
 LATE_BUTTONS_WAIT = 10  # seconds for a page's buttons to be drawn
 SIGN_IN_SETTLE = 10  # seconds a sign-in sent, its form still on show, may take before it counts as refused
 RESET_SETTLE = 15  # the same for a new password sent: its reset form still on show, no error yet (Workday's)
@@ -1532,6 +1532,7 @@ class Applier:
         if not await self._open(run):
             return
         stalls, entries_done, refilled, dismissed = 0, set(), set(), set()
+        stalled_on: tuple[Any, ...] = ()  # the step (address and headings) the stalls were counted on
         # pages waited on to draw their buttons late, once a page each time it's reached (Baker Tilly's Workday, run 44:
         # the step after its sign-in drew them late too, and once a pass left it unwaited)
         waited: set[tuple[Any, ...]] = set()
@@ -2131,7 +2132,12 @@ class Applier:
                 if await srv.browser.challenge_showing():  # the click brought up a CAPTCHA
                     await self._bring_forward(run)
                     return self._pause(run, "bot_check", _BOT_CHECK_SAYS)
-                stalls += 1
+                # (counted on this step only: a press on the step before that the site took a moment over, then went
+                # on from by itself, isn't this one's stall. Baker Tilly's Workday, run 53: the first press of its
+                # Voluntary Disclosures, whose error came a moment after, stopped the desk before it read the error)
+                step = (data.get("url"), tuple(data.get("headings") or []))
+                stalls = stalls + 1 if step == stalled_on else 1
+                stalled_on = step
                 if (kind == "page" and sign_ins.get("wants_account") and not run.accounts_tried
                         and _may_manage_accounts() and await self._register_from_posting(run, looked)):
                     # on its way to a new account (the sign-in page had no way to one: the job was opened

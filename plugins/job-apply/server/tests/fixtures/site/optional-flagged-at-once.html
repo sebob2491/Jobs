@@ -1,0 +1,37 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Apply</title></head>
+<body>
+<!-- like Baker Tilly's Workday in run 53 (Oct 13): Save and Continue on Application Questions is greyed while the step
+     saves, and the next step comes at the same address. There a question nothing marks required, whose choices don't
+     have the profile's answer, is left empty; Save and Continue then says, a moment after, that the page wants it
+     ("Errors Found", "Error-Gender"), and the step stays -->
+<h1 id="step">Application Questions</h1>
+<form id="app" novalidate></form>
+<script>
+  const form = document.getElementById('app');
+  form.innerHTML = '<label for="fn">First Name*</label><input id="fn" required>'
+    + '<button type="button" id="next">Save and Continue</button>';
+  document.getElementById('next').addEventListener('click', (e) => {
+    e.target.disabled = true;
+    setTimeout(disclosures, 1500);
+  });
+
+  function disclosures() {
+    document.getElementById('step').textContent = 'Voluntary Disclosures';
+    form.innerHTML = '<label for="g">Gender</label>'
+      + '<select id="g"><option value="">Select One</option><option>Male</option><option>Female</option></select>'
+      + '<div id="errors"></div><button type="button" id="save">Save and Continue</button>';
+    document.getElementById('save').addEventListener('click', () => {
+      const g = document.getElementById('g');
+      if (g.value) { location.href = 'review.html'; return; }
+      setTimeout(() => {
+        g.setAttribute('aria-invalid', 'true');
+        document.getElementById('errors').innerHTML = '<div role="alert">Errors Found</div>'
+          + '<button type="button">Error-Gender</button>';
+      }, 1000);
+    });
+  }
+</script>
+</body>
+</html>

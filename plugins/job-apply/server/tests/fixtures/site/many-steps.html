@@ -1,0 +1,23 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Apply</title></head>
+<body>
+<!-- an application of many steps (Avnet's Workday, run 53, Oct 13: its account, then seven steps, reached the review
+     page as the desk's passes ran out): ?n=<steps>, each with a box and Save and Continue, then the review page -->
+<h1 id="step"></h1>
+<form id="app" novalidate>
+  <label for="fn">First Name*</label><input id="fn" required>
+  <button type="button" id="next">Save and Continue</button>
+</form>
+<script>
+  const q = new URLSearchParams(location.search);
+  const step = Number(q.get('step') || 1), n = Number(q.get('n') || 18);
+  document.getElementById('step').textContent = `Step ${step} of ${n}`;
+  document.getElementById('next').addEventListener('click', () => {
+    if (step >= n) { location.href = 'review.html'; return; }
+    q.set('step', step + 1);
+    location.search = q.toString();
+  });
+</script>
+</body>
+</html>
