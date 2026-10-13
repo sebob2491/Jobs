@@ -2338,6 +2338,21 @@ def test_a_step_still_loading_its_questions_is_waited_for(srv, monkeypatch, quer
     assert any("clicked “Save and Continue”" in line for line in r.log), r.log
 
 
+def test_a_resume_from_a_stop_is_never_followed_by_a_reload_of_the_persons_page(srv):
+    """The review of 0.3.147: a page still loading after the person's own Resume from a stop (what they typed there by
+    hand) is said, never reloaded away; a Resume after questions answered on the desk may still be reloaded once."""
+    applier = Applier(srv)
+    job = srv.add_job(url=fixture_url("site/workday-sections-loading.html"), title="Clerk", company="Example Bank")["job"]
+    r = applier.enqueue(job["id"])
+    r.status, r.need = "needs_you", "stuck"
+    assert applier.resume(job["id"]).load_reloaded
+    other = srv.add_job(url=fixture_url("site/workday-sections-loading.html") + "?b", title="Clerk 2",
+                        company="Example Bank")["job"]
+    q = applier.enqueue(other["id"])
+    q.status, q.need = "needs_you", "questions"
+    assert not applier.resume(other["id"]).load_reloaded
+
+
 @pytest.mark.parametrize("query", ["", "?heal"])
 def test_a_step_whose_sections_never_finish_loading_is_reloaded_once_then_said(srv, monkeypatch, query):
     """Wells Fargo's and Hitachi's Workday (run 57, Oct 13): My Information right after the account's sign-in drew its

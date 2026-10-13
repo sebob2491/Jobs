@@ -693,6 +693,8 @@ class Applier:
         signing_in = run is not None and run.need == "sign_in"  # (before enqueue clears it)
         if run is not None and run.entries_told:
             run.entries_ok = dict(run.entries_told)  # (a card said a section was short: gone on with, if unchanged)
+        if run is not None and run.need in ("stuck", "sign_in", "bot_check"):
+            run.load_reloaded = True  # (what they did in the browser is never reloaded away: a loading page is said)
         run = self.enqueue(job_id, submit=bool(run and run.submit), front=True)
         self.pressed.add(job_id)  # (the person's own press: it goes even while the queue is paused)
         if signing_in:
@@ -1990,14 +1992,24 @@ class Applier:
                     saved_waited.add(just)
                     await self._wait_for_step_change(just, STEP_SAVE_WAIT)
                     continue
-                if loading:
+                # (only where nothing else explains the stop: an agreement to press, a bot check, a closed posting or a
+                # site down are said for what they are, the review of 0.3.147)
+                if loading and _agreement_button(data) is None and not data.get("captcha") and not _BOT_BADGE.search(
+                        " ".join([text[:3000], *(a.get("text") or "" for a in data.get("actions") or [])])) \
+                        and not _closed_notice(data, text) and not _maintenance_page(data):
                     # still loading after the wait (Wells Fargo's and Hitachi's Workday My Information after the account's
                     # sign-in, run 57: its Address, Email and Phone stayed loading placeholders, its Save and Continue
                     # greyed, and the desk said it couldn't find the way on): reloaded once a job, the reload waited on as
-                    # a step of its own, and then said for what it is
-                    if not run.load_reloaded and run.page is not None:
+                    # a step of its own, and then said for what it is. Never after a Submit was pressed (a reload may send
+                    # a form again), nor after the person's own Resume from a stop (what they typed there would go:
+                    # Applier.resume)
+                    if not run.load_reloaded and not run.pressed_before and run.page is not None:
                         run.load_reloaded = True
                         step_waited.discard(drawn)
+                        # (a new page: its late buttons waited on, and the steps it goes through again no circle, as
+                        # after a refresh the site asked for)
+                        waited.clear()
+                        since, more = len(pressed), steps
                         self._log(run, f"{_site(run, data)}'s page was still loading after {STEP_LOAD_WAIT} seconds, so I "
                                   "reloaded it")
                         with contextlib.suppress(Exception):

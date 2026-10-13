@@ -77,7 +77,7 @@ _DECLINE = re.compile(
     rf"|\b(not|don t|dont) (wish|want|care|like) to (be )?{_ANSWERING}"
     rf"|\b(prefers?|preferred|chooses?|chose|elect|opt|wish|rather) not (to )?{_ANSWERING}"
     # (SuccessFactors' lists at Pfeiffer Vacuum, run 56: "Prefers not to answer", "Not willing to answer")
-    rf"|\b(not|un)( )?willing to {_ANSWERING}"
+    rf"|\b(not|un)( )?willing to {_ANSWERING}$"  # (and no more: "Not willing to share salary history" is an answer)
     r"|^(not specified|unspecified|not disclosed|undisclosed|not declared|undeclared|no answer|no response)$")
 
 

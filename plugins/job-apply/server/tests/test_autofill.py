@@ -1474,6 +1474,7 @@ def test_a_decline_finds_the_lists_own_way_to_decline_and_is_never_a_no():
     # (but not willing to relocate, or to travel, is an answer)
     from job_apply.autofill import is_decline
     assert not is_decline("Not willing to relocate") and not is_decline("Unwilling to travel")
+    assert not is_decline("Not willing to share salary history")  # (the review of 0.3.147: an answer)
 
 
 def test_a_decline_is_found_where_workday_names_each_choice_with_its_country():
