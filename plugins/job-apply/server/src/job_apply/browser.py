@@ -1832,10 +1832,12 @@ class BrowserSession:
             # a pill (a school its list doesn't have read as filled with the typed name). Only a
             # free-text box may keep what was typed.
             # Unless the search chose it: Workday chooses the one entry its search finds at once, and closes the
-            # list (live probe 45, Oct 13), its pill the answer itself
-            pills = await loc.evaluate(WORKDAY_CHOSEN_JS) or []
-            took = next((p for p in pills if norm(p) == norm(text)), None)
+            # list (live probe 45, Oct 13), its pill the answer itself, word for word ("C" isn't "C#": the review's)
+            said = " ".join(text.split()).casefold()
+            took = next((p for p in await loc.evaluate(WORKDAY_CHOSEN_JS) or [] if " ".join(p.split()).casefold() == said),
+                        None)
             if took is not None:
+                await self._clear_search(page, loc)  # (nothing typed left in its box)
                 return f"selected {took}"
             picks = (await loc.evaluate("el => !!(el.getAttribute('aria-controls') || el.getAttribute('aria-owns'))")
                      or await loc.evaluate(WORKDAY_PROMPT_JS))

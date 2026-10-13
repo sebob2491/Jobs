@@ -933,7 +933,8 @@ FIELD_OPTIONS_JS = r"""
     const box = (el.closest('[role="combobox"]') || el.parentElement || el).getBoundingClientRect();
     const overlaps = (b, r) => Math.min(b.right, r.right) - Math.max(b.left, r.left) > 0;
     const gapTo = (b, r) => Math.min(Math.abs(b.top - r.bottom), Math.abs(r.top - b.bottom));
-    const covers = (b, r) => overlaps(b, r) && b.top < r.bottom && r.top < b.bottom;
+    // (drawn over it: more than a joined border's pixel or a rounding)
+    const covers = (b, r) => overlaps(b, r) && Math.min(b.bottom, r.bottom) - Math.max(b.top, r.top) > 4;
     // the other dropdowns on the page: a menu that sits nearer one of them is that one's
     // (Micron's previous question kept its menu open over this field and drew it afresh)
     const others = Array.from(document.querySelectorAll('[role="combobox"], [aria-haspopup="listbox"], input[aria-autocomplete]'))
@@ -953,9 +954,10 @@ FIELD_OPTIONS_JS = r"""
       const b = c.getBoundingClientRect();
       if (!overlaps(b, box)) continue;
       const gap = gapTo(b, box);
-      // (but never one it's drawn over: Workday's prompt, once a group's own list opens under its header, covers
-      // the Country and Prefix lists below it, nearer the Country list's edge than its own box, live probe 47)
-      if (others.some((r) => overlaps(b, r) && !covers(b, r) && gapTo(b, r) < gapTo(b, mine))) continue;
+      // (but never one it's drawn over, while it's clear of this one: Workday's prompt, once a group's own list opens
+      // under its header, covers the Country and Prefix lists below it, nearer the Country list's edge than its own
+      // box, live probe 47)
+      if (others.some((r) => overlaps(b, r) && !(covers(b, r) && !covers(b, mine)) && gapTo(b, r) < gapTo(b, mine))) continue;
       if (gap < 120 && gap < bestGap) { bestGap = gap; best = os; }
     }
     opts = best;
