@@ -26,7 +26,7 @@ from .autofill import (is_eeo_rule, is_empty_value, is_how_heard, is_name_rule, 
 from .browser import BrowserSession, BrowserUnavailable, SiteDown, SubmitBlocked
 from .postings import FetchError, Posting, fetch_posting, finalize, parse_html
 from .render import KINDS, render_pdf, to_html
-from .search import (ICIMS_FRAME, companies_path, eightfold_page_url, employer_lists,
+from .search import (ICIMS_FRAME, companies_path, eightfold_page_url, employer_lists, every_employer,
                      icims_search, icims_state, infor_search, keep_listings, load_companies, location_terms,
                      parse_eightfold, paycom_search, rmk_search, search_companies, sfclassic_search, sitecore_search,
                      ukg_search, wordings_for)
@@ -359,6 +359,7 @@ async def search_company_jobs(
     companies: list[str] | None = None,
     location: str | None = "AZ",
     limit_per_company: int = 20,
+    every_list: bool = False,
 ) -> dict[str, Any]:
     """Search employers' own careers sites for openings through their applicant tracking
     system's public search: Workday, Greenhouse, Lever, Eightfold, SmartRecruiters, Oracle,
@@ -372,8 +373,9 @@ async def search_company_jobs(
     location: state code/name or city alternatives ("AZ", "Phoenix|Chandler"); null for anywhere.
     Results already in the tracker carry `tracked`. Companies in `browser_only` have no
     search the plugin can use, and some turn automated browsers away: give the user their
-    careers_url to search in their own browser."""
-    listed = load_companies()  # once: the person's own file may name several lists
+    careers_url to search in their own browser.
+    every_list: every plugin list's employers too, not only the person's (the desk's troubleshooting)."""
+    listed = every_employer() if every_list else load_companies()  # once: the person's own file may name several lists
     out = await search_companies(query, companies, location, limit_per_company, companies=listed)
     # Eightfold career sites refuse scripted API calls; let a real page make the call instead.
     by_name = {c["name"]: c for c in listed}
@@ -945,6 +947,10 @@ async def submit_application(job_id: int | None = None, user_confirmed: bool = F
     (user_confirmed=true), or when settings.submit_mode is "auto" for this ATS.
     On LinkedIn and Indeed this never clicks: it marks the job ready_to_submit and
     the user clicks Submit in the browser; then call update_job(status="applied")."""
+    from . import desk as job_desk  # (the desk's own module imports this one)
+    if job_desk._desk is not None and job_desk._desk.applier.hold_submits:
+        return {"submitted": False, "reason": "The Job Desk's Troubleshooting is on, so nothing is submitted. Turn it "
+                "off on the desk first."}
     job = _job_here(job_id)
     page = await browser.inspect(include_dropdown_options=False)
     ats = await browser.human_submit_ats() or detect_ats(page["url"])  # Indeed's form inside an employer's page

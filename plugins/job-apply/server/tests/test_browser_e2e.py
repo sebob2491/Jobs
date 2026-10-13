@@ -1412,7 +1412,8 @@ def test_a_boards_frame_is_read_once_its_page_is_in(srv):
         run(srv.browser.page())  # the browser is up: only reading the board is timed
         start = time.monotonic()
         pages = run(srv.browser.frames_html(url, inner="#icims_content_iframe"))
-        assert time.monotonic() - start < 5
+        # not the whole SETTLE_WAIT the polling page would hold it for (5 s was too close on Windows CI, Oct 13)
+        assert time.monotonic() - start < browser_module.SETTLE_WAIT - 1
         assert any("Recruiter" in p for p in pages)
     finally:
         site.shutdown()

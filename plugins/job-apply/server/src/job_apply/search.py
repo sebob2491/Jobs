@@ -190,11 +190,16 @@ def load_companies() -> list[dict[str, Any]]:
         if name not in lists:
             raise ValueError(f"{own_path}: the plugin has no employer list named {name!r}; "
                              f"its lists are {', '.join(lists)}")
+    return _with_lists(own, [lists[name] for name in names])
+
+
+def _with_lists(own: list[dict[str, Any]], paths: list[Path]) -> list[dict[str, Any]]:
+    """These employers, then each list's that none before it has (the same name, or the same site searched)."""
     out = list(own)
     seen_names = {norm(c["name"]) for c in own}
     seen_sites = {_search_key(c) for c in own} - {""}
-    for name in names:
-        for company in _companies_in(lists[name])[0]:
+    for path in paths:
+        for company in _companies_in(path)[0]:
             key = _search_key(company)
             if norm(company["name"]) in seen_names or key and key in seen_sites:
                 continue
@@ -202,6 +207,11 @@ def load_companies() -> list[dict[str, Any]]:
             seen_sites.add(key)
             out.append(company)
     return out
+
+
+def every_employer() -> list[dict[str, Any]]:
+    """The person's employers, then every plugin list's (the desk's troubleshooting searches them all)."""
+    return _with_lists(load_companies(), list(employer_lists().values()))
 
 
 def alternatives(query: str) -> list[str]:
