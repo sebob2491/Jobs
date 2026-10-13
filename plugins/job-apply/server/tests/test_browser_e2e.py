@@ -415,7 +415,7 @@ def test_ukg_blocks_named_only_by_their_region_are_counted_and_named(srv):
     assert (edu["before"], edu["clicks"], edu["after"]) == (0, 1, 1), edu
     sections = {(f.get("section"), f["label"]) for f in run(srv.inspect_form(include_dropdown_options=False))["fields"]}
     assert {("Work Experience 1", "Job Title"), ("Work Experience 2", "Company / Organization"),
-            ("Education 1", "School")} <= sections, sections
+            ("Education 1", "School"), (None, "First Name")} <= sections, sections  # (the step's region isn't a block)
 
 
 def test_workday_experience_entries(srv):

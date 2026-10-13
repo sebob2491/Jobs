@@ -4,7 +4,10 @@
 <body>
 <!-- like Desert Financial's UKG Pro (run 55, Oct 13): each work or education block is a form region its aria-label
      numbers ("Work Experience 2"), with no heading of its own; the section's Add is an icon button named "Add
-     Experience" / "Add Education". Two jobs saved on the account are there as the page opens -->
+     Experience" / "Add Education". Two jobs saved on the account are there as the page opens. The whole step is a form region too, its label numbered
+     ("Application step 2"): never a block -->
+<div role="form" aria-label="Application step 2">
+<label for="fn">First Name</label><input id="fn">
 <h2>Work Experience</h2>
 <button type="button" aria-label="Add Experience" id="add-work">+</button>
 <div id="work"></div>
@@ -12,6 +15,7 @@
 <button type="button" aria-label="Add Education" id="add-edu">+</button>
 <div id="edu"></div>
 <button type="button">Save and continue</button>
+</div>
 <script>
   function block(host, name, n, labels) {
     const div = document.createElement('div');

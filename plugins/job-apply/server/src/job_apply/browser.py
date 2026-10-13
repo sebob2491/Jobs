@@ -1712,10 +1712,11 @@ class BrowserSession:
                     with contextlib.suppress(PlaywrightError, PlaywrightTimeout):
                         await part.focus(timeout=FOCUS_TIMEOUT)
                         for _ in range(5):  # (a part's digits, one at a time: never on into the part before it)
-                            if not re.sub(r"\D", "", str(await part.evaluate(read_js))) or not await part.evaluate(
+                            if not number(await part.evaluate(read_js)) or not await part.evaluate(
                                     "el => el === el.ownerDocument.activeElement"):
                                 break
                             await page.keyboard.press("Backspace")
+                            await page.wait_for_timeout(50)  # (the part's number read again once it's drawn)
                 await loc.evaluate("el => el.ownerDocument.activeElement && el.ownerDocument.activeElement.blur()")
                 await page.wait_for_timeout(150)
                 await said("cleared and left")

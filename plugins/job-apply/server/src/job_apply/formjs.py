@@ -223,22 +223,22 @@ EXTRACT_JS = r"""
   // and (live, Oct 2026) a fieldset whose legend is that label.
   const HEADING = ':scope > h2, :scope > h3, :scope > h4, :scope > h5, :scope > legend, :scope > [role="heading"], :scope > div:first-child > h3, :scope > div:first-child > h4';
   const bare = (t) => clean(t).replace(/[\s*:]+$/, '').toLowerCase();
+  const BLOCK_NAME = /\b(?:work|experience|employment|education|school|licen[cs]e|certification|reference)/i;
   const sectionOf = (el, own) => {
     let node = el.parentElement;
     for (let d = 0; node && d < 12; d++, node = node.parentElement) {
       const role = (node.getAttribute('role') || '').toLowerCase();
       const container = role === 'group' || role === 'region' || node.tagName === 'FIELDSET' || node.tagName === 'SECTION';
       let t = container ? labelledBy(node) : '';
-      // (UKG Pro's blocks: a form region its aria-label numbers, "Work Experience 2", with no heading: Desert
-      // Financial's, run 55)
-      if (!t && role === 'form' && /\b\d+\s*$/.test(clean(node.getAttribute('aria-label') || ''))) {
-        t = clean(node.getAttribute('aria-label'));
-      }
       if (!t) {
         // the last heading before the field: "Work Experience 2" sits beside block 2, after block 1
         const hs = Array.from(node.querySelectorAll(HEADING)).filter((h) => h.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING);
         t = hs.length ? txt(hs[hs.length - 1]) : '';
       }
+      // (UKG Pro's blocks: a form region its aria-label numbers, "Work Experience 2", with no heading: Desert
+      // Financial's, run 55. Only a block's name: never a whole application's "Step 2 of 3" or its requisition number)
+      const region = role === 'form' ? clean(node.getAttribute('aria-label') || '') : '';
+      if (!t && BLOCK_NAME.test(region) && /\b\d+\s*$/.test(region)) t = region;
       if (!t || t.length > 80 || (own && bare(t) === bare(own))) continue;  // (the field's own group)
       if (container || /\b\d+\s*$/.test(t)) return t;
     }
@@ -768,10 +768,11 @@ ENTRIES_JS = r"""
     .filter((h) => visible(h) && kind.test(txt(h)) && /\b\d+\s*$/.test(txt(h)));
   // and blocks with no heading that a form region's aria-label numbers (UKG Pro's "Work Experience 2": Desert
   // Financial's, run 55, where a block was added on every pass), each once
-  const named = new Set(numbered.map(txt));
+  const key = (t) => t.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();  // ("WORK EXPERIENCE #2" is "Work Experience 2")
+  const named = new Set(numbered.map((h) => key(txt(h))));
   const regions = Array.from(document.querySelectorAll('[role="form"][aria-label]')).filter((r) => {
     const t = clean(r.getAttribute('aria-label'));
-    return visible(r) && kind.test(t) && /\b\d+\s*$/.test(t) && !named.has(t);
+    return visible(r) && kind.test(t) && /\b\d+\s*$/.test(t) && !named.has(key(t)) && !numbered.some((h) => r.contains(h));
   });
   const entries = numbered.length + regions.length;
   // Workday draws a new block's heading first and its boxes a moment later: a block's boxes are
