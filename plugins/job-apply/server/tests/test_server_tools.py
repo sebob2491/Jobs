@@ -544,6 +544,24 @@ def test_a_submit_whose_record_cant_be_written_is_still_in_the_tracker(srv):
 
 
 @needs_browser
+def test_a_screenshot_chrome_cant_take_doesnt_stop_a_submit(srv, monkeypatch):
+    """CI (Oct 12): Chrome's "Unable to capture screenshot" on the keepsake taken before Submit stopped the Submit
+    the person had pressed. The keepsake is skipped; the application goes."""
+    sent = routed(srv)
+    job = srv.add_job(url="https://careers.example.com/a", title="Tech", company="Example")["job"]
+    run(srv.open_application(job_id=job["id"]))
+
+    async def no_picture(full_page=False, save_to=None):
+        from playwright.async_api import Error
+
+        raise Error("Page.screenshot: Protocol error (Page.captureScreenshot): Unable to capture screenshot")
+
+    monkeypatch.setattr(srv.browser, "screenshot", no_picture)
+    out = run(srv.submit_application(job_id=job["id"], user_confirmed=True))
+    assert out["submitted"] and len(sent) == 1, out
+
+
+@needs_browser
 @pytest.mark.parametrize("how", ["broke", "blocked"])
 def test_a_press_that_doesnt_finish_is_remembered_and_one_never_made_isnt(srv, monkeypatch, how):
     """The press is recorded before it's made: a tab that dies mid-press may still have sent
@@ -654,3 +672,21 @@ def test_reading_a_posting_leaves_the_desks_paused_tab_alone(srv):
         assert tab.url == "https://careers.example.com/a"
     finally:
         desk_module._desk = None
+
+
+def test_a_workday_posting_takes_its_employers_listed_name_not_workdays_legal_entity(srv, monkeypatch):
+    """The tailoring test (Oct 12): Intel's and Applied Materials' Workday postings came in as "100 Intel
+    Corporation" and "0001 Applied Materials, Inc", Workday's legal entities, which named the jobs' folders and
+    missed the desk's employer lists by name. A posting on a listed employer's Workday site takes the list's name;
+    one elsewhere keeps its own."""
+    from job_apply.postings import Posting
+
+    async def fetched(url: str) -> Posting:
+        return Posting(url=url, title="Module Equipment Technician", company="100 Intel Corporation",
+                       description="Maintain tools.", parse_method="workday-api")
+
+    monkeypatch.setattr(srv, "fetch_posting", fetched)
+    intel = "https://intel.wd1.myworkdayjobs.com/External/job/US-Arizona-Phoenix/Module-Equipment-Technician_JR0286553"
+    assert run(srv.ingest_job(intel))["job"]["company"] == "Intel"
+    other = "https://acme.wd1.myworkdayjobs.com/External/job/Phoenix-AZ/Technician_R1"
+    assert run(srv.ingest_job(other))["job"]["company"] == "100 Intel Corporation"
