@@ -6942,13 +6942,25 @@ def test_a_bare_i_agree_is_ticked_only_where_the_words_above_it_are_the_sites_te
                     # the review's: a short sign-up heading just above, a terms sentence further up
                     '<div><p>In order to proceed, you must consent to our Privacy Policy.</p><div><div>Job alerts</div>'
                     '<label><input type="checkbox" id="g"> I agree</label></div></div>'
+                    # Air Liquide's Workday (live run 41, Oct 12): "the documents above", and how long that lasts;
+                    # the same box under a talent community's words is the person's
+                    '<div><p>By creating an account, you recognize that Air Liquide will process your personal data in '
+                    'accordance with the data privacy notice applicable to the job application process.</p>'
+                    '<label><input type="checkbox" id="h"> You acknowledge having read the documents above. Your '
+                    'agreement is valid for any future visits.</label></div>'
+                    '<div><p>Join our talent community to hear about future openings.</p>'
+                    '<label><input type="checkbox" id="i"> You acknowledge having read the documents above. Your '
+                    'agreement is valid for any future visits.</label></div>'
+                    # never a box whose own words ask for more than the terms, however long that lasts
+                    '<label><input type="checkbox" id="j"> I agree to receive future job updates by email. Your '
+                    'agreement is valid for any future visits.</label>'
                     '<button type="submit">Create Account</button>', encoding="utf-8")
     run(srv.browser.goto(page.as_uri()))
     data = run(srv.browser.inspect(include_dropdown_options=False))
     boxes = pipeline._terms_boxes(data)
-    assert len(boxes) == 7, data["fields"]  # (by their labels alone, all seven)
+    assert len(boxes) == 9, data["fields"]  # (by their labels alone, all but the last)
     kept = run(Applier(srv)._said_terms(boxes))
-    assert [b["id"] for b in kept] == [boxes[0]["id"], boxes[3]["id"], boxes[5]["id"]], (boxes, kept)
+    assert [b["id"] for b in kept] == [boxes[0]["id"], boxes[3]["id"], boxes[5]["id"], boxes[7]["id"]], (boxes, kept)
 
 
 def test_a_round_holds_while_the_person_is_at_a_review_page_and_ends_once_it_is_sent(srv):

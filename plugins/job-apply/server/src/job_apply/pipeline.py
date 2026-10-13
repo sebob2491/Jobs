@@ -174,6 +174,12 @@ _NOT_TERMS = re.compile(r"newsletter|marketing|job alerts?|text messages?|\bsms\
 # a box's words only, never a statement's (whose text names most of these in passing)
 _MORE_THAN_TERMS = re.compile(r"receiv\w*|e-?mails?|updates?|notifications?|messages?|partners?|third[- ]part|future|"
                               r"talent pool|retain|retention", re.I)
+# How long a box's agreement lasts, which is no more than it (Air Liquide's Workday, live run 41, Oct 12: "You
+# acknowledge having read the documents above. Your agreement is valid for any future visits."): not "future" news
+_LASTS = re.compile(r"\byour (?:agreement|consent|acceptance) (?:is|will be|remains) valid for (?:any|all) future visits\b",
+                    re.I)
+# A box whose words say it agrees to the words above it ("the documents above"): what it agrees to is up there
+_READ_ABOVE = re.compile(r"\b(?:documents?|terms|text|information|notices?|statements?|policy|policies) above\b", re.I)
 # An attestation or privacy agreement that also signs the person up: "... and consent to receive email communications
 # from Acme", "... and would like to receive updates" (the safety audit of Oct 12): never ticked for them
 _SIGNS_UP_TOO = re.compile(r"\breceiv\w*\b.{0,40}\b(?:e-?mails?|communications?|updates?|messages?|news\w*|offers|"
@@ -2118,12 +2124,13 @@ class Applier:
                 return
 
     async def _said_terms(self, boxes: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        """A Create Account form's terms boxes, less a bare one ("I agree", "I consent") whose words just above it
-        say what it agrees to and that's more than the site's terms: job alerts, a talent network, texts, marketing
-        (the safety audit of Oct 12). Those are the person's."""
+        """A Create Account form's terms boxes, less a bare one ("I agree", "I consent") or one agreeing to "the
+        documents above" (Air Liquide's) whose words just above it say what it agrees to and that's more than the
+        site's terms: job alerts, a talent network, texts, marketing (the safety audit of Oct 12). Those are the
+        person's."""
         kept = []
         for box in boxes:
-            if _BARE_AGREE.match(box.get("label") or ""):
+            if _BARE_AGREE.match(box.get("label") or "") or _READ_ABOVE.search(box.get("label") or ""):
                 above = await self.srv.browser.words_before(box["id"])
                 # (gone, or not read: not ticked; the words of a sign-up, not the terms' passing mentions: the review's)
                 if not above or _SIGN_UP_ABOVE.search(above):  # (unread, or nothing to read: the person's)
@@ -3926,7 +3933,7 @@ def _terms_boxes(data: dict[str, Any]) -> list[dict[str, Any]]:
     messages' (_NOT_TERMS)."""
     return [f for f in data.get("fields") or [] if f.get("kind") == "checkbox" and is_empty_value(f.get("value"))
             and _TERMS_BOX.search(f.get("label") or "") and not _NOT_TERMS.search(f.get("label") or "")
-            and not _MORE_THAN_TERMS.search(f.get("label") or "")
+            and not _MORE_THAN_TERMS.search(_LASTS.sub("", f.get("label") or ""))
             and (f.get("required") or _TERMS_ONLY.search(f.get("label") or ""))]
 
 
