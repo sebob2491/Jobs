@@ -965,7 +965,10 @@ async def submit_application(job_id: int | None = None, user_confirmed: bool = F
         return {"submitted": False, "reason": "No submit button on this page. Continue through the steps first.",
                 "empty_required": empty_required, "actions": [a["text"] for a in page["actions"]]}
     folder = Path(job["folder"])
-    await browser.screenshot(full_page=True, save_to=folder / "before-submit.jpg")
+    # a keepsake of the page as sent, when Chrome can take one (CI, Oct 12: "Unable to capture screenshot"
+    # stopped a Submit the person had pressed)
+    with contextlib.suppress(Exception):
+        await browser.screenshot(full_page=True, save_to=folder / "before-submit.jpg")
     # A record of the press, written before it: with no confirmation (or a page that closes itself
     # as it sends) the application may still have gone, and the Job Desk reads this, after a
     # restart too, so as never to press Submit again by itself

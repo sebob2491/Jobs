@@ -544,6 +544,24 @@ def test_a_submit_whose_record_cant_be_written_is_still_in_the_tracker(srv):
 
 
 @needs_browser
+def test_a_screenshot_chrome_cant_take_doesnt_stop_a_submit(srv, monkeypatch):
+    """CI (Oct 12): Chrome's "Unable to capture screenshot" on the keepsake taken before Submit stopped the Submit
+    the person had pressed. The keepsake is skipped; the application goes."""
+    sent = routed(srv)
+    job = srv.add_job(url="https://careers.example.com/a", title="Tech", company="Example")["job"]
+    run(srv.open_application(job_id=job["id"]))
+
+    async def no_picture(full_page=False, save_to=None):
+        from playwright.async_api import Error
+
+        raise Error("Page.screenshot: Protocol error (Page.captureScreenshot): Unable to capture screenshot")
+
+    monkeypatch.setattr(srv.browser, "screenshot", no_picture)
+    out = run(srv.submit_application(job_id=job["id"], user_confirmed=True))
+    assert out["submitted"] and len(sent) == 1, out
+
+
+@needs_browser
 @pytest.mark.parametrize("how", ["broke", "blocked"])
 def test_a_press_that_doesnt_finish_is_remembered_and_one_never_made_isnt(srv, monkeypatch, how):
     """The press is recorded before it's made: a tab that dies mid-press may still have sent
