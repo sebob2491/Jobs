@@ -654,3 +654,21 @@ def test_reading_a_posting_leaves_the_desks_paused_tab_alone(srv):
         assert tab.url == "https://careers.example.com/a"
     finally:
         desk_module._desk = None
+
+
+def test_a_workday_posting_takes_its_employers_listed_name_not_workdays_legal_entity(srv, monkeypatch):
+    """The tailoring test (Oct 12): Intel's and Applied Materials' Workday postings came in as "100 Intel
+    Corporation" and "0001 Applied Materials, Inc", Workday's legal entities, which named the jobs' folders and
+    missed the desk's employer lists by name. A posting on a listed employer's Workday site takes the list's name;
+    one elsewhere keeps its own."""
+    from job_apply.postings import Posting
+
+    async def fetched(url: str) -> Posting:
+        return Posting(url=url, title="Module Equipment Technician", company="100 Intel Corporation",
+                       description="Maintain tools.", parse_method="workday-api")
+
+    monkeypatch.setattr(srv, "fetch_posting", fetched)
+    intel = "https://intel.wd1.myworkdayjobs.com/External/job/US-Arizona-Phoenix/Module-Equipment-Technician_JR0286553"
+    assert run(srv.ingest_job(intel))["job"]["company"] == "Intel"
+    other = "https://acme.wd1.myworkdayjobs.com/External/job/Phoenix-AZ/Technician_R1"
+    assert run(srv.ingest_job(other))["job"]["company"] == "100 Intel Corporation"

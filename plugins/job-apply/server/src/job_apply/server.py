@@ -20,7 +20,7 @@ from mcp.server.mcpserver import Image, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 
 from . import config
-from .ats import ATS_NAMES, detect_ats, greenhouse_form_url
+from .ats import ATS_NAMES, detect_ats, greenhouse_form_url, workday_parts
 from .autofill import (is_eeo_rule, is_empty_value, is_name_rule, is_school_rule, place_words, plan_autofill,
                        profile_entries, resolve_field)
 from .browser import BrowserSession, BrowserUnavailable, SiteDown, SubmitBlocked
@@ -313,8 +313,28 @@ async def ingest_job(url: str, use_browser: bool = False) -> dict[str, Any]:
             posting = finalize(parse_html(await browser.html(), url))
         except BrowserUnavailable as e:
             return {"saved": False, "error": str(e)}
+    posting.company = _listed_employer(url) or posting.company
     job, created = tracker().upsert(posting.to_dict())
     return {"saved": True, "created": created, "job": job, "warnings": posting.warnings}
+
+
+def _listed_employer(url: str) -> str | None:
+    """The name a Workday posting's employer goes by on the person's lists, from its career site (its host and
+    tenant): Workday's own name for it is a legal entity ("100 Intel Corporation", "0001 Applied Materials, Inc",
+    the tailoring test of Oct 12), which named the job's folder and missed the desk's lists by name."""
+    parts = workday_parts(url)
+    if not parts:
+        return None
+    try:
+        listed = load_companies()
+    except Exception:  # (a person's companies.yaml with a mistake: the posting keeps its own name)
+        return None
+    for c in listed:
+        for site in (c.get("careers_url"), (c.get("search") or {}).get("workday")):
+            theirs = workday_parts(f"{site}/x") if isinstance(site, str) else None
+            if theirs and (theirs["host"], theirs["tenant"]) == (parts["host"], parts["tenant"]):
+                return str(c["name"])
+    return None
 
 
 async def read_icims_posting(url: str) -> Posting:
