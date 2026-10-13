@@ -27,6 +27,9 @@ name: live-nightly
 # (scripts/nightly_summary.py --artifacts reads them).
 
 on:
+  # GitHub starts this schedule hours late (5 to 10, Oct 2026), so a routine dispatches the run at 3:17 AM in Arizona
+  # instead (the owner's call, Oct 13), and a run is dispatched after each release. The schedule stays as a fallback:
+  # a scheduled run skips itself when a full run was written to the issue in the last 12 hours (the "fresh" job).
   schedule:
     - cron: "17 10 * * *"  # 3:17 AM in Arizona (UTC-7 all year)
   workflow_dispatch:
@@ -54,7 +57,34 @@ permissions:
   issues: write
 
 jobs:
+  # A scheduled run that a dispatched full run has already done today's work for (its "Last checked" in the issue
+  # within 12 hours) runs nothing: two full runs a day would make the test identity's accounts twice. A dispatched
+  # run always goes ahead.
+  fresh:
+    runs-on: ubuntu-latest
+    outputs:
+      go: ${{ steps.last.outputs.go }}
+    steps:
+      - name: When the issue was last written
+        id: last
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          if [ "$EVENT" != schedule ]; then echo "go=true" >> "$GITHUB_OUTPUT"; exit 0; fi
+          body=$(gh issue list --repo "$REPO" --label live-check --state open --limit 1 --json body --jq '.[0].body' || true)
+          last=$(printf '%s' "$body" | sed -n 's/^Last checked: \([0-9-]* [0-9:]*\) UTC.*/\1/p' | head -1)
+          if [ -n "$last" ] && [ $(( $(date -u +%s) - $(date -u -d "$last" +%s) )) -lt 43200 ]; then
+            echo "A full run was written to the issue at $last UTC, within 12 hours: this late scheduled run skips." >> "$GITHUB_STEP_SUMMARY"
+            echo "go=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "go=true" >> "$GITHUB_OUTPUT"
+          fi
+
   check:
+    needs: fresh
+    if: needs.fresh.outputs.go == 'true'
     name: ${{ matrix.slot || matrix.check }} check
     runs-on: ubuntu-latest
     timeout-minutes: ${{ matrix.check == 'accounts' && 100 || 45 }}
@@ -166,9 +196,9 @@ jobs:
           retention-days: 7
 
   compare:
-    needs: check
+    needs: [fresh, check]
     # (a probe of a few employers or checks isn't compared: the issue keeps the last full run's results)
-    if: always() && github.event.inputs.companies == '' && github.event.inputs.checks == '' && github.event.inputs.plus != 'true'
+    if: always() && needs.fresh.outputs.go == 'true' && github.event.inputs.companies == '' && github.event.inputs.checks == '' && github.event.inputs.plus != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     defaults:
