@@ -1464,7 +1464,7 @@ def best_posting(results: list[dict[str, Any]]) -> dict[str, Any]:
 # assessment vendor's (ASSESSMENT_VENDORS); on any other page (the employer's application, on its own address or
 # another of its job system's) nothing is filled or pressed, and it ends. A CAPTCHA, a page it can't answer or one
 # that won't move ends it too, and what it saw is kept
-ASSESSMENT_PAGES = 40
+ASSESSMENT_PAGES = 100  # (Circle K's: a page for each statement, run 62)
 ASSESSMENT_SECONDS = 600
 ASSESSMENT_OPEN_WAIT = 20  # seconds for the assessment to open after Take Assessment (Circle K's: a moment after)
 _TAKE_ASSESSMENT = re.compile(r"^(?:take|start|begin|launch|continue)\s+(?:the\s+|your\s+)?assessment\b", re.I)
@@ -1530,6 +1530,64 @@ _AROUND_JS = """(id) => {
 }"""
 
 
+# An assessment's answers drawn as tiles to click, not boxes (Circle K's "Answers", run 62: "How strongly do you agree
+# or disagree with the following statement?", nothing read as a box but its Auto Advance switch): what's under its
+# "Answers" heading that takes a click, with a few words of its own. Each gets data-ja-tile; their words, in order
+_ANSWER_TILES_JS = """() => {
+  const vis = (el) => { const r = el.getBoundingClientRect(); return r.width > 2 && r.height > 2
+    && getComputedStyle(el).visibility !== 'hidden'; };
+  const txt = (el) => (el.innerText || '').replace(/\\s+/g, ' ').trim();
+  document.querySelectorAll('[data-ja-tile]').forEach((el) => el.removeAttribute('data-ja-tile'));
+  const head = [...document.querySelectorAll('h1, h2, h3, h4, h5, h6, [role="heading"], legend, p, div, span')]
+    .find((el) => /^answers?$/i.test(txt(el)) && vis(el));
+  if (!head) return [];
+  let tiles = [];
+  for (let box = head.parentElement, d = 0; box && d < 4 && !tiles.length; box = box.parentElement, d++) {
+    tiles = [...box.querySelectorAll('*')].filter((el) => !el.contains(head) && !head.contains(el) && vis(el)
+      && getComputedStyle(el).cursor === 'pointer'
+      // (never a link, a page's header, menu or footer, a dialog, or the Auto Advance switch)
+      && !el.closest('a[href], header, nav, footer, [role="dialog"], [role="switch"], [class*="autoadvance" i]')
+      && txt(el).length > 0 && txt(el).length <= 120 && !/^(continue|next|back|previous|submit|auto ?advance)\\b/i.test(txt(el)));
+    // (each answer once: its outermost element that takes the click)
+    tiles = tiles.filter((el) => !tiles.some((o) => o !== el && o.contains(el)));
+    // (a row of answers: two or more side by side, sharing the first wrapper above them that holds more than one
+    // thing (a tile can sit in a column of its own); of several rows, the one nearest the heading)
+    const rowOf = (el) => {
+      let up = el;
+      while (up.parentElement && up.parentElement !== box && up.parentElement.childElementCount === 1) up = up.parentElement;
+      return up.parentElement;
+    };
+    const rows = new Map();
+    tiles.forEach((el) => { const r = rowOf(el); rows.set(r, [...(rows.get(r) || []), el]); });
+    const after = (r) => Boolean(head.compareDocumentPosition(r[0]) & Node.DOCUMENT_POSITION_FOLLOWING);
+    tiles = [...rows.values()].filter((r) => r.length > 1).sort((a, b) => after(b) - after(a))[0] || [];
+  }
+  return tiles.slice(0, 12).map((el, i) => { el.setAttribute('data-ja-tile', String(i)); return txt(el); });
+}"""
+
+# (never a tile that agrees to something, signs up, shares, or leaves: only an answer's)
+_NOT_A_TILE = re.compile(r"\bi agree\b|\bi accept\b|consent|\bshare\b|privacy|terms|policy|\bhelp\b|\bexit\b|"
+                         r"\blog ?(?:in|out)\b|\bsign ?(?:in|up|out)\b|\bsave\b|\bquit\b", re.I)
+
+# A box about an assessment taken before (its score or results brought in), or one that shares the results: never
+# ticked as an answer
+_TAKEN_BEFORE = re.compile(r"(?:already|previously|before)\b.{0,40}\b(?:taken|completed|done)\b|\btaken\b.{0,20}\bbefore\b|"
+                           r"score id|existing (?:score|results?)|\bshare\b", re.I)
+
+# A page's words (what a click on it changed, or not)
+_PAGE_WORDS_JS = "() => (document.body.innerText || '').slice(0, 5000)"
+
+# The markup around an assessment page's "Answers" heading (as _AROUND_JS), for the next look
+_ANSWERS_AROUND_JS = """() => {
+  const txt = (el) => (el.innerText || '').replace(/\\s+/g, ' ').trim();
+  let el = [...document.querySelectorAll('h1, h2, h3, h4, h5, h6, [role="heading"], legend, p, div, span')]
+    .find((e) => /^answers?$/i.test(txt(e)));
+  if (!el) return '';
+  for (let d = 0; d < 3 && el.parentElement && el.parentElement !== document.body; d++) el = el.parentElement;
+  return el.outerHTML.replace(/\\b(href|src|action|srcset|value)="[^"]*"/gi, '$1=""').slice(0, 4000);
+}"""
+
+
 async def take_assessment(run: Any, rec: dict[str, Any]) -> None:
     """The assessment the desk stopped at, taken with random answers: its "Take Assessment" pressed, then page by
     page on the vendor's site, every question answered at random and the page's way on pressed, until it leaves the
@@ -1584,6 +1642,7 @@ async def _take_assessment(run: Any, steps: list[dict[str, Any]], rec: dict[str,
                                 "tabs": len([p for p in ctx.pages if not p.is_closed()])}})
     vendor: set[str] = set()  # (the hosts first reached after it that are an assessment's)
     seen: list[tuple[Any, ...]] = []
+    stalls = 0  # (answer tiles clicked in a row that changed nothing)
     for _ in range(ASSESSMENT_PAGES):
         if time.monotonic() - start > ASSESSMENT_SECONDS:
             return "time limit"
@@ -1620,8 +1679,12 @@ async def _take_assessment(run: Any, steps: list[dict[str, Any]], rec: dict[str,
         boxes = [f for f in fields if f.get("kind") == "checkbox" and not _SIGN_UP_BOX.search(f.get("label") or "")]
         answers = [{"id": f["id"], "value": v} for f in fields if f.get("kind") != "checkbox"
                    and (v := assessment_answer(f)) is not None]
-        if boxes and not any(f.get("kind") == "checkbox" and f.get("value") is True for f in data.get("fields") or []):
-            answers.append({"id": random.choice(boxes)["id"], "value": True})  # (one of them, as an answer's choice)
+        # (a row of them is an answer's choices, one ticked; a box alone only where it's required: The Predictive
+        # Index's "I have already taken the PI Behavioral Assessment and would like to enter my Behavioral Score ID"
+        # took the run another way, run 62)
+        if (len(boxes) > 1 or boxes and boxes[0].get("required")) \
+                and not any(f.get("kind") == "checkbox" and f.get("value") is True for f in data.get("fields") or []):
+            answers.append({"id": random.choice(boxes)["id"], "value": True})
         filled = (await server.fill_form(answers))["results"] if answers else []
 
         # (a vendor's page with the applicant's details is gone on from, never sent: some vendors run applications too)
@@ -1648,9 +1711,40 @@ async def _take_assessment(run: Any, steps: list[dict[str, Any]], rec: dict[str,
                       "kinds": sorted({str(f.get("kind")) for f in data.get("fields") or []}),
                       "questions": [{"label": (f.get("label") or "")[:120], "kind": f.get("kind"),
                                      "options": (f.get("options") or [])[:8]} for f in fields[:12]],
+                      # (what the page says, and the choices it holds: why a page didn't move on, PI's in run 62)
+                      "errors": [_mask(e)[:120] for e in (data.get("errors") or [])[:3]],
+                      "chosen": [[(f.get("label") or "")[:50], _mask(str(f.get("value")))[:60]]
+                                 for f in (data.get("fields") or []) if f.get("kind") in ("checkbox_group", "radio_group")
+                                 and not is_empty_value(f.get("value"))][:4],
                       "answered": sum(1 for r in filled if r.get("ok")), "buttons": [a.get("text") for a in actions][:12],
                       "pressed": on.get("text") if on else None})
+        if on is None and not answers and sends:
+            # its answers as tiles to click (Circle K's, run 62): one at random, and the page read again (its Auto
+            # Advance goes on by itself; else its way on comes)
+            tiles: list[str] = []
+            with contextlib.suppress(Exception):
+                tiles = await page.evaluate(_ANSWER_TILES_JS)
+            usable = [i for i, t in enumerate(tiles) if not _NOT_PRESSED.search(t) and not _SIGN_UP_BOX.search(t)
+                      and not _NOT_A_TILE.search(t)]
+            if len(usable) > 1:
+                pick = random.choice(usable)
+                steps[-1]["tiles"], steps[-1]["clicked"] = [_mask(t)[:60] for t in tiles], _mask(tiles[pick])[:60]
+                shown = await page.evaluate(_PAGE_WORDS_JS)
+                await page.locator(f'[data-ja-tile="{pick}"]').first.click(timeout=10000)  # (a vendor's page)
+                await page.wait_for_timeout(1500)
+                # (three clicks in a row that change nothing on the page: it doesn't take them. A page gone with the
+                # click, back to the application say, has changed)
+                now_shown = None
+                with contextlib.suppress(Exception):
+                    now_shown = await page.evaluate(_PAGE_WORDS_JS)
+                stalls = stalls + 1 if now_shown == shown else 0
+                if stalls >= 3:
+                    return "the page didn't move on"
+                continue
+        stalls = 0
         if on is None:
+            with contextlib.suppress(Exception):
+                steps[-1]["answers_markup"] = _mask(await page.evaluate(_ANSWERS_AROUND_JS))
             # every box as read, and the markup around the first, for the next look (Circle K's "Answers", run 61:
             # boxes read, none taken for a question)
             steps[-1]["fields"] = [{"label": _mask(f.get("label") or "")[:80], "kind": f.get("kind"),
@@ -1664,6 +1758,22 @@ async def _take_assessment(run: Any, steps: list[dict[str, Any]], rec: dict[str,
                on.get("text"))
         if seen[-2:] == [key, key]:  # pressed three times, and the page stays
             return "the page didn't move on"
+        if seen and seen[-1] == key:
+            # pressed once and it stayed: one more of a list's choices ticked, where it has some already (a list of
+            # words to tick that wants more than one, maybe: PI's stayed, run 62); and where the page says something's
+            # wrong, a box alone that the press left unticked (never one for an assessment taken before: its score ID)
+            more_ticks = [{"id": f["id"], "value": [*f["value"], random.choice(rest)]}
+                          for f in data.get("fields") or [] if f.get("kind") == "checkbox_group" and isinstance(
+                              f.get("value"), list) and f["value"] and not _SIGN_UP_BOX.search(f.get("label") or "")
+                          and (rest := [o for o in f.get("options") or [] if o not in f["value"]
+                                        and not _SIGN_UP_BOX.search(o)])]
+            lone = [f for f in data.get("fields") or [] if f.get("kind") == "checkbox"]
+            if data.get("errors") and len(lone) == 1 and lone[0].get("value") is False and not lone[0].get("disabled") \
+                    and not _SIGN_UP_BOX.search(lone[0].get("label") or "") \
+                    and not _TAKEN_BEFORE.search(lone[0].get("label") or ""):
+                more_ticks.append({"id": lone[0]["id"], "value": True})
+            if more_ticks:
+                steps[-1]["ticked_more"] = sum(1 for r in (await server.fill_form(more_ticks))["results"] if r.get("ok"))
         seen.append(key)
         await browser._locator(page, on["id"]).click(timeout=10000)  # (a vendor's page: never the application's)
         await page.wait_for_timeout(1500)

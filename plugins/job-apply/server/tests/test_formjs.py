@@ -59,6 +59,18 @@ def test_a_gigya_choice_is_required_by_its_data_required_and_marked_while_its_ma
     assert [(f["value"], f.get("invalid")) for f in got] == [("Anyone", True)], got
 
 
+def test_workdays_whole_step_loading_page_is_busy_while_on_show(srv, tmp_path):
+    """Baker Tilly's Workday (run 62): a step still loading is Workday's applyFlowLoadingPage, grey bars where the step
+    goes: busy while it's on show, and not once it's gone."""
+    page = tmp_path / "form.html"
+    for style, busy in (("", True), (' style="display: none"', False)):
+        page.write_text('<!doctype html><html><body><h2>Create Account/Sign In</h2><div data-automation-id='
+                        f'"applyFlowLoadingPage"{style}><div style="height: 40px; width: 300px; background: #eee"></div>'
+                        '</div></body></html>', encoding="utf-8")
+        run(srv.browser.goto(page.resolve().as_uri()))
+        assert bool(run(srv.browser.inspect(include_dropdown_options=False)).get("busy")) is busy, style
+
+
 def test_a_hidden_file_box_is_named_by_its_own_upload_button(srv, tmp_path):
     """EMD Electronics' Phenom application (Oct 2026): the resume's file box is hidden beside its
     "Upload Resume/CV" button, after an "or" between it and Apply With LinkedIn, under a header

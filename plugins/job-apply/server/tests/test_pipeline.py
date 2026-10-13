@@ -2427,6 +2427,41 @@ def test_a_step_still_loading_its_questions_is_waited_for(srv, monkeypatch, quer
     assert any("clicked “Save and Continue”" in line for line in r.log), r.log
 
 
+@pytest.mark.parametrize("query", ["", "?heal", "?late=1500"])
+def test_a_sign_in_step_still_loading_is_reloaded_once_then_said_not_taken_for_one_to_sign_in_at(srv, monkeypatch, query):
+    """Baker Tilly's Workday (run 62; run 61 went to its review page): Apply Manually opened its "Create Account/Sign
+    In" step with Workday's whole-step loading skeleton (applyFlowLoadingPage) and only the header's Sign In, and the
+    desk said "Sign in (or create your account) on Workday in the browser window". A step still loading is waited on,
+    reloaded once (heal: then it draws and goes on), and otherwise said not to have finished loading, as the sign-in
+    step it is (the person may sign in there, and the desk carries on by itself). One that draws a moment later (late)
+    is waited on, never reloaded."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 1)
+    monkeypatch.setattr(pipeline, "SIGN_IN_STEP_WAIT", 1)
+    monkeypatch.setattr(pipeline, "STEP_LOAD_WAIT", 2)
+    job = srv.add_job(url=fixture_url("site/workday-signin-loading.html") + query, title="HR Business Partner",
+                      company="Example Advisors")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        r = applier.enqueue(job["id"])
+        applier.start()
+        try:
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    reloaded = any("was still loading" in line and "reloaded it" in line for line in r.log)
+    assert reloaded == (query != "?late=1500"), (r.reason, r.log)
+    if query:
+        assert r.status == "ready", (r.status, r.need, r.reason, r.log)
+    else:
+        assert (r.status, r.need) == ("needs_you", "sign_in") and "hasn't finished loading" in r.reason, (r.reason, r.log)
+        assert "its Sign In at the top" in r.reason, r.reason
+
+
 def test_a_resume_from_a_stop_is_never_followed_by_a_reload_of_the_persons_page(srv):
     """The review of 0.3.147: a page still loading after the person's own Resume from a stop (what they typed there by
     hand) is said, never reloaded away; a Resume after questions answered on the desk may still be reloaded once."""

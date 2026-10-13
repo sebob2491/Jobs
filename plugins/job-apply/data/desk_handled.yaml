@@ -2,7 +2,7 @@
 # account there and the common questions answered) to the application's review page, or to its last button.
 # The desk's "Only where the desk goes all the way" switch shows these employers' openings alone.
 # Refresh it from each full nightly before a release: `uv run python scripts/nightly_summary.py --handled`.
-as_of: "2026-10-13: full runs 51 (0.3.138) and 54 (0.3.142)"
+as_of: "2026-10-13: full run 62 (0.3.149), with Baker Tilly (its stop there fixed in 0.3.150) and Infineon (a blank page that run) from run 61"
 employers:
   - "Air Liquide"
   - "Air Products"
@@ -29,8 +29,9 @@ employers:
   - "Desert Financial Credit Union"
   - "Early Warning Services"
   - "Ebara Technologies"
-  - "EMD Electronics"
+  - "Edwards Vacuum"
   - "Entegris"
+  - "Freeport-McMoRan"
   - "Grand Canyon Education"
   - "Grand Canyon University"
   - "Grant Thornton"
@@ -60,6 +61,7 @@ employers:
   - "Robert Half"
   - "SCREEN SPE USA"
   - "Southwest Gas"
+  - "Texas Instruments"
   - "Thermo Fisher Scientific"
   - "Tokyo Electron (TEL)"
   - "U-Haul"
