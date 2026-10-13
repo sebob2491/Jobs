@@ -18,7 +18,7 @@ from datetime import date
 from pathlib import Path
 from typing import Any, Callable
 
-from .config import Profile, expand
+from .config import Profile, expand, question_core
 
 US_STATES = {
     "AL": "Alabama", "AK": "Alaska", "AZ": "Arizona", "AR": "Arkansas", "CA": "California",
@@ -1137,10 +1137,11 @@ def _reads_question(getter: Getter) -> bool:
 _READS_QUESTION = {_relatives, _government, _travel, _previously_employed, _no_sponsorship, _sponsorship, _UNDER_18, _OVER_18, _phone,
                    _local_or_relocate, _lives_in, _veteran, _has_degree}
 
+HOW_HEARD = r"(how|where) did you (first )?(hear|find|learn)|source of (application|referral)|^source$"
 # (rule name, label regex, getter, max label length or None, allowed kinds or None)
 _TEXTY = {"text", "textarea", "select", "listbox", "combobox", "radio_group"}
 RULES: list[tuple[str, str, Getter, int | None, set[str] | None]] = [
-    ("how_heard", r"(how|where) did you (first )?(hear|find|learn)|source of (application|referral)|^source$", _p("preferences.how_did_you_hear"), None, None),
+    ("how_heard", HOW_HEARD, _p("preferences.how_did_you_hear"), None, None),
     # contact details: short labels only, so long questions that merely mention
     # "state" or "name" don't match
     ("email", r"^(confirm |re ?enter |re ?type |verify )?e ?mail( address)?( again)?$|^(your )?email\b|^enter (your )?e ?mail\b",
@@ -1366,10 +1367,17 @@ def _answer_bank(prof: Profile, label: str, job: dict | None = None, common: boo
         if item.get("question"):
             # answered in the Job Desk: that question, worded the same. "I agree" isn't "I agree
             # to binding arbitration", and "Are you currently employed?" isn't "... by ASML?"
+            asked = label
             if _bare_question(str(item["question"])) != _bare_question(label):
-                continue
+                # or the question a long label was remembered by (its "core"), when this long label asks the same
+                # one: a notice is worded for each employer (issue #112, note 29). Whether it is about the
+                # employer is read from that question, not the notice around it ("our Privacy Statement"); a
+                # label that asks two things has no one question, and isn't answered from this
+                asked = question_core(label)
+                if not item.get("core") or _bare_question(asked) != _bare_question(str(item["core"])):
+                    continue
             source = norm(str(item.get("from") or ""))
-            if source and source != company and (_EMPLOYER_SPECIFIC.search(label) or source in norm(label)
+            if source and source != company and (_EMPLOYER_SPECIFIC.search(asked) or source in norm(label)
                                                  or source.split()[0] in norm(item.get("answer")).split()):
                 continue  # about the company it was given for, or naming it
             return Answer(item.get("answer"), f"answers[{item['match']}]")
@@ -1910,7 +1918,7 @@ def _resolve_field(field: dict, prof: Profile, job: dict | None = None, file_inp
             return Answer(us[0], ans.rule) if home and len(us) == 1 else None
         chosen = (ans.rule in _PLACE_RULES and choose_place(ans.value, options, place_words(ans.rule, prof))
                   or choose_option(ans.value, options, names=is_name_rule(ans.rule)))
-        if chosen is None and ans.rule == "how_heard":
+        if chosen is None and is_how_heard(ans.rule, label):
             chosen = _own_website(ans.value, options, job)
         if chosen is None and ans.rule == "start_date":
             chosen = _same_wait(ans.value, options)
@@ -2141,6 +2149,30 @@ def _own_website(value: Any, options: list[str], job: dict) -> str | None:
         # (its whole name, never a word of it: "Texas" isn't Texas Instruments)
         sites = [o for o in options if norm(o) and set(norm(o).split()) == employer]
     return sites[0] if len(sites) == 1 else None
+
+
+# What doesn't make an employer's name its own ("The Boeing Company", "Acme Technologies Inc")
+_NAME_FILLER = {"the", "inc", "incorporated", "corp", "corporation", "co", "company", "group", "llc", "ltd", "plc",
+                "technologies", "technology", "holdings", "international", "and"}
+
+
+def is_how_heard(rule: str, label: str) -> bool:
+    """The question of how the person heard of the job, answered from the profile or from an answer they
+    remembered for it."""
+    return rule == "how_heard" or rule.startswith("answers[") and bool(re.search(HOW_HEARD, norm(label)))
+
+
+def answer_to_remember(label: str, answer: Any, company: str) -> Any | None:
+    """What of a person's answer to keep for the questions of later applications, or None for nothing. An answer
+    that names the employer it was given to ("Acme website", to how they heard of the job) isn't another's: for
+    that question it's kept as "Company Website", which each form's list words as its own employer's site
+    (_own_website); any other is for this application only (issue #112, note 27)."""
+    first = next((w for w in norm(company).split() if w not in _NAME_FILLER), "")
+    if not first or first not in norm(answer).split():
+        return answer
+    if re.search(HOW_HEARD, norm(label)) and _WEBSITE.search(str(answer)):
+        return "Company Website"
+    return None
 
 
 # not "Institution that issued your license": a licence's or certificate's, not a school's

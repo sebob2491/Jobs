@@ -520,8 +520,16 @@ class Desk:
             if not label or value in (None, ""):
                 continue
             if a.get("remember", True) and " | " not in label:  # (one box's own answer is never remembered)
+                # an answer naming this employer ("Acme website") is remembered as "Company Website", or not at
+                # all: it isn't the answer at another employer's
+                kept = autofill.answer_to_remember(label, value, run.company)
+                if kept is None:
+                    said = f'"{value}" names {run.company}, so it\'s used for this application only, not remembered.'
+                    problem = f"{problem} {said}" if problem else said
+                    run.once[question_key(label)] = value
+                    continue
                 try:
-                    config.save_answer(label, value, run.company)
+                    config.save_answer(label, kept, run.company)
                     run.once.pop(question_key(label), None)  # an earlier answer for this application only
                     continue
                 except (ValueError, OSError) as e:

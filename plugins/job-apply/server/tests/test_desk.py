@@ -571,6 +571,33 @@ def test_a_remembered_answer_replaces_one_given_for_this_application_only(srv, j
     assert desk.applier.runs[job["id"]].once == {}
     assert config.saved_answers()[0]["answer"] == "English"
 
+
+def test_an_answer_naming_the_employer_is_remembered_as_company_website_or_not_at_all(srv, job_apply_home):
+    """The card's "Acme website" (issue #112, note 27) is Acme's own, which no other employer's list has: how the
+    person heard of the job is remembered as "Company Website", which each list words as its own employer's site;
+    another answer naming the employer is used for this application only, and the person is told."""
+    from job_apply.pipeline import Run, question_key
+
+    job = srv.add_job(url="https://example.com/a", title="FSE", company="Acme Technologies Inc")["job"]
+    desk = Desk(srv)
+
+    def answer(*pairs):
+        desk.applier.runs[job["id"]] = Run(job["id"], "FSE", "Acme Technologies Inc", status="needs_you", need="questions")
+        return desk.answer(job["id"], [{"label": label, "value": value} for label, value in pairs])
+
+    assert answer(("How Did You Hear About Us?*", "Acme website"), ("Preferred shift", "Nights")) is None
+    assert {a["question"]: a["answer"] for a in config.saved_answers()} == {
+        "How Did You Hear About Us?*": "Company Website", "Preferred shift": "Nights"}
+    assert desk.applier.runs[job["id"]].once == {}
+    note = answer(("Which of our teams would you like to join?", "The Acme field team"))
+    assert "Acme field team" in note and "this application only" in note
+    assert desk.applier.runs[job["id"]].once == {question_key("Which of our teams would you like to join?"):
+                                                 "The Acme field team"}
+    assert len(config.saved_answers()) == 2
+    # a source that isn't the employer's site stays as it was said
+    assert answer(("How Did You Hear About Us?*", "LinkedIn")) is None
+    assert config.saved_answers()[0]["answer"] == "LinkedIn"
+
 def test_saving_an_answer_keeps_the_rest_of_answers_yaml(job_apply_home):
     import yaml
 

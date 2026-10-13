@@ -368,6 +368,16 @@ class PickedAGroup(ValueError):
         self.entries = entries
 
 
+class NoMatch(ValueError):
+    """The answer isn't among the list's suggestions. The list is carried: one that drew its choices late
+    wasn't read when the answer was chosen (Workday's "How Did You Hear About Us?", issue #112, note 27), and
+    the answer is chosen again among them."""
+
+    def __init__(self, text: str, entries: list[str]) -> None:
+        super().__init__(f"{text!r} doesn't match any suggestion: {entries[:30]}")
+        self.entries = entries
+
+
 class DialogOpen(Exception):
     """A dialog is open over the page (a notice to answer first): nothing is filled behind it."""
 
@@ -1186,7 +1196,7 @@ class BrowserSession:
                     except Exception as e:  # report and keep going; one odd widget shouldn't stop the rest
                         results.append({"id": fid, "ok": False,
                                         "error": f"{type(e).__name__}: {str(e).splitlines()[0][:300]}",
-                                        **({"options": e.entries} if isinstance(e, PickedAGroup) else {})})
+                                        **({"options": e.entries} if isinstance(e, (PickedAGroup, NoMatch)) else {})})
                 if self._typed.get(page.url) and any(r["ok"] and r["result"] != "already set" for r in results):
                     await self._fill_lost(page)
             finally:
@@ -1781,7 +1791,7 @@ class BrowserSession:
         if choice is None:
             if options:
                 await self._clear_search(page, loc)
-                raise ValueError(f"{text!r} doesn't match any suggestion: {options[:30]}")
+                raise NoMatch(text, options)
             # Nothing was listed. A pick-list (one that names its menu) needs a pick: Eightfold's
             # Country code dropped the typed text once its menu closed, and the field stayed
             # empty while counting as filled. So does a Workday prompt, whose value is only ever

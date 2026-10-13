@@ -229,6 +229,29 @@ def test_an_answer_that_picks_a_group_is_chosen_again_among_its_entries(srv, job
     assert heard["value"] == "Company Career Site"
 
 
+def test_how_did_you_hear_is_chosen_again_from_a_list_that_drew_late(srv, job_apply_home):
+    """Workday's "How Did You Hear About Us?" (live, issue #112, note 27): the prompt listed nothing when the
+    page was read, so "Company Website" went to the fill as it was and found no match in the list that came
+    after ("doesn't match any suggestion: [..., 'Acme website']"). The failed field comes back with that
+    list, the answer is chosen again among its entries ("Acme website") and filled, inside the group it opens."""
+    profile = job_apply_home / "profile.yaml"
+    profile.write_text(profile.read_text(encoding="utf-8").replace("how_did_you_hear: LinkedIn", "how_did_you_hear: Company Website"),
+                       encoding="utf-8")
+    job = srv.add_job(url=fixture_url("workday_prompt_2026.html") + "?groups=employer&slow=1500",
+                      title="Technician", company="Acme")["job"]
+    run(srv.open_application(job_id=job["id"]))
+    result = run(srv.autofill(job_id=job["id"]))
+    assert not [f for f in result["failed"] if "hear" in (f["label"] or "").lower()], result["failed"]
+    heard = by_label(run(srv.inspect_form(include_dropdown_options=False))["fields"], "how did you hear")
+    assert heard["value"] == "Acme website"
+    # an answer the list has no match for (and isn't the employer's site) is left to the person, with the list
+    profile.write_text(profile.read_text(encoding="utf-8").replace("how_did_you_hear: Company Website", "how_did_you_hear: Radio"),
+                       encoding="utf-8")
+    run(srv.browser.goto(fixture_url("workday_prompt_2026.html") + "?groups=employer&slow=1500"))
+    failed = [f for f in run(srv.autofill(job_id=job["id"]))["failed"] if "hear" in (f["label"] or "").lower()]
+    assert [f["options"] for f in failed] == [["Advertisement", "Acme website", "Job Board"]], failed
+
+
 def test_a_list_the_page_draws_is_read_page_by_page(srv):
     """Amkor's career site (SuccessFactors' older pages) draws its job list with a script,
     10 to a page: a bigger page is chosen, then the next-page arrow pressed until it's gone."""
