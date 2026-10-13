@@ -1278,6 +1278,58 @@ _MENU_JS = r"""
 """
 
 
+async def _desk_steps(page: Any, loc: Any, fid: str, typed: str) -> dict[str, Any]:
+    """The desk's own steps for a pick from the list a box opens with (browser._type_and_pick's), each one's
+    result recorded: the options read on opening, the pills a moment after the click, and the options read
+    after it (a group's own list, which the desk didn't see at Air Products, ASML and Wells Fargo in run 44).
+    The run is over; nothing is sent."""
+    from job_apply.formjs import FIELD_OPTIONS_JS, WORKDAY_CHOSEN_JS
+
+    b, out = server.browser, {}
+    try:
+        await b._open(page, fid, loc)
+        out["options"] = opened = await b._field_options(page, fid, loc, 2500)
+        out["geometry_open"] = await loc.evaluate(_GEOMETRY_JS)
+        if typed not in opened:
+            return out
+        await b._click_option(page, fid, typed)
+        await page.wait_for_timeout(150)
+        out["pills"] = await loc.evaluate(WORKDAY_CHOSEN_JS)
+        await page.wait_for_timeout(1600)
+        out["inner"] = await b._new_options(page, fid, loc, opened, 1500)
+        out["raw"] = await loc.evaluate(FIELD_OPTIONS_JS)
+        out["geometry_after"] = await loc.evaluate(_GEOMETRY_JS)
+        out["menu_after"] = await loc.evaluate(_MENU_JS)
+    except Exception as e:  # noqa: BLE001 - a probe
+        out["error"] = f"{type(e).__name__}: {str(e)[:300]}"
+    finally:
+        with contextlib.suppress(Exception):
+            await b._close_menus(page)
+    return out
+
+
+# Where a box, its open menu and the page's other dropdowns are (FIELD_OPTIONS_JS's measures): which menu it
+# takes for the box's own
+_GEOMETRY_JS = r"""
+(el) => {
+  const r = (n) => { const b = n.getBoundingClientRect(); return [Math.round(b.top), Math.round(b.bottom),
+                                                                  Math.round(b.left), Math.round(b.right)]; };
+  const outer = (f) => f.closest('[role="combobox"]') || f;
+  const shown = (o) => o.getClientRects().length > 0 && getComputedStyle(o).visibility !== 'hidden';
+  const opts = [...document.querySelectorAll('[role="option"]')].filter(shown);
+  const lists = [...new Set(opts.map((o) => o.closest('[role="listbox"]') || o.parentElement))];
+  const others = [...document.querySelectorAll('[role="combobox"], [aria-haspopup="listbox"], input[aria-autocomplete]')]
+    .map(outer).filter((f) => f !== outer(el) && !f.contains(el) && !el.contains(f) && f.getClientRects().length > 0);
+  return { el: r(el), outer: r(outer(el)), parent: r(el.closest('[role="combobox"]') || el.parentElement || el),
+           controls: el.getAttribute('aria-controls') || el.getAttribute('aria-owns') || '',
+           lists: lists.map((l) => ({ at: r(l), auto: l.getAttribute('data-automation-id') || l.tagName.toLowerCase(),
+                                      n: opts.filter((o) => (o.closest('[role="listbox"]') || o.parentElement) === l).length,
+                                      before: opts.filter((o) => o.getAttribute('data-ja-before')).length })),
+           others: others.slice(0, 12).map((f) => ({ at: r(f), name: (f.getAttribute('aria-label') || f.id || '').slice(0, 40) })) };
+}
+"""
+
+
 FINAL_BOXES = 12  # boxes final_form keeps
 FINAL_CHOICES = 30  # choices it keeps of each
 
@@ -1318,10 +1370,14 @@ async def list_probe(questions: list[dict[str, Any]]) -> list[dict[str, Any]]:
             if not m or len(out) >= 3:
                 continue
             loc = page.locator(f'[data-ja-id="{q["id"]}"]')
-            if not await loc.count():  # (drawn again since it was read: ASML's Workday, run 45) found by its label
-                loc = page.locator('[data-automation-id="formField-source"] input').first if re.match(
-                    r"how did you hear", q.get("label") or "", re.I) else page.get_by_label(
-                    re.sub(r"\s*\*\s*$", "", q.get("label") or "")).first
+            if not await loc.count():
+                # drawn again since it was read (ASML's Workday, runs 45 and 46): found by its label, and given the
+                # id again, for the desk's own steps below
+                said = re.sub(r"\s*\*\s*$", "", q.get("label") or "")
+                loc = page.locator('[data-automation-id^="formField-"]').filter(has_text=said).locator(
+                    'input:not([type=hidden]), button[aria-haspopup]').first
+                with contextlib.suppress(Exception):
+                    await loc.evaluate("(el, id) => el.setAttribute('data-ja-id', id)", str(q["id"]), timeout=5000)
             opened: dict[str, Any] = {}
             try:
                 # focus and type without a pointer click: a cookie banner may cover the page
@@ -1351,6 +1407,7 @@ async def list_probe(questions: list[dict[str, Any]]) -> list[dict[str, Any]]:
                         await print_shot(f"after picking {typed!r} from the opening list", page)
                     await page.keyboard.press("Escape")
                     await asyncio.sleep(0.5)
+                    opened["desk"] = await _desk_steps(page, loc, str(q["id"]), typed)
                 await loc.evaluate("el => el.focus()")
                 await loc.fill("")
                 await loc.press_sequentially(typed, delay=80)
