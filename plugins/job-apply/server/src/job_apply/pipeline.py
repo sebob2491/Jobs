@@ -4109,9 +4109,12 @@ _TEST_NOTICE = re.compile(r"\b(?:privacy|terms|consent|agreement|notice|statemen
 def _test_identity_agrees(heading: str, said: str, test_identity: bool) -> bool:
     """Whether the live check's test identity agrees to a notice the person's own desk leaves to them: only the
     test identity (config.live_test_identity: never a person's profile), only a notice (_TEST_NOTICE), never a
-    dialog about an error, an overwrite or a deletion (_NOT_A_NOTICE, by its heading)."""
-    return (test_identity and bool(_TEST_NOTICE.search(said)) and not _NOT_A_NOTICE.search(heading)
-            and not re.search(r"\bwent wrong\b|\berror\b", said[:300], re.I))
+    dialog about an error, an overwrite, a deletion, a withdrawal or one that sends or applies (by its opening), and
+    never one that signs up for anything (_SIGNS_UP: newsletters, job alerts, a talent community, marketing)."""
+    opening = said[:300]  # (its heading and first words say what it is; a long statement's later words don't)
+    return (test_identity and bool(_TEST_NOTICE.search(said)) and not _NOT_A_NOTICE.search(opening)
+            and not re.search(r"\bwent wrong\b|\bsubmit\w*|\bapply\b|\bwithdraw", opening, re.I)
+            and not _SIGNS_UP.search(said))  # (never a sign-up, CLAUDE.md's rule, test identity or not)
 
 
 def _test_identity() -> bool:

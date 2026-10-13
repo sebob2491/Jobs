@@ -114,6 +114,7 @@ from job_apply.fixtures import convert  # noqa: E402
 from job_apply.postings import fetch_posting  # noqa: E402
 from job_apply.search import title_matches  # noqa: E402
 from job_apply.autofill import is_empty_value, polarity  # noqa: E402
+from job_apply.ats import detect_ats  # noqa: E402
 from job_apply.search import load_companies, sitecore_search  # noqa: E402
 
 import live_identity  # noqa: E402  (scripts/live_identity.py, beside this one)
@@ -1456,30 +1457,38 @@ def best_posting(results: list[dict[str, Any]]) -> dict[str, Any]:
 
 # The test identity takes an employer's assessment with random answers, to see what comes after it (the owner's
 # call, Oct 13: "it shouldn't matter how well you do"; Circle K's and Taylor Morrison's Workday stopped at "Take
-# Assessment"). Never the person's desk: an assessment is theirs. The application itself still never goes: an
-# assessment's own Submit or Finish is pressed only off the application's site (the vendor's), and on the
-# application's site only a step's way on. A CAPTCHA, a page it can't read or answer, or one that won't move ends it
+# Assessment"). Never the person's desk: an assessment is theirs. The application itself never goes: the assessment is
+# answered and pressed on only on a vendor's site, one first reached after "Take Assessment", that no job system runs
+# (detect_ats: a company's own site), and none of whose boxes hold the applicant's details; on any other page (the
+# employer's application, on its own address or another of its job system's) nothing is filled or pressed, and it
+# ends. A CAPTCHA, a page it can't answer or one that won't move ends it too, and what it saw is kept
 ASSESSMENT_PAGES = 40
 ASSESSMENT_SECONDS = 600
 _TAKE_ASSESSMENT = re.compile(r"^(?:take|start|begin|launch|continue)\s+(?:the\s+|your\s+)?assessment\b", re.I)
-_ASSESSMENT_ON = re.compile(r"^(?:next|continue|start|begin|get started|let'?s (?:go|begin|start)|proceed|go|ok|okay|"
-                            r"i agree|agree|accept|i accept|i understand|i'?m ready|ready|save and continue|save & continue|"
-                            r"(?:start|begin|continue|resume)\s+(?:the\s+)?(?:assessment|test|questionnaire|survey|section))\b",
+_ASSESSMENT_ON = re.compile(r"^(?:next|continue|start|begin|get started|let'?s (?:begin|start)|proceed|ok|okay|"
+                            r"i agree|agree|accept|i accept|i understand|i'?m ready|ready|"
+                            r"(?:start|begin|continue|resume)\s+(?:the\s+)?(?:assessment|test|questionnaire|survey|section))$",
                             re.I)
-_ASSESSMENT_DONE = re.compile(r"^(?:submit|finish|done|complete|end|submit\s+(?:the\s+)?(?:assessment|test|answers?|"
-                              r"questionnaire|survey)|finish\s+(?:the\s+)?(?:assessment|test))\b", re.I)
+_ASSESSMENT_DONE = re.compile(r"^(?:submit|finish|done|complete|submit\s+(?:the\s+)?(?:assessment|test|answers?|questionnaire|"
+                              r"survey)|finish\s+(?:the\s+)?(?:assessment|test))$", re.I)
+# (never these, whatever they say: a cookie banner's, a sign-in with another site, a way back, an application's)
+_NOT_PRESSED = re.compile(r"cookie|google|linkedin|facebook|apple|microsoft|\bback\b|application|\bapply\b", re.I)
+# (and never ticked: a sign-up of any sort)
+_SIGN_UP_BOX = re.compile(r"marketing|newsletter|job alerts?|talent (?:community|network|pool)|\bsms\b|text messages?|"
+                          r"promotion|offers|updates", re.I)
 
 
 def assessment_answer(field: dict[str, Any]) -> Any:
-    """A random answer for an assessment's question (this run only): any of its choices, or a few words."""
+    """A random answer for an assessment's question (this run only): any of its choices, or a few words. None for
+    a box that signs up for something (never ticked)."""
     import random
     options = [o for o in field.get("options") or [] if o and not is_empty_value(o)
-               and not re.match(r"^(select|choose|--|please)", o, re.I)]
+               and not re.match(r"^(select|choose|--|please)", o, re.I) and not _SIGN_UP_BOX.search(o)]
     kind = field.get("kind")
     if kind == "checkbox":
-        return True
-    if kind == "checkbox_group" and options:
-        return [random.choice(options)]
+        return None if _SIGN_UP_BOX.search(field.get("label") or "") else True
+    if kind == "checkbox_group":
+        return [random.choice(options)] if options else None
     if options:
         return random.choice(options)
     if re.search(r"year|number|how many|\bage\b|percent|amount", field.get("label") or "", re.I):
@@ -1487,86 +1496,97 @@ def assessment_answer(field: dict[str, Any]) -> Any:
     return "Test answer"
 
 
+def _applicants_page(data: dict[str, Any]) -> bool:
+    """A page with the applicant's own details in its boxes (an application's, not an assessment's)."""
+    email = os.environ.get("LIVE_TEST_EMAIL", "").strip().lower()
+    own = {v for v in (email, live_identity.LAST_NAME.lower(), f"{live_identity.FIRST_NAME} {live_identity.LAST_NAME}".lower(),
+                       FAKE_PROFILE["personal"]["email"].lower()) if v}
+    return any(str(f.get("value") or "").strip().lower() in own for f in data.get("fields") or [])
+
+
 async def take_assessment(run: Any, rec: dict[str, Any]) -> None:
     """The assessment the desk stopped at, taken with random answers: its "Take Assessment" pressed, then page by
-    page, every question answered at random and the page's way on pressed, until it's back on the application's
-    site (or the tab it opened closes). What it saw is kept in rec["assessment"]."""
+    page on the vendor's site, every question answered at random and the page's way on pressed, until it leaves the
+    vendor's site. What it saw is kept in rec["assessment"]; anything unforeseen ends it (never the whole check)."""
     steps: list[dict[str, Any]] = []
     rec["assessment"] = {"steps": steps}
+    try:
+        rec["assessment"]["end"] = await _take_assessment(run, steps, rec)
+    except Exception as e:  # noqa: BLE001
+        rec["assessment"]["end"] = f"stopped: {type(e).__name__}: {str(e)[:160]}"
+    browser = server.browser
+    browser.use_tab(run.page)
+    with contextlib.suppress(Exception):
+        await run.page.reload(wait_until="load")  # (the application's step as it is now)
+    print("LIVE_ASSESSMENT " + _mask(json.dumps({"company": rec.get("company"), "end": rec["assessment"].get("end"),
+                                                 "pages": len(steps)}, default=str)), flush=True)
+
+
+async def _take_assessment(run: Any, steps: list[dict[str, Any]], rec: dict[str, Any]) -> str:
     browser = server.browser
     browser.use_tab(run.page)
     home = (urlsplit(run.page.url).hostname or "").lower()
+    application = {h for h in (home, (urlsplit(getattr(run, "url", "") or "").hostname or "").lower()) if h}
     start = time.monotonic()
     data = await server.inspect_form(include_dropdown_options=False)
     take = next((a for a in data.get("actions") or [] if not a.get("disabled")
                  and _TAKE_ASSESSMENT.match((a.get("text") or "").strip())), None)
     if take is None:
-        rec["assessment"]["end"] = "no Take Assessment button"
-        return
-    out = await server.click(take["id"])
+        return "no Take Assessment button"
+    out = await server.click(take["id"])  # (the desk's own guard)
     steps.append({"pressed": take["text"], "url": _mask(str(out.get("url") or ""))[:200]})
+    if not out.get("clicked"):
+        return f"Take Assessment wasn't pressed: {str(out.get('blocked') or '')[:120]}"
+    vendor: set[str] = set()  # (the hosts first reached after it that are an assessment's)
     seen: list[tuple[Any, ...]] = []
-    end = "page limit"
     for _ in range(ASSESSMENT_PAGES):
         if time.monotonic() - start > ASSESSMENT_SECONDS:
-            end = "time limit"
-            break
+            return "time limit"
         page = await browser.page()
-        if page.is_closed():  # (the assessment's tab closed itself once done)
-            browser.use_tab(run.page)
-            end = "its tab closed"
-            break
         with contextlib.suppress(Exception):
             await page.wait_for_load_state("load", timeout=15000)
         host = (urlsplit(page.url).hostname or "").lower()
+        if not host:  # (a tab just opened, its address not there yet)
+            await page.wait_for_timeout(1000)
+            continue
         data = await server.inspect_form(include_dropdown_options=True)
-        actions = [a for a in data.get("actions") or [] if not a.get("disabled")]
-        here = host == home
-        if here and len(steps) > 1 and not any(_TAKE_ASSESSMENT.match((a.get("text") or "").strip()) for a in actions):
-            end = "back on the application"
-            rec["assessment"]["back_at"] = _mask(page.url)[:300]
-            break
+        if host not in vendor and host not in application and detect_ats(page.url) == "company_site" \
+                and not _applicants_page(data):
+            vendor.add(host)
+        if host not in vendor:
+            # on the application (its own address, another of its job system's, or a page with the applicant's
+            # details): nothing filled or pressed there
+            if vendor:
+                rec["assessment"]["back_at"] = _mask(page.url)[:300]
+                return "back on the application"
+            return "it opened no assessment off the application's site"
         if data.get("captcha"):
-            end = "a CAPTCHA (the rules: never solved)"
-            break
+            return "a CAPTCHA (the rules: never solved)"
+        actions = [a for a in data.get("actions") or [] if not a.get("disabled") and not a.get("cookie")
+                   and not _NOT_PRESSED.search(a.get("text") or "")]
         fields = [f for f in data.get("fields") or [] if not f.get("disabled") and f.get("kind") not in ("file", "password")
                   and is_empty_value(f.get("value"))]
-        answers = [{"id": f["id"], "value": assessment_answer(f)} for f in fields]
+        answers = [{"id": f["id"], "value": v} for f in fields if (v := assessment_answer(f)) is not None]
         filled = (await server.fill_form(answers))["results"] if answers else []
-        on = next((a for a in actions if _ASSESSMENT_ON.match((a.get("text") or "").strip())), None)
-        if on is None and not here:  # (its own Submit or Finish: only off the application's site)
-            on = next((a for a in actions if _ASSESSMENT_DONE.match((a.get("text") or "").strip())), None)
-        step = {"host": host, "here": here, "title": (data.get("title") or "")[:80],
-                "headings": [h[:80] for h in (data.get("headings") or [])[:4]],
-                "kinds": sorted({str(f.get("kind")) for f in data.get("fields") or []}),
-                "questions": [{"label": (f.get("label") or "")[:120], "kind": f.get("kind"),
-                               "options": (f.get("options") or [])[:8]} for f in fields[:12]],
-                "answered": sum(1 for r in filled if r.get("ok")), "buttons": [a.get("text") for a in actions][:12],
-                "pressed": on.get("text") if on else None}
-        steps.append(step)
+        on = next((a for a in actions if _ASSESSMENT_ON.match((a.get("text") or "").strip())), None) \
+            or next((a for a in actions if _ASSESSMENT_DONE.match((a.get("text") or "").strip())), None)
+        steps.append({"host": host, "title": (data.get("title") or "")[:80],
+                      "headings": [h[:80] for h in (data.get("headings") or [])[:4]],
+                      "kinds": sorted({str(f.get("kind")) for f in data.get("fields") or []}),
+                      "questions": [{"label": (f.get("label") or "")[:120], "kind": f.get("kind"),
+                                     "options": (f.get("options") or [])[:8]} for f in fields[:12]],
+                      "answered": sum(1 for r in filled if r.get("ok")), "buttons": [a.get("text") for a in actions][:12],
+                      "pressed": on.get("text") if on else None})
         if on is None:
-            end = "no way on it knows"
-            break
-        key = (page.url, tuple(data.get("headings") or []), len(data.get("fields") or []), on.get("text"))
+            return "no way on it knows"
+        key = (page.url, tuple(data.get("headings") or []), tuple(f.get("label") for f in data.get("fields") or []),
+               on.get("text"))
         if seen[-2:] == [key, key]:  # pressed three times, and the page stays
-            end = "the page didn't move on"
-            break
+            return "the page didn't move on"
         seen.append(key)
-        try:
-            if here:  # (the desk's own guard: never the application's Submit)
-                await server.click(on["id"])
-            else:
-                await browser._locator(page, on["id"]).click(timeout=10000)
-                await page.wait_for_timeout(1500)
-        except Exception as e:  # noqa: BLE001
-            end = f"its button wouldn't take a press ({type(e).__name__})"
-            break
-    rec["assessment"]["end"] = end
-    browser.use_tab(run.page)
-    with contextlib.suppress(Exception):
-        await run.page.reload(wait_until="load")  # (the application's step as it is now)
-    print("LIVE_ASSESSMENT " + _mask(json.dumps({"company": rec.get("company"), "end": end, "pages": len(steps)},
-                                                 default=str)), flush=True)
+        await browser._locator(page, on["id"]).click(timeout=10000)  # (a vendor's page: never the application's)
+        await page.wait_for_timeout(1500)
+    return "page limit"
 
 
 async def check_pipeline(company: dict[str, Any], out: Path, rec: dict[str, Any], fixtures: bool = False) -> None:

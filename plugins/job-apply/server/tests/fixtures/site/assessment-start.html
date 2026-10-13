@@ -18,7 +18,8 @@
     step.innerHTML = '<p>In order to submit your application, please click the Take Assessment button.</p>'
       + '<button type="button" id="take">Take Assessment</button>';
     document.getElementById('take').addEventListener('click', () => {
-      const back = location.href.split('?')[0] + '?done=1';
+      // (?return=<address>: where the assessment hands back instead, another address of the application's)
+      const back = q.get('return') || location.href.split('?')[0] + '?done=1';
       window.open(q.get('vendor') + '?back=' + encodeURIComponent(back), '_blank');
     });
   }

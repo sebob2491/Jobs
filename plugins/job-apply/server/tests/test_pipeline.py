@@ -2789,8 +2789,13 @@ def test_the_test_identity_agrees_to_the_notices_a_persons_desk_leaves_to_them()
     assert not pipeline._test_identity_agrees(heading, said, False)
     assert pipeline._test_identity_agrees(heading, said, True)
     assert not pipeline._test_identity_agrees("Something went wrong", "Something went wrong. Privacy notice failed", True)
-    assert not pipeline._test_identity_agrees("Overwrite your existing profile?", "Your profile and its terms", True)
+    assert not pipeline._test_identity_agrees("Overwrite your existing profile?",
+                                              "Overwrite your existing profile? Your profile and its terms", True)
     assert not pipeline._test_identity_agrees("Upload your resume", "Choose a file to upload", True)
+    # (the review: by its opening, not its heading alone; never a sign-up, nor one that sends)
+    assert not pipeline._test_identity_agrees("Notice", "Notice Your existing profile will be overwritten. I agree", True)
+    assert not pipeline._test_identity_agrees("Privacy", "Privacy Join our talent community and receive job alerts", True)
+    assert not pipeline._test_identity_agrees("Terms", "Terms By continuing you submit your application and agree", True)
 
 
 def test_an_employers_mail_domains_are_only_its_own(job_apply_home):
