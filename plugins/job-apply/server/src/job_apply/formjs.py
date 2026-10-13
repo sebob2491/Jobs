@@ -857,8 +857,10 @@ COVERED_JS = r"""
 UPLOAD_NOT_KEPT_JS = r"""
 () => {
   const named = /resume|(^|[_-])cv([_-]|$)/i;
+  // (only the fields an upload is kept in: a save-for-later's "resumeToken" isn't one, the review of 0.3.136's)
+  const kept_in = /resume.?(?:path|name|file|size|bucket|relative|url|id)|^isresume$/i;
   const hidden = Array.from(document.querySelectorAll('input[type="hidden"]'))
-    .filter((el) => named.test(el.id || '') || named.test(el.name || ''));
+    .filter((el) => kept_in.test(el.id || '') || kept_in.test(el.name || ''));
   // (the resume's own file box, and the hidden fields beside it: its form's, or within a few levels of it; not a
   // cover letter's box, nor a "resumeToken" of a save-for-later elsewhere on the page: the review of note 28)
   const near = (box, el) => {
@@ -881,7 +883,8 @@ UPLOAD_NOT_KEPT_JS = r"""
     const file = box.__jaUploaded ? String(box.__jaUploaded) : (box.files && box.files.length ? box.files[0].name : '');
     const said = [box.id, box.name, box.getAttribute('aria-label') || '',
                   ...Array.from(box.labels || []).map((l) => l.textContent || '')].join(' ').trim();
-    if (!file || !named.test(said || block(box))) continue;
+    const words = said || block(box);
+    if (!file || !named.test(words) || !said && /cover letter|transcript|other documents?|additional/i.test(words)) continue;
     const kept = hidden.filter((el) => near(box, el));
     if (kept.length >= 2 && !kept.some((el) => (el.value || '').trim())) return file;
   }
@@ -980,6 +983,7 @@ FIELD_OPTIONS_JS = r"""
   const out = [];
   for (const o of opts) {
     const t = text(o);
+    if (t && empty.test(t)) el.setAttribute('data-ja-empty', '1');  // (a list to pick from, that said it's empty)
     if (t && !empty.test(t) && !out.includes(t)) { o.setAttribute('data-ja-opt', t); out.push(t); }
   }
   return out;

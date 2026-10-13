@@ -1673,15 +1673,22 @@ class BrowserSession:
             def off(read: list[Any]) -> list[int]:  # every part with an answer, not only those typed now
                 return [i for i in range(count) if want[i] and not (str(read[i]).isdigit() and int(read[i]) == int(want[i]))]
 
+            def number(x: Any) -> str:  # (as a number: "05" and "5" alike, "0" and "" alike)
+                return str(int(x)) if str(x).isdigit() and int(x) else ""
+
+            def strays(read: list[Any]) -> list[int]:  # parts not typed that don't read as they did before
+                return [i for i in range(count) if not start <= i <= end and number(read[i]) != number(was[i])]
+
             read = await type_run(False)
             wrong = off(read)
-            if wrong:
+            if wrong and not strays(read):
                 # once more, the same parts with the same digits, a little slower (HonorHealth's school year lost
-                # the keys typed as it took focus, and read 1900: run 49); taken only where the parts not typed read
-                # as they did before (never a year the first run left from a month alone: the review's)
+                # the keys typed as it took focus, and read 1900: run 49); never where a part not typed has changed,
+                # and taken only where none has after (never a year the first run left from a month alone: the
+                # reviews')
                 await said("not as typed: once more")
                 read = await type_run(True)
-                wrong = off(read) + [i for i in range(count) if not start <= i <= end and str(read[i]) != was[i]]
+                wrong = off(read) + strays(read)
         finally:
             with contextlib.suppress(PlaywrightError):
                 await loc.evaluate("el => el.ownerDocument.querySelectorAll('[data-ja-date-part]').forEach((p) => {"
@@ -1857,7 +1864,9 @@ class BrowserSession:
                 await self._clear_search(page, loc)  # (nothing typed left in its box)
                 return f"selected {took}"
             picks = (await loc.evaluate("el => !!(el.getAttribute('aria-controls') || el.getAttribute('aria-owns'))")
-                     or await loc.evaluate(WORKDAY_PROMPT_JS))
+                     or await loc.evaluate(WORKDAY_PROMPT_JS)
+                     # (or one whose list said it was empty, "No results found": a list to pick from, the review's)
+                     or await loc.evaluate("el => el.hasAttribute('data-ja-empty')"))
             await loc.evaluate("el => el.blur()")
             await page.wait_for_timeout(200)
             if picks or norm(await loc.input_value()) != norm(query):

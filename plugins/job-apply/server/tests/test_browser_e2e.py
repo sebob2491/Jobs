@@ -1355,6 +1355,25 @@ def test_a_pick_list_with_no_match_is_reported(srv):
     assert not out["ok"] and "nothing in its list matched 'Atlantis'" in out["results"][0]["error"]
 
 
+def test_a_search_whose_list_says_its_empty_is_asked_about_not_left_typed(srv):
+    """A list's word that it's empty ("No results found") is no choice (0.3.136), but it still says the box is one to
+    pick from: the words typed are cleared and the question asked, not left in the box as an answer (the review)."""
+    run(srv.open_application(url=fixture_url("jsonld_posting.html")))
+    page = run(srv.browser.page())
+    run(page.set_content("""
+      <label for="city">City *</label>
+      <input id="city" role="combobox" aria-autocomplete="list" required>
+      <ul id="city-list" hidden><li role="option">No results found</li></ul>
+      <script>
+        const box = document.getElementById('city'), list = document.getElementById('city-list');
+        box.addEventListener('input', () => { list.hidden = !box.value; });
+      </script>"""))
+    field = run(srv.inspect_form(include_dropdown_options=False))["fields"][0]
+    out = run(srv.fill_form([{"id": field["id"], "value": "Atlantis"}]))
+    assert not out["ok"] and "nothing in its list matched 'Atlantis'" in out["results"][0]["error"], out
+    assert run(page.input_value("#city")) == ""
+
+
 def test_a_picker_is_searched_by_name_not_by_flag_and_code(srv):
     """When the entry only shows up once searched for, the search has to be words the list
     matches: the country's name, not "🇺🇸 (+1) ..." or "... (+1)"."""

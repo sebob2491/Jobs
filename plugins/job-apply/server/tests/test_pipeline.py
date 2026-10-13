@@ -3208,6 +3208,23 @@ def test_a_review_page_whose_submit_is_greyed_while_it_draws_is_waited_on(srv, m
     assert r.status == "ready" and r.url.endswith("late-submit-review.html"), (r.status, r.reason, r.log)
 
 
+def test_only_a_greyed_submit_or_step_that_comes_on_ends_the_wait():
+    """The wait on a page drawing late ends when a Submit or step button that was greyed out comes on (Wells Fargo,
+    run 49). Not when another button does, nor one aside from the form, nor a greyed twin of a button already on
+    (Workday draws a covered copy of its Submit)."""
+    def page(*actions):
+        return {"actions": [dict(a) for a in actions]}
+    submit, grey = {"text": "Submit", "is_submit": True}, {"text": "Submit", "is_submit": True, "disabled": True}
+    assert pipeline._came_on(page(grey), page(submit))
+    assert pipeline._came_on(page({"text": "Next", "disabled": True}), page({"text": "Next"}))
+    assert not pipeline._came_on(page(grey), page(grey))
+    assert not pipeline._came_on(page(grey, submit), page(submit))  # (its twin was on already)
+    assert not pipeline._came_on(page({"text": "Download", "disabled": True}), page({"text": "Download"}))
+    aside = {"text": "Submit", "is_submit": True, "aside": True}
+    assert not pipeline._came_on(page(dict(aside, disabled=True)), page(aside))
+    assert not pipeline._came_on(page(), page(submit))  # (a button that wasn't there isn't one that came on)
+
+
 def test_each_page_that_draws_its_buttons_late_is_waited_on(srv, monkeypatch, job_apply_home):
     """Baker Tilly's Workday (run 44, Oct 13): the page after its sign-in drew its questions and Save and Continue
     late, and the desk, having waited on an earlier page's late buttons on that pass, stopped at once: "I couldn't
