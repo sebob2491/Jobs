@@ -2032,6 +2032,26 @@ def test_a_box_the_page_says_is_wrong_showing_what_it_wrote_itself_takes_the_pro
     assert any(line.startswith("filled from your profile what the page said was wrong: Phone Number")
                for line in r.log), r.log
 
+    # (the review's) a box an error names while asking for something else, that the page doesn't mark invalid,
+    # keeps what it shows
+    job = srv.add_job(url=fixture_url("site/phenom-parsed-phone.html") + "?valid", title="Equipment Technician",
+                      company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def held():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r, await r.page.evaluate("() => document.getElementById('phoneNumber').value")
+        finally:
+            await applier.stop()
+
+    r, shown = run(held())
+    assert r.status == "needs_you", (r.status, r.reason, r.log)
+    assert not any(line.startswith("filled from your profile") for line in r.log), r.log
+    assert shown == "+14805550000", r.log
+
 
 def test_a_resume_parse_notice_is_not_an_error(srv, monkeypatch):
     """Nikon's UKG Pro (live run 16, Oct 11): its Skills step took a moment to save, with the resume parse's
