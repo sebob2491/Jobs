@@ -1831,6 +1831,12 @@ class BrowserSession:
             # empty while counting as filled. So does a Workday prompt, whose value is only ever
             # a pill (a school its list doesn't have read as filled with the typed name). Only a
             # free-text box may keep what was typed.
+            # Unless the search chose it: Workday chooses the one entry its search finds at once, and closes the
+            # list (live probe 45, Oct 13), its pill the answer itself
+            pills = await loc.evaluate(WORKDAY_CHOSEN_JS) or []
+            took = next((p for p in pills if norm(p) == norm(text)), None)
+            if took is not None:
+                return f"selected {took}"
             picks = (await loc.evaluate("el => !!(el.getAttribute('aria-controls') || el.getAttribute('aria-owns'))")
                      or await loc.evaluate(WORKDAY_PROMPT_JS))
             await loc.evaluate("el => el.blur()")
