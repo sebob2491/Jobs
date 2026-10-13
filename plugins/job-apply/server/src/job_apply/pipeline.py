@@ -33,7 +33,7 @@ from urllib.parse import parse_qsl, urlparse
 from . import config, mailbox, report
 from .ats import ATS_NAMES, detect_ats, shared_system
 from .autofill import (clean_label, degree_kinds_listed, degree_not_listed, entry_of, is_empty_value, no_choice_for_no_degree, norm,
-                       plan_autofill, unset_choice,
+                       plan_autofill, profile_entries, unset_choice,
                        polarity, tailored_document, works_there_now)
 from .browser import (_SENDS_TOO, CONFIRMATION_RE, SubmitBlocked, TabClosed, _accepts_cookies, _cookie_setting,
                       confirmations, declines_cookies, final_text, may_accept_cookies)
@@ -419,6 +419,7 @@ class Run:
     invalid_redone: bool = False  # the review page's invalid lists answered again from the profile (once a job)
     reset_no_mail: bool = False  # and none came in RESET_MAIL_WAIT: no account there, most likely, so one is made
     reopened_elsewhere: bool = False  # its sign-in page, opened again, led elsewhere: the job opened again (once a job)
+    schools_dropped: list[str] = field(default_factory=list)  # education blocks deleted (_drop_unfit_school)
     reopened: int = 0  # times _back_to_sign_in opened the job again: a press before one is another visit's
     # The job's sign-ins pressed with the saved password, and which password that was (a digest): a Run
     # outlasts Resume and the queue, so these hold for the job, not for one pass at it
@@ -1740,7 +1741,10 @@ class Applier:
                 if key not in entries_done and _EXPERIENCE_PAGE.search(" ".join(data.get("headings") or [])):
                     entries_done.add(key)
                     for section in ("work", "education"):
-                        added = await srv.add_entries(section)
+                        # (one block fewer for each school deleted from this job's form: never added back)
+                        added = await srv.add_entries(section, **({"count": len(profile_entries(
+                            config.Profile.load(), "education_history")) - len(run.schools_dropped)}
+                            if section == "education" and run.schools_dropped else {}))
                         if added.get("clicks"):
                             self._log(run, f"added {added['clicks']} {section} block(s)")
                         if added.get("add_button_covered"):
@@ -1783,6 +1787,8 @@ class Applier:
                 if _new_required(before, data) and page_key not in refilled:
                     refilled.add(page_key)  # answers drew new questions ("If yes, explain"): fill those too
                     continue
+                if await self._drop_unfit_school(run, data, pending):
+                    continue  # the page looked at again without that school's block
                 gaps, pending = self._entry_gaps(run, data, pending)
                 if self._stop_for_what_is_left(run, gaps, pending, missing_files):
                     return
@@ -2278,6 +2284,38 @@ class Applier:
         for line in said:
             if line not in run.log:
                 self._log(run, line)
+
+    async def _drop_unfit_school(self, run: Run, data: dict[str, Any], pending: list[dict[str, Any]]) -> bool:
+        """A school attended without finishing a degree, whose block's Degree list has nothing for that (issue #112,
+        note 26, the owner's call): the desk deletes that block with its own Delete and carries on (the resume
+        still shows the classes; a degree not earned is never picked). Only the page's last school block, and
+        never its only one (the site may need one): a block before others would hand its number to the next
+        school's. Once a block; any other way, the person's (_entry_gaps says so). True when it deleted one."""
+        prof = config.Profile.load()
+        unfit = {str(q.get("section") or "") for q in pending if no_choice_for_no_degree(q, prof)} - {""}
+        if not unfit:
+            return False
+        blocks = sorted({str(f.get("section") or "") for f in data.get("fields") or []
+                         if re.match(r"education\b.*\d\s*$", str(f.get("section") or ""), re.I)},
+                        key=lambda s: int(re.findall(r"\d+", s)[-1]))
+        last = blocks[-1] if blocks else ""
+        if len(blocks) < 2 or last not in unfit or last in run.schools_dropped:
+            return False
+        delete = next((a for a in data.get("actions") or [] if a.get("section") == last and not a.get("disabled")
+                       and re.match(r"^(?:delete|remove)\b", final_text(a.get("text") or ""), re.I)), None)
+        if delete is None:
+            return False
+        run.schools_dropped.append(last)
+        try:
+            await self.srv.click(delete["id"])
+        except Exception:  # gone, or it won't take a click: the person's, as before
+            return False
+        found = next((entry_of(q, prof) for q in pending if q.get("section") == last and entry_of(q, prof)), None)
+        school = found[0] if found else last
+        self._log(run, f"deleted {last} ({school}): its Degree list has no choice for classes without a degree, and "
+                  "the desk never picks a degree you didn't earn (your resume still shows the classes)")
+        await asyncio.sleep(0.5)  # (the block goes from the page)
+        return True
 
     def _entry_gaps(self, run: Run, data: dict[str, Any],
                     pending: list[dict[str, Any]]) -> tuple[str, list[dict[str, Any]]]:

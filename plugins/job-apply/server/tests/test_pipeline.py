@@ -6193,11 +6193,48 @@ def test_a_degree_list_with_nothing_for_classes_leaves_the_pick_to_the_person(sr
     assert "no choice for classes without a degree" in said and "closest choice" not in said, said
 
 
+def test_a_school_block_is_deleted_only_where_it_is_the_last_of_several(srv):
+    """Issue #112, note 26: the desk deletes a classes-only school's block whose Degree list has nothing for it,
+    but never the page's only school block (the site may need one), nor one before others (Workday numbers the
+    blocks after it down, onto the wrong school), nor one it deleted before; those stay the person's."""
+    import yaml
+
+    path = config.profile_path()
+    profile = yaml.safe_load(path.read_text())
+    profile["education_history"].append({"school": profile["education_history"][0]["school"], "degree": "",
+                                         "start": 2021, "end": 2022})
+    path.write_text(yaml.safe_dump(profile))
+    applier, clicked = Applier(srv), []
+
+    class Stub:
+        async def click(self, id):
+            clicked.append(id)
+            return {"clicked": True}
+    applier.srv = Stub()
+
+    def page(*sections):
+        return {"fields": [{"id": f"s{i}", "label": "School", "section": s} for i, s in enumerate(sections)],
+                "actions": [{"id": f"d{i}", "text": "Delete", "section": s} for i, s in enumerate(sections)]}
+
+    def degree(section):
+        return {"id": "a", "label": "Degree*", "section": section, "required": True, "kind": "listbox",
+                "options": WORKDAY_DEGREES}
+
+    r = Run(1, "Technician", "Example Litho")
+    assert not run(applier._drop_unfit_school(r, page("Education 2"), [degree("Education 2")]))  # its only one
+    assert not run(applier._drop_unfit_school(r, page("Education 1", "Education 2"), [degree("Education 1")]))
+    assert not clicked
+    assert run(applier._drop_unfit_school(r, page("Education 1", "Education 2"), [degree("Education 2")]))
+    assert clicked == ["d1"] and r.schools_dropped == ["Education 2"]
+    assert not run(applier._drop_unfit_school(r, page("Education 1", "Education 2"), [degree("Education 2")]))  # once
+
+
 def test_a_workday_experience_page_is_filled_block_by_block(srv, monkeypatch, job_apply_home):
     """A Workday site's My Experience page as drawn live (Oct 2026): each date a fieldset of its
     own, and an Education block's boxes drawn a moment after its heading. Every job's and
-    school's dates go in, the second block of one school is filled once drawn, and its Degree
-    (classes, no degree, in a list without such a choice) is named with its block as the person's."""
+    school's dates go in, and the second block of one school is filled once drawn. Its Degree
+    list has no choice for its classes without a degree: the person deleted such a block by hand
+    each time (issue #112, note 26), so the desk deletes it, and never adds it back."""
     import yaml
 
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
@@ -6224,12 +6261,10 @@ def test_a_workday_experience_page_is_filled_block_by_block(srv, monkeypatch, jo
             await applier.stop()
 
     r, shown = run(go())
-    assert (r.status, r.need) == ("needs_you", "stuck"), (r.status, r.reason, r.log)
-    assert f"The Degree list for {school} in Education 2 has no choice for classes without a degree" in r.reason, \
-        r.reason
+    assert "no choice for classes without a degree" not in r.reason, (r.status, r.reason, r.log)
+    assert any(line.startswith(f"deleted Education 2 ({school})") for line in r.log), r.log
     assert not r.questions, r.questions
-    assert shown == ["03", "2021", "06", "2018", "02", "2021", school, "Bachelors", "2016", "2020",
-                     school, "Select One", "2021", "2022"], shown
+    assert shown == ["03", "2021", "06", "2018", "02", "2021", school, "Bachelors", "2016", "2020"], shown
 
 
 def test_a_posting_that_has_closed_says_so(srv, monkeypatch):

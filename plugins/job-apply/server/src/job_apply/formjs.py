@@ -653,6 +653,8 @@ EXTRACT_JS = r"""
     const ownForm = !formSubmit && a.after_password && (formOf(el) || el.closest('form'));
     if (ownForm && ownForm.querySelectorAll('input[type="password"]').length >= 2) a.in_account_form = true;
     if (el.disabled || el.getAttribute('aria-disabled') === 'true') a.disabled = true;
+    // A block's own Delete ("Education 2"'s): which block it deletes
+    if (/^(delete|remove)\b/i.test(t)) { const sec = sectionOf(el, ''); if (sec) a.section = sec; }
     // A link to something already on show on this page (Phoenix Children's "Apply!" to its form,
     // #apply) only scrolls there; one to something hidden may be what shows it
     const anchor = el.tagName === 'A' && /^#([A-Za-z][\w:-]*)$/.exec(el.getAttribute('href') || '');
