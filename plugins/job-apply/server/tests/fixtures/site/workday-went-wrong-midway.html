@@ -17,7 +17,9 @@
     const name = names[st.step - 1];
     document.getElementById('app').innerHTML =
       `<div data-automation-id="progressBarActiveStep">current step ${st.step} of 3 ${name}</div><h3>${name}</h3>`
-      + `<label for="note${st.step}">Anything else for ${name}</label><input id="note${st.step}">`
+      // (My Experience with nothing to fill, as Circle K's showed only its Add buttons: a page, not a form)
+      + (st.step === 2 ? '<button type="button">Add</button>'
+         : `<label for="note${st.step}">Anything else for ${name}</label><input id="note${st.step}">`)
       + '<button type="button" id="next">Save and Continue</button>';
     document.getElementById('next').onclick = () => {
       if (st.step === 3 && !st.erred) {

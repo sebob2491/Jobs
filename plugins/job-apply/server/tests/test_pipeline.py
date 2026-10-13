@@ -3186,6 +3186,28 @@ def test_a_page_that_asks_to_be_refreshed_is_reloaded_once(srv, monkeypatch, job
     assert len(said) == 1 and r.seen_form and "went-wrong" not in r.url, (r.url, r.reason, r.log)
 
 
+def test_each_page_that_draws_its_buttons_late_is_waited_on(srv, monkeypatch, job_apply_home):
+    """Baker Tilly's Workday (run 44, Oct 13): the page after its sign-in drew its questions and Save and Continue
+    late, and the desk, having waited on an earlier page's late buttons on that pass, stopped at once: "I couldn't
+    find the button that moves this application on". Each page is waited on once."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 4)
+    job = srv.add_job(url=fixture_url("site/late-twice.html"), title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), timeout=120, about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert r.status == "ready" and r.url.endswith("review.html"), (r.status, r.reason, r.log)
+
+
 def test_a_refresh_the_site_asked_for_midway_is_no_circle(srv, monkeypatch, job_apply_home):
     """Circle K's Workday (run 44, Oct 13): Save and Continue on Voluntary Disclosures said "Something went wrong.
     Please refresh the page", and the page reloaded went back to the first step. The desk, going through again, took
@@ -7666,8 +7688,14 @@ def test_a_read_and_understood_box_is_ticked_only_under_the_sites_privacy_statem
     What it was read and understood is above it: the site's terms or privacy statement, ticked; anything else (a
     sign-up, an attestation), the person's."""
     page = tmp_path / "account.html"
-    page.write_text('<!doctype html><h2>Create Account</h2><label for="e">Email Address</label><input id="e" type="email">'
+    page.write_text('<!doctype html><p>By using this site you agree to our Terms of Use.</p><h2>Create Account</h2>'
+                    '<form><label for="e">Email Address</label><input id="e" type="email">'
                     '<label for="pw">Password</label><input id="pw" type="password">'
+                    # the review of 0.3.133's: the words above the form's email and password aren't this box's (its
+                    # paragraph is below it)
+                    '<div><label><input type="checkbox" id="z"> Yes, I have read and understood.</label></div>'
+                    '<p>Acme will keep your profile in its talent database and may contact you about future vacancies.</p>'
+                    '</form>'
                     # Avnet's: the paragraph a block of its own, the box a few wrappers down in the next
                     '<div><div dir="ltr"><div><p>By creating an Avnet Candidate Home account, you acknowledge Avnet will '
                     'collect and process your personal data as outlined in our <a href="#">Applicant Data Protection and '
@@ -7678,13 +7706,25 @@ def test_a_read_and_understood_box_is_ticked_only_under_the_sites_privacy_statem
                     '<div><p>I certify that the information I give is true and complete.</p>'
                     '<label><input type="checkbox" id="c"> I have read and understand</label></div>'
                     '<label><input type="checkbox" id="d"> Yes, I have read and understood the job description.</label>'
+                    # the review of 0.3.133's: a privacy notice named in words that keep the profile for later, share
+                    # it, attest, or waive
+                    '<div><p>I consent to Acme keeping my personal data in its talent database for 24 months, as '
+                    'described in the Privacy Notice, so that I may be considered for future vacancies.</p>'
+                    '<label><input type="checkbox" id="f"> Yes, I have read and understood.</label></div>'
+                    '<div><p>Acme may share your profile with its recruiting partners and staffing agencies, per our '
+                    'Privacy Policy.</p><label><input type="checkbox" id="g"> Yes, I have read and understood.</label></div>'
+                    '<div><p>I certify the information I provide is true. I understand any offer is subject to the terms '
+                    'and conditions of employment, including a background check.</p>'
+                    '<label><input type="checkbox" id="h"> Yes, I have read and understood.</label></div>'
+                    '<div><p>By applying you agree to binding arbitration under our Terms of Use.</p>'
+                    '<label><input type="checkbox" id="i"> I have read and understood</label></div>'
                     '<button type="submit">Create Account</button>', encoding="utf-8")
     run(srv.browser.goto(page.as_uri()))
     data = run(srv.browser.inspect(include_dropdown_options=False))
     boxes = pipeline._terms_boxes(data)
-    assert len(boxes) == 3, data["fields"]  # (by their labels alone: not one that says what was read)
+    assert len(boxes) == 8, data["fields"]  # (by their labels alone: not one that says what was read)
     kept = run(Applier(srv)._said_terms(boxes))
-    assert [b["id"] for b in kept] == [boxes[0]["id"]], (boxes, kept)
+    assert [b["id"] for b in kept] == [boxes[1]["id"]], (boxes, kept)
 
 
 def test_a_round_holds_while_the_person_is_at_a_review_page_and_ends_once_it_is_sent(srv):

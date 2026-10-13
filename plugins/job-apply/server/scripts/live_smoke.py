@@ -1235,6 +1235,49 @@ _LIST_JS = r"""
 """
 
 
+# A box's open menu as the desk reads it (formjs FIELD_OPTIONS_JS: the visible options, wherever they are), and its
+# chosen pills: each option's words, label and kind, a few options' markup, and the list around them, with only the
+# attributes that say what each part is (the page holds only the fake applicant's details)
+_MENU_JS = r"""
+(el) => {
+  const KEEP = /^(data-automation-id|role|aria-label|aria-selected|aria-checked|aria-expanded|aria-haspopup|aria-level|type|data-uxi-widget-type|tabindex)$/;
+  const short = (node, n) => {
+    const c = node.cloneNode(true);
+    for (const x of [c, ...c.querySelectorAll('*')]) {
+      if (/^(SCRIPT|STYLE|PATH)$/i.test(x.tagName)) { x.remove(); continue; }
+      for (const a of [...x.attributes]) {
+        if (!KEEP.test(a.name) && !(x.tagName === 'svg' && a.name === 'class')) x.removeAttribute(a.name);
+      }
+    }
+    return c.outerHTML.replace(/\s+/g, ' ').slice(0, n);
+  };
+  const shown = (o) => o.getClientRects().length > 0 && getComputedStyle(o).visibility !== 'hidden';
+  const pillsBox = el.closest('[data-automation-id="multiSelectContainer"]');
+  const pills = pillsBox ? [...pillsBox.querySelectorAll('[data-automation-id="selectedItem"]')]
+    .map((p) => (p.innerText || '').trim()) : null;
+  const opts = [...document.querySelectorAll('[role="option"]')].filter(shown)
+    .filter((o) => !o.closest('[data-automation-id="selectedItemList"]'));
+  const info = opts.slice(0, 20).map((o) => ({
+    text: (o.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 80), label: o.getAttribute('aria-label'),
+    auto: o.getAttribute('data-automation-id'), selected: o.getAttribute('aria-selected'),
+    inner: [...new Set([...o.querySelectorAll('[data-automation-id]')].map((x) => x.getAttribute('data-automation-id')))],
+    svg: [...o.querySelectorAll('svg')].map((x) => x.getAttribute('class') || '').join(' ').slice(0, 80),
+    radio: !!o.querySelector('input[type=radio], input[type=checkbox], [role=radio], [role=checkbox]') }));
+  const box = opts.length ? (opts[0].closest('[data-automation-id="activeListContainer"]')
+    || opts[0].closest('[role="listbox"]') || opts[0].parentElement) : null;
+  const chain = [];
+  for (let n = box, d = 0; n && d < 6; n = n.parentElement, d++) {
+    chain.push([n.tagName.toLowerCase(), n.getAttribute('data-automation-id') || '', n.getAttribute('role') || ''].join('|'));
+  }
+  const prompts = [...document.querySelectorAll('[data-automation-id]')].filter(shown)
+    .map((x) => x.getAttribute('data-automation-id')).filter((a) => /prompt|menu|list|back|search|loading/i.test(a));
+  return { pills, value: el.value, expanded: el.getAttribute('aria-expanded'), count: opts.length, options: info,
+           first: opts.slice(0, 2).map((o) => short(o, 1200)), box: box ? short(box, 2500) : null, chain,
+           automation: [...new Set(prompts)].slice(0, 40) };
+}
+"""
+
+
 FINAL_BOXES = 12  # boxes final_form keeps
 FINAL_CHOICES = 30  # choices it keeps of each
 
@@ -1275,6 +1318,10 @@ async def list_probe(questions: list[dict[str, Any]]) -> list[dict[str, Any]]:
             if not m or len(out) >= 3:
                 continue
             loc = page.locator(f'[data-ja-id="{q["id"]}"]')
+            if not await loc.count():  # (drawn again since it was read: ASML's Workday, run 45) found by its label
+                loc = page.locator('[data-automation-id="formField-source"] input').first if re.match(
+                    r"how did you hear", q.get("label") or "", re.I) else page.get_by_label(
+                    re.sub(r"\s*\*\s*$", "", q.get("label") or "")).first
             opened: dict[str, Any] = {}
             try:
                 # focus and type without a pointer click: a cookie banner may cover the page
@@ -1283,19 +1330,24 @@ async def list_probe(questions: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 typed = m.group(1) or m.group(2) or m.group(3)
                 if m.group(2):
                     # first as the desk picked it: from the list the box opens with, before anything is typed
-                    # (Workday's groups: run 44's "Website" at Air Products, "ASML" at ASML)
+                    # (Workday's groups: run 44's "Website" at Air Products, "ASML" at ASML), the menu as the desk
+                    # reads it (_MENU_JS), and as it is a moment and a few seconds after the click
                     try:
                         await loc.click(timeout=3000)
                     except Exception:  # noqa: BLE001 - covered: as the desk does, focus and open it from the keys
                         await loc.evaluate("el => el.focus()")
                         await loc.press("ArrowDown")
                     await asyncio.sleep(2)
-                    opened["on_opening"] = await page.evaluate(_LIST_JS, str(q["id"])) or {}
-                    entry = page.get_by_role("option", name=typed, exact=True).first
-                    if await entry.count():
-                        await entry.click(timeout=5000)
+                    opened["on_opening"] = await loc.evaluate(_MENU_JS)
+                    entry = page.locator('[role="option"]:visible').filter(
+                        has_text=re.compile(rf"^\s*{re.escape(typed)}\s*$"))
+                    opened["matching"] = await entry.count()
+                    if opened["matching"]:
+                        await entry.first.click(timeout=5000)
+                        await asyncio.sleep(0.8)
+                        opened["after_opening_click"] = await loc.evaluate(_MENU_JS)
                         await asyncio.sleep(2.5)
-                        opened["after_opening_click"] = await page.evaluate(_LIST_JS, str(q["id"])) or {}
+                        opened["later"] = await loc.evaluate(_MENU_JS)
                         await print_shot(f"after picking {typed!r} from the opening list", page)
                     await page.keyboard.press("Escape")
                     await asyncio.sleep(0.5)
@@ -1306,6 +1358,7 @@ async def list_probe(questions: list[dict[str, Any]]) -> list[dict[str, Any]]:
                     await loc.press("Enter")
                 await asyncio.sleep(3)
                 info = await page.evaluate(_LIST_JS, str(q["id"])) or {}
+                info["menu_typed"] = await loc.evaluate(_MENU_JS)
                 await print_shot(f"list for {q.get('label')}", page)
                 if m.group(2):  # the entry pressed, and the box as it is a moment after (a pill, a group's list)
                     entry = page.get_by_role("option", name=typed, exact=True).first
