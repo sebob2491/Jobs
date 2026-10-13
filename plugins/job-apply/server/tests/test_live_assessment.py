@@ -56,8 +56,10 @@ def test_an_assessment_is_taken_with_random_answers_and_the_application_page_com
     tab. Each page's questions are answered at random and its way on pressed (its Submit too, on the vendor's site),
     until the assessment brings the tab back to the application, its Take Assessment gone."""
     # the application at 127.0.0.1, the vendor at localhost: two sites
-    result = _take("?vendor=http://localhost:PORT/site/assessment-vendor.html")
-    assert result["end"] == "back on the application", result
+    # (and one that opens a moment after the press: Circle K's and Taylor Morrison's, run 57)
+    for late in ("", "&late=3000"):
+        result = _take("?vendor=http://localhost:PORT/site/assessment-vendor.html" + late)
+        assert result["end"] == "back on the application", (late, result)
     pressed = [s.get("pressed") for s in result["steps"]]
     assert pressed[:4] == ["Take Assessment", "Start", "Next", "Submit"], result
     assert result["steps"][2]["answered"] == 3 and result["steps"][3]["answered"] == 2, result

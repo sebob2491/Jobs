@@ -1464,6 +1464,7 @@ def best_posting(results: list[dict[str, Any]]) -> dict[str, Any]:
 # ends. A CAPTCHA, a page it can't answer or one that won't move ends it too, and what it saw is kept
 ASSESSMENT_PAGES = 40
 ASSESSMENT_SECONDS = 600
+ASSESSMENT_OPEN_WAIT = 20  # seconds for the assessment to open after Take Assessment (Circle K's: a moment after)
 _TAKE_ASSESSMENT = re.compile(r"^(?:take|start|begin|launch|continue)\s+(?:the\s+|your\s+)?assessment\b", re.I)
 _ASSESSMENT_ON = re.compile(r"^(?:next|continue|start|begin|get started|let'?s (?:begin|start)|proceed|ok|okay|"
                             r"i agree|agree|accept|i accept|i understand|i'?m ready|ready|"
@@ -1533,10 +1534,29 @@ async def _take_assessment(run: Any, steps: list[dict[str, Any]], rec: dict[str,
                  and _TAKE_ASSESSMENT.match((a.get("text") or "").strip())), None)
     if take is None:
         return "no Take Assessment button"
+    ctx = run.page.context
+    before = {id(p) for p in ctx.pages}
     out = await server.click(take["id"])  # (the desk's own guard)
     steps.append({"pressed": take["text"], "url": _mask(str(out.get("url") or ""))[:200]})
     if not out.get("clicked"):
         return f"Take Assessment wasn't pressed: {str(out.get('blocked') or '')[:120]}"
+    # the assessment opens a moment after the press (Circle K's and Taylor Morrison's Workday, run 57: looked for at
+    # once, it wasn't there yet): a tab new since the press, or this one gone on, on another site. Never a tab that was
+    # open before it (the employer's own posting page)
+    deadline = time.monotonic() + ASSESSMENT_OPEN_WAIT
+    while time.monotonic() < deadline:
+        fresh = [p for p in ctx.pages if not p.is_closed() and (id(p) not in before or p is run.page)]
+        away = next((p for p in reversed(fresh) if (h := (urlsplit(p.url).hostname or "").lower())
+                     and h not in application and detect_ats(p.url) == "company_site"), None)
+        if away is not None:
+            browser.use_tab(away)
+            break
+        await asyncio.sleep(0.5)
+    else:
+        now = await server.inspect_form(include_dropdown_options=False)
+        steps.append({"after": {"headings": [h[:80] for h in (now.get("headings") or [])[:4]],
+                                "buttons": [a.get("text") for a in now.get("actions") or []][:12],
+                                "tabs": len([p for p in ctx.pages if not p.is_closed()])}})
     vendor: set[str] = set()  # (the hosts first reached after it that are an assessment's)
     seen: list[tuple[Any, ...]] = []
     for _ in range(ASSESSMENT_PAGES):
