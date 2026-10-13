@@ -1275,13 +1275,32 @@ async def list_probe(questions: list[dict[str, Any]]) -> list[dict[str, Any]]:
             if not m or len(out) >= 3:
                 continue
             loc = page.locator(f'[data-ja-id="{q["id"]}"]')
+            opened: dict[str, Any] = {}
             try:
                 # focus and type without a pointer click: a cookie banner may cover the page
                 # (TI's has no Reject, so it stays), and typing goes in under it
                 await loc.scroll_into_view_if_needed(timeout=5000)
+                typed = m.group(1) or m.group(2) or m.group(3)
+                if m.group(2):
+                    # first as the desk picked it: from the list the box opens with, before anything is typed
+                    # (Workday's groups: run 44's "Website" at Air Products, "ASML" at ASML)
+                    try:
+                        await loc.click(timeout=3000)
+                    except Exception:  # noqa: BLE001 - covered: as the desk does, focus and open it from the keys
+                        await loc.evaluate("el => el.focus()")
+                        await loc.press("ArrowDown")
+                    await asyncio.sleep(2)
+                    opened["on_opening"] = await page.evaluate(_LIST_JS, str(q["id"])) or {}
+                    entry = page.get_by_role("option", name=typed, exact=True).first
+                    if await entry.count():
+                        await entry.click(timeout=5000)
+                        await asyncio.sleep(2.5)
+                        opened["after_opening_click"] = await page.evaluate(_LIST_JS, str(q["id"])) or {}
+                        await print_shot(f"after picking {typed!r} from the opening list", page)
+                    await page.keyboard.press("Escape")
+                    await asyncio.sleep(0.5)
                 await loc.evaluate("el => el.focus()")
                 await loc.fill("")
-                typed = m.group(1) or m.group(2) or m.group(3)
                 await loc.press_sequentially(typed, delay=80)
                 if m.group(2) or m.group(3):  # (a Workday prompt lists its matches after Enter)
                     await loc.press("Enter")
@@ -1298,7 +1317,7 @@ async def list_probe(questions: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 await page.keyboard.press("Escape")
             except Exception as e:  # noqa: BLE001
                 info = {"error": f"{type(e).__name__}: {str(e)[:200]}"}
-            out.append({"label": q.get("label"), "typed": m.group(1) or m.group(2) or m.group(3), **info})
+            out.append({"label": q.get("label"), "typed": m.group(1) or m.group(2) or m.group(3), **opened, **info})
     except Exception as e:  # noqa: BLE001 - a probe; the run's record stands without it
         out.append({"error": f"{type(e).__name__}: {str(e)[:200]}"})
     return out
@@ -1337,7 +1356,8 @@ async def check_pipeline(company: dict[str, Any], out: Path, rec: dict[str, Any]
     run = None
     try:
         run = applier.enqueue(job["id"])
-        for _ in range(3 + (MAIL_ROUNDS if TEST_IDENTITY else 0)):
+        rounds = 3 + (MAIL_ROUNDS if TEST_IDENTITY else 0)
+        for n in range(rounds):
             start = time.monotonic()
             while run.status in ("queued", "running"):
                 if time.monotonic() - start > PIPELINE_WAIT:
@@ -1354,6 +1374,11 @@ async def check_pipeline(company: dict[str, Any], out: Path, rec: dict[str, Any]
             if run.need in ("stuck", "sign_in"):  # (an account's step it stopped on, too: UKG Pro's, Oct 2026)
                 await print_shot(company["name"], run.page)
             if run.status == "needs_you" and run.need == "questions":
+                if n == rounds - 1:
+                    # the last round: its questions stay as they are, for the list probe below (answered and queued
+                    # again, they were cleared, and the job was still running when the run was stopped: run 44's
+                    # Workday lists at Air Products, ASML and Wells Fargo were never probed)
+                    break
                 labels = [q.get("label") or "" for q in run.questions]
                 for q in run.questions:
                     # (as the desk's card keys them: a label more than one box has, a date's Month, Day and Year,
