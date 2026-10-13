@@ -188,8 +188,11 @@ _MORE_THAN_TERMS = re.compile(r"receiv\w*|e-?mails?|updates?|notifications?|mess
                               r"talent pool|retain|retention", re.I)
 # How long a box's agreement lasts, which is no more than it (Air Liquide's Workday, live run 41, Oct 12: "You
 # acknowledge having read the documents above. Your agreement is valid for any future visits."): not "future" news
-_LASTS = re.compile(r"\byour (?:agreement|consent|acceptance) (?:is|will be|remains) valid for (?:any|all) future visits\b",
-                    re.I)
+_LASTS = re.compile(r"\byour (?:agreement|consent|acceptance) (?:is|will be|remains) valid for (?:any|all) future visits\b"
+                    # and a privacy notice received, which is no more than it (Boeing's Workday Create Account, run 44,
+                    # Oct 13: "I have received the Boeing Applicant Privacy Notice."): not "receive" emails
+                    r"|\bhave (?:read and )?received (?:a copy of )?(?:the|a|an|our|its)\b[^.]{0,60}?"
+                    r"\b(?:privacy|data protection) (?:notice|policy|statement)\b", re.I)
 # A box whose words say it agrees to the words above it ("the documents above"): what it agrees to is up there
 _READ_ABOVE = re.compile(r"\b(?:documents?|terms|text|information|notices?|statements?|policy|policies) above\b", re.I)
 # An attestation or privacy agreement that also signs the person up: "... and consent to receive email communications
@@ -2756,7 +2759,7 @@ class Applier:
             ticked = [f for f in data.get("fields") or [] if f.get("kind") == "checkbox" and not f.get("disabled")
                       and is_empty_value(f.get("value")) and _TERMS_BOX.search(f.get("label") or "")
                       and not _NOT_TERMS.search(f.get("label") or "") and _TERMS_ONLY.search(f.get("label") or "")
-                      and not _MORE_THAN_TERMS.search(f.get("label") or "")]
+                      and not _MORE_THAN_TERMS.search(_LASTS.sub("", f.get("label") or ""))]
             if ticked and not (await srv.fill_form([{"id": f["id"], "value": True} for f in ticked])).get("ok"):
                 return await self._account_theirs(run, data, f"{site} asks you to agree to its terms before making your "
                                             "account, and its box didn't take my tick")
@@ -4355,13 +4358,14 @@ def _sent_already(data: dict[str, Any], text: str, moved: bool) -> str:
     return _applied_before(data, text)
 
 
-_BLOCK_KINDS = {"work": r"work|experience|employment|employer|job|position",
-                "education": r"education|school|college|university|degree"}
+# A block's own Delete, and nothing else's ("Delete Military Experience 2", "Delete Job Reference 1" aren't a job's)
+_BLOCK_KINDS = {"work": r"(?:work|employment|professional) (?:experience|history)|employment|experience",
+                "education": r"education(?:al)?(?: (?:history|background))?"}
 
 
 def _blocks_by_delete(data: dict[str, Any], section: str) -> int:
     """How many of a section's blocks the page shows, by their own numbered Delete ("Delete Education 2")."""
-    kind = re.compile(rf"^(?:delete|remove)\b.*\b(?:{_BLOCK_KINDS.get(section, section)})\w*\b.*?(\d+)\s*$", re.I)
+    kind = re.compile(rf"^(?:delete|remove) (?:{_BLOCK_KINDS.get(section, section)}) (\d+)\s*$", re.I)
     return len({m.group(1) for a in data.get("actions") or [] if (m := kind.match(final_text(a.get("text") or "")))})
 
 

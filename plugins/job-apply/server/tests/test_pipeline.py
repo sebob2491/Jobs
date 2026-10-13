@@ -6590,6 +6590,22 @@ def degree_box(section):
             "options": WORKDAY_DEGREES}
 
 
+def test_a_privacy_notice_received_is_ticked_on_create_account_but_never_a_sign_up():
+    """Run 44 (Oct 13): Boeing's Workday Create Account requires "I have received the Boeing Applicant Privacy
+    Notice.", and the desk left it, as it read "received" as a sign-up's "receive emails". A privacy notice
+    received is no more than its terms (settings.accept_notices); receiving emails or updates still never is."""
+    from job_apply.pipeline import _terms_boxes
+
+    def ticked(label, required=True):
+        return bool(_terms_boxes({"fields": [{"id": "a", "kind": "checkbox", "label": label, "value": False,
+                                              "required": required}]}))
+
+    assert ticked("I have received the Example Fab Applicant Privacy Notice.")
+    assert ticked("I have read and received a copy of the Privacy Policy")
+    assert not ticked("I agree to receive emails about new jobs")
+    assert not ticked("I have received the Privacy Notice and agree to receive job alerts by email")
+
+
 def test_a_sections_blocks_are_counted_by_their_own_deletes_too(srv):
     """Run 44 (Oct 13): UKG Pro fills a Work Experience and an Education block from the resume, with no numbered
     heading, and covers its Add buttons with the resume's note; the desk read "0 of your 1 job" and stopped Nikon,
@@ -6607,6 +6623,11 @@ def test_a_sections_blocks_are_counted_by_their_own_deletes_too(srv):
     assert r.entries_short == {"work": (1, 2)}  # (one of two, still short)
     applier._note_short_entries(r, "education", covered, {"actions": [{"id": "e", "text": "Delete resume.pdf"}]})
     assert r.entries_short["education"] == (0, 1)
+    # (the review's: another section's Delete, or one inside a block, is no block of this one)
+    others = {"actions": [{"id": "m", "text": "Delete Military Experience 1"}, {"id": "j", "text": "Delete Job Reference 1"},
+                          {"id": "a", "text": "Delete Work Experience 1 Attachment 2"}]}
+    applier._note_short_entries(r, "work", covered, others)
+    assert r.entries_short["work"] == (0, 1)
 
 
 def test_a_reset_form_is_still_showing_only_with_its_own_button_and_no_word_it_went():
