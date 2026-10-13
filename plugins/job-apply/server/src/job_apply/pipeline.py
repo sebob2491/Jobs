@@ -34,7 +34,8 @@ from urllib.parse import parse_qsl, urlparse
 from . import config, mailbox, report
 from .search import every_employer
 from .ats import ATS_NAMES, detect_ats, shared_system
-from .autofill import (classes_only, clean_label, degree_kinds_listed, degree_not_listed, entry_of, is_empty_value, no_choice_for_no_degree, norm,
+from .autofill import (classes_only, clean_label, degree_kinds_listed, degree_not_listed, entry_list_unloaded, entry_of,
+                       is_empty_value, no_choice_for_no_degree, norm,
                        plan_autofill, profile_entries, site_default, unset_choice,
                        polarity, tailored_document, works_there_now)
 from .browser import (_SENDS_TOO, CONFIRMATION_RE, SubmitBlocked, TabClosed, _accepts_cookies, _cookie_setting,
@@ -452,6 +453,8 @@ class Run:
     refreshed: bool = False  # reloaded once for a page that asked for it ("Please refresh the page")
     account_in: bool = False  # an account made for this job, and signed in to (Run.account_made said)
     load_reloaded: bool = False  # reloaded once for a step still loading after its wait (Workday's placeholders, run 57)
+    list_reloaded: bool = False  # reloaded once for a school's list with no choices at all (GCU's Degree list, run 61)
+    hands_on: bool = False  # the person pressed Resume on it: what they did in the browser is never reloaded away
     invalid_redone: bool = False  # the review page's invalid lists answered again from the profile (once a job)
     reset_no_mail: bool = False  # and none came in RESET_MAIL_WAIT: no account there, most likely, so one is made
     reopened_elsewhere: bool = False  # its sign-in page, opened again, led elsewhere: the job opened again (once a job)
@@ -696,6 +699,8 @@ class Applier:
             run.entries_ok = dict(run.entries_told)  # (a card said a section was short: gone on with, if unchanged)
         if run is not None and run.need in ("stuck", "sign_in", "bot_check"):
             run.load_reloaded = True  # (what they did in the browser is never reloaded away: a loading page is said)
+        if run is not None:
+            run.hands_on = True  # (on any card: a questions card's Resume is for answers typed into the page itself)
         run = self.enqueue(job_id, submit=bool(run and run.submit), front=True)
         self.pressed.add(job_id)  # (the person's own press: it goes even while the queue is paused)
         if signing_in:
@@ -1910,6 +1915,25 @@ class Applier:
                 if _new_required(before, data) and page_key not in refilled:
                     refilled.add(page_key)  # answers drew new questions ("If yes, explain"): fill those too
                     continue
+                if not run.list_reloaded and not run.hands_on and not run.pressed_before and run.page is not None \
+                        and (unloaded := _unloaded_lists(pending, data, config.Profile.load())):
+                    # a school's Degree (or major) list with its placeholder alone, no choice at all (Grand Canyon
+                    # University's Workday, run 61): the page didn't finish loading it. Reloaded once a job (never
+                    # after a Submit, nor after the person's Resume: what they typed there would go), and the page
+                    # filled again, its blocks added again; still empty, it's said for what it is (_entry_gaps). Before
+                    # a school's block is deleted for having no fitting choice: an empty list has none for anything
+                    run.list_reloaded = True
+                    entries_done.clear()  # (the blocks it added are gone with the reload)
+                    refilled.discard(page_key)
+                    bare_waited.discard(_page_key(data))
+                    step_waited.difference_update({d for d in step_waited if d and d[0] == _page_key(data)})
+                    waited.clear()
+                    since, more = len(pressed), steps
+                    self._log(run, f"{_site(run, data)}'s {_unloaded_said(unloaded)} showed no choices at all, so I "
+                              "reloaded the page")
+                    with contextlib.suppress(Exception):
+                        await run.page.reload(wait_until="load")
+                    continue
                 if await self._drop_unfit_school(run, data, pending):
                     continue  # the page looked at again without that school's block
                 gaps, pending = self._entry_gaps(run, data, pending)
@@ -2634,6 +2658,8 @@ class Applier:
         no_choice: list[str] = []  # Degree lists with nothing for classes without a degree
         unlisted: dict[str, str] = {}  # Degree lists with nothing for the profile's degree (a GED's)
         kinds: dict[str, tuple[str, list[str]]] = {}  # Degree lists with several kinds of it (BA, BS) and the profile naming none
+        unloaded: dict[str, list[str]] = {}  # a school's lists with their placeholder alone: not loaded
+        empty_lists = _unloaded_lists(pending, data, prof)
         rest = []
         for q in pending:
             found = entry_of(q, prof)
@@ -2644,6 +2670,11 @@ class Applier:
             block = str(q.get("section") or "")
             if kind == "education" and block and block != name:
                 name = f"{name} in {block}"
+            if any(q is e for e in empty_lists):
+                what = clean_label(q.get("label") or "").strip() or "a list"
+                if what not in unloaded.setdefault(name, []):
+                    unloaded[name].append(what)
+                continue
             if no_choice_for_no_degree(q, prof):
                 if name not in no_choice:
                     no_choice.append(name)
@@ -2707,6 +2738,12 @@ class Applier:
                         + ", and your profile doesn't say which you earned, so that box is yours: choose it in the "
                         "browser, then press Resume. Or write it in full under education_history in profile.yaml "
                         "(degree: Bachelor of Science, say), and the desk picks it from then on.")
+        if unloaded:
+            one = sum(len(w) for w in unloaded.values()) == 1
+            said.append(f"{site}'s {'list' if one else 'lists'} for {listed(unloaded)} showed no choices at all, only "
+                        f"{'its' if one else 'their'} placeholder: the page didn't finish loading {'it' if one else 'them'}"
+                        + (", even after I reloaded it" if run.list_reloaded else "")
+                        + ". Reload the page in the browser window (or try again later), then press Resume.")
         if unlisted:
             # the profile has it; the list doesn't (no high school or GED choice: issue #112, note 16)
             said.append("The Degree list has no choice for " + "; ".join(f"your {degree} ({name})" for name, degree in
@@ -4495,6 +4532,21 @@ def _unanswered(data: dict[str, Any]) -> str:
     return ""
 
 
+def _unloaded_lists(pending: list[dict[str, Any]], data: dict[str, Any], prof: Any) -> list[dict[str, Any]]:
+    """The questions that are a school's Degree or major list read with its placeholder alone (entry_list_unloaded),
+    never a search prompt (its choices come as it's typed in; the page's own record of the box says which)."""
+    page = {f.get("id"): f for f in data.get("fields") or []}
+    return [q for q in pending if not (page.get(q.get("id")) or {}).get("search") and entry_list_unloaded(q, prof)]
+
+
+def _unloaded_said(unloaded: list[dict[str, Any]]) -> str:
+    """Those lists by name ("“Degree” list")."""
+    names = list(dict.fromkeys(clean_label(q.get("label") or "").strip() for q in unloaded))
+    if not all(names):
+        return "list" if len(names) == 1 else "lists"
+    return f"{' and '.join(f'“{n}”' for n in names[:3])} list{'s' if len(names) > 1 else ''}"
+
+
 def _account_wants(left: dict[str, Any], filled: dict[str, Any]) -> str:
     """What a Create Account form that didn't go through says it wants: as the site `left` it, its
     error or alert text and what it marks (Workday's "Error-Email" links, boxes marked invalid); or
@@ -4504,14 +4556,27 @@ def _account_wants(left: dict[str, Any], filled: dict[str, Any]) -> str:
     said = list(dict.fromkeys(" ".join(e.split()) for e in errors if not _ERROR_COUNT.match(e.strip())))
     marked = [m for m in _flagged(left) if m not in errors]
     if said or marked:
-        return "; ".join(([f"it says \u201c{'; '.join(said)[:300].rstrip(' .')}\u201d"] if said else []) + marked) + "."
+        return "; ".join(([f"it says \u201c{'; '.join(said)[:300].rstrip(' .')}\u201d"] if said else []) + marked) + "." \
+            + _choices_left(left)
     empty = [f for f in filled.get("fields") or [] if f.get("label") and not f.get("disabled")
              and f.get("kind") not in ("password", "file") and is_empty_value(f.get("value"))
              and (f.get("required") or f.get("kind") == "checkbox" and (_TERMS_BOX.search(f["label"])
                   and not _NOT_TERMS.search(f["label"]) or _NEW_CANDIDATE.fullmatch(clean_label(f["label"]).rstrip(" ."))))]
     named = [f"\u201c{_short(f['label'])}\u201d " + ("isn't ticked" if f.get("kind") == "checkbox" else "is still empty")
              for f in empty[:3]]
-    return "; ".join(named) + "." if named else ""
+    return "; ".join(named) + "." + _choices_left(filled) if named else ""
+
+
+def _choices_left(data: dict[str, Any]) -> str:
+    """A Create Account form's choices it marks or requires and the desk left (Edwards Vacuum's "Make my profile
+    visible to:", run 61: which recruiters see the profile, the person's to say), each with what it offers."""
+    left = [(f, options) for f in data.get("fields") or [] if f.get("kind") in ("radio_group", "select", "listbox")
+            and f.get("label") and not f.get("disabled") and is_empty_value(f.get("value"))
+            and (f.get("invalid") or f.get("required"))
+            and (options := [o for o in f.get("options") or [] if not is_empty_value(o)])]
+    return "".join(f" Its choices for \u201c{_short(f['label'])}\u201d: " + ", ".join(f"\u201c{_short(o)}\u201d" for o in options[:4])
+                   + (f" and {len(options) - 4} more" if len(options) > 4 else "") + "; that choice is yours."
+                   for f, options in left[:2])
 
 
 _ASSESSMENT = re.compile(r"^(?:take|start|begin|launch|complete|go to)\s+(?:the\s+|your\s+|an?\s+)?"
