@@ -2033,11 +2033,10 @@ class Applier:
                         # answer, once a page; a box already showing it is typed again below
                         redone_pages.add(looked)
                         ids = {f["id"] for f in lost}
-                        answered = [f for f in (await srv.autofill(job_id=run.job_id, redo=sorted(ids))).get("filled")
-                                    or [] if f.get("id") in ids]
-                        if answered:
-                            names = ", ".join(clean_label(f.get("label") or "") for f in lost
-                                              if f["id"] in {a.get("id") for a in answered})
+                        given = {f.get("id") for f in (await srv.autofill(job_id=run.job_id, redo=sorted(ids))).get("filled")
+                                 or [] if f.get("id") in ids}
+                        if given:
+                            names = ", ".join(clean_label(f.get("label") or "") for f in lost if f["id"] in given)
                             self._log(run, f"filled from your profile what the page said was wrong: {names}")
                             stalls = 0
                             continue
