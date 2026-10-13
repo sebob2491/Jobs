@@ -1,0 +1,29 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Apply</title></head>
+<body>
+<!-- like EMD's Phenom in run 51's practice check (Oct 13): Next, pressed, is greyed out while the step is saved, and the
+     site then goes to its next step (?step=2) at the same address but its query: fewer boxes, and Submit, no Next -->
+<h1>Equipment Technician</h1>
+<form id="app" novalidate></form>
+<script>
+  const form = document.getElementById('app');
+  if (new URLSearchParams(location.search).get('step') === '2') {
+    form.innerHTML = '<label for="city">City*</label><input id="city" required>'
+      + '<button type="submit" id="send">Submit</button>';
+  } else {
+    form.innerHTML = '<label for="fn">First Name*</label><input id="fn" required>'
+      + '<label for="ln">Last Name*</label><input id="ln" required>'
+      + '<label for="em">Email Address*</label><input id="em" type="email" required>'
+      + '<label for="ph">Phone*</label><input id="ph" type="tel" required>'
+      + '<button type="button" id="next">Next</button>';
+    document.getElementById('next').addEventListener('click', (e) => {
+      e.target.disabled = true;
+      // ?save=<ms>: how long it takes to save the step (EMD's took longer than the desk's wait for a page's buttons)
+      setTimeout(() => { location.search = '?step=2'; }, Number(new URLSearchParams(location.search).get('save') || 1500));
+    });
+  }
+  form.addEventListener('submit', (e) => e.preventDefault());
+</script>
+</body>
+</html>

@@ -1963,6 +1963,16 @@ class Applier:
             if action is None:
                 greyed = [a for a in data.get("actions") or [] if a.get("is_submit") and a.get("disabled")
                           and not a.get("aside")] or _greyed_step(data)
+                # the step button just pressed here, greyed while the site saves the step: EMD's Phenom (run 51's
+                # practice check, Oct 13) took longer than the wait for a page's buttons, then went on to its next
+                # step at the same address but its query. Waited on as a step still saving, once a step
+                just = greyed and (data.get("url"), tuple(data.get("headings") or []), greyed[0]["text"].strip().lower(),
+                                   run.reopened)
+                if just and pressed and pressed[-1] == just and just not in saved_waited \
+                        and not any(_errorish(e) for e in data.get("errors") or []):
+                    saved_waited.add(just)
+                    if await self._wait_for_step_change(just, STEP_SAVE_WAIT):
+                        continue
                 if greyed:
                     said = "; ".join(e for e in data.get("errors") or [] if _errorish(e))[:300] \
                         or _unanswered(data)
