@@ -2372,6 +2372,12 @@ class Applier:
             # an answer stays with the page it first went in on: "If yes, please explain" about
             # relatives isn't the answer to a later page's "If yes, please explain"
             here = _page_key(data)
+            if attempt == 0:  # (an answer that is the site's first choice a list shows: the person's now, never asked
+                # again for being the site's: the review of 0.3.138)
+                same = [fid for fid, key in by_id.items() if key in run.once and run.once_page.get(key, here) == here
+                        and site_default(fields[fid]) and norm(run.once[key]) == norm(fields[fid].get("value"))]
+                if same:
+                    await self.srv.browser.mark_judged(same, [])
             fills = [{"id": fid, "value": run.once[key]} for fid, key in by_id.items()
                      if key in run.once and run.once_page.get(key, here) == here
                      # (or still on its own "Not Specified", which isn't an answer: Kforce's, the probe of Oct 12; or on

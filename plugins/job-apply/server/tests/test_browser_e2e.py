@@ -1369,6 +1369,15 @@ def test_a_gender_list_opening_on_male_takes_the_profiles_decline_once(srv):
     run(page.select_option("#gender", "Male"))
     run(srv.autofill())
     assert run(page.input_value("#gender")) == "Male"
+    # a list that didn't take the answer (it went back to its first choice) isn't judged yet: tried again, or asked
+    run(page.set_content("""
+      <form><label for="gender">Gender</label>
+        <select id="gender" onchange="setTimeout(() => { this.selectedIndex = 0; }, 0)">
+          <option>Male</option><option>Female</option><option>I don't wish to answer</option></select>
+      </form>"""))
+    run(srv.autofill())
+    assert run(page.input_value("#gender")) == "Male"
+    assert not run(page.evaluate("() => document.getElementById('gender').hasAttribute('data-ja-default-judged')"))
 
 
 def test_a_search_whose_list_says_its_empty_is_asked_about_not_left_typed(srv):

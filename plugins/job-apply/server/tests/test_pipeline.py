@@ -5061,10 +5061,12 @@ def test_a_persons_answer_goes_into_a_list_still_on_not_specified(srv, monkeypat
     assert value == "Female" and r.status == "ready", (value, r.status, r.reason)
 
 
-def test_a_persons_answer_goes_into_a_list_on_the_sites_first_choice(srv, monkeypatch):
+@pytest.mark.parametrize("answer", ["Female", "Male"])
+def test_a_persons_answer_goes_into_a_list_on_the_sites_first_choice(srv, monkeypatch, answer):
     """A required list with no empty choice opens on "Male", which no one chose; the profile declines and the list has
-    no decline, so the person is asked. Their answer for this application only ("Female") goes in over the site's
-    first choice, rather than the question coming back again and again (the review of 0.3.138)."""
+    no decline, so the person is asked. Their answer for this application only goes in over the site's first choice,
+    or, where it is that choice, is theirs now, rather than the question coming back again and again (the reviews of
+    0.3.138)."""
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
     job = srv.add_job(url=fixture_url("site/select-site-default.html"), title="FSE", company="Example Fab")["job"]
     applier = Applier(srv)
@@ -5076,7 +5078,7 @@ def test_a_persons_answer_goes_into_a_list_on_the_sites_first_choice(srv, monkey
             await until(lambda: r.status not in ("queued", "running"))
             assert r.need == "questions" and [q["label"] for q in r.questions] == ["Gender"], \
                 (r.status, r.need, r.reason, r.log)
-            r.once[question_key("Gender")] = "Female"
+            r.once[question_key("Gender")] = answer
             applier.enqueue(job["id"], front=True)
             await until(lambda: r.status not in ("queued", "running"))
             return r, await r.page.input_value("#g")
@@ -5084,7 +5086,7 @@ def test_a_persons_answer_goes_into_a_list_on_the_sites_first_choice(srv, monkey
             await applier.stop()
 
     r, value = run(go())
-    assert value == "Female" and r.status == "ready", (value, r.status, r.reason)
+    assert value == answer and r.status == "ready", (value, r.status, r.reason)
 
 
 def test_an_answer_that_doesnt_stick_the_first_time_is_filled_again_not_asked_again(srv, monkeypatch):
