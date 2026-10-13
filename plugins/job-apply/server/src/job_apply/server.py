@@ -963,7 +963,8 @@ async def submit_application(job_id: int | None = None, user_confirmed: bool = F
     buttons = await browser.find_submit()
     if not buttons:
         return {"submitted": False, "reason": "No submit button on this page. Continue through the steps first.",
-                "empty_required": empty_required, "actions": [a["text"] for a in page["actions"]]}
+                "no_submit_button": True, "empty_required": empty_required,
+                "actions": [a["text"] for a in page["actions"]]}
     folder = Path(job["folder"])
     # a keepsake of the page as sent, when Chrome can take one (CI, Oct 12: "Unable to capture screenshot"
     # stopped a Submit the person had pressed)

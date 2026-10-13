@@ -4262,6 +4262,36 @@ def test_a_submit_the_site_turns_down_is_not_called_submitted(srv, monkeypatch):
     assert srv.tracker().get(job["id"])["status"] != "applied"
 
 
+@pytest.mark.parametrize("page,sent", [("workday-candidate-home.html", True), ("applied-before-posting.html", True),
+                                       ("workday-questions-thank-you.html", False), ("note-posting.html", False)])
+def test_a_submit_on_a_page_already_past_its_submit_takes_the_sites_word(srv, monkeypatch, page, sent):
+    """Issue #112, note 31: the person pressed Submit on the site, then on the desk, which found no Submit button
+    ("No submit button on this page. Continue through the steps first."); the job ended up skipped and the
+    application never counted. A page that says it went (Workday's "Application Submitted", a job page's "You
+    applied for this job on") marks it applied; any other is the person's to say, with "I submitted it already"
+    on its card. Nothing is pressed either way."""
+    job = srv.add_job(url=fixture_url(f"site/{page}"), title="FSE", company="Example Fab")["job"]
+    srv.tracker().update(job["id"], status="ready_to_submit")
+    applier = Applier(srv)
+
+    async def go():
+        tab = await srv.browser.new_tab()
+        await tab.goto(fixture_url(f"site/{page}"))
+        r = pipeline.Run(job["id"], "FSE", "Example Fab", status="queued", seen_form=True, page=tab)
+        applier.runs[job["id"]] = r
+        await applier._strict(applier._submit(r))
+        return r
+
+    r = run(go())
+    status = srv.tracker().get(job["id"])["status"]
+    if sent:
+        assert r.status == "submitted" and r.reason.startswith("Submitted:"), (r.status, r.reason)
+        assert status == "applied"
+    else:
+        assert (r.status, r.need) == ("needs_you", "stuck") and "I submitted it already" in r.reason, (r.status, r.reason)
+        assert status != "applied"
+
+
 def test_a_submit_with_no_confirmation_asks_the_person_to_check(srv, monkeypatch):
     job = srv.add_job(url=fixture_url("site/submit-quiet.html"), title="FSE", company="Example Fab")["job"]
     applier = Applier(srv)
@@ -6224,6 +6254,53 @@ def test_a_posting_that_has_closed_says_so(srv, monkeypatch):
     assert (r.status, r.need) == ("needs_you", "stuck") and "has closed" in r.reason, (r.reason, r.log)
     assert "expired or the position has already been filled" in r.reason and "find the button" not in r.reason
     assert not r.blocking
+
+
+@pytest.mark.parametrize("page", ["applied-before-posting.html", "applied-before-form.html"])
+def test_a_job_the_site_says_was_applied_to_already_is_marked_applied_and_never_filled(srv, monkeypatch, page):
+    """Issue #112, note 30: a job applied to by hand (the tracker never knew) was opened again. Workday's job page
+    says "You applied for this job on <date>." over its View Application, and the desk stopped there, the job
+    opened again three times in 8 minutes; an Eightfold application said it was applied to already, and the desk
+    filled it all and offered Submit. Each is marked applied, nothing is filled, and it's never queued again."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 1)
+    job = srv.add_job(url=fixture_url(f"site/{page}"), title="Equipment Technician", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            typed = await r.page.evaluate("() => [...document.querySelectorAll('input')].map((i) => i.value)")
+            return r, typed
+        finally:
+            await applier.stop()
+
+    r, typed = run(go())
+    assert r.status == "submitted" and "applied to already" in r.reason.lower(), (r.status, r.reason, r.log)
+    assert not any(typed), typed  # nothing filled in
+    assert srv.tracker().get(job["id"])["status"] == "applied"
+    with pytest.raises(ValueError):
+        applier.enqueue(job["id"])  # never opened again by itself, or by Apply
+
+
+def test_already_applied_wording():
+    """What says a job was applied to already, and what doesn't (a sign-in's offer, a question on the form)."""
+    from job_apply.pipeline import _applied_before
+
+    said = {"You applied for this job on 10/09/2026.": True,
+            "You have already applied for this position.": True,
+            "You've already applied to this job. Track it in your candidate home.": True,
+            "You have already submitted an application.": True,
+            "If you have already applied, sign in to check your status.": False,
+            "Already applied? Sign in to see your applications.": False,
+            "Have you already applied for this position?": False,
+            "Please indicate whether you have already applied for this position before.": False,
+            "If you have already applied for this job, you don't need to apply again.": False}
+    assert {t: bool(_applied_before({}, t)) for t in said} == said
+    asked = {"fields": [{"label": "You have already applied for this position. Is that right?"}]}
+    assert not _applied_before(asked, "You have already applied for this position. Is that right?")
 
 
 def test_confirmation_wording():

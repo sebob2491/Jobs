@@ -107,6 +107,14 @@ _TURNED_AWAY = re.compile(r"^\s*(?:403\s*)?forbidden\s*$|^\s*(?:406\s*)?not acce
 _CLOSED = re.compile(
     r"\b(?:posting|job|position|requisition|opening|vacancy)\b[^.]{0,60}?\b(?:has|have|is|was)\b(?: already)?(?: been)?"
     r" (?:expired|filled|closed|no longer (?:available|open|active|accepting))|no longer accepting applications", re.I)
+# The site saying this person applied for this job before (issue #112, note 30: Workday's job page "You applied for
+# this job on <date>." over its View Application, an Eightfold application saying it was applied to already). Never
+# "If you have already applied, sign in…", "Already applied? Sign in", or a question asking whether they have.
+_APPLIED_BEFORE = re.compile(
+    r"\byou applied (?:for|to) this (?:job|position|role|posting|requisition|opening|vacancy) on\b|"
+    r"(?<!\bif )(?<!whether )(?<!\bhave )\byou(?:'ve| have)? already applied (?:for|to) this "
+    r"(?:job|position|role|posting|requisition|opening|vacancy)\b(?!\s*(?:\?|before|within|in the))|"
+    r"(?<!\bif )(?<!whether )\byou(?:'ve| have) already (?:applied|submitted an application)\s*[.!]", re.I)
 _BOT_TEXT = re.compile(r"verify (?:that )?you are (?:a )?human|are you a robot|checking (?:if the site connection is secure|"
                        r"your browser)|press (?:&|and) hold|complete the security check|unusual traffic from your|"
                        r"enable javascript and cookies to continue|request unsuccessful|you have been blocked", re.I)
@@ -1462,6 +1470,13 @@ class Applier:
                 srv.tracker().update(run.job_id, status="applied", note="submitted on the site")
                 run.status, run.need, run.blocking, run.left = "submitted", "", False, False
                 run.reason = f"Submitted: {_site(run, data)} says \u201c{gone[0]}\u201d."
+                self._log(run, run.reason)
+                return
+            if applied := _applied_before(data, text):
+                # applied to already (by hand, or before the tracker knew): never filled, or sent, again
+                srv.tracker().update(run.job_id, status="applied", note="the site says it was applied to already")
+                run.status, run.need, run.blocking, run.left = "submitted", "", False, False
+                run.reason = f"Applied to already: {_site(run, data)} says \u201c{applied}\u201d It isn't filled in again."
                 self._log(run, run.reason)
                 return
             cookies = await self._decline_cookies(run, data, text)
@@ -3409,6 +3424,19 @@ class Applier:
                                    "Submit again (or \u201cI submitted it\u201d if it did go through).")
             return self._pause(run, "check_submit", "I pressed Submit, but no confirmation showed. Check the page: "
                                "if it went through, press \u201cI submitted it\u201d.")
+        elif result.get("no_submit_button"):
+            # Submit pressed on the desk after the person sent it on the site themselves (issue #112, note 31: Workday's
+            # "Application Submitted" was showing, and the job ended up skipped, its application never counted): the
+            # page's own word that it went is taken; nothing is pressed
+            data, text = await self._look()
+            if gone := _sent_already(data, text):
+                srv.tracker().update(run.job_id, status="applied", note="submitted on the site")
+                run.status, run.need, run.blocking, run.left = "submitted", "", False, False
+                run.reason = f"Submitted: {_site(run, data)} says \u201c{gone}\u201d."
+            else:
+                return self._pause(run, "stuck", "I couldn't find a Submit button on this page. If you sent it yourself "
+                                   "on the site, press \u201cI submitted it already\u201d; otherwise press Resume and the "
+                                   "desk takes it on to its review page.")
         else:
             run.status, run.need = "ready", ""
             run.reason = result.get("reason") or "Not submitted."
@@ -4136,6 +4164,28 @@ def _maintenance_page(data: dict[str, Any]) -> bool:
     community.workday.com/maintenance-page, asml.com/en/maintenance's "We'll be back.", live, Oct 2026)."""
     return bool(re.fullmatch(r"maintenance(?:-page)?|outage", urlparse(data.get("url") or "").path.rstrip("/")
                              .rsplit("/", 1)[-1], re.I))
+
+
+def _sent_already(data: dict[str, Any], text: str) -> str:
+    """The page's own words that this application has gone (a confirmation, not a step of the form that thanks
+    the person, or the job's page saying it was applied to), or "" when it doesn't say so."""
+    if (gone := sorted(confirmations(text))) and not _mid_application(data, text):
+        return gone[0]
+    return _applied_before(data, text)
+
+
+def _applied_before(data: dict[str, Any], text: str) -> str:
+    """The page's own words that this job was applied to already, or "" when it doesn't say so. A
+    question on the form that asks it ("Have you already applied for this position?") isn't that."""
+    labels = " ".join(str(f.get("label") or "") for f in data.get("fields") or []).lower()
+    for said in list(data.get("errors") or []) + [text or ""]:
+        for m in _APPLIED_BEFORE.finditer(said):
+            if m.group(0).lower() in labels:
+                continue
+            start, end = said.rfind(".", 0, m.start()) + 1, said.find(".", m.end())
+            sentence = " ".join(said[start:end + 1 if end >= 0 else len(said)].split())[:200]
+            return sentence
+    return ""
 
 
 def _closed_notice(data: dict[str, Any], text: str) -> str:

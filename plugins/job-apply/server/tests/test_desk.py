@@ -1721,6 +1721,56 @@ def test_jobs_stopped_on_a_bot_check_or_captcha_are_marked_and_a_forms_captcha_i
     run(go())
 
 
+def test_every_card_says_i_submitted_it_already(srv):
+    """Issue #112, note 31 (the owner's ask): an application sent on the site itself, whatever the desk's card
+    waited on, is marked applied from that card: "I submitted it already" on the questions, sign-in, stuck,
+    ready and failed cards alike. It counts as applied, and the job is never queued again."""
+    from playwright.async_api import async_playwright
+
+    from job_apply.pipeline import Run
+
+    desk = Desk(srv)
+    desk.applier.start = lambda: None
+    desk.search.update(status="done", at=time.time())
+    shapes = {"Example Questions": dict(status="needs_you", need="questions"),
+              "Example Sign In": dict(status="needs_you", need="sign_in"),
+              "Example Stuck": dict(status="needs_you", need="stuck"),
+              "Example Ready": dict(status="ready"),
+              "Example Failed": dict(status="failed")}
+    jobs = {}
+    for i, (name, shape) in enumerate(shapes.items()):
+        job = srv.add_job(url=f"https://example.com/job/{i}", title="Technician", company=name)["job"]
+        desk.applier.runs[job["id"]] = Run(job["id"], "Technician", name, reason="Waiting.", **shape)
+        jobs[name] = job["id"]
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with async_playwright() as pw:
+                browser = await pw.chromium.launch(**launch_options())
+                page = await browser.new_page()
+                await page.goto(desk.url)
+                await page.wait_for_selector("#done .task")
+                for name, job_id in jobs.items():
+                    button = page.locator(f"[data-job='{job_id}'][data-job-act=applied]")
+                    assert await button.count() == 1, name
+                    assert await button.inner_text() == "I submitted it already", name
+                await page.click(f"[data-job='{jobs['Example Ready']}'][data-job-act=applied]")
+                for _ in range(40):
+                    if desk.applier.runs[jobs["Example Ready"]].status == "submitted":
+                        break
+                    await page.wait_for_timeout(50)
+                await browser.close()
+        finally:
+            await desk.stop()
+
+    run(go())
+    assert desk.applier.runs[jobs["Example Ready"]].status == "submitted"
+    assert srv.tracker().get(jobs["Example Ready"])["status"] == "applied"
+    with pytest.raises(ValueError):
+        desk.applier.enqueue(jobs["Example Ready"])
+
+
 def test_a_review_rounds_submit_sends_only_the_application_its_banner_names(srv):
     """The review of the round: a review page whose tab was closed is passed over for the next one, and the banner
     went on naming the closed one for up to a poll while its Submit would have sent the next, which the person never
