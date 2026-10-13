@@ -4402,8 +4402,9 @@ _BLOCK_KINDS = {"work": r"(?:work|employment|professional)\s+(?:experience|histo
 
 
 def _blocks_by_delete(data: dict[str, Any], section: str) -> int:
-    """How many of a section's blocks the page shows, by their own numbered Delete ("Delete Education 2")."""
-    kind = re.compile(rf"^(?:delete|remove)\s+(?:{_BLOCK_KINDS.get(section, section)})\s+(\d+)\s*$", re.I)
+    """How many of a section's blocks the page shows, by their own numbered Delete ("Delete Education 2"), or Edit of a
+    saved one (UKG Pro's "Edit Education Item 1": Nikon, UCT and Desert Financial, run 49)."""
+    kind = re.compile(rf"^(?:delete|remove|edit)\s+(?:{_BLOCK_KINDS.get(section, section)})\s+(?:item\s+)?(\d+)\s*$", re.I)
     return len({m.group(1) for a in data.get("actions") or [] if (m := kind.match(final_text(a.get("text") or "")))})
 
 

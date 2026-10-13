@@ -6685,6 +6685,16 @@ def test_a_sections_blocks_are_counted_by_their_own_deletes_too(srv):
                           {"id": "a", "text": "Delete Work Experience 1 Attachment 2"}]}
     applier._note_short_entries(r, "work", covered, others)
     assert r.entries_short["work"] == (0, 1)
+    # UKG Pro's saved items (run 49: still "0 of your 1 school" at Nikon, UCT and Desert Financial): each has its own
+    # numbered Edit; a section's own Edit ("Edit Skills") is no block
+    saved = {"actions": [{"id": "x", "text": "Edit Experience Item 1"}, {"id": "y", "text": "Add Education"},
+                         {"id": "z", "text": "Edit Education Item 1"}, {"id": "k", "text": "Edit Skills"}]}
+    r.entries_short = {}
+    for section in ("work", "education"):
+        applier._note_short_entries(r, section, covered, saved)
+    assert r.entries_short == {}
+    applier._note_short_entries(r, "education", covered, {"actions": [{"id": "k", "text": "Edit Skills"}]})
+    assert r.entries_short["education"] == (0, 1)
 
 
 def test_a_reset_form_is_still_showing_only_with_its_own_button_and_no_word_it_went():
