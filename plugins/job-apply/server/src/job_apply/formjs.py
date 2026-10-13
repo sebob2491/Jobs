@@ -974,10 +974,13 @@ FIELD_OPTIONS_JS = r"""
     opts = best;
   }
   for (const o of document.querySelectorAll('[data-ja-opt]')) o.removeAttribute('data-ja-opt');
+  // (never a list's word that it's empty: Workday's "No Items.", which the desk offered HonorHealth's Skills as a
+  // choice, probe 50)
+  const empty = /^(?:no (?:items|results|matches|options|data)(?: found| available)?|nothing found)\.?$/i;
   const out = [];
   for (const o of opts) {
     const t = text(o);
-    if (t && !out.includes(t)) { o.setAttribute('data-ja-opt', t); out.push(t); }
+    if (t && !empty.test(t) && !out.includes(t)) { o.setAttribute('data-ja-opt', t); out.push(t); }
   }
   return out;
 }

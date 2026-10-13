@@ -1182,6 +1182,24 @@ def test_a_menu_left_over_the_next_field_isnt_its_options(srv, overlap):
     assert by_label(fields, "friends")["options"] == ["Yes", "No"]
 
 
+def test_a_lists_word_that_its_empty_is_never_a_choice(srv):
+    """HonorHealth's Workday (probe 50, Oct 13): its required Skills prompt, nothing typed yet, listed only "No
+    Items.", and the desk asked the person with that as the one choice. A list's word that it's empty is no choice:
+    the question is asked with none, for an answer of the person's own."""
+    run(srv.open_application(url=fixture_url("jsonld_posting.html")))
+    page = run(srv.browser.page())
+    run(page.set_content("""
+      <form><label for="skills">Type to Add Skills *</label>
+        <input id="skills" role="combobox" aria-controls="skills-list" aria-expanded="false" required>
+        <ul id="skills-list" role="listbox" hidden><li role="option">No Items.</li></ul></form>
+      <script>
+        const box = document.getElementById('skills'), list = document.getElementById('skills-list');
+        box.addEventListener('click', () => { list.hidden = false; box.setAttribute('aria-expanded', 'true'); });
+      </script>"""))
+    skills = by_label(run(srv.inspect_form(include_dropdown_options=True))["fields"], "skills")
+    assert not skills.get("options"), skills
+
+
 def test_a_pick_only_dropdown_is_asked_about_and_filled(srv):
     """Infineon: a required read-only dropdown ("Preferred location") was neither filled
     nor asked about, so the application stalled with nothing to answer."""
