@@ -2,7 +2,7 @@
 # account there and the common questions answered) to the application's review page, or to its last button.
 # The desk's "Only where the desk goes all the way" switch shows these employers' openings alone.
 # Refresh it from each full nightly before a release: `uv run python scripts/nightly_summary.py --handled`.
-as_of: "2026-10-13: full run 62 (0.3.149), with Baker Tilly (its stop there fixed in 0.3.150) and Infineon (a blank page that run) from run 61"
+as_of: "2026-10-13: full run 63 (0.3.150), with Linde (its posting taken down that run) from run 62"
 employers:
   - "Air Liquide"
   - "Air Products"

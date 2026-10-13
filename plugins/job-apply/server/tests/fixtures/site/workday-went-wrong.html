@@ -7,7 +7,8 @@
      reload shows the application (step1.html). What happened is kept for the tab (sessionStorage's
      ww.loads). ?late: as KLA's in the nightly of Oct 12, the desk's one wait for late buttons used before it (an
      "Apply Manually" drawn late, which leads to "Something went wrong"), and the reloaded page drawing its
-     application a few seconds late. -->
+     application a few seconds late. ?again: as Circle K's Take Assessment step (run 63), the reloaded page says the same
+     again. -->
 <a href="#">Back to Job Posting</a>
 <h2>Field Service Engineer</h2>
 <div>current step 1 of 6 My Information</div>
@@ -15,9 +16,10 @@
   const loads = Number(sessionStorage.getItem('ww.loads') || 0) + 1;
   sessionStorage.setItem('ww.loads', String(loads));
   const late = new URLSearchParams(location.search).has('late');
+  const again = new URLSearchParams(location.search).has('again');
   const wrong = '<h2>Something went wrong</h2><p>Please refresh the page and then try again.</p>'
                 + '<p>Error Code: VPS|0000</p>';
-  if (loads > 1) setTimeout(() => location.replace('step1.html'), late ? 3000 : 0);
+  if (loads > 1 && !again) setTimeout(() => location.replace('step1.html'), late ? 3000 : 0);
   else if (late) setTimeout(() => {
     const b = document.createElement('button');
     b.textContent = 'Apply Manually';

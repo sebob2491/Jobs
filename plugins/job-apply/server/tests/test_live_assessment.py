@@ -176,8 +176,8 @@ def test_the_test_identity_makes_a_create_account_choice_the_desk_leaves_to_the_
 def test_an_assessments_answer_tiles_are_clicked_and_a_word_list_that_wants_more_gets_more():
     """Circle K's (run 62): its statements' answers are tiles to click under "Answers" (nothing read as a box but its
     Auto Advance switch), and the taker found no way on. One is clicked at random, and the page goes on by itself.
-    The Predictive Index's word list (run 62) stayed after its Continue: pressed once and stayed, one more word is
-    ticked, and it goes on."""
+    The Predictive Index's word list (run 62) stayed after its Continue: pressed once and stayed, more words are ticked
+    (as many as its error asks for, run 63: "Please select 5 more"; else one), and it goes on."""
     def take(mode: str) -> dict:
         vendor = f"http://localhost:PORT/site/assessment-vendor.html?{mode}"
         return _take("?vendor=" + vendor.replace("?", "%3F").replace("=", "%3D").replace("&", "%26"))
@@ -193,5 +193,9 @@ def test_an_assessments_answer_tiles_are_clicked_and_a_word_list_that_wants_more
     assert dead["end"] == "the page didn't move on" and sum(1 for s in dead["steps"] if s.get("clicked")) == 3, dead
     words = take("words")
     assert words["end"] == "back on the application", words
-    stayed = next(s for s in words["steps"] if s.get("ticked_more"))
-    assert "Please select at least 2 words." in stayed["errors"] and stayed["chosen"], words
+    stayed = next((s for s in words["steps"] if s.get("ticked_more")), {})
+    assert "Please select at least 2 words." in stayed.get("errors", []) and stayed.get("chosen"), words
+    many = take("words=many")  # (as many more as the page asks: PI's "Please select 5 more", run 63)
+    assert many["end"] == "back on the application", many
+    assert "Please select 3 more words." in next((s for s in many["steps"] if s.get("ticked_more")), {}).get("errors", []), \
+        many

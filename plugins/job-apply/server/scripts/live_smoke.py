@@ -1478,7 +1478,8 @@ _ASSESSMENT_DONE = re.compile(r"^(?:submit|finish|done|complete|submit\s+(?:the\
 _NOT_PRESSED = re.compile(r"cookie|google|linkedin|facebook|apple|microsoft|\bback\b|application|\bapply\b", re.I)
 # (and never ticked: a sign-up of any sort)
 _SIGN_UP_BOX = re.compile(r"marketing|newsletter|job alerts?|talent (?:community|network|pool)|\bsms\b|text messages?|"
-                          r"promotion|offers|updates", re.I)
+                          r"promotion|offers|updates|subscribe|notify me|keep me (?:informed|updated)|contact me|"
+                          r"future (?:job |career )?opportunities|share my (?:results|profile|score)", re.I)
 
 
 def assessment_answer(field: dict[str, Any]) -> Any:
@@ -1762,10 +1763,14 @@ async def _take_assessment(run: Any, steps: list[dict[str, Any]], rec: dict[str,
             # pressed once and it stayed: one more of a list's choices ticked, where it has some already (a list of
             # words to tick that wants more than one, maybe: PI's stayed, run 62); and where the page says something's
             # wrong, a box alone that the press left unticked (never one for an assessment taken before: its score ID)
-            more_ticks = [{"id": f["id"], "value": [*f["value"], random.choice(rest)]}
+            # (as many more as the page asks: "Please select 5 more words", PI's, run 63; else one)
+            asked = max(1, next((int(m.group(1)) for e in data.get("errors") or [] if (m := re.search(
+                r"\b(\d{1,2}) more (?:words?|options?|items?|choices?|answers?|adjectives?|selections?)\b", e, re.I))), 1))
+            more_ticks = [{"id": f["id"], "value": [*f["value"], *random.sample(rest, min(asked, len(rest)))]}
                           for f in data.get("fields") or [] if f.get("kind") == "checkbox_group" and isinstance(
                               f.get("value"), list) and f["value"] and not _SIGN_UP_BOX.search(f.get("label") or "")
-                          and (rest := [o for o in f.get("options") or [] if o not in f["value"]
+                          and (rest := [o for o in f.get("options") or [] if o and o not in f["value"]
+                                        and not is_empty_value(o) and not re.match(r"^(select|choose|--|please)", o, re.I)
                                         and not _SIGN_UP_BOX.search(o)])]
             lone = [f for f in data.get("fields") or [] if f.get("kind") == "checkbox"]
             if data.get("errors") and len(lone) == 1 and lone[0].get("value") is False and not lone[0].get("disabled") \
