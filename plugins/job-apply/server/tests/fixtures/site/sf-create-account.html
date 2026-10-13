@@ -31,7 +31,11 @@
      again." (kept: passcode, the last one typed).
      ?gigya: the form as Edwards Vacuum's (Atlas Copco's SAP screen set, run 57) draws it: the statement's link,
      "Read and acknowledge the data privacy statement.", is inside the label of a required box that stays greyed
-     out until the statement is accepted, and the form's button reads "Submit"; no account without the box ticked. -->
+     out until the statement is accepted, and the form's button reads "Submit"; no account without the box ticked.
+     &visibility: and as Edwards Vacuum's has it since (run 61), a required "Make my profile visible to:" (which
+     recruiters see the profile; Gigya's: its radios data-required, its star a label of its own), and no account
+     without a choice: "This field is required" over it, its first radio marked invalid (kept: visibility, the
+     choice at each press, null for none). &alerts: a required "Send me job alerts" list too (Daily, Weekly). -->
 <div id="outershell">
 <h1>Career Opportunities: Create an Account</h1>
 <p>Already a registered user? <a href="#signin">Please sign in</a> Login credentials are case sensitive</p>
@@ -61,6 +65,20 @@
               <option value="">- Select -</option><option>Canada</option><option>Mexico</option>
               <option>United Kingdom</option><option>United States</option></select>
             <div id="countryError" aria-live="assertive"></div></td></tr>
+    <tr id="visRow" hidden><td colspan="2"><div class="gigya-composite-control" role="group" aria-labelledby="visLabel">
+      <label class="gigya-label"><span id="visLabel">Make my profile visible to:</span><label
+        class="gigya-required-display" aria-hidden="true">*</label></label>
+      <span class="gigya-error-msg" id="visErr"></span>
+      <div><input type="radio" name="data.visibility" value="1" data-required="true" id="vis1"><label for="vis1">Any
+        recruiter within the Example Group worldwide</label></div>
+      <div><input type="radio" name="data.visibility" value="0" data-required="true" id="vis0"><label for="vis0">Any
+        recruiter within the Example Group in this country</label></div>
+      <div><input type="radio" name="data.visibility" value="2" data-required="true" id="vis2"><label for="vis2">Only
+        recruiters managing jobs I apply to</label></div>
+    </div></td></tr>
+    <tr id="alertsRow" hidden><td><label for="alerts">Send me job alerts <span>*</span></label></td>
+        <td><select id="alerts" aria-required="true"><option value="">- Select -</option><option>Daily</option>
+            <option>Weekly</option></select></td></tr>
     <tr><td><label>Notification:</label></td>
         <td><input id="fbclc_emailEnabled" type="checkbox" checked>
             <label for="fbclc_emailEnabled">Receive new job posting notifications</label></td></tr>
@@ -123,6 +141,8 @@
       + 'role="button" tabindex="0">Read and acknowledge the data privacy statement.</a></span> *</label>'
       + '<input type="hidden" id="fbclc_dpcsId" value="">';
     $('fbclc_createAccountButton').textContent = 'Submit';
+    $('visRow').hidden = !q.has('visibility');
+    $('alertsRow').hidden = !q.has('alerts');
   }
   // ?long: the link's words as Amkor's older SuccessFactors site has them (nightly live check, Oct 11), longer
   // than the form reader took a button's to be
@@ -176,6 +196,16 @@
       $('msgContainer').textContent = 'Please complete all required fields and re-submit. The following fields '
         + 'require a valid input: Please open the data privacy agreement to accept the terms';
       return;
+    }
+    if (q.has('visibility')) {
+      const chosen = document.querySelector('input[name="data.visibility"]:checked');
+      put('visibility', chosen ? chosen.value : null);
+      if (!chosen) {
+        $('visErr').textContent = 'This field is required';
+        $('visErr').classList.add('gigya-error-msg-active');
+        $('vis1').setAttribute('aria-invalid', 'true');
+        return;
+      }
     }
     bump('created');
     put('campaign', $('fbclc_campaignEmailEnabled').checked);

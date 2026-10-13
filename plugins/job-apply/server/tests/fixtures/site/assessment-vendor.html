@@ -5,7 +5,10 @@
 <!-- an assessment vendor's pages: an introduction with Start, a page of questions (a scale of agreement for each)
      with Next, a last page (a list and a box) with Submit, which goes back to the application (?back=). A page whose
      questions aren't all answered stays, saying so. ?boxes: its question page is Circle K's (run 60): "1 Question", its
-     "Answers" a row of boxes to tick one of, and its Next drawn only once one is ticked -->
+     "Answers" a row of boxes to tick one of, and its Next drawn only once one is ticked. ?welcome: its first page is
+     The Predictive Index's (Taylor Morrison's, run 61): "Welcome!", the applicant's name and email (?email=) filled in
+     from the employer, and Continue.
+     ?boxes&stuck: the boxes all ticked when drawn, and no Next (what Circle K's read as, run 61) -->
 <h1 id="h">Work Styles Assessment</h1>
 <form id="f" onsubmit="return false"></form>
 <div id="err" role="alert"></div>
@@ -18,10 +21,13 @@
   let page = 0;
   const choose = () => '<h2>1 Question</h2><p>How often do you finish what you start?</p><h3>Answers</h3>'
     // (?boxes=apart: each box its own, as Circle K's read)
-    + ['Always', 'Often', 'Sometimes', 'Never'].map((a, i) => `<label><input type="checkbox" name="${q.get('boxes') === 'apart' ? 'a' + i : 'a'}" value="${i}"> ${a}</label>`)
+    + ['Always', 'Often', 'Sometimes', 'Never'].map((a, i) => `<label><input type="checkbox" name="${q.get('boxes') === 'apart' ? 'a' + i : 'a'}" value="${i}"${q.has('stuck') ? ' checked' : ''}> ${a}</label>`)
       .join('') + '<button type="button" class="go" hidden>Next</button>';
+  const welcome = () => '<h2>Welcome!</h2><label for="fn">First name</label><input id="fn">'
+    + '<label for="em">Email</label><input id="em" type="email">'
+    + '<button type="button" class="go">Continue</button>';
   const pages = [
-    () => '<p>This assessment takes about 5 minutes.</p><button type="button" class="go">Start</button>',
+    q.has('welcome') ? welcome : () => '<p>This assessment takes about 5 minutes.</p><button type="button" class="go">Start</button>',
     q.has('boxes') ? choose : () => radios(1, 'I like to plan my work ahead.') + radios(2, 'I stay calm under pressure.')
       + radios(3, 'I enjoy working with customers.') + '<button type="button" class="go">Next</button>',
     () => '<label for="shift">Which shift suits you best?</label><select id="shift"><option value="">Select one</option>'
@@ -32,6 +38,10 @@
   function draw() {
     f.innerHTML = pages[page]();
     document.getElementById('err').textContent = '';
+    if (page === 0 && q.has('welcome')) {
+      f.querySelector('#fn').value = 'Jobdesk';
+      f.querySelector('#em').value = q.get('email') || '';
+    }
     f.querySelectorAll('input[type=checkbox]').forEach((b) => b.addEventListener('change', () => {
       f.querySelector('.go').hidden = !f.querySelector('input[type=checkbox]:checked');
     }));

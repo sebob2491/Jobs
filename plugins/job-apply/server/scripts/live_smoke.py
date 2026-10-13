@@ -1460,9 +1460,10 @@ def best_posting(results: list[dict[str, Any]]) -> dict[str, Any]:
 # call, Oct 13: "it shouldn't matter how well you do"; Circle K's and Taylor Morrison's Workday stopped at "Take
 # Assessment"). Never the person's desk: an assessment is theirs. The application itself never goes: the assessment is
 # answered and pressed on only on a vendor's site, one first reached after "Take Assessment", that no job system runs
-# (detect_ats: a company's own site), and none of whose boxes hold the applicant's details; on any other page (the
-# employer's application, on its own address or another of its job system's) nothing is filled or pressed, and it
-# ends. A CAPTCHA, a page it can't answer or one that won't move ends it too, and what it saw is kept
+# (detect_ats: a company's own site), and none of whose boxes hold the applicant's details, unless it's a known
+# assessment vendor's (ASSESSMENT_VENDORS); on any other page (the employer's application, on its own address or
+# another of its job system's) nothing is filled or pressed, and it ends. A CAPTCHA, a page it can't answer or one
+# that won't move ends it too, and what it saw is kept
 ASSESSMENT_PAGES = 40
 ASSESSMENT_SECONDS = 600
 ASSESSMENT_OPEN_WAIT = 20  # seconds for the assessment to open after Take Assessment (Circle K's: a moment after)
@@ -1504,6 +1505,29 @@ def _applicants_page(data: dict[str, Any]) -> bool:
     own = {v for v in (email, live_identity.LAST_NAME.lower(), f"{live_identity.FIRST_NAME} {live_identity.LAST_NAME}".lower(),
                        FAKE_PROFILE["personal"]["email"].lower()) if v}
     return any(str(f.get("value") or "").strip().lower() in own for f in data.get("fields") or [])
+
+
+# Assessment vendors' own sites, where a page can show the applicant's details as the employer passed them on (The
+# Predictive Index's "Welcome!", its name and email filled in: Taylor Morrison's, run 61). Only these: a page with the
+# applicant's details on any other site is taken for the application's (an employer's own page that greets the
+# applicant by name, say), and nothing on it is filled or pressed
+ASSESSMENT_VENDORS = {"predictiveindex.com", "shl.com", "hirevue.com", "criteriacorp.com", "wonderlic.com", "harver.com",
+                      "testgorilla.com", "pymetrics.ai"}
+
+
+def _assessment_vendor(host: str) -> bool:
+    return any(host == d or host.endswith("." + d) for d in ASSESSMENT_VENDORS)
+
+
+_AROUND_JS = """(id) => {
+  // (a group's id is its members': theirs are id.0, id.1, ...)
+  let el = document.querySelector(`[data-ja-id="${CSS.escape(id)}"]`)
+    || document.querySelector(`[data-ja-gid-member="${CSS.escape(id)}"]`);
+  if (!el) return '';
+  for (let d = 0; d < 3 && el.parentElement && el.parentElement !== document.body; d++) el = el.parentElement;
+  // (without its addresses or values: a link's, a form's or a hidden box's can carry the session's token)
+  return el.outerHTML.replace(/\\b(href|src|action|srcset|value)="[^"]*"/gi, '$1=""').slice(0, 3000);
+}"""
 
 
 async def take_assessment(run: Any, rec: dict[str, Any]) -> None:
@@ -1572,7 +1596,7 @@ async def _take_assessment(run: Any, steps: list[dict[str, Any]], rec: dict[str,
             continue
         data = await server.inspect_form(include_dropdown_options=True)
         if host not in vendor and host not in application and detect_ats(page.url) == "company_site" \
-                and not _applicants_page(data):
+                and (not _applicants_page(data) or _assessment_vendor(host)):
             vendor.add(host)
         if host not in vendor:
             # on the application (its own address, another of its job system's, or a page with the applicant's
@@ -1600,9 +1624,12 @@ async def _take_assessment(run: Any, steps: list[dict[str, Any]], rec: dict[str,
             answers.append({"id": random.choice(boxes)["id"], "value": True})  # (one of them, as an answer's choice)
         filled = (await server.fill_form(answers))["results"] if answers else []
 
-        def way_on(actions: list[dict[str, Any]]) -> dict[str, Any] | None:
+        # (a vendor's page with the applicant's details is gone on from, never sent: some vendors run applications too)
+        sends = not _applicants_page(data)
+
+        def way_on(actions: list[dict[str, Any]], sends: bool = sends) -> dict[str, Any] | None:
             return next((a for a in actions if _ASSESSMENT_ON.match((a.get("text") or "").strip())), None) \
-                or next((a for a in actions if _ASSESSMENT_DONE.match((a.get("text") or "").strip())), None)
+                or next((a for a in actions if sends and _ASSESSMENT_DONE.match((a.get("text") or "").strip())), None)
 
         on = way_on(actions)
         if on is None and answers:
@@ -1624,6 +1651,14 @@ async def _take_assessment(run: Any, steps: list[dict[str, Any]], rec: dict[str,
                       "answered": sum(1 for r in filled if r.get("ok")), "buttons": [a.get("text") for a in actions][:12],
                       "pressed": on.get("text") if on else None})
         if on is None:
+            # every box as read, and the markup around the first, for the next look (Circle K's "Answers", run 61:
+            # boxes read, none taken for a question)
+            steps[-1]["fields"] = [{"label": _mask(f.get("label") or "")[:80], "kind": f.get("kind"),
+                                    "value": _mask(str(f.get("value")))[:40], "disabled": bool(f.get("disabled")),
+                                    "options": (f.get("options") or [])[:6]} for f in (data.get("fields") or [])[:12]]
+            if data.get("fields"):
+                with contextlib.suppress(Exception):
+                    steps[-1]["markup"] = _mask(await page.evaluate(_AROUND_JS, str(data["fields"][0]["id"])))
             return "no way on it knows"
         key = (page.url, tuple(data.get("headings") or []), tuple(f.get("label") for f in data.get("fields") or []),
                on.get("text"))
@@ -1633,6 +1668,48 @@ async def _take_assessment(run: Any, steps: list[dict[str, Any]], rec: dict[str,
         await browser._locator(page, on["id"]).click(timeout=10000)  # (a vendor's page: never the application's)
         await page.wait_for_timeout(1500)
     return "page limit"
+
+
+_CREATED_WITH = re.compile(r"pressed \u201c([^\u201d]+)\u201d to (?:create|finish creating) your account")
+
+
+async def finish_account_choices(run: Any) -> str:
+    """The test identity's run stopped on a Create Account form for a choice the desk leaves to the person (Edwards
+    Vacuum's "Make my profile visible to:", which recruiters see the profile, run 61): made as the person would, with
+    a throwaway answer (fake_answer), and the button the desk pressed to create the account pressed again. Only on a
+    form with two password boxes (a Create Account form's), only its marked or required choices left empty, and only
+    that same button. What it did, or "" (nothing done)."""
+    pressed = next((m.group(1) for line in reversed(run.log) if (m := _CREATED_WITH.search(line))), "")
+    if not pressed or run.page is None or run.page.is_closed():
+        return ""
+    from job_apply import pipeline
+
+    server.browser.use_tab(run.page)
+    data = await server.inspect_form(include_dropdown_options=True)
+    fields = data.get("fields") or []
+    left = [f for f in fields if f.get("kind") in ("radio_group", "select", "listbox") and not f.get("disabled")
+            and is_empty_value(f.get("value")) and (f.get("invalid") or f.get("required"))]
+    # the account form's own button (as the desk's _make_account has it), never a footer's or a banner's
+    button = next((a for a in data.get("actions") or [] if (a.get("text") or "").strip() == pressed
+                   and not a.get("disabled") and not a.get("cookie") and not a.get("aside")
+                   and (a.get("account_form") or a.get("in_account_form") or a.get("form_submit") and a.get("after_password"))),
+                  None)
+    if sum(f.get("kind") == "password" for f in fields) < 2 or not left or button is None:
+        return ""
+    # never with a CAPTCHA or security questions on it (the person's), nor on a page that is the application too, nor
+    # for a choice that signs up for anything (job alerts, a newsletter, a talent community)
+    if pipeline._captcha_on(data) or pipeline._security_boxes(fields) or pipeline._account_and_application(data) \
+            or any(pipeline._NEVER_AGREED.search(" ".join([f.get("label") or "", *(f.get("options") or [])]))
+                   or _SIGN_UP_BOX.search(f.get("label") or "") for f in left):
+        return ""
+    answers = [{"id": f["id"], "value": fake_answer(f)} for f in left]
+    filled = (await server.fill_form(answers)).get("results") or []
+    if not any(r.get("ok") for r in filled):
+        return ""
+    await server.browser._locator(run.page, button["id"]).click(timeout=10000)  # (the account's, never an application's)
+    await asyncio.sleep(5)
+    return "; ".join(f"{_mask(f.get('label') or '')[:60]}: {_mask(str(a['value']))[:60]}" for f, a in zip(left, answers)) \
+        + f"; pressed \u201c{pressed}\u201d"
 
 
 async def check_pipeline(company: dict[str, Any], out: Path, rec: dict[str, Any], fixtures: bool = False) -> None:
@@ -1693,6 +1770,13 @@ async def check_pipeline(company: dict[str, Any], out: Path, rec: dict[str, Any]
                     run.once[key] = fake_answer(q)
                 applier.enqueue(job["id"], front=True)
                 continue
+            if (TEST_IDENTITY and run.status == "needs_you" and run.need == "sign_in" and "account_choice" not in rec
+                    and "that choice is yours" in (run.reason or "") and n < rounds - 1):
+                # a Create Account choice the desk leaves to the person, made as they would (finish_account_choices)
+                rec["account_choice"] = await finish_account_choices(run) or "none made"
+                if rec["account_choice"] != "none made":
+                    applier.resume(job["id"])
+                    continue
             if (TEST_IDENTITY and run.status == "needs_you" and run.need == "stuck" and "assessment" not in rec
                     and re.search(r"\bassessment\b", run.reason or "", re.I) and n < rounds - 1):
                 # its assessment taken with random answers, then the application carried on (take_assessment)

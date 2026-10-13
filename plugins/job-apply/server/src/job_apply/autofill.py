@@ -1697,7 +1697,8 @@ def no_choice_for_no_degree(field: dict, prof: Profile) -> bool:
     (no degree)" in the profile can't place it there, and none of the others is ever picked for
     it (coursework is not a degree). The pick there is the person's."""
     slot = _entry_slot(field, prof)
-    if slot is None or slot[0] != "education_history" or slot[3] != "degree" or not field.get("options"):
+    if slot is None or slot[0] != "education_history" or slot[3] != "degree" or not field.get("options") \
+            or list_unloaded(field):  # (a list with nothing at all has nothing for anything: not loaded)
         return False
     _, n, entries, _ = slot
     if not 0 < n <= len(entries) or finished_degree(entries[n - 1].get("degree")):
@@ -1721,12 +1722,34 @@ def classes_only(field: dict, prof: Profile) -> bool:
     return 0 < n <= len(entries) and bool(_CLASSES_ONLY.search(str(entries[n - 1].get("degree") or "")))
 
 
+def list_unloaded(field: dict) -> bool:
+    """A list read with its placeholder alone ("Select One") and no choice at all: one the page didn't finish loading
+    (Grand Canyon University's Workday Degree list, run 61; in runs 57 to 60 it had its degrees). Not a search prompt,
+    whose choices come as it's typed in."""
+    options = field.get("options") or []
+    return field.get("kind") in ("select", "listbox", "combobox") and not field.get("search") and bool(options) \
+        and all(is_empty_value(o) for o in options)
+
+
+def entry_list_unloaded(field: dict, prof: Profile) -> bool:
+    """A school's Degree or major list read with its placeholder alone (list_unloaded), in a block the profile has
+    that answer for. Only those: a list that fills once another box is chosen (a State after its Country) shows its
+    placeholder alone until then, and a block past the profile's entries, or an answer the profile lacks, is said for
+    what it is."""
+    slot = _entry_slot(field, prof)
+    if slot is None or slot[0] != "education_history" or slot[3] not in ("degree", "major") or not list_unloaded(field):
+        return False
+    _, n, entries, attr = slot
+    return 0 < n <= len(entries) and bool(str(entries[n - 1].get(attr) or "").strip())
+
+
 def degree_not_listed(field: dict, prof: Profile) -> str | None:
     """The profile's degree for a school whose Degree list has no choice for it (a Workday site's list was
     Certificate, Foundation, Associate, Bachelor ... Some College, No degree, with no high school or GED:
     live test 2, issue #112, note 16), which isn't the profile missing it. That degree, else None."""
     slot = _entry_slot(field, prof)
-    if slot is None or slot[0] != "education_history" or slot[3] != "degree" or not field.get("options"):
+    if slot is None or slot[0] != "education_history" or slot[3] != "degree" or not field.get("options") \
+            or list_unloaded(field):  # (nothing at all: not loaded, not without the profile's degree)
         return None
     _, n, entries, _ = slot
     if not 0 < n <= len(entries):

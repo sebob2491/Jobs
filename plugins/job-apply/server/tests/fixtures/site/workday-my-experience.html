@@ -74,6 +74,11 @@
   });
 
   const degrees = ["High School Diploma", "Associate's Degree", "Bachelor's Degree", "Master's Degree", "Doctorate"];
+  // ?nodegrees: the Degree list opens on its placeholder alone, no choice at all (Grand Canyon University's, run 61: it
+  // didn't finish loading); ?nodegrees=once: only until the page is reloaded
+  const loading = new URLSearchParams(location.search);
+  const unloaded = loading.has('nodegrees') && !(loading.get('nodegrees') === 'once' && sessionStorage.getItem('degrees.seen') === '1');
+  sessionStorage.setItem('degrees.seen', '1');
   const studies = ['Electrical Engineering', 'Electrical and Computer Engineering', 'Mechanical Engineering', 'Physics'];
   const popup = document.getElementById('popup');
   function show(items, onPick, anchor) {
@@ -107,7 +112,7 @@
       ${date('lastYearAttended', 'To (Actual or Expected)', 'Y')}`;
     document.getElementById('ed-panels').appendChild(panel);
     const dg = panel.querySelector('#dg-' + n);
-    dg.addEventListener('click', () => setTimeout(() => show(degrees, (v) => { dg.textContent = v; }, dg), 120));
+    dg.addEventListener('click', () => setTimeout(() => show(unloaded ? ['Select One'] : degrees, (v) => { dg.textContent = v; }, dg), 120));
     const fs = panel.querySelector('#fs-' + n);
     fs.addEventListener('keydown', (ev) => {
       if (ev.key !== 'Enter') return;

@@ -43,6 +43,22 @@ def test_a_taleo_question_marked_required_in_its_words_is_required(srv, tmp_path
     assert [f["required"] for f in got] == [True, False], got
 
 
+def test_a_gigya_choice_is_required_by_its_data_required_and_marked_while_its_mark_stands(srv, tmp_path):
+    """Edwards Vacuum's Create Account (SAP's Gigya screen set, run 61): "Make my profile visible to:" is required
+    only by its radios' data-required (its star a label of its own), and after a refused Submit its first radio is
+    marked aria-invalid. The group is required, and marked while nothing's chosen; a mark left on one radio after
+    another was picked isn't the group's (the review of 0.3.149)."""
+    radios = ('<div role="group" aria-labelledby="v"><span id="v">Make my profile visible to:</span>'
+              '<input type="radio" name="vis" id="a" data-required="true" aria-invalid="true"{a}><label for="a">Anyone</label>'
+              '<input type="radio" name="vis" id="b" data-required="true"{b}><label for="b">Only recruiters</label></div>')
+    got = fields_of(srv, tmp_path, radios.format(a="", b=""))
+    assert [(f["kind"], f["required"], f.get("invalid")) for f in got] == [("radio_group", True, True)], got
+    got = fields_of(srv, tmp_path, radios.format(a="", b=" checked"))
+    assert [(f["value"], f.get("invalid")) for f in got] == [("Only recruiters", None)], got
+    got = fields_of(srv, tmp_path, radios.format(a=" checked", b=""))
+    assert [(f["value"], f.get("invalid")) for f in got] == [("Anyone", True)], got
+
+
 def test_a_hidden_file_box_is_named_by_its_own_upload_button(srv, tmp_path):
     """EMD Electronics' Phenom application (Oct 2026): the resume's file box is hidden beside its
     "Upload Resume/CV" button, after an "or" between it and Apply With LinkedIn, under a header

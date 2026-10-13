@@ -168,7 +168,9 @@ EXTRACT_JS = r"""
     return preceding(first);
   };
   const isRequired = (el, label) => {
-    if (el.required || el.getAttribute('aria-required') === 'true') return true;
+    // (and SAP's Gigya screen sets: data-required, their star a label of its own beside the question's, Edwards
+    // Vacuum's "Make my profile visible to:", run 61)
+    if (el.required || el.getAttribute('aria-required') === 'true' || el.getAttribute('data-required') === 'true') return true;
     // "First Name *", "* First Name", "Email * (work)"; not "* indicates a required field"
     if ((/\*/.test(label || '') && !/indicates?|denotes?|required fields?/i.test(label)) || /\(required\)/i.test(label || '')) return true;
     // Taleo's questionnaire: "1. Are you over the age of 18? . Required" (Kforce's, live, Oct 2026)
@@ -542,6 +544,11 @@ EXTRACT_JS = r"""
       id: gid, kind: g.isRadio ? 'radio_group' : 'checkbox_group', label, options, value,
       required: g.members.some((m) => isRequired(m, '')) || isRequired(g.container || first, label),
     };
+    // a group the page marks wrong (Edwards Vacuum's Create Account, run 61: "This field is required" over its radios)
+    // (while nothing's chosen, or the choice is the one marked: a mark the page left on one radio after another was
+    // picked isn't about the group as it is now)
+    const marked = g.members.filter((m) => m.getAttribute('aria-invalid') === 'true');
+    if (marked.length && (!g.members.some(checkedOf) || marked.some(checkedOf))) group.invalid = true;
     const section = sectionOf(g.container || first);
     if (section && section !== label) group.section = section;
     fields.push(group);

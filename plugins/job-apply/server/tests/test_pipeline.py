@@ -110,6 +110,18 @@ def test_what_a_create_account_form_wants_is_named():
     assert pipeline._account_wants({"errors": []}, filled) == ("“I am at least 18 years of age” isn't ticked; "
                                                                "“Phone” is still empty.")
     assert pipeline._account_wants({}, {"fields": []}) == ""
+    # Edwards Vacuum's (SAP's Gigya screen set, run 61): a required choice of who sees the profile, the person's
+    seen = ["Any recruiter within the Atlas Copco Group worldwide", "Any recruiter within the Atlas Copco Group in this "
+            "country", "Only recruiters managing jobs I apply to"]
+    left = {"errors": ["This field is required"], "fields": [
+        {"kind": "radio_group", "label": "Make my profile visible to:", "required": True, "invalid": True, "value": "",
+         "options": seen}]}
+    assert pipeline._account_wants(left, {}) == (
+        "it says “This field is required”; “Make my profile visible to” is marked invalid. Its choices for “Make my "
+        "profile visible to”: “Any recruiter within the Atlas Copco Group worldwide”, “Any recruiter within the Atlas "
+        "Copco Group in this country”, “Only recruiters managing jobs I apply to”; that choice is yours.")
+    left["fields"][0]["options"] = ["Select One", *"ABCDEF"]
+    assert pipeline._account_wants(left, {}).endswith("“A”, “B”, “C”, “D” and 2 more; that choice is yours.")
 
 
 def test_a_posting_with_a_talent_community_box_goes_in_through_apply(srv, monkeypatch):
@@ -1454,6 +1466,27 @@ def test_with_manage_accounts_a_data_privacy_statement_is_opened_and_accepted_fo
     assert kept == {"opened": opened, "statement": "accepted", "presses": 1, "created": 1, "campaign": False}, kept
     assert r.need != "sign_in" and "Create Account" not in r.reason, (r.status, r.reason, log)
     assert any("“My Information”" in line for line in r.log), log  # on to the application
+
+
+def test_a_create_account_choice_the_profile_doesnt_make_is_named_with_its_choices_and_left_to_the_person(
+        srv, monkeypatch, job_apply_home):
+    """Edwards Vacuum's Create Account (SAP's Gigya screen set, run 61): with its statement accepted and Submit
+    pressed, it said "This field is required" over "Make my profile visible to:" (which recruiters see the profile),
+    a choice it marks required only by a data-required and a star of its own, and the card said only that. The
+    question is read as required and marked, and the card names it with its choices, as the person's: the desk never
+    picks one."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    saved_password(monkeypatch)
+    manage_accounts(job_apply_home)
+    r, kept, _ = create_account_on_sf(srv, "?gigya&visibility")
+    assert r.need == "sign_in" and "This field is required”" in r.reason, (r.status, r.reason, r.log)
+    assert "“Make my profile visible to” is marked invalid" in r.reason, r.reason
+    assert ("Its choices for “Make my profile visible to”: “Any recruiter within the Example Group worldwide”, “Any "
+            "recruiter within the Example Group in this country”, “Only recruiters managing jobs I apply to”; that "
+            "choice is yours.") in r.reason, r.reason
+    assert kept["statement"] == "accepted" and kept["visibility"] is None and "created" not in kept, kept
+    seen = next(f for f in r.page_info["fields"] if f.get("label", "").startswith("Make my profile visible to"))
+    assert seen["required"] and seen["kind"] == "radio_group", seen  # (Gigya's data-required)
 
 
 def test_an_emailed_passcode_in_a_password_box_takes_the_inbox_code_never_the_saved_password(
@@ -6884,6 +6917,81 @@ def test_a_jobs_missing_dates_are_named_not_asked_box_by_box(srv, monkeypatch, j
     assert "Maintenance Technician at Example Fab Services (From, To)" in r.reason, r.reason
     assert "add the start and end months of my jobs from my resume" in r.reason, r.reason
     assert not [q for q in r.questions if q.get("section", "").startswith("Work Experience")], r.questions
+
+
+def test_a_degree_list_with_no_choices_at_all_is_reloaded_once_then_said_to_have_not_loaded(srv, monkeypatch,
+                                                                                            job_apply_home):
+    """Grand Canyon University's Workday (run 61; runs 57 to 60 went to its review page): its Degree list opened on
+    "Select One" alone, and the card said the list had no choice for the person's Bachelor of Science, to pick "the
+    closest honest one". A list with no choice at all didn't finish loading: the page is reloaded once (and filled
+    again), and a list still empty is said to be one the page didn't load."""
+    import yaml
+
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 1)
+    path = job_apply_home / "profile.yaml"
+    profile = yaml.safe_load(path.read_text(encoding="utf-8"))
+    for entry in profile["work_history"]:
+        entry.pop("start"), entry.pop("end")  # (so the page stops on them, after the Degree list)
+    path.write_text(yaml.safe_dump(profile), encoding="utf-8")
+    applier = Applier(srv)
+
+    async def go(query: str, hands_on: bool = False):
+        job = srv.add_job(url=fixture_url("site/workday-my-experience.html") + query, title="Equipment Technician",
+                          company="Example Litho")["job"]
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            r.hands_on = hands_on  # (as after the person's Resume on it)
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r, await r.page.evaluate("() => document.getElementById('dg-1').textContent")
+        finally:
+            await applier.stop()
+
+    r, degree = run(go("?nodegrees=once"))  # (loaded once the page is reloaded)
+    assert any("showed no choices at all, so I reloaded the page" in line for line in r.log), r.log
+    assert degree != "Select One" and "Degree" not in r.reason, (degree, r.reason)
+    assert (r.status, r.need) == ("needs_you", "stuck") and "(From, To)" in r.reason, r.reason  # (the work dates)
+    r, degree = run(go("?nodegrees"))  # (never loaded)
+    assert "list for " in r.reason and "(Degree) showed no choices at all, only its placeholder" in r.reason, r.reason
+    assert "even after I reloaded it" in r.reason and "has no choice for your" not in r.reason, r.reason
+    assert degree == "Select One" and sum("so I reloaded the page" in line for line in r.log) == 1, r.log  # (once)
+    r, _ = run(go("?nodegrees=once&resumed", hands_on=True))  # (after the person's Resume: never reloaded, what they did stays)
+    assert not any("reloaded" in line for line in r.log) and "(Degree) showed no choices at all" in r.reason, r.log
+    assert "even after I reloaded it" not in r.reason, r.reason
+
+
+def test_a_degree_list_with_no_choices_at_all_isnt_one_without_a_choice_for_classes(srv):
+    """The review of 0.3.149: a Degree list read with its placeholder alone, for a school the profile says no degree
+    was finished at, was taken for a list with no choice for classes without a degree (and its block was deleted). A
+    list with nothing at all has nothing for anything: it's said to be one the page didn't load."""
+    import yaml
+
+    from job_apply.autofill import no_choice_for_no_degree
+
+    path = config.profile_path()
+    profile = yaml.safe_load(path.read_text(encoding="utf-8"))
+    school = profile["education_history"][0]["school"]
+    profile["education_history"][0]["degree"] = "Some college (no degree)"
+    path.write_text(yaml.safe_dump(profile), encoding="utf-8")
+    degree = {"id": "a", "label": "Degree*", "section": "Education 1", "required": True, "kind": "listbox",
+              "options": ["Select One"]}
+    assert not no_choice_for_no_degree(degree, config.Profile.load())
+    said, rest = Applier(srv)._entry_gaps(Run(1, "Technician", "Example Litho"),
+                                         {"url": "https://example.wd1.myworkdayjobs.com/x"}, [degree])
+    assert f"list for {school} in Education 1 (Degree) showed no choices at all" in said, said
+    assert "classes without a degree" not in said and rest == [], said
+    # (a school's own list, filled once its Country or State is chosen, is no Degree list that didn't load; nor is a
+    # search prompt, whose choices come as it's typed in)
+    school_box = {"id": "b", "label": "School*", "section": "Education 1", "required": True, "kind": "select",
+                  "options": ["Select One"]}
+    said, _ = Applier(srv)._entry_gaps(Run(1, "Technician", "Example Litho"),
+                                       {"url": "https://example.wd1.myworkdayjobs.com/x"}, [school_box])
+    assert "showed no choices" not in said, said
+    prompt = {**degree, "kind": "combobox"}
+    said, _ = Applier(srv)._entry_gaps(Run(1, "Technician", "Example Litho"), {
+        "url": "https://example.wd1.myworkdayjobs.com/x", "fields": [{**prompt, "search": True}]}, [prompt])
+    assert "showed no choices" not in said and "no choice for your" not in said, said
 
 
 def test_a_resume_workday_already_lists_isnt_uploaded_again(srv, monkeypatch, job_apply_home):

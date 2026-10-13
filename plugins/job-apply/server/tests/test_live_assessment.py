@@ -21,7 +21,8 @@ sys.path.insert(0, "scripts")
 import live_smoke
 from job_apply import server
 
-async def main(url):
+async def main(url, *vendors):
+    live_smoke.ASSESSMENT_VENDORS.update(vendors)  # (a site taken for an assessment vendor's, for this test)
     await server.browser.goto(url.replace("EMAIL", live_smoke.FAKE_PROFILE["personal"]["email"]))
     run = types.SimpleNamespace(page=await server.browser.page())
     rec = {"company": "Example Store"}
@@ -30,18 +31,18 @@ async def main(url):
     print("RESULT " + json.dumps({**rec["assessment"], "titles": titles}))
     await server.close_browser()
 
-asyncio.run(main(sys.argv[1]))
+asyncio.run(main(*sys.argv[1:]))
 """
 
 
-def _take(path_query: str) -> dict:
+def _take(path_query: str, vendors: tuple[str, ...] = ()) -> dict:
     handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=str(FIXTURES))
     httpd = http.server.ThreadingHTTPServer(("", 0), handler)  # (127.0.0.1, 127.0.0.2 and localhost: three sites)
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
     port = httpd.server_address[1]
     try:
         url = f"http://127.0.0.1:{port}/site/assessment-start.html" + path_query.replace("PORT", str(port))
-        out = subprocess.run([sys.executable, "-c", RUN, url], cwd=SERVER, capture_output=True, text=True,
+        out = subprocess.run([sys.executable, "-c", RUN, url, *vendors], cwd=SERVER, capture_output=True, text=True,
                              encoding="utf-8", timeout=240)
     finally:
         httpd.shutdown()
@@ -83,3 +84,89 @@ def test_an_application_page_the_assessment_hands_back_to_is_never_filled_or_pre
     assert result["end"] == "back on the application", result
     assert "127.0.0.2" in result["back_at"] and all(s.get("host") != "127.0.0.2" for s in result["steps"]), result
     assert "SENT" not in result["titles"], result
+
+
+@pytest.mark.skipif(not browser_available(), reason="needs Chromium")
+def test_an_assessment_vendors_page_with_the_applicants_details_is_taken_and_no_other_sites():
+    """Taylor Morrison's (run 61): The Predictive Index's assessment opens on "Welcome!" with the applicant's name and
+    email filled in from the employer, and a Continue, and the taker took it for the application's page. On a known
+    assessment vendor's site it's the assessment's: taken. The same page on any other site (an employer's own that
+    greets the applicant by name, the review of 0.3.149) is never filled or pressed."""
+    vendor = "http://localhost:PORT/site/assessment-vendor.html?welcome&email=EMAIL"
+    query = "?vendor=" + vendor.replace("?", "%3F").replace("=", "%3D").replace("&", "%26")
+    result = _take(query, vendors=("localhost",))
+    assert result["end"] == "back on the application", result
+    assert [s.get("pressed") for s in result["steps"]][:4] == ["Take Assessment", "Continue", "Next", "Submit"], result
+    other = _take(query)
+    assert other["end"] == "it opened no assessment off the application's site", other
+    assert other["steps"][-1]["applicants_page"] and len(other["steps"]) == 2, other
+
+
+@pytest.mark.skipif(not browser_available(), reason="needs Chromium")
+def test_an_assessment_page_with_no_way_on_keeps_its_boxes_as_read():
+    """Circle K's (run 61): its question page read boxes, none taken for a question, and no way on. What the page's
+    boxes were, and the markup around the first, are kept for the next look."""
+    vendor = "http://localhost:PORT/site/assessment-vendor.html?boxes=apart&stuck"
+    result = _take("?vendor=" + vendor.replace("?", "%3F").replace("=", "%3D").replace("&", "%26"))
+    assert result["end"] == "no way on it knows", result
+    last = result["steps"][-1]
+    assert last["questions"] == [] and last["kinds"] == ["checkbox"], result  # (run 61's record: all it had)
+    assert [(f["kind"], f["value"]) for f in last["fields"]] == [("checkbox", "True")] * 4, result
+    assert "Always" in last["markup"] and "Never" in last["markup"], result
+    grouped = _take("?vendor=" + "http://localhost:PORT/site/assessment-vendor.html?boxes&stuck".replace("?", "%3F")
+                    .replace("=", "%3D").replace("&", "%26"))  # (a group of boxes: its markup by its members)
+    assert grouped["steps"][-1]["fields"][0]["kind"] == "checkbox_group" and "Always" in grouped["steps"][-1]["markup"], \
+        grouped
+
+
+ACCOUNT = """
+import asyncio, json, sys, types
+sys.path.insert(0, "scripts")
+import live_smoke
+from job_apply import server
+
+async def main(url, pressed):
+    await server.browser.goto(url)
+    page = await server.browser.page()
+    for box, value in (("fbclc_userName", "a@example.com"), ("fbclc_emailConf", "a@example.com"),
+                       ("fbclc_pwd", "Pw-12345678"), ("fbclc_pwdConf", "Pw-12345678"), ("fbclc_fName", "Jobdesk"),
+                       ("fbclc_lName", "Test")):
+        await page.fill("#" + box, value)
+    await page.select_option("#fbclc_country", "United States")
+    await page.click("#dataPrivacyId")
+    await page.click("#accept")
+    await page.check("#gigya-checkbox-terms")
+    await page.click("#fbclc_createAccountButton")  # (the desk's press: refused, a choice left)
+    log = [f"pressed \u201c{pressed}\u201d to create your account on SAP SuccessFactors with your saved password"]
+    run = types.SimpleNamespace(page=page, log=log)
+    did = await live_smoke.finish_account_choices(run)
+    kept = await page.evaluate("() => Object.fromEntries(Object.keys(sessionStorage).filter(k => k.startsWith('sf.'))"
+                               ".map(k => [k.slice(3), JSON.parse(sessionStorage.getItem(k))]))")
+    print("RESULT " + json.dumps({"did": did, "kept": kept, "url": page.url}))
+    await server.close_browser()
+
+asyncio.run(main(*sys.argv[1:]))
+"""
+
+
+def _finish_account(pressed: str, more: str = "") -> dict:
+    url = (FIXTURES / "site" / "sf-create-account.html").as_uri() + "?gigya&visibility" + more
+    out = subprocess.run([sys.executable, "-c", ACCOUNT, url, pressed], cwd=SERVER, capture_output=True, text=True,
+                         encoding="utf-8", timeout=240)
+    line = next((x for x in out.stdout.splitlines() if x.startswith("RESULT ")), None)
+    assert line, out.stdout[-2000:] + out.stderr[-3000:]
+    return json.loads(line[len("RESULT "):])
+
+
+@pytest.mark.skipif(not browser_available(), reason="needs Chromium")
+def test_the_test_identity_makes_a_create_account_choice_the_desk_leaves_to_the_person():
+    """Edwards Vacuum's Create Account (run 61): the desk stopped on "Make my profile visible to:", a choice that's
+    the person's. The live check's test identity makes it as a person would (a throwaway answer), and presses the
+    button the desk pressed to create the account: the account is made. Never another button."""
+    result = _finish_account("Submit")
+    assert "Make my profile visible to" in result["did"] and result["did"].endswith("pressed “Submit”"), result
+    assert result["kept"]["created"] == 1 and result["kept"]["visibility"] is not None, result
+    other = _finish_account("Create Account")  # (not the button the page has: nothing done)
+    assert other["did"] == "" and "created" not in other["kept"] and other["kept"]["visibility"] is None, other
+    alerts = _finish_account("Submit", "&alerts")  # (a required choice of job alerts too: the person's, never made)
+    assert alerts["did"] == "" and "created" not in alerts["kept"] and alerts["kept"]["visibility"] is None, alerts
