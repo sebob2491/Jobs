@@ -196,6 +196,11 @@ _LASTS = re.compile(r"\byour (?:agreement|consent|acceptance) (?:is|will be|rema
                     r"\b(?:privacy|data protection) (?:notice|policy|statement)\b)", re.I)
 # A box whose words say it agrees to the words above it ("the documents above"): what it agrees to is up there
 _READ_ABOVE = re.compile(r"\b(?:documents?|terms|text|information|notices?|statements?|policy|policies) above\b", re.I)
+# A box that says only that the words above it were read (Avnet's Workday Create Account, run 44: "Yes, I have read and
+# understood." under "you acknowledge Avnet will collect and process your personal data as outlined in our Applicant
+# Data Protection and Privacy Statement"): ticked only where those words are the site's terms or privacy statement
+_READ_UNDERSTOOD = re.compile(r"^\W*(?:yes,? )?i have read,? and (?:understood|understand)(?: (?:it|this|them|the above))?\W*$",
+                              re.I)
 # An attestation or privacy agreement that also signs the person up: "... and consent to receive email communications
 # from Acme", "... and would like to receive updates" (the safety audit of Oct 12): never ticked for them
 _SIGNS_UP_TOO = re.compile(r"\breceiv\w*\b.{0,40}\b(?:e-?mails?|communications?|updates?|messages?|news\w*|offers|"
@@ -1502,7 +1507,10 @@ class Applier:
         pressed: list[tuple[Any, ...]] = []  # (page, button) for each button pressed on this pass
         pressed_on: list[str] = []  # and where, in words
         agreed: set[str] = set()  # notices agreed to for the person on this pass (settings.accept_notices)
-        for _ in range(MAX_STEPS):
+        since = 0  # where the presses that count for a circle start (after a refresh the site asked for)
+        steps, more = 0, 0  # (more: the steps that refresh made it take again)
+        while steps < MAX_STEPS + more:
+            steps += 1
             if run.status in ("skipped", "submitted"):  # Skip, or "I submitted it", pressed while it ran
                 return
             data, text = await self._look()
@@ -1583,10 +1591,9 @@ class Applier:
                 run.refreshed = True
                 waited = False  # (a new page: its late buttons waited on, whatever was before it)
                 # and the steps it goes through again after that are no circle (Circle K's Workday, run 44: asked
-                # on Voluntary Disclosures, it started again at My Information). Once a job, so a real circle after
-                # it is still caught on its next lap
-                pressed.clear()
-                pressed_on.clear()
+                # on Voluntary Disclosures, it started again at My Information), nor more steps than expected. Once a
+                # job, so a real circle after it is still caught on its next lap
+                since, more = len(pressed), len(pressed) + 1
                 self._log(run, f"{_site(run, data)} said something went wrong and asked for the page to be "
                           "refreshed, so I reloaded it")
                 with contextlib.suppress(Exception):
@@ -2004,10 +2011,10 @@ class Applier:
             # (and which visit to the job: its Apply pressed again once it's opened again isn't a third press, EY's,
             # Freeport's and SRP's SuccessFactors, nightly Oct 11: "Apply now", then its menu's "Apply Now", before)
             key = (data.get("url"), tuple(data.get("headings") or []), action["text"].strip().lower(), run.reopened)
-            if key in pressed and pressed[-1] != key:
+            if key in pressed[since:] and pressed[-1] != key:
                 # Round in a circle (Oracle sent its sites back to the posting from "Continue"):
                 # going round again only repeats it, and may email the person another code.
-                lap = " \u2192 ".join(pressed_on[pressed.index(key):])
+                lap = " \u2192 ".join(pressed_on[pressed.index(key, since):])
                 return self._pause(run, "stuck", f"I went round in a circle ({lap}, then back to {_where(data)}), so "
                                    "the site isn't letting this application on. Have a look in the browser, then press "
                                    "Resume.")
@@ -2247,11 +2254,14 @@ class Applier:
         person's."""
         kept = []
         for box in boxes:
-            if _BARE_AGREE.match(box.get("label") or "") or _READ_ABOVE.search(box.get("label") or ""):
+            label = box.get("label") or ""
+            if _BARE_AGREE.match(label) or _READ_ABOVE.search(label) or _READ_UNDERSTOOD.match(label):
                 above = await self.srv.browser.words_before(box["id"])
                 # (gone, or not read: not ticked; the words of a sign-up, not the terms' passing mentions: the review's)
                 if not above or _SIGN_UP_ABOVE.search(above):  # (unread, or nothing to read: the person's)
                     continue
+                if _READ_UNDERSTOOD.match(label) and not _TERMS_ONLY.search(above):
+                    continue  # (read and understood anything else: the person's)
             kept.append(box)
         return kept
 
@@ -4170,9 +4180,10 @@ def _terms_boxes(data: dict[str, Any]) -> list[dict[str, Any]]:
     ones, or its terms, or a privacy notice read. Never a newsletter's, job alerts' or text
     messages' (_NOT_TERMS)."""
     return [f for f in data.get("fields") or [] if f.get("kind") == "checkbox" and is_empty_value(f.get("value"))
-            and _TERMS_BOX.search(f.get("label") or "") and not _NOT_TERMS.search(f.get("label") or "")
-            and not _MORE_THAN_TERMS.search(_LASTS.sub("", f.get("label") or ""))
-            and (f.get("required") or _TERMS_ONLY.search(f.get("label") or ""))]
+            and (_READ_UNDERSTOOD.match(f.get("label") or "")  # (what it agrees to is above it: _said_terms reads it)
+                 or _TERMS_BOX.search(f.get("label") or "") and not _NOT_TERMS.search(f.get("label") or "")
+                 and not _MORE_THAN_TERMS.search(_LASTS.sub("", f.get("label") or ""))
+                 and (f.get("required") or _TERMS_ONLY.search(f.get("label") or "")))]
 
 
 def _privacy_statement(data: dict[str, Any]) -> dict[str, Any] | None:
