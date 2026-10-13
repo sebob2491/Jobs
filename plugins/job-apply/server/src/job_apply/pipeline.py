@@ -4501,7 +4501,8 @@ def _sent_from(found: mailbox.Found) -> str:
 # Never an employer's mail domain, whatever a list says: a mail service's or a big shared site's, where anyone
 # may have an address (the review of 0.3.137)
 _PUBLIC_MAIL = {*mailbox.IMAP_HOSTS, "outlook.com", "hotmail.com", "live.com", "msn.com", "proton.me", "protonmail.com",
-                "gmx.com", "mail.com", "zoho.com", "google.com", "microsoft.com", "apple.com", "amazon.com",
+                "pm.me", "protonmail.ch", "gmx.com", "gmx.net", "mail.com", "zoho.com", "fastmail.com", "yandex.com",
+                "google.com", "microsoft.com", "apple.com", "amazon.com",
                 "linkedin.com", "indeed.com", "glassdoor.com", "ziprecruiter.com", "monster.com"}
 
 
@@ -4544,7 +4545,8 @@ def _employer_mail_domains(company: str, hosts: set[str], own: str = "") -> set[
             out |= {d.strip().lower() for d in listed if isinstance(d, str)} if isinstance(listed, list) else set()
     except Exception:
         return set()
-    return {d for d in out if "." in d and d != own and not any(d == p or d.endswith("." + p) for p in _PUBLIC_MAIL)}
+    never = _PUBLIC_MAIL | ({own} if own else set())
+    return {d for d in out if "." in d and not any(d == p or d.endswith("." + p) for p in never)}
 
 
 def question_key(label: str) -> str:

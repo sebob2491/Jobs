@@ -2767,7 +2767,8 @@ def test_an_employers_mail_domains_are_only_its_own(job_apply_home):
     (job_apply_home / "companies.yaml").write_text(yaml.safe_dump({"lists": ["phoenix-metro"], "companies": [
         {"name": "Odd One", "search": {"query": "Test [x"}, "mail_domains": 5},
         {"name": "Example Mailer", "careers_url": "https://mail.google.com/careers",
-         "mail_domains": ["gmail.com", "careers.outlook.com", "examplemailer.com", "acme-person.example"]}]}),
+         "mail_domains": ["gmail.com", "careers.outlook.com", "examplemailer.com", "acme-person.example",
+                          "mail.acme-person.example"]}]}),
         encoding="utf-8")
     assert pipeline._employer_mail_domains("Example Mailer", set(), own="acme-person.example") == {"examplemailer.com"}
     assert pipeline._employer_mail_domains("BDO", set()) == {"bdo.com"}
