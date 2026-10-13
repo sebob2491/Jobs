@@ -510,6 +510,12 @@ def test_a_pause_on_a_bot_check_or_captcha_is_marked_as_one(srv):
         marks[(need, str(seen))] = r.public()["captcha"]
     assert marks == {("bot_check", "None"): True, ("captcha", "None"): True, ("sign_in", "{'captcha': True}"): True,
                      ("sign_in", "{'challenge': True}"): True, ("sign_in", "{}"): False, ("questions", "None"): False}
+    # Submit pressed on a CAPTCHA's stop whose tab was closed meanwhile: a stop for Resume, no CAPTCHA's any more
+    job = srv.add_job(url="https://example.com/job/1", title="FSE", company="Example Fab")["job"]
+    r = applier.runs[job["id"]] = Run(job["id"], "FSE", "Example Fab", status="running")
+    applier._pause(r, "captcha", "Filled. The form has a CAPTCHA.")
+    run(applier._submit(r))
+    assert (r.status, r.need, r.captcha) == ("needs_you", "stuck", False), (r.status, r.need, r.reason)
 
 
 def test_a_this_application_answer_stays_on_its_page(srv):

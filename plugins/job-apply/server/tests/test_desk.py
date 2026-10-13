@@ -1705,6 +1705,9 @@ def test_jobs_stopped_on_a_bot_check_or_captcha_are_marked_and_a_forms_captcha_i
                 await page.wait_for_selector("#notices [data-act=review-submit]")
                 assert shown == [jobs[2]["id"]], shown
                 assert "Tick its CAPTCHA" in await page.inner_text("#notices")
+                # (or ticked, and the site's own Submit pressed: theirs to say, on its card and in the round)
+                assert await page.locator("#notices [data-act=review-applied]").count() == 1
+                assert await page.locator(f"#needs [data-job='{jobs[2]['id']}'][data-job-act=applied]").count() == 1
                 await page.click("#notices [data-act=review-submit]")
                 for _ in range(40):
                     if sent:

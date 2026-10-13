@@ -566,7 +566,8 @@ function renderSide() {
     // password reset by hand (the desk then presses its sign-in once more)
     else if (["sign_in", "bot_check", "email_code"].includes(r.need))
       body = jobButtons(r, ["show", ...(r.blocking ? (r.need === "sign_in" ? ["resume", "later"] : ["later"]) : ["resume"]), "skip"]);
-    else if (r.need === "captcha") body = jobButtons(r, ["show", "submit", "skip"]);
+    // (or the site's own Submit, pressed after ticking it: "I submitted it")
+    else if (r.need === "captcha") body = jobButtons(r, ["show", "submit", "applied", "skip"]);
     else if (r.need === "your_submit" || r.need === "check_submit") body = jobButtons(r, ["show", "applied", "skip"]);
     else if (r.need === "submit_failed") body = jobButtons(r, ["show", "submit", "applied", "skip"]);
     else if (r.need === "tailor") body = jobButtons(r, ["usual_resume", "skip"]);
@@ -682,7 +683,8 @@ function renderHeader() {
   if (!botRound && (toSend.length || reviewRound)) notes.push({cls: "waiting", html: reviewRound && shownJob
     ? `<strong>Reviewing ${esc(shownJob.title)} (${esc(shownJob.company)}).</strong>
        <span>${shownJob.need === "captcha" && shownJob.status !== "ready" ? "Tick its CAPTCHA in the browser window and check the page, then send it, or leave it for later." : shownJob.status === "ready" ? "Check the page in the browser window, then send it, or leave it for later." : "Its last button is the site's own: check the page, press it there, then say so here."} ${toSend.length - 1} more after this one. No other job starts meanwhile.</span>
-       ${sendable(shownJob) ? `<button class="primary" data-act="review-submit" data-review="${shownJob.job_id}">Submit this one</button>` : `<button class="primary" data-act="review-applied" data-review="${shownJob.job_id}">I submitted it</button>`}
+       ${sendable(shownJob) ? `<button class="primary" data-act="review-submit" data-review="${shownJob.job_id}">Submit this one</button>` : ""}
+       ${!sendable(shownJob) || shownJob.status === "needs_you" ? `<button class="${sendable(shownJob) ? "" : "primary"}" data-act="review-applied" data-review="${shownJob.job_id}">I submitted it</button>` : ""}
        <button data-act="review-next">Next</button> <button data-act="review-stop">Stop</button>`
     : `<strong>${toSend.length} application${toSend.length === 1 ? "" : "s"} ready for your Submit${toSend.some((r) => r.need === "captcha" && r.status !== "ready") ? ` (${toSend.filter((r) => r.need === "captcha" && r.status !== "ready").length} with a CAPTCHA to tick first)` : ""}.</strong>
        <span>Go through them one by one: each review page comes up in the browser window to check before you send it.</span>

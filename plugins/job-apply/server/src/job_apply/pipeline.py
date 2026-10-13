@@ -3379,7 +3379,7 @@ class Applier:
                                "Press Resume to fill this application again in a tab of its own.")
         if not srv.browser.use_tab(run.page):
             # waiting on Resume now, whatever it waited on before (a CAPTCHA's pause has no Resume button)
-            run.status, run.need, run.blocking = "needs_you", "stuck", False
+            run.status, run.need, run.blocking, run.captcha = "needs_you", "stuck", False, False
             run.reason = "Its tab was closed. Press Resume to fill it again first."
             self._log(run, run.reason)
             return
