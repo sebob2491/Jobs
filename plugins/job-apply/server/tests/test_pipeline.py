@@ -5315,12 +5315,14 @@ def test_a_job_picked_up_again_carries_on_with_the_form_in_its_tab(srv, monkeypa
         assert r.page is tab and after[0] == before[0], r.log
         assert loads.count(posting) == 1 and not any(line.startswith(("opened", "its tab")) for line in since), r.log
     else:
-        said = {"crashed": "its tab crashed", "closed": "its tab was closed",
-                "browser": "the browser had closed", "home": "its tab had gone back to the site's careers home"}[how]
+        said: tuple[str, ...] = ({"crashed": "its tab crashed", "closed": "its tab was closed",
+                                  "browser": "the browser had closed",
+                                  "home": "its tab had gone back to the site's careers home"}[how],)
         if how == "crashed" and tab.context is not srv.browser._ctx:
             # Chromium sometimes goes down whole with the crashed tab (Windows CI, and a loaded machine, Oct 13):
-            # then that's what the desk saw, and says
-            said = "the browser had closed"
+            # then the desk may have seen the browser closed, and says so. (A browser started again since, to open
+            # the job, is no sign of that: the desk said "its tab crashed" then, on Linux CI, Oct 13)
+            said += ("the browser had closed",)
         assert r.page is not tab and loads.count(posting) == 2, (loads, r.log)
         # (in full, as a string: a list is cut short in pytest's report, and on Windows CI this has failed now and
         # then with the line that says why cut off, Oct 11)
