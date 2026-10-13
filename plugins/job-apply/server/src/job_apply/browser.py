@@ -94,6 +94,13 @@ CAPTCHA_SAYS = ("A CAPTCHA (a bot check: an \"I'm not a robot\" box or pictures)
 # never touches a CAPTCHA anyway
 _CAPTCHA_FRAME = re.compile(r"^https?://([\w-]+\.)*(hcaptcha\.com|recaptcha\.net|challenges\.cloudflare\.com)/|"
                             r"^https?://(www\.)?google\.com/recaptcha/", re.I)
+# A video player's frame: never read as part of the page. Oracle's job pages carry a media slider whose
+# YouTube embed says "This video is private ... Sign in." in a `.ytp-error` box, which read as the
+# page's error (the desk stopped on "The page didn't move on") and its "Sign in" link as a sign-in
+# (issue #112, note 33). Only the players' hosts: an employer's form in a frame (iCIMS, Greenhouse)
+# is cross-origin too, and its errors matter.
+_MEDIA_FRAME = re.compile(r"^https?://([\w-]+\.)*(youtube(-nocookie)?\.com|youtu\.be|vimeo\.com|wistia\.(com|net)|"
+                          r"dailymotion\.com|loom\.com|vidyard\.com|brightcove\.net|jwplatform\.com)([:/?#]|$)", re.I)
 
 
 # What declines a cookie banner, pressed for the person wherever a banner offers it: anywhere
@@ -699,13 +706,16 @@ class BrowserSession:
                 if await self._shown(frame):  # never read, but said: it's for the person to solve
                     result["captcha"] = CAPTCHA_SAYS
                 continue
-            if frame is not page.main_frame and (not frame.url or frame.url == "about:blank"):
+            if frame is not page.main_frame and (not frame.url or frame.url == "about:blank"
+                                                 or _MEDIA_FRAME.match(frame.url)):
                 continue
             prefix = self._frame_prefix(frame, page)
             try:
                 data = await frame.evaluate(EXTRACT_JS, prefix)
             except PlaywrightError:
                 continue  # cross-origin frame that refused, or navigated mid-read
+            if frame is not page.main_frame and not data.get("fields"):
+                data["errors"] = []  # nothing to fill: an embed (a player, a widget), whose errors aren't the form's
             for key in ("fields", "actions", "errors", "headings", "dialogs"):
                 result[key].extend(data.get(key, []))
             if data.get("busy"):  # a loading indicator on show (Workday's dots while a step loads)
@@ -861,6 +871,8 @@ class BrowserSession:
             page = await self.page()
             parts = []
             for frame in page.frames:
+                if frame is not page.main_frame and _MEDIA_FRAME.match(frame.url):
+                    continue
                 try:
                     t = await frame.evaluate(VISIBLE_TEXT_JS)
                 except PlaywrightError:
@@ -968,7 +980,8 @@ class BrowserSession:
             data: dict[str, Any] = {"fields": [], "actions": [], "errors": [], "headings": []}
             parts, challenge = [], False
             for frame in tab.frames:
-                if frame.is_detached() or frame is not tab.main_frame and (not frame.url or frame.url == "about:blank"):
+                if frame.is_detached() or frame is not tab.main_frame and (not frame.url or frame.url == "about:blank"
+                                                                           or _MEDIA_FRAME.match(frame.url)):
                     continue
                 try:
                     found = ({} if _CAPTCHA_FRAME.match(frame.url) else
@@ -977,6 +990,8 @@ class BrowserSession:
                     challenge = challenge or bool(await frame.evaluate(CHALLENGE_JS))
                 except PlaywrightError:
                     continue
+                if frame is not tab.main_frame and not found.get("fields"):
+                    found = {**found, "errors": []}  # (as in _extract: an embed's errors aren't the form's)
                 for key in data:
                     data[key].extend(found.get(key, []))
                 if text:
@@ -1940,7 +1955,8 @@ class BrowserSession:
 
     async def _find_by_text(self, page: Page, text: str) -> Locator | None:
         """First visible button/link named `text`, then any visible text match, across frames."""
-        frames = [f for f in page.frames if not f.is_detached() and not _CAPTCHA_FRAME.match(f.url)]
+        frames = [f for f in page.frames if not f.is_detached() and not _CAPTCHA_FRAME.match(f.url)
+                  and not _MEDIA_FRAME.match(f.url)]
         for exact_role in (True, False):
             for frame in frames:
                 if exact_role:
@@ -2018,6 +2034,8 @@ class BrowserSession:
     async def _page_text(self, page: Page) -> str:
         text = ""
         for frame in page.frames:
+            if frame is not page.main_frame and _MEDIA_FRAME.match(frame.url):
+                continue
             try:
                 text += "\n" + await frame.evaluate(VISIBLE_TEXT_JS)
             except PlaywrightError:

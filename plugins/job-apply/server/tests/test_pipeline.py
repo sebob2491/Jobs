@@ -1761,14 +1761,19 @@ def test_the_password_alone_goes_only_where_the_sign_in_shows_whos_signing_in(sr
     assert run(page.evaluate("() => document.getElementById('p').value")) == "", boxes
 
 
-@pytest.mark.parametrize("then", ["", "done", "alone"])
-def test_with_manage_accounts_a_refused_saved_password_is_reset(srv, monkeypatch, job_apply_home, then):
+@pytest.mark.parametrize("then,slow", [("", 0), ("done", 0), ("alone", 0), ("", 3000)],
+                         ids=["plain", "done", "alone", "slow"])
+def test_with_manage_accounts_a_refused_saved_password_is_reset(srv, monkeypatch, job_apply_home, then, slow):
     """The email has an account there, and the saved password isn't its password. With the
     inbox watched, the desk asks for a password reset before trying a new account (the owner's
     choice), opens the emailed link in the job's tab, sets the saved password as the new one,
     and signs in. Live (issue #112, note 14), the desk stopped after the reset with "Sign in ... in the
     browser window": the sign-in after it may say "Password has been reset" with only a "Sign In" button
-    (done), or ask for the password alone (alone). It signs in with the new password there too."""
+    (done), or ask for the password alone (alone). It signs in with the new password there too.
+    Again live (note 34) the site took a moment over the new password, its reset form still on show with no
+    error (slow): that read as a taken password, then as a sign-in with no email box, and the desk asked the
+    person to sign in. It waits for the sign-in; and the reset form, two password boxes like a Create Account
+    form, doesn't spend the wait kept for one."""
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
     monkeypatch.setattr(pipeline, "MAIL_POLL_SECONDS", 0)
     saved_password(monkeypatch)
@@ -1779,10 +1784,19 @@ def test_with_manage_accounts_a_refused_saved_password_is_reset(srv, monkeypatch
 
     def inbox(address, password, since, senders, want, allowed_link, before=None, look_back=None):
         wanted.append(want)
-        link = fixture_url("site/reset-password.html") + "?token=abc" + (f"&then={then}" if then else "")
+        link = (fixture_url("site/reset-password.html") + "?token=abc" + (f"&then={then}" if then else "")
+                + (f"&slow={slow}" if slow else ""))
         return pipeline.mailbox.Found(want, link, "careers.example.com", time.time()) if want == "reset" else None
 
     monkeypatch.setattr(pipeline.mailbox, "search", inbox)
+    waits = []
+    wait_for_application = Applier._wait_for_application
+
+    async def counted(self):
+        waits.append(1)
+        await wait_for_application(self)
+
+    monkeypatch.setattr(Applier, "_wait_for_application", counted)
     job = srv.add_job(url=fixture_url("site/signin-forgot.html"), title="FSE", company="Example Fab")["job"]
     applier = Applier(srv)
 
@@ -1801,9 +1815,47 @@ def test_with_manage_accounts_a_refused_saved_password_is_reset(srv, monkeypatch
     assert "asked it to email a password reset" in log, log
     assert "opened the password reset link from your email (sent from careers.example.com)" in log, r.log
     assert "set your saved password as" in log, r.log
+    set_at = next(i for i, line in enumerate(r.log) if line.startswith("set your saved password as"))
+    assert "pressed “Sign In” with your saved password" in r.log[set_at:], r.log  # signed in after the reset
     assert r.seen_form and not any(w in r.url for w in ("signin", "reset", "forgot")), (r.url, r.reason, r.log)
+    assert "Sign in (or create your account)" not in (r.reason or ""), (r.reason, r.log)
     assert "reset" in wanted
     assert "opened Create Account" not in log and "created your account" not in log, log
+    assert not waits  # (the reset form has two password boxes, but it isn't a Create Account form drawing its application)
+
+
+def test_a_new_password_the_site_never_takes_is_left_to_the_person(srv, monkeypatch, job_apply_home):
+    """The reset form stays on show after the desk's button press, with no error, past RESET_SETTLE: the
+    saved password wasn't taken as the new one, and the person is told so (not asked to sign in)."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "MAIL_POLL_SECONDS", 0)
+    monkeypatch.setattr(pipeline, "RESET_SETTLE", 2)
+    saved_password(monkeypatch)
+    manage_accounts(job_apply_home)
+    monkeypatch.setenv("JOB_APPLY_SECRET_EMAIL_PASSWORD", "an-app-password")
+    monkeypatch.setattr(pipeline.mailbox, "imap_host", lambda address: "imap.example.com")
+
+    def inbox(address, password, since, senders, want, allowed_link, before=None, look_back=None):
+        link = fixture_url("site/reset-password.html") + "?token=abc&slow=600000"
+        return pipeline.mailbox.Found(want, link, "careers.example.com", time.time()) if want == "reset" else None
+
+    monkeypatch.setattr(pipeline.mailbox, "search", inbox)
+    job = srv.add_job(url=fixture_url("site/signin-forgot.html"), title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status == "needs_you" and r.need != "email_code" or r.status == "ready",
+                        timeout=90, about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert r.need == "sign_in" and "didn't take it as the new one" in r.reason, (r.need, r.reason, r.log)
+    assert "set your saved password as" not in "\n".join(r.log), r.log
 
 
 def test_a_new_account_is_signed_in_with_and_only_its_own_form_is_sent(srv, monkeypatch, job_apply_home):
@@ -5771,6 +5823,39 @@ def test_a_form_still_being_drawn_is_waited_for(srv, monkeypatch):
     r = run(go())
     assert r.status == "ready", (r.need, r.reason, r.log)
     assert "clicked “Next”" in r.log and r.url.endswith("review.html"), r.log
+
+
+@pytest.mark.parametrize("player", ["beside", "youtube"])
+def test_a_video_players_error_isnt_the_pages_while_the_email_page_is_drawn(srv, monkeypatch, player):
+    """Oracle's job page (issue #112, note 33) has a YouTube player in its media slider, which said "This
+    video is private ... Sign in." Apply Now draws the email page a moment after the click, and the desk
+    took the player's text for the page's error and stopped with "The page didn't move on". The player's
+    frame isn't read (youtube), and nor are the errors of a frame with nothing to fill (beside); the desk
+    fills the email, ticks the terms box and presses Next."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    video = (Path(__file__).parent / "fixtures" / "site" / "video-frame.html").read_text(encoding="utf-8")
+    job = srv.add_job(url=fixture_url("site/oracle-video-posting.html") + ("?youtube" if player == "youtube" else ""),
+                      title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        await srv.browser.page()
+        await srv.browser._ctx.route("https://www.youtube.com/**", lambda route: route.fulfill(
+            status=200, content_type="text/html", body=video))
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    log = "\n".join(r.log)
+    assert "didn't move on" not in log and "didn't move on" not in r.reason, (r.reason, r.log)
+    assert "filled 1 field(s) on “Authentication screen. You don't need to have an account”" in r.log, r.log
+    assert "ticked “I agree with the terms and conditions” for you (settings.accept_notices)" in r.log, r.log
+    assert "clicked “Next”" in r.log, r.log
 
 
 @pytest.mark.parametrize("settings", [{"accept_notices": False}, {}], ids=["off", "on"])

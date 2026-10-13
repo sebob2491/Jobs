@@ -1455,6 +1455,40 @@ def test_a_captcha_on_show_is_said_but_its_frame_isnt_read(srv):
     assert "captcha" not in hidden
 
 
+def test_a_video_players_frame_isnt_read_as_part_of_the_page(srv):
+    """Oracle's job pages (live, issue #112, note 33) embed a YouTube player whose private video says
+    "This video is private ... Sign in." in an error box: its words and its "Sign in" link are the
+    player's, not the page's. Players are known by their hosts; an employer's own frame is read."""
+    for url in ("https://www.youtube.com/embed/abc123", "https://youtube-nocookie.com/embed/abc123?rel=0",
+                "https://player.vimeo.com/video/1", "https://fast.wistia.net/embed/iframe/x", "https://youtu.be/x",
+                "https://www.dailymotion.com/embed/video/x", "https://www.loom.com/embed/x", "HTTPS://YOUTUBE.COM"):
+        assert browser_module._MEDIA_FRAME.match(url), url
+    for url in ("https://careers-x.icims.com/jobs/1/login?in_iframe=1", "https://boards.greenhouse.io/embed/job_app",
+                "https://notyoutube.com/embed/x", "https://youtube.com.example.com/x", "about:blank", ""):
+        assert not browser_module._MEDIA_FRAME.match(url), url
+
+    video = (Path(__file__).parent / "fixtures" / "site" / "video-frame.html").read_text(encoding="utf-8")
+
+    async def go():
+        await srv.browser.page()
+        await srv.browser._ctx.route("https://www.youtube.com/**", lambda route: route.fulfill(
+            status=200, content_type="text/html", body=video))
+        await srv.browser.goto(fixture_url("generic_form.html"))
+        page = await srv.browser.page()
+        await page.evaluate("""() => {
+            const f = document.createElement('iframe');
+            f.src = 'https://www.youtube.com/embed/abc123';
+            f.style.cssText = 'width:400px;height:200px';
+            document.body.append(f);
+        }""")
+        await framed(page, "embed/abc123")
+        return await srv.inspect_form(include_dropdown_options=False), await srv.browser.visible_text()
+
+    form, text = run(go())
+    assert form["fields"] and "Sign in" not in [a["text"] for a in form["actions"]], form["actions"]
+    assert not form["errors"] and "private" not in text, (form["errors"], text)
+
+
 def test_answers_a_page_loses_in_a_quick_run_of_fills_are_put_in_again(srv):
     """Insight Enterprises' Eightfold form (live, Oct 2026) lost some of a quick run of fills from
     its own record and said "Email cannot be left blank" beside the address shown. The boxes it

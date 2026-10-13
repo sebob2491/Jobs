@@ -43,6 +43,7 @@ ONCE_SETTLE = 1.0  # seconds after filling the person's answers before checking 
 MAX_STEPS = 15
 LATE_BUTTONS_WAIT = 10  # seconds for a page's buttons to be drawn
 SIGN_IN_SETTLE = 10  # seconds a sign-in sent, its form still on show, may take before it counts as refused
+RESET_SETTLE = 15  # the same for a new password sent: its reset form still on show, no error yet (Workday's)
 STEP_SAVE_WAIT = 20  # for a step pressed three times that's still saving (KLA's Workday), before it counts as stuck
 STEP_LOAD_WAIT = 30  # for a step still loading its questions, its loading dots on show (KLA's Workday)
 BLANK_PAGE_WAIT = 30  # for a page with nothing on it yet to draw (Infineon's application, now and then)
@@ -1591,7 +1592,7 @@ class Applier:
                 return self._pause(run, "sign_in", f"{_site(run, data)} has no account for your email yet, and its "
                                    "steps of making one are yours: finish them in the browser window (or sign in with "
                                    "the email you use there); the desk carries on by itself after that.", seen=data)
-            if (kind == "sign_in" and not account_waited and not _account_and_application(data)
+            if (kind == "sign_in" and not account_waited and not run.resetting and not _account_and_application(data)
                     and sum(f.get("kind") == "password" and not _code_box(f) for f in data.get("fields") or []) >= 2):
                 # A Create Account form: Qorvo's draws its application below it a moment later
                 account_waited = True
@@ -3062,6 +3063,13 @@ class Applier:
                 and not run.mail_done and not run.reset_no_mail and self.mail_login() is not None
                 and time.time() - run.paused_at > RESET_MAIL_WAIT)
 
+    @staticmethod
+    def _reset_form_showing(data: dict[str, Any], text: str) -> bool:
+        """Still a password reset's form: its new-password boxes, its reset words, and not the site's word that
+        the password is reset."""
+        boxes = [f for f in data.get("fields") or [] if f.get("kind") == "password" and not _code_box(f)]
+        return len(boxes) >= 2 and bool(_RESET_PAGE.search(text[:2000])) and not _RESET_DONE.search(text[:2000])
+
     async def _set_new_password(self, run: Run, data: dict[str, Any], text: str) -> str | None:
         """A password reset's page (opened from its email): the saved password in its new-password
         boxes, and its button pressed. "set" when the site took it, "paused" when it's the
@@ -3093,8 +3101,15 @@ class Applier:
         except Exception:
             pressed = False
         after, after_text = await self._look()
-        still = [f for f in after.get("fields") or [] if f.get("kind") == "password" and not named]
-        if not pressed or (len(still) >= 2 and _RESET_PAGE.search(after_text[:2000]) and after.get("errors")):
+        # A site that takes a moment over the new password leaves its reset form on show, with no error, until it goes
+        # on to its sign-in (Workday's, live, issue #112, note 34): waited for, or the form is read as a sign-in
+        # with no email box and the person is asked to sign in. Still there after RESET_SETTLE, it wasn't taken.
+        deadline = time.monotonic() + RESET_SETTLE
+        while (pressed and time.monotonic() < deadline and self._reset_form_showing(after, after_text)
+               and not after.get("errors")):
+            await asyncio.sleep(1)
+            after, after_text = await self._look()
+        if not pressed or self._reset_form_showing(after, after_text):
             await self._bring_forward(run)
             said = f" It says \u201c{after['errors'][0][:160]}\u201d." if after.get("errors") else ""
             self._pause(run, "sign_in", f"I put your saved password in {site}'s new-password boxes, and it didn't take it "
