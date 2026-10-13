@@ -1423,7 +1423,7 @@ def create_account_on_sf(srv, query="", watch=0):
     return run(go())
 
 
-@pytest.mark.parametrize("how", ["on", "slow", "once", "test-identity", "long"])
+@pytest.mark.parametrize("how", ["on", "slow", "once", "test-identity", "long", "gigya"])
 def test_with_manage_accounts_a_data_privacy_statement_is_opened_and_accepted_for_the_account(
         srv, monkeypatch, job_apply_home, how):
     """SuccessFactors' Create Account (APS's, live, Oct 10, 2026) makes no account until its data privacy
@@ -1434,19 +1434,22 @@ def test_with_manage_accounts_a_data_privacy_statement_is_opened_and_accepted_fo
     Create Account; never Decline, and never the box for hearing more about career opportunities (marketing).
     The statement comes a moment after its link is pressed (slow). The live check's test identity does the
     same in practice mode. Amkor's link reads "Please read and accept the data privacy statement to proceed.",
-    longer than the form reader took a button's words to be, so it was never seen (long, live check Oct 11)."""
+    longer than the form reader took a button's words to be, so it was never seen (long, live check Oct 11).
+    Edwards Vacuum's (gigya, run 57) has it inside the label of a required box greyed out until it's accepted,
+    "Read and acknowledge the data privacy statement.", and a "Submit": the link was never seen as one to press."""
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
     saved_password(monkeypatch)
     manage_accounts(job_apply_home)
     if how == "test-identity":
         as_test_identity(monkeypatch, job_apply_home)
-    r, kept, _ = create_account_on_sf(srv, f"?{how}" if how in ("slow", "once", "long") else "")
+    r, kept, _ = create_account_on_sf(srv, f"?{how}" if how in ("slow", "once", "long", "gigya") else "")
     log = "\n".join(r.log)
     agreed = f"agreed to Example Corp's notice “{STATEMENT}” for you (settings.accept_notices)"
     assert agreed in r.log, log
     assert any(line.startswith("created your account on") and "accepted its data privacy statement" in line
                for line in r.log), log
-    assert r.log.index(agreed) < next(i for i, line in enumerate(r.log) if line.startswith("pressed “Create Account”")), log
+    made = "pressed “Submit” to create" if how == "gigya" else "pressed “Create Account”"
+    assert r.log.index(agreed) < next(i for i, line in enumerate(r.log) if line.startswith(made)), log
     opened = 2 if how == "once" else 1  # (once: its first press opened nothing, and it was pressed again)
     assert kept == {"opened": opened, "statement": "accepted", "presses": 1, "created": 1, "campaign": False}, kept
     assert r.need != "sign_in" and "Create Account" not in r.reason, (r.status, r.reason, log)

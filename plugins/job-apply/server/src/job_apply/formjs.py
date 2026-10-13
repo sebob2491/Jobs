@@ -616,7 +616,9 @@ EXTRACT_JS = r"""
     // (a link to read a privacy statement or terms may say more: Amkor's SuccessFactors "Please read and accept
     // the data privacy statement to proceed.", nightly live check Oct 11)
     if (!t || t.length > 60 && !(t.length <= 120 && /^(please )?(read|view|open)\b.*\b(privacy|terms)\b/i.test(t))) continue;
-    if (el.tagName === 'A' && !ACTION.test(t)) continue;
+    // (and a link to read the statement is one to press, whatever else it says: Edwards Vacuum's SAP screen set, run 57,
+    // "Read and acknowledge the data privacy statement.", in the label of a box greyed out until it's read)
+    if (el.tagName === 'A' && !ACTION.test(t) && !/^(please )?(read|view|open)\b.*\b(privacy|terms)\b/i.test(t)) continue;
     const full = covers ? t : t + ' ' + (el.getAttribute('aria-label') || '');
     const formSubmit = el.type === 'submit' && !!formOf(el);
     // SuccessFactors' older sites show a posting inside a form whose submit is "Apply": with
