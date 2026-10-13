@@ -32,7 +32,7 @@ from urllib.parse import parse_qsl, urlparse
 
 from . import config, mailbox, report
 from .ats import ATS_NAMES, detect_ats, shared_system
-from .autofill import (clean_label, degree_kinds_listed, degree_not_listed, entry_of, is_empty_value, no_choice_for_no_degree, norm,
+from .autofill import (classes_only, clean_label, degree_kinds_listed, degree_not_listed, entry_of, is_empty_value, no_choice_for_no_degree, norm,
                        plan_autofill, profile_entries, unset_choice,
                        polarity, tailored_document, works_there_now)
 from .browser import (_SENDS_TOO, CONFIRMATION_RE, SubmitBlocked, TabClosed, _accepts_cookies, _cookie_setting,
@@ -108,13 +108,13 @@ _CLOSED = re.compile(
     r"\b(?:posting|job|position|requisition|opening|vacancy)\b[^.]{0,60}?\b(?:has|have|is|was)\b(?: already)?(?: been)?"
     r" (?:expired|filled|closed|no longer (?:available|open|active|accepting))|no longer accepting applications", re.I)
 # The site saying this person applied for this job before (issue #112, note 30: Workday's job page "You applied for
-# this job on <date>." over its View Application, an Eightfold application saying it was applied to already). Never
-# "If you have already applied, sign in…", "Already applied? Sign in", or a question asking whether they have.
+# this job on <date>." over its View Application, an Eightfold application saying it was applied to already): a
+# sentence of its own that starts with it, never "If you are an internal candidate or you have already applied for
+# this position, sign in", "Already applied? Sign in", a limit on applications, or a question asking whether they have.
 _APPLIED_BEFORE = re.compile(
     r"\byou applied (?:for|to) this (?:job|position|role|posting|requisition|opening|vacancy) on\b|"
-    r"(?<!\bif )(?<!whether )(?<!\bhave )\byou(?:'ve| have)? already applied (?:for|to) this "
-    r"(?:job|position|role|posting|requisition|opening|vacancy)\b(?!\s*(?:\?|before|within|in the))|"
-    r"(?<!\bif )(?<!whether )\byou(?:'ve| have) already (?:applied|submitted an application)\s*[.!]", re.I)
+    r"\byou(?:'ve| have)? already (?:applied|submitted an application) (?:for|to) this "
+    r"(?:job|position|role|posting|requisition|opening|vacancy)\b(?!\s*(?:\?|before|within|in the))", re.I)
 _BOT_TEXT = re.compile(r"verify (?:that )?you are (?:a )?human|are you a robot|checking (?:if the site connection is secure|"
                        r"your browser)|press (?:&|and) hold|complete the security check|unusual traffic from your|"
                        r"enable javascript and cookies to continue|request unsuccessful|you have been blocked", re.I)
@@ -2292,17 +2292,23 @@ class Applier:
         never its only one (the site may need one): a block before others would hand its number to the next
         school's. Once a block; any other way, the person's (_entry_gaps says so). True when it deleted one."""
         prof = config.Profile.load()
-        unfit = {str(q.get("section") or "") for q in pending if no_choice_for_no_degree(q, prof)} - {""}
+        # (only where the profile says no degree was finished there: not a degree it lacks, nor one under way)
+        unfit = {str(q.get("section") or "") for q in pending
+                 if no_choice_for_no_degree(q, prof) and classes_only(q, prof)} - {""}
         if not unfit:
             return False
-        blocks = sorted({str(f.get("section") or "") for f in data.get("fields") or []
-                         if re.match(r"education\b.*\d\s*$", str(f.get("section") or ""), re.I)},
-                        key=lambda s: int(re.findall(r"\d+", s)[-1]))
+        school_block = re.compile(r"education\b.*\d\s*$", re.I)
+        deletes = [a for a in data.get("actions") or [] if not a.get("disabled")
+                   and re.match(r"^(?:delete|remove)\b", final_text(a.get("text") or ""), re.I)]
+        # the blocks by their boxes, and by their Deletes (a block's boxes can be drawn a moment after it)
+        blocks = sorted({str(x.get("section") or "") for x in [*(data.get("fields") or []), *deletes]
+                         if school_block.match(str(x.get("section") or ""))}, key=lambda s: int(re.findall(r"\d+", s)[-1]))
         last = blocks[-1] if blocks else ""
         if len(blocks) < 2 or last not in unfit or last in run.schools_dropped:
             return False
-        delete = next((a for a in data.get("actions") or [] if a.get("section") == last and not a.get("disabled")
-                       and re.match(r"^(?:delete|remove)\b", final_text(a.get("text") or ""), re.I)), None)
+        # its own Delete: one that names the block, else the only Delete in it (not a file's or a pill's)
+        own = [a for a in deletes if a.get("section") == last]
+        delete = next((a for a in own if a.get("names_block")), own[0] if len(own) == 1 else None)
         if delete is None:
             return False
         run.schools_dropped.append(last)
@@ -2310,11 +2316,14 @@ class Applier:
             await self.srv.click(delete["id"])
         except Exception:  # gone, or it won't take a click: the person's, as before
             return False
+        await asyncio.sleep(0.5)  # (the block goes from the page)
+        now, _ = await self._look()
+        if any(f.get("section") == last for f in now.get("fields") or []):
+            return False  # still there (a "Are you sure?" over it, say): the person's
         found = next((entry_of(q, prof) for q in pending if q.get("section") == last and entry_of(q, prof)), None)
         school = found[0] if found else last
         self._log(run, f"deleted {last} ({school}): its Degree list has no choice for classes without a degree, and "
                   "the desk never picks a degree you didn't earn (your resume still shows the classes)")
-        await asyncio.sleep(0.5)  # (the block goes from the page)
         return True
 
     def _entry_gaps(self, run: Run, data: dict[str, Any],
@@ -3445,6 +3454,7 @@ class Applier:
                                    + "). Fill them in the browser, then press Resume.")
         if run.status == "skipped":  # skipped while the page was being checked
             return
+        review = run.url  # (the page it waited on for this Submit)
         result = await srv.submit_application(job_id=run.job_id, user_confirmed=True)
         if result.get("submitted") and not result.get("confirmed"):
             run.pressed_before = True  # it may have gone: Submit for me never presses it again
@@ -3462,12 +3472,16 @@ class Applier:
                                    "Submit again (or \u201cI submitted it\u201d if it did go through).")
             return self._pause(run, "check_submit", "I pressed Submit, but no confirmation showed. Check the page: "
                                "if it went through, press \u201cI submitted it\u201d.")
-        elif result.get("no_submit_button"):
+        elif result.get("no_submit_button") and by_person:
             # Submit pressed on the desk after the person sent it on the site themselves (issue #112, note 31: Workday's
             # "Application Submitted" was showing, and the job ended up skipped, its application never counted): the
-            # page's own word that it went is taken; nothing is pressed
+            # page's own word that it went is taken, nothing pressed. A confirmation only on a page the tab went on
+            # to, not the review page it waited on or the posting (a session gone back to it): "Thank you for
+            # applying" in a posting's words, or "this application submitted by me is true" in an attestation's
             data, text = await self._look()
-            if gone := _sent_already(data, text):
+            job = srv.tracker().get(run.job_id, with_description=False) or {}
+            moved = _bare(data.get("url") or "") not in {_bare(u) for u in (review, job.get("url"), job.get("apply_url")) if u}
+            if gone := _sent_already(data, text, moved):
                 srv.tracker().update(run.job_id, status="applied", note="submitted on the site")
                 run.status, run.need, run.blocking, run.left = "submitted", "", False, False
                 run.reason = f"Submitted: {_site(run, data)} says \u201c{gone}\u201d."
@@ -4204,10 +4218,10 @@ def _maintenance_page(data: dict[str, Any]) -> bool:
                              .rsplit("/", 1)[-1], re.I))
 
 
-def _sent_already(data: dict[str, Any], text: str) -> str:
-    """The page's own words that this application has gone (a confirmation, not a step of the form that thanks
-    the person, or the job's page saying it was applied to), or "" when it doesn't say so."""
-    if (gone := sorted(confirmations(text))) and not _mid_application(data, text):
+def _sent_already(data: dict[str, Any], text: str, moved: bool) -> str:
+    """The page's own words that this application has gone (a confirmation, on a page the tab `moved` on to, not a
+    step of the form that thanks the person; or the job's page saying it was applied to), or "" when it doesn't."""
+    if moved and (gone := sorted(confirmations(text))) and not _mid_application(data, text):
         return gone[0]
     return _applied_before(data, text)
 
@@ -4217,9 +4231,11 @@ def _applied_before(data: dict[str, Any], text: str) -> str:
     question on the form that asks it ("Have you already applied for this position?") isn't that."""
     labels = " ".join(str(f.get("label") or "") for f in data.get("fields") or []).lower()
     for said in list(data.get("errors") or []) + [text or ""]:
+        said = re.sub(r"[ \t\xa0]+", " ", said.replace("\u2019", "'"))
         for m in _APPLIED_BEFORE.finditer(said):
-            if m.group(0).lower() in labels:
-                continue
+            begun = max(said.rfind(c, 0, m.start()) for c in ".!?\n")
+            if m.group(0).lower() in labels or not re.fullmatch(r"[\s\W]*", said[begun + 1:m.start()]):
+                continue  # a question on the form, or a sentence that only supposes it ("If you have already…")
             start, end = said.rfind(".", 0, m.start()) + 1, said.find(".", m.end())
             sentence = " ".join(said[start:end + 1 if end >= 0 else len(said)].split())[:200]
             return sentence

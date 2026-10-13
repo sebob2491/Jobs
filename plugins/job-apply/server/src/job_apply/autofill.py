@@ -1610,6 +1610,21 @@ def no_choice_for_no_degree(field: dict, prof: Profile) -> bool:
     return all(choose_option(words, field["options"]) is None for words in {said, NO_DEGREE} if words)
 
 
+# A school's degree that says no degree was finished there: classes taken, not a degree missing from the profile (an
+# empty one), nor one under way ("BS in progress", "expected 2027")
+_CLASSES_ONLY = re.compile(r"\bno degree\b|\bsome college\b|\bcourse ?work\b|\bclasses\b|\bnot (?:completed|finished)\b|"
+                           r"\bdid(?: not|n't) (?:finish|complete)\b|\bnon-?degree\b|\battended\b", re.I)
+
+
+def classes_only(field: dict, prof: Profile) -> bool:
+    """A box in a school's block whose profile entry says no degree was finished there ("Some college (no degree)")."""
+    slot = _entry_slot(field, prof)
+    if slot is None or slot[0] != "education_history":
+        return False
+    _, n, entries, _ = slot
+    return 0 < n <= len(entries) and bool(_CLASSES_ONLY.search(str(entries[n - 1].get("degree") or "")))
+
+
 def degree_not_listed(field: dict, prof: Profile) -> str | None:
     """The profile's degree for a school whose Degree list has no choice for it (a Workday site's list was
     Certificate, Foundation, Associate, Bachelor ... Some College, No degree, with no high school or GED:

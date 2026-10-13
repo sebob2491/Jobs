@@ -4270,14 +4270,15 @@ def test_a_submit_on_a_page_already_past_its_submit_takes_the_sites_word(srv, mo
     application never counted. A page that says it went (Workday's "Application Submitted", a job page's "You
     applied for this job on") marks it applied; any other is the person's to say, with "I submitted it already"
     on its card. Nothing is pressed either way."""
-    job = srv.add_job(url=fixture_url(f"site/{page}"), title="FSE", company="Example Fab")["job"]
+    job = srv.add_job(url=fixture_url("site/posting.html"), title="FSE", company="Example Fab")["job"]
     srv.tracker().update(job["id"], status="ready_to_submit")
     applier = Applier(srv)
 
     async def go():
         tab = await srv.browser.new_tab()
         await tab.goto(fixture_url(f"site/{page}"))
-        r = pipeline.Run(job["id"], "FSE", "Example Fab", status="queued", seen_form=True, page=tab)
+        r = pipeline.Run(job["id"], "FSE", "Example Fab", status="queued", seen_form=True, page=tab,
+                         url=fixture_url("site/review.html"))  # (the review page it waited on)
         applier.runs[job["id"]] = r
         await applier._strict(applier._submit(r))
         return r
@@ -4290,6 +4291,28 @@ def test_a_submit_on_a_page_already_past_its_submit_takes_the_sites_word(srv, mo
     else:
         assert (r.status, r.need) == ("needs_you", "stuck") and "I submitted it already" in r.reason, (r.status, r.reason)
         assert status != "applied"
+
+
+def test_a_confirmation_is_taken_only_on_the_persons_submit_and_a_page_the_tab_went_on_to(srv):
+    """The review of note 31: a confirmation's words on the review page itself ("this application submitted by me is
+    true"), or on the posting a session went back to ("Thank you for applying"), are no word that it went; nor
+    is any page for Submit for me, whose second look for a Submit button may just have missed it."""
+    applier = Applier(srv)
+
+    async def go(page, by_person, url):
+        job = srv.add_job(url=fixture_url("site/workday-candidate-home.html") + f"?{page}", title="FSE",
+                          company="Example Fab")["job"]
+        tab = await srv.browser.new_tab()
+        await tab.goto(fixture_url(f"site/{page}"))
+        r = pipeline.Run(job["id"], "FSE", "Example Fab", status="queued", seen_form=True, page=tab, url=url)
+        applier.runs[job["id"]] = r
+        await applier._strict(applier._submit(r, by_person=by_person))
+        return r, srv.tracker().get(job["id"])["status"]
+
+    home = fixture_url("site/workday-candidate-home.html")
+    for by_person, url in ((False, fixture_url("site/review.html")), (True, home)):
+        r, status = run(go("workday-candidate-home.html", by_person, url))
+        assert r.status != "submitted" and status != "applied", (by_person, r.status, r.reason)
 
 
 def test_a_submit_with_no_confirmation_asks_the_person_to_check(srv, monkeypatch):
@@ -6193,6 +6216,11 @@ def test_a_degree_list_with_nothing_for_classes_leaves_the_pick_to_the_person(sr
     assert "no choice for classes without a degree" in said and "closest choice" not in said, said
 
 
+def degree_box(section):
+    return {"id": "a", "label": "Degree*", "section": section, "required": True, "kind": "listbox",
+            "options": WORKDAY_DEGREES}
+
+
 def test_a_school_block_is_deleted_only_where_it_is_the_last_of_several(srv):
     """Issue #112, note 26: the desk deletes a classes-only school's block whose Degree list has nothing for it,
     but never the page's only school block (the site may need one), nor one before others (Workday numbers the
@@ -6204,29 +6232,40 @@ def test_a_school_block_is_deleted_only_where_it_is_the_last_of_several(srv):
     profile["education_history"].append({"school": profile["education_history"][0]["school"], "degree": "",
                                          "start": 2021, "end": 2022})
     path.write_text(yaml.safe_dump(profile))
-    applier, clicked = Applier(srv), []
+    applier, clicked, gone = Applier(srv), [], []
 
     class Stub:
         async def click(self, id):
             clicked.append(id)
+            gone.append(f"Education {int(id[1:]) + 1}")
             return {"clicked": True}
     applier.srv = Stub()
 
     def page(*sections):
         return {"fields": [{"id": f"s{i}", "label": "School", "section": s} for i, s in enumerate(sections)],
-                "actions": [{"id": f"d{i}", "text": "Delete", "section": s} for i, s in enumerate(sections)]}
+                "actions": [{"id": f"d{i}", "text": "Delete", "section": s, "names_block": True}
+                            for i, s in enumerate(sections)]}
 
-    def degree(section):
-        return {"id": "a", "label": "Degree*", "section": section, "required": True, "kind": "listbox",
-                "options": WORKDAY_DEGREES}
+    async def look():
+        shown = page(*[s for s in ("Education 1", "Education 2") if s not in gone])
+        return shown, ""
+    applier._look = look
 
     r = Run(1, "Technician", "Example Litho")
-    assert not run(applier._drop_unfit_school(r, page("Education 2"), [degree("Education 2")]))  # its only one
-    assert not run(applier._drop_unfit_school(r, page("Education 1", "Education 2"), [degree("Education 1")]))
+    # a degree the profile lacks there, or one under way, is never taken for classes: the person's
+    for said in ("", "BS in progress", "Bachelor of Science (expected 2027)"):
+        profile["education_history"][1]["degree"] = said
+        path.write_text(yaml.safe_dump(profile))
+        assert not run(applier._drop_unfit_school(r, page("Education 1", "Education 2"), [degree_box("Education 2")]))
+    profile["education_history"][1]["degree"] = "Some college (no degree)"
+    path.write_text(yaml.safe_dump(profile))
+
+    assert not run(applier._drop_unfit_school(r, page("Education 2"), [degree_box("Education 2")]))  # its only one
+    assert not run(applier._drop_unfit_school(r, page("Education 1", "Education 2"), [degree_box("Education 1")]))
     assert not clicked
-    assert run(applier._drop_unfit_school(r, page("Education 1", "Education 2"), [degree("Education 2")]))
+    assert run(applier._drop_unfit_school(r, page("Education 1", "Education 2"), [degree_box("Education 2")]))
     assert clicked == ["d1"] and r.schools_dropped == ["Education 2"]
-    assert not run(applier._drop_unfit_school(r, page("Education 1", "Education 2"), [degree("Education 2")]))  # once
+    assert not run(applier._drop_unfit_school(r, page("Education 1", "Education 2"), [degree_box("Education 2")]))  # once
 
 
 def test_a_workday_experience_page_is_filled_block_by_block(srv, monkeypatch, job_apply_home):
@@ -6242,8 +6281,8 @@ def test_a_workday_experience_page_is_filled_block_by_block(srv, monkeypatch, jo
     path = job_apply_home / "profile.yaml"
     profile = yaml.safe_load(path.read_text())
     school = profile["education_history"][0]["school"]
-    profile["education_history"].append({"school": school, "degree": "", "major": "Physics", "start": 2021,
-                                         "end": 2022})
+    profile["education_history"].append({"school": school, "degree": "Some college (no degree)", "major": "Physics",
+                                         "start": 2021, "end": 2022})
     path.write_text(yaml.safe_dump(profile))
     job = srv.add_job(url=fixture_url("site/workday-experience-blocks.html"), title="Equipment Technician",
                       company="Example Litho")["job"]
@@ -6253,7 +6292,8 @@ def test_a_workday_experience_page_is_filled_block_by_block(srv, monkeypatch, jo
         applier.start()
         try:
             r = applier.enqueue(job["id"])
-            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            # (on past the school deleted, to its Save and Continue, which goes nowhere here: the stall's waits)
+            await until(lambda: r.status not in ("queued", "running"), timeout=180, about=state(r))
             return r, await r.page.evaluate(
                 "() => [...document.querySelectorAll('[role=spinbutton], [name=school], [name=degree]')]"
                 ".filter((e) => e.getClientRects().length).map((e) => e.value || e.textContent)")
@@ -6327,12 +6367,20 @@ def test_already_applied_wording():
     said = {"You applied for this job on 10/09/2026.": True,
             "You have already applied for this position.": True,
             "You've already applied to this job. Track it in your candidate home.": True,
-            "You have already submitted an application.": True,
+            "You have already submitted an application for this position.": True,
+            "You have already submitted an application.": False,  # (to which job, it doesn't say)
             "If you have already applied, sign in to check your status.": False,
             "Already applied? Sign in to see your applications.": False,
             "Have you already applied for this position?": False,
             "Please indicate whether you have already applied for this position before.": False,
-            "If you have already applied for this job, you don't need to apply again.": False}
+            "If you have already applied for this job, you don't need to apply again.": False,
+            # (the review's: a posting's or a sign-in's boilerplate, and a limit on applications)
+            "If you are an internal candidate or you have already applied for this position, please sign in.": False,
+            "If you believe you have already applied for this position, please contact us.": False,
+            "In case you have already applied for this job, please ignore this message.": False,
+            "If\xa0you have already applied for this position, sign in.": False,
+            "You have already applied. You may apply to 3 jobs every 30 days.": False,
+            "Thank you.\nYou have already applied for this position.": True}
     assert {t: bool(_applied_before({}, t)) for t in said} == said
     asked = {"fields": [{"label": "You have already applied for this position. Is that right?"}]}
     assert not _applied_before(asked, "You have already applied for this position. Is that right?")
