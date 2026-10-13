@@ -774,7 +774,18 @@ ENTRIES_JS = r"""
     const t = clean(r.getAttribute('aria-label'));
     return visible(r) && kind.test(t) && /\b\d+\s*$/.test(t) && !named.has(key(t)) && !numbered.some((h) => r.contains(h));
   });
-  const entries = numbered.length + regions.length;
+  // and UKG Pro's saved rows, each with its own pencil "Edit Experience Item 1" and no box (Desert Financial's, Nikon's
+  // and UCT's, run 56: the resume's job not counted, one added and asked of the person, and the job in twice): each
+  // number once, its row shown (an open row's own Edit is hidden while its editor is), and none a region counted above
+  const items = new Set();
+  for (const b of document.querySelectorAll('button, [role="button"]')) {
+    const t = clean(b.getAttribute('aria-label') || txt(b));
+    const m = /^edit\b(.*)\bitem\s*(\d+)$/i.exec(t);
+    const row = b.closest('li') || b;
+    if (!m || !kind.test(m[1]) || !(visible(b) || visible(row)) || regions.some((r) => r.contains(b))) continue;
+    items.add(m[2]);
+  }
+  const entries = numbered.length + regions.length + items.size;
   // Workday draws a new block's heading first and its boxes a moment later: a block's boxes are
   // the ones after its heading, before the next heading
   const follows = (a, b) => !!(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);

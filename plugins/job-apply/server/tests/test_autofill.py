@@ -44,6 +44,31 @@ def f(label, kind="text", **kw):
     return {"id": "1", "label": label, "kind": kind, "value": "", **kw}
 
 
+def test_a_choice_saying_the_person_is_not_on_staff_is_answered_from_the_profile():
+    """Desert Financial's UKG Pro (run 56): "Have you notified your leader of your application? (internal candidates
+    only)" with Yes, No and "I am not a current Desert Financial employee": the last, where the profile says where the
+    person works and it isn't there, as a Create Account's "new candidate" box is ticked. Never a plain Yes or No, nor
+    a choice naming another employer, nor at the employer they work for now."""
+    from job_apply.config import Profile
+
+    asked = "Have you notified your leader of your application? (internal candidates only)"
+    options = ["Yes", "No", "I am not a current Desert Financial employee"]
+    dfcu = {"company": "Desert Financial Credit Union"}
+
+    def answer(p, opts=options, job=dfcu, kind="radio_group"):
+        a = resolve_field(f(asked, kind, options=opts), p, job)
+        return a and a.value
+
+    assert answer(prof()) == "I am not a current Desert Financial employee"
+    assert answer(prof(), kind="select") == "I am not a current Desert Financial employee"
+    assert answer(prof(), ["Yes", "No", "I am an external candidate"]) == "I am an external candidate"
+    assert answer(prof(), ["Yes", "No"]) is None
+    assert answer(prof(), ["Yes", "No", "I am not a current Intel employee"]) is None  # (another employer's)
+    assert answer(prof(), ["Yes", "No", "I am not a current Intel employee"], {"company": "Intel Corporation"}) is None
+    assert answer(Profile({"personal": {"first_name": "Sam"}})) is None  # (nothing said of their work)
+    assert answer(prof(), job={}) is None
+
+
 def test_resolve_contact_fields():
     p = prof()
     assert resolve_field(f("First Name *"), p).value == "Sam"
@@ -2026,10 +2051,14 @@ def test_a_confirmed_degree_answers_yes():
     assert answer("Do you have a high school diploma?", ged) is None
     assert answer("Do you have a GED?", ged) == "Yes"
     assert answer("Do you have a high school diploma or GED?", ged) == "Yes"
+    # (Desert Financial's UKG Pro, run 56: "or equivalent" is either; "equivalent experience" isn't a diploma's)
+    assert answer("Do you have a high school diploma or equivalent?", ged) == "Yes"
+    assert answer("Do you have a high school diploma or equivalent experience?", ged) is None
     assert answer("Do you have a Bachelor's degree?", ged) == "No"
     assert answer("Do you have a high school diploma?", with_degrees([{"level": "high_school", "field": "GED"}], "GED")) is None
     diploma = with_degrees([{"level": "high_school"}], "High school diploma", [{"degree": "High school diploma", "end": 2015}])
     assert answer("Do you have a high school diploma?", diploma) == "Yes"
+    assert answer("Do you have a high school diploma or equivalent?", diploma) == "Yes"
     assert answer("Do you have a Bachelor's degree?", diploma) == "No"
     # anything it can't read: a level, a status, a field saying it isn't done or is something else
     for degrees in ([{"level": "Bachelor's (in progress)"}], [{"level": "MA"}], [{"level": "BS"}],
@@ -2173,6 +2202,9 @@ def test_more_questions_the_profile_answers():
     assert answer("Where are you currently located? This role is onsite 4 days/week at one of our hubs.", "text") is None
     assert answer("Will you require visa sponsorship, from Grant Thornton or otherwise, now or in the future to maintain "
                   "your work authorization?") == "No"
+    # (APS's SuccessFactors, run 56: what the sponsorship is for, "in order to have" it)
+    assert answer("* Do you now, or will you in the future, require sponsorship in order to have work authorization in "
+                  "the United States?") == "No"
     # both halves in one question stay the person's
     assert answer("Are you authorized to work in the U.S., or will you require sponsorship to obtain work "
                   "authorization?") is None

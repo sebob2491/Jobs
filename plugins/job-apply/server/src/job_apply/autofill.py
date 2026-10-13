@@ -673,6 +673,32 @@ def _plans_none(field: dict, prof: Profile) -> Any:
     return [neither[0]] if _said_no(prof, "outside_work") and _said_no(prof, "board_member") else None
 
 
+# A choice that says the person isn't one of the employer's staff, and nothing more: "I am not a current Desert
+# Financial employee" beside the Yes and No of "Have you notified your leader of your application? (internal candidates
+# only)" (Desert Financial's UKG Pro, run 56), "I am an external candidate"
+_NOT_STAFF = re.compile(r"^(?:(?:n a|not applicable|no) )?(?:i am |i m )?(?:not (?:a |an )?(?:current|existing) (?P<who>(?:\w+ ){0,4}?)"
+                        r"(?:employee|associate|team member|staff member)(?: of (?P<of>.+))?|(?:a |an )?(?:new|external) "
+                        r"(?:candidate|applicant))$")
+
+
+def _not_staff_choice(field: dict, prof: Profile, job: dict) -> str | None:
+    """A question's one choice saying the person isn't a current employee of this employer (_NOT_STAFF), where the
+    profile says where they work and it isn't there (works_there_now), as a Create Account's "new candidate, not a
+    current employee" box is ticked (pipeline._new_candidate_boxes). A choice naming another employer isn't theirs to
+    claim, nor one of several alike; a profile that says nothing of their work says nothing of this either."""
+    company = norm(job.get("company"))
+    if not company or not (prof.get("work_history") or prof.get("experience.current_company")):
+        return None
+    first = company.split()[0]
+    fits = []
+    for o in field.get("options") or []:
+        m = _NOT_STAFF.fullmatch(norm(o))
+        named = m and ((m.group("who") or "").strip() or (m.group("of") or "").strip())
+        if m and (not named or re.search(rf"(^| ){re.escape(first)}( |$)", named) or _same_employer(named, company)):
+            fits.append(o)
+    return fits[0] if len(fits) == 1 and not works_there_now(prof, company) else None
+
+
 def _employee_id(prof: Profile, job: dict) -> str | None:
     """The person's ID at the employer applied to (history.employee_ids, by employer), for its
     "Employee ID (if applicable)" or "please provide your WWID": never another employer's."""
@@ -748,8 +774,10 @@ def _no_sponsorship(prof: Profile, job: dict, label: str = "") -> Any:
 
 
 # what the sponsorship would be for, not a second question: "...require visa sponsorship...
-# to maintain your work authorization?" (Grant Thornton)
-_FOR_AUTHORIZATION = re.compile(r"\b(in order )?to (obtain|maintain|keep|retain|continue|extend)( your| my| the)?( current)?"
+# to maintain your work authorization?" (Grant Thornton), "...require sponsorship in order to have work authorization in the
+# United States?" (APS's SuccessFactors, run 56)
+_FOR_AUTHORIZATION = re.compile(r"\b(in order )?to (obtain|maintain|keep|retain|continue|extend|have|get|gain|secure|receive)"
+                                r"( your| my| the)?( current)?"
                                 r"( work| employment)? (authori[sz]ation|eligibility)\b|\bfor (work |employment )?authori[sz]ation\b")
 
 
@@ -851,7 +879,7 @@ def _studied_level(text: Any) -> int | None:
 _DEGREE_WORDS = "|".join(pattern[len(r"\b("):-len(r")\b")] for _, pattern in _DEGREES)
 _DEGREE_NAME = rf"(?:an? )?(?:{_DEGREE_WORDS})(?: ?degrees?)?"  # ("master s?" takes a trailing space)
 _DEGREE_ONLY = (r"^(?:do you (?:have|hold|possess) |have you (?:earned|completed|received) )?(?:an? |the )?"
-                r"(?P<deg>high school diploma(?: or (?:a )?ged)?|ged|(?:associate|bachelor|master)(?: s|s)? degree|"
+                r"(?P<deg>high school diploma(?: or (?:a |an |its )?(?:ged|equivalent))?|ged|(?:associate|bachelor|master)(?: s|s)? degree|"
                 r"doctorate(?: degree)?)(?P<higher> or (?:higher|above|greater)"
                 rf"(?: (?:{_DEGREE_NAME}|e g|eg|i e|such as|including|etc|or|and))*)?(?: (?:required|preferred))*$")
 _EXAMPLES_SPLIT = re.compile(r"[,/;()]|\b(?:or|and|e\.?\s?g|i\.?\s?e|such as|including|etc)\b\.?", re.I)
@@ -940,9 +968,11 @@ def _has_degree(prof: Profile, job: dict, label: str = "") -> Any:
         return None
     earned, unread = _degrees_earned(prof)
     higher = bool(shape.group("higher"))
-    # a high school diploma isn't a GED, nor a GED a diploma; "a high school diploma or GED" is either
+    # a high school diploma isn't a GED, nor a GED a diploma; "a high school diploma or GED" is either, and so is "a high
+    # school diploma or equivalent" (Desert Financial's UKG Pro, run 56), but not "...or equivalent experience"
     deg = shape.group("deg")
-    kinds = {"", "ged"} if rank > 0 or "diploma" in deg and "ged" in deg else {"ged"} if deg == "ged" else {""}
+    kinds = ({"", "ged"} if rank > 0 or "diploma" in deg and re.search(r"\b(ged|equivalent)$", deg)
+             else {"ged"} if deg == "ged" else {""})
     if kinds == {""} and rank == 0 and re.fullmatch(rf"(a )?({_EQUIVALENT})( diploma| certificate)?",
                                                     norm(prof.get("education.highest_degree"))):
         return None  # a diploma asked of someone whose highest is a GED (or HiSET...): theirs to say
@@ -1875,6 +1905,9 @@ def _resolve_field(field: dict, prof: Profile, job: dict | None = None, file_inp
             ans = Answer(city, "personal.address.city")
     if ans is None and kind == "checkbox_group" and (none := _plans_none(field, prof)):
         return Answer(none, "background.plans")  # (one of its own choices, as it reads)
+    if ans is None and kind in _CHOICE_KINDS - {"checkbox", "checkbox_group"} and not someone_else \
+            and (outside := _not_staff_choice(field, prof, job)):
+        return Answer(outside, "work_history")  # (one of its own choices, as it reads)
     if ans is None:
         # a self-identification question is its own topic's, whatever else its notice's words match
         own = _self_identification(label, field)

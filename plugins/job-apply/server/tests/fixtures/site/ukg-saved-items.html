@@ -1,0 +1,50 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Apply</title></head>
+<body>
+<!-- like Desert Financial's, Nikon's and UCT's UKG Pro (run 56, Oct 13): the jobs and schools the resume's parse saved
+     are read-only rows, each with its own pencil button "Edit Experience Item 1" / "Edit Education Item 1", and no
+     box. "Add Experience" puts a new row first with its editor open (Job Title, Company / Organization, From month,
+     From year: no numbered region, no heading), its own Edit button hidden while it's open, and the rows after it
+     numbered on -->
+<h2>Contact Information</h2>
+<label for="fn">First Name</label><input id="fn" value="Sam">
+<div class="panel">
+  <h3>Work Experience</h3>
+  <button type="button" aria-label="Add Experience" id="add-work">+</button>
+  <ul id="work"></ul>
+</div>
+<div class="panel">
+  <h3>Education</h3>
+  <button type="button" aria-label="Add Education" id="add-edu">+</button>
+  <ul id="edu"></ul>
+</div>
+<button type="button">Save and continue</button>
+<script>
+  function renumber(list, name) {
+    list.querySelectorAll('li > span > button').forEach((b, i) => b.setAttribute('aria-label', `Edit ${name} Item ${i + 1}`));
+  }
+  function saved(list, name, words) {
+    const li = document.createElement('li');
+    li.innerHTML = `<span>${words}</span> <span><button type="button">&#9998;</button></span>`;
+    list.appendChild(li);
+    renumber(list, name);
+  }
+  function editor(list, name, labels) {
+    const li = document.createElement('li');
+    const n = list.children.length;
+    li.innerHTML = `<span><button type="button" style="display: none">&#9998;</button></span><div>` + labels.map((l, i) =>
+      `<label for="${list.id}-new-${n}-${i}">${l}</label><input id="${list.id}-new-${n}-${i}" required>`).join('')
+      + '</div>';
+    list.insertBefore(li, list.firstChild);
+    renumber(list, name);
+  }
+  const work = document.getElementById('work'), edu = document.getElementById('edu');
+  saved(work, 'Experience', 'Equipment Technician, Example Fab');
+  saved(work, 'Experience', 'Maintenance Technician, Example Plant');
+  saved(edu, 'Education', 'Example Community College');
+  document.getElementById('add-work').addEventListener('click', () => editor(work, 'Experience', ['Job Title', 'Company / Organization']));
+  document.getElementById('add-edu').addEventListener('click', () => editor(edu, 'Education', ['School']));
+</script>
+</body>
+</html>
