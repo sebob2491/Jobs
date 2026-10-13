@@ -3546,8 +3546,11 @@ class Applier:
         if run.status == "skipped" or self._already_done(run):
             return
         if self.hold_submits:  # (a Submit pressed before troubleshooting was turned on, still waiting its turn)
-            return self._pause(run, "your_submit", "Troubleshooting is on, so nothing is sent. Turn it off on the desk "
-                               "to send this one, or send it yourself in the browser and press \u201cI submitted it\u201d.")
+            run.status, run.need, run.blocking = "ready", "", False
+            run.reason = ("Troubleshooting is on, so it wasn't submitted. It waits on its review page: turn troubleshooting "
+                          "off and press Submit to send it.")
+            self._log(run, run.reason)
+            return
         if run.page is not None and not run.page.is_closed() and not self._own_place(run, run.page.url):
             # its tab was taken on to another posting: Submit there would send that one as this job
             return self._pause(run, "stuck", "Its tab has gone on to another page, so I didn't press Submit there. "

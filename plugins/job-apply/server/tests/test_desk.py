@@ -760,7 +760,7 @@ def test_only_where_the_desk_goes_all_the_way_shows_those_employers_alone_and_is
 
 
 def test_troubleshooting_searches_every_list_shows_where_the_desk_stops_and_sends_nothing(srv, job_apply_home, monkeypatch):
-    """The owner (Oct 12), to get the desk going for a friend's HR search: a Troubleshooting switch. Find jobs
+    """The owner (Oct 12), to get the desk going at more employers: a Troubleshooting switch. Find jobs
     searches every list's employers (the person's own file names only one) for the profile's titles and HR ones;
     the page shows only the openings where the desk doesn't go all the way yet, whatever their fit; and nothing is
     sent while it's on (Submit is refused, Submit for me held). It turns "Only where the desk goes all the way" off."""
@@ -796,23 +796,42 @@ def test_troubleshooting_searches_every_list_shows_where_the_desk_stops_and_send
                 await page.goto(desk.url)
                 await page.check("#handled-only")
                 await page.wait_for_selector("text=HR Generalist", state="detached")
+                listed = list(desk.listings)
                 await page.check("#troubleshoot")
+                # the other way's openings are cleared, and the page searches again, troubleshooting's way
+                for _ in range(100):
+                    if searched and desk.search["status"] == "done":
+                        break
+                    await page.wait_for_timeout(100)
+                assert searched and searched[0][1] is True, searched
+                desk.listings = listed  # (as troubleshooting's search would find them)
                 await page.wait_for_selector("text=HR Generalist")  # (a low fit, shown all the same)
                 assert await page.locator("text=Module Equipment Technician").count() == 0  # (the desk goes all the way)
                 assert not await page.is_checked("#handled-only")
-                assert "Troubleshooting is on: nothing is sent" in await page.inner_text("#notices")
+                assert "Troubleshooting is on: no application is submitted" in await page.inner_text("#notices")
                 await browser.close()
             h = {"x-desk-token": desk.token}
             async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{desk.port}", timeout=20, trust_env=False) as c:
                 r = await c.post(f"/api/job/{job['id']}/submit", headers=h)
                 assert r.status_code >= 400 and "Troubleshooting is on" in r.text, r.text
+                # (the review's) Submit for me isn't carried by Apply, Claude's own Submit is refused too, and a
+                # Submit queued before troubleshooting waits on its review page for when it's off
+                other = srv.add_job(url="https://example.com/other", title="Recruiter", company="Example Clinic")["job"]
+                r = await c.post("/api/apply", headers=h, json={"job_ids": [other["id"]], "submit": True})
+                assert other["id"] in r.json()["queued"] and not desk.applier.runs[other["id"]].submit
+                monkeypatch.setattr(desk_module, "_desk", desk)
+                said = await srv.submit_application(job_id=job["id"], user_confirmed=True)
+                assert said["submitted"] is False and "Troubleshooting is on" in said["reason"], said
+                held = desk.applier.runs[job["id"]]
+                await desk.applier._submit(held)
+                assert held.status == "ready" and "turn troubleshooting off" in held.reason, held.reason
             await desk.find_jobs()
         finally:
             await desk.stop()
 
     run(go())
     assert desk.applier.runs[job["id"]].status == "ready"  # nothing sent
-    assert len(searched) == 1 and searched[0][1] is True, searched
+    assert len(searched) == 2 and all(every for _, every in searched), searched  # (the page's own, and Find jobs)
     assert "human resources" in searched[0][0] and "recruiter" in searched[0][0], searched
     saved = json.loads((job_apply_home / "desk.json").read_text(encoding="utf-8"))
     assert saved["troubleshoot"] is True and saved["handled_only"] is False

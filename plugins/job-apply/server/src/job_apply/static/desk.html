@@ -638,7 +638,7 @@ function renderBank() {
 function renderHeader() {
   const p = state.profile, s = state.settings;
   $("who").textContent = p.name ? `for ${p.name}` : "";
-  const mode = s.dry_run ? ["Practice mode: nothing is sent", "warn"] : s.troubleshoot ? ["Troubleshooting: nothing is sent", "warn"] : state.settings.auto_submit ? ["Submits for you", "bad"] : ["Stops at each review page", "good"];
+  const mode = s.dry_run ? ["Practice mode: nothing is sent", "warn"] : s.troubleshoot ? ["Troubleshooting: nothing submitted", "warn"] : state.settings.auto_submit ? ["Submits for you", "bad"] : ["Stops at each review page", "good"];
   $("mode").innerHTML = `<span class="pill ${mode[1]}">${esc(mode[0])}</span>`;
   const sr = state.search;
   $("find").innerHTML = sr.status === "running" ? `<span class="spin"></span> Searching…` : "Find jobs";
@@ -695,7 +695,7 @@ function renderHeader() {
   // Applications filled to the person's Submit: one banner, and a round that brings each review page up in turn
   const toSend = reviewWaiting();
   const shownJob = reviewRound ? toSend.find((r) => r.job_id === reviewShown) : null;
-  if (!botRound && (toSend.length || reviewRound)) notes.push({cls: "waiting", html: reviewRound && shownJob
+  if (!botRound && !s.troubleshoot && (toSend.length || reviewRound)) notes.push({cls: "waiting", html: reviewRound && shownJob
     ? `<strong>Reviewing ${esc(shownJob.title)} (${esc(shownJob.company)}).</strong>
        <span>${shownJob.need === "captcha" && shownJob.status !== "ready" ? "Tick its CAPTCHA in the browser window and check the page, then send it, or leave it for later." : shownJob.status === "ready" ? "Check the page in the browser window, then send it, or leave it for later." : "Its last button is the site's own: check the page, press it there, then say so here."} ${toSend.length - 1} more after this one. No other job starts meanwhile.</span>
        ${sendable(shownJob) ? `<button class="primary" data-act="review-submit" data-review="${shownJob.job_id}">Submit this one</button>` : ""}
@@ -704,8 +704,8 @@ function renderHeader() {
     : `<strong>${toSend.length} application${toSend.length === 1 ? "" : "s"} ready for your Submit${toSend.some((r) => r.need === "captcha" && r.status !== "ready") ? ` (${toSend.filter((r) => r.need === "captcha" && r.status !== "ready").length} with a CAPTCHA to tick first)` : ""}.</strong>
        <span>Go through them one by one: each review page comes up in the browser window to check before you send it.</span>
        <button class="primary" data-act="review-round">Review them</button>`});
-  if (s.troubleshoot) notes.push({cls: "waiting", html: `<strong>Troubleshooting is on: nothing is sent.</strong>
-    <span>Find jobs searches every list's employers, and only the openings where the desk doesn't go all the way yet show. Turn it off (under Openings) to apply for real.</span>`});
+  if (s.troubleshoot) notes.push({cls: "waiting", html: `<strong>Troubleshooting is on: no application is submitted.</strong>
+    <span>Find jobs searches every list's employers, and only the openings where the desk doesn't go all the way yet show. The desk still makes accounts and fills each step, which the sites keep. Turn it off (under Openings) to apply for real.</span>`});
   const needing = allRuns().filter((r) => r.status === "needs_you").length;
   document.title = needing ? `(${needing}) Needs you · Job Desk` : "Job Desk";
   if (state.tailoring) notes.push({cls: "waiting", html: `<strong>${state.tailoring} job${state.tailoring === 1 ? "" : "s"} waiting for a tailored resume.</strong>
@@ -1012,7 +1012,7 @@ document.addEventListener("click", (e) => {
   if (a === "apply") {
     const urls = [...selected].filter(selectable);
     if (!urls.length) return;
-    const auto = state.settings.auto_submit && !state.settings.dry_run;
+    const auto = state.settings.auto_submit && !state.settings.dry_run && !state.settings.troubleshoot;
     if (auto && !confirm(`Submit ${urls.length} application(s) for you wherever nothing needs you?`)) return;
     act(async () => {
       const out = await api("/api/apply", {urls, submit: auto});
@@ -1087,7 +1087,7 @@ document.addEventListener("change", (e) => {
     act(() => api("/api/settings", {handled_only: t.checked}));
   }
   if (t.id === "troubleshoot") {
-    if (t.checked) (state.listings || []).forEach((r) => { if (!keptElse(r)) selected.delete(r.url); });
+    selected.clear();  // (the openings are searched again the other way: none picked carries over)
     if (t.checked) $("handled-only").checked = false;
     act(() => api("/api/settings", {troubleshoot: t.checked}));
   }

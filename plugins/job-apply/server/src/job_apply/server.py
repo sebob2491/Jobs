@@ -947,6 +947,10 @@ async def submit_application(job_id: int | None = None, user_confirmed: bool = F
     (user_confirmed=true), or when settings.submit_mode is "auto" for this ATS.
     On LinkedIn and Indeed this never clicks: it marks the job ready_to_submit and
     the user clicks Submit in the browser; then call update_job(status="applied")."""
+    from . import desk as job_desk  # (the desk's own module imports this one)
+    if job_desk._desk is not None and job_desk._desk.applier.hold_submits:
+        return {"submitted": False, "reason": "The Job Desk's Troubleshooting is on, so nothing is submitted. Turn it "
+                "off on the desk first."}
     job = _job_here(job_id)
     page = await browser.inspect(include_dropdown_options=False)
     ats = await browser.human_submit_ats() or detect_ats(page["url"])  # Indeed's form inside an employer's page

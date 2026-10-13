@@ -88,7 +88,7 @@ class Desk:
         self.port: int | None = None
         self.listings: list[dict[str, Any]] = []
         self.handled_only = False  # the page shows only openings where the desk goes all the way (desk_handled.yaml)
-        # Troubleshooting (the owner, Oct 12, to get the desk going for someone else's search): Find jobs searches every
+        # Troubleshooting (the owner, Oct 12, to get the desk going at more employers): Find jobs searches every
         # list's employers, for the profile's titles and HR ones, and the page shows only the openings where the desk
         # doesn't go all the way yet, whatever their fit. Nothing is sent meanwhile (Applier.hold_submits)
         self.troubleshoot = False
@@ -254,7 +254,8 @@ class Desk:
                 raise ValueError("job_ids should be a list of job numbers")
         except ValueError as e:
             return self._bad(e)
-        queued, refused = self.apply(urls=urls, job_ids=job_ids, submit=body.get("submit") is True)
+        # (never Submit for me while troubleshooting: a job queued now could go once it's off)
+        queued, refused = self.apply(urls=urls, job_ids=job_ids, submit=body.get("submit") is True and not self.troubleshoot)
         return JSONResponse({"queued": queued, "already_applied": refused})
 
     async def answer_view(self, request: Request) -> Response:
@@ -362,8 +363,15 @@ class Desk:
             self.handled_only = body["handled_only"] is True
             self.troubleshoot = self.troubleshoot and not self.handled_only
         if "troubleshoot" in body:
-            self.troubleshoot = body["troubleshoot"] is True
+            was, self.troubleshoot = self.troubleshoot, body["troubleshoot"] is True
             self.handled_only = self.handled_only and not self.troubleshoot
+            if was != self.troubleshoot:
+                # the openings found one way aren't the other's (troubleshooting's: every list's employers, HR jobs):
+                # cleared, for Find jobs to search again, so none is applied to by mistake
+                self.listings = []
+                self.search.update(status="idle", at=None)
+                with contextlib.suppress(OSError):
+                    _recommendations_path().unlink()
         self.applier.hold_submits = self.troubleshoot
         if any(k in body for k in ("auto_submit", "tailor_resumes", "handled_only", "troubleshoot")):
             self._save_settings()
