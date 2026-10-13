@@ -229,6 +229,29 @@ def test_an_answer_that_picks_a_group_is_chosen_again_among_its_entries(srv, job
     assert heard["value"] == "Company Career Site"
 
 
+def test_how_did_you_hear_is_chosen_again_from_a_list_that_drew_late(srv, job_apply_home):
+    """Workday's "How Did You Hear About Us?" (live, issue #112, note 27): the prompt listed nothing when the
+    page was read, so "Company Website" went to the fill as it was and found no match in the list that came
+    after ("doesn't match any suggestion: [..., 'Acme website']"). The failed field comes back with that
+    list, the answer is chosen again among its entries ("Acme website") and filled, inside the group it opens."""
+    profile = job_apply_home / "profile.yaml"
+    profile.write_text(profile.read_text(encoding="utf-8").replace("how_did_you_hear: LinkedIn", "how_did_you_hear: Company Website"),
+                       encoding="utf-8")
+    job = srv.add_job(url=fixture_url("workday_prompt_2026.html") + "?groups=employer&slow=1500",
+                      title="Technician", company="Acme")["job"]
+    run(srv.open_application(job_id=job["id"]))
+    result = run(srv.autofill(job_id=job["id"]))
+    assert not [f for f in result["failed"] if "hear" in (f["label"] or "").lower()], result["failed"]
+    heard = by_label(run(srv.inspect_form(include_dropdown_options=False))["fields"], "how did you hear")
+    assert heard["value"] == "Acme website"
+    # an answer the list has no match for (and isn't the employer's site) is left to the person, with the list
+    profile.write_text(profile.read_text(encoding="utf-8").replace("how_did_you_hear: Company Website", "how_did_you_hear: Radio"),
+                       encoding="utf-8")
+    run(srv.browser.goto(fixture_url("workday_prompt_2026.html") + "?groups=employer&slow=1500"))
+    failed = [f for f in run(srv.autofill(job_id=job["id"]))["failed"] if "hear" in (f["label"] or "").lower()]
+    assert [f["options"] for f in failed] == [["Advertisement", "Acme website", "Job Board"]], failed
+
+
 def test_a_list_the_page_draws_is_read_page_by_page(srv):
     """Amkor's career site (SuccessFactors' older pages) draws its job list with a script,
     10 to a page: a bigger page is chosen, then the next-page arrow pressed until it's gone."""
@@ -442,6 +465,17 @@ def test_a_covered_add_button_is_left_and_said(srv):
     assert work["clicks"] == 1 and not work.get("add_button_covered"), work
 
 
+def test_an_add_button_a_toast_covers_for_a_moment_is_pressed_once_it_clears(srv):
+    """Workday's My Experience (issue #112, note 32): "added 1 work block(s)", then the work section's Add button
+    was "covered" and its other blocks were left off (the page reached the form with 2 of 5 jobs). A cover that
+    goes away on its own, a toast or a re-render, is waited on: the button is pressed again a little later. (The
+    note here goes after 6 s; the one press that found it there gave up after 3.)"""
+    run(srv.browser.goto(fixture_url("site/workday-my-experience.html") + "?toast"))
+    education = run(srv.add_entries("education"))
+    assert (education["clicks"], education["after"]) == (1, 1), education
+    assert not education.get("add_button_covered") and "note" not in education, education
+
+
 def test_workday_date_parts_read_back_as_typed_whatever_the_order(srv):
     """Workday's date boxes (issue #112, note 13, live test 2, Oct 2026): every job's month came out 02
     (its year right) and the self-identify "Date" 02/02/2006, on two employers' sites, and the desk said
@@ -527,6 +561,20 @@ def test_a_file_put_in_the_sites_open_upload_dialog_is_sent_with_its_upload(srv,
     assert out["results"][0].get("ok"), out["results"]
     page = run(srv.browser.page())
     assert run(page.inner_text("#resume")) == "resume.pdf is on file.", run(page.inner_text("body"))
+
+
+@pytest.mark.parametrize("page,said", [("phenom-resume-not-kept.html", "resume.pdf"), ("phenom-resume-not-kept.html?kept", None),
+                                       ("upload-cover-letter.html", None)])
+def test_a_resume_the_site_didnt_keep_is_told_from_any_other_upload(srv, tmp_path, page, said):
+    """Issue #112, note 28 and its review: the resume's own file box, its hidden fields beside it all empty, is a
+    resume the site didn't keep; a cover letter's box, beside "resume" fields of a save-for-later elsewhere, isn't."""
+    doc = tmp_path / "resume.pdf"
+    doc.write_bytes(b"%PDF-1.4 test")
+    name, _, query = page.partition("?")
+    run(srv.browser.goto(fixture_url(f"site/{name}") + (f"?{query}" if query else "")))
+    box = next(f for f in run(srv.inspect_form(include_dropdown_options=False))["fields"] if f["kind"] == "file")
+    run(srv.fill_form([{"id": box["id"], "value": str(doc)}]))
+    assert run(srv.browser.upload_not_kept()) == said
 
 
 def test_a_dialog_that_isnt_an_uploads_alone_is_never_pressed(srv, tmp_path):
@@ -1419,6 +1467,40 @@ def test_a_captcha_on_show_is_said_but_its_frame_isnt_read(srv):
     assert "Verify" not in [a["text"] for a in shown["actions"]]
     assert not any("robot" in (f.get("label") or "") for f in shown["fields"])
     assert "captcha" not in hidden
+
+
+def test_a_video_players_frame_isnt_read_as_part_of_the_page(srv):
+    """Oracle's job pages (live, issue #112, note 33) embed a YouTube player whose private video says
+    "This video is private ... Sign in." in an error box: its words and its "Sign in" link are the
+    player's, not the page's. Players are known by their hosts; an employer's own frame is read."""
+    for url in ("https://www.youtube.com/embed/abc123", "https://youtube-nocookie.com/embed/abc123?rel=0",
+                "https://player.vimeo.com/video/1", "https://fast.wistia.net/embed/iframe/x", "https://youtu.be/x",
+                "https://www.dailymotion.com/embed/video/x", "https://www.loom.com/embed/x", "HTTPS://YOUTUBE.COM"):
+        assert browser_module._MEDIA_FRAME.match(url), url
+    for url in ("https://careers-x.icims.com/jobs/1/login?in_iframe=1", "https://boards.greenhouse.io/embed/job_app",
+                "https://notyoutube.com/embed/x", "https://youtube.com.example.com/x", "about:blank", ""):
+        assert not browser_module._MEDIA_FRAME.match(url), url
+
+    video = (Path(__file__).parent / "fixtures" / "site" / "video-frame.html").read_text(encoding="utf-8")
+
+    async def go():
+        await srv.browser.page()
+        await srv.browser._ctx.route("https://www.youtube.com/**", lambda route: route.fulfill(
+            status=200, content_type="text/html", body=video))
+        await srv.browser.goto(fixture_url("generic_form.html"))
+        page = await srv.browser.page()
+        await page.evaluate("""() => {
+            const f = document.createElement('iframe');
+            f.src = 'https://www.youtube.com/embed/abc123';
+            f.style.cssText = 'width:400px;height:200px';
+            document.body.append(f);
+        }""")
+        await framed(page, "embed/abc123")
+        return await srv.inspect_form(include_dropdown_options=False), await srv.browser.visible_text()
+
+    form, text = run(go())
+    assert form["fields"] and "Sign in" not in [a["text"] for a in form["actions"]], form["actions"]
+    assert not form["errors"] and "private" not in text, (form["errors"], text)
 
 
 def test_answers_a_page_loses_in_a_quick_run_of_fills_are_put_in_again(srv):

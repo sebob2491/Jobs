@@ -61,6 +61,8 @@
     p.setAttribute('aria-labelledby', `${kind}-${n}-panel`);
     p.innerHTML = `<div><h3 id="${kind}-${n}-panel">${kind.replace('-', ' ')} ${n}</h3>
       <button type="button" aria-label="Delete ${kind.replace('-', ' ')} ${n}">Delete</button></div><div class="body"></div>`;
+    // its Delete takes the block away (a block added after it gets the next number still: one added back shows)
+    p.querySelector('button').addEventListener('click', () => p.remove());
     return p;
   };
 

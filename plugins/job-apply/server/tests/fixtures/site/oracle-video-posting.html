@@ -1,0 +1,25 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Field Service Engineer</title></head>
+<body>
+<!-- Oracle Recruiting Cloud's job page (live, issue #112, note 33): a media slider holds a video player in a frame
+     (?youtube: from youtube.com, which the test serves), and Apply Now draws the email page a moment later (1.5 s),
+     its "I agree with the terms and conditions" box required. -->
+<h1>Field Service Engineer</h1>
+<iframe class="media-slider__player" width="400" height="200"></iframe>
+<button id="apply" type="button">Apply Now</button>
+<div id="app"></div>
+<script>
+  document.querySelector('iframe').src = location.search.includes('youtube')
+    ? 'https://www.youtube.com/embed/abc123' : 'video-frame.html';
+  document.getElementById('apply').addEventListener('click', () => setTimeout(() => {
+    document.getElementById('app').innerHTML = '<h2>Authentication screen. You don\'t need to have an account</h2>'
+      + '<form id="f" novalidate><label for="em">Email Address *</label><input id="em" type="email" required>'
+      + '<input type="checkbox" id="t" required><label for="t">I agree with the terms and conditions</label>'
+      + '<button type="submit">Next</button></form>';
+    document.getElementById('f').addEventListener('submit', (e) => {
+      e.preventDefault();
+      if (document.getElementById('em').value && document.getElementById('t').checked) location.href = 'step1.html';
+    });
+  }, 1500));
+</script>
+</body></html>

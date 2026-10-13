@@ -32,8 +32,8 @@ from urllib.parse import parse_qsl, urlparse
 
 from . import config, mailbox, report
 from .ats import ATS_NAMES, detect_ats, shared_system
-from .autofill import (clean_label, degree_kinds_listed, degree_not_listed, entry_of, is_empty_value, no_choice_for_no_degree, norm,
-                       plan_autofill, unset_choice,
+from .autofill import (classes_only, clean_label, degree_kinds_listed, degree_not_listed, entry_of, is_empty_value, no_choice_for_no_degree, norm,
+                       plan_autofill, profile_entries, unset_choice,
                        polarity, tailored_document, works_there_now)
 from .browser import (_SENDS_TOO, CONFIRMATION_RE, SubmitBlocked, TabClosed, _accepts_cookies, _cookie_setting,
                       confirmations, declines_cookies, final_text, may_accept_cookies)
@@ -43,6 +43,7 @@ ONCE_SETTLE = 1.0  # seconds after filling the person's answers before checking 
 MAX_STEPS = 15
 LATE_BUTTONS_WAIT = 10  # seconds for a page's buttons to be drawn
 SIGN_IN_SETTLE = 10  # seconds a sign-in sent, its form still on show, may take before it counts as refused
+RESET_SETTLE = 15  # the same for a new password sent: its reset form still on show, no error yet (Workday's)
 STEP_SAVE_WAIT = 20  # for a step pressed three times that's still saving (KLA's Workday), before it counts as stuck
 STEP_LOAD_WAIT = 30  # for a step still loading its questions, its loading dots on show (KLA's Workday)
 BLANK_PAGE_WAIT = 30  # for a page with nothing on it yet to draw (Infineon's application, now and then)
@@ -97,7 +98,8 @@ _BOT_TITLE = re.compile(r"just a moment|attention required|access denied|pardon 
 # A bare "403 Forbidden" (Valleywise Health's postings, to the desk's browser) or "406 Not Acceptable"
 # (Deloitte's sign-in, to a headless browser): the site turns the browser away. There's nothing to
 # solve, so it holds nothing up: the person applies elsewhere
-_RESET_DONE = re.compile(r"\b(?:your )?password (?:has been|was|is) (?:reset|changed|updated)\b", re.I)
+_RESET_DONE = re.compile(r"\b(?:your )?password (?:has been|was|is)(?: successfully)? (?:reset|changed|updated)\b|"
+                         r"\bpassword (?:reset|change|changed|updated?) (?:was |is )?(?:a )?success", re.I)
 _STEPISH = re.compile(r"\b(next|continue|save|submit|review|apply|finish|done|proceed)\b", re.I)
 _REFRESH_ASKED = re.compile(r"\bsomething went wrong\b.{0,200}\b(?:refresh|reload) (?:the|this) page\b", re.I | re.S)
 _TURNED_AWAY = re.compile(r"^\s*(?:403\s*)?forbidden\s*$|^\s*(?:406\s*)?not acceptable\s*$|"
@@ -107,6 +109,15 @@ _TURNED_AWAY = re.compile(r"^\s*(?:403\s*)?forbidden\s*$|^\s*(?:406\s*)?not acce
 _CLOSED = re.compile(
     r"\b(?:posting|job|position|requisition|opening|vacancy)\b[^.]{0,60}?\b(?:has|have|is|was)\b(?: already)?(?: been)?"
     r" (?:expired|filled|closed|no longer (?:available|open|active|accepting))|no longer accepting applications", re.I)
+# The site saying this person applied for this job before (issue #112, note 30: Workday's job page "You applied for
+# this job on <date>." over its View Application, an Eightfold application saying it was applied to already): a
+# sentence of its own that starts with it, never "If you are an internal candidate or you have already applied for
+# this position, sign in", "Already applied? Sign in", a limit on applications, or a question asking whether they have.
+_APPLIED_BEFORE = re.compile(
+    r"\byou applied (?:for|to) this (?:job|position|role|posting|requisition|opening|vacancy) on\b|"
+    r"\byou(?:'ve| have)? already (?:applied|submitted an application) (?:for|to) this "
+    r"(?:job|position|role|posting|requisition|opening|vacancy)\b(?!\s*(?:\?|before|within|in the))", re.I)
+_WRAPPED = re.compile(r"(?:,|\b(?:or|and|the|an?|to|for|of|if|that|who|you|have|whether|unless|when|once))\s*$", re.I)
 _BOT_TEXT = re.compile(r"verify (?:that )?you are (?:a )?human|are you a robot|checking (?:if the site connection is secure|"
                        r"your browser)|press (?:&|and) hold|complete the security check|unusual traffic from your|"
                        r"enable javascript and cookies to continue|request unsuccessful|you have been blocked", re.I)
@@ -411,6 +422,8 @@ class Run:
     invalid_redone: bool = False  # the review page's invalid lists answered again from the profile (once a job)
     reset_no_mail: bool = False  # and none came in RESET_MAIL_WAIT: no account there, most likely, so one is made
     reopened_elsewhere: bool = False  # its sign-in page, opened again, led elsewhere: the job opened again (once a job)
+    schools_dropped: list[str] = field(default_factory=list)  # education blocks deleted (_drop_unfit_school)
+    schools_tried: list[str] = field(default_factory=list)  # and those whose Delete was pressed, gone or not
     reopened: int = 0  # times _back_to_sign_in opened the job again: a press before one is another visit's
     # The job's sign-ins pressed with the saved password, and which password that was (a digest): a Run
     # outlasts Resume and the queue, so these hold for the job, not for one pass at it
@@ -442,6 +455,12 @@ class Run:
     # Submit was pressed for this job before and no confirmation showed (its folder keeps the
     # record): it may have gone, so it's never pressed again without the person
     pressed_before: bool = False
+    # Sections ("work", "education") whose Add button stayed covered with fewer blocks on the page than the profile
+    # has entries, as (blocks there, entries wanted): the job stops for them (issue #112, note 32). What a card said
+    # of them, and what a Resume was pressed on: an unchanged shortfall is gone on with once, noted on the review card
+    entries_short: dict[str, tuple[int, int]] = field(default_factory=dict)
+    entries_told: dict[str, tuple[int, int]] = field(default_factory=dict)
+    entries_ok: dict[str, tuple[int, int]] = field(default_factory=dict)
     page_info: dict[str, Any] = field(default_factory=dict)  # what the page looked like when it paused
     page: Any = None  # its browser tab
     updated: float = field(default_factory=time.time)
@@ -451,7 +470,8 @@ class Run:
                                                                      "reset_asked", "reset_from", "reset_waited",
                                                                      "reset_no_mail", "reopened_elsewhere", "reopened", "sign_in_tries", "sign_in_key",
                                                                      "accounts_tried", "account_made", "account_page",
-                                                                     "account_finished", "verifying", "mail_looks", "mail_last")}
+                                                                     "account_finished", "verifying", "mail_looks", "mail_last",
+                                                                     "entries_short", "entries_told", "entries_ok")}
 
 
 def classify(data: dict[str, Any], text: str) -> str:
@@ -570,6 +590,10 @@ class Applier:
         self.tasks: deque[tuple[str, int]] = deque()
         self.auto_submit = False
         self.tailor = False  # hold each job until Claude has written a resume for it
+        # The person pressed Pause queue: no new job starts until Resume queue (in memory, like the queue it holds),
+        # but those they pressed Resume on, or answered on their card (pressed)
+        self.paused = False
+        self.pressed: set[int] = set()
         self.current: int | None = None
         # The bot check the person is solving in the desk's round (Bot checks: "Solve them"), and since when: while
         # it waits, no other job is started (nothing opens over the tab they're at), and the solved one is noticed
@@ -631,7 +655,10 @@ class Applier:
         the job by itself."""
         run = self.runs.get(job_id)
         signing_in = run is not None and run.need == "sign_in"  # (before enqueue clears it)
+        if run is not None and run.entries_told:
+            run.entries_ok = dict(run.entries_told)  # (a card said a section was short: gone on with, if unchanged)
         run = self.enqueue(job_id, submit=bool(run and run.submit), front=True)
+        self.pressed.add(job_id)  # (the person's own press: it goes even while the queue is paused)
         if signing_in:
             run.sign_in_tries = min(run.sign_in_tries, SIGN_IN_TRIES - 1)
         return run
@@ -648,6 +675,17 @@ class Applier:
 
     def wake(self) -> None:
         """Look again now (a tailored resume was just written)."""
+        self._wake.set()
+
+    def pause_queue(self) -> None:
+        """The person pressed Pause queue: the job under way finishes its pass, and none starts after it
+        until Resume queue (issue #112, note 36: a queue of about 90 had no way to stop but quitting Claude
+        Code, which broke the job in progress). A Submit they press still goes, and the tabs left waiting
+        are still watched."""
+        self.paused = True
+
+    def resume_queue(self) -> None:
+        self.paused = False
         self._wake.set()
 
     def set_tailor(self, on: bool) -> None:
@@ -878,9 +916,16 @@ class Applier:
             # with a job left waiting on the person, look at its tab again soon
             await self._sleep(POLL_SECONDS if any(r.left and r.status == "needs_you" for r in self.runs.values()) else 30)
             return
+        # paused: only what the person pressed for a job goes (its Submit, its Resume, its answers on its card)
+        pressed = next((t for t in self.tasks if t[1] in self.pressed), None) if self.paused and submit is None else None
+        if self.paused and submit is None and pressed is None:
+            self._wake.clear()
+            await self._sleep(POLL_SECONDS)
+            return
         if submit is None and self._in_round():
             return  # a round begun meanwhile (the desk's Solve them): nothing started over the tab the person is at
-        task = submit or self.tasks[0]
+        task = submit or pressed or self.tasks[0]
+        self.pressed.discard(task[1])
         self.tasks.remove(task)
         kind, job_id = task
         run = self.runs[job_id]
@@ -897,8 +942,11 @@ class Applier:
             if run.status != "skipped":
                 run.status, run.need = "failed", ""
                 run.reason = f"Something went wrong: {type(e).__name__}: {str(e).splitlines()[0][:200] if str(e) else ''}"
-                if run.page is not None and self.srv.browser.lost(run.page) == "crashed":  # (Playwright: "Page crashed")
+                lost = self.srv.browser.lost(run.page) if run.page is not None else ""
+                if lost == "crashed":  # (Playwright: "Page crashed")
                     run.reason = "Its tab crashed. Press Resume to start this application again."
+                elif lost == "browser":  # (Playwright: "Target page, context or browser has been closed", issue #112, note 36)
+                    run.reason = "The automation browser was closed. Press Resume to start this application again."
                 self._log(run, run.reason)
                 logging.getLogger(__name__).warning("job %s stopped on an error", run.job_id, exc_info=True)
         finally:
@@ -1263,7 +1311,7 @@ class Applier:
             self._log(run, f"pressed \u201c{press['text'].strip()}\u201d")
             if made:  # said once the application shows (_drive), as a code turned down leaves it here
                 run.account_made = (f"created your account on {_site(run, data)} with your email and the code it "
-                                    "emailed you (manage_accounts: false in profile.yaml leaves this to you)")
+                                    "emailed you" + _manage_hint())
         else:  # (a "Confirm" that sends a form is left to the person, as any final button is)
             run.reason = ("I entered the code from your email. Press the page's button to carry on; "
                           "the desk continues after that.")
@@ -1305,6 +1353,7 @@ class Applier:
         if run.status in ("skipped", "submitted"):  # skipped, or marked applied, while it ran
             return
         run.pause_sig = _page_sig(seen) if seen else None
+        run.entries_told = {}  # (the card that says a section is short sets it again, after this)
         run.status, run.need, run.reason = "needs_you", need, reason
         run.questions = questions or []
         run.blocking = need in HANDS_ON
@@ -1464,6 +1513,13 @@ class Applier:
                 run.reason = f"Submitted: {_site(run, data)} says \u201c{gone[0]}\u201d."
                 self._log(run, run.reason)
                 return
+            if applied := _applied_before(data, text):
+                # applied to already (by hand, or before the tracker knew): never filled, or sent, again
+                srv.tracker().update(run.job_id, status="applied", note="the site says it was applied to already")
+                run.status, run.need, run.blocking, run.left = "submitted", "", False, False
+                run.reason = f"Applied to already: {_site(run, data)} says \u201c{applied}\u201d It isn't filled in again."
+                self._log(run, run.reason)
+                return
             cookies = await self._decline_cookies(run, data, text)
             if cookies is False:
                 await self._bring_forward(run)
@@ -1543,7 +1599,7 @@ class Applier:
                 return self._pause(run, "sign_in", f"{_site(run, data)} has no account for your email yet, and its "
                                    "steps of making one are yours: finish them in the browser window (or sign in with "
                                    "the email you use there); the desk carries on by itself after that.", seen=data)
-            if (kind == "sign_in" and not account_waited and not _account_and_application(data)
+            if (kind == "sign_in" and not account_waited and not run.resetting and not _account_and_application(data)
                     and sum(f.get("kind") == "password" and not _code_box(f) for f in data.get("fields") or []) >= 2):
                 # A Create Account form: Qorvo's draws its application below it a moment later
                 account_waited = True
@@ -1725,12 +1781,16 @@ class Applier:
                 if key not in entries_done and _EXPERIENCE_PAGE.search(" ".join(data.get("headings") or [])):
                     entries_done.add(key)
                     for section in ("work", "education"):
-                        added = await srv.add_entries(section)
+                        # (one block fewer for each school deleted from this job's form: never added back)
+                        added = await srv.add_entries(section, **({"count": len(profile_entries(
+                            config.Profile.load(), "education_history")) - len(run.schools_dropped)}
+                            if section == "education" and run.schools_dropped else {}))
                         if added.get("clicks"):
                             self._log(run, f"added {added['clicks']} {section} block(s)")
                         if added.get("add_button_covered"):
                             self._log(run, f"couldn't press the {section} section's Add button: something on the page "
                                       "covers it, so its blocks are left as they are")
+                        self._note_short_entries(run, section, added)
                 result = await srv.autofill(job_id=run.job_id)
                 if result["filled"]:
                     self._log(run, f"filled {len(result['filled'])} field(s) on {_where(data)}")
@@ -1768,8 +1828,15 @@ class Applier:
                 if _new_required(before, data) and page_key not in refilled:
                     refilled.add(page_key)  # answers drew new questions ("If yes, explain"): fill those too
                     continue
+                if await self._drop_unfit_school(run, data, pending):
+                    continue  # the page looked at again without that school's block
                 gaps, pending = self._entry_gaps(run, data, pending)
+                on_experience = _EXPERIENCE_PAGE.search(" ".join(data.get("headings") or []))
+                short = self._short_entries(run) if on_experience else {}
+                if short:  # (first on the card: the rest of what it needs comes after)
+                    gaps = f"{_short_said(_site(run, data), short)} {gaps}".strip()
                 if self._stop_for_what_is_left(run, gaps, pending, missing_files):
+                    run.entries_told = short
                     return
                 actions = data.get("actions") or []
                 entry_here = any(_ENTRY.match(final_text(a["text"])) and not a.get("disabled") for a in actions)
@@ -1959,6 +2026,8 @@ class Applier:
                 problems = _flagged(data) or [
                     f"\u201c{a['text'].strip()}\u201d is greyed out, so the site still wants something (a file, say, "
                     "or a box to tick)" for a in _greyed_step(data)[:1]]
+                if not problems and await self._resume_not_kept(run, data):
+                    return
                 errors = "; ".join(problems)[:300].rstrip(" .")
                 return self._pause(run, "stuck", "The page didn't move on" + (f": {errors}." if errors else ".")
                                    + " Fix it in the browser, then press Resume.")
@@ -2087,6 +2156,8 @@ class Applier:
                         if await srv.browser.challenge_showing():  # a bot check drawn while it was waited on
                             await self._bring_forward(run)
                             return self._pause(run, "bot_check", _BOT_CHECK_SAYS)
+                    if not problems and await self._resume_not_kept(run, data):
+                        return  # (it never kept the resume: typing the boxes again can't fix that)
                     if not problems and looked not in retyped:
                         # nothing said wrong, and the page didn't move: it may have lost its own record of boxes that
                         # still show their values (EMD's Phenom, live check Oct 11: it drops some of the boxes filled
@@ -2122,6 +2193,20 @@ class Applier:
                 stalls = 0
         self._pause(run, "stuck", "This application has more steps than I expected. Have a look in the browser, "
                     "then press Resume.")
+
+    async def _resume_not_kept(self, run: Run, data: dict[str, Any]) -> bool:
+        """A step that won't go on with nothing said wrong, whose page shows the resume as uploaded while the hidden
+        fields it keeps the upload in are empty (EMD's Phenom, issue #112, note 28: Next did nothing and said nothing,
+        and the desk pressed it three times and typed the required boxes again): the person's to put right, by deleting
+        the file and uploading it again. Not tried again by the desk. True when it paused."""
+        name = await self.srv.browser.upload_not_kept()
+        if not name:
+            return False
+        await self._bring_forward(run)
+        self._pause(run, "stuck", f"{_site(run, data)} shows {name} as uploaded, but the resume didn't upload: its own "
+                    "upload fields are empty, so its Next does nothing. In the browser window, delete the file with "
+                    "its Delete link, upload your resume again, then press Resume.")
+        return True
 
     async def _new_tab_soon(self, run: Run, seconds: float) -> bool:
         """Follow a tab that opens a little after a click (the browser makes it current)."""
@@ -2263,6 +2348,68 @@ class Applier:
         for line in said:
             if line not in run.log:
                 self._log(run, line)
+
+    async def _drop_unfit_school(self, run: Run, data: dict[str, Any], pending: list[dict[str, Any]]) -> bool:
+        """A school attended without finishing a degree, whose block's Degree list has nothing for that (issue #112,
+        note 26, the owner's call): the desk deletes that block with its own Delete and carries on (the resume
+        still shows the classes; a degree not earned is never picked). Only the page's last school block, and
+        never its only one (the site may need one): a block before others would hand its number to the next
+        school's. Once a block; any other way, the person's (_entry_gaps says so). True when it deleted one."""
+        prof = config.Profile.load()
+        # (only where the profile says no degree was finished there: not a degree it lacks, nor one under way)
+        unfit = {str(q.get("section") or "") for q in pending
+                 if no_choice_for_no_degree(q, prof) and classes_only(q, prof)} - {""}
+        if not unfit:
+            return False
+        school_block = re.compile(r"education\b.*\d\s*$", re.I)
+        deletes = [a for a in data.get("actions") or [] if not a.get("disabled")
+                   and re.match(r"^(?:delete|remove)\b", final_text(a.get("text") or ""), re.I)]
+        # the blocks by their boxes, and by their Deletes (a block's boxes can be drawn a moment after it)
+        blocks = sorted({str(x.get("section") or "") for x in [*(data.get("fields") or []), *deletes]
+                         if school_block.match(str(x.get("section") or ""))}, key=lambda s: int(re.findall(r"\d+", s)[-1]))
+        last = blocks[-1] if blocks else ""
+        if len(blocks) < 2 or last not in unfit:
+            return False
+        # its own Delete: one that names the block, else the only Delete in it that names nothing else (not a
+        # file's or a pill's)
+        own = [a for a in deletes if a.get("section") == last]
+        bare = [a for a in own if not a.get("names_other")]
+        delete = next((a for a in own if a.get("names_block")), bare[0] if len(own) == 1 and bare else None)
+        if delete is None or last in run.schools_tried:
+            return False
+        run.schools_tried.append(last)  # (pressed once a block, whatever comes of it)
+        try:
+            await self.srv.click(delete["id"])
+        except Exception:  # gone, or it won't take a click: the person's, as before
+            return False
+        await asyncio.sleep(0.5)  # (the block goes from the page)
+        now, _ = await self._look()
+        if any(f.get("section") == last for f in now.get("fields") or []):
+            return False  # still there (a "Are you sure?" over it, say): the person's
+        run.schools_dropped.append(last)  # gone: one block fewer of the profile's schools from here on
+        found = next((entry_of(q, prof) for q in pending if q.get("section") == last and entry_of(q, prof)), None)
+        school = found[0] if found else last
+        self._log(run, f"deleted {last} ({school}): its Degree list has no choice for classes without a degree, and "
+                  "the desk never picks a degree you didn't earn (your resume still shows the classes)")
+        return True
+
+    def _note_short_entries(self, run: Run, section: str, added: dict[str, Any]) -> None:
+        """A section whose Add button stayed covered, with fewer blocks on the page than the profile has entries
+        (Workday's My Experience, issue #112, note 32: 2 of 5 jobs reached the form, and on another site the job went
+        on to its review page with its school missing), is remembered on the run: the job stops for it."""
+        after, wanted = added.get("after", 0), added.get("wanted", 0)
+        if not added.get("add_button_covered") or after >= wanted:
+            run.entries_short.pop(section, None)
+            return
+        run.entries_short[section] = (after, wanted)
+        if run.entries_ok.get(section) == (after, wanted):
+            self._log(run, f"went on with {_blocks(section, after, wanted)}: the Add button is still covered, and you "
+                      "pressed Resume on it")
+
+    def _short_entries(self, run: Run) -> dict[str, tuple[int, int]]:
+        """The sections left short that the person hasn't pressed Resume on, as they stand (one pressed on, with the
+        shortfall unchanged, is gone on with: pressing Resume on a page nothing was added to would only stop again)."""
+        return {s: n for s, n in run.entries_short.items() if run.entries_ok.get(s) != n}
 
     def _entry_gaps(self, run: Run, data: dict[str, Any],
                     pending: list[dict[str, Any]]) -> tuple[str, list[dict[str, Any]]]:
@@ -2410,7 +2557,7 @@ class Applier:
                   + (f", after ticking {ticked}" if boxes else ""))
         run.account_made = (f"created your account on {site} with {with_}" + (" and agreed to its terms"
                             if terms else "") + (" and accepted its data privacy statement" if statement else "")
-                            + " (manage_accounts: false in profile.yaml leaves this to you)")
+                            + _manage_hint())
         await self._wait_for_account(data)
         return True
 
@@ -2562,7 +2709,7 @@ class Applier:
             return await self._account_theirs(run, data, f"{site} has no account for your email yet, and its "
                                         f"“{create['text'].strip()}” didn't take my click")
         self._log(run, f"{site} has no account for your email, so I pressed “{create['text'].strip()}” to make "
-                  "one (manage_accounts: false in profile.yaml leaves this to you)")
+                  "one" + _manage_hint())
         now, _ = await self._after_press(data)
         view = _email_account_view(now)
         if view == "code":
@@ -2807,8 +2954,8 @@ class Applier:
                 return "no_account"
             return await stop(f"asked for a password reset, and it says \u201c{data['errors'][0][:160]}\u201d", data)
         run.resetting = True
-        self._log(run, f"your saved password didn't sign in on {site}, so I asked it to email a password reset "
-                  "(manage_accounts: false in profile.yaml leaves this to you)")
+        self._log(run, f"your saved password didn't sign in on {site}, so I asked it to email a password reset"
+                  + _manage_hint())
         await self._await_reset_email(run, data)
         return "paused"
 
@@ -2923,6 +3070,15 @@ class Applier:
                 and not run.mail_done and not run.reset_no_mail and self.mail_login() is not None
                 and time.time() - run.paused_at > RESET_MAIL_WAIT)
 
+    @staticmethod
+    def _reset_form_showing(data: dict[str, Any], text: str, button: str) -> bool:
+        """Still a password reset's form: its new-password boxes, its reset words, the button that was pressed, and
+        not the site's word that the password is reset."""
+        boxes = [f for f in data.get("fields") or [] if f.get("kind") == "password" and not _code_box(f)]
+        pressed = any(final_text(a.get("text") or "").lower() == button for a in data.get("actions") or [])
+        return (len(boxes) >= 2 and pressed and bool(_RESET_PAGE.search(text[:2000]))
+                and not _RESET_DONE.search(text[:2000]))
+
     async def _set_new_password(self, run: Run, data: dict[str, Any], text: str) -> str | None:
         """A password reset's page (opened from its email): the saved password in its new-password
         boxes, and its button pressed. "set" when the site took it, "paused" when it's the
@@ -2954,8 +3110,16 @@ class Applier:
         except Exception:
             pressed = False
         after, after_text = await self._look()
-        still = [f for f in after.get("fields") or [] if f.get("kind") == "password" and not named]
-        if not pressed or (len(still) >= 2 and _RESET_PAGE.search(after_text[:2000]) and after.get("errors")):
+        said_on = final_text(button.get("text") or "").lower() if button is not None else ""
+        # A site that takes a moment over the new password leaves its reset form on show, with no error, until it goes
+        # on to its sign-in (Workday's, live, issue #112, note 34): waited for, or the form is read as a sign-in
+        # with no email box and the person is asked to sign in. Still there after RESET_SETTLE, it wasn't taken.
+        deadline = time.monotonic() + RESET_SETTLE
+        while (pressed and time.monotonic() < deadline and self._reset_form_showing(after, after_text, said_on)
+               and not after.get("errors")):
+            await asyncio.sleep(1)
+            after, after_text = await self._look()
+        if not pressed or self._reset_form_showing(after, after_text, said_on):
             await self._bring_forward(run)
             said = f" It says \u201c{after['errors'][0][:160]}\u201d." if after.get("errors") else ""
             self._pause(run, "sign_in", f"I put your saved password in {site}'s new-password boxes, and it didn't take it "
@@ -3353,7 +3517,7 @@ class Applier:
         if shown and run.submit and self.auto_submit:  # Insight's review page lists what's still missing
             return self._pause(run, "stuck", f"The review page shows errors: {shown}. Fix them in the browser, then "
                                "press Submit.")
-        if run.submit and self.auto_submit:
+        if run.submit and self.auto_submit and not run.entries_short:  # (jobs or schools left off: the person's)
             return await self._submit(run, by_person=False)
         srv._mark_ready(job, "filled by the Job Desk")
         run.status, run.need = "ready", ""
@@ -3365,6 +3529,10 @@ class Applier:
             run.reason = ("Filled and waiting on the review page. Submit was pressed for this job before and no "
                           "confirmation showed, so it may have gone through: check your email or the site before you "
                           "press Submit." + (f" The review page also shows errors: {shown}." if shown else ""))
+        if run.entries_short:  # gone on with, on the person's Resume (note 32): said where Submit is
+            names = " and ".join(_blocks(s, *n) for s, n in run.entries_short.items())
+            run.reason += (f" Note: {_site(run, data)} shows only {names} (the Add button was covered): add the rest "
+                           "in the browser before you press Submit.")
         self._log(run, "reached the review page")
 
     async def _submit(self, run: Run, by_person: bool = True) -> None:
@@ -3392,6 +3560,7 @@ class Applier:
                                    + "). Fill them in the browser, then press Resume.")
         if run.status == "skipped":  # skipped while the page was being checked
             return
+        review = run.url  # (the page it waited on for this Submit)
         result = await srv.submit_application(job_id=run.job_id, user_confirmed=True)
         if result.get("submitted") and not result.get("confirmed"):
             run.pressed_before = True  # it may have gone: Submit for me never presses it again
@@ -3409,6 +3578,23 @@ class Applier:
                                    "Submit again (or \u201cI submitted it\u201d if it did go through).")
             return self._pause(run, "check_submit", "I pressed Submit, but no confirmation showed. Check the page: "
                                "if it went through, press \u201cI submitted it\u201d.")
+        elif result.get("no_submit_button") and by_person:
+            # Submit pressed on the desk after the person sent it on the site themselves (issue #112, note 31: Workday's
+            # "Application Submitted" was showing, and the job ended up skipped, its application never counted): the
+            # page's own word that it went is taken, nothing pressed. A confirmation only on a page the tab went on
+            # to, not the review page it waited on or the posting (a session gone back to it): "Thank you for
+            # applying" in a posting's words, or "this application submitted by me is true" in an attestation's
+            data, text = await self._look()
+            job = srv.tracker().get(run.job_id, with_description=False) or {}
+            moved = _bare(data.get("url") or "") not in {_bare(u) for u in (review, job.get("url"), job.get("apply_url")) if u}
+            if gone := _sent_already(data, text, moved):
+                srv.tracker().update(run.job_id, status="applied", note="submitted on the site")
+                run.status, run.need, run.blocking, run.left = "submitted", "", False, False
+                run.reason = f"Submitted: {_site(run, data)} says \u201c{gone}\u201d."
+            else:
+                return self._pause(run, "stuck", "I couldn't find a Submit button on this page. If you sent it yourself "
+                                   "on the site, press \u201cI submitted it already\u201d; otherwise press Resume and the "
+                                   "desk takes it on to its review page.")
         else:
             run.status, run.need = "ready", ""
             run.reason = result.get("reason") or "Not submitted."
@@ -3746,6 +3932,17 @@ def _may_manage_accounts() -> bool:
         return False
 
 
+def _manage_hint() -> str:
+    """What a log line about an account made or a reset asked for ends with, until the profile has
+    chosen the setting (either way): where to turn it off. Said to someone who chose it, it's noise
+    (issue #112, notes 23 and 37)."""
+    try:
+        chosen = config.Profile.load().settings.manage_accounts_chosen
+    except ValueError:  # a profile with a typo has chosen nothing
+        chosen = False
+    return "" if chosen else " (manage_accounts: false in profile.yaml leaves this to you)"
+
+
 def _may_accept_notices() -> bool:
     try:
         return config.Profile.load().settings.may_accept_notices
@@ -4021,7 +4218,7 @@ def _account_made_says(site: str, terms: bool, password: bool = True) -> str:
     """What the log says once the site shows the account made (Run.account_made)."""
     return ((f"created your account on {site} with your saved password" if password
              else f"finished creating your account on {site}") + (" and agreed to its terms" if terms else "")
-            + " (manage_accounts: false in profile.yaml leaves this to you)")
+            + _manage_hint())
 
 
 def _unanswered(data: dict[str, Any]) -> str:
@@ -4138,6 +4335,33 @@ def _maintenance_page(data: dict[str, Any]) -> bool:
                              .rsplit("/", 1)[-1], re.I))
 
 
+def _sent_already(data: dict[str, Any], text: str, moved: bool) -> str:
+    """The page's own words that this application has gone (a confirmation, on a page the tab `moved` on to, not a
+    step of the form that thanks the person; or the job's page saying it was applied to), or "" when it doesn't."""
+    if moved and (gone := sorted(confirmations(text))) and not _mid_application(data, text):
+        return gone[0]
+    return _applied_before(data, text)
+
+
+def _applied_before(data: dict[str, Any], text: str) -> str:
+    """The page's own words that this job was applied to already, or "" when it doesn't say so. A
+    question on the form that asks it ("Have you already applied for this position?") isn't that."""
+    labels = " ".join(str(f.get("label") or "") for f in data.get("fields") or []).lower()
+    for said in list(data.get("errors") or []) + [text or ""]:
+        said = re.sub(r"[ \t\xa0]+", " ", said.replace("\u2019", "'"))
+        for m in _APPLIED_BEFORE.finditer(said):
+            begun = max(said.rfind(c, 0, m.start()) for c in ".!?")
+            line = said.rfind("\n", 0, m.start())
+            if line > begun and not _WRAPPED.search(said[:line]):
+                begun = line  # a line of its own (under a heading), not one sentence wrapped onto the next
+            if m.group(0).lower() in labels or not re.fullmatch(r"[\s\W]*", said[begun + 1:m.start()]):
+                continue  # a question on the form, or a sentence that only supposes it ("If you have already…")
+            start, end = said.rfind(".", 0, m.start()) + 1, said.find(".", m.end())
+            sentence = " ".join(said[start:end + 1 if end >= 0 else len(said)].split())[:200]
+            return sentence
+    return ""
+
+
 def _closed_notice(data: dict[str, Any], text: str) -> str:
     """The page's own words that its posting has closed, or "" when it doesn't say so."""
     for said in list(data.get("errors") or []) + [text or ""]:
@@ -4145,6 +4369,20 @@ def _closed_notice(data: dict[str, Any], text: str) -> str:
             start, end = said.rfind(".", 0, m.start()) + 1, said.find(".", m.end())
             return " ".join(said[start:end + 1 if end >= 0 else len(said)].split())[:200]
     return ""
+
+
+def _blocks(section: str, have: int, wanted: int) -> str:
+    """"1 of your 3 jobs", "0 of your 1 school": a section's blocks on the page against the profile's entries."""
+    what = "job" if section == "work" else "school"
+    return f"{have} of your {wanted} {what}{'' if wanted == 1 else 's'}"
+
+
+def _short_said(site: str, short: dict[str, tuple[int, int]]) -> str:
+    """The card for sections left short by a covered Add button: what is there, and what to do."""
+    names = " and ".join(_blocks(s, *n) for s, n in short.items())
+    return (f"{site} shows only {names}: the Add button is covered by something on the page, so the rest weren't "
+            "added. Press Add in the browser until all are there (the desk fills them in), or close what covers it, "
+            "then press Resume. A Resume with nothing added goes on without them.")
 
 
 def _site(run: Run, data: dict[str, Any]) -> str:
@@ -4174,9 +4412,29 @@ def _page_said(data: dict[str, Any]) -> str:
     return _where(data) + (f" (\u201c{message[:160]}\u201d)" if message else "")
 
 
+# Workday's progress bar names the step it is on: "current step 4 of 6 Voluntary Disclosures"
+_STEP_NAME = re.compile(r"current step \d+ of \d+\s+(\S.*)", re.I)
+# Headings that name no page: an error banner, the site's footer and menus
+_NOT_A_PAGE = re.compile(r"errors? found|\d+ errors?.*|follow us|contact us|share.*|menu|skip to.*", re.I)
+
+
+def _names_a_page(heading: str) -> bool:
+    """Whether a heading could be the page's name: not a progress bar's, nor a banner's or a footer's, nor a
+    sentence (a checkbox's legend: "I agree that I am 18 years of age or older and")."""
+    words = heading.lower().split()
+    return bool(words) and not (heading.lower().startswith("current step") or _NOT_A_PAGE.fullmatch(heading)
+                                or len(words) > 8 or words[-1] in ("and", "or", "of"))
+
+
 def _where(data: dict[str, Any]) -> str:
-    headings = [h for h in data.get("headings") or [] if h and not re.match(r"current step", h, re.I)]
-    return f"“{headings[-1][:60]}”" if headings else "this page"
+    """A page named for the log: its step's name, else its last heading that names a page (the site's
+    own name comes first), else its title less the site's name (notes 23 and 37: the last heading was
+    a footer's "follow us" or a checkbox's legend, and a Workday step's own name was thrown away)."""
+    headings = [h.strip() for h in data.get("headings") or [] if h and h.strip()]
+    name = next((m[1] for h in headings if (m := _STEP_NAME.match(h))), None) \
+        or next((h for h in reversed(headings) if _names_a_page(h)), None) \
+        or re.split(r"\s+\|\s+", str(data.get("title") or "").strip())[0]
+    return f"“{name[:60]}”" if name else "this page"
 
 
 def _short(label: str) -> str:

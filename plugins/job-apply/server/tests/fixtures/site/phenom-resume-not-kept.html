@@ -1,0 +1,48 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Equipment Technician | Apply</title></head>
+<body>
+<!-- like EMD Electronics' Phenom application (issue #112, note 28): after the resume goes up the page shows it as
+     uploaded (the file's name and Download / Delete links), but the hidden fields it keeps the upload in
+     (#isResume, #resumeBucketId, #resumeFileSize, #resumeName, #resumePath) stay empty, and Next does nothing and
+     says nothing. ?kept: the upload is kept (the hidden fields are filled), and Next goes on. -->
+<h2>My information</h2>
+<form onsubmit="return false">
+  <label for="firstName">First Name *</label><input id="firstName" required>
+  <label for="lastName">Last Name *</label><input id="lastName" required>
+  <label for="email">Email *</label><input id="email" type="email" required>
+  <label for="resumeFile">Resume</label><input id="resumeFile" type="file">
+  <div class="has-resume resume-info" hidden>
+    <div class="pdf after-upload"><span class="uploadedFileName"></span>
+      <a href="#" class="download">Download</a> <a href="#" class="delete">Delete</a></div>
+  </div>
+  <input type="hidden" id="isResume" name="isResume" value="">
+  <input type="hidden" id="resumeBucketId" name="resumeBucketId" value="">
+  <input type="hidden" id="resumeFileSize" name="resumeFileSize" value="">
+  <input type="hidden" id="resumeName" name="resumeName" value="">
+  <input type="hidden" id="resumePath" name="resumePath" value="">
+  <button type="button" id="next">Next</button>
+</form>
+<script>
+  const kept = new URLSearchParams(location.search).has('kept');
+  document.getElementById('resumeFile').addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const info = document.querySelector('.resume-info');
+    info.querySelector('.uploadedFileName').textContent = file.name;
+    info.hidden = false;
+    if (kept) {
+      document.getElementById('isResume').value = 'true';
+      document.getElementById('resumeBucketId').value = 'bucket-1';
+      document.getElementById('resumeFileSize').value = String(file.size);
+      document.getElementById('resumeName').value = file.name;
+      document.getElementById('resumePath').value = '/resumes/' + file.name;
+    }
+  });
+  document.getElementById('next').addEventListener('click', () => {
+    // (nothing said when the upload wasn't kept: the page just doesn't move)
+    if (document.getElementById('resumePath').value) location.href = 'review.html';
+  });
+</script>
+</body>
+</html>

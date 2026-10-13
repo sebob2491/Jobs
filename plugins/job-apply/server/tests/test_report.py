@@ -277,6 +277,57 @@ def test_an_anonymous_report_says_only_the_job_system_and_the_step(job_apply_hom
     assert "Acme Semi" in report.build(job, r, PERSON)["preview"]  # unless asked, the report says which job
 
 
+def test_an_anonymous_report_says_an_address_with_parentheses_and_an_employers_short_forms(job_apply_home):
+    """Note 35: a Workday address with "(AZ)" in its path was cut at the ")", so the head was said and
+    the tail stayed (a doubled ")", the title's slug, the query with an email), and an employer
+    named "Acme Semiconductor Group" stayed in a heading ("Acme Career") and a page title
+    ("Apply I Acme Group"), which are not its name as given."""
+    posting = "https://acme.wd5.myworkdayjobs.com/External/job/Phoenix-(AZ)/Test-Technician-II-Hybrid_R98765"
+    address = posting + "/apply/applyManually?username=a%40b.com"
+    job = {"id": 21, "title": "Test Technician II (Hybrid)", "company": "Acme Semiconductor Group", "ats": "workday",
+           "url": posting}
+    r = Run(21, "Test Technician II (Hybrid)", "Acme Semiconductor Group", status="needs_you", need="stuck",
+            reason="I couldn't find the button that moves this application on.",
+            log=[f"opened {address}", "clicked “Apply” for Test Technician II (Hybrid)"],
+            page_info={"title": "Apply I Acme Group", "headings": ["Acme Career", "My Information"],
+                       "actions": ["Save and Continue"]})
+    text = report.build(job, r, PERSON, anonymous=True)["preview"]
+    assert "1. opened (a Workday address)\n" in text and text.count("(a Workday address)") == 1
+    assert "Headings: the employer Career | My Information" in text and " (Apply I the employer)\n" in text
+    for left in ("))", "Acme", "acme", "Test-Technician", "Technician", "Phoenix", "username", "a%40b", "R98765"):
+        assert left not in text, left
+    assert "Acme Career" in report.build(job, r, PERSON)["preview"]  # unless asked, the report says which job
+
+
+def test_an_employers_short_forms_are_its_name_less_its_last_words_its_first_word_and_its_tenant():
+    forms = report._employer_forms("Acme Semiconductor Group, Inc.", ["https://acme.wd5.myworkdayjobs.com/x", None])
+    assert set(forms) == {"Acme Semiconductor Group, Inc.", "Acme Semiconductor Group", "Acme Semiconductor", "Acme",
+                          "acme", "ACME"}  # (its tenant as a host has it, and as a page may)
+    # an everyday first word stays (it is a page's too), and so does a short one and a job system's own label
+    assert report._employer_forms("American Wafer Co", ["https://boards.greenhouse.io/x"]) == [
+        "American Wafer Co", "American Wafer"]
+    assert report._employer_forms("TI", ["https://www.linkedin.com/jobs/1"]) == ["TI"]
+    assert set(report._employer_forms("Example Fab", ["https://exfab.wd1.myworkdayjobs.com/x"])) == {
+        "Example Fab", "Example", "exfab", "EXFAB", "Exfab"}
+    # (the review's) an all-capitals short name, and one in parentheses
+    assert "NXP" in report._employer_forms("NXP Semiconductors", [])
+    assert "TEL" in report._employer_forms("Tokyo Electron (TEL)", [])
+
+
+def test_an_employers_one_word_forms_are_taken_out_as_written_and_never_inside_an_email():
+    """The review of issue #112, note 35: "How early can you start?" kept at Early Warning, an email whose first
+    name is the employer's first word left whole (for the scrubber to take out whole), "Careers at NXP" said."""
+    say, _ = report._anonymous({"company": "Early Warning Services"}, None, [], [])
+    assert say("How early can you start? Early Warning thanks you.") == "How early can you start? the employer thanks you."
+    say, _ = report._anonymous({"company": "Grant Thornton"}, None, [], ["grant.lee@mail.example.org"])
+    said = say("Reply to grant.lee@mail.example.org about Grant Thornton")
+    assert "lee" not in said and "mail.example" not in said and "Grant" not in said, said  # (the email whole)
+    say, _ = report._anonymous({"company": "NXP Semiconductors"}, None, [], [])
+    assert "NXP" not in say("Careers at NXP")
+    assert report._employer_forms("Example Fab", ["https://careers.example-fab.example/x"]) == [
+        "Example Fab", "Example"]  # an employer's own address names no tenant
+
+
 def test_claude_can_make_the_report_anonymous_too(srv):
     job = srv.add_job(url="https://acme.wd1.myworkdayjobs.com/External/job/x", title="Technician",
                       company="Example Litho")["job"]
@@ -316,7 +367,8 @@ def test_a_note_holds_the_stop_but_not_the_person_their_answers_or_the_employer(
     assert "**Job system:** workday" in text and "Acme Semi" not in text and "the employer's site" in text
     assert "1 question(s) your profile doesn't answer." in text
     assert "15. " in text and "16. " not in text and "step 17\n" not in text  # its last 15 steps
-    assert f"{url} (Apply to the employer - REDACTED)" in text  # an address keeps its host and page only
+    assert "(a Workday address) (Apply to the employer - REDACTED)" in text  # an address says its job system only
+    assert url not in text and "wd1" not in text
     assert "- City (text, required, filled)" in text and "- Phone (text, required, empty)" in text
     assert ("- Are you authorized to work in the US? (select, 3 choices) [Application Questions]: "
             "ValueError: Picked … but the field shows …; set it by hand") in text
@@ -326,6 +378,28 @@ def test_a_note_holds_the_stop_but_not_the_person_their_answers_or_the_employer(
     for private in (*PRIVATE, *MORE_PRIVATE, "SESS123", "jsessionid", "Maybe", "Klingon", "Wizardry", "Atlantis",
                     "Albania", "Protected veteran"):
         assert private not in text, private
+
+
+def test_a_note_says_every_address_by_its_job_system_and_the_employer_by_any_of_its_forms(job_apply_home):
+    """Notes 25 and 34: a note kept the job's address (its host, path, title slug and requisition
+    number) and a password reset's path with its one-time token, and an employer named "Acme
+    Semiconductor Group" stayed in its short forms. A note says an address by its job system only."""
+    host = "https://acme.wd5.myworkdayjobs.com/External"
+    job = {"id": 22, "title": "Test Technician II (Hybrid)", "company": "Acme Semiconductor Group", "ats": "workday",
+           "url": f"{host}/job/Phoenix-(AZ)/Test-Technician-II-Hybrid_R98765?x=SECRET"}
+    r = Run(22, "Test Technician II (Hybrid)", "Acme Semiconductor Group", status="needs_you", need="stuck",
+            reason=f"asked for a password reset: {host}/passwordreset/TOKEN123/ and {host}/job/Phoenix-(AZ)/Test_R1",
+            url=f"{host}/job/Phoenix-(AZ)/Test-Technician-II-Hybrid_R98765/apply?x=SECRET",
+            log=[f"opened {host}/job/Phoenix-(AZ)/Test-Technician-II-Hybrid_R98765/apply?x=SECRET",
+                 f"followed the reset link {host}/passwordreset/TOKEN123/ on acme"],
+            page_info={"url": f"{host}/passwordreset/TOKEN123/", "title": "Apply I Acme Group",
+                       "headings": ["Acme Career", "Reset Password"]})
+    text = report.note(job, r, PERSON)
+    assert "(a Workday address)" in text and text.count("(a Workday address)") == 5
+    assert " (Apply I the employer)\n" in text and "Headings: the employer Career | Reset Password" in text
+    for left in ("TOKEN123", "SECRET", "passwordreset", "Phoenix", "R98765", "Test-Technician", "))", "Acme", "acme",
+                 "myworkdayjobs"):
+        assert left not in text, left
 
 
 def test_a_note_says_which_job_system_the_job_stopped_on(job_apply_home):

@@ -138,6 +138,7 @@ class Desk:
             r("/api/answer", self.answer_view, methods=["POST"]),
             r("/api/job/{job_id:int}/{action}", self.job_view, methods=["POST"]),
             r("/api/notes/{action}", self.notes_view, methods=["POST"]),
+            r("/api/queue/{action}", self.queue_view, methods=["POST"]),
             r("/api/settings", self.settings_view, methods=["POST"]),
             r("/api/password", self.password_view, methods=["POST"]),
             r("/api/add", self.add_view, methods=["POST"]),
@@ -309,6 +310,16 @@ class Desk:
         except (KeyError, ValueError) as e:
             return self._bad(e)
         return JSONResponse({"ok": True})
+
+    async def queue_view(self, request: Request) -> Response:
+        """Pause queue / Resume queue: the job under way finishes its pass, and no other starts while paused."""
+        if not self._allowed(request, api=True):
+            return self._forbidden()
+        action = request.path_params["action"]
+        if action not in ("pause", "resume"):
+            return JSONResponse({"error": f"unknown action {action!r}"}, status_code=404)
+        (self.applier.pause_queue if action == "pause" else self.applier.resume_queue)()
+        return JSONResponse({"paused": self.applier.paused})
 
     async def notes_view(self, request: Request) -> Response:
         """The notes the desk took on its stops (report.take_note): shown as the one issue they'd
@@ -509,14 +520,26 @@ class Desk:
             if not label or value in (None, ""):
                 continue
             if a.get("remember", True) and " | " not in label:  # (one box's own answer is never remembered)
-                try:
-                    config.save_answer(label, value, run.company)
-                    run.once.pop(question_key(label), None)  # an earlier answer for this application only
+                # an answer naming this employer ("Acme website") is remembered as "Company Website", or not at
+                # all: it isn't the answer at another employer's
+                kept = autofill.answer_to_remember(label, value, run.company)
+                if kept is None:
+                    said = f'"{value}" names {run.company}, so it\'s used for this application only, not remembered.'
+                    problem = f"{problem} {said}" if problem else said
+                    run.once[question_key(label)] = value
                     continue
+                try:
+                    config.save_answer(label, kept, run.company)
+                    if kept == value:
+                        run.once.pop(question_key(label), None)  # an earlier answer for this application only
+                        continue
+                    # (remembered in its general form: this application gets the choice as picked, which a
+                    # list with two of the employer's own sites can't be told from "Company Website")
                 except (ValueError, OSError) as e:
                     problem = f"Couldn't remember your answers ({e}); they're used for this application only."
             run.once[question_key(label)] = value
         self.applier.enqueue(job_id, submit=run.submit, front=True)
+        self.applier.pressed.add(job_id)  # (answered on its card: it goes even while the queue is paused)
         return problem
 
     # ------------------------------------------------------------- state
@@ -592,6 +615,7 @@ class Desk:
                      if q.get("answer") not in (None, "") or not _profile_answers(q, prof)],
             "current": self.applier.current,
             "queued": [jid for kind, jid in self.applier.tasks if kind == "apply"],
+            "paused": self.applier.paused,  # (Pause queue: nothing new starts until Resume queue)
             "counts": t.counts(),
             "notes": report.notes_count(),  # notes on the desk's stops, waiting to be filed
         }

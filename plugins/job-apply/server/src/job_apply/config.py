@@ -501,6 +501,32 @@ def question_pattern(label: str) -> str:
     return r"\s+".join(re.escape(w) for w in text.split())
 
 
+def label_sentences(label: str) -> list[str]:
+    """A label's sentences, required-markers and extra spaces gone."""
+    text = re.sub(r"\(required\)|\*", " ", label or "", flags=re.I)
+    return [s for part in re.split(r"(?<=[.?!])\s+", text) if (s := " ".join(part.split()))]
+
+
+# A label this short is its own question; a longer one (a notice with a question in it) is told by the one
+# sentence that asks, which is at most so long and not so short that it says nothing without the rest
+OWN_QUESTION_WORDS = 15
+CORE_WORDS = (5, 25)
+
+
+def question_core(label: str) -> str:
+    """The question a long label asks, to remember an answer by: the one sentence ending in "?" when the label
+    is longer than a question (Workday's "Use of Your Profile: …" paragraph, worded for each employer, asks
+    one thing). Else the whole label, as it was, with its markers gone (issue #112, note 29)."""
+    sentences = label_sentences(label)
+    whole = " ".join(sentences)
+    if len(whole.split()) <= OWN_QUESTION_WORDS:
+        return whole
+    asks = [s for s in sentences if s.endswith("?")]
+    if len(asks) == 1 and CORE_WORDS[0] <= len(asks[0].split()) <= CORE_WORDS[1]:
+        return asks[0]
+    return whole
+
+
 QUESTION_BANK = PLUGIN_ROOT / "data" / "question_bank.yaml"
 HANDLED = PLUGIN_ROOT / "data" / "desk_handled.yaml"
 
@@ -580,6 +606,9 @@ def save_answer(label: str, answer: Any, source: str = "") -> dict[str, Any]:
     old = data.get("answers")
     entries = [a for a in (old if isinstance(old, list) else []) if not (isinstance(a, dict) and a.get("match") == match)]
     entry: dict[str, Any] = {"match": match, "answer": answer, "question": label.strip()}
+    core = question_core(label)
+    if core != " ".join(label_sentences(label)):  # the question in a longer label: asked in other wording around it
+        entry["core"] = core
     if source:
         entry["from"] = source
     entries.insert(0, entry)

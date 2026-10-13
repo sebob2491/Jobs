@@ -1293,6 +1293,61 @@ def test_with_manage_accounts_the_desk_creates_the_account(srv, monkeypatch, job
     assert r.need != "sign_in" and "Create Account" not in r.reason, (r.status, r.reason, r.log)
 
 
+@pytest.mark.parametrize("chosen", [True, False])
+def test_the_log_says_where_to_turn_manage_accounts_off_only_until_the_profile_has_chosen_it(
+        srv, monkeypatch, job_apply_home, chosen):
+    """Notes 23 and 37: "(manage_accounts: false in profile.yaml leaves this to you)" ended the line about
+    the account made even for someone whose profile says manage_accounts: true."""
+    import yaml
+
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    saved_password(monkeypatch)
+    manage_accounts(job_apply_home)
+    if not chosen:  # the profile doesn't say: the setting is on, as it is by default
+        path = job_apply_home / "profile.yaml"
+        profile = yaml.safe_load(path.read_text())
+        del profile["settings"]["manage_accounts"]
+        path.write_text(yaml.safe_dump(profile))
+    assert config.Profile.load().settings.may_manage_accounts
+    job = srv.add_job(url=fixture_url("site/create-account.html"), title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert any(line.startswith("created your account on") for line in r.log), r.log
+    hinted = [line for line in r.log if "manage_accounts: false" in line]
+    if chosen:
+        assert not hinted, r.log
+    else:
+        assert len(hinted) == 1 and hinted[0].startswith("created your account on") \
+            and hinted[0].endswith("(manage_accounts: false in profile.yaml leaves this to you)"), r.log
+
+
+@pytest.mark.parametrize("headings, title, said", [
+    # Workday's progress bar names the step, and a checkbox's legend or a footer's heading doesn't
+    (["current step 4 of 6 Voluntary Disclosures", "I agree that I am 18 years of age or older and", "follow us"], "",
+     "Voluntary Disclosures"),
+    (["Errors Found", "My Information", "follow us"], "", "My Information"),
+    (["current step 2 of 6", "Menu", "Skip to main content", "Contact Us"], "My Experience | Acme Careers",
+     "My Experience"),
+    (["3 errors", "Share"], "", "this page"),
+    ([], "", "this page"),
+    (["Example Financial", "Join our talent network", "Privacy Notice and Sign-In"], "Login | Example Financial",
+     "Privacy Notice and Sign-In"),
+])
+def test_a_page_is_named_by_its_step_or_its_last_heading_that_names_a_page(headings, title, said):
+    assert pipeline._where({"headings": headings, "title": title}) == (
+        "this page" if said == "this page" else f"“{said}”")
+
+
 def test_with_manage_accounts_a_create_account_forms_link_is_pressed(srv, monkeypatch, job_apply_home):
     """SCREEN's ApplicantStack (live, Oct 2026): its Create an Account form's own "Submit" is a link
     whose script sends the form, not a submit button, and it reads neither account nor sign up. The
@@ -1706,14 +1761,19 @@ def test_the_password_alone_goes_only_where_the_sign_in_shows_whos_signing_in(sr
     assert run(page.evaluate("() => document.getElementById('p').value")) == "", boxes
 
 
-@pytest.mark.parametrize("then", ["", "done", "alone"])
-def test_with_manage_accounts_a_refused_saved_password_is_reset(srv, monkeypatch, job_apply_home, then):
+@pytest.mark.parametrize("then,slow", [("", 0), ("done", 0), ("alone", 0), ("", 3000)],
+                         ids=["plain", "done", "alone", "slow"])
+def test_with_manage_accounts_a_refused_saved_password_is_reset(srv, monkeypatch, job_apply_home, then, slow):
     """The email has an account there, and the saved password isn't its password. With the
     inbox watched, the desk asks for a password reset before trying a new account (the owner's
     choice), opens the emailed link in the job's tab, sets the saved password as the new one,
     and signs in. Live (issue #112, note 14), the desk stopped after the reset with "Sign in ... in the
     browser window": the sign-in after it may say "Password has been reset" with only a "Sign In" button
-    (done), or ask for the password alone (alone). It signs in with the new password there too."""
+    (done), or ask for the password alone (alone). It signs in with the new password there too.
+    Again live (note 34) the site took a moment over the new password, its reset form still on show with no
+    error (slow): that read as a taken password, then as a sign-in with no email box, and the desk asked the
+    person to sign in. It waits for the sign-in; and the reset form, two password boxes like a Create Account
+    form, doesn't spend the wait kept for one."""
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
     monkeypatch.setattr(pipeline, "MAIL_POLL_SECONDS", 0)
     saved_password(monkeypatch)
@@ -1724,10 +1784,19 @@ def test_with_manage_accounts_a_refused_saved_password_is_reset(srv, monkeypatch
 
     def inbox(address, password, since, senders, want, allowed_link, before=None, look_back=None):
         wanted.append(want)
-        link = fixture_url("site/reset-password.html") + "?token=abc" + (f"&then={then}" if then else "")
+        link = (fixture_url("site/reset-password.html") + "?token=abc" + (f"&then={then}" if then else "")
+                + (f"&slow={slow}" if slow else ""))
         return pipeline.mailbox.Found(want, link, "careers.example.com", time.time()) if want == "reset" else None
 
     monkeypatch.setattr(pipeline.mailbox, "search", inbox)
+    waits = []
+    wait_for_application = Applier._wait_for_application
+
+    async def counted(self):
+        waits.append(1)
+        await wait_for_application(self)
+
+    monkeypatch.setattr(Applier, "_wait_for_application", counted)
     job = srv.add_job(url=fixture_url("site/signin-forgot.html"), title="FSE", company="Example Fab")["job"]
     applier = Applier(srv)
 
@@ -1746,9 +1815,47 @@ def test_with_manage_accounts_a_refused_saved_password_is_reset(srv, monkeypatch
     assert "asked it to email a password reset" in log, log
     assert "opened the password reset link from your email (sent from careers.example.com)" in log, r.log
     assert "set your saved password as" in log, r.log
+    set_at = next(i for i, line in enumerate(r.log) if line.startswith("set your saved password as"))
+    assert "pressed “Sign In” with your saved password" in r.log[set_at:], r.log  # signed in after the reset
     assert r.seen_form and not any(w in r.url for w in ("signin", "reset", "forgot")), (r.url, r.reason, r.log)
+    assert "Sign in (or create your account)" not in (r.reason or ""), (r.reason, r.log)
     assert "reset" in wanted
     assert "opened Create Account" not in log and "created your account" not in log, log
+    assert not waits  # (the reset form has two password boxes, but it isn't a Create Account form drawing its application)
+
+
+def test_a_new_password_the_site_never_takes_is_left_to_the_person(srv, monkeypatch, job_apply_home):
+    """The reset form stays on show after the desk's button press, with no error, past RESET_SETTLE: the
+    saved password wasn't taken as the new one, and the person is told so (not asked to sign in)."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "MAIL_POLL_SECONDS", 0)
+    monkeypatch.setattr(pipeline, "RESET_SETTLE", 2)
+    saved_password(monkeypatch)
+    manage_accounts(job_apply_home)
+    monkeypatch.setenv("JOB_APPLY_SECRET_EMAIL_PASSWORD", "an-app-password")
+    monkeypatch.setattr(pipeline.mailbox, "imap_host", lambda address: "imap.example.com")
+
+    def inbox(address, password, since, senders, want, allowed_link, before=None, look_back=None):
+        link = fixture_url("site/reset-password.html") + "?token=abc&slow=600000"
+        return pipeline.mailbox.Found(want, link, "careers.example.com", time.time()) if want == "reset" else None
+
+    monkeypatch.setattr(pipeline.mailbox, "search", inbox)
+    job = srv.add_job(url=fixture_url("site/signin-forgot.html"), title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status == "needs_you" and r.need != "email_code" or r.status == "ready",
+                        timeout=90, about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert r.need == "sign_in" and "didn't take it as the new one" in r.reason, (r.need, r.reason, r.log)
+    assert "set your saved password as" not in "\n".join(r.log), r.log
 
 
 def test_a_new_account_is_signed_in_with_and_only_its_own_form_is_sent(srv, monkeypatch, job_apply_home):
@@ -2021,6 +2128,39 @@ def test_boxes_the_pages_errors_say_are_empty_though_filled_are_typed_again(srv,
         assert any(line.startswith("filled again") for line in r.log), r.log
     else:
         assert any(line.startswith("typed again") and "Address 1" in line for line in r.log), r.log
+
+
+@pytest.mark.parametrize("query", ["", "?kept"])
+def test_a_resume_the_page_shows_but_never_kept_is_said_not_typed_around(srv, monkeypatch, query):
+    """EMD's Phenom (issue #112, note 28): the page showed the resume as uploaded (its name, Download and Delete
+    links), but the hidden fields it keeps the upload in stayed empty, so Next did nothing and said nothing. The desk
+    pressed Next three times, typed the required boxes again, and stopped with "The page didn't move on". It says what
+    is wrong instead (the upload, for the person to delete and do again) and doesn't type the boxes again.
+    ?kept: the upload is kept, and Next goes on."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "STEP_SAVE_WAIT", 1)
+    monkeypatch.setattr(pipeline, "NEW_TAB_WAIT", 1)
+    job = srv.add_job(url=fixture_url("site/phenom-resume-not-kept.html") + query, title="Equipment Technician",
+                      company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    if query:
+        assert "review.html" in r.url, (r.url, r.reason, r.log)
+        return
+    assert (r.status, r.need) == ("needs_you", "stuck"), (r.status, r.reason, r.log)
+    assert "resume.pdf" in r.reason and "resume didn't upload" in r.reason and "Delete link" in r.reason, r.reason
+    assert "page didn't move on" not in r.reason, r.reason
+    assert not any("required box(es) again" in line for line in r.log), r.log
 
 
 def test_a_box_the_page_says_is_wrong_showing_what_it_wrote_itself_takes_the_profiles_answer(srv, monkeypatch):
@@ -4262,6 +4402,59 @@ def test_a_submit_the_site_turns_down_is_not_called_submitted(srv, monkeypatch):
     assert srv.tracker().get(job["id"])["status"] != "applied"
 
 
+@pytest.mark.parametrize("page,sent", [("workday-candidate-home.html", True), ("applied-before-posting.html", True),
+                                       ("workday-questions-thank-you.html", False), ("note-posting.html", False)])
+def test_a_submit_on_a_page_already_past_its_submit_takes_the_sites_word(srv, monkeypatch, page, sent):
+    """Issue #112, note 31: the person pressed Submit on the site, then on the desk, which found no Submit button
+    ("No submit button on this page. Continue through the steps first."); the job ended up skipped and the
+    application never counted. A page that says it went (Workday's "Application Submitted", a job page's "You
+    applied for this job on") marks it applied; any other is the person's to say, with "I submitted it already"
+    on its card. Nothing is pressed either way."""
+    job = srv.add_job(url=fixture_url("site/posting.html"), title="FSE", company="Example Fab")["job"]
+    srv.tracker().update(job["id"], status="ready_to_submit")
+    applier = Applier(srv)
+
+    async def go():
+        tab = await srv.browser.new_tab()
+        await tab.goto(fixture_url(f"site/{page}"))
+        r = pipeline.Run(job["id"], "FSE", "Example Fab", status="queued", seen_form=True, page=tab,
+                         url=fixture_url("site/review.html"))  # (the review page it waited on)
+        applier.runs[job["id"]] = r
+        await applier._strict(applier._submit(r))
+        return r
+
+    r = run(go())
+    status = srv.tracker().get(job["id"])["status"]
+    if sent:
+        assert r.status == "submitted" and r.reason.startswith("Submitted:"), (r.status, r.reason)
+        assert status == "applied"
+    else:
+        assert (r.status, r.need) == ("needs_you", "stuck") and "I submitted it already" in r.reason, (r.status, r.reason)
+        assert status != "applied"
+
+
+def test_a_confirmation_is_taken_only_on_the_persons_submit_and_a_page_the_tab_went_on_to(srv):
+    """The review of note 31: a confirmation's words on the review page itself ("this application submitted by me is
+    true"), or on the posting a session went back to ("Thank you for applying"), are no word that it went; nor
+    is any page for Submit for me, whose second look for a Submit button may just have missed it."""
+    applier = Applier(srv)
+
+    async def go(page, by_person, url):
+        job = srv.add_job(url=fixture_url("site/workday-candidate-home.html") + f"?{page}", title="FSE",
+                          company="Example Fab")["job"]
+        tab = await srv.browser.new_tab()
+        await tab.goto(fixture_url(f"site/{page}"))
+        r = pipeline.Run(job["id"], "FSE", "Example Fab", status="queued", seen_form=True, page=tab, url=url)
+        applier.runs[job["id"]] = r
+        await applier._strict(applier._submit(r, by_person=by_person))
+        return r, srv.tracker().get(job["id"])["status"]
+
+    home = fixture_url("site/workday-candidate-home.html")
+    for by_person, url in ((False, fixture_url("site/review.html")), (True, home)):
+        r, status = run(go("workday-candidate-home.html", by_person, url))
+        assert r.status != "submitted" and status != "applied", (by_person, r.status, r.reason)
+
+
 def test_a_submit_with_no_confirmation_asks_the_person_to_check(srv, monkeypatch):
     job = srv.add_job(url=fixture_url("site/submit-quiet.html"), title="FSE", company="Example Fab")["job"]
     applier = Applier(srv)
@@ -5162,6 +5355,131 @@ def test_a_tab_that_crashes_while_its_job_runs_is_opened_again_on_resume(srv, mo
     assert any(line.startswith("its tab crashed, so I opened the job again") for line in r.log), r.log
 
 
+def test_a_browser_closed_while_its_job_runs_is_said_so_and_opened_again_on_resume(srv, monkeypatch):
+    """The automation browser closed under a job in progress (issue #112, note 36: the person quit to stop the queue)
+    said "Something went wrong: TargetClosedError: Target page, context or browser has been closed". It says that
+    the browser was closed, and Resume opens the application again in a new one."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    posting = _example_corp(srv, monkeypatch, [])
+    job = srv.add_job(url=posting, title="Field Service Engineer", company="Example Corp")["job"]
+    applier = Applier(srv)
+    real_click = srv.click
+    closed = []
+
+    async def click_then_close(target):
+        out = await real_click(target)
+        if not closed:
+            closed.append(srv.browser.current_tab)
+            await srv.browser.close()
+            await closed[0].title()  # (raises as Playwright does for a page of a browser that's gone)
+        return out
+
+    monkeypatch.setattr(srv, "click", click_then_close)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            said = r.reason
+            applier.enqueue(job["id"], front=True)  # Resume
+            await until(lambda: r.status == "needs_you", about=state(r))
+            return r, said
+        finally:
+            await applier.stop()
+
+    r, said = run(go())
+    assert said == "The automation browser was closed. Press Resume to start this application again.", said
+    assert r.need == "questions" and r.page is not closed[0] and closed[0].is_closed(), (r.reason, r.log)
+
+
+def test_a_paused_queue_starts_no_job_until_it_is_resumed(srv, monkeypatch):
+    """A queue of about 90 jobs had no way to stop but quitting Claude Code, which broke the job in progress
+    (issue #112, note 36). With the queue paused nothing new starts; Resume queue carries on with all of it."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    a_url, b_url = "https://careers.acme-fab.example/apply/1", "https://careers.other-litho.example/apply/2"
+    pages = {a_url: _form("Acme Fab"), b_url: _form("Other Litho")}
+    a = srv.add_job(url=a_url, title="Field Service Engineer", company="Acme Fab")["job"]
+    b = srv.add_job(url=b_url, title="Litho Technician", company="Other Litho")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        await _serve(srv, pages, [])
+        applier.start()
+        try:
+            applier.pause_queue()
+            first, second = applier.enqueue(a["id"]), applier.enqueue(b["id"])
+            await asyncio.sleep(1.5)  # (five polls)
+            held = (first.status, second.status, list(applier.tasks), applier.current)
+            applier.resume_queue()
+            await until(lambda: first.status == second.status == "ready", about=state(second))
+            return held, applier.paused
+        finally:
+            await applier.stop()
+
+    held, paused = run(go())
+    assert held == ("queued", "queued", [("apply", a["id"]), ("apply", b["id"])], None), held
+    assert not paused
+
+
+def test_a_resume_the_person_pressed_goes_while_the_queue_is_paused(srv, monkeypatch):
+    """The review of note 36: a job's own Resume (or answers on its card) while the queue is paused only queued it,
+    and its card said "queued" with nothing happening. The person's own press goes; the rest stay paused."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    a_url, b_url = "https://careers.acme-fab.example/apply/1", "https://careers.other-litho.example/apply/2"
+    pages = {a_url: _form("Acme Fab"), b_url: _form("Other Litho")}
+    a = srv.add_job(url=a_url, title="Field Service Engineer", company="Acme Fab")["job"]
+    b = srv.add_job(url=b_url, title="Litho Technician", company="Other Litho")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        await _serve(srv, pages, [])
+        applier.start()
+        try:
+            applier.pause_queue()
+            first, second = applier.enqueue(a["id"]), applier.enqueue(b["id"])
+            applier.resume(b["id"])
+            await until(lambda: second.status == "ready", about=state(second))
+            return first.status
+        finally:
+            await applier.stop()
+
+    assert run(go()) == "queued"
+
+
+def test_a_submit_the_person_pressed_still_goes_while_the_queue_is_paused(srv, monkeypatch):
+    """Pause queue holds the jobs that haven't started, not the person's own press of Submit on one that waits on
+    its review page (issue #112, note 36)."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    a_url, b_url = "https://careers.acme-fab.example/apply/1", "https://careers.other-litho.example/apply/2"
+    pages = {a_url: _form("Acme Fab"), b_url: _form("Other Litho")}
+    posts: list[str] = []
+    a = srv.add_job(url=a_url, title="Field Service Engineer", company="Acme Fab")["job"]
+    b = srv.add_job(url=b_url, title="Litho Technician", company="Other Litho")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        await _serve(srv, pages, posts)
+        applier.start()
+        try:
+            first = applier.enqueue(a["id"])
+            await until(lambda: first.status == "ready", about=state(first))
+            applier.pause_queue()
+            second = applier.enqueue(b["id"])
+            applier.submit_now(a["id"])
+            await until(lambda: first.status == "submitted", about=state(first))
+            await asyncio.sleep(1)
+            held = second.status
+            applier.resume_queue()
+            await until(lambda: second.status == "ready", about=state(second))
+            return held
+        finally:
+            await applier.stop()
+
+    held = run(go())
+    assert held == "queued" and posts == ["https://careers.acme-fab.example/posted"], (held, posts)
+
+
 def test_submit_presses_the_applications_button_not_a_footer_alerts_one(srv, monkeypatch):
     """A one-page application, and the site's footer job-alerts box with a "Submit" of its own
     (whose "Thank you for your interest!" reads like a confirmation). The person's Submit
@@ -5530,6 +5848,39 @@ def test_a_form_still_being_drawn_is_waited_for(srv, monkeypatch):
     r = run(go())
     assert r.status == "ready", (r.need, r.reason, r.log)
     assert "clicked “Next”" in r.log and r.url.endswith("review.html"), r.log
+
+
+@pytest.mark.parametrize("player", ["beside", "youtube"])
+def test_a_video_players_error_isnt_the_pages_while_the_email_page_is_drawn(srv, monkeypatch, player):
+    """Oracle's job page (issue #112, note 33) has a YouTube player in its media slider, which said "This
+    video is private ... Sign in." Apply Now draws the email page a moment after the click, and the desk
+    took the player's text for the page's error and stopped with "The page didn't move on". The player's
+    frame isn't read (youtube), and nor are the errors of a frame with nothing to fill (beside); the desk
+    fills the email, ticks the terms box and presses Next."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    video = (Path(__file__).parent / "fixtures" / "site" / "video-frame.html").read_text(encoding="utf-8")
+    job = srv.add_job(url=fixture_url("site/oracle-video-posting.html") + ("?youtube" if player == "youtube" else ""),
+                      title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        await srv.browser.page()
+        await srv.browser._ctx.route("https://www.youtube.com/**", lambda route: route.fulfill(
+            status=200, content_type="text/html", body=video))
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    log = "\n".join(r.log)
+    assert "didn't move on" not in log and "didn't move on" not in r.reason, (r.reason, r.log)
+    assert any(line.startswith("filled 1 field(s) on") for line in r.log), r.log  # (its email, on its start page)
+    assert "ticked “I agree with the terms and conditions” for you (settings.accept_notices)" in r.log, r.log
+    assert "clicked “Next”" in r.log, r.log
 
 
 @pytest.mark.parametrize("settings", [{"accept_notices": False}, {}], ids=["off", "on"])
@@ -5994,6 +6345,73 @@ def test_a_resume_workday_already_lists_isnt_uploaded_again(srv, monkeypatch, jo
     assert (r.status, r.need) == ("needs_you", "stuck") and uploads == 1, (uploads, r.reason, r.log)
 
 
+def test_a_section_left_short_by_a_covered_add_button_stops_the_job_until_the_person_says_go_on(srv, monkeypatch):
+    """Workday's My Experience (issue #112, note 32): "added 1 work block(s)", then the Add button "covered", and the
+    log only said so: 2 of 5 jobs reached the form and the card spoke of a Degree box alone; on another site the
+    education Add was covered and the job went on to its review page, and was submitted, with education missing. The
+    job stops on the page with what is short said first, and the Next isn't pressed. A Resume on it with nothing
+    added goes on (it would only stop again), and says so."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 1)
+    monkeypatch.setattr(pipeline, "STEP_SAVE_WAIT", 1)
+    monkeypatch.setattr(pipeline, "NEW_TAB_WAIT", 1)
+    monkeypatch.setattr(browser_module, "ADD_PRESS_TIMEOUT", 500, raising=False)  # (short: the cover stays)
+    monkeypatch.setattr(browser_module, "ADD_COVER_WAIT", 100, raising=False)
+    job = srv.add_job(url=fixture_url("site/workday-my-experience.html") + "?covered", title="Equipment Technician",
+                      company="Example Litho")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            first = (r.status, r.need, r.reason, list(r.log), r.paused_at)
+            applier.resume(job["id"])
+            await until(lambda: r.paused_at > first[4] and r.status not in ("queued", "running"), about=state(r))
+            return first, r
+        finally:
+            await applier.stop()
+
+    first, r = run(go())
+    status, need, reason, log, _ = first
+    assert (status, need) == ("needs_you", "stuck"), (status, reason, log)
+    assert reason.startswith("Example Litho's site shows only 0 of your 1 school: the Add button is covered"), reason
+    assert "then press Resume" in reason, reason
+    assert not any(line.startswith("clicked") or "review page" in line for line in log), log  # (stopped on the page)
+    assert any(line == "added 1 work block(s)" for line in log), log
+    # the Resume with nothing added: gone on with, said, and the page pressed on (this fixture's Next goes nowhere)
+    assert any(line.startswith("went on with 0 of your 1 school") for line in r.log), r.log
+    assert any(line.startswith("clicked") for line in r.log), r.log
+    assert "Add button is covered" not in r.reason, r.reason
+
+
+def test_a_review_page_reached_with_a_section_left_short_is_never_submitted_for_the_person(srv, monkeypatch):
+    """"Submit for me" on a job whose school (or job) blocks were left short on a covered Add button (issue #112,
+    note 32: it went on to its review page and was submitted with education missing): the review page waits for the
+    person, with what's short said on its card."""
+    job = srv.add_job(url=fixture_url("site/review.html"), title="Equipment Technician", company="Example Litho")["job"]
+    applier = Applier(srv)
+    applier.auto_submit = True
+    sent = []
+
+    async def submit(r, by_person=True):
+        sent.append(r.job_id)
+
+    monkeypatch.setattr(applier, "_submit", submit)
+    data = {"url": "https://example.wd1.myworkdayjobs.com/x/review", "headings": ["Review"], "fields": [], "actions": [],
+            "errors": []}
+    r = Run(job["id"], "Equipment Technician", "Example Litho", submit=True)
+    r.entries_short = {"work": (3, 5), "education": (0, 1)}
+    run(applier._finish(r, data, ""))
+    assert (r.status, sent) == ("ready", []), (r.status, r.reason, sent)
+    assert "Note: Workday shows only 3 of your 5 jobs and 0 of your 1 school" in r.reason, r.reason
+    assert "before you press Submit" in r.reason, r.reason
+    r = Run(job["id"], "Equipment Technician", "Example Litho", submit=True)  # (nothing short: sent as asked)
+    run(applier._finish(r, data, ""))
+    assert sent == [job["id"]], sent
+
+
 def test_a_school_the_sites_list_refuses_is_not_called_missing_from_the_profile(srv):
     """Where even "Other" isn't in a site's school list, the profile isn't missing the school:
     the site's list won't take it, which is said as that."""
@@ -6163,11 +6581,85 @@ def test_a_degree_list_with_nothing_for_classes_leaves_the_pick_to_the_person(sr
     assert "no choice for classes without a degree" in said and "closest choice" not in said, said
 
 
+def degree_box(section):
+    return {"id": "a", "label": "Degree*", "section": section, "required": True, "kind": "listbox",
+            "options": WORKDAY_DEGREES}
+
+
+def test_a_reset_form_is_still_showing_only_with_its_own_button_and_no_word_it_went():
+    """The review of notes 14/34: a site that says the reset went in its own words ("has been successfully reset",
+    "Password changed successfully"), or that has taken its button away, isn't a reset the site refused."""
+    from job_apply.pipeline import _RESET_DONE
+
+    for said in ("Your password has been successfully reset.", "Password changed successfully", "Password reset successful"):
+        assert _RESET_DONE.search(said), said
+    boxes = [{"id": "a", "kind": "password", "label": "New Password"}, {"id": "b", "kind": "password",
+                                                                           "label": "Verify New Password"}]
+    page = {"fields": boxes, "actions": [{"id": "s", "text": "Submit"}]}
+    showing = Applier._reset_form_showing
+    assert showing(page, "Reset Password", "submit")
+    assert not showing({**page, "actions": []}, "Reset Password", "submit")
+    assert not showing(page, "Reset Password. Your password has been successfully reset.", "submit")
+
+
+def test_a_school_block_is_deleted_only_where_it_is_the_last_of_several(srv):
+    """Issue #112, note 26: the desk deletes a classes-only school's block whose Degree list has nothing for it,
+    but never the page's only school block (the site may need one), nor one before others (Workday numbers the
+    blocks after it down, onto the wrong school), nor one it deleted before; those stay the person's."""
+    import yaml
+
+    path = config.profile_path()
+    profile = yaml.safe_load(path.read_text())
+    profile["education_history"].append({"school": profile["education_history"][0]["school"], "degree": "",
+                                         "start": 2021, "end": 2022})
+    path.write_text(yaml.safe_dump(profile))
+    applier, clicked, gone = Applier(srv), [], []
+
+    class Stub:
+        async def click(self, id):
+            clicked.append(id)
+            gone.append(f"Education {int(id[1:]) + 1}")
+            return {"clicked": True}
+    applier.srv = Stub()
+
+    def page(*sections):
+        return {"fields": [{"id": f"s{i}", "label": "School", "section": s} for i, s in enumerate(sections)],
+                "actions": [{"id": f"d{i}", "text": "Delete", "section": s, "names_block": True}
+                            for i, s in enumerate(sections)]}
+
+    async def look():
+        shown = page(*[s for s in ("Education 1", "Education 2") if s not in gone])
+        return shown, ""
+    applier._look = look
+
+    r = Run(1, "Technician", "Example Litho")
+    # a degree the profile lacks there, or one under way, is never taken for classes: the person's
+    for said in ("", "BS in progress", "Bachelor of Science (expected 2027)"):
+        profile["education_history"][1]["degree"] = said
+        path.write_text(yaml.safe_dump(profile))
+        assert not run(applier._drop_unfit_school(r, page("Education 1", "Education 2"), [degree_box("Education 2")]))
+    profile["education_history"][1]["degree"] = "Some college (no degree)"
+    path.write_text(yaml.safe_dump(profile))
+
+    assert not run(applier._drop_unfit_school(r, page("Education 2"), [degree_box("Education 2")]))  # its only one
+    assert not run(applier._drop_unfit_school(r, page("Education 1", "Education 2"), [degree_box("Education 1")]))
+    assert not clicked
+    assert run(applier._drop_unfit_school(r, page("Education 1", "Education 2"), [degree_box("Education 2")]))
+    assert clicked == ["d1"] and r.schools_dropped == ["Education 2"]
+    # (a file's Delete, the only one in the block, named for the file: never pressed)
+    r2 = Run(2, "Technician", "Example Litho")
+    file_delete = {**page("Education 1", "Education 2"), "actions": [{"id": "f1", "text": "Delete", "section": "Education 2",
+                                                                       "names_other": True}]}
+    assert not run(applier._drop_unfit_school(r2, file_delete, [degree_box("Education 2")])) and clicked == ["d1"]
+    assert not run(applier._drop_unfit_school(r, page("Education 1", "Education 2"), [degree_box("Education 2")]))  # once
+
+
 def test_a_workday_experience_page_is_filled_block_by_block(srv, monkeypatch, job_apply_home):
     """A Workday site's My Experience page as drawn live (Oct 2026): each date a fieldset of its
     own, and an Education block's boxes drawn a moment after its heading. Every job's and
-    school's dates go in, the second block of one school is filled once drawn, and its Degree
-    (classes, no degree, in a list without such a choice) is named with its block as the person's."""
+    school's dates go in, and the second block of one school is filled once drawn. Its Degree
+    list has no choice for its classes without a degree: the person deleted such a block by hand
+    each time (issue #112, note 26), so the desk deletes it, and never adds it back."""
     import yaml
 
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
@@ -6175,8 +6667,8 @@ def test_a_workday_experience_page_is_filled_block_by_block(srv, monkeypatch, jo
     path = job_apply_home / "profile.yaml"
     profile = yaml.safe_load(path.read_text())
     school = profile["education_history"][0]["school"]
-    profile["education_history"].append({"school": school, "degree": "", "major": "Physics", "start": 2021,
-                                         "end": 2022})
+    profile["education_history"].append({"school": school, "degree": "Some college (no degree)", "major": "Physics",
+                                         "start": 2021, "end": 2022})
     path.write_text(yaml.safe_dump(profile))
     job = srv.add_job(url=fixture_url("site/workday-experience-blocks.html"), title="Equipment Technician",
                       company="Example Litho")["job"]
@@ -6186,7 +6678,8 @@ def test_a_workday_experience_page_is_filled_block_by_block(srv, monkeypatch, jo
         applier.start()
         try:
             r = applier.enqueue(job["id"])
-            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            # (on past the school deleted, to its Save and Continue, which goes nowhere here: the stall's waits)
+            await until(lambda: r.status not in ("queued", "running"), timeout=180, about=state(r))
             return r, await r.page.evaluate(
                 "() => [...document.querySelectorAll('[role=spinbutton], [name=school], [name=degree]')]"
                 ".filter((e) => e.getClientRects().length).map((e) => e.value || e.textContent)")
@@ -6194,12 +6687,10 @@ def test_a_workday_experience_page_is_filled_block_by_block(srv, monkeypatch, jo
             await applier.stop()
 
     r, shown = run(go())
-    assert (r.status, r.need) == ("needs_you", "stuck"), (r.status, r.reason, r.log)
-    assert f"The Degree list for {school} in Education 2 has no choice for classes without a degree" in r.reason, \
-        r.reason
+    assert "no choice for classes without a degree" not in r.reason, (r.status, r.reason, r.log)
+    assert any(line.startswith(f"deleted Education 2 ({school})") for line in r.log), r.log
     assert not r.questions, r.questions
-    assert shown == ["03", "2021", "06", "2018", "02", "2021", school, "Bachelors", "2016", "2020",
-                     school, "Select One", "2021", "2022"], shown
+    assert shown == ["03", "2021", "06", "2018", "02", "2021", school, "Bachelors", "2016", "2020"], shown
 
 
 def test_a_posting_that_has_closed_says_so(srv, monkeypatch):
@@ -6224,6 +6715,63 @@ def test_a_posting_that_has_closed_says_so(srv, monkeypatch):
     assert (r.status, r.need) == ("needs_you", "stuck") and "has closed" in r.reason, (r.reason, r.log)
     assert "expired or the position has already been filled" in r.reason and "find the button" not in r.reason
     assert not r.blocking
+
+
+@pytest.mark.parametrize("page", ["applied-before-posting.html", "applied-before-form.html"])
+def test_a_job_the_site_says_was_applied_to_already_is_marked_applied_and_never_filled(srv, monkeypatch, page):
+    """Issue #112, note 30: a job applied to by hand (the tracker never knew) was opened again. Workday's job page
+    says "You applied for this job on <date>." over its View Application, and the desk stopped there, the job
+    opened again three times in 8 minutes; an Eightfold application said it was applied to already, and the desk
+    filled it all and offered Submit. Each is marked applied, nothing is filled, and it's never queued again."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 1)
+    job = srv.add_job(url=fixture_url(f"site/{page}"), title="Equipment Technician", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            typed = await r.page.evaluate("() => [...document.querySelectorAll('input')].map((i) => i.value)")
+            return r, typed
+        finally:
+            await applier.stop()
+
+    r, typed = run(go())
+    assert r.status == "submitted" and "applied to already" in r.reason.lower(), (r.status, r.reason, r.log)
+    assert not any(typed), typed  # nothing filled in
+    assert srv.tracker().get(job["id"])["status"] == "applied"
+    with pytest.raises(ValueError):
+        applier.enqueue(job["id"])  # never opened again by itself, or by Apply
+
+
+def test_already_applied_wording():
+    """What says a job was applied to already, and what doesn't (a sign-in's offer, a question on the form)."""
+    from job_apply.pipeline import _applied_before
+
+    said = {"You applied for this job on 10/09/2026.": True,
+            "You have already applied for this position.": True,
+            "You've already applied to this job. Track it in your candidate home.": True,
+            "You have already submitted an application for this position.": True,
+            "You have already submitted an application.": False,  # (to which job, it doesn't say)
+            "If you have already applied, sign in to check your status.": False,
+            "Already applied? Sign in to see your applications.": False,
+            "Have you already applied for this position?": False,
+            "Please indicate whether you have already applied for this position before.": False,
+            "If you have already applied for this job, you don't need to apply again.": False,
+            # (the review's: a posting's or a sign-in's boilerplate, and a limit on applications)
+            "If you are an internal candidate or you have already applied for this position, please sign in.": False,
+            "If you believe you have already applied for this position, please contact us.": False,
+            "In case you have already applied for this job, please ignore this message.": False,
+            "If\xa0you have already applied for this position, sign in.": False,
+            "You have already applied. You may apply to 3 jobs every 30 days.": False,
+            "Thank you.\nYou have already applied for this position.": True,
+            "Equipment Technician\nYou applied for this job on 10/09/2026.": True,  # (under its heading)
+            "If you are an internal candidate or\nyou have already applied for this position, sign in.": False}
+    assert {t: bool(_applied_before({}, t)) for t in said} == said
+    asked = {"fields": [{"label": "You have already applied for this position. Is that right?"}]}
+    assert not _applied_before(asked, "You have already applied for this position. Is that right?")
 
 
 def test_confirmation_wording():

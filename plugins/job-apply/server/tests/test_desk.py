@@ -571,6 +571,34 @@ def test_a_remembered_answer_replaces_one_given_for_this_application_only(srv, j
     assert desk.applier.runs[job["id"]].once == {}
     assert config.saved_answers()[0]["answer"] == "English"
 
+
+def test_an_answer_naming_the_employer_is_remembered_as_company_website_or_not_at_all(srv, job_apply_home):
+    """The card's "Acme website" (issue #112, note 27) is Acme's own, which no other employer's list has: how the
+    person heard of the job is remembered as "Company Website", which each list words as its own employer's site;
+    another answer naming the employer is used for this application only, and the person is told."""
+    from job_apply.pipeline import Run, question_key
+
+    job = srv.add_job(url="https://example.com/a", title="FSE", company="Acme Technologies Inc")["job"]
+    desk = Desk(srv)
+
+    def answer(*pairs):
+        desk.applier.runs[job["id"]] = Run(job["id"], "FSE", "Acme Technologies Inc", status="needs_you", need="questions")
+        return desk.answer(job["id"], [{"label": label, "value": value} for label, value in pairs])
+
+    assert answer(("How Did You Hear About Us?*", "Acme website"), ("Preferred shift", "Nights")) is None
+    assert {a["question"]: a["answer"] for a in config.saved_answers()} == {
+        "How Did You Hear About Us?*": "Company Website", "Preferred shift": "Nights"}
+    # (this application gets the choice as picked: the review of note 27)
+    assert desk.applier.runs[job["id"]].once == {"how did you hear about us": "Acme website"}
+    note = answer(("Which of our teams would you like to join?", "The Acme field team"))
+    assert "Acme field team" in note and "this application only" in note
+    assert desk.applier.runs[job["id"]].once == {question_key("Which of our teams would you like to join?"):
+                                                 "The Acme field team"}
+    assert len(config.saved_answers()) == 2
+    # a source that isn't the employer's site stays as it was said
+    assert answer(("How Did You Hear About Us?*", "LinkedIn")) is None
+    assert config.saved_answers()[0]["answer"] == "LinkedIn"
+
 def test_saving_an_answer_keeps_the_rest_of_answers_yaml(job_apply_home):
     import yaml
 
@@ -611,6 +639,72 @@ def test_the_tailoring_switch_is_kept_and_its_waiting_jobs_listed(srv, job_apply
     run(go())
     assert json.loads((job_apply_home / "desk.json").read_text())["tailor_resumes"] is True
     assert Desk(srv).applier.tailor is True  # still on next time the desk opens
+
+
+def test_the_queue_is_paused_and_resumed_through_the_api(srv):
+    """Pause queue and Resume queue (issue #112, note 36): behind the page's key like the rest, an unknown action is
+    no action, and the state says whether the queue is paused. Not one of the settings: kept in memory only."""
+    desk = Desk(srv)
+    desk.applier.start = lambda: None
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            h = {"x-desk-token": desk.token}
+            async with _client(desk) as c:
+                assert (await c.post("/api/queue/pause")).status_code == 403
+                assert (await c.post("/api/queue/everything", headers=h)).status_code == 404
+                assert not desk.applier.paused and (await c.get("/api/state", headers=h)).json()["paused"] is False
+                r = await c.post("/api/queue/pause", headers=h)
+                assert r.json() == {"paused": True} and desk.applier.paused
+                assert (await c.get("/api/state", headers=h)).json()["paused"] is True
+                r = await c.post("/api/queue/resume", headers=h)
+                assert r.json() == {"paused": False} and not desk.applier.paused
+                assert (await c.get("/api/state", headers=h)).json()["paused"] is False
+        finally:
+            await desk.stop()
+
+    run(go())
+    assert Desk(srv).applier.paused is False  # (a new desk starts with the queue going)
+
+
+def test_the_pause_button_pauses_and_resumes_the_queue(srv):
+    """The header's Pause queue shows while jobs are queued or running, turns into Resume queue (with how many wait)
+    once pressed, and the Working on card says the queue is paused (issue #112, note 36)."""
+    from playwright.async_api import async_playwright
+
+    from job_apply.pipeline import Run
+
+    job = srv.add_job(url=fixture_url("generic_form.html"), title="Technician", company="Example Litho")["job"]
+    desk = Desk(srv)
+    desk.applier.start = lambda: None  # the queue isn't worked in this test
+    desk.search.update(status="done", at=time.time())  # recent, so opening the page doesn't search the real sites
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with async_playwright() as pw:
+                browser = await pw.chromium.launch(**launch_options())
+                page = await browser.new_page()
+                await page.goto(desk.url)
+                await page.wait_for_selector("#plugin-version:not(:empty)")  # the page has its state
+                assert await page.locator("#pause-btn").is_hidden()  # nothing queued or running
+                desk.applier.runs[job["id"]] = Run(job["id"], "Technician", "Example Litho", status="queued")
+                desk.applier.tasks.append(("apply", job["id"]))
+                await page.wait_for_selector("#pause-btn:visible:text-is('Pause queue')")
+                await page.click("#pause-btn")
+                await page.wait_for_selector("#pause-btn:text-is('Resume queue (1 waiting)')")
+                assert desk.applier.paused
+                assert "Paused: 1 waiting" in await page.locator("#work").inner_text()
+                await page.click("#pause-btn")
+                await page.wait_for_selector("#pause-btn:text-is('Pause queue')")
+                assert not desk.applier.paused
+                assert "Paused" not in await page.locator("#work").inner_text()
+                await browser.close()
+        finally:
+            await desk.stop()
+
+    run(go())
 
 
 def test_only_where_the_desk_goes_all_the_way_shows_those_employers_alone_and_is_kept(srv, job_apply_home):
@@ -1642,7 +1736,8 @@ def test_the_applications_ready_for_the_persons_submit_are_reviewed_in_one_round
                 await page.wait_for_selector("#notices [data-act=review-submit]")
                 assert shown == [jobs[0]["id"]], shown
                 await page.click("#notices [data-act=review-submit]")
-                await page.wait_for_selector("#notices [data-act=review-applied]")
+                # (its own "I submitted it", the site's last button pressed: the round is on the second)
+                await page.wait_for_selector("#notices :text('Reviewing Technician (Example Litho)')")
                 assert sent == [jobs[0]["id"]] and shown == [jobs[0]["id"], jobs[1]["id"]], (sent, shown)
                 await page.click("#notices [data-act=review-applied]")
                 for _ in range(40):
@@ -1719,6 +1814,56 @@ def test_jobs_stopped_on_a_bot_check_or_captcha_are_marked_and_a_forms_captcha_i
             await desk.stop()
 
     run(go())
+
+
+def test_every_card_says_i_submitted_it_already(srv):
+    """Issue #112, note 31 (the owner's ask): an application sent on the site itself, whatever the desk's card
+    waited on, is marked applied from that card: "I submitted it already" on the questions, sign-in, stuck,
+    ready and failed cards alike. It counts as applied, and the job is never queued again."""
+    from playwright.async_api import async_playwright
+
+    from job_apply.pipeline import Run
+
+    desk = Desk(srv)
+    desk.applier.start = lambda: None
+    desk.search.update(status="done", at=time.time())
+    shapes = {"Example Questions": dict(status="needs_you", need="questions"),
+              "Example Sign In": dict(status="needs_you", need="sign_in"),
+              "Example Stuck": dict(status="needs_you", need="stuck"),
+              "Example Ready": dict(status="ready"),
+              "Example Failed": dict(status="failed")}
+    jobs = {}
+    for i, (name, shape) in enumerate(shapes.items()):
+        job = srv.add_job(url=f"https://example.com/job/{i}", title="Technician", company=name)["job"]
+        desk.applier.runs[job["id"]] = Run(job["id"], "Technician", name, reason="Waiting.", **shape)
+        jobs[name] = job["id"]
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with async_playwright() as pw:
+                browser = await pw.chromium.launch(**launch_options())
+                page = await browser.new_page()
+                await page.goto(desk.url)
+                await page.wait_for_selector("#done .task")
+                for name, job_id in jobs.items():
+                    button = page.locator(f"[data-job='{job_id}'][data-job-act=applied]")
+                    assert await button.count() == 1, name
+                    assert await button.inner_text() == "I submitted it already", name
+                await page.click(f"[data-job='{jobs['Example Ready']}'][data-job-act=applied]")
+                for _ in range(40):
+                    if desk.applier.runs[jobs["Example Ready"]].status == "submitted":
+                        break
+                    await page.wait_for_timeout(50)
+                await browser.close()
+        finally:
+            await desk.stop()
+
+    run(go())
+    assert desk.applier.runs[jobs["Example Ready"]].status == "submitted"
+    assert srv.tracker().get(jobs["Example Ready"])["status"] == "applied"
+    with pytest.raises(ValueError):
+        desk.applier.enqueue(jobs["Example Ready"])
 
 
 def test_a_review_rounds_submit_sends_only_the_application_its_banner_names(srv):

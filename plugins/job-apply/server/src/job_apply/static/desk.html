@@ -147,6 +147,7 @@ footer { max-width: 1240px; margin: 0 auto; padding: 0 16px 24px; color: var(--m
     <span class="small" id="searched"></span>
     <button class="link" id="notes-btn" data-act="notes" title="Notes the desk took where it stopped on something it most likely got wrong, for you to file" hidden>Notes</button>
     <button class="link" id="alerts" data-act="alerts" hidden>Alert me</button>
+    <button id="pause-btn" data-act="pause" title="The job under way finishes what it is doing; no other job starts until you press Resume queue" hidden>Pause queue</button>
     <button id="find" data-act="find">Find jobs</button>
   </div>
 </header>
@@ -536,6 +537,8 @@ function jobButtons(r, which) {
   if (which.includes("usual_resume")) out.push(b("usual_resume", "Use my usual resume"));
   if (which.includes("later")) out.push(b("later", "Later"));
   if (which.includes("skip")) out.push(b("skip", "Skip job"));
+  // sent on the site itself, whatever the card waited on (issue #112, note 31): it counts as applied
+  if (which.includes("already")) out.push(b("applied", "I submitted it already", "link"));
   if (which.includes("unskip")) out.push(b("unskip", "Undo", "primary"));
   out.push(b("report", "Report a problem", "link"));
   return `<div class="actions">${out.join("")}</div>`;
@@ -561,17 +564,17 @@ function renderSide() {
     const repeated = new Set(qs.map((q) => q.label).filter((l, i, all) => all.indexOf(l) !== i));
     const form = qs.length ? `<form data-answer="${r.job_id}">${qs.map((q, i) => question(r.job_id, q, i, repeated.has(q.label))).join("")}</form>` : "";
     // questions (with Resume, for answers typed into the page itself), or a missing file plus questions
-    if (form || r.need === "questions") body = form + jobButtons(r, ["fill", "show", "resume", "skip"]);
+    if (form || r.need === "questions") body = form + jobButtons(r, ["fill", "show", "resume", "skip", "already"]);
     // a sign-in holding the queue keeps Resume beside Later: its card may ask for Resume after a
     // password reset by hand (the desk then presses its sign-in once more)
     else if (["sign_in", "bot_check", "email_code"].includes(r.need))
-      body = jobButtons(r, ["show", ...(r.blocking ? (r.need === "sign_in" ? ["resume", "later"] : ["later"]) : ["resume"]), "skip"]);
+      body = jobButtons(r, ["show", ...(r.blocking ? (r.need === "sign_in" ? ["resume", "later"] : ["later"]) : ["resume"]), "skip", "already"]);
     // (or the site's own Submit, pressed after ticking it: "I submitted it")
     else if (r.need === "captcha") body = jobButtons(r, ["show", "submit", "applied", "skip"]);
     else if (r.need === "your_submit" || r.need === "check_submit") body = jobButtons(r, ["show", "applied", "skip"]);
     else if (r.need === "submit_failed") body = jobButtons(r, ["show", "submit", "applied", "skip"]);
     else if (r.need === "tailor") body = jobButtons(r, ["usual_resume", "skip"]);
-    else body = jobButtons(r, ["show", "resume", "skip"]);
+    else body = jobButtons(r, ["show", "resume", "skip", "already"]);
     const key = `${r.job_id}:${r.need}:${(r.questions || []).map((q) => q.label).join("|")}`;
     return {key, html: `<div class="task ${r.blocking ? "hands" : ""}">${head}${body}</div>`};
   });
@@ -582,14 +585,15 @@ function renderSide() {
   const queued = runs.filter((r) => r.status === "queued").length;
   const workEntries = working.map((r) => ({key: "w" + r.job_id, html: `<div class="task"><h3><span class="spin"></span> ${esc(r.title)} <span class="small">· ${esc(r.company)}</span></h3>
     <ul class="log">${(r.log || []).slice(-4).map((l) => `<li>${esc(l)}</li>`).join("")}</ul>${jobButtons(r, [])}</div>`}));
-  if (queued) workEntries.push({key: "q", html: `<div class="task small">${queued} more queued.</div>`});
+  if (state.paused) workEntries.push({key: "p", html: `<div class="task small">Paused: ${queued} waiting. Press Resume queue to carry on.</div>`});
+  else if (queued) workEntries.push({key: "q", html: `<div class="task small">${queued} more queued.</div>`});
   if (!workEntries.length) workEntries.push({key: "idle", html: `<div class="empty">Idle.</div>`});
   patch($("work"), workEntries);
 
   const done = runs.filter((r) => ["ready", "submitted", "failed", "skipped"].includes(r.status));
   const doneEntries = done.map((r) => {
-    const buttons = r.status === "ready" ? jobButtons(r, ["show", "submit", "skip"])
-      : r.status === "failed" ? jobButtons(r, ["show", "resume", "skip"])
+    const buttons = r.status === "ready" ? jobButtons(r, ["show", "submit", "skip", "already"])
+      : r.status === "failed" ? jobButtons(r, ["show", "resume", "skip", "already"])
       : r.status === "skipped" ? jobButtons(r, ["unskip"]) : jobButtons(r, []);  // submitted: Report only
     const [text, cls] = RUN[r.status];
     return {key: "d" + r.job_id + r.status, html: `<div class="task"><h3>${esc(r.title)} <span class="small">· ${esc(r.company)}</span>
@@ -602,7 +606,7 @@ function renderSide() {
     .map((k) => `<span class="pill ${STATUS[k][1]}">${esc(STATUS[k][0])}: ${c[k]}</span>`).join("") || `<span class="small">No applications tracked yet.</span>`;
   if ($("counts").dataset.html !== counts) { $("counts").innerHTML = counts; $("idle-counts").innerHTML = counts; $("counts").dataset.html = counts; }
   // nothing in any of the three: one short card instead of three saying "nothing"
-  const idle = !needs.length && !working.length && !queued && !done.length;
+  const idle = !needs.length && !working.length && !queued && !done.length && !state.paused;
   $("idle-card").hidden = !idle;
   for (const id of ["needs-h", "work-h", "done-h"]) $(id).closest("section").hidden = idle;
 }
@@ -635,6 +639,11 @@ function renderHeader() {
   const sr = state.search;
   $("find").innerHTML = sr.status === "running" ? `<span class="spin"></span> Searching…` : "Find jobs";
   $("find").disabled = sr.status === "running";
+  // Pause queue while jobs are queued or running; Resume queue (with how many wait) while paused
+  const lined = allRuns(), lineWaits = lined.filter((r) => r.status === "queued").length;
+  $("pause-btn").hidden = !state.paused && !lineWaits && !lined.some((r) => r.status === "running");
+  $("pause-btn").dataset.act = state.paused ? "resume" : "pause";
+  $("pause-btn").textContent = state.paused ? `Resume queue${lineWaits ? ` (${lineWaits} waiting)` : ""}` : "Pause queue";
   const fresh = (state.listings || []).filter((r) => isNew(r) && (r.added || (r.fit && r.fit.recommended))).length;
   $("searched").textContent = sr.status === "failed" ? "Search failed: " + (sr.error || "")
     : sr.at ? "Searched " + ago(sr.at) + (fresh ? ` · ${fresh} new` : "") : "";
@@ -684,7 +693,7 @@ function renderHeader() {
     ? `<strong>Reviewing ${esc(shownJob.title)} (${esc(shownJob.company)}).</strong>
        <span>${shownJob.need === "captcha" && shownJob.status !== "ready" ? "Tick its CAPTCHA in the browser window and check the page, then send it, or leave it for later." : shownJob.status === "ready" ? "Check the page in the browser window, then send it, or leave it for later." : "Its last button is the site's own: check the page, press it there, then say so here."} ${toSend.length - 1} more after this one. No other job starts meanwhile.</span>
        ${sendable(shownJob) ? `<button class="primary" data-act="review-submit" data-review="${shownJob.job_id}">Submit this one</button>` : ""}
-       ${!sendable(shownJob) || shownJob.status === "needs_you" ? `<button class="${sendable(shownJob) ? "" : "primary"}" data-act="review-applied" data-review="${shownJob.job_id}">I submitted it</button>` : ""}
+       <button class="${sendable(shownJob) ? "" : "primary"}" data-act="review-applied" data-review="${shownJob.job_id}">${sendable(shownJob) ? "I submitted it already" : "I submitted it"}</button>
        <button data-act="review-next">Next</button> <button data-act="review-stop">Stop</button>`
     : `<strong>${toSend.length} application${toSend.length === 1 ? "" : "s"} ready for your Submit${toSend.some((r) => r.need === "captcha" && r.status !== "ready") ? ` (${toSend.filter((r) => r.need === "captcha" && r.status !== "ready").length} with a CAPTCHA to tick first)` : ""}.</strong>
        <span>Go through them one by one: each review page comes up in the browser window to check before you send it.</span>
@@ -937,6 +946,7 @@ document.addEventListener("click", (e) => {
   const a = t.dataset.act, job = t.dataset.job, jobAct = t.dataset.jobAct;
   if (!state && (a || jobAct)) return;  // the page hasn't loaded yet
   if (a === "find") act(() => api("/api/search", {}));
+  if (a === "pause" || a === "resume") act(() => api(`/api/queue/${a}`, {}));
   // (a review round given way to: its hold is replaced by the bot round's, never ended after it)
   if (a === "bot-round") { reviewRound = false; reviewShown = null; reviewPassed.clear(); botRound = true; botShown = null; botPassed.clear(); botStep(); renderHeader(); }
   if (a === "bot-next" && botShown !== null) { botPassed.add(botShown); botStep(); renderHeader(); }
@@ -946,7 +956,7 @@ document.addEventListener("click", (e) => {
   if (a === "review-stop") { endReview(); renderHeader(); }
   // their press, on the application the banner named, still waiting as it showed it: never another one
   const named = Number(t.dataset.review), now = reviewWaiting().find((r) => r.job_id === named);
-  const asShown = now && named === reviewShown && (a === "review-submit" ? sendable(now) : now.status === "needs_you");
+  const asShown = now && named === reviewShown && (a === "review-submit" ? sendable(now) : ["needs_you", "ready"].includes(now.status));
   if (a === "review-submit" && asShown) act(() => api(`/api/job/${named}/submit`, {}));
   if (a === "review-applied" && asShown) act(() => api(`/api/job/${named}/applied`, {}));
   if ((a === "review-submit" || a === "review-applied") && !asShown) renderHeader();

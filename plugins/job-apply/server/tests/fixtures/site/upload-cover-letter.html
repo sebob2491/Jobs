@@ -1,0 +1,15 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Application</title></head>
+<body>
+<!-- A form whose only file box is a cover letter's, on a page with save-for-later fields named for a resume
+     elsewhere (the review of issue #112, note 28): no resume upload to say wasn't kept -->
+<div id="save-later">
+  <input type="hidden" id="resumeToken" name="resumeToken" value="">
+  <input type="hidden" id="resumeStep" name="resumeStep" value="">
+</div>
+<form onsubmit="return false">
+  <label for="fn">First name *</label><input id="fn" required>
+  <label for="cl">Cover letter</label><input id="cl" type="file">
+  <button type="button">Next</button>
+</form>
+</body></html>

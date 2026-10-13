@@ -653,6 +653,15 @@ EXTRACT_JS = r"""
     const ownForm = !formSubmit && a.after_password && (formOf(el) || el.closest('form'));
     if (ownForm && ownForm.querySelectorAll('input[type="password"]').length >= 2) a.in_account_form = true;
     if (el.disabled || el.getAttribute('aria-disabled') === 'true') a.disabled = true;
+    // A block's own Delete ("Education 2"'s): which block it deletes
+    // (and whether it names that block, "Delete Education 2", not a file's or a pill's inside it)
+    if (/^(delete|remove)\b/i.test(t)) {
+      const sec = sectionOf(el, '');
+      if (sec) a.section = sec;
+      const named = clean(el.getAttribute('aria-label') || el.getAttribute('title') || t).toLowerCase();
+      if (sec && named.endsWith(sec.toLowerCase())) a.names_block = true;
+      else if (el.getAttribute('aria-label') || el.getAttribute('title')) a.names_other = true;
+    }
     // A link to something already on show on this page (Phoenix Children's "Apply!" to its form,
     // #apply) only scrolls there; one to something hidden may be what shows it
     const anchor = el.tagName === 'A' && /^#([A-Za-z][\w:-]*)$/.exec(el.getAttribute('href') || '');
@@ -838,6 +847,34 @@ COVERED_JS = r"""
   if (!r.width || !r.height) return true;
   const top = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
   return !(top && (top === el || el.contains(top)));
+}
+"""
+
+# A resume the page shows as uploaded (the file's name, a Delete link) though the hidden fields it keeps the upload
+# in stayed empty (EMD's Phenom, issue #112, note 28: #isResume, #resumeBucketId, #resumeFileSize, #resumeName and
+# #resumePath all empty, so Next did nothing and said nothing). Two or more hidden fields named for the resume, every
+# one empty, and a file sent into a file box of the page (by the desk, or one that reads a value): the file's name.
+UPLOAD_NOT_KEPT_JS = r"""
+() => {
+  const named = /resume|(^|[_-])cv([_-]|$)/i;
+  const hidden = Array.from(document.querySelectorAll('input[type="hidden"]'))
+    .filter((el) => named.test(el.id || '') || named.test(el.name || ''));
+  // (the resume's own file box, and the hidden fields beside it: its form's, or within a few levels of it; not a
+  // cover letter's box, nor a "resumeToken" of a save-for-later elsewhere on the page: the review of note 28)
+  const near = (box, el) => {
+    if (box.form || el.form) return box.form === el.form;
+    for (let n = box.parentElement, d = 0; n && d < 6; n = n.parentElement, d++) if (n.contains(el)) return true;
+    return false;
+  };
+  for (const box of document.querySelectorAll('input[type="file"]')) {
+    const file = box.__jaUploaded ? String(box.__jaUploaded) : (box.files && box.files.length ? box.files[0].name : '');
+    const said = [box.id, box.name, box.getAttribute('aria-label') || '',
+                  ...Array.from(box.labels || []).map((l) => l.textContent || '')].join(' ');
+    if (!file || !named.test(said)) continue;
+    const kept = hidden.filter((el) => near(box, el));
+    if (kept.length >= 2 && !kept.some((el) => (el.value || '').trim())) return file;
+  }
+  return '';
 }
 """
 

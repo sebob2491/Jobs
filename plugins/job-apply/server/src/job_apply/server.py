@@ -21,8 +21,8 @@ from mcp.server.mcpserver.exceptions import ToolError
 
 from . import config
 from .ats import ATS_NAMES, detect_ats, greenhouse_form_url, workday_parts
-from .autofill import (is_eeo_rule, is_empty_value, is_name_rule, is_school_rule, place_words, plan_autofill,
-                       profile_entries, resolve_field)
+from .autofill import (is_eeo_rule, is_empty_value, is_how_heard, is_name_rule, is_school_rule, place_words,
+                       plan_autofill, profile_entries, resolve_field)
 from .browser import BrowserSession, BrowserUnavailable, SiteDown, SubmitBlocked
 from .postings import FetchError, Posting, fetch_posting, finalize, parse_html
 from .render import KINDS, render_pdf, to_html
@@ -703,13 +703,20 @@ async def autofill(job_id: int | None = None, overwrite: bool = False, redo: lis
     by_id = {f["id"]: f for f in plan["to_fill"]}
     fields = {f["id"]: f for f in data["fields"]}
     # an answer that matched only a group (Robert Half's "Website / Job Board Posting", holding
-    # "Company Career Site"): chosen again among the group's entries, and filled with that one
+    # "Company Career Site"): chosen again among the group's entries, and filled with that one.
+    # So is a how-did-you-hear answer that matched nothing in a list the plan hadn't read (a Workday prompt
+    # that draws its choices late: "Company Website" is its "<employer> website", issue #112, note 27)
     regrouped = {}
     for r in results:
-        if not r["ok"] and r.get("options") and r["id"] in fields:
-            again = resolve_field({**fields[r["id"]], "options": r["options"], "search": False}, prof, job)
-            if again is not None and again.value in r["options"]:
-                regrouped[r["id"]] = again.value
+        if r["ok"] or not r.get("options") or r["id"] not in fields:
+            continue
+        # (any other answer a list had no match for stays that: the fill looked at the same entries)
+        if str(r.get("error") or "").startswith("NoMatch") and not is_how_heard(by_id.get(r["id"], {}).get("rule") or "",
+                                                                   fields[r["id"]].get("label") or ""):
+            continue
+        again = resolve_field({**fields[r["id"]], "options": r["options"], "search": False}, prof, job)
+        if again is not None and again.value in r["options"]:
+            regrouped[r["id"]] = again.value
     if regrouped:
         retried = {x["id"]: x for x in await browser.fill([{"id": fid, "value": v} for fid, v in regrouped.items()])}
         results = [retried.get(r["id"], r) for r in results]
@@ -963,7 +970,8 @@ async def submit_application(job_id: int | None = None, user_confirmed: bool = F
     buttons = await browser.find_submit()
     if not buttons:
         return {"submitted": False, "reason": "No submit button on this page. Continue through the steps first.",
-                "empty_required": empty_required, "actions": [a["text"] for a in page["actions"]]}
+                "no_submit_button": True, "empty_required": empty_required,
+                "actions": [a["text"] for a in page["actions"]]}
     folder = Path(job["folder"])
     # a keepsake of the page as sent, when Chrome can take one (CI, Oct 12: "Unable to capture screenshot"
     # stopped a Submit the person had pressed)
