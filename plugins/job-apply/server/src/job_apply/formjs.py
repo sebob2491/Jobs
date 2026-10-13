@@ -660,6 +660,7 @@ EXTRACT_JS = r"""
       if (sec) a.section = sec;
       const named = clean(el.getAttribute('aria-label') || el.getAttribute('title') || t).toLowerCase();
       if (sec && named.endsWith(sec.toLowerCase())) a.names_block = true;
+      else if (el.getAttribute('aria-label') || el.getAttribute('title')) a.names_other = true;
     }
     // A link to something already on show on this page (Phoenix Children's "Apply!" to its form,
     // #apply) only scrolls there; one to something hidden may be what shows it

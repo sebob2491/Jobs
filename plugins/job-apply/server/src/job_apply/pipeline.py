@@ -115,6 +115,7 @@ _APPLIED_BEFORE = re.compile(
     r"\byou applied (?:for|to) this (?:job|position|role|posting|requisition|opening|vacancy) on\b|"
     r"\byou(?:'ve| have)? already (?:applied|submitted an application) (?:for|to) this "
     r"(?:job|position|role|posting|requisition|opening|vacancy)\b(?!\s*(?:\?|before|within|in the))", re.I)
+_WRAPPED = re.compile(r"(?:,|\b(?:or|and|the|an?|to|for|of|if|that|who|you|have|whether|unless|when|once))\s*$", re.I)
 _BOT_TEXT = re.compile(r"verify (?:that )?you are (?:a )?human|are you a robot|checking (?:if the site connection is secure|"
                        r"your browser)|press (?:&|and) hold|complete the security check|unusual traffic from your|"
                        r"enable javascript and cookies to continue|request unsuccessful|you have been blocked", re.I)
@@ -420,6 +421,7 @@ class Run:
     reset_no_mail: bool = False  # and none came in RESET_MAIL_WAIT: no account there, most likely, so one is made
     reopened_elsewhere: bool = False  # its sign-in page, opened again, led elsewhere: the job opened again (once a job)
     schools_dropped: list[str] = field(default_factory=list)  # education blocks deleted (_drop_unfit_school)
+    schools_tried: list[str] = field(default_factory=list)  # and those whose Delete was pressed, gone or not
     reopened: int = 0  # times _back_to_sign_in opened the job again: a press before one is another visit's
     # The job's sign-ins pressed with the saved password, and which password that was (a digest): a Run
     # outlasts Resume and the queue, so these hold for the job, not for one pass at it
@@ -2304,14 +2306,16 @@ class Applier:
         blocks = sorted({str(x.get("section") or "") for x in [*(data.get("fields") or []), *deletes]
                          if school_block.match(str(x.get("section") or ""))}, key=lambda s: int(re.findall(r"\d+", s)[-1]))
         last = blocks[-1] if blocks else ""
-        if len(blocks) < 2 or last not in unfit or last in run.schools_dropped:
+        if len(blocks) < 2 or last not in unfit:
             return False
-        # its own Delete: one that names the block, else the only Delete in it (not a file's or a pill's)
+        # its own Delete: one that names the block, else the only Delete in it that names nothing else (not a
+        # file's or a pill's)
         own = [a for a in deletes if a.get("section") == last]
-        delete = next((a for a in own if a.get("names_block")), own[0] if len(own) == 1 else None)
-        if delete is None:
+        bare = [a for a in own if not a.get("names_other")]
+        delete = next((a for a in own if a.get("names_block")), bare[0] if len(own) == 1 and bare else None)
+        if delete is None or last in run.schools_tried:
             return False
-        run.schools_dropped.append(last)
+        run.schools_tried.append(last)  # (pressed once a block, whatever comes of it)
         try:
             await self.srv.click(delete["id"])
         except Exception:  # gone, or it won't take a click: the person's, as before
@@ -2320,6 +2324,7 @@ class Applier:
         now, _ = await self._look()
         if any(f.get("section") == last for f in now.get("fields") or []):
             return False  # still there (a "Are you sure?" over it, say): the person's
+        run.schools_dropped.append(last)  # gone: one block fewer of the profile's schools from here on
         found = next((entry_of(q, prof) for q in pending if q.get("section") == last and entry_of(q, prof)), None)
         school = found[0] if found else last
         self._log(run, f"deleted {last} ({school}): its Degree list has no choice for classes without a degree, and "
@@ -4233,7 +4238,10 @@ def _applied_before(data: dict[str, Any], text: str) -> str:
     for said in list(data.get("errors") or []) + [text or ""]:
         said = re.sub(r"[ \t\xa0]+", " ", said.replace("\u2019", "'"))
         for m in _APPLIED_BEFORE.finditer(said):
-            begun = max(said.rfind(c, 0, m.start()) for c in ".!?\n")
+            begun = max(said.rfind(c, 0, m.start()) for c in ".!?")
+            line = said.rfind("\n", 0, m.start())
+            if line > begun and not _WRAPPED.search(said[:line]):
+                begun = line  # a line of its own (under a heading), not one sentence wrapped onto the next
             if m.group(0).lower() in labels or not re.fullmatch(r"[\s\W]*", said[begun + 1:m.start()]):
                 continue  # a question on the form, or a sentence that only supposes it ("If you have already…")
             start, end = said.rfind(".", 0, m.start()) + 1, said.find(".", m.end())

@@ -6265,6 +6265,11 @@ def test_a_school_block_is_deleted_only_where_it_is_the_last_of_several(srv):
     assert not clicked
     assert run(applier._drop_unfit_school(r, page("Education 1", "Education 2"), [degree_box("Education 2")]))
     assert clicked == ["d1"] and r.schools_dropped == ["Education 2"]
+    # (a file's Delete, the only one in the block, named for the file: never pressed)
+    r2 = Run(2, "Technician", "Example Litho")
+    file_delete = {**page("Education 1", "Education 2"), "actions": [{"id": "f1", "text": "Delete", "section": "Education 2",
+                                                                       "names_other": True}]}
+    assert not run(applier._drop_unfit_school(r2, file_delete, [degree_box("Education 2")])) and clicked == ["d1"]
     assert not run(applier._drop_unfit_school(r, page("Education 1", "Education 2"), [degree_box("Education 2")]))  # once
 
 
@@ -6380,7 +6385,9 @@ def test_already_applied_wording():
             "In case you have already applied for this job, please ignore this message.": False,
             "If\xa0you have already applied for this position, sign in.": False,
             "You have already applied. You may apply to 3 jobs every 30 days.": False,
-            "Thank you.\nYou have already applied for this position.": True}
+            "Thank you.\nYou have already applied for this position.": True,
+            "Equipment Technician\nYou applied for this job on 10/09/2026.": True,  # (under its heading)
+            "If you are an internal candidate or\nyou have already applied for this position, sign in.": False}
     assert {t: bool(_applied_before({}, t)) for t in said} == said
     asked = {"fields": [{"label": "You have already applied for this position. Is that right?"}]}
     assert not _applied_before(asked, "You have already applied for this position. Is that right?")
