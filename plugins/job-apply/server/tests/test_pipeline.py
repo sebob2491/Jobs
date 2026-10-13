@@ -3519,6 +3519,32 @@ def test_a_page_that_asks_to_be_refreshed_is_reloaded_once(srv, monkeypatch, job
     assert len(said) == 1 and r.seen_form and "went-wrong" not in r.url, (r.url, r.reason, r.log)
 
 
+def test_a_page_that_asks_to_be_refreshed_again_after_its_reload_is_said_for_what_it_is(srv, monkeypatch, job_apply_home):
+    """Circle K's Workday (run 63): its Take Assessment step said "Something went wrong. Please refresh the page and
+    then try again." The desk reloaded it once, went through the steps again, and the step said the same; the desk
+    then said "I couldn't find the button that moves this application on". Asked again after its one reload, it says
+    the site went wrong again, and that it's the site's."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 1)
+    job = srv.add_job(url=fixture_url("site/workday-went-wrong.html") + "?again", title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert sum("so I reloaded it" in line for line in r.log) == 1, r.log
+    assert (r.status, r.need) == ("needs_you", "stuck") and "said \u201cSomething went wrong\u201d again" in r.reason, \
+        (r.reason, r.log)
+    assert "then press Resume" in r.reason and "couldn't find the button" not in r.reason, r.reason
+
+
 def test_a_review_page_whose_submit_is_greyed_while_it_draws_is_waited_on(srv, monkeypatch, job_apply_home):
     """Wells Fargo's Workday (run 49, Oct 13): its review page drew Submit greyed out for a moment, and the desk
     stopped with "“Submit” is greyed out, so the site still wants something" though the page wanted nothing. A

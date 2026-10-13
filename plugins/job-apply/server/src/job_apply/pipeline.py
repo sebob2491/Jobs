@@ -2144,6 +2144,14 @@ class Applier:
                     run.reopened += 1
                     await srv.open_application(job_id=run.job_id)
                     continue
+                if run.refreshed and not data.get("fields") and _REFRESH_ASKED.search(text):
+                    # asked to refresh again after the one reload a job (Circle K's Workday, run 63: its Take Assessment
+                    # step, reached again, said the same), with no way on: the site's own trouble, said for what it is
+                    await self._bring_forward(run)
+                    return self._pause(run, "stuck", f"{_site(run, data)} said \u201cSomething went wrong\u201d again and "
+                                       "asked for the page to be refreshed, and I had reloaded once already for this "
+                                       "application. That's the site's own trouble: reload the page in the browser window "
+                                       "(now, or later if it still says so), then press Resume.")
                 return self._pause(run, "stuck", "I couldn't find the button that moves this application on. "
                                    "Take it a step further in the browser, then press Resume.")
             if (kind == "form" and action.get("form_fields") == len(data.get("fields") or [])

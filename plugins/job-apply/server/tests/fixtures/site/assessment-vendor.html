@@ -11,7 +11,8 @@
      ?boxes&stuck: the boxes all ticked when drawn, and no Next (what Circle K's read as, run 61). The welcome page also
      has The Predictive Index's lone "I have already taken the assessment and would like to enter my Score ID" box:
      ticked, the run goes to a page asking for a Score ID, which never moves on (run 62). ?words: its question page is
-     a list of words to tick, at least 2 (PI's stayed, run 62). ?tiles: its questions are Circle K's (run 62): "1
+     a list of words to tick, at least 2 (PI's stayed, run 62); ?words=many: at least 4, its error saying how many more
+     ("Please select 3 more words", as PI's in run 63). ?tiles: its questions are Circle K's (run 62): "1
      Statement", "Answers" drawn as tiles to click (no box) and an Auto Advance switch, on: a click goes on at once;
      below them a Privacy Policy link and a Help tile, never answers. ?tiles=fixed: its heading stays "1 Statement"
      (only the statement changes). Each tile sits in a column of its own (a wrapper with only it). A click on the link
@@ -87,8 +88,10 @@
         || [...f.querySelectorAll('select, input:not([type=radio]):not([type=checkbox])')].some((b) => !b.value)
         || (f.querySelector('.a-box') && f.querySelectorAll('.a-box:checked').length !== 1);
       if (missing) { err('Please answer every question.'); return; }
-      if (f.querySelector('.w-box') && f.querySelectorAll('.w-box:checked').length < 2) {
-        err('Please select at least 2 words.');
+      const want = q.get('words') === 'many' ? 4 : 2;  // (?words=many: as PI's, "Please select 3 more words")
+      if (f.querySelector('.w-box') && f.querySelectorAll('.w-box:checked').length < want) {
+        err(want === 2 ? 'Please select at least 2 words.'
+          : `Please select ${want - f.querySelectorAll('.w-box:checked').length} more words.`);
         return;
       }
       on();
