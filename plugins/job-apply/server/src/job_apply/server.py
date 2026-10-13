@@ -702,6 +702,8 @@ async def autofill(job_id: int | None = None, overwrite: bool = False, redo: lis
                                    "near": place_words(f.get("rule") or "", prof),
                                    "pick_only": is_eeo_rule(f.get("rule") or "")}
                                   for f in plan["to_fill"]]) if plan["to_fill"] else []
+    if plan.get("judged"):
+        await browser.mark_judged(plan["judged"])
     by_id = {f["id"]: f for f in plan["to_fill"]}
     fields = {f["id"]: f for f in data["fields"]}
     # an answer that matched only a group (Robert Half's "Website / Job Board Posting", holding

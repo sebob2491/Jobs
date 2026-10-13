@@ -34,7 +34,7 @@ from . import config, mailbox, report
 from .search import every_employer
 from .ats import ATS_NAMES, detect_ats, shared_system
 from .autofill import (classes_only, clean_label, degree_kinds_listed, degree_not_listed, entry_of, is_empty_value, no_choice_for_no_degree, norm,
-                       plan_autofill, profile_entries, unset_choice,
+                       plan_autofill, profile_entries, site_default, unset_choice,
                        polarity, tailored_document, works_there_now)
 from .browser import (_SENDS_TOO, CONFIRMATION_RE, SubmitBlocked, TabClosed, _accepts_cookies, _cookie_setting,
                       confirmations, declines_cookies, final_text, may_accept_cookies)
@@ -2374,8 +2374,10 @@ class Applier:
             here = _page_key(data)
             fills = [{"id": fid, "value": run.once[key]} for fid, key in by_id.items()
                      if key in run.once and run.once_page.get(key, here) == here
-                     # (or still on its own "Not Specified", which isn't an answer: Kforce's, the probe of Oct 12)
-                     and (is_empty_value(fields[fid].get("value")) or unset_choice(fields[fid]))]
+                     # (or still on its own "Not Specified", which isn't an answer: Kforce's, the probe of Oct 12; or on
+                     # the site's first choice where the answer is another: the review of 0.3.138)
+                     and (is_empty_value(fields[fid].get("value")) or unset_choice(fields[fid])
+                          or site_default(fields[fid]) and norm(run.once[key]) != norm(fields[fid].get("value")))]
             if not fills:
                 break
             out = await self.srv.fill_form(fills)

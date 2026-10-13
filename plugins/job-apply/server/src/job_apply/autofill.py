@@ -2277,10 +2277,11 @@ def unset_choice(f: dict) -> bool:
 def site_default(f: dict) -> bool:
     """A list on its first choice that has no empty one to start on (a gender list opening on "Male", a country code
     on "Afghanistan +93"): the site's own default, which no one chose. Read as answered, it went out as the person's
-    answer, whatever the profile said."""
+    answer, whatever the profile said. Once only (`judged`: the desk marks the list): a pick of it after that is the
+    person's (the review)."""
     options = [str(o) for o in f.get("options") or []]
-    return f.get("kind") == "select" and len(options) > 1 and norm(f.get("value")) == norm(options[0]) \
-        and not any(is_empty_value(o) for o in options)
+    return f.get("kind") == "select" and not f.get("multiple") and not f.get("judged") and len(options) > 1 \
+        and norm(f.get("value")) == norm(options[0]) and not any(is_empty_value(o) for o in options)
 
 
 def plan_autofill(fields: list[dict], prof: Profile, job: dict | None = None, overwrite: bool = False,
@@ -2292,6 +2293,7 @@ def plan_autofill(fields: list[dict], prof: Profile, job: dict | None = None, ov
     to_fill: list[dict] = []
     needs_input: list[dict] = []
     already: list[str] = []
+    judged: list[str] = []  # lists on the site's first choice, filled or left as they are (site_default)
     for f in fields:
         # a read-only text box can't be typed in, but a read-only dropdown is a pick-only
         # menu (Infineon's "Preferred location"): it still takes a choice
@@ -2313,9 +2315,11 @@ def plan_autofill(fields: list[dict], prof: Profile, job: dict | None = None, ov
         ans = resolve_field({**f, "options": (f.get("options") or [])[1:]} if unset else f, prof, job, file_inputs,
                             unmatched=missed)
         if defaulted and not overwrite and (ans is None and not missed or ans is not None and (
-                ans.value == SKIP or choose_option(str(ans.value), [str(f.get("value"))]) is not None)):
-            # (the site's first choice, where the profile says nothing else, or says the same: left as it is)
+                ans.value == SKIP or choose_option(str(ans.value), [str(f.get("value"))], exact_only=True) is not None)):
+            # (the site's first choice, where the profile says nothing else, or says the same: left as it is; the same
+            # word for word, as "Bachelor's Degree" isn't an "Associate's Degree" a list opens on: the review)
             already.append(f["id"])
+            judged.append(f["id"])
             continue
         if unset and not overwrite and ans is not None and is_eeo_rule(ans.rule) and not f.get("required"):
             # an optional self-identification list on its "Not Specified" stays as it is (the person may have
@@ -2332,13 +2336,18 @@ def plan_autofill(fields: list[dict], prof: Profile, job: dict | None = None, ov
             continue
         if ans is not None:
             to_fill.append({"id": f["id"], "label": f.get("label", ""), "value": ans.value, "rule": ans.rule})
+            if defaulted:
+                judged.append(f["id"])
         elif f.get("kind") != "password":
             # with the profile's answer the choices don't have (Qorvo's veteran list has no "I
             # don't wish to answer"), so the desk can say why it's empty
             # (a list on its "Not Specified" first choice is asked about without it: that choice is the empty one,
             # and an answer of it was taken for none and asked again, Kforce's Birth Assigned Gender, live run 24)
             asked = _asked({**f, "options": (f.get("options") or [])[1:]} if unset else f)
-            needs_input.append({**asked, **({"unmatched": str(missed[0].value)} if missed else {})})
+            # (a list on the site's first choice is never left empty: what it shows goes out, so it's asked as
+            # required, optional or not: the review)
+            needs_input.append({**asked, **({"unmatched": str(missed[0].value)} if missed else {}),
+                                **({"required": True} if defaulted else {})})
     _graduation_of_the_school_given(fields, to_fill, needs_input, prof, job, file_inputs)
     _title_beside_its_company(fields, to_fill, needs_input, prof)
     # A form with no phone box of the profile's kind and no plain one, whose boxes name other kinds ("Home
@@ -2372,7 +2381,8 @@ def plan_autofill(fields: list[dict], prof: Profile, job: dict | None = None, ov
     if declined:
         needs_input[:] = [q for q in needs_input if norm(clean_label(q.get("label") or "")) not in declined]
     needs_input.sort(key=lambda f: not f.get("required"))
-    return {"to_fill": to_fill, "needs_input": needs_input, "already_filled": already}
+    return {"to_fill": to_fill, "needs_input": needs_input, "already_filled": already,
+            **({"judged": judged} if judged else {})}
 
 
 def _asked(f: dict) -> dict:

@@ -1321,6 +1321,21 @@ def test_a_list_on_its_first_choice_with_no_empty_one_is_the_sites_and_takes_the
     nothing = {"id": "s", "label": "Salutation", "kind": "select", "value": "Mr.", "options": ["Mr.", "Ms.", "Dr."]}
     plan = plan_autofill([same, picked, nothing], decliner, {})
     assert plan["to_fill"] == [] and plan["needs_input"] == [] and plan["already_filled"] == ["c", "p", "s"], plan
+    assert plan["judged"] == ["c", "s"]  # (marked on the page: judged once)
+    # the review: the same answer word for word ("Bachelor's Degree" isn't the "Associate's Degree" a list opens on)
+    graduate = Profile({"education": {"degree": "Bachelor's Degree", "field": "Physics", "school": "Example State"},
+                        "education_history": [{"school": "Example State", "degree": "Bachelor's Degree"}]})
+    degree = {"id": "d", "label": "Highest degree", "kind": "select", "value": "Associate's Degree",
+              "options": ["Associate's Degree", "Bachelor's Degree", "Master's Degree"]}
+    assert [(t["id"], t["value"]) for t in plan_autofill([degree], graduate, {})["to_fill"]] == \
+        [("d", "Bachelor's Degree")]
+    # an optional list with no choice for the profile's answer is asked all the same: what it shows goes out
+    asked = plan_autofill([{**no_decline, "required": False}], decliner, {})["needs_input"]
+    assert [(q["id"], q.get("required")) for q in asked] == [("n", True)], asked
+    # a list of several picks, a list judged once already, or the desk told to fill everything again: as before
+    assert plan_autofill([{**gender, "multiple": True}], decliner, {})["already_filled"] == ["g"]
+    assert plan_autofill([{**gender, "judged": True}], decliner, {})["already_filled"] == ["g"]
+    assert [t["id"] for t in plan_autofill([gender], decliner, {}, overwrite=True)["to_fill"]] == ["g"]
 
 
 def test_a_list_the_page_marks_invalid_takes_the_profiles_answer_and_a_required_self_id_is_answered():

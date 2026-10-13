@@ -1164,6 +1164,16 @@ class BrowserSession:
         return data
 
     # ---------------------------------------------------------------- writing
+    async def mark_judged(self, ids: list[str]) -> None:
+        """Mark lists whose first choice the desk judged the site's default (autofill.site_default): judged once, so a
+        pick of that choice later (the person's, while the desk waits) is never taken for the site's again."""
+        async with self._lock:
+            page = await self.page()
+            for element_id in ids:
+                with contextlib.suppress(PlaywrightError, KeyError):
+                    await self._locator(page, element_id).evaluate(
+                        "el => el.setAttribute('data-ja-default-judged', '1')", timeout=2000)
+
     def _locator(self, page: Page, element_id: str) -> Locator:
         frame = self._frame_for(page, element_id)
         return frame.locator(f'[data-ja-id="{element_id}"]').first
