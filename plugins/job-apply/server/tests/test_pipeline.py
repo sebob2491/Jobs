@@ -6971,14 +6971,23 @@ def test_a_bare_i_agree_is_ticked_only_where_the_words_above_it_are_the_sites_te
                     '<div><p>Join our talent community to hear about future openings.</p>'
                     '<label><input type="checkbox" id="i"> You acknowledge having read the documents above. Your '
                     'agreement is valid for any future visits.</label></div>'
-                    # never a box whose own words ask for more than the terms, however long that lasts
-                    '<label><input type="checkbox" id="j"> I agree to receive future job updates by email. Your '
-                    'agreement is valid for any future visits.</label>'
+                    # the review's: a sign-up above in other words (a mailing list, being notified, opting in)
+                    '<div><p>Join our mailing list to hear about new openings.</p>'
+                    '<label><input type="checkbox" id="k"> You acknowledge having read the documents above. Your '
+                    'agreement is valid for any future visits.</label></div>'
+                    '<div><p>Opt in to be notified when new roles open.</p>'
+                    '<label><input type="checkbox" id="l"> I agree</label></div>'
+                    '<div><p>We will email you about roles like this one.</p>'
+                    '<label><input type="checkbox" id="m"> I agree</label></div>'
+                    # never a box whose own words ask for more than the terms, however long that lasts (required, and
+                    # naming the terms: left for its own words alone)
+                    '<label><input type="checkbox" id="j" required> I agree to the terms and to receive future job '
+                    'updates by email. Your agreement is valid for any future visits.</label>'
                     '<button type="submit">Create Account</button>', encoding="utf-8")
     run(srv.browser.goto(page.as_uri()))
     data = run(srv.browser.inspect(include_dropdown_options=False))
     boxes = pipeline._terms_boxes(data)
-    assert len(boxes) == 9, data["fields"]  # (by their labels alone, all but the last)
+    assert len(boxes) == 12, data["fields"]  # (by their labels alone, all but the last)
     kept = run(Applier(srv)._said_terms(boxes))
     assert [b["id"] for b in kept] == [boxes[0]["id"], boxes[3]["id"], boxes[5]["id"], boxes[7]["id"]], (boxes, kept)
 

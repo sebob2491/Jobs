@@ -167,7 +167,7 @@ _TERMS_ONLY = re.compile(r"terms|conditions|(?:privacy|data protection) (?:polic
                          r"|\b(?:agree|consent)\w*\b.{0,40}\bcreat\w*\b.{0,60}\baccount\b|^\s*(?:yes,? )?i (?:agree|consent|accept)\W*$"
                          r"|\bgdpr\b|process\w* (?:of )?my personal data|acknowledge having read", re.I)
 _TERMS_BOX = re.compile(r"terms|conditions|privacy|consent|agree|acknowledge|policy|notice", re.I)
-_NOT_TERMS = re.compile(r"newsletter|marketing|job alerts?|text messages?|\bsms\b|promotion|offers|subscribe|similar jobs|"
+_NOT_TERMS = re.compile(r"newsletter|mailing list|marketing|job alerts?|text messages?|\bsms\b|promotion|offers|subscribe|similar jobs|"
                         r"talent (?:community|network)|keep me|stay informed|send me|contact(?:ed)? me|be contacted|"
                         r"share my|other (?:\w+ )?(?:roles|positions|jobs|openings|opportunities)|affiliat", re.I)
 # And on an account's own box, what else its agreement may take in (the review of 0.3.117's wider account terms):
@@ -204,6 +204,9 @@ def _signs_up(text: str) -> bool:
 # The words above a bare "I agree" that make it a sign-up (a terms paragraph names emails, affiliates and offers in
 # passing: "you'll receive an email to verify your account", the review's)
 _SIGN_UP_ABOVE = re.compile(r"talent (?:community|network|pool)|job alerts?|newsletter|subscribe|marketing|"
+                            # (the review of 0.3.126's: a mailing list, being notified, opting in, emailed about roles)
+                            r"mailing list|\bnotif(?:y|ied|ications?)\b|\bopt(?:ing)?[- ]in\b|"
+                            r"\be-?mail (?:me|you)\b|"
                             r"text messages?|\bsms\b|keep me|stay informed|similar jobs|promotion\w*|offers|send me|"
                             r"contact(?:ed)? me|be contacted|share my|"
                             r"other (?:\w+ )?(?:roles|positions|jobs|openings|opportunities)|"
