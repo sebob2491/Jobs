@@ -36,7 +36,7 @@ from .pipeline import DESK_PASSWORDS, Applier, question_key
 from .ats import detect_ats
 from .postings import FetchError, Posting, fetch_posting, finalize, parse_html
 from .recommend import recommend, score_listing
-from .search import load_companies, own_companies_path
+from .search import MAX_ALTERNATIVES, alternatives, load_companies, own_companies_path
 from .updates import UpdateCheck
 
 PAGE = Path(__file__).resolve().parent / "static" / "desk.html"
@@ -88,6 +88,10 @@ class Desk:
         self.port: int | None = None
         self.listings: list[dict[str, Any]] = []
         self.handled_only = False  # the page shows only openings where the desk goes all the way (desk_handled.yaml)
+        # Troubleshooting (the owner, Oct 12, to get the desk going for someone else's search): Find jobs searches every
+        # list's employers, for the profile's titles and HR ones, and the page shows only the openings where the desk
+        # doesn't go all the way yet, whatever their fit. Nothing is sent meanwhile (Applier.hold_submits)
+        self.troubleshoot = False
         self.search: dict[str, Any] = {"status": "idle", "at": None, "error": None, "query": "", "location": None,
                                        "errors": {}, "browser_only": []}
         self._search_task: asyncio.Task | None = None
@@ -114,6 +118,8 @@ class Desk:
             self.applier.auto_submit = saved.get("auto_submit") is True
             self.applier.tailor = saved.get("tailor_resumes") is True
             self.handled_only = saved.get("handled_only") is True
+            self.troubleshoot = saved.get("troubleshoot") is True and not self.handled_only
+            self.applier.hold_submits = self.troubleshoot
         except (OSError, ValueError, AttributeError):
             pass
 
@@ -121,7 +127,8 @@ class Desk:
         config.ensure_home()
         _settings_path().write_text(json.dumps({"auto_submit": self.applier.auto_submit,
                                                 "tailor_resumes": self.applier.tailor,
-                                                "handled_only": self.handled_only}), encoding="utf-8")
+                                                "handled_only": self.handled_only,
+                                                "troubleshoot": self.troubleshoot}), encoding="utf-8")
 
     # ------------------------------------------------------------- serving
     @property
@@ -350,12 +357,18 @@ class Desk:
             self.applier.auto_submit = body["auto_submit"] is True  # not "false", which bool() calls true
         if "tailor_resumes" in body:
             self.applier.set_tailor(body["tailor_resumes"] is True)
+        # the two employer switches are one or the other: either turned on turns the other off
         if "handled_only" in body:
             self.handled_only = body["handled_only"] is True
-        if "auto_submit" in body or "tailor_resumes" in body or "handled_only" in body:
+            self.troubleshoot = self.troubleshoot and not self.handled_only
+        if "troubleshoot" in body:
+            self.troubleshoot = body["troubleshoot"] is True
+            self.handled_only = self.handled_only and not self.troubleshoot
+        self.applier.hold_submits = self.troubleshoot
+        if any(k in body for k in ("auto_submit", "tailor_resumes", "handled_only", "troubleshoot")):
             self._save_settings()
         return JSONResponse({"auto_submit": self.applier.auto_submit, "tailor_resumes": self.applier.tailor,
-                             "handled_only": self.handled_only})
+                             "handled_only": self.handled_only, "troubleshoot": self.troubleshoot})
 
     async def bank_view(self, request: Request) -> Response:
         """An answer to one of the common questions (data/question_bank.yaml), kept in answers.yaml for
@@ -419,7 +432,12 @@ class Desk:
     async def find_jobs(self) -> None:
         self.search.update(status="running", error=None, started=time.time())
         try:
+            every = self.troubleshoot  # (as it was when Find jobs was pressed)
+
             async def run_search(query: str, location: str | None, limit: int) -> dict[str, Any]:
+                if every:
+                    return await self.srv.search_company_jobs(troubleshoot_query(query), location=location,
+                                                              limit_per_company=limit, every_list=True)
                 return await self.srv.search_company_jobs(query, location=location, limit_per_company=limit)
 
             out = await recommend(config.Profile.load(), run_search, limit_per_company=10, read_postings=40,
@@ -595,7 +613,7 @@ class Desk:
                          "manage_accounts": settings.may_manage_accounts,
                          "manage_accounts_chosen": settings.manage_accounts_chosen,
                          "auto_submit": self.applier.auto_submit, "tailor_resumes": self.applier.tailor,
-                         "handled_only": self.handled_only},
+                         "handled_only": self.handled_only, "troubleshoot": self.troubleshoot},
             "tailoring": len(self.applier.tailoring()),
             # saved or not, never the value
             "passwords": {name.removesuffix("_password"): saved for name, saved in
@@ -661,6 +679,7 @@ def _own_file(url: str) -> bool:
         return True
 
 
+TROUBLESHOOT_TITLES = ["human resources", "recruiter"]  # troubleshooting's HR jobs, beside the profile's titles
 MAX_LINKS = 20  # pasted at once; a person's own picks, not a crawl
 # The job systems whose password the page lets the person save (the employers on the list
 # use these): the desk signs in with each on that system's own sites only (PASSWORD_SITES).
@@ -693,6 +712,14 @@ def password_systems() -> list[dict[str, str]]:
         out.append({"value": ats, "label": f"{system}: {', '.join(users[:3])}{more}" if users else system})
     _systems = (key, out)
     return out
+
+def troubleshoot_query(query: str) -> str:
+    """What troubleshooting searches for: the profile's first two titles, and HR jobs (the Phoenix list's
+    employers mostly hire for those), so every list's employers have openings to try the desk on."""
+    titles = [t for t in alternatives(query) if t][:2]
+    extra = [t for t in TROUBLESHOOT_TITLES if t not in titles]
+    return " | ".join([*titles, *extra][:MAX_ALTERNATIVES])
+
 
 _desk: Desk | None = None
 

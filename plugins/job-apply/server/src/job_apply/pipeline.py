@@ -589,6 +589,7 @@ class Applier:
         self.runs: dict[int, Run] = {}
         self.tasks: deque[tuple[str, int]] = deque()
         self.auto_submit = False
+        self.hold_submits = False  # the desk's troubleshooting is on: nothing is sent, by the person's Submit or for them
         self.tailor = False  # hold each job until Claude has written a resume for it
         # The person pressed Pause queue: no new job starts until Resume queue (in memory, like the queue it holds),
         # but those they pressed Resume on, or answered on their card (pressed)
@@ -666,6 +667,8 @@ class Applier:
     def submit_now(self, job_id: int) -> Run:
         """The person pressed Submit for a job that's waiting on its review page."""
         run = self.runs[job_id]
+        if self.hold_submits:
+            raise ValueError("Troubleshooting is on, so nothing is sent. Turn it off on the desk to send this one.")
         if run.status not in ("ready", "needs_you"):
             raise ValueError(f"Job {job_id} isn't waiting on a review page")
         run.status, run.reason = "queued", "Submitting…"
@@ -3514,10 +3517,11 @@ class Applier:
                 self._log(run, f"filled again {len(again)} field(s) the page marked invalid")
                 data, text = await self._look()
                 shown = "; ".join(e for e in _flagged(data) if not _ERROR_COUNT.match(e))[:300].rstrip(" .")
-        if shown and run.submit and self.auto_submit:  # Insight's review page lists what's still missing
+        sends = run.submit and self.auto_submit and not self.hold_submits
+        if shown and sends:  # Insight's review page lists what's still missing
             return self._pause(run, "stuck", f"The review page shows errors: {shown}. Fix them in the browser, then "
                                "press Submit.")
-        if run.submit and self.auto_submit and not run.entries_short:  # (jobs or schools left off: the person's)
+        if sends and not run.entries_short:  # (jobs or schools left off: the person's)
             return await self._submit(run, by_person=False)
         srv._mark_ready(job, "filled by the Job Desk")
         run.status, run.need = "ready", ""
@@ -3541,6 +3545,9 @@ class Applier:
         srv = self.srv
         if run.status == "skipped" or self._already_done(run):
             return
+        if self.hold_submits:  # (a Submit pressed before troubleshooting was turned on, still waiting its turn)
+            return self._pause(run, "your_submit", "Troubleshooting is on, so nothing is sent. Turn it off on the desk "
+                               "to send this one, or send it yourself in the browser and press \u201cI submitted it\u201d.")
         if run.page is not None and not run.page.is_closed() and not self._own_place(run, run.page.url):
             # its tab was taken on to another posting: Submit there would send that one as this job
             return self._pause(run, "stuck", "Its tab has gone on to another page, so I didn't press Submit there. "

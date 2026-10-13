@@ -625,7 +625,7 @@ def test_the_tailoring_switch_is_kept_and_its_waiting_jobs_listed(srv, job_apply
             h = {"x-desk-token": desk.token}
             async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{desk.port}", timeout=20, trust_env=False) as c:
                 r = await c.post("/api/settings", headers=h, json={"tailor_resumes": True})
-                assert r.json() == {"auto_submit": False, "tailor_resumes": True, "handled_only": False}
+                assert r.json() == {"auto_submit": False, "tailor_resumes": True, "handled_only": False, "troubleshoot": False}
                 await desk.applier.stop()  # hold the queue still while the waiting job is set up
                 desk.applier.runs[job["id"]] = Run(job["id"], "FSE", "Example Fab", status="needs_you", need="tailor")
                 state = (await c.get("/api/state", headers=h)).json()
@@ -757,6 +757,79 @@ def test_only_where_the_desk_goes_all_the_way_shows_those_employers_alone_and_is
     run(go())
     assert json.loads((job_apply_home / "desk.json").read_text())["handled_only"] is True
     assert Desk(srv).handled_only is True  # still on next time the desk opens
+
+
+def test_troubleshooting_searches_every_list_shows_where_the_desk_stops_and_sends_nothing(srv, job_apply_home, monkeypatch):
+    """The owner (Oct 12), to get the desk going for a friend's HR search: a Troubleshooting switch. Find jobs
+    searches every list's employers (the person's own file names only one) for the profile's titles and HR ones;
+    the page shows only the openings where the desk doesn't go all the way yet, whatever their fit; and nothing is
+    sent while it's on (Submit is refused, Submit for me held). It turns "Only where the desk goes all the way" off."""
+    from playwright.async_api import async_playwright
+
+    from job_apply import desk as desk_module
+    from job_apply.pipeline import Run
+
+    (job_apply_home / "companies.yaml").write_text("lists: [semiconductor-az]\ncompanies: []\n", encoding="utf-8")
+    searched = []
+
+    async def search_company_jobs(query, location=None, limit_per_company=20, every_list=False):
+        searched.append((query, every_list))
+        return {"results": [], "errors": {}, "browser_only": []}
+    monkeypatch.setattr(srv, "search_company_jobs", search_company_jobs, raising=False)
+    low = {"score": 20, "reasons": [], "concerns": [], "blocked": False, "recommended": False}
+    desk = Desk(srv)
+    desk.listings = [{"company": "Intel", "title": "Module Equipment Technician", "url": "https://example.com/intel",
+                      "location": "Phoenix, AZ", "fit": low},
+                     {"company": "Example Health", "title": "HR Generalist", "url": "https://example.com/hr",
+                      "location": "Phoenix, AZ", "fit": low}]
+    desk.applier.start = lambda: None
+    desk.search.update(status="done", at=time.time())
+    job = srv.add_job(url="https://example.com/ready", title="Recruiter", company="Example Health")["job"]
+    desk.applier.runs[job["id"]] = Run(job["id"], "Recruiter", "Example Health", status="ready")
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with async_playwright() as pw:
+                browser = await pw.chromium.launch(**launch_options())
+                page = await browser.new_page()
+                await page.goto(desk.url)
+                await page.check("#handled-only")
+                await page.wait_for_selector("text=HR Generalist", state="detached")
+                await page.check("#troubleshoot")
+                await page.wait_for_selector("text=HR Generalist")  # (a low fit, shown all the same)
+                assert await page.locator("text=Module Equipment Technician").count() == 0  # (the desk goes all the way)
+                assert not await page.is_checked("#handled-only")
+                assert "Troubleshooting is on: nothing is sent" in await page.inner_text("#notices")
+                await browser.close()
+            h = {"x-desk-token": desk.token}
+            async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{desk.port}", timeout=20, trust_env=False) as c:
+                r = await c.post(f"/api/job/{job['id']}/submit", headers=h)
+                assert r.status_code >= 400 and "Troubleshooting is on" in r.text, r.text
+            await desk.find_jobs()
+        finally:
+            await desk.stop()
+
+    run(go())
+    assert desk.applier.runs[job["id"]].status == "ready"  # nothing sent
+    assert len(searched) == 1 and searched[0][1] is True, searched
+    assert "human resources" in searched[0][0] and "recruiter" in searched[0][0], searched
+    saved = json.loads((job_apply_home / "desk.json").read_text(encoding="utf-8"))
+    assert saved["troubleshoot"] is True and saved["handled_only"] is False
+    assert Desk(srv).applier.hold_submits is True  # still on next time the desk opens
+    assert desk_module.troubleshoot_query("field service | equipment technician | customer engineer") == \
+        "field service | equipment technician | human resources | recruiter"
+
+
+def test_every_employer_is_the_persons_and_every_list(job_apply_home):
+    from job_apply.search import employer_lists, every_employer, load_companies
+
+    (job_apply_home / "companies.yaml").write_text("lists: [semiconductor-az]\ncompanies: []\n", encoding="utf-8")
+    names = {c["name"] for c in every_employer()}
+    assert {c["name"] for c in load_companies()} < names
+    from job_apply.search import _companies_in
+    for path in employer_lists().values():
+        assert {c["name"] for c in _companies_in(path)[0]} <= names
 
 
 def test_tailoring_queue_hands_claude_the_jobs_and_the_real_resume(srv, job_apply_home):

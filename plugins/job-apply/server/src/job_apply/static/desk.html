@@ -162,6 +162,7 @@ footer { max-width: 1240px; margin: 0 auto; padding: 0 16px 24px; color: var(--m
         <button data-filter="mine" aria-pressed="false">My applications <span id="mine-count"></span></button>
       </div>
       <label class="openings-only handled-switch" title="Only the employers where, in the plugin's live check, the desk took a test applicant all the way to the application's review page. Bot checks, CAPTCHAs and steps it can't do yet are elsewhere."><input type="checkbox" id="handled-only"> Only where the desk goes all the way</label>
+      <label class="openings-only handled-switch" title="To get the desk going at more employers: Find jobs searches every list's employers (yours, and HR jobs too), and only the openings where the desk doesn't go all the way yet show, whatever their fit. Nothing is sent while it's on."><input type="checkbox" id="troubleshoot"> Troubleshooting</label>
       <span class="spacer"></span>
       <span class="openings-only links"><button class="link" data-act="select-recommended">Select recommended</button>
       <button class="link" data-act="select-none">Clear</button></span>
@@ -460,7 +461,9 @@ function renderRows() {
   if (mine) { renderApps(); return; }
   // links the person added (here, or through Claude) always show: they picked those themselves
   const onlyHandled = !!(state.settings && state.settings.handled_only);
-  const listed = (state.listings || []).filter((r) => filter === "all" || r.added || (r.fit && r.fit.recommended) || r.run);
+  const troubleshooting = !!(state.settings && state.settings.troubleshoot);
+  // (troubleshooting: every opening tried, whatever its fit)
+  const listed = (state.listings || []).filter((r) => filter === "all" || troubleshooting || r.added || (r.fit && r.fit.recommended) || r.run);
   const rows = listed.filter(shown);
   const entries = rows.map((r) => {
     const fit = r.fit || {score: 0, reasons: [], concerns: []};
@@ -487,6 +490,7 @@ function renderRows() {
   if (!entries.length) {
     const msg = state.search.status === "running" ? "Searching employers' career sites…"
       : onlyHandled && listed.length ? "Nothing here from the employers where the desk goes all the way. Turn off that switch to see the rest."
+      : troubleshooting ? "Nothing here yet from the employers where the desk doesn't go all the way. Press Find jobs: troubleshooting searches every list's employers."
       : (state.listings || []).length ? "Nothing recommended. Switch to All to see every opening."
       : "Press Find jobs to search every employer's career site for openings that fit your profile.";
     entries.push({key: "empty", html: `<li class="empty">${esc(msg)}</li>`});
@@ -634,7 +638,7 @@ function renderBank() {
 function renderHeader() {
   const p = state.profile, s = state.settings;
   $("who").textContent = p.name ? `for ${p.name}` : "";
-  const mode = s.dry_run ? ["Practice mode: nothing is sent", "warn"] : state.settings.auto_submit ? ["Submits for you", "bad"] : ["Stops at each review page", "good"];
+  const mode = s.dry_run ? ["Practice mode: nothing is sent", "warn"] : s.troubleshoot ? ["Troubleshooting: nothing is sent", "warn"] : state.settings.auto_submit ? ["Submits for you", "bad"] : ["Stops at each review page", "good"];
   $("mode").innerHTML = `<span class="pill ${mode[1]}">${esc(mode[0])}</span>`;
   const sr = state.search;
   $("find").innerHTML = sr.status === "running" ? `<span class="spin"></span> Searching…` : "Find jobs";
@@ -655,6 +659,8 @@ function renderHeader() {
   if (document.activeElement !== tailor) tailor.checked = !!s.tailor_resumes;
   const handledOnly = $("handled-only");
   if (document.activeElement !== handledOnly) handledOnly.checked = !!s.handled_only;
+  const troubleshootOn = $("troubleshoot");
+  if (document.activeElement !== troubleshootOn) troubleshootOn.checked = !!s.troubleshoot;
   $("plugin-version").textContent = state.version ? `job-apply ${state.version}` : "";
   $("tailor-hint").textContent = s.tailor_resumes ? "On: each job waits for Claude to write a resume for it." : "Off: your usual resume goes with every application.";
   const systems = {workday: "Workday", successfactors: "SuccessFactors", icims: "iCIMS", applicantstack: "ApplicantStack",
@@ -698,6 +704,8 @@ function renderHeader() {
     : `<strong>${toSend.length} application${toSend.length === 1 ? "" : "s"} ready for your Submit${toSend.some((r) => r.need === "captcha" && r.status !== "ready") ? ` (${toSend.filter((r) => r.need === "captcha" && r.status !== "ready").length} with a CAPTCHA to tick first)` : ""}.</strong>
        <span>Go through them one by one: each review page comes up in the browser window to check before you send it.</span>
        <button class="primary" data-act="review-round">Review them</button>`});
+  if (s.troubleshoot) notes.push({cls: "waiting", html: `<strong>Troubleshooting is on: nothing is sent.</strong>
+    <span>Find jobs searches every list's employers, and only the openings where the desk doesn't go all the way yet show. Turn it off (under Openings) to apply for real.</span>`});
   const needing = allRuns().filter((r) => r.status === "needs_you").length;
   document.title = needing ? `(${needing}) Needs you · Job Desk` : "Job Desk";
   if (state.tailoring) notes.push({cls: "waiting", html: `<strong>${state.tailoring} job${state.tailoring === 1 ? "" : "s"} waiting for a tailored resume.</strong>
@@ -893,11 +901,15 @@ function selectable(url) {
 }
 
 // What "Only where the desk goes all the way" leaves showing: those employers' openings, and what the person has
-// already had to do with (a link they added, a job under way or tracked); nothing hidden is ever applied to
+// already had to do with (a link they added, a job under way or tracked); "Troubleshooting", the other employers'
+// openings, and the same. Nothing hidden is ever applied to
 function shown(r) {
-  return !(state.settings && state.settings.handled_only) || kept(r);
+  const s = state.settings || {};
+  return s.handled_only ? kept(r) : s.troubleshoot ? keptElse(r) : true;
 }
-const kept = (r) => !!(r.handled || r.added || r.run || (r.job_id != null && r.status && r.status !== "skipped"));
+const theirs = (r) => !!(r.added || r.run || (r.job_id != null && r.status && r.status !== "skipped"));
+const kept = (r) => !!r.handled || theirs(r);
+const keptElse = (r) => !r.handled || theirs(r);
 
 // A problem report for a job, shown in a dialog with a link: the person's own click opens GitHub,
 // which a pop-up opened after the wait would not (browsers block those). Made again for the same
@@ -991,9 +1003,9 @@ document.addEventListener("click", (e) => {
     }
   }
   if (a === "select-recommended") {
-    const onlyHandled = !!(state.settings && state.settings.handled_only);
-    (state.listings || []).forEach((r) => { if (r.fit && r.fit.recommended && !DONE.has(r.status) && !r.run
-                                             && (!onlyHandled || r.handled)) selected.add(r.url); });
+    const s = state.settings || {};
+    (state.listings || []).forEach((r) => { if ((s.troubleshoot || r.fit && r.fit.recommended) && !DONE.has(r.status) && !r.run
+                                             && (s.handled_only ? r.handled : s.troubleshoot ? !r.handled : true)) selected.add(r.url); });
     renderRows();
   }
   if (a === "select-none") { selected.clear(); renderRows(); }
@@ -1071,7 +1083,13 @@ document.addEventListener("change", (e) => {
   if (t.id === "handled-only") {
     // what the switch hides isn't applied to unseen
     if (t.checked) (state.listings || []).forEach((r) => { if (!kept(r)) selected.delete(r.url); });
+    if (t.checked) $("troubleshoot").checked = false;
     act(() => api("/api/settings", {handled_only: t.checked}));
+  }
+  if (t.id === "troubleshoot") {
+    if (t.checked) (state.listings || []).forEach((r) => { if (!keptElse(r)) selected.delete(r.url); });
+    if (t.checked) $("handled-only").checked = false;
+    act(() => api("/api/settings", {troubleshoot: t.checked}));
   }
   if (t.dataset.bank) act(() => api("/api/bank", {id: t.dataset.bank, answer: t.value}));
   if (t.id === "report-anonymous" && reportShown) makeReport(reportShown.job, true);
