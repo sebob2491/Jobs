@@ -355,7 +355,7 @@ def main(argv: list[str] | None = None) -> int:
     body = issue_body(args.issue_file)
     state = live_compare.read_state(body) or {}
     if args.handled:
-        quoted = [json.dumps(n) if re.search(r"""[:#'"]""", n) else n for n in handled(state, details(body))]
+        quoted = [json.dumps(n) for n in handled(state, details(body))]  # (any name, quoted: YAML reads "No" as false)
         print("employers:\n" + "\n".join(f"  - {n}" for n in quoted))
     elif args.tables:
         print(tables(state, details(body)))

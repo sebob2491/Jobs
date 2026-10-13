@@ -456,8 +456,8 @@ function renderRows() {
   if (mine) { renderApps(); return; }
   // links the person added (here, or through Claude) always show: they picked those themselves
   const onlyHandled = !!(state.settings && state.settings.handled_only);
-  const rows = (state.listings || []).filter((r) => filter === "all" || r.added || (r.fit && r.fit.recommended) || r.run)
-    .filter((r) => !onlyHandled || r.handled || r.run);  // (one under way stays where the person can see it)
+  const listed = (state.listings || []).filter((r) => filter === "all" || r.added || (r.fit && r.fit.recommended) || r.run);
+  const rows = listed.filter(shown);
   const entries = rows.map((r) => {
     const fit = r.fit || {score: 0, reasons: [], concerns: []};
     const done = DONE.has(r.status) || (r.run && UNDER_WAY.has(r.run.status));
@@ -482,7 +482,7 @@ function renderRows() {
   });
   if (!entries.length) {
     const msg = state.search.status === "running" ? "Searching employers' career sites…"
-      : onlyHandled && (state.listings || []).length ? "Nothing here from the employers where the desk goes all the way. Turn off that switch to see the rest."
+      : onlyHandled && listed.length ? "Nothing here from the employers where the desk goes all the way. Turn off that switch to see the rest."
       : (state.listings || []).length ? "Nothing recommended. Switch to All to see every opening."
       : "Press Find jobs to search every employer's career site for openings that fit your profile.";
     entries.push({key: "empty", html: `<li class="empty">${esc(msg)}</li>`});
@@ -872,8 +872,15 @@ async function act(fn, hold = true) {
 const UNDER_WAY = new Set(["submitted", "running", "queued", "ready", "needs_you"]);
 function selectable(url) {
   const r = (state.listings || []).find((x) => x.url === url);
-  return !!r && !DONE.has(r.status) && !(r.run && UNDER_WAY.has(r.run.status));
+  return !!r && shown(r) && !DONE.has(r.status) && !(r.run && UNDER_WAY.has(r.run.status));
 }
+
+// What "Only where the desk goes all the way" leaves showing: those employers' openings, and what the person has
+// already had to do with (a link they added, a job under way or tracked); nothing hidden is ever applied to
+function shown(r) {
+  return !(state.settings && state.settings.handled_only) || kept(r);
+}
+const kept = (r) => !!(r.handled || r.added || r.run || (r.job_id != null && r.status && r.status !== "skipped"));
 
 // A problem report for a job, shown in a dialog with a link: the person's own click opens GitHub,
 // which a pop-up opened after the wait would not (browsers block those). Made again for the same
@@ -1045,7 +1052,7 @@ document.addEventListener("change", (e) => {
   if (t.id === "tailor") act(() => api("/api/settings", {tailor_resumes: t.checked}));
   if (t.id === "handled-only") {
     // what the switch hides isn't applied to unseen
-    if (t.checked) (state.listings || []).forEach((r) => { if (!r.handled) selected.delete(r.url); });
+    if (t.checked) (state.listings || []).forEach((r) => { if (!kept(r)) selected.delete(r.url); });
     act(() => api("/api/settings", {handled_only: t.checked}));
   }
   if (t.dataset.bank) act(() => api("/api/bank", {id: t.dataset.bank, answer: t.value}));

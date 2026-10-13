@@ -647,6 +647,15 @@ def test_only_where_the_desk_goes_all_the_way_shows_those_employers_alone_and_is
                 await page.wait_for_selector("text=Field Service Engineer", state="detached")
                 assert await page.locator("text=Module Equipment Technician").count() == 1
                 assert await page.locator("#apply").inner_text() == "Apply to 1 selected"
+                # (the review's) a link the person adds shows, whatever its employer, and nothing hidden is applied to
+                srv.add_job(url="https://example.com/p", title="Pasted Technician", company="lamresearch")  # (a pasted link)
+                desk.listings.append({"company": "Example Fab", "title": "Hidden Tech", "url": "https://example.com/h",
+                                      "location": "Phoenix, AZ", "fit": fit})
+                await page.wait_for_selector("text=Pasted Technician")
+                assert await page.locator("text=Hidden Tech").count() == 0
+                await page.click("text=Select recommended")
+                picked = await page.evaluate("() => [...selected].filter(selectable)")
+                assert "https://example.com/h" not in picked and "https://example.com/intel" in picked, picked
                 await browser.close()
         finally:
             await desk.stop()
