@@ -188,8 +188,12 @@ _MORE_THAN_TERMS = re.compile(r"receiv\w*|e-?mails?|updates?|notifications?|mess
                               r"talent pool|retain|retention", re.I)
 # How long a box's agreement lasts, which is no more than it (Air Liquide's Workday, live run 41, Oct 12: "You
 # acknowledge having read the documents above. Your agreement is valid for any future visits."): not "future" news
-_LASTS = re.compile(r"\byour (?:agreement|consent|acceptance) (?:is|will be|remains) valid for (?:any|all) future visits\b",
-                    re.I)
+_LASTS = re.compile(r"\byour (?:agreement|consent|acceptance) (?:is|will be|remains) valid for (?:any|all) future visits\b"
+                    # and a privacy notice received, which is no more than it (Boeing's Workday Create Account, run 44,
+                    # Oct 13: "I have received the Boeing Applicant Privacy Notice."): not "receive" emails
+                    # (only the verb taken out: the notice's own name is still read, "the Talent Pool Privacy Notice")
+                    r"|\bhave (?:read and )?received(?= (?:a copy of )?(?:the|a|an|our|its)\b[^.]{0,60}?"
+                    r"\b(?:privacy|data protection) (?:notice|policy|statement)\b)", re.I)
 # A box whose words say it agrees to the words above it ("the documents above"): what it agrees to is up there
 _READ_ABOVE = re.compile(r"\b(?:documents?|terms|text|information|notices?|statements?|policy|policies) above\b", re.I)
 # An attestation or privacy agreement that also signs the person up: "... and consent to receive email communications
@@ -1793,7 +1797,7 @@ class Applier:
                         if added.get("add_button_covered"):
                             self._log(run, f"couldn't press the {section} section's Add button: something on the page "
                                       "covers it, so its blocks are left as they are")
-                        self._note_short_entries(run, section, added)
+                        self._note_short_entries(run, section, added, data)
                 result = await srv.autofill(job_id=run.job_id)
                 if result["filled"]:
                     self._log(run, f"filled {len(result['filled'])} field(s) on {_where(data)}")
@@ -2396,11 +2400,13 @@ class Applier:
                   "the desk never picks a degree you didn't earn (your resume still shows the classes)")
         return True
 
-    def _note_short_entries(self, run: Run, section: str, added: dict[str, Any]) -> None:
+    def _note_short_entries(self, run: Run, section: str, added: dict[str, Any], data: dict[str, Any]) -> None:
         """A section whose Add button stayed covered, with fewer blocks on the page than the profile has entries
         (Workday's My Experience, issue #112, note 32: 2 of 5 jobs reached the form, and on another site the job went
-        on to its review page with its school missing), is remembered on the run: the job stops for it."""
-        after, wanted = added.get("after", 0), added.get("wanted", 0)
+        on to its review page with its school missing), is remembered on the run: the job stops for it. Its blocks
+        are counted by their own Deletes too: UKG Pro's, filled from the resume, have no numbered heading ("Delete
+        Work Experience 1"; run 44 stopped Nikon, UCT and Desert Financial on "0 of your 1 job")."""
+        after, wanted = max(added.get("after", 0), _blocks_by_delete(data, section)), added.get("wanted", 0)
         if not added.get("add_button_covered") or after >= wanted:
             run.entries_short.pop(section, None)
             return
@@ -2754,7 +2760,7 @@ class Applier:
             ticked = [f for f in data.get("fields") or [] if f.get("kind") == "checkbox" and not f.get("disabled")
                       and is_empty_value(f.get("value")) and _TERMS_BOX.search(f.get("label") or "")
                       and not _NOT_TERMS.search(f.get("label") or "") and _TERMS_ONLY.search(f.get("label") or "")
-                      and not _MORE_THAN_TERMS.search(f.get("label") or "")]
+                      and not _MORE_THAN_TERMS.search(_LASTS.sub("", f.get("label") or ""))]
             if ticked and not (await srv.fill_form([{"id": f["id"], "value": True} for f in ticked])).get("ok"):
                 return await self._account_theirs(run, data, f"{site} asks you to agree to its terms before making your "
                                             "account, and its box didn't take my tick")
@@ -4351,6 +4357,17 @@ def _sent_already(data: dict[str, Any], text: str, moved: bool) -> str:
     if moved and (gone := sorted(confirmations(text))) and not _mid_application(data, text):
         return gone[0]
     return _applied_before(data, text)
+
+
+# A block's own Delete, and nothing else's ("Delete Military Experience 2", "Delete Job Reference 1" aren't a job's)
+_BLOCK_KINDS = {"work": r"(?:work|employment|professional)\s+(?:experience|history)|employment|experience",
+                "education": r"education(?:al)?(?:\s+(?:history|background))?"}
+
+
+def _blocks_by_delete(data: dict[str, Any], section: str) -> int:
+    """How many of a section's blocks the page shows, by their own numbered Delete ("Delete Education 2")."""
+    kind = re.compile(rf"^(?:delete|remove)\s+(?:{_BLOCK_KINDS.get(section, section)})\s+(\d+)\s*$", re.I)
+    return len({m.group(1) for a in data.get("actions") or [] if (m := kind.match(final_text(a.get("text") or "")))})
 
 
 def _applied_before(data: dict[str, Any], text: str) -> str:

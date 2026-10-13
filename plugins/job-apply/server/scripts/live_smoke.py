@@ -92,8 +92,10 @@ FAKE_PROFILE = {
     "eeo": {"gender": "Decline to self-identify", "hispanic_latino": "Decline to self-identify",
             "race": "Decline to self-identify", "veteran": "I don't wish to answer",
             "disability": "I do not want to answer"},
+    # (with a description: Workday's Role Description is required at some employers, and three stopped there, run 44)
     "work_history": [{"title": "Equipment Technician", "company": "Example Fab", "location": "Chandler, AZ",
-                      "start": "2021-03", "end": "present"}],
+                      "start": "2021-03", "end": "present",
+                      "description": "Maintained and repaired process equipment; ran preventive maintenance."}],
     "education_history": [{"school": "Arizona State University", "degree": "Bachelor of Science",
                            "major": "Electrical Engineering", "start": 2016, "end": 2020}],
     # (its kind named, as setup asks for it: a list with several kinds of a bachelor's, BA and BS, is the
@@ -123,7 +125,8 @@ ROLES: dict[str, dict[str, Any]] = {
         "query_az": "human resources | recruiter | talent acquisition | hr generalist",  # (four: the most searched)
         "query_any": "human resources | recruiter",
         "work_history": [{"title": "HR Coordinator", "company": "Example Staffing", "location": "Tempe, AZ",
-                          "start": "2021-03", "end": "present"}],
+                          "start": "2021-03", "end": "present",
+                          "description": "Coordinated hiring, onboarding and employee records for a staffing team."}],
         "education_history": [{"school": "Arizona State University", "degree": "Bachelor of Science",
                                "major": "Business Administration", "start": 2016, "end": 2020}],
         "education": {"highest_degree": "Bachelor's Degree",
@@ -133,7 +136,8 @@ ROLES: dict[str, dict[str, Any]] = {
         "query_az": "financial analyst | accountant | accounting | finance",
         "query_any": "financial analyst | accountant",
         "work_history": [{"title": "Financial Analyst", "company": "Example Bank", "location": "Phoenix, AZ",
-                          "start": "2021-03", "end": "present"}],
+                          "start": "2021-03", "end": "present",
+                          "description": "Built monthly forecasts and variance reports for a regional bank."}],
         "education_history": [{"school": "Arizona State University", "degree": "Bachelor of Science",
                                "major": "Finance", "start": 2016, "end": 2020}],
         "education": {"highest_degree": "Bachelor's Degree",
