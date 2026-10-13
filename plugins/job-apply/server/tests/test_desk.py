@@ -588,7 +588,8 @@ def test_an_answer_naming_the_employer_is_remembered_as_company_website_or_not_a
     assert answer(("How Did You Hear About Us?*", "Acme website"), ("Preferred shift", "Nights")) is None
     assert {a["question"]: a["answer"] for a in config.saved_answers()} == {
         "How Did You Hear About Us?*": "Company Website", "Preferred shift": "Nights"}
-    assert desk.applier.runs[job["id"]].once == {}
+    # (this application gets the choice as picked: the review of note 27)
+    assert desk.applier.runs[job["id"]].once == {"how did you hear about us": "Acme website"}
     note = answer(("Which of our teams would you like to join?", "The Acme field team"))
     assert "Acme field team" in note and "this application only" in note
     assert desk.applier.runs[job["id"]].once == {question_key("Which of our teams would you like to join?"):

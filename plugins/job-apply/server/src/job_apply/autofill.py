@@ -2164,13 +2164,12 @@ def _own_website(value: Any, options: list[str], job: dict) -> str | None:
         sites = [o for o in options if norm(o) and set(norm(o).split()) == employer]
     if len(sites) != 1:
         return None
-    # one site: the employer's, or one any employer's could be called ("Careers Site"), never another source's
-    # ("Indeed Website", "University Career Site": review of issue #112, note 27)
+    # one site: the employer's, or any but another source's ("Indeed Website", "University Career Site": the review
+    # of issue #112, note 27). Robert Half's "Website / Job Board Posting" is a group holding "Company Career Site"
     named = bool(employer & set(norm(sites[0]).split()))
-    generic = re.search(r"\b(company|employer|career|careers|corporate|our)\b", sites[0], re.I) \
-        and not re.search(r"\b(indeed|linkedin|glassdoor|monster|ziprecruiter|handshake|university|college|school|"
-                          r"other|board|social|agency|recruiter|referral)\b", sites[0], re.I)
-    return sites[0] if named or generic else None
+    other = re.search(r"\b(indeed|linkedin|glassdoor|monster|ziprecruiter|handshake|university|college|school|"
+                      r"other|agency|recruiter|referral)\b", sites[0], re.I)
+    return sites[0] if named or not other else None
 
 
 # Employers' first words that are everyday or places' words too: an answer that has one doesn't name the employer
