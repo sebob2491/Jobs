@@ -1,0 +1,48 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Apply</title>
+<style>
+  .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  .bone { height: 40px; width: 300px; background: #eee; margin-bottom: 8px; }
+</style>
+</head>
+<body>
+<!-- like Wells Fargo's and Hitachi's Workday My Information right after the account's sign-in (run 57, Oct 13): the
+     step's Country and names drawn, its Address, Email Address and Phone sections each still Workday's loading
+     placeholder (a hidden "Loading" beside grey bars), and Save and Continue greyed out; they never came. The desk read
+     it as a page with no way on ("I couldn't find the button that moves this application on").
+     ?heal: the page reloaded draws the rest and its Save and Continue, which goes to the review page. -->
+<ol aria-label="Application Progress">
+  <li data-automation-id="progressBarActiveStep">current step 1 of 5 My Information</li>
+  <li>My Experience</li><li>Application Questions</li><li>Voluntary Disclosures</li><li>Review</li>
+</ol>
+<h2>My Information</h2>
+<form id="info" onsubmit="return false">
+  <label for="country">Country*</label>
+  <select id="country" required><option value="">Select One</option><option>Canada</option><option>United States of America</option></select>
+  <h4>Legal Name</h4>
+  <label for="fn">First Name*</label><input id="fn" required>
+  <label for="ln">Last Name*</label><input id="ln" required>
+  <div id="sections"></div>
+</form>
+<div data-automation-id="pageFooter"><button id="next" type="button" disabled>Save and Continue</button></div>
+<script>
+  const sections = ['Address', 'Email Address', 'Phone'];
+  const healed = new URLSearchParams(location.search).has('heal') && sessionStorage.getItem('seen') === '1';
+  sessionStorage.setItem('seen', '1');
+  const host = document.getElementById('sections');
+  host.innerHTML = sections.map((name, i) => `<div role="group" aria-labelledby="s${i}"><h4 id="s${i}">${name}</h4>`
+    + (healed ? `<label for="b${i}">${name === 'Address' ? 'City' : name}*</label><input id="b${i}" required>`
+       : '<div><div class="sr">Loading</div><div aria-hidden="true"><div class="bone"></div><div class="bone"></div></div></div>')
+    + '</div>').join('');
+  const next = document.getElementById('next');
+  if (healed) {
+    next.disabled = false;
+    next.onclick = () => {
+      document.body.innerHTML = '<div>current step 5 of 5</div><h2>Review</h2>'
+        + '<form onsubmit="return false"><button type="submit">Submit</button></form>';
+    };
+  }
+</script>
+</body>
+</html>

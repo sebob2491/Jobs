@@ -1044,6 +1044,9 @@ def test_a_county_comes_from_an_arizona_citys():
     assert resolve_field(f("County *", "combobox", options=counties), p).value == "Maricopa, AZ"
     assert resolve_field(f("County"), p).value == "Maricopa"
     assert "Maricopa" in place_words("city", p)
+    # "County / State" is the state (Rogers' SuccessFactors lists the states under it, run 56: "Maricopa" wasn't there)
+    states = ["No Selection", "Alabama", "Alaska", "Arizona", "Arkansas", "California"]
+    assert resolve_field(f("County / State", "combobox", options=states), p).value == "Arizona"
 
     path = config.profile_path()
     data = yaml.safe_load(path.read_text())
@@ -1462,6 +1465,16 @@ def test_a_decline_finds_the_lists_own_way_to_decline_and_is_never_a_no():
         assert choose_option(said, ["Female", "Male"]) is None, said
     # a "no" about something else than answering is an answer, not a decline
     assert choose_option("No", ["Yes, I am willing to relocate", "I do not wish to relocate"]) == "I do not wish to relocate"
+    # Pfeiffer Vacuum's SuccessFactors (run 56): "Prefers not to answer", "Not willing to answer"
+    assert choose_option("I don't wish to answer", ["No Selection", "Non-Veteran", "Not a Protected Veteran",
+                                                    "Prefers not to answer", "Protected Veteran"]) == "Prefers not to answer"
+    assert choose_option("I do not want to answer", ["No Selection", "No disability", "Not willing to answer",
+                                                     "Yes, with a disability (or previously had a disability)"]) \
+        == "Not willing to answer"
+    # (but not willing to relocate, or to travel, is an answer)
+    from job_apply.autofill import is_decline
+    assert not is_decline("Not willing to relocate") and not is_decline("Unwilling to travel")
+    assert not is_decline("Not willing to share salary history")  # (the review of 0.3.147: an answer)
 
 
 def test_a_decline_is_found_where_workday_names_each_choice_with_its_country():

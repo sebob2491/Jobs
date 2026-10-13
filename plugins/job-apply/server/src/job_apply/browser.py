@@ -720,7 +720,9 @@ class BrowserSession:
                 data["errors"] = []  # nothing to fill: an embed (a player, a widget), whose errors aren't the form's
             for key in ("fields", "actions", "errors", "headings", "dialogs"):
                 result[key].extend(data.get(key, []))
-            if data.get("busy"):  # a loading indicator on show (Workday's dots while a step loads)
+            if data.get("busy") and (frame is page.main_frame or data.get("fields")):
+                # a loading indicator on show (Workday's dots while a step loads); not an embed's with nothing to fill (a
+                # chat widget's spinner: the review of 0.3.147)
                 result["busy"] = True
             result["frame_headings"][prefix] = list(data.get("headings", []))
         self._fields = {f["id"]: f for f in result["fields"]}
@@ -767,10 +769,12 @@ class BrowserSession:
         await loc.focus(timeout=FOCUS_TIMEOUT)
         await loc.press("ArrowDown", timeout=FOCUS_TIMEOUT)
 
-    async def _field_options(self, page: Page, field_id: str, loc: Locator, wait_ms: int) -> list[str]:
+    async def _field_options(self, page: Page, field_id: str, loc: Locator, wait_ms: int,
+                             placeholder_ms: int = 0) -> list[str]:
         """This field's menu options, polling while the menu renders (and while it shows only its placeholder:
         BCBS of Arizona's and KLA's Workday Degree list, run 53, opened on "Select One" alone, its choices a moment
-        after)."""
+        after). `placeholder_ms`: how long a menu showing its placeholder alone is waited on, where that's longer
+        (Boeing's veteran list, run 56: still "Select One" after two seconds); one showing nothing, `wait_ms`."""
         self._frame_for(page, field_id)  # fails clearly if the field's frame has gone
         waited = 0
         while True:
@@ -778,7 +782,7 @@ class BrowserSession:
                 options = await loc.evaluate(FIELD_OPTIONS_JS)
             except PlaywrightError:
                 options = []
-            if any(not is_empty_value(o) for o in options) or waited >= wait_ms:
+            if any(not is_empty_value(o) for o in options) or waited >= max(wait_ms, placeholder_ms if options else 0):
                 return options
             await page.wait_for_timeout(150)
             waited += 150
@@ -815,7 +819,9 @@ class BrowserSession:
         wait = 2000 if field["kind"] == "listbox" else 900  # search pickers often show nothing until typed into
         try:
             await self._open(page, field["id"], loc)
-            options = await self._field_options(page, field["id"], loc, wait)
+            # (a list's choices can take seconds after it opens on its placeholder alone: Boeing's Workday veteran list,
+            # run 56, still "Select One" after two; _field_options stops waiting as soon as they come)
+            options = await self._field_options(page, field["id"], loc, wait, 5000 if field["kind"] == "listbox" else 0)
         except (PlaywrightError, PlaywrightTimeout):
             options = []
         finally:

@@ -20,7 +20,8 @@
     document.getElementById('take').addEventListener('click', () => {
       // (?return=<address>: where the assessment hands back instead, another address of the application's)
       const back = q.get('return') || location.href.split('?')[0] + '?done=1';
-      window.open(q.get('vendor') + '?back=' + encodeURIComponent(back), '_blank');
+      // (?late=<ms>: opened that long after the press, as Circle K's and Taylor Morrison's did, run 57)
+      setTimeout(() => window.open(q.get('vendor') + '?back=' + encodeURIComponent(back), '_blank'), Number(q.get('late') || 0));
     });
   }
   document.getElementById('next').addEventListener('click', () => { if (q.get('done') === '1') location.href = 'review.html'; });

@@ -1423,7 +1423,7 @@ def create_account_on_sf(srv, query="", watch=0):
     return run(go())
 
 
-@pytest.mark.parametrize("how", ["on", "slow", "once", "test-identity", "long"])
+@pytest.mark.parametrize("how", ["on", "slow", "once", "test-identity", "long", "gigya"])
 def test_with_manage_accounts_a_data_privacy_statement_is_opened_and_accepted_for_the_account(
         srv, monkeypatch, job_apply_home, how):
     """SuccessFactors' Create Account (APS's, live, Oct 10, 2026) makes no account until its data privacy
@@ -1434,19 +1434,22 @@ def test_with_manage_accounts_a_data_privacy_statement_is_opened_and_accepted_fo
     Create Account; never Decline, and never the box for hearing more about career opportunities (marketing).
     The statement comes a moment after its link is pressed (slow). The live check's test identity does the
     same in practice mode. Amkor's link reads "Please read and accept the data privacy statement to proceed.",
-    longer than the form reader took a button's words to be, so it was never seen (long, live check Oct 11)."""
+    longer than the form reader took a button's words to be, so it was never seen (long, live check Oct 11).
+    Edwards Vacuum's (gigya, run 57) has it inside the label of a required box greyed out until it's accepted,
+    "Read and acknowledge the data privacy statement.", and a "Submit": the link was never seen as one to press."""
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
     saved_password(monkeypatch)
     manage_accounts(job_apply_home)
     if how == "test-identity":
         as_test_identity(monkeypatch, job_apply_home)
-    r, kept, _ = create_account_on_sf(srv, f"?{how}" if how in ("slow", "once", "long") else "")
+    r, kept, _ = create_account_on_sf(srv, f"?{how}" if how in ("slow", "once", "long", "gigya") else "")
     log = "\n".join(r.log)
     agreed = f"agreed to Example Corp's notice “{STATEMENT}” for you (settings.accept_notices)"
     assert agreed in r.log, log
     assert any(line.startswith("created your account on") and "accepted its data privacy statement" in line
                for line in r.log), log
-    assert r.log.index(agreed) < next(i for i, line in enumerate(r.log) if line.startswith("pressed “Create Account”")), log
+    made = "pressed “Submit” to create" if how == "gigya" else "pressed “Create Account”"
+    assert r.log.index(agreed) < next(i for i, line in enumerate(r.log) if line.startswith(made)), log
     opened = 2 if how == "once" else 1  # (once: its first press opened nothing, and it was pressed again)
     assert kept == {"opened": opened, "statement": "accepted", "presses": 1, "created": 1, "campaign": False}, kept
     assert r.need != "sign_in" and "Create Account" not in r.reason, (r.status, r.reason, log)
@@ -2333,6 +2336,80 @@ def test_a_step_still_loading_its_questions_is_waited_for(srv, monkeypatch, quer
     r = run(go())
     assert r.status == "ready", (r.status, r.need, r.reason, r.log)
     assert any("clicked “Save and Continue”" in line for line in r.log), r.log
+
+
+def test_a_resume_from_a_stop_is_never_followed_by_a_reload_of_the_persons_page(srv):
+    """The review of 0.3.147: a page still loading after the person's own Resume from a stop (what they typed there by
+    hand) is said, never reloaded away; a Resume after questions answered on the desk may still be reloaded once."""
+    applier = Applier(srv)
+    job = srv.add_job(url=fixture_url("site/workday-sections-loading.html"), title="Clerk", company="Example Bank")["job"]
+    r = applier.enqueue(job["id"])
+    r.status, r.need = "needs_you", "stuck"
+    assert applier.resume(job["id"]).load_reloaded
+    other = srv.add_job(url=fixture_url("site/workday-sections-loading.html") + "?b", title="Clerk 2",
+                        company="Example Bank")["job"]
+    q = applier.enqueue(other["id"])
+    q.status, q.need = "needs_you", "questions"
+    assert not applier.resume(other["id"]).load_reloaded
+
+
+@pytest.mark.parametrize("query", ["", "?heal"])
+def test_a_step_whose_sections_never_finish_loading_is_reloaded_once_then_said(srv, monkeypatch, query):
+    """Wells Fargo's and Hitachi's Workday (run 57, Oct 13): My Information right after the account's sign-in drew its
+    Country and names, but its Address, Email Address and Phone stayed Workday's loading placeholders and its Save and
+    Continue greyed out, and the desk said "I couldn't find the button that moves this application on". A step still
+    loading is waited on, reloaded once (heal: then it draws the rest and goes on), and otherwise said for what it is."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 1)
+    monkeypatch.setattr(pipeline, "STEP_LOAD_WAIT", 2)
+    job = srv.add_job(url=fixture_url("site/workday-sections-loading.html") + query, title="Branch Coordinator",
+                      company="Example Bank")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        r = applier.enqueue(job["id"])
+        applier.start()
+        try:
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert any("still loading" in line and "reloaded" in line for line in r.log), r.log
+    if query:
+        assert r.status == "ready", (r.status, r.need, r.reason, r.log)
+    else:
+        assert (r.status, r.need) == ("needs_you", "stuck"), (r.status, r.need, r.reason, r.log)
+        assert "didn't finish loading" in r.reason and "couldn't find the button" not in r.reason, r.reason
+
+
+def test_an_answer_the_site_lost_is_put_back_on_its_own_step_with_workdays_errors_found(srv, monkeypatch):
+    """Robert Half's Workday (run 59): the person's answers to its compensation and non-compete lists went in, and Next
+    came back to the same step with "Errors Found" over it and the compensation list on "Select One" again. Each answer
+    is kept to the page it first went in on, and the heading made the step another page: the answer was never put
+    back, and the question was asked round after round. The step is the same step with its errors shown."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 1)
+    job = srv.add_job(url=fixture_url("site/workday-answers-lost.html"), title="Talent Manager",
+                      company="Example Staffing")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        r = applier.enqueue(job["id"])
+        r.seen_form = True  # (past My Information and My Experience)
+        r.once[pipeline.question_key("What is your desired Compensation?*")] = "Negotiable"
+        r.once[pipeline.question_key("Have you ever entered in to a non-compete agreement or any other agreement to "
+                                     "restrict your employment?*")] = "No"
+        applier.start()
+        try:
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert r.status == "ready", (r.status, r.need, r.reason, [q.get("label") for q in r.questions], r.log)
 
 
 def test_a_first_step_that_thanks_the_person_isnt_taken_for_a_confirmation(srv, monkeypatch):

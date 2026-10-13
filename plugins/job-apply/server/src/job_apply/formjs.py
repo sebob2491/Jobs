@@ -616,7 +616,9 @@ EXTRACT_JS = r"""
     // (a link to read a privacy statement or terms may say more: Amkor's SuccessFactors "Please read and accept
     // the data privacy statement to proceed.", nightly live check Oct 11)
     if (!t || t.length > 60 && !(t.length <= 120 && /^(please )?(read|view|open)\b.*\b(privacy|terms)\b/i.test(t))) continue;
-    if (el.tagName === 'A' && !ACTION.test(t)) continue;
+    // (and a link to read the statement is one to press, whatever else it says: Edwards Vacuum's SAP screen set, run 57,
+    // "Read and acknowledge the data privacy statement.", in the label of a box greyed out until it's read)
+    if (el.tagName === 'A' && !ACTION.test(t) && !/^(please )?(read|view|open)\b.*\b(privacy|terms)\b/i.test(t)) continue;
     const full = covers ? t : t + ' ' + (el.getAttribute('aria-label') || '');
     const formSubmit = el.type === 'submit' && !!formOf(el);
     // SuccessFactors' older sites show a posting inside a form whose submit is "Apply": with
@@ -727,7 +729,12 @@ EXTRACT_JS = r"""
   const LOADING = '[data-automation-id="loading"], [data-automation-id*="loadingSpinner" i], '
     + '[data-automation-id*="loading-dots" i], [data-automation-id*="loadingDots" i], [data-part="loading-animation-dot"], '
     + '[aria-busy="true"], [role="progressbar"]:not([aria-valuenow])';
-  const busy = [...document.querySelectorAll(LOADING)].some(visible);
+  // and Workday's placeholder for a section still loading: a hidden "Loading" beside its grey bars (Wells Fargo's and
+  // Hitachi's My Information after the account's sign-in, run 57: its Address, Email and Phone never came)
+  const bones = () => [...document.querySelectorAll('div, span')].some((el) => el.childElementCount === 0
+    && /^loading(?:\.\.\.|\u2026)?$/i.test((el.textContent || '').trim()) && el.nextElementSibling
+    && el.nextElementSibling.getAttribute('aria-hidden') === 'true' && visible(el.nextElementSibling));
+  const busy = [...document.querySelectorAll(LOADING)].some(visible) || bones();
   return { fields, actions, errors, headings, dialogs, ...(busy ? { busy: true } : {}) };
 }
 """.replace("/*SIGN_IN_FORM*/", SIGN_IN_FORM_JS).replace("/*OPEN_DIALOGS*/", OPEN_DIALOGS_JS)

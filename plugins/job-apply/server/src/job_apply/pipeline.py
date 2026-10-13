@@ -450,6 +450,7 @@ class Run:
     reset_from: str = ""  # the sign-in page a reset was asked from: back there once it's done elsewhere
     reset_waited: bool = False  # paused for the reset email (a Resume after that means it's done)
     refreshed: bool = False  # reloaded once for a page that asked for it ("Please refresh the page")
+    load_reloaded: bool = False  # reloaded once for a step still loading after its wait (Workday's placeholders, run 57)
     invalid_redone: bool = False  # the review page's invalid lists answered again from the profile (once a job)
     reset_no_mail: bool = False  # and none came in RESET_MAIL_WAIT: no account there, most likely, so one is made
     reopened_elsewhere: bool = False  # its sign-in page, opened again, led elsewhere: the job opened again (once a job)
@@ -692,6 +693,8 @@ class Applier:
         signing_in = run is not None and run.need == "sign_in"  # (before enqueue clears it)
         if run is not None and run.entries_told:
             run.entries_ok = dict(run.entries_told)  # (a card said a section was short: gone on with, if unchanged)
+        if run is not None and run.need in ("stuck", "sign_in", "bot_check"):
+            run.load_reloaded = True  # (what they did in the browser is never reloaded away: a loading page is said)
         run = self.enqueue(job_id, submit=bool(run and run.submit), front=True)
         self.pressed.add(job_id)  # (the person's own press: it goes even while the queue is paused)
         if signing_in:
@@ -1989,6 +1992,35 @@ class Applier:
                     saved_waited.add(just)
                     await self._wait_for_step_change(just, STEP_SAVE_WAIT)
                     continue
+                # (only where nothing else explains the stop: an agreement to press, a bot check, a closed posting or a
+                # site down are said for what they are, the review of 0.3.147)
+                if loading and _agreement_button(data) is None and not data.get("captcha") and not _BOT_BADGE.search(
+                        " ".join([text[:3000], *(a.get("text") or "" for a in data.get("actions") or [])])) \
+                        and not _closed_notice(data, text) and not _maintenance_page(data) and not _account_step(data) \
+                        and not any(g.startswith(f"{_page_key(data)} ") for g in agreed) \
+                        and not any(_errorish(e) for e in data.get("errors") or []):
+                    # still loading after the wait (Wells Fargo's and Hitachi's Workday My Information after the account's
+                    # sign-in, run 57: its Address, Email and Phone stayed loading placeholders, its Save and Continue
+                    # greyed, and the desk said it couldn't find the way on): reloaded once a job, the reload waited on as
+                    # a step of its own, and then said for what it is. Never after a Submit was pressed (a reload may send
+                    # a form again), nor after the person's own Resume from a stop (what they typed there would go:
+                    # Applier.resume)
+                    if not run.load_reloaded and not run.pressed_before and run.page is not None:
+                        run.load_reloaded = True
+                        step_waited.discard(drawn)
+                        # (a new page: its late buttons waited on, and the steps it goes through again no circle, as
+                        # after a refresh the site asked for)
+                        waited.clear()
+                        since, more = len(pressed), steps
+                        self._log(run, f"{_site(run, data)}'s page was still loading after {STEP_LOAD_WAIT} seconds, so I "
+                                  "reloaded it")
+                        with contextlib.suppress(Exception):
+                            await run.page.reload(wait_until="load")
+                        continue
+                    await self._bring_forward(run)
+                    return self._pause(run, "stuck", f"{_site(run, data)}'s page didn't finish loading: parts of it still "
+                                       "showed their loading placeholders after a wait and a reload, so there's no way on "
+                                       "yet. Reload it in the browser window (or try again later), then press Resume.")
                 if greyed:
                     said = "; ".join(e for e in data.get("errors") or [] if _errorish(e))[:300] \
                         or _unanswered(data)
@@ -2441,8 +2473,10 @@ class Applier:
             by_id = {fid: placed if (placed := placed_key(f)) in run.once else question_key(f.get("label") or "")
                      for fid, f in fields.items()}
             # an answer stays with the page it first went in on: "If yes, please explain" about
-            # relatives isn't the answer to a later page's "If yes, please explain"
-            here = _page_key(data)
+            # relatives isn't the answer to a later page's "If yes, please explain" (the same step with its errors
+            # shown is the same page: Robert Half's Workday, run 59, came back with "Errors Found" over it and an
+            # answer lost, which was never put back)
+            here = _answers_page(data)
             if attempt == 0:  # (an answer that is the site's first choice a list shows: the person's now, never asked
                 # again for being the site's: the review of 0.3.138)
                 same = [fid for fid, key in by_id.items() if key in run.once and run.once_page.get(key, here) == here
@@ -4491,6 +4525,16 @@ def _boxes(data: dict[str, Any]) -> int:
 def _page_key(data: dict[str, Any]) -> tuple:
     """Which page of an application this is: its address and headings."""
     return _bare(data.get("url") or ""), tuple(data.get("headings") or [])
+
+
+# A heading the page shows over its own step when something on it is wrong (Workday's "Errors Found")
+_ERRORS_HEADING = re.compile(r"^(?:\d+\s+)?errors?\s+(?:found|on (?:this|the) page)\b", re.I)
+
+
+def _answers_page(data: dict[str, Any]) -> tuple:
+    """The page an answer the person gave went in on (_fill_once): _page_key without an errors heading, which
+    the same step shows once it's pressed with something wrong (Workday's "Errors Found")."""
+    return _bare(data.get("url") or ""), tuple(h for h in data.get("headings") or [] if not _ERRORS_HEADING.match(h.strip()))
 
 
 def _code_only_submit(data: dict[str, Any]) -> dict[str, Any] | None:

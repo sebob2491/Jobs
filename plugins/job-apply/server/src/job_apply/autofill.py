@@ -75,7 +75,9 @@ _ANSWERING = (r"(answer|respond|reply|disclose|say|state|specify|share|declare|i
 _DECLINE = re.compile(
     r"\bdeclin(e|ed|es|ing)\b"
     rf"|\b(not|don t|dont) (wish|want|care|like) to (be )?{_ANSWERING}"
-    rf"|\b(prefer|preferred|choose|chose|elect|opt|wish|rather) not (to )?{_ANSWERING}"
+    rf"|\b(prefers?|preferred|chooses?|chose|elect|opt|wish|rather) not (to )?{_ANSWERING}"
+    # (SuccessFactors' lists at Pfeiffer Vacuum, run 56: "Prefers not to answer", "Not willing to answer")
+    rf"|\b(not|un)( )?willing to {_ANSWERING}$"  # (and no more: "Not willing to share salary history" is an answer)
     r"|^(not specified|unspecified|not disclosed|undisclosed|not declared|undeclared|no answer|no response)$")
 
 
@@ -1240,9 +1242,11 @@ RULES: list[tuple[str, str, Getter, int | None, set[str] | None]] = [
     # Oracle's "Zip Code+4" wants the 4-digit extension, not the ZIP: left for the site to fill
     ("postal_ext", r"zip( code)? ?(\+|plus) ?4|^zip ?4$|zip (code )?extension", lambda p, j: None, 45, None),
     ("postal", r"zip|postal|post code|postcode", _p("personal.address.postal_code"), 45, None),
-    ("county", r"^county", lambda p, j: county_of(p), 45, None),
+    # (but "County / State" is a state's: Rogers' SuccessFactors lists the states under it, run 56)
+    ("county", r"^county(?! (or |and )?state\b)", lambda p, j: county_of(p), 45, None),
     # (not "State your desired salary", "State ID Number" or "Statement of accuracy")
-    ("state", r"^state\b(?! (your|id|identification|licen[cs]e|the|any|why|how|what|whether|if|briefly)\b)|province|^region",
+    ("state", r"^state\b(?! (your|id|identification|licen[cs]e|the|any|why|how|what|whether|if|briefly)\b)|province|^region|"
+     r"^county (or |and )?state$",
      _state, 45, None),
     # asked as a question, with a note on how to write it (GCU's "In what state do you live? (Please use the state
     # abbreviation format, i.e. AZ)", the full run of Oct 12)
