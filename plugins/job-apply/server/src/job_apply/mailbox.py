@@ -302,20 +302,21 @@ def message_code(msg: email.message.EmailMessage, texts: list[str] | None = None
 
 def search(address: str, password: str, since: float, allowed: set[str], want: str,
            allowed_link: Callable[[str], bool] = lambda url: False, before: float | None = None,
-           look_back: float = LOOK_BACK) -> Found | None:
+           look_back: float = LOOK_BACK, others: Callable[[str, str], bool] | None = None) -> Found | None:
     """The newest code (want="code"), confirmation link (want="link") or password reset link
     (want="reset") from an allowed
     sender that arrived after `since` (a time.time()) less `look_back`, and before `before`
-    when given (mail after then is another waiting job's). Read-only: nothing is marked read.
+    when given (mail after then is another waiting job's), and not one `others` says is another job's (from its
+    sender's domain and its subject). Read-only: nothing is marked read.
     The inbox first; its Spam folder only when the inbox has none."""
     box, host = connect(address, password)
     try:
         args = (since, allowed, want, allowed_link, before, look_back)
-        found = _scan(box, "INBOX", *args)
+        found = _scan(box, "INBOX", *args, others=others)
         if found is None:
             try:
                 junk = junk_folder(box)
-                found = _scan(box, quoted(junk), *args, signed_only=True) if junk else None
+                found = _scan(box, quoted(junk), *args, signed_only=True, others=others) if junk else None
             except imaplib.IMAP4.error:  # a Spam folder that won't open: the inbox's answer (none) stands
                 found = None
             if found is not None:
@@ -342,7 +343,7 @@ def signed_by_sender(head: email.message.Message) -> bool:
 
 def _scan(box: imaplib.IMAP4, folder: str, since: float, allowed: set[str], want: str,
           allowed_link: Callable[[str], bool], before: float | None, look_back: float,
-          signed_only: bool = False) -> Found | None:
+          signed_only: bool = False, others: Callable[[str, str], bool] | None = None) -> Found | None:
     """search's answer from one folder. `signed_only` (the Spam folder, where mail that only claims a
     sender ends up): only mail the mail service found really sent from its sender's domain (DMARC, or
     DKIM signed by that domain, in its Authentication-Results)."""
@@ -355,9 +356,12 @@ def _scan(box: imaplib.IMAP4, folder: str, since: float, allowed: set[str], want
     # When each arrived and who sent it, in one round trip; the whole message only for the
     # job site's own mail since the wait began
     wanted = []
-    for received, mid, head in headers(box, ids, "FROM AUTHENTICATION-RESULTS" if signed_only else "FROM"):
+    fields = "FROM" + (" AUTHENTICATION-RESULTS" if signed_only else "") + (" SUBJECT" if others else "")
+    for received, mid, head in headers(box, ids, fields):
         sender = str(head.get("From") or "")
         if signed_only and not signed_by_sender(head):
+            continue
+        if others and others(email.utils.parseaddr(sender)[1].rsplit("@", 1)[-1].lower(), str(head.get("Subject") or "")):
             continue
         if received >= since - look_back and (before is None or received < before) and sender_allowed(sender, allowed):
             wanted.append((received, mid, sender))

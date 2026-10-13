@@ -1,0 +1,66 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Self Identify</title>
+<style>
+  .part { position: relative; display: inline-block; }
+  .part input { width: 4em; }
+  .part [aria-hidden="true"] { position: absolute; inset: 0; background: #fff; pointer-events: none; }
+</style>
+</head>
+<body>
+<!-- like Entegris' and Analog Devices' Workday Self Identify (runs 53 and 54, Oct 13): its signature Date showed
+     10/13/2026, typed in, but Save and Continue said "Error-Date The field Date is required and must have a value."
+     The date's parts (as site/workday-date-sections.html?sticky&arrows: digits go to the part with focus, a part
+     full moves focus on; each input shows its number) lose the date's record on the first press, and say so only in
+     Workday's "Error-Date" link; the date is taken once each part is typed again -->
+<h2>Self Identify</h2>
+<h3>Voluntary Self-Identification of Disability</h3>
+<label for="name">Name<abbr title="required">*</abbr></label><input id="name" type="text" aria-required="true">
+<div data-automation-id="formField-dateSignedOn">
+  <label for="sid--dateSignedOn">Date<abbr title="required">*</abbr></label>
+  <div id="sid--dateSignedOn" role="group" data-automation-id="dateInputWrapper"></div>
+</div>
+<div id="errors"></div>
+<button type="button" id="save">Save and Continue</button>
+<script>
+  const KINDS = { Month: [12, 'MM', 2], Day: [31, 'DD', 2], Year: [9999, 'YYYY', 4] };
+  const kinds = ['Month', 'Day', 'Year'];
+  const group = document.getElementById("sid--dateSignedOn");
+  group.innerHTML = kinds.map((k) => `
+    <div class="part" tabindex="-1"><div aria-hidden="true" data-automation-id="dateSection${k}-display">${KINDS[k][1]}</div>
+      <input role="spinbutton" aria-label="${k}" aria-valuemin="1" aria-valuemax="${KINDS[k][0]}" aria-required="true"
+             data-automation-id="dateSection${k}-input"></div>`).join('<div>/</div>');
+  const inputs = [...group.querySelectorAll('input')];
+  const typed = kinds.map(() => '');
+  const fresh = new Set();  // the parts typed since the date's record was lost
+  let lost = false;
+  const show = (i) => {
+    const n = typed[i] ? Number(typed[i]) : null;
+    inputs[i].setAttribute('aria-valuenow', n === null ? '' : String(n));
+    inputs[i].value = n === null ? '' : String(n).padStart(KINDS[kinds[i]][2], '0');
+    group.querySelectorAll('[aria-hidden=true]')[i].textContent = n === null ? KINDS[kinds[i]][1] : String(n).padStart(KINDS[kinds[i]][2], '0');
+  };
+  inputs.forEach((input, i) => {
+    input.addEventListener('keydown', (e) => {
+      if (!/^\d$/.test(e.key)) return;
+      e.preventDefault();
+      const [max, , width] = KINDS[kinds[i]];
+      let next = typed[i].length >= width ? e.key : typed[i] + e.key;
+      if (next.length === 1 && width === 2 && Number(next) * 10 > max) next = '0' + next;
+      typed[i] = next;
+      fresh.add(i);
+      show(i);
+      if (next.length >= width && i < kinds.length - 1) inputs[i + 1].focus();
+    });
+    input.addEventListener('input', () => show(i));  // (what's pasted in isn't taken: the part shows what was typed)
+  });
+  document.getElementById('save').addEventListener('click', () => {
+    if (lost && fresh.size === kinds.length && typed.every((t) => t)) { location.href = 'review.html'; return; }
+    if (!lost) { lost = true; fresh.clear(); }
+    // (only as Workday's links: its words under them aren't an error message the desk reads)
+    document.getElementById('errors').innerHTML = '<button type="button">Errors Found</button>'
+      + '<button type="button">Error-Date</button><span>The field Date is required and must have a value.</span>';
+  });
+</script>
+</body>
+</html>

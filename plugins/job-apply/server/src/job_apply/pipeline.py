@@ -27,6 +27,7 @@ from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
+from collections.abc import Callable
 from typing import Any
 from urllib.parse import parse_qsl, urlparse
 
@@ -1251,7 +1252,9 @@ class Applier:
         try:
             want = "code" if boxes else "reset" if run.resetting else "link"
             found = await asyncio.to_thread(mailbox.search, *login, run.paused_at, senders, want, own_link,
-                                            min(later) if later else None, look_back)
+                                            min(later) if later else None, look_back,
+                                            others=_another_employers_mail(str(run.company or ""), run.employer_mail
+                                                                           or frozenset()) if want == "code" else None)
         except mailbox.MailboxError as e:
             if "app password" in str(e):
                 self._mail_refused = login[1]  # not tried again until a new one is saved
@@ -1549,6 +1552,7 @@ class Applier:
         pressed_on: list[str] = []  # and where, in words
         agreed: set[str] = set()  # notices agreed to for the person on this pass (settings.accept_notices)
         since = 0  # where the presses that count for a circle start (after a refresh the site asked for)
+        fixed_at = 0  # and those that count as a step pressed again and again (after the desk set right what it said)
         steps, more = 0, 0  # (more: the steps that refresh made it take again)
         while steps < MAX_STEPS + more:
             steps += 1
@@ -2066,6 +2070,9 @@ class Applier:
             # Freeport's and SRP's SuccessFactors, nightly Oct 11: "Apply now", then its menu's "Apply Now", before)
             key = (data.get("url"), tuple(data.get("headings") or []), action["text"].strip().lower(), run.reopened)
             lately = pressed[since:]  # (the presses since a refresh the site asked for: the steps it takes again are new)
+            # (and for a step pressed three times, those since the desk set right what the page said was wrong: Entegris'
+            # Self Identify, run 54, its Date typed again after the second press, then never pressed a third time)
+            tries = pressed[max(since, fixed_at):]
             if key in lately and pressed[-1] != key:
                 # Round in a circle (Oracle sent its sites back to the posting from "Continue"):
                 # going round again only repeats it, and may email the person another code.
@@ -2075,7 +2082,7 @@ class Applier:
                                    "Resume.")
             test = _assessment_button(data)
             if test and (kind == "page" and [p[:1] + p[2:] for p in lately[-2:]] == [key[:1] + key[2:]] * 2
-                         or kind == "form" and lately[-3:] == [key] * 3):
+                         or kind == "form" and tries[-3:] == [key] * 3):
                 # a step that won't go on until the applicant takes the employer's assessment (Circle K's Workday,
                 # the nightly of Oct 12: "Take Assessment" beside its Save and Continue): a test of the person
                 return await self._assessment_pause(run, data, test)
@@ -2085,7 +2092,7 @@ class Applier:
                 return self._pause(run, "stuck", f"I pressed \u201c{action['text'].strip()}\u201d three times on "
                                    f"{_where(data)} and no application opened. Have a look in the browser, then press "
                                    "Resume.")
-            if kind == "form" and lately[-3:] == [key] * 3 and key not in saved_waited:
+            if kind == "form" and tries[-3:] == [key] * 3 and key not in saved_waited:
                 # a step still saving: KLA's Workday took a while over its Application Questions 2 of 2 (live run
                 # 11, Oct 11: the desk stopped after the fourth press, and the next step was there a little later).
                 # Waited on once, with nothing said wrong, before the step counts as stuck
@@ -2093,7 +2100,7 @@ class Applier:
                 if not any(_errorish(e) for e in data.get("errors") or []) and \
                         await self._wait_for_step_change(key, STEP_SAVE_WAIT):
                     continue
-            if kind == "form" and lately[-3:] == [key] * 3:
+            if kind == "form" and tries[-3:] == [key] * 3:
                 # the same step button pressed three times on the same step: Cornerstone's (Matheson's,
                 # under load, Oct 10) redraws its page a little after each press, so no single press
                 # looked like a stall, and the desk pressed Next fifteen times
@@ -2188,11 +2195,17 @@ class Applier:
                     # were typed). Typed again, once a page, and the step pressed again
                     seen_now = (await self._look())[0] if (looked not in retyped or looked not in refilled_pages
                                                            or looked not in redone_pages) else {}
-                    said = norm(" ".join(e for e in seen_now.get("errors") or [] if _errorish(e)))
+                    # (and Workday's error links, "Error-Date", where its words read as no error: Entegris' and Analog
+                    # Devices' Self Identify, runs 53 and 54, whose signature Date showed 10/13/2026)
+                    links = [a.get("text") or "" for a in seen_now.get("actions") or []
+                             if re.match(r"\s*error\s*[-\u2013:]", a.get("text") or "", re.I)]
+                    said = norm(" ".join([*(e for e in seen_now.get("errors") or [] if _errorish(e)), *links]))
                     lost = [f for f in seen_now.get("fields") or [] if f.get("kind") == "text" and not f.get("disabled")
                             and not is_empty_value(f.get("value")) and len(norm(clean_label(f.get("label") or ""))) >= 3
                             and re.search(rf"\b{re.escape(norm(clean_label(f.get('label') or '')))}\b", said)]
-                    wrong = [f for f in lost if f.get("invalid")]
+                    # a date's parts (Workday's Month / Day / Year) are answered again as a date is, in one run: typed
+                    # again one by one, each left before the next, they'd go into the wrong part
+                    wrong = [f for f in lost if f.get("invalid") or f.get("role") == "spinbutton"]
                     if wrong and looked not in redone_pages:
                         # of those, the ones the page marks invalid themselves (not a box whose label an error about
                         # another names: the review's) showing something other than the profile's answer: what the
@@ -2206,15 +2219,16 @@ class Applier:
                         if given:
                             names = ", ".join(clean_label(f.get("label") or "") for f in wrong if f["id"] in given)
                             self._log(run, f"filled from your profile what the page said was wrong: {names}")
-                            stalls = 0
+                            stalls, fixed_at = 0, len(pressed)
                             continue
+                    lost = [f for f in lost if f.get("role") != "spinbutton"]
                     if lost and looked not in retyped:
                         retyped.add(looked)
                         again = await srv.browser.retype([f["id"] for f in lost])
                         if again:
                             names = ", ".join(clean_label(f.get("label") or "") for f in lost if f["id"] in again)
                             self._log(run, f"typed again what the page said was empty though it showed it: {names}")
-                            stalls = 0
+                            stalls, fixed_at = 0, len(pressed)
                             continue
                     # boxes the errors name that the page has emptied since they were filled (Nikon's resume parse
                     # cleared Address 1, Zip, Company and Skills, live run 12): filled from the profile again, once
@@ -2227,7 +2241,7 @@ class Applier:
                                         if f.get("id") in {e["id"] for e in emptied}]
                         if again_filled:
                             self._log(run, f"filled again {len(again_filled)} field(s) the page had emptied")
-                            stalls = 0
+                            stalls, fixed_at = 0, len(pressed)
                             continue
                     if not problems and key not in saved_waited:
                         # nothing said wrong and nothing showing while it works: KLA's Workday saving its
@@ -4578,6 +4592,35 @@ def _employer_mail_domains(company: str, hosts: set[str], own: str = "") -> set[
         return set()
     never = _PUBLIC_MAIL | ({own} if own else set())
     return {d for d in out if "." in d and not any(d == p or d.endswith("." + p) for p in never)}
+
+
+def _another_employers_mail(company: str, own: frozenset[str]) -> Callable[[str, str], bool] | None:
+    """Whether a code's mail is another job's by its subject: mail from a job system's shared address (not the
+    employer's own domains, `own`) whose subject names another employer on the person's lists and not this one.
+    Oracle mails every employer's code from one address, "onsemi Confirm Your Identity" (run 54: onsemi's code came
+    after onsemi's wait ended, and American Express, waiting a minute later, put it in). None when there's nothing
+    to tell by. Employers whose names begin alike (Grand Canyon Education and Grand Canyon University) aren't told
+    apart this way."""
+    def names(name: str) -> set[str]:  # "Tokyo Electron (TEL)": the name, and the one in brackets
+        return {n for n in (norm(x) for x in (re.sub(r"\(.*?\)", " ", name), *re.findall(r"\((.*?)\)", name)))
+                if len(n) >= 3}
+
+    try:
+        mine = names(company)
+        theirs = {n for c in every_employer() for n in names(str(c.get("name") or ""))} - mine
+    except Exception:  # (an entry of the person's written oddly: told by sender alone, as before)
+        return None
+    firsts = {m.split()[0] for m in mine}
+    theirs = {t for t in theirs if t.split()[0] not in firsts and not any(t in m or m in t for m in mine)}
+    if not mine or not theirs:
+        return None
+
+    def others(domain: str, subject: str) -> bool:
+        if any(domain == d or domain.endswith("." + d) for d in own):
+            return False
+        said = f" {norm(subject)} "
+        return any(f" {t} " in said for t in theirs) and not any(f" {m} " in said for m in mine)
+    return others
 
 
 def question_key(label: str) -> str:

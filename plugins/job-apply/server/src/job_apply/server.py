@@ -700,7 +700,9 @@ async def autofill(job_id: int | None = None, overwrite: bool = False, redo: lis
     plan = plan_autofill(data["fields"], prof, job, overwrite=overwrite, redo=set(redo or []))
     results = await browser.fill([{"id": f["id"], "value": f["value"], "names": is_name_rule(f.get("rule") or ""),
                                    "near": place_words(f.get("rule") or "", prof),
-                                   "pick_only": is_eeo_rule(f.get("rule") or "")}
+                                   "pick_only": is_eeo_rule(f.get("rule") or ""),
+                                   # (answered again, where the page lost it, even showing the answer: a date's parts)
+                                   "again": f["id"] in (redo or [])}
                                   for f in plan["to_fill"]]) if plan["to_fill"] else []
     if plan.get("judged"):  # (one whose fill didn't go in isn't judged yet: it's tried again, or asked)
         went, filling = {r["id"] for r in results if r.get("ok")}, {f["id"] for f in plan["to_fill"]}

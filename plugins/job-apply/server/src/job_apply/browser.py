@@ -1232,7 +1232,7 @@ class BrowserSession:
                             field = {**field, "near": item["near"]}
                         if item.get("pick_only"):  # a self-identification answer: picked from the list, never typed
                             field = {**field, "pick_only": True}
-                        if await self._holds(page, field, item.get("value")):
+                        if not item.get("again") and await self._holds(page, field, item.get("value")):
                             results.append({"id": fid, "label": field.get("label", ""), "ok": True, "result": "already set"})
                             continue
                         await self._clear_of_dialogs(page, field)

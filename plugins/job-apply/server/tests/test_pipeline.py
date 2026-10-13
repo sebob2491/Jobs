@@ -1799,7 +1799,7 @@ def test_with_manage_accounts_a_refused_saved_password_is_reset(srv, monkeypatch
     monkeypatch.setattr(pipeline.mailbox, "imap_host", lambda address: "imap.example.com")
     wanted = []
 
-    def inbox(address, password, since, senders, want, allowed_link, before=None, look_back=None):
+    def inbox(address, password, since, senders, want, allowed_link, before=None, look_back=None, others=None):
         wanted.append(want)
         link = (fixture_url("site/reset-password.html") + "?token=abc" + (f"&then={then}" if then else "")
                 + (f"&slow={slow}" if slow else ""))
@@ -1852,7 +1852,7 @@ def test_a_new_password_the_site_never_takes_is_left_to_the_person(srv, monkeypa
     monkeypatch.setenv("JOB_APPLY_SECRET_EMAIL_PASSWORD", "an-app-password")
     monkeypatch.setattr(pipeline.mailbox, "imap_host", lambda address: "imap.example.com")
 
-    def inbox(address, password, since, senders, want, allowed_link, before=None, look_back=None):
+    def inbox(address, password, since, senders, want, allowed_link, before=None, look_back=None, others=None):
         link = fixture_url("site/reset-password.html") + "?token=abc&slow=600000"
         return pipeline.mailbox.Found(want, link, "careers.example.com", time.time()) if want == "reset" else None
 
@@ -2443,7 +2443,7 @@ def watched_inbox(monkeypatch, reset_link=None):
     monkeypatch.setenv("JOB_APPLY_SECRET_EMAIL_PASSWORD", "an-app-password")
     monkeypatch.setattr(pipeline.mailbox, "imap_host", lambda address: "imap.example.com")
 
-    def inbox(address, password, since, senders, want, allowed_link, before=None, look_back=None):
+    def inbox(address, password, since, senders, want, allowed_link, before=None, look_back=None, others=None):
         if want == "reset" and reset_link:
             return pipeline.mailbox.Found(want, reset_link, "careers.example.com", time.time())
         return None
@@ -2754,6 +2754,25 @@ def test_whose_mail_an_oracle_job_reads_its_code_from(srv, job_apply_home, compa
     job = srv.add_job(url=other, title="Analyst", company="Unlisted Example")["job"]
     assert Applier(srv)._mail_senders(Run(job["id"], "Analyst", "Unlisted Example", url=other)) == {"oracle.com",
                                                                                                   "oraclecloud.com"}
+
+
+def test_a_code_from_a_shared_sender_naming_another_employer_is_never_this_jobs(job_apply_home):
+    """Run 54: Oracle mailed onsemi's code from its one shared address ("onsemi Confirm Your Identity") after onsemi's
+    wait had ended, and American Express, waiting a minute later on a code from that address too, put it in ("The
+    code isn't valid"). Such mail is another job's; the employer's own domain's, or a subject naming this employer
+    (or none on the lists), stays this job's. Employers whose names begin alike aren't told apart by it."""
+    (job_apply_home / "companies.yaml").write_text(yaml.safe_dump({"lists": ["phoenix-metro", "semiconductor-az"]}))
+    oracle = "workflow.email.us-phoenix-1.ocs.oraclecloud.com"
+    others = pipeline._another_employers_mail("American Express", frozenset({"americanexpress.com"}))
+    assert others(oracle, "onsemi Confirm Your Identity")
+    assert others(oracle, "Thank you for your interest in Tokyo Electron (TEL)")
+    assert not others(oracle, "American Express Confirm Your Identity")
+    assert not others(oracle, "Confirm Your Identity")
+    assert not others("recruitment.americanexpress.com", "onsemi Confirm Your Identity")  # (the employer's own)
+    assert not others(oracle, "Your onsemiconductor order")  # (a word of its own)
+    gcu = pipeline._another_employers_mail("Grand Canyon University", frozenset())
+    assert gcu is not None and not gcu("myworkday.com", "Grand Canyon Education: verify your email")
+    assert pipeline._another_employers_mail("", frozenset()) is None
 
 
 def test_an_employers_mail_domains_are_only_its_own(job_apply_home):
@@ -3361,6 +3380,28 @@ def test_an_application_of_many_steps_reaches_its_review_page(srv, monkeypatch, 
     assert r.status == "ready" and r.url.endswith("review.html"), (r.status, r.reason, r.log[-3:])
 
 
+def test_a_workday_date_the_page_lost_is_typed_in_again_as_a_date(srv, monkeypatch, job_apply_home):
+    """Entegris' and Analog Devices' Workday Self Identify (runs 53 and 54, Oct 13): the signature Date showed
+    10/13/2026, typed in, but Save and Continue said "The field Date is required and must have a value"; its parts
+    went to the boxes typed again one by one, which takes no date's part, and the desk stopped. A date's parts the
+    errors name are filled again from the profile, as a date is."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    job = srv.add_job(url=fixture_url("site/workday-date-lost.html"), title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), timeout=120, about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert r.status == "ready" and r.url.endswith("review.html"), (r.status, r.reason, r.log[-4:])
+
+
 def test_each_page_that_draws_its_buttons_late_is_waited_on(srv, monkeypatch, job_apply_home):
     """Baker Tilly's Workday (run 44, Oct 13): the page after its sign-in drew its questions and Save and Continue
     late, and the desk, having waited on an earlier page's late buttons on that pass, stopped at once: "I couldn't
@@ -3671,7 +3712,7 @@ def test_with_the_inbox_a_new_account_to_verify_is_signed_in_to_once_its_link_is
     with served_fixtures() as site:
         link = f"{site}site/workday-verify.html"
 
-        def inbox(address, password, since, senders, want, allowed_link, before=None, look_back=None):
+        def inbox(address, password, since, senders, want, allowed_link, before=None, look_back=None, others=None):
             asked.append(want)
             assert allowed_link(link) and not allowed_link("https://elsewhere.example.net/verify?t=1")
             return pipeline.mailbox.Found(want, link, "myworkday.com", time.time()) if want == "link" else None
@@ -3711,7 +3752,7 @@ def test_without_the_inbox_a_new_account_to_verify_waits_for_the_person_and_thei
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
     saved_password(monkeypatch)
     manage_accounts(job_apply_home)
-    monkeypatch.setattr(pipeline.mailbox, "search", lambda *a: pytest.fail("the inbox was read"))
+    monkeypatch.setattr(pipeline.mailbox, "search", lambda *a, **k: pytest.fail("the inbox was read"))
     job = srv.add_job(url=fixture_url("site/workday-account.html") + "?create&verify", title="FSE", company="Example Fab")["job"]
     applier = Applier(srv)
 
@@ -4049,7 +4090,7 @@ def test_an_emailed_code_or_link_is_read_from_the_inbox(srv, monkeypatch, query)
     applier = Applier(srv)
     asked = []
 
-    def inbox(address, password, since, senders, want, allowed_link, before=None, look_back=None):
+    def inbox(address, password, since, senders, want, allowed_link, before=None, look_back=None, others=None):
         asked.append((address, password, want))
         assert since > time.time() - 120  # since the wait began
         if want == "code":
@@ -4095,7 +4136,7 @@ def test_a_code_that_comes_after_the_queue_went_on_is_still_used(srv, monkeypatc
     applier = Applier(srv)
     sent = {"yet": False}
 
-    def inbox(address, password, since, senders, want, allowed_link, before=None, look_back=None):
+    def inbox(address, password, since, senders, want, allowed_link, before=None, look_back=None, others=None):
         return pipeline.mailbox.Found("code", "123456", "careers.example.com", time.time()) if sent["yet"] else None
 
     monkeypatch.setattr(pipeline.mailbox, "search", inbox)
@@ -4126,7 +4167,7 @@ def test_a_refused_email_app_password_is_said_once_and_not_tried_again(srv, monk
     applier = Applier(srv)
     tries = []
 
-    def refused(*args):
+    def refused(*args, **kw):
         tries.append(args)
         raise pipeline.mailbox.MailboxError("imap.gmail.com didn't accept the email app password")
 
@@ -4171,7 +4212,7 @@ def test_a_code_that_didnt_go_in_is_tried_again(srv, monkeypatch):
     job = srv.add_job(url=fixture_url("site/verify-email.html") + "?code", title="FSE", company="Example Fab")["job"]
     applier = Applier(srv)
     monkeypatch.setattr(pipeline.mailbox, "search",
-                        lambda *a: pipeline.mailbox.Found("code", "123456", "careers.example.com", time.time()))
+                        lambda *a, **k: pipeline.mailbox.Found("code", "123456", "careers.example.com", time.time()))
     real, tries = applier._enter_code, []
 
     async def enter(run, found):
@@ -4201,7 +4242,7 @@ def test_an_odd_answer_from_the_mail_service_doesnt_stop_the_queue(srv, monkeypa
     job = srv.add_job(url=fixture_url("site/verify-email.html") + "?code", title="FSE", company="Example Fab")["job"]
     applier = Applier(srv)
 
-    def odd(*a):
+    def odd(*a, **k):
         raise IndexError("an unexpected answer")
 
     monkeypatch.setattr(pipeline.mailbox, "search", odd)
@@ -4225,7 +4266,7 @@ def test_without_an_email_app_password_the_inbox_is_never_read(srv, monkeypatch)
     monkeypatch.setattr(pipeline, "MAIL_POLL_SECONDS", 0)
     job = srv.add_job(url=fixture_url("site/verify-email.html") + "?code", title="FSE", company="Example Fab")["job"]
     applier = Applier(srv)
-    monkeypatch.setattr(pipeline.mailbox, "search", lambda *a: pytest.fail("the inbox was read"))
+    monkeypatch.setattr(pipeline.mailbox, "search", lambda *a, **k: pytest.fail("the inbox was read"))
 
     async def go():
         applier.start()
@@ -5903,7 +5944,7 @@ def test_an_emailed_code_put_in_between_jobs_gives_the_tools_back(srv, monkeypat
     held_by = []
     real_type = srv.browser.type_code
 
-    def inbox(address, password, since, senders, want, allowed_link, before=None, look_back=None):
+    def inbox(address, password, since, senders, want, allowed_link, before=None, look_back=None, others=None):
         return pipeline.mailbox.Found("code", "123456", "careers.example.com", time.time()) if sent["yet"] else None
 
     async def type_code(ids, code):
@@ -7425,7 +7466,7 @@ def inbox_with_code(monkeypatch, codes=None, spam=False):
     monkeypatch.setenv("JOB_APPLY_SECRET_EMAIL_PASSWORD", "an-app-password")
     monkeypatch.setattr(pipeline.mailbox, "imap_host", lambda address: "imap.example.com")
 
-    def inbox(address, password, since, senders, want, allowed_link, before=None, look_back=None):
+    def inbox(address, password, since, senders, want, allowed_link, before=None, look_back=None, others=None):
         if codes is not None:
             codes.append(want)
         found = pipeline.mailbox.Found("code", "123456", "careers.example.com", time.time())
