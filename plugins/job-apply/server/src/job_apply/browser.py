@@ -449,6 +449,7 @@ _BARS_BACK_JS = r"""
 
 class BrowserSession:
     def __init__(self) -> None:
+        self._date_typed: set[str] = set()  # a date's parts typed in the fill under way
         self._pw: Playwright | None = None
         self._ctx: BrowserContext | None = None
         self._page: Page | None = None
@@ -1221,9 +1222,13 @@ class BrowserSession:
             results = []
             known = dict(self._fields)  # the boxes as read before filling, by the ids given out then
             given = {str(item.get("id", "")): item.get("value") for item in values}  # (a date's other parts)
+            self._date_typed = set()  # a date's parts typed in this fill (with its part given first)
             try:
                 for item in values:
                     fid = str(item.get("id", ""))
+                    if item.get("again") and fid in self._date_typed:  # (typed again with its date's first part)
+                        results.append({"id": fid, "label": "", "ok": True, "result": "typed"})
+                        continue
                     try:
                         field = await self._current(page, known.get(fid) or await self._field(page, fid))
                         if item.get("names"):  # a school or an employer: matched by name only
@@ -1232,7 +1237,7 @@ class BrowserSession:
                             field = {**field, "near": item["near"]}
                         if item.get("pick_only"):  # a self-identification answer: picked from the list, never typed
                             field = {**field, "pick_only": True}
-                        if await self._holds(page, field, item.get("value")):
+                        if not item.get("again") and await self._holds(page, field, item.get("value")):
                             results.append({"id": fid, "label": field.get("label", ""), "ok": True, "result": "already set"})
                             continue
                         await self._clear_of_dialogs(page, field)
@@ -1695,6 +1700,7 @@ class BrowserSession:
                 return [i for i in range(count) if not start <= i <= end and number(read[i]) != number(was[i])]
 
             read = await type_run(False)
+            self._date_typed |= {str(infos[i]["id"]) for i in range(start, end + 1) if infos[i]["id"]}
             wrong = off(read)
             if wrong and not strays(read):
                 # once more, the same parts with the same digits, a little slower (HonorHealth's school year lost

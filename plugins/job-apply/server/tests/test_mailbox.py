@@ -196,6 +196,33 @@ def test_the_newest_code_from_the_job_site_since_the_wait_began(imap):
     assert mailbox.search("sam@gmail.com", "app-password", since, {"ti.com"}, "code").value == "444444"
 
 
+def test_mail_another_job_s_by_its_subject_is_passed_over(imap):
+    """Run 54: onsemi's code, mailed from Oracle's one address a moment before American Express's wait began, was put
+    in there. What `others` says is another job's (by sender and subject) is passed over, the inbox's and the Spam
+    folder's; without `others`, only who sent each is read, as before."""
+    since = time.time()
+    oracle = "no-reply@workflow.email.us-phoenix-1.ocs.oraclecloud.com"
+    imap.messages = [
+        (since - 40, _message(oracle, "onsemi Confirm Your Identity", "Your verification code is 111111")),
+        (since + 5, _message("no-reply@recruitment.americanexpress.com", "Please confirm your identity",
+                             "Your verification code is 222222")),
+    ]
+    allowed = {"oraclecloud.com", "americanexpress.com"}
+    seen = []
+
+    def others(domain, subject):
+        seen.append((domain, subject))
+        return "onsemi" in subject
+
+    assert mailbox.search("sam@gmail.com", "pw", since, allowed, "code", others=others).value == "222222"
+    assert ("workflow.email.us-phoenix-1.ocs.oraclecloud.com", "onsemi Confirm Your Identity") in seen
+    imap.messages = imap.messages[:1]
+    assert mailbox.search("sam@gmail.com", "pw", since, allowed, "code", others=others) is None
+    assert mailbox.search("sam@gmail.com", "pw", since, allowed, "code").value == "111111"  # (as before, without)
+    fetches = [c[2] for i in imap.instances for c in i.calls if c[0] == "fetch" and "HEADER" in c[2]]
+    assert "SUBJECT" in fetches[0] and "SUBJECT" not in fetches[-1], fetches
+
+
 def test_a_malformed_message_is_passed_over(imap, monkeypatch):
     since = time.time()
     imap.messages = [

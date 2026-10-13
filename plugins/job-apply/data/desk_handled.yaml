@@ -2,7 +2,7 @@
 # account there and the common questions answered) to the application's review page, or to its last button.
 # The desk's "Only where the desk goes all the way" switch shows these employers' openings alone.
 # Refresh it from each full nightly before a release: `uv run python scripts/nightly_summary.py --handled`.
-as_of: "2026-10-13: full run 51 (0.3.138)"
+as_of: "2026-10-13: full runs 51 (0.3.138) and 54 (0.3.142)"
 employers:
   - "Air Liquide"
   - "Air Products"
@@ -34,6 +34,7 @@ employers:
   - "Grand Canyon Education"
   - "Grand Canyon University"
   - "Grant Thornton"
+  - "Hitachi High-Tech America"
   - "HonorHealth"
   - "Infineon"
   - "Intel"

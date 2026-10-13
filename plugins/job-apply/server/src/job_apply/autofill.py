@@ -2332,8 +2332,11 @@ def plan_autofill(fields: list[dict], prof: Profile, job: dict | None = None, ov
             # chosen it); a required one is answered (Kforce's "Birth Assigned Gender", live run 13)
             already.append(f["id"])
             continue
+        # (a date's part showing the answer is typed again all the same: the page lost what was typed, and keeps only
+        # what's shown: Entegris' Workday Self Identify Date, run 54)
         if rejected and not overwrite and (ans is None or ans.value == SKIP or is_eeo_rule(ans.rule)
                                            or (str(ans.value).strip() == str(f.get("value")).strip()
+                                               and f.get("role") != "spinbutton"
                                                if f.get("kind") == "text"
                                                else choose_option(str(ans.value), [str(f.get("value"))]) is not None)):
             already.append(f["id"])  # (nothing else to give it, or the same answer: left to the person)
