@@ -3319,6 +3319,48 @@ def test_a_step_that_goes_on_while_its_next_is_greyed_is_read_again(srv, monkeyp
     assert r.status == "ready" and "step=2" in r.url, (r.status, r.reason, r.log)
 
 
+def test_an_optional_question_the_step_says_it_wants_at_once_is_asked(srv, monkeypatch, job_apply_home):
+    """Baker Tilly's Workday (run 53, Oct 13): a question nothing marked required, whose choices lack the profile's
+    answer, was left empty; Save and Continue said at once that the page wants it ("Errors Found", "Error-Please
+    indicate if you are Hispanic or Latino?"), and the desk stopped: "The page didn't move on ... Fix it in the
+    browser". Said later (run 51), the question was asked. It's asked either way."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    job = srv.add_job(url=fixture_url("site/optional-flagged-at-once.html"), title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), timeout=120, about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert r.need == "questions" and [q["label"] for q in r.questions] == ["Gender"], (r.need, r.reason, r.log)
+
+
+def test_an_application_of_many_steps_reaches_its_review_page(srv, monkeypatch, job_apply_home):
+    """Avnet's Workday (run 53, Oct 13): its account, then seven steps, some passes over a page waiting on it; the
+    desk's 15 passes ran out as the review page came ("This application has more steps than I expected")."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    job = srv.add_job(url=fixture_url("site/many-steps.html") + "?n=18", title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), timeout=180, about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert r.status == "ready" and r.url.endswith("review.html"), (r.status, r.reason, r.log[-3:])
+
+
 def test_each_page_that_draws_its_buttons_late_is_waited_on(srv, monkeypatch, job_apply_home):
     """Baker Tilly's Workday (run 44, Oct 13): the page after its sign-in drew its questions and Save and Continue
     late, and the desk, having waited on an earlier page's late buttons on that pass, stopped at once: "I couldn't

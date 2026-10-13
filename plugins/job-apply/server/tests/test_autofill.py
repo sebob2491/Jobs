@@ -2216,6 +2216,14 @@ def test_questions_from_the_finance_run():
     assert answer("Can you provide verification of both your identity and authorization to work in the United States, "
                   "to the extent required by law?*") == "Yes"
     assert answer("Can you provide verification of authorization to work in a country other than the United States?") is None
+    # Onto's Workday says only "eligibility", after "If hired"; eligibility for something else isn't it
+    assert answer("If hired, can you provide proof of eligibility?*", "listbox", ("Select One", "Yes", "No")) == "Yes"
+    assert answer("Upon hire, can you provide documentation of your eligibility?") == "Yes"
+    assert answer("Can you provide proof of eligibility once hired?") == "Yes"
+    assert answer("Can you provide proof of eligibility?") is None  # (eligibility for what: the person's)
+    assert answer("Can you provide proof of eligibility for the veterans' preference?") is None
+    assert answer("If hired, can you provide proof of eligibility for rehire?") is None
+    assert answer("If hired, can you provide proof of eligibility to work in Canada?") is None
     assert answer("Do you consider yourself a member of the Lesbian, Gay, or Bisexual (LGBTQ) community?*",
                   options=("Yes", "No", "I don't wish to answer")) == "I don't wish to answer"
     # a family member's isn't the person's

@@ -1251,8 +1251,14 @@ RULES: list[tuple[str, str, Getter, int | None, set[str] | None]] = [
      _sponsorship, None, None),
     # the I-9: "Can you provide verification of both your identity and authorization to work in the
     # United States, to the extent required by law?" (Axon)
-    ("work_proof", r"^can you (provide|furnish|submit|present) (proof|verification|documentation|documents?) (of|for|showing) "
-                   r".{0,40}(authori[sz]ation to work|eligibility to work|employment eligibility|work authori[sz]ation)",
+    # Onto's Workday: "If hired, can you provide proof of eligibility?" (eligibility alone, if hired, is the I-9's)
+    ("work_proof", r"^((if|once|when) (you are )?hired |upon hire )?can you (provide|furnish|submit|present) "
+                   r"(proof|verification|documentation|documents?) (of|for|showing) "
+                   r".{0,40}(authori[sz]ation to work|eligibility to work|employment eligibility|work authori[sz]ation)|"
+                   r"^((if|once|when) (you are )?hired |upon hire )can you (provide|furnish|submit|present) "
+                   r"(proof|verification|documentation|documents?) (of|for|showing) (your )?eligibility$|"
+                   r"^can you (provide|furnish|submit|present) (proof|verification|documentation|documents?) "
+                   r"(of|for|showing) (your )?eligibility (upon|if|once|when) (you are )?hired$",
      _yn("work_authorization.authorized_to_work"), 200, {"select", "listbox", "combobox", "radio_group"}),
     ("authorized", _AUTHORIZED, _authorized, None, None),
     # Only questions that ask whether you are a U.S. person: export-control wording

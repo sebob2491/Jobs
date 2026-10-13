@@ -390,6 +390,19 @@ def test_saved_blocks_drawn_late_are_counted_before_any_is_added(srv):
     assert (work["clicks"], work["after"], work["wanted"]) == (0, 2, 2), work
 
 
+def test_a_list_that_opens_on_its_placeholder_alone_is_read_once_its_choices_come(srv):
+    """BCBS of Arizona's and KLA's Workday (run 53, Oct 13): the Degree list opened on "Select One" alone, its choices
+    a moment later; the desk read that as the whole list and stopped: "The Degree list has no choice for your Bachelor
+    of Science". A list showing only its placeholder is read again until its choices come (or the wait ends)."""
+    job = srv.add_job(url=fixture_url("workday_experience.html") + "?degrees=700", title="FSE",
+                      company="Example Litho")["job"]
+    run(srv.open_application(job_id=job["id"]))
+    run(srv.add_entries("education"))
+    degree = next(f for f in run(srv.inspect_form())["fields"] if f.get("section") == "Education 1"
+                  and f["label"].startswith("Degree"))
+    assert "Bachelor's Degree" in (degree.get("options") or []), degree
+
+
 def test_workday_experience_entries(srv):
     job = srv.add_job(url=fixture_url("workday_experience.html"), title="FSE", company="Example Litho")["job"]
     run(srv.open_application(job_id=job["id"]))

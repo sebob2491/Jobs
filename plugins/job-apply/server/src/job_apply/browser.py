@@ -767,7 +767,9 @@ class BrowserSession:
         await loc.press("ArrowDown", timeout=FOCUS_TIMEOUT)
 
     async def _field_options(self, page: Page, field_id: str, loc: Locator, wait_ms: int) -> list[str]:
-        """This field's menu options, polling while the menu renders."""
+        """This field's menu options, polling while the menu renders (and while it shows only its placeholder:
+        BCBS of Arizona's and KLA's Workday Degree list, run 53, opened on "Select One" alone, its choices a moment
+        after)."""
         self._frame_for(page, field_id)  # fails clearly if the field's frame has gone
         waited = 0
         while True:
@@ -775,7 +777,7 @@ class BrowserSession:
                 options = await loc.evaluate(FIELD_OPTIONS_JS)
             except PlaywrightError:
                 options = []
-            if options or waited >= wait_ms:
+            if any(not is_empty_value(o) for o in options) or waited >= wait_ms:
                 return options
             await page.wait_for_timeout(150)
             waited += 150
