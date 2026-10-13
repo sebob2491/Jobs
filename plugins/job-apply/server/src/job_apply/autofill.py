@@ -86,9 +86,14 @@ def norm(s: Any) -> str:
 
 
 def _without_aside(text: Any) -> str:
-    """A choice's own words, without the aside after them: Workday names each self-identification choice with the
-    form's country, "Undeclared (United States of America)" (probe 48, Oct 13)."""
-    return re.sub(r"\s*\([^()]*\)\s*$", "", str(text or ""))
+    """A choice's own words, without the country after them: Workday names each self-identification choice with the
+    form's country, "Undeclared (United States of America)" (probe 48, Oct 13). Only a country: "Unspecified (X)" is
+    an answer (the review's)."""
+    said = str(text or "")
+    m = re.match(r"^(.*?)\s*\(([^()]*)\)\s*$", said, re.S)
+    if m and (norm(m[2]) in _US_NAMES or _OTHER_COUNTRIES.fullmatch(norm(m[2]))):
+        return m[1]
+    return said
 
 
 def is_decline(text: Any) -> bool:

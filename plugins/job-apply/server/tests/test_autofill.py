@@ -1400,6 +1400,10 @@ def test_a_decline_is_found_where_workday_names_each_choice_with_its_country():
     assert choose_option("I don't wish to answer", race) == "Not Declared (United States of America)"
     assert choose_option("Female", gender) == "Female (United States of America)"
     assert not is_decline("Female (United States of America)") and not is_decline("Asian (Not Declared)")
+    # only a country is put aside: a bracket that holds an answer is read (the review's: gender X)
+    assert not is_decline("Unspecified (X)")
+    assert choose_option("Decline to self-identify", ["Male", "Female", "Unspecified (X)", "Decline to answer"]) == \
+        "Decline to answer"
 
 
 def test_an_answer_is_never_a_refusal_to_answer():
