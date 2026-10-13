@@ -1814,6 +1814,7 @@ def test_after_a_resume_an_agreement_a_bot_check_holds_is_still_said_to_be_the_p
     assert "I pressed “I Acknowledge the Privacy Notice” for you" in first, first
     assert (r.status, r.need) == ("needs_you", "stuck"), (r.status, r.reason, r.log)
     assert "is greyed out, and the page is protected by a bot check (hCaptcha)" in r.reason, r.reason
+    assert "couldn't find the button" not in r.reason
 
 
 @pytest.mark.parametrize("boxes", [
@@ -3385,16 +3386,20 @@ def test_a_create_account_shown_again_after_the_account_was_made_goes_to_its_sig
     data = run(srv.inspect_form(include_dropdown_options=False))
     applier = Applier(srv)
     r = Run(1, "FSE", "Example Fab")
-    r.accounts_tried, r.account_made = 1, "created your account on Workday with your saved password"
+    r.accounts_tried, r.account_in = 1, True  # (made, and signed in to: the desk said so)
     tried: dict = {}
     assert run(applier._sign_in(r, data, tried)) == "email_step", r.log
     assert "your account there is made already, so I went to its Sign In" in r.log
     now = run(srv.inspect_form(include_dropdown_options=False))
     assert sum(f.get("kind") == "password" for f in now["fields"]) == 1, now["fields"]  # (Sign In's one password box)
-    # (and an account not made for this job: its Create Account is filled, as before)
-    run(srv.open_application(url=fixture_url("site/workday-account.html") + "?create"))
-    data = run(srv.inspect_form(include_dropdown_options=False))
-    assert run(applier._sign_in(Run(2, "FSE", "Example Fab"), data, {})) == "prefilled"
+    # (and an account not made for this job, or only pressed for and not yet signed in to: its Create Account is
+    # filled, as before, and what the site wants of it is said: the review of 0.3.148)
+    for made in ("", "created your account on Workday with your saved password"):
+        run(srv.open_application(url=fixture_url("site/workday-account.html") + "?create"))
+        data = run(srv.inspect_form(include_dropdown_options=False))
+        other = Run(2, "FSE", "Example Fab")
+        other.account_made = made
+        assert run(applier._sign_in(other, data, {})) == "prefilled", made
 
 
 def test_an_assessment_step_is_said_to_be_the_applicants(srv, monkeypatch, job_apply_home):

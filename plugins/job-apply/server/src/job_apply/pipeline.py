@@ -450,6 +450,7 @@ class Run:
     reset_from: str = ""  # the sign-in page a reset was asked from: back there once it's done elsewhere
     reset_waited: bool = False  # paused for the reset email (a Resume after that means it's done)
     refreshed: bool = False  # reloaded once for a page that asked for it ("Please refresh the page")
+    account_in: bool = False  # an account made for this job, and signed in to (Run.account_made said)
     load_reloaded: bool = False  # reloaded once for a step still loading after its wait (Workday's placeholders, run 57)
     invalid_redone: bool = False  # the review page's invalid lists answered again from the profile (once a job)
     reset_no_mail: bool = False  # and none came in RESET_MAIL_WAIT: no account there, most likely, so one is made
@@ -1635,6 +1636,7 @@ class Applier:
                 # for its Sign In) isn't that, nor the account's own next step
                 self._log(run, run.account_made)
                 run.account_made = ""
+                run.account_in = True
             if str(data.get("url") or "").startswith("chrome-error://"):
                 host = unreached_host(data, text)
                 where = f"{host}, which" if host else "a page that"
@@ -2099,8 +2101,9 @@ class Applier:
                 if badge and greyed_agree:
                     check = "reCAPTCHA" if "re" in badge.group(0).lower() else "hCaptcha"
                     return self._pause(run, "stuck", f"\u201c{greyed_agree}\u201d is greyed out, and the page is protected "
-                                       f"by a bot check ({check}), which may want you to show you're not a robot: that's "
-                                       "yours. Look at it in the browser window, then press Resume.")
+                                       f"by a bot check ({check}), which may want you to show you're not a robot; or the "
+                                       "page wants a box ticked or its text read to the end first. Those are yours: look "
+                                       "at it in the browser window, then press Resume.")
                 if run.reset_from and not run.reopened_elsewhere and _no_sign_in_here(run, data) and _job_search(data):
                     # mid sign-in, the site's session gone, on its job search with no way on (Edwards' SuccessFactors
                     # after the reset email's wait, the probe of Oct 12, without the desk going back): the job opened
@@ -3596,13 +3599,15 @@ class Applier:
         if not address or not 1 <= len(passwords) <= 2:
             return None
         new_account = len(passwords) == 2 or signing_up
-        if new_account and run.account_made and not tried.get("to_sign_in"):
-            # the account made for this job already, its Create Account on show again (Applied Materials' Workday, run
-            # 60: signed out by its "something went wrong" refresh, it showed Create Account, and the desk filled it and
-            # stopped): its own Sign In is the way back in, never a second account
-            way = next((a for a in actions if not a.get("cookie") and re.match(r"^(sign|log) ?in$", a["text"].strip(), re.I)
-                        and not a.get("after_password")), None) or next(
-                (a for a in actions if not a.get("cookie") and re.match(r"^(sign|log) ?in$", a["text"].strip(), re.I)), None)
+        if new_account and run.account_in and not tried.get("to_sign_in"):
+            # the account made for this job already, and signed in to (never one only pressed for: a form the site turned
+            # down is said for what it wants, the review of 0.3.148), its Create Account on show again (Applied Materials'
+            # Workday, run 60: signed out by its "something went wrong" refresh, it showed Create Account, and the desk
+            # filled it and stopped): its own Sign In is the way back in, never a second account. The form's own link
+            # first ("Already have an account? Sign In"), then the page's; never another site's sign-in
+            ways = [a for a in actions if not a.get("cookie") and not _SOCIAL.search(a["text"])
+                    and re.match(r"^(sign|log) ?in$", a["text"].strip(), re.I)]
+            way = next((a for a in ways if a.get("in_account_form") or a.get("after_password")), None) or next(iter(ways), None)
             if way is not None:
                 tried["to_sign_in"] = 1
                 try:
