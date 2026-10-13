@@ -1999,8 +1999,9 @@ class BrowserSession:
                 return None
 
     async def words_before(self, element_id: str) -> str | None:
-        """The words just before a box: the nearest text before it, its own label's aside, within the few blocks
-        around it (a bare "I agree" whose question is the paragraph above it), or None once it's gone."""
+        """The words just before a box: the nearest text before it, its own label's aside, within the blocks around
+        it (a bare "I agree" whose question is the paragraph above it; Workday's sits six wrappers down from it, the
+        full run of Oct 12), or None once it's gone."""
         async with self._lock:
             page = await self.page()
             try:
@@ -2010,19 +2011,23 @@ class BrowserSession:
                   const said = (node) => node.nodeType === 3 ? (node.textContent || '').trim()
                     : node.nodeType === 1 ? (node.innerText || '').trim() : '';
                   // the text before it, text nodes too ("Join our talent network.<br><label>..."), up to another box
-                  for (let n = el, d = 0; n && n !== document.body && d < 4; n = n.parentElement, d++) {
-                    const out = [];
-                    for (let s = n.previousSibling; s && out.join(' ').length < 400; s = s.previousSibling) {
+                  // (kept across levels: a short "Job alerts" just above it isn't dropped for a longer sentence further up,
+                  // the review's)
+                  const out = [];
+                  for (let n = el, d = 0; n && n !== document.body && d < 8; n = n.parentElement, d++) {
+                    const level = [];
+                    for (let s = n.previousSibling; s && level.join(' ').length < 400; s = s.previousSibling) {
                       if (s.nodeType === 1 && (s.matches(boxes) || s.querySelector(boxes))) break;
                       const t = said(s);
-                      if (t && !own.includes(t)) out.unshift(t);
+                      if (t && !own.includes(t)) level.unshift(t);
                     }
+                    out.unshift(...level);
                     if (out.join(' ').length > 15) return out.join(' ').slice(-500);
                   }
                   // nothing before it: the widest of the few blocks around it that's still short, less its own label's
                   // (more words only make the box the person's, never the desk's: the review's)
                   let wide = '';
-                  for (let n = el.parentElement, d = 0; n && n !== document.body && d < 4; n = n.parentElement, d++) {
+                  for (let n = el.parentElement, d = 0; n && n !== document.body && d < 8; n = n.parentElement, d++) {
                     let t = (n.innerText || '').trim();
                     for (const o of own) t = t.replace(o, '').trim();
                     if (t.length > 1500) break;
