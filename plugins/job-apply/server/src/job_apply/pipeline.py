@@ -91,7 +91,7 @@ NOTICE_WAIT = 5  # seconds for a notice agreed to for the person to go (one may 
 # this many: one tab per job adds up over a long queue
 DONE_TABS_KEPT = 3
 SHARED_LOOK_BACK = 30  # seconds looked back for a job's code while an earlier job waits on the same sender
-# The codes and links the inbox gave, each with the job it went to: one is never another job's (Mayo Clinic's
+# The codes the inbox gave, each with the job it went to: one is never another job's (Mayo Clinic's
 # Oracle site, run 49, was given onsemi's code, mailed from the same Oracle address a minute before and put in
 # there). For the whole process: the live check gives each employer a desk of its own.
 _MAIL_TAKEN: dict[tuple[str, str, float], int] = {}
@@ -589,9 +589,10 @@ def _flagged(data: dict[str, Any]) -> list[str]:
     for a in data.get("actions") or []:
         m = re.match(r"^error\s*-\s*(.+)$", (a if isinstance(a, str) else a.get("text", "")).strip(), re.I)
         if m:
-            out.append(f"\u201c{clean_label(m.group(1))}\u201d needs fixing")
+            out.append(f"\u201c{_short(m.group(1))}\u201d needs fixing")
     fields = data.get("fields")  # a click's summary carries only how many there are
-    out += [f"\u201c{clean_label(f.get('label') or '')}\u201d is marked invalid"
+    # (a question in a few words: Maricopa County's salary question, whole, left "is mar" of what was said, run 49)
+    out += [f"\u201c{_short(f.get('label') or '')}\u201d is marked invalid"
             for f in (fields if isinstance(fields, list) else []) if isinstance(f, dict) and f.get("invalid") and f.get("label")]
     return list(dict.fromkeys(out))
 
@@ -1191,8 +1192,12 @@ class Applier:
             if tenant := re.fullmatch(r"([a-z0-9-]+)\.wd\d+\.myworkdayjobs\.com", (urlparse(u).hostname or "").lower()):
                 allowed.add(f"workday.{tenant.group(1)}.com")
         if run.employer_mail is None:
+            try:
+                own = str(config.Profile.load().get("personal.email") or "").rpartition("@")[2].strip().lower()
+            except Exception:  # (a profile.yaml that doesn't read: no inbox to read either)
+                own = ""
             run.employer_mail = frozenset(_employer_mail_domains(str(run.company or job.get("company") or ""),
-                                                                 {(urlparse(u).hostname or "").lower() for u in urls}))
+                                                                 {(urlparse(u).hostname or "").lower() for u in urls}, own))
         return {d for d in allowed | run.employer_mail if d}
 
     async def _check_mail_safely(self, run: Run) -> None:
@@ -1264,8 +1269,9 @@ class Applier:
                          + f" ({len(boxes)} code box(es) on the page)")
         if found is None or run.status != "needs_you" or run.need != "email_code":
             return
-        mail = (found.sender, found.value, found.received)
-        if _MAIL_TAKEN.get(mail, run.job_id) != run.job_id:  # (the job it went to has it: this one's is still to come)
+        # (a code only: a link is the account's, and two jobs on one site share one: the review)
+        mail = (found.sender, found.value, found.received) if found.kind == "code" else None
+        if mail and _MAIL_TAKEN.get(mail, run.job_id) != run.job_id:  # (the job it went to has it: this one's is to come)
             run.mail_last += "; not used: another job's, put in there already"
             return
         try:
@@ -1296,7 +1302,7 @@ class Applier:
             run.mail_done = True
             self._log(run, f"couldn't use the {found.kind} from your email ({type(e).__name__}); "
                       "it's in your inbox for you")
-        if run.mail_done:
+        if mail and run.mail_done:
             _MAIL_TAKEN[mail] = run.job_id
 
     async def _enter_code(self, run: Run, found: mailbox.Found) -> bool:
@@ -4492,16 +4498,20 @@ def _sent_from(found: mailbox.Found) -> str:
     return f"sent from {found.sender}" + (", in your Spam folder" if found.spam else "")
 
 
-def _employer_mail_domains(company: str, hosts: set[str]) -> set[str]:
+# Never an employer's mail domain, whatever a list says: a mail service's or a big shared site's, where anyone
+# may have an address (the review of 0.3.137)
+_PUBLIC_MAIL = {*mailbox.IMAP_HOSTS, "outlook.com", "hotmail.com", "live.com", "msn.com", "proton.me", "protonmail.com",
+                "gmx.com", "mail.com", "zoho.com", "google.com", "microsoft.com", "apple.com", "amazon.com",
+                "linkedin.com", "indeed.com", "glassdoor.com", "ziprecruiter.com", "monster.com"}
+
+
+def _employer_mail_domains(company: str, hosts: set[str], own: str = "") -> set[str]:
     """The domains an employer on the person's lists mails from besides its job system's: its own site's (its
     careers_url, where that isn't a job system's) and any its entry names (`mail_domains`). Oracle Recruiting mails
     its code from the employer's own (careers.bdo.com, recruitment.americanexpress.com, us.gt.com: run 49, where each
-    waited out a code the inbox had). The entry is the job's employer by name, or by searching the job's own site."""
-    try:
-        listed = every_employer()
-    except Exception:  # (a person's companies.yaml with a mistake: the job site's and its system's still)
-        return set()
-
+    waited out a code the inbox had). The entry is the job's employer by name, or by searching the job's own site
+    where no other employer on the lists searches it too (Nikon's, UCT's and Desert Financial's UKG Pro is one
+    site: the review). Never a mail service's domain, nor the person's own address's (`own`)."""
     def named(value: Any) -> list[str]:  # the addresses an entry names, its search's too
         if isinstance(value, str):
             return [value]
@@ -4509,17 +4519,32 @@ def _employer_mail_domains(company: str, hosts: set[str]) -> set[str]:
             return [s for v in value.values() for s in named(v)]
         return [s for v in value for s in named(v)] if isinstance(value, list) else []
 
-    out: set[str] = set()
-    for c in listed:
-        theirs = {(urlparse(s if "//" in s else f"https://{s}").hostname or "").lower()
-                  for s in named([c.get("careers_url"), c.get("search")])}
-        if norm(c.get("name") or "") != norm(company) and not hosts & (theirs - {""}):
-            continue
-        careers = c.get("careers_url")
-        if isinstance(careers, str) and shared_system(careers) is None:
-            out.add(mailbox.site_domain(urlparse(careers).hostname or ""))
-        out |= {d.strip().lower() for d in c.get("mail_domains") or [] if isinstance(d, str)}
-    return {d for d in out if "." in d}
+    def host(s: str) -> str:
+        try:
+            return (urlparse(s if "//" in s else f"https://{s}").hostname or "").lower()
+        except ValueError:  # (a search's words, "Test [x", read as an address)
+            return ""
+
+    try:  # (an entry of the person's written oddly: the job site's and its system's domains still)
+        entries = [(c, {host(s) for s in named([c.get("careers_url"), c.get("search")])} - {""})
+                   for c in every_employer()]
+        claimed: dict[str, set[str]] = {}
+        for c, theirs in entries:
+            for h in theirs:
+                claimed.setdefault(h, set()).add(norm(c.get("name") or ""))
+        sites = {h for h in hosts if len(claimed.get(h, ())) == 1}
+        out: set[str] = set()
+        for c, theirs in entries:
+            if norm(c.get("name") or "") != norm(company) and not sites & theirs:
+                continue
+            careers = c.get("careers_url")
+            if isinstance(careers, str) and shared_system(careers) is None:
+                out.add(mailbox.site_domain(host(careers)))
+            listed = c.get("mail_domains")
+            out |= {d.strip().lower() for d in listed if isinstance(d, str)} if isinstance(listed, list) else set()
+    except Exception:
+        return set()
+    return {d for d in out if "." in d and d != own and not any(d == p or d.endswith("." + p) for p in _PUBLIC_MAIL)}
 
 
 def question_key(label: str) -> str:

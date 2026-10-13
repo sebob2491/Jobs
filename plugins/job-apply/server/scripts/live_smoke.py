@@ -1077,7 +1077,8 @@ def fake_answer(q: dict[str, Any]) -> Any:
     # (an answer the site takes: U-Haul's and Baker Tilly's refused "0" hours, "0" salary and "Test answer" pay)
     if span := re.search(r"between (\d+) and (\d+)", label, re.I):
         return span.group(2)
-    if re.search(r"salary|pay requirement|compensation|desired pay|wage", label, re.I):
+    if re.search(r"salary|pay requirement|compensation|desired pay|wage|earnings", label, re.I):  # (Taylor Morrison's
+        # "Desired Annual Earnings" refused "Test answer" five rounds running, run 49)
         return "50000"
     if re.search(r"year|salary|number|how many|zip|postal|\bgpa\b", q.get("label") or "", re.I):
         return "0"
