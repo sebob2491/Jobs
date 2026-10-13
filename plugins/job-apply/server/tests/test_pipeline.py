@@ -1761,6 +1761,34 @@ def test_an_agreement_a_bot_check_holds_is_said_to_be_the_persons(srv, monkeypat
     assert "couldn't find the button" not in r.reason
 
 
+def test_after_a_resume_an_agreement_a_bot_check_holds_is_still_said_to_be_the_persons(srv, monkeypatch, job_apply_home):
+    """Charles Schwab's iCIMS in the live check (run 57): after the person's Resume, the greyed "I Acknowledge the Privacy
+    Notice" behind the page's hCaptcha (pressed on the pass before) read as a page with no way on: "I couldn't find the
+    button". It's the bot check's, on any pass."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 1)
+    job = srv.add_job(url=fixture_url("site/icims-privacy-gate.html") + "?bot&keep", title="Analyst",
+                      company="Example Financial")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            first = r.reason
+            r = applier.resume(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return first, r
+        finally:
+            await applier.stop()
+
+    first, r = run(go())
+    assert "I pressed “I Acknowledge the Privacy Notice” for you" in first, first
+    assert (r.status, r.need) == ("needs_you", "stuck"), (r.status, r.reason, r.log)
+    assert "is greyed out, and the page is protected by a bot check (hCaptcha)" in r.reason, r.reason
+
+
 @pytest.mark.parametrize("boxes", [
     '<label for="u">User ID</label><input id="u" type="text"><label for="p">Password</label><input id="p" type="password">',
     '<p>Signing in as sam.rivera@example.com</p><label for="p">New Password</label><input id="p" type="password">',

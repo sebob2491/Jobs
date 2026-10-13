@@ -2087,6 +2087,16 @@ class Applier:
                     return self._pause(run, "stuck", f"I pressed \u201c{held}\u201d for you (settings.accept_notices), "
                                        "but the page stayed: it may want a box filled or a check passed first. "
                                        "Look at it in the browser window, then press Resume.")
+                # an agreement's button greyed out on a page a bot check guards, not pressed on this pass (Charles Schwab's
+                # iCIMS, run 57, after the person's Resume: read as a page with no way on)
+                badge = _BOT_BADGE.search(" ".join([text, *(a.get("text") or "" for a in data.get("actions") or [])]))
+                greyed_agree = next((a["text"].strip() for a in data.get("actions") or [] if a.get("disabled")
+                                     and not a.get("cookie") and _AGREEMENT.search(a["text"].strip())), "")
+                if badge and greyed_agree:
+                    check = "reCAPTCHA" if "re" in badge.group(0).lower() else "hCaptcha"
+                    return self._pause(run, "stuck", f"\u201c{greyed_agree}\u201d is greyed out, and the page is protected "
+                                       f"by a bot check ({check}), which may want you to show you're not a robot: that's "
+                                       "yours. Look at it in the browser window, then press Resume.")
                 if run.reset_from and not run.reopened_elsewhere and _no_sign_in_here(run, data) and _job_search(data):
                     # mid sign-in, the site's session gone, on its job search with no way on (Edwards' SuccessFactors
                     # after the reset email's wait, the probe of Oct 12, without the desk going back): the job opened
