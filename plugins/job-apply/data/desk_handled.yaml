@@ -2,56 +2,58 @@
 # account there and the common questions answered) to the application's review page, or to its last button.
 # The desk's "Only where the desk goes all the way" switch shows these employers' openings alone.
 # Refresh it from each full nightly before a release: `uv run python scripts/nightly_summary.py --handled`.
-as_of: "2026-10-12: nightly run 41 (0.3.124), and probes on 0.3.125-0.3.126 (Northern Trust, Entegris, NXP,
-  Analog Devices, EMD Electronics, Air Liquide)"
+as_of: "2026-10-13: full run 49 (0.3.135)"
 employers:
-  - ASM (ASM America)
-  - Air Liquide
-  - Amkor Technology
-  - Analog Devices
-  - Applied Materials
-  - Arizona Public Service
-  - Axcelis Technologies
-  - Axon
-  - Baker Tilly
-  - Bank of America
-  - Blue Cross Blue Shield of Arizona
-  - Brooks Automation
-  - Capital One
-  - Carvana
-  - CliftonLarsonAllen (CLA)
-  - Desert Financial Credit Union
-  - EMD Electronics
-  - Early Warning Services
-  - Ebara Technologies
-  - Entegris
-  - Grand Canyon Education
-  - Grand Canyon University
-  - Hitachi High-Tech America
-  - Infineon
-  - Intel
-  - KLA
-  - Knight-Swift Transportation
-  - Lam Research
-  - Linde
-  - Marketech International
-  - Matheson
-  - Micron
-  - NXP Semiconductors
-  - Nikon Precision
-  - Northern Trust
-  - Northrop Grumman
-  - Onto Innovation
-  - PwC
-  - Republic Services
-  - Robert Half
-  - SCREEN SPE USA
-  - Southwest Gas
-  - Thermo Fisher Scientific
-  - Tokyo Electron (TEL)
-  - U-Haul
-  - U.S. Bank
-  - USAA
-  - Ultra Clean Holdings (UCT)
-  - Western Alliance Bank
-  - onsemi
+  - "Air Liquide"
+  - "Air Products"
+  - "Amkor Technology"
+  - "Analog Devices"
+  - "Applied Materials"
+  - "Arizona Public Service"
+  - "Arizona State University"
+  - "ASM (ASM America)"
+  - "ASML"
+  - "Avnet"
+  - "Axcelis Technologies"
+  - "Axon"
+  - "Baker Tilly"
+  - "Bank of America"
+  - "Blue Cross Blue Shield of Arizona"
+  - "Boeing"
+  - "Brooks Automation"
+  - "Capital One"
+  - "Carvana"
+  - "CliftonLarsonAllen (CLA)"
+  - "Early Warning Services"
+  - "Ebara Technologies"
+  - "Entegris"
+  - "Grand Canyon Education"
+  - "Grand Canyon University"
+  - "Hitachi High-Tech America"
+  - "Infineon"
+  - "Intel"
+  - "KLA"
+  - "Knight-Swift Transportation"
+  - "Lam Research"
+  - "Linde"
+  - "Marketech International"
+  - "Matheson"
+  - "Microchip Technology"
+  - "Micron"
+  - "Northern Trust"
+  - "Northrop Grumman"
+  - "NXP Semiconductors"
+  - "onsemi"
+  - "Onto Innovation"
+  - "PayPal"
+  - "PwC"
+  - "Republic Services"
+  - "Robert Half"
+  - "SCREEN SPE USA"
+  - "Southwest Gas"
+  - "Thermo Fisher Scientific"
+  - "Tokyo Electron (TEL)"
+  - "U-Haul"
+  - "U.S. Bank"
+  - "USAA"
+  - "Western Alliance Bank"
