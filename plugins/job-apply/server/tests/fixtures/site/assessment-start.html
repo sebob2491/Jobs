@@ -1,0 +1,28 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Apply</title></head>
+<body>
+<!-- like Circle K's and Taylor Morrison's Workday (run 56, Oct 13): "In order to submit your application, please click
+     the 'Take Assessment' button ... After completion, you will be brought back to this page". Its Take Assessment
+     opens the assessment, on the vendor's site (?vendor=<its address>), in a new tab; done, the assessment brings
+     that tab back here with ?done=1, where Take Assessment is gone -->
+<h2>Take Assessment</h2>
+<div id="step"></div>
+<button type="button" id="next">Save and Continue</button>
+<script>
+  const q = new URLSearchParams(location.search);
+  const step = document.getElementById('step');
+  if (q.get('done') === '1') {
+    step.textContent = 'Assessment completed.';
+  } else {
+    step.innerHTML = '<p>In order to submit your application, please click the Take Assessment button.</p>'
+      + '<button type="button" id="take">Take Assessment</button>';
+    document.getElementById('take').addEventListener('click', () => {
+      const back = location.href.split('?')[0] + '?done=1';
+      window.open(q.get('vendor') + '?back=' + encodeURIComponent(back), '_blank');
+    });
+  }
+  document.getElementById('next').addEventListener('click', () => { if (q.get('done') === '1') location.href = 'review.html'; });
+</script>
+</body>
+</html>

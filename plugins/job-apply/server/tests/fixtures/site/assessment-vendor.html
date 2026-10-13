@@ -1,0 +1,42 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Assessment</title></head>
+<body>
+<!-- an assessment vendor's pages: an introduction with Start, a page of questions (a scale of agreement for each)
+     with Next, a last page (a list and a box) with Submit, which goes back to the application (?back=). A page whose
+     questions aren't all answered stays, saying so -->
+<h1 id="h">Work Styles Assessment</h1>
+<form id="f" onsubmit="return false"></form>
+<div id="err" role="alert"></div>
+<script>
+  const q = new URLSearchParams(location.search);
+  const f = document.getElementById('f');
+  const scale = ['Strongly disagree', 'Disagree', 'Neutral', 'Agree', 'Strongly agree'];
+  const radios = (n, text) => `<fieldset><legend>${text}</legend>` + scale.map((s, i) =>
+    `<label><input type="radio" name="q${n}" value="${i}"> ${s}</label>`).join('') + '</fieldset>';
+  let page = 0;
+  const pages = [
+    () => '<p>This assessment takes about 5 minutes.</p><button type="button" class="go">Start</button>',
+    () => radios(1, 'I like to plan my work ahead.') + radios(2, 'I stay calm under pressure.')
+      + radios(3, 'I enjoy working with customers.') + '<button type="button" class="go">Next</button>',
+    () => '<label for="shift">Which shift suits you best?</label><select id="shift"><option value="">Select one</option>'
+      + '<option>Morning</option><option>Evening</option><option>Night</option></select>'
+      + '<label for="why">Why do you want this job?</label><input id="why">'
+      + '<button type="button" class="go">Submit</button>',
+  ];
+  function draw() {
+    f.innerHTML = pages[page]();
+    document.getElementById('err').textContent = '';
+    f.querySelector('.go').addEventListener('click', () => {
+      const missing = [...f.querySelectorAll('fieldset')].some((fs) => !fs.querySelector('input:checked'))
+        || [...f.querySelectorAll('select, input:not([type=radio])')].some((b) => !b.value);
+      if (missing) { document.getElementById('err').textContent = 'Please answer every question.'; return; }
+      if (page === pages.length - 1) { location.href = q.get('back'); return; }
+      page += 1;
+      draw();
+    });
+  }
+  draw();
+</script>
+</body>
+</html>

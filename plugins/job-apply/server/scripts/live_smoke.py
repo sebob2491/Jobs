@@ -1454,6 +1454,121 @@ def best_posting(results: list[dict[str, Any]]) -> dict[str, Any]:
     return next((r for r in results if title_matches(r.get("title") or "", f"{QUERY_AZ} | {QUERY_ANY}")), results[0])
 
 
+# The test identity takes an employer's assessment with random answers, to see what comes after it (the owner's
+# call, Oct 13: "it shouldn't matter how well you do"; Circle K's and Taylor Morrison's Workday stopped at "Take
+# Assessment"). Never the person's desk: an assessment is theirs. The application itself still never goes: an
+# assessment's own Submit or Finish is pressed only off the application's site (the vendor's), and on the
+# application's site only a step's way on. A CAPTCHA, a page it can't read or answer, or one that won't move ends it
+ASSESSMENT_PAGES = 40
+ASSESSMENT_SECONDS = 600
+_TAKE_ASSESSMENT = re.compile(r"^(?:take|start|begin|launch|continue)\s+(?:the\s+|your\s+)?assessment\b", re.I)
+_ASSESSMENT_ON = re.compile(r"^(?:next|continue|start|begin|get started|let'?s (?:go|begin|start)|proceed|go|ok|okay|"
+                            r"i agree|agree|accept|i accept|i understand|i'?m ready|ready|save and continue|save & continue|"
+                            r"(?:start|begin|continue|resume)\s+(?:the\s+)?(?:assessment|test|questionnaire|survey|section))\b",
+                            re.I)
+_ASSESSMENT_DONE = re.compile(r"^(?:submit|finish|done|complete|end|submit\s+(?:the\s+)?(?:assessment|test|answers?|"
+                              r"questionnaire|survey)|finish\s+(?:the\s+)?(?:assessment|test))\b", re.I)
+
+
+def assessment_answer(field: dict[str, Any]) -> Any:
+    """A random answer for an assessment's question (this run only): any of its choices, or a few words."""
+    import random
+    options = [o for o in field.get("options") or [] if o and not is_empty_value(o)
+               and not re.match(r"^(select|choose|--|please)", o, re.I)]
+    kind = field.get("kind")
+    if kind == "checkbox":
+        return True
+    if kind == "checkbox_group" and options:
+        return [random.choice(options)]
+    if options:
+        return random.choice(options)
+    if re.search(r"year|number|how many|\bage\b|percent|amount", field.get("label") or "", re.I):
+        return str(random.randint(1, 9))
+    return "Test answer"
+
+
+async def take_assessment(run: Any, rec: dict[str, Any]) -> None:
+    """The assessment the desk stopped at, taken with random answers: its "Take Assessment" pressed, then page by
+    page, every question answered at random and the page's way on pressed, until it's back on the application's
+    site (or the tab it opened closes). What it saw is kept in rec["assessment"]."""
+    steps: list[dict[str, Any]] = []
+    rec["assessment"] = {"steps": steps}
+    browser = server.browser
+    browser.use_tab(run.page)
+    home = (urlsplit(run.page.url).hostname or "").lower()
+    start = time.monotonic()
+    data = await server.inspect_form(include_dropdown_options=False)
+    take = next((a for a in data.get("actions") or [] if not a.get("disabled")
+                 and _TAKE_ASSESSMENT.match((a.get("text") or "").strip())), None)
+    if take is None:
+        rec["assessment"]["end"] = "no Take Assessment button"
+        return
+    out = await server.click(take["id"])
+    steps.append({"pressed": take["text"], "url": _mask(str(out.get("url") or ""))[:200]})
+    seen: list[tuple[Any, ...]] = []
+    end = "page limit"
+    for _ in range(ASSESSMENT_PAGES):
+        if time.monotonic() - start > ASSESSMENT_SECONDS:
+            end = "time limit"
+            break
+        page = await browser.page()
+        if page.is_closed():  # (the assessment's tab closed itself once done)
+            browser.use_tab(run.page)
+            end = "its tab closed"
+            break
+        with contextlib.suppress(Exception):
+            await page.wait_for_load_state("load", timeout=15000)
+        host = (urlsplit(page.url).hostname or "").lower()
+        data = await server.inspect_form(include_dropdown_options=True)
+        actions = [a for a in data.get("actions") or [] if not a.get("disabled")]
+        here = host == home
+        if here and len(steps) > 1 and not any(_TAKE_ASSESSMENT.match((a.get("text") or "").strip()) for a in actions):
+            end = "back on the application"
+            rec["assessment"]["back_at"] = _mask(page.url)[:300]
+            break
+        if data.get("captcha"):
+            end = "a CAPTCHA (the rules: never solved)"
+            break
+        fields = [f for f in data.get("fields") or [] if not f.get("disabled") and f.get("kind") not in ("file", "password")
+                  and is_empty_value(f.get("value"))]
+        answers = [{"id": f["id"], "value": assessment_answer(f)} for f in fields]
+        filled = (await server.fill_form(answers))["results"] if answers else []
+        on = next((a for a in actions if _ASSESSMENT_ON.match((a.get("text") or "").strip())), None)
+        if on is None and not here:  # (its own Submit or Finish: only off the application's site)
+            on = next((a for a in actions if _ASSESSMENT_DONE.match((a.get("text") or "").strip())), None)
+        step = {"host": host, "here": here, "title": (data.get("title") or "")[:80],
+                "headings": [h[:80] for h in (data.get("headings") or [])[:4]],
+                "kinds": sorted({str(f.get("kind")) for f in data.get("fields") or []}),
+                "questions": [{"label": (f.get("label") or "")[:120], "kind": f.get("kind"),
+                               "options": (f.get("options") or [])[:8]} for f in fields[:12]],
+                "answered": sum(1 for r in filled if r.get("ok")), "buttons": [a.get("text") for a in actions][:12],
+                "pressed": on.get("text") if on else None}
+        steps.append(step)
+        if on is None:
+            end = "no way on it knows"
+            break
+        key = (page.url, tuple(data.get("headings") or []), len(data.get("fields") or []), on.get("text"))
+        if seen[-2:] == [key, key]:  # pressed three times, and the page stays
+            end = "the page didn't move on"
+            break
+        seen.append(key)
+        try:
+            if here:  # (the desk's own guard: never the application's Submit)
+                await server.click(on["id"])
+            else:
+                await browser._locator(page, on["id"]).click(timeout=10000)
+                await page.wait_for_timeout(1500)
+        except Exception as e:  # noqa: BLE001
+            end = f"its button wouldn't take a press ({type(e).__name__})"
+            break
+    rec["assessment"]["end"] = end
+    browser.use_tab(run.page)
+    with contextlib.suppress(Exception):
+        await run.page.reload(wait_until="load")  # (the application's step as it is now)
+    print("LIVE_ASSESSMENT " + _mask(json.dumps({"company": rec.get("company"), "end": end, "pages": len(steps)},
+                                                 default=str)), flush=True)
+
+
 async def check_pipeline(company: dict[str, Any], out: Path, rec: dict[str, Any], fixtures: bool = False) -> None:
     from job_apply.pipeline import Applier, placed_key, question_key
 
@@ -1511,6 +1626,12 @@ async def check_pipeline(company: dict[str, Any], out: Path, rec: dict[str, Any]
                     key = placed_key(q) if labels.count(q.get("label") or "") > 1 else question_key(q.get("label") or "")
                     run.once[key] = fake_answer(q)
                 applier.enqueue(job["id"], front=True)
+                continue
+            if (TEST_IDENTITY and run.status == "needs_you" and run.need == "stuck" and "assessment" not in rec
+                    and re.search(r"\bassessment\b", run.reason or "", re.I) and n < rounds - 1):
+                # its assessment taken with random answers, then the application carried on (take_assessment)
+                await take_assessment(run, rec)
+                applier.resume(job["id"])
                 continue
             if run.status == "needs_you" and run.need == "stuck" and resumes and n < rounds - 1:
                 # pressed Resume once, as a person would with nothing else done: what a second try gets to
