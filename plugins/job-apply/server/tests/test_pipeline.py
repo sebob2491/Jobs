@@ -6909,13 +6909,17 @@ def test_a_bare_i_agree_is_ticked_only_where_the_words_above_it_are_the_sites_te
                     '<label><input type="checkbox" id="d"> I agree</label></div>'
                     '<div><p>Get special offers and updates by email.</p><label><input type="checkbox" id="e"> I agree'
                     '</label></div>'
+                    # Workday's (Entegris', the full run of Oct 12): the box six wrappers down from its words
+                    '<div><div><div><p>In order to proceed, you must consent to our <a href="#">Privacy Policy</a>.</p>'
+                    '</div></div></div><div><div><div><div><div><div><input id="f" type="checkbox"><span></span></div>'
+                    '<label for="f">I consent</label></div></div></div></div></div>'
                     '<button type="submit">Create Account</button>', encoding="utf-8")
     run(srv.browser.goto(page.as_uri()))
     data = run(srv.browser.inspect(include_dropdown_options=False))
     boxes = pipeline._terms_boxes(data)
-    assert len(boxes) == 5, data["fields"]  # (by their labels alone, all five)
+    assert len(boxes) == 6, data["fields"]  # (by their labels alone, all six)
     kept = run(Applier(srv)._said_terms(boxes))
-    assert [b["id"] for b in kept] == [boxes[0]["id"], boxes[3]["id"]], (boxes, kept)
+    assert [b["id"] for b in kept] == [boxes[0]["id"], boxes[3]["id"], boxes[5]["id"]], (boxes, kept)
 
 
 def test_a_round_holds_while_the_person_is_at_a_review_page_and_ends_once_it_is_sent(srv):
