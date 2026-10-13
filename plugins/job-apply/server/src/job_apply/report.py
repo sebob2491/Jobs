@@ -10,8 +10,9 @@ choices they picked, say). Screenshots are never included: a picture can't be sc
 Notes are the same, made lighter for filing many at once: the desk takes one by itself when
 a job stops on something it most likely got wrong (pipeline.NOTED), and the person files
 them together in one issue from the desk's Notes. A note holds no answers, and says the
-employer by its job system ("a Workday employer"), not its name: only the addresses of the
-pages show which site it was.
+employer by its job system ("a Workday employer"), not its name, and every address the same
+way ("a Workday address"): a job's address shows its employer, its title and its requisition
+number, a password reset's its one-time token.
 
 A report made anonymous says the job that way too, and leaves out its title, its addresses and
 its requisition number, from the issue and from the saved pages.
@@ -40,7 +41,22 @@ ISSUE_URL = 7000  # ...and of the whole address, once encoded (GitHub refuses on
 NOTES = 50  # notes kept at most: the oldest go first
 NOTE_STEPS = 15  # the desk's last steps in a note
 _SEEN = 1000  # the stops already noted that are remembered, so one isn't noted again after a Clear
-_URL = re.compile(r"https?://[^\s\"'<>)\]]+")
+# An address ends at a space, a quote or a bracket, but a pair of parentheses inside it stays in it
+# ("/job/Phoenix-(AZ)/Test-Technician_R123?username=..." in a Workday address: issue #112, note 35)
+_URL = re.compile(r"https?://(?:[^\s\"'<>()\]]|\([^\s()]*\))+")
+# The last words of an employer's name that aren't its name ("Acme Semiconductor Group, Inc.")
+_COMPANY_WORDS = {"inc", "corp", "corporation", "co", "group", "holdings", "llc", "ltd", "technologies",
+                  "technology", "semiconductor", "semiconductors", "company"}
+# The first words of employers' names that are everyday words too: a page uses them for other things
+_COMMON_WORDS = {"american", "national", "global", "united", "general", "first", "advanced", "applied",
+                 "international", "western", "northern", "southern", "eastern", "central", "pacific", "digital",
+                 "state", "city", "county", "public", "home", "health", "university", "college"}
+# A job system's host labels that are the system's own, not an employer's tenant
+_SYSTEM_LABELS = {"www", "jobs", "job-boards", "boards", "careers", "career", "external", "apply", "hire",
+                  "recruiting", "talent", "careersite"}
+# "the employer Group", once an employer's short form has been said ("Apply I Acme Group")
+_EMPLOYER_TAIL = re.compile(r"(the employer)(?:[\s,]+(?:" + "|".join(sorted(_COMPANY_WORDS, key=len, reverse=True))
+                            + r")\b\.?)+", re.I)
 # Quoted text in a fill's error: the answer being filled, what the box showed instead ("Picked 'No'
 # but the field shows 'Select One'"). Python quotes it with ' or ", the desk with curly quotes
 _QUOTED = re.compile(r"\u201c[^\u201d]*\u201d|(?<!\w)'[^'\n]*'(?!\w)|(?<!\w)\"[^\"\n]*\"(?!\w)")
@@ -109,6 +125,28 @@ def _address_said(url: str) -> str:
     return f"({_a(ATS_NAMES.get(ats, ats))} address)" if ats and ats != "company_site" else "(an employer's own address)"
 
 
+def _employer_forms(company: str, urls: list[Any]) -> list[str]:
+    """How a page may say an employer, longest first: the name it was given, and (each at least 4
+    letters) the name with its last words dropped one at a time ("Acme Semiconductor Group" ->
+    "Acme Semiconductor", "Acme": a heading says "Acme Career", a title "Apply I Acme Group"), its
+    first word unless an everyday one, and the tenant label of a job system's host
+    (acme.wd5.myworkdayjobs.com -> "acme")."""
+    words = company.split()
+    forms: set[str] = set()
+    for last in range(len(words) - 1, 0, -1):
+        if words[last].strip(".,").lower() not in _COMPANY_WORDS:
+            break
+        forms.add(" ".join(words[:last]).rstrip(".,"))
+    if words and words[0].strip(".,").lower() not in _COMMON_WORDS | _COMPANY_WORDS:
+        forms.add(words[0].strip(".,"))
+    for url in urls:
+        tenant = (urlparse(str(url)).hostname or "").lower().split(".")[0] if url and shared_system(str(url)) else ""
+        if tenant and tenant not in {f.lower() for f in forms}:
+            forms.add(tenant)
+    kept = {f for f in forms if len(f) >= 4 and f not in _SYSTEM_LABELS}
+    return sorted({*kept, *([company.strip()] if len(company.strip()) >= 2 else [])}, key=len, reverse=True)
+
+
 def _anonymous(job: dict[str, Any], run: Any, urls: list[Any],
                secrets: list[str]) -> tuple[Callable[[Any], str], list[str]]:
     """For a report that doesn't say which job it was: a scrubber for its text that also says every
@@ -122,6 +160,9 @@ def _anonymous(job: dict[str, Any], run: Any, urls: list[Any],
                             (getattr(run, "company", ""), "the employer")):
         if len(name := str(value or "").strip()) >= 2:
             said.setdefault(name, stand_in)
+    for company in (job.get("company"), getattr(run, "company", "")):
+        for form in _employer_forms(str(company or ""), urls):
+            said.setdefault(form, "the employer")
     sites = set()
     for url in urls:
         host = (urlparse(str(url or "")).hostname or "").lower().removeprefix("www.")
@@ -136,7 +177,7 @@ def _anonymous(job: dict[str, Any], run: Any, urls: list[Any],
         text = _URL.sub(lambda m: _address_said(m.group(0)), str(text or ""))
         for name in names:
             text = re.sub(_pattern(name), said[name], text, flags=re.I if len(name) >= 3 else 0)
-        return scrub(text)
+        return scrub(_EMPLOYER_TAIL.sub(r"\1", text))
     return say, secrets
 
 
@@ -297,21 +338,19 @@ def _job_system(job: dict[str, Any], run: Any) -> tuple[str, str]:
 
 def _note_scrubber(job: dict[str, Any], run: Any, prof: config.Profile) -> Callable[[Any], str]:
     """`_scrubber`, and also: the profile's answers the desk names in its own words taken out,
-    and the employer applied to called "the employer" outside web addresses."""
+    every address said by its job system alone ("(a Workday address)": its path names the job
+    and a password reset's holds its token), and the employer applied to, by its name or a short
+    form of it, called "the employer"."""
     scrub = _scrubber(report_strings(prof))
-    names = {str(n).strip() for n in (job.get("company"), getattr(run, "company", ""))
-             if n and len(str(n).strip()) >= 2}
-    spaced = [r"[\s.,]+".join(map(re.escape, n.split())) for n in sorted(names, key=len, reverse=True)]
-    employer = re.compile(r"(?<!\w)(?:" + "|".join(spaced) + r")(?!\w)", re.I) if spaced else None
+    urls = [job.get("url"), job.get("apply_url"), getattr(run, "url", ""), (getattr(run, "page_info", None) or {}).get("url")]
+    forms = {f for n in (job.get("company"), getattr(run, "company", "")) for f in _employer_forms(str(n or ""), urls)}
+    spaced = [r"[\s.,]+".join(map(re.escape, f.split())) for f in sorted(forms, key=len, reverse=True)]
+    # (never after an "@": the person's own email, at a domain the employer's first word is, is taken out whole after)
+    employer = re.compile(r"(?<![\w@])(?:" + "|".join(spaced) + r")(?!\w)", re.I) if spaced else None
 
     def unnamed(text: str) -> str:
-        if employer is None:
-            return text
-        out, at = [], 0
-        for m in _URL.finditer(text):
-            out += [employer.sub("the employer", text[at:m.start()]), m.group(0)]
-            at = m.end()
-        return "".join(out) + employer.sub("the employer", text[at:])
+        text = _URL.sub(lambda m: _address_said(m.group(0)), text)
+        return _EMPLOYER_TAIL.sub(r"\1", employer.sub("the employer", text)) if employer else text
 
     return lambda text: scrub(unnamed(_ANSWER_SAID.sub("\\1\u2026", str(text or ""))))
 
@@ -320,8 +359,8 @@ def note(job: dict[str, Any], run: Any, profile: config.Profile | None = None) -
     """A note on one job's stop: what the desk said, its last steps, the page it stopped on and
     its questions, with why any answer didn't go in. Notes are filed together in one public
     issue, so on top of what `build` takes out, a note holds none of the person's answers, and
-    says the employer by its job system only: the issue could otherwise list every employer
-    they applied to."""
+    says the employer and every address by its job system only: the issue could otherwise list
+    every employer they applied to."""
     say = _note_scrubber(job, run, profile or config.Profile.load())
     ats, employer = _job_system(job, run)
     stop, title = getattr(run, "need", "") or getattr(run, "status", ""), job.get("title") or getattr(run, "title", "")
@@ -378,8 +417,8 @@ def notes() -> dict[str, Any]:
             continue
     stops = f"{len(kept)} stop{'' if len(kept) == 1 else 's'}"
     title = f"Live-run notes: {stops} (job-apply {config.plugin_version() or 'unknown'})"
-    end = (f"_Personal details found in the profile are shown as {REDACTED}. Employers are said by their job "
-           "system, not named. No answers, field values or screenshots are included._")
+    end = (f"_Personal details found in the profile are shown as {REDACTED}. Employers and their addresses are "
+           "said by their job system, not named. No answers, field values or screenshots are included._")
     text = "\n\n".join([*(n["text"] for n in kept), end]) + "\n"
     url = _issue_url(title, text, rest="the rest is in the text the Job Desk's Copy all copies")
     return {"notes": kept, "title": title, "text": text, "issue_url": url, "cut": quote(text) not in url}

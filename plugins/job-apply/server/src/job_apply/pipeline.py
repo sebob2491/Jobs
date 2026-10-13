@@ -1294,7 +1294,7 @@ class Applier:
             self._log(run, f"pressed \u201c{press['text'].strip()}\u201d")
             if made:  # said once the application shows (_drive), as a code turned down leaves it here
                 run.account_made = (f"created your account on {_site(run, data)} with your email and the code it "
-                                    "emailed you (manage_accounts: false in profile.yaml leaves this to you)")
+                                    "emailed you" + _manage_hint())
         else:  # (a "Confirm" that sends a form is left to the person, as any final button is)
             run.reason = ("I entered the code from your email. Press the page's button to carry on; "
                           "the desk continues after that.")
@@ -2497,7 +2497,7 @@ class Applier:
                   + (f", after ticking {ticked}" if boxes else ""))
         run.account_made = (f"created your account on {site} with {with_}" + (" and agreed to its terms"
                             if terms else "") + (" and accepted its data privacy statement" if statement else "")
-                            + " (manage_accounts: false in profile.yaml leaves this to you)")
+                            + _manage_hint())
         await self._wait_for_account(data)
         return True
 
@@ -2649,7 +2649,7 @@ class Applier:
             return await self._account_theirs(run, data, f"{site} has no account for your email yet, and its "
                                         f"“{create['text'].strip()}” didn't take my click")
         self._log(run, f"{site} has no account for your email, so I pressed “{create['text'].strip()}” to make "
-                  "one (manage_accounts: false in profile.yaml leaves this to you)")
+                  "one" + _manage_hint())
         now, _ = await self._after_press(data)
         view = _email_account_view(now)
         if view == "code":
@@ -2894,8 +2894,8 @@ class Applier:
                 return "no_account"
             return await stop(f"asked for a password reset, and it says \u201c{data['errors'][0][:160]}\u201d", data)
         run.resetting = True
-        self._log(run, f"your saved password didn't sign in on {site}, so I asked it to email a password reset "
-                  "(manage_accounts: false in profile.yaml leaves this to you)")
+        self._log(run, f"your saved password didn't sign in on {site}, so I asked it to email a password reset"
+                  + _manage_hint())
         await self._await_reset_email(run, data)
         return "paused"
 
@@ -3851,6 +3851,17 @@ def _may_manage_accounts() -> bool:
         return False
 
 
+def _manage_hint() -> str:
+    """What a log line about an account made or a reset asked for ends with, until the profile has
+    chosen the setting (either way): where to turn it off. Said to someone who chose it, it's noise
+    (issue #112, notes 23 and 37)."""
+    try:
+        chosen = config.Profile.load().settings.manage_accounts_chosen
+    except ValueError:  # a profile with a typo has chosen nothing
+        chosen = False
+    return "" if chosen else " (manage_accounts: false in profile.yaml leaves this to you)"
+
+
 def _may_accept_notices() -> bool:
     try:
         return config.Profile.load().settings.may_accept_notices
@@ -4126,7 +4137,7 @@ def _account_made_says(site: str, terms: bool, password: bool = True) -> str:
     """What the log says once the site shows the account made (Run.account_made)."""
     return ((f"created your account on {site} with your saved password" if password
              else f"finished creating your account on {site}") + (" and agreed to its terms" if terms else "")
-            + " (manage_accounts: false in profile.yaml leaves this to you)")
+            + _manage_hint())
 
 
 def _unanswered(data: dict[str, Any]) -> str:
@@ -4306,9 +4317,29 @@ def _page_said(data: dict[str, Any]) -> str:
     return _where(data) + (f" (\u201c{message[:160]}\u201d)" if message else "")
 
 
+# Workday's progress bar names the step it is on: "current step 4 of 6 Voluntary Disclosures"
+_STEP_NAME = re.compile(r"current step \d+ of \d+\s+(\S.*)", re.I)
+# Headings that name no page: an error banner, the site's footer and menus
+_NOT_A_PAGE = re.compile(r"errors? found|\d+ errors?.*|follow us|contact us|share.*|menu|skip to.*", re.I)
+
+
+def _names_a_page(heading: str) -> bool:
+    """Whether a heading could be the page's name: not a progress bar's, nor a banner's or a footer's, nor a
+    sentence (a checkbox's legend: "I agree that I am 18 years of age or older and")."""
+    words = heading.lower().split()
+    return bool(words) and not (heading.lower().startswith("current step") or _NOT_A_PAGE.fullmatch(heading)
+                                or len(words) > 8 or words[-1] in ("and", "or", "of"))
+
+
 def _where(data: dict[str, Any]) -> str:
-    headings = [h for h in data.get("headings") or [] if h and not re.match(r"current step", h, re.I)]
-    return f"“{headings[-1][:60]}”" if headings else "this page"
+    """A page named for the log: its step's name, else its last heading that names a page (the site's
+    own name comes first), else its title less the site's name (notes 23 and 37: the last heading was
+    a footer's "follow us" or a checkbox's legend, and a Workday step's own name was thrown away)."""
+    headings = [h.strip() for h in data.get("headings") or [] if h and h.strip()]
+    name = next((m[1] for h in headings if (m := _STEP_NAME.match(h))), None) \
+        or next((h for h in reversed(headings) if _names_a_page(h)), None) \
+        or re.split(r"\s+\|\s+", str(data.get("title") or "").strip())[0]
+    return f"“{name[:60]}”" if name else "this page"
 
 
 def _short(label: str) -> str:

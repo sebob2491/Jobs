@@ -1293,6 +1293,61 @@ def test_with_manage_accounts_the_desk_creates_the_account(srv, monkeypatch, job
     assert r.need != "sign_in" and "Create Account" not in r.reason, (r.status, r.reason, r.log)
 
 
+@pytest.mark.parametrize("chosen", [True, False])
+def test_the_log_says_where_to_turn_manage_accounts_off_only_until_the_profile_has_chosen_it(
+        srv, monkeypatch, job_apply_home, chosen):
+    """Notes 23 and 37: "(manage_accounts: false in profile.yaml leaves this to you)" ended the line about
+    the account made even for someone whose profile says manage_accounts: true."""
+    import yaml
+
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    saved_password(monkeypatch)
+    manage_accounts(job_apply_home)
+    if not chosen:  # the profile doesn't say: the setting is on, as it is by default
+        path = job_apply_home / "profile.yaml"
+        profile = yaml.safe_load(path.read_text())
+        del profile["settings"]["manage_accounts"]
+        path.write_text(yaml.safe_dump(profile))
+    assert config.Profile.load().settings.may_manage_accounts
+    job = srv.add_job(url=fixture_url("site/create-account.html"), title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert any(line.startswith("created your account on") for line in r.log), r.log
+    hinted = [line for line in r.log if "manage_accounts: false" in line]
+    if chosen:
+        assert not hinted, r.log
+    else:
+        assert len(hinted) == 1 and hinted[0].startswith("created your account on") \
+            and hinted[0].endswith("(manage_accounts: false in profile.yaml leaves this to you)"), r.log
+
+
+@pytest.mark.parametrize("headings, title, said", [
+    # Workday's progress bar names the step, and a checkbox's legend or a footer's heading doesn't
+    (["current step 4 of 6 Voluntary Disclosures", "I agree that I am 18 years of age or older and", "follow us"], "",
+     "Voluntary Disclosures"),
+    (["Errors Found", "My Information", "follow us"], "", "My Information"),
+    (["current step 2 of 6", "Menu", "Skip to main content", "Contact Us"], "My Experience | Acme Careers",
+     "My Experience"),
+    (["3 errors", "Share"], "", "this page"),
+    ([], "", "this page"),
+    (["Example Financial", "Join our talent network", "Privacy Notice and Sign-In"], "Login | Example Financial",
+     "Privacy Notice and Sign-In"),
+])
+def test_a_page_is_named_by_its_step_or_its_last_heading_that_names_a_page(headings, title, said):
+    assert pipeline._where({"headings": headings, "title": title}) == (
+        "this page" if said == "this page" else f"“{said}”")
+
+
 def test_with_manage_accounts_a_create_account_forms_link_is_pressed(srv, monkeypatch, job_apply_home):
     """SCREEN's ApplicantStack (live, Oct 2026): its Create an Account form's own "Submit" is a link
     whose script sends the form, not a submit button, and it reads neither account nor sign up. The
