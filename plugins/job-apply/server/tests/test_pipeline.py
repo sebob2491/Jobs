@@ -3186,6 +3186,30 @@ def test_a_page_that_asks_to_be_refreshed_is_reloaded_once(srv, monkeypatch, job
     assert len(said) == 1 and r.seen_form and "went-wrong" not in r.url, (r.url, r.reason, r.log)
 
 
+def test_a_refresh_the_site_asked_for_midway_is_no_circle(srv, monkeypatch, job_apply_home):
+    """Circle K's Workday (run 44, Oct 13): Save and Continue on its last step said "Something went wrong. Please
+    refresh the page", and the page reloaded went back to its first step. The desk, going through again, took that
+    for going round in a circle and stopped. A refresh the site asked for starts the steps afresh (once a job)."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 1)
+    job = srv.add_job(url=fixture_url("site/workday-went-wrong-midway.html"), title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), timeout=120, about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert "round in a circle" not in r.reason, (r.status, r.reason, r.log)
+    assert r.status == "ready" and r.url.endswith("review.html"), (r.status, r.reason, r.log)
+    assert sum("asked for the page to be refreshed" in line for line in r.log) == 1, r.log
+
+
 def test_a_workday_sign_in_presses_the_cover_over_its_hidden_button(srv, monkeypatch, job_apply_home):
     """KLA's Workday (live, Oct 2026) draws its Sign In as a hidden "Sign In" button (aria-hidden) under a
     div of its own named "Submit" (data-automation-id="click_filter") that takes the click. The desk

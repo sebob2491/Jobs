@@ -1582,6 +1582,11 @@ class Applier:
                 # the page and then try again." Done, once a job
                 run.refreshed = True
                 waited = False  # (a new page: its late buttons waited on, whatever was before it)
+                # and the steps it goes through again after that are no circle (Circle K's Workday, run 44: asked
+                # on Voluntary Disclosures, it started again at My Information). Once a job, so a real circle after
+                # it is still caught on its next lap
+                pressed.clear()
+                pressed_on.clear()
                 self._log(run, f"{_site(run, data)} said something went wrong and asked for the page to be "
                           "refreshed, so I reloaded it")
                 with contextlib.suppress(Exception):
