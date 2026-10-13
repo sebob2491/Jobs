@@ -19,3 +19,5 @@ companies: []
 #     ats: workday
 #     confidence: medium
 #     search: {workday: "https://example.wd1.myworkdayjobs.com/Careers"}
+#     mail_domains: [example.com]   # (optional) where its emailed sign-up codes come from, when that's
+#                                   # neither its careers site's domain nor its job system's

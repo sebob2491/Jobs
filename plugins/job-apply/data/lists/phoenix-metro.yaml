@@ -261,6 +261,7 @@ companies:
     az_sites: Phoenix
     confidence: high          # live check, Oct 2026: tax and accounting openings in Phoenix
     search: {oracle: {host: ehzq.fa.us2.oraclecloud.com, site: CX_1}}
+    mail_domains: [gt.com]    # its Oracle site mails the sign-up code from us.gt.com (run 49, Oct 13)
   - name: BDO
     careers_url: https://www.bdo.com/careers
     ats: oracle_hcm           # bdo.com/careers links to two Oracle sites; this is the experienced one

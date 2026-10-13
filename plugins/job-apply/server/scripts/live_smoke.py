@@ -1081,6 +1081,10 @@ def fake_answer(q: dict[str, Any]) -> Any:
         return "50000"
     if re.search(r"year|salary|number|how many|zip|postal|\bgpa\b", q.get("label") or "", re.I):
         return "0"
+    # a skill a Workday skills search finds (HonorHealth's required "Type to Add Skills", probe 50: "Test answer"
+    # matches none, and the desk would ask again and again)
+    if re.search(r"\bskills?\b", label, re.I):
+        return "Communication"
     return "Test answer"
 
 
