@@ -782,7 +782,8 @@ ENTRIES_JS = r"""
     const t = clean(b.getAttribute('aria-label') || txt(b));
     const m = /^edit\b(.*)\bitem\s*(\d+)$/i.exec(t);
     const row = b.closest('li') || b;
-    if (!m || !kind.test(m[1]) || !(visible(b) || visible(row)) || regions.some((r) => r.contains(b))) continue;
+    if (!m || !kind.test(m[1]) || /volunteer|military/i.test(m[1]) || !(visible(b) || visible(row))
+        || regions.some((r) => r.contains(b))) continue;  // (a volunteer or military row is no job's)
     items.add(m[2]);
   }
   const entries = numbered.length + regions.length + items.size;

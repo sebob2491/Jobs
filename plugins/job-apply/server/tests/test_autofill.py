@@ -47,26 +47,46 @@ def f(label, kind="text", **kw):
 def test_a_choice_saying_the_person_is_not_on_staff_is_answered_from_the_profile():
     """Desert Financial's UKG Pro (run 56): "Have you notified your leader of your application? (internal candidates
     only)" with Yes, No and "I am not a current Desert Financial employee": the last, where the profile says where the
-    person works and it isn't there, as a Create Account's "new candidate" box is ticked. Never a plain Yes or No, nor
-    a choice naming another employer, nor at the employer they work for now."""
+    person works and has never had this employer there, as a Create Account's "new candidate" box is ticked. Only a
+    question for the employer's own staff, and only a choice that says no more than that (the review of 0.3.146)."""
     from job_apply.config import Profile
 
     asked = "Have you notified your leader of your application? (internal candidates only)"
     options = ["Yes", "No", "I am not a current Desert Financial employee"]
     dfcu = {"company": "Desert Financial Credit Union"}
 
-    def answer(p, opts=options, job=dfcu, kind="radio_group"):
-        a = resolve_field(f(asked, kind, options=opts), p, job)
+    def answer(p=None, opts=options, job=dfcu, kind="radio_group", label=asked):
+        a = resolve_field(f(label, kind, options=opts), p or prof(), job)
         return a and a.value
 
-    assert answer(prof()) == "I am not a current Desert Financial employee"
-    assert answer(prof(), kind="select") == "I am not a current Desert Financial employee"
-    assert answer(prof(), ["Yes", "No", "I am an external candidate"]) == "I am an external candidate"
-    assert answer(prof(), ["Yes", "No"]) is None
-    assert answer(prof(), ["Yes", "No", "I am not a current Intel employee"]) is None  # (another employer's)
-    assert answer(prof(), ["Yes", "No", "I am not a current Intel employee"], {"company": "Intel Corporation"}) is None
+    assert answer() == "I am not a current Desert Financial employee"
+    assert answer(kind="select") == "I am not a current Desert Financial employee"
+    assert answer(opts=["Yes", "No", "I am not a current employee of Desert Financial Credit Union"]) \
+        == "I am not a current employee of Desert Financial Credit Union"
+    assert answer(opts=["Yes", "No", "I am an external candidate"]) == "I am an external candidate"
+    assert answer(opts=["Yes", "No"]) is None
+    assert answer(opts=["Yes", "No", "I am not a current Intel employee"]) is None  # (another employer's)
+    assert answer(opts=["Yes", "No", "I am not a current Intel employee"], job={"company": "Intel Corporation"}) is None
     assert answer(Profile({"personal": {"first_name": "Sam"}})) is None  # (nothing said of their work)
-    assert answer(prof(), job={}) is None
+    assert answer(job={}) is None
+    # a choice that says more than that is theirs: "former", relatives, the last 12 months
+    for more in ("I am not a current or former Desert Financial employee",
+                 "I am not a current employee of Desert Financial or a former employee",
+                 "I am not a current employee of Desert Financial and I am not related to any employee",
+                 "I am not a current employee and have not been employed there in the last 12 months"):
+        assert answer(opts=["Yes", "No", more]) is None, more
+    # a question that isn't only for staff: whether they applied before, or worked there lately, isn't this
+    assert answer(label="Have you applied with us before?", opts=["I am a new applicant", "I am a returning applicant"]) is None
+    assert answer(label="Have you worked for Desert Financial in the last year?") == "No"  # (the work history's rule)
+    # a profile that has this employer in it at all (a job there with no end, a past one): theirs to say
+    there = {"title": "Teller", "company": "Desert Financial Credit Union", "start": "2022-01"}
+    data = dict(prof().data)
+    assert answer(Profile({**data, "work_history": [there]})) is None
+    assert answer(Profile({**data, "work_history": [*data["work_history"], {**there, "end": "2023-05"}]})) is None
+    # another employer that only shares a first word isn't this one (the State of Arizona at Arizona State University)
+    asu = {"company": "Arizona State University"}
+    for other in ("I am not a current employee of the State of Arizona", "I am not a current State of Arizona employee"):
+        assert answer(opts=["Yes", "No", other], job=asu) is None, other
 
 
 def test_resolve_contact_fields():
@@ -2205,6 +2225,13 @@ def test_more_questions_the_profile_answers():
     # (APS's SuccessFactors, run 56: what the sponsorship is for, "in order to have" it)
     assert answer("* Do you now, or will you in the future, require sponsorship in order to have work authorization in "
                   "the United States?") == "No"
+    # ...but a question that also asks whether they can work now stays theirs (the review of 0.3.146)
+    for both in ("Are you able to work in the US now, or will you need sponsorship to get work authorization?",
+                 "Will you require sponsorship to get work authorization, and are you currently able to work in the US?",
+                 "Do you currently have, or will you require sponsorship to receive, work authorization?",
+                 "Are you able to work in the US, or will you require sponsorship in order to have work authorization?",
+                 "Are you able to work in the US now, or will you need sponsorship to obtain work authorization?"):
+        assert answer(both) is None, both
     # both halves in one question stay the person's
     assert answer("Are you authorized to work in the U.S., or will you require sponsorship to obtain work "
                   "authorization?") is None

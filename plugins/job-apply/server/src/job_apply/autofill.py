@@ -675,28 +675,44 @@ def _plans_none(field: dict, prof: Profile) -> Any:
 
 # A choice that says the person isn't one of the employer's staff, and nothing more: "I am not a current Desert
 # Financial employee" beside the Yes and No of "Have you notified your leader of your application? (internal candidates
-# only)" (Desert Financial's UKG Pro, run 56), "I am an external candidate"
-_NOT_STAFF = re.compile(r"^(?:(?:n a|not applicable|no) )?(?:i am |i m )?(?:not (?:a |an )?(?:current|existing) (?P<who>(?:\w+ ){0,4}?)"
-                        r"(?:employee|associate|team member|staff member)(?: of (?P<of>.+))?|(?:a |an )?(?:new|external) "
-                        r"(?:candidate|applicant))$")
+# only)" (Desert Financial's UKG Pro, run 56), "I am an external candidate". Never one that says more ("...or former",
+# "...and not related to any employee"), nor a new applicant's (whether they applied before isn't the profile's)
+_NOT_STAFF = re.compile(r"^(?:(?:n a|not applicable|no) )?(?:i am |i m )?(?:not (?:a |an )?current (?P<who>(?:\w+ ){0,4}?)"
+                        r"(?:employee|associate|team member|staff member)(?: (?:of|at|with) (?:the )?(?P<of>(?:\w+ ?){1,6}))?|"
+                        r"(?:an )?external (?:candidate|applicant))$")
+_SAYS_MORE = re.compile(r"\b(?:or|and|nor|former\w*|previous\w*|past|prior|ever|been|relat\w*|famil\w*|last|within)\b")
+# a question only for the employer's own staff ("(internal candidates only)", "Current employees only: ...")
+_STAFF_ONLY = re.compile(r"\binternal (?:candidates?|applicants?|employees?|only)\b|\bcurrent (?:employees?|associates?|"
+                         r"team members?) only\b|\b(?:if|for) (?:you are )?(?:an? )?(?:current|internal) (?:employee|associate|"
+                         r"team member|candidate|applicant)s?\b")
 
 
 def _not_staff_choice(field: dict, prof: Profile, job: dict) -> str | None:
-    """A question's one choice saying the person isn't a current employee of this employer (_NOT_STAFF), where the
-    profile says where they work and it isn't there (works_there_now), as a Create Account's "new candidate, not a
-    current employee" box is ticked (pipeline._new_candidate_boxes). A choice naming another employer isn't theirs to
-    claim, nor one of several alike; a profile that says nothing of their work says nothing of this either."""
+    """A question only for the employer's own staff (_STAFF_ONLY), answered with its one choice that says the person
+    isn't on that staff and nothing more (_NOT_STAFF), naming no employer or this one alone, as a Create Account's
+    "new candidate, not a current employee" box is ticked (pipeline._new_candidate_boxes): where the profile says
+    where the person works and has never had this employer there (a job there with no end may be one they have now,
+    and "former" is theirs to say)."""
     company = norm(job.get("company"))
-    if not company or not (prof.get("work_history") or prof.get("experience.current_company")):
+    if not company or not _STAFF_ONLY.search(norm(field.get("label"))):
         return None
-    first = company.split()[0]
+    entries = [e for e in _listed(prof.get("work_history")) if isinstance(e, dict)]
+    if not (entries or prof.get("experience.current_company")):
+        return None  # (a profile that says nothing of their work says nothing of this either)
+    known = [norm(e.get("company")) for e in entries] + [norm(c) for c in _listed(prof.get("history.previous_employers"))]
+    known.append(norm(prof.get("experience.current_company")))
+    if any(_same_employer(c, company) for c in known if c):
+        return None
     fits = []
     for o in field.get("options") or []:
-        m = _NOT_STAFF.fullmatch(norm(o))
-        named = m and ((m.group("who") or "").strip() or (m.group("of") or "").strip())
-        if m and (not named or re.search(rf"(^| ){re.escape(first)}( |$)", named) or _same_employer(named, company)):
+        said = norm(o)
+        m = _NOT_STAFF.fullmatch(said)
+        if not m or _SAYS_MORE.search(said):
+            continue
+        named = [n.strip() for n in (m.group("who"), m.group("of")) if n and n.strip()]
+        if all(_same_employer(n, company) for n in named):
             fits.append(o)
-    return fits[0] if len(fits) == 1 and not works_there_now(prof, company) else None
+    return fits[0] if len(fits) == 1 else None
 
 
 def _employee_id(prof: Profile, job: dict) -> str | None:
@@ -776,16 +792,21 @@ def _no_sponsorship(prof: Profile, job: dict, label: str = "") -> Any:
 # what the sponsorship would be for, not a second question: "...require visa sponsorship...
 # to maintain your work authorization?" (Grant Thornton), "...require sponsorship in order to have work authorization in the
 # United States?" (APS's SuccessFactors, run 56)
-_FOR_AUTHORIZATION = re.compile(r"\b(in order )?to (obtain|maintain|keep|retain|continue|extend|have|get|gain|secure|receive)"
-                                r"( your| my| the)?( current)?"
+_FOR_AUTHORIZATION = re.compile(r"\b((in order )?to (obtain|maintain|keep|retain|continue|extend)|in order to (have|get|gain|"
+                                r"secure|receive))( your| my| the)?( current)?"
                                 r"( work| employment)? (authori[sz]ation|eligibility)\b|\bfor (work |employment )?authori[sz]ation\b")
+# and the other half of a question that also asks whether they can work now ("Are you able to work in the US now, or
+# will you need sponsorship to obtain work authorization?"): a single Yes or No can't answer both (the review of 0.3.146)
+_ABLE_NOW = re.compile(r"\b(able|permitted|allowed|eligible) to (legally |lawfully )?work\b|\b(currently|already) (have|hold|"
+                       r"possess)\b")
 
 
 def _sponsorship(prof: Profile, job: dict, label: str = "") -> Any:
     """Will the person need sponsorship? Not answered when the same question also asks whether
     they're authorized ("Are you authorized … and will you require sponsorship?"), which a
     single Yes or No can't answer both halves of."""
-    if re.search(_AUTHORIZED, _FOR_AUTHORIZATION.sub(" ", norm(label))):
+    rest = _FOR_AUTHORIZATION.sub(" ", norm(label))
+    if re.search(_AUTHORIZED, rest) or _ABLE_NOW.search(rest):
         return None
     return _yn("work_authorization.requires_sponsorship")(prof, job)
 
@@ -1905,9 +1926,6 @@ def _resolve_field(field: dict, prof: Profile, job: dict | None = None, file_inp
             ans = Answer(city, "personal.address.city")
     if ans is None and kind == "checkbox_group" and (none := _plans_none(field, prof)):
         return Answer(none, "background.plans")  # (one of its own choices, as it reads)
-    if ans is None and kind in _CHOICE_KINDS - {"checkbox", "checkbox_group"} and not someone_else \
-            and (outside := _not_staff_choice(field, prof, job)):
-        return Answer(outside, "work_history")  # (one of its own choices, as it reads)
     if ans is None:
         # a self-identification question is its own topic's, whatever else its notice's words match
         own = _self_identification(label, field)
@@ -1930,6 +1948,9 @@ def _resolve_field(field: dict, prof: Profile, job: dict | None = None, file_inp
                     return None  # recognised but the profile has no answer
                 ans = Answer(value, name)
                 break
+    if ans is None and kind in _CHOICE_KINDS - {"checkbox", "checkbox_group"} and not someone_else \
+            and (outside := _not_staff_choice(field, prof, job)):
+        return Answer(outside, "work_history")  # (one of its own choices, as it reads; only where no rule took the question)
     if ans is None and kind in _CHOICE_KINDS and field.get("options") and _INSTRUCTION_ONLY.match(label) \
             and _POINTS_AT_CHOICES.search(label):
         ans = _topic_from_options(field["options"], prof, job)
