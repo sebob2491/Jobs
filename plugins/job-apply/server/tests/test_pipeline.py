@@ -2335,6 +2335,37 @@ def test_a_step_still_loading_its_questions_is_waited_for(srv, monkeypatch, quer
     assert any("clicked “Save and Continue”" in line for line in r.log), r.log
 
 
+@pytest.mark.parametrize("query", ["", "?heal"])
+def test_a_step_whose_sections_never_finish_loading_is_reloaded_once_then_said(srv, monkeypatch, query):
+    """Wells Fargo's and Hitachi's Workday (run 57, Oct 13): My Information right after the account's sign-in drew its
+    Country and names, but its Address, Email Address and Phone stayed Workday's loading placeholders and its Save and
+    Continue greyed out, and the desk said "I couldn't find the button that moves this application on". A step still
+    loading is waited on, reloaded once (heal: then it draws the rest and goes on), and otherwise said for what it is."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 1)
+    monkeypatch.setattr(pipeline, "STEP_LOAD_WAIT", 2)
+    job = srv.add_job(url=fixture_url("site/workday-sections-loading.html") + query, title="Branch Coordinator",
+                      company="Example Bank")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        r = applier.enqueue(job["id"])
+        applier.start()
+        try:
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert any("still loading" in line and "reloaded" in line for line in r.log), r.log
+    if query:
+        assert r.status == "ready", (r.status, r.need, r.reason, r.log)
+    else:
+        assert (r.status, r.need) == ("needs_you", "stuck"), (r.status, r.need, r.reason, r.log)
+        assert "didn't finish loading" in r.reason and "couldn't find the button" not in r.reason, r.reason
+
+
 def test_a_first_step_that_thanks_the_person_isnt_taken_for_a_confirmation(srv, monkeypatch):
     """A careers site's first step thanks the person ("Thanks for applying to Acme!") over its required
     First Name and Email and their Next, and its footer asks them to join its talent community. Back on

@@ -727,7 +727,12 @@ EXTRACT_JS = r"""
   const LOADING = '[data-automation-id="loading"], [data-automation-id*="loadingSpinner" i], '
     + '[data-automation-id*="loading-dots" i], [data-automation-id*="loadingDots" i], [data-part="loading-animation-dot"], '
     + '[aria-busy="true"], [role="progressbar"]:not([aria-valuenow])';
-  const busy = [...document.querySelectorAll(LOADING)].some(visible);
+  // and Workday's placeholder for a section still loading: a hidden "Loading" beside its grey bars (Wells Fargo's and
+  // Hitachi's My Information after the account's sign-in, run 57: its Address, Email and Phone never came)
+  const bones = () => [...document.querySelectorAll('div, span')].some((el) => el.childElementCount === 0
+    && /^loading(?:\.\.\.|\u2026)?$/i.test((el.textContent || '').trim()) && el.nextElementSibling
+    && el.nextElementSibling.getAttribute('aria-hidden') === 'true' && visible(el.nextElementSibling));
+  const busy = [...document.querySelectorAll(LOADING)].some(visible) || bones();
   return { fields, actions, errors, headings, dialogs, ...(busy ? { busy: true } : {}) };
 }
 """.replace("/*SIGN_IN_FORM*/", SIGN_IN_FORM_JS).replace("/*OPEN_DIALOGS*/", OPEN_DIALOGS_JS)

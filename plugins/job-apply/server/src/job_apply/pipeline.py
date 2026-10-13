@@ -450,6 +450,7 @@ class Run:
     reset_from: str = ""  # the sign-in page a reset was asked from: back there once it's done elsewhere
     reset_waited: bool = False  # paused for the reset email (a Resume after that means it's done)
     refreshed: bool = False  # reloaded once for a page that asked for it ("Please refresh the page")
+    load_reloaded: bool = False  # reloaded once for a step still loading after its wait (Workday's placeholders, run 57)
     invalid_redone: bool = False  # the review page's invalid lists answered again from the profile (once a job)
     reset_no_mail: bool = False  # and none came in RESET_MAIL_WAIT: no account there, most likely, so one is made
     reopened_elsewhere: bool = False  # its sign-in page, opened again, led elsewhere: the job opened again (once a job)
@@ -1989,6 +1990,23 @@ class Applier:
                     saved_waited.add(just)
                     await self._wait_for_step_change(just, STEP_SAVE_WAIT)
                     continue
+                if loading:
+                    # still loading after the wait (Wells Fargo's and Hitachi's Workday My Information after the account's
+                    # sign-in, run 57: its Address, Email and Phone stayed loading placeholders, its Save and Continue
+                    # greyed, and the desk said it couldn't find the way on): reloaded once a job, the reload waited on as
+                    # a step of its own, and then said for what it is
+                    if not run.load_reloaded and run.page is not None:
+                        run.load_reloaded = True
+                        step_waited.discard(drawn)
+                        self._log(run, f"{_site(run, data)}'s page was still loading after {STEP_LOAD_WAIT} seconds, so I "
+                                  "reloaded it")
+                        with contextlib.suppress(Exception):
+                            await run.page.reload(wait_until="load")
+                        continue
+                    await self._bring_forward(run)
+                    return self._pause(run, "stuck", f"{_site(run, data)}'s page didn't finish loading: parts of it still "
+                                       "showed their loading placeholders after a wait and a reload, so there's no way on "
+                                       "yet. Reload it in the browser window (or try again later), then press Resume.")
                 if greyed:
                     said = "; ".join(e for e in data.get("errors") or [] if _errorish(e))[:300] \
                         or _unanswered(data)
