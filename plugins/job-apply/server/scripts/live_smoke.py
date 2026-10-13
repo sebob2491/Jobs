@@ -1235,6 +1235,101 @@ _LIST_JS = r"""
 """
 
 
+# A box's open menu as the desk reads it (formjs FIELD_OPTIONS_JS: the visible options, wherever they are), and its
+# chosen pills: each option's words, label and kind, a few options' markup, and the list around them, with only the
+# attributes that say what each part is (the page holds only the fake applicant's details)
+_MENU_JS = r"""
+(el) => {
+  const KEEP = /^(data-automation-id|role|aria-label|aria-selected|aria-checked|aria-expanded|aria-haspopup|aria-level|type|data-uxi-widget-type|tabindex)$/;
+  const short = (node, n) => {
+    const c = node.cloneNode(true);
+    for (const x of [c, ...c.querySelectorAll('*')]) {
+      if (/^(SCRIPT|STYLE|PATH)$/i.test(x.tagName)) { x.remove(); continue; }
+      for (const a of [...x.attributes]) {
+        if (!KEEP.test(a.name) && !(x.tagName === 'svg' && a.name === 'class')) x.removeAttribute(a.name);
+      }
+    }
+    return c.outerHTML.replace(/\s+/g, ' ').slice(0, n);
+  };
+  const shown = (o) => o.getClientRects().length > 0 && getComputedStyle(o).visibility !== 'hidden';
+  const pillsBox = el.closest('[data-automation-id="multiSelectContainer"]');
+  const pills = pillsBox ? [...pillsBox.querySelectorAll('[data-automation-id="selectedItem"]')]
+    .map((p) => (p.innerText || '').trim()) : null;
+  const opts = [...document.querySelectorAll('[role="option"]')].filter(shown)
+    .filter((o) => !o.closest('[data-automation-id="selectedItemList"]'));
+  const info = opts.slice(0, 20).map((o) => ({
+    text: (o.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 80), label: o.getAttribute('aria-label'),
+    auto: o.getAttribute('data-automation-id'), selected: o.getAttribute('aria-selected'),
+    inner: [...new Set([...o.querySelectorAll('[data-automation-id]')].map((x) => x.getAttribute('data-automation-id')))],
+    svg: [...o.querySelectorAll('svg')].map((x) => x.getAttribute('class') || '').join(' ').slice(0, 80),
+    radio: !!o.querySelector('input[type=radio], input[type=checkbox], [role=radio], [role=checkbox]') }));
+  const box = opts.length ? (opts[0].closest('[data-automation-id="activeListContainer"]')
+    || opts[0].closest('[role="listbox"]') || opts[0].parentElement) : null;
+  const chain = [];
+  for (let n = box, d = 0; n && d < 6; n = n.parentElement, d++) {
+    chain.push([n.tagName.toLowerCase(), n.getAttribute('data-automation-id') || '', n.getAttribute('role') || ''].join('|'));
+  }
+  const prompts = [...document.querySelectorAll('[data-automation-id]')].filter(shown)
+    .map((x) => x.getAttribute('data-automation-id')).filter((a) => /prompt|menu|list|back|search|loading/i.test(a));
+  return { pills, value: el.value, expanded: el.getAttribute('aria-expanded'), count: opts.length, options: info,
+           first: opts.slice(0, 2).map((o) => short(o, 1200)), box: box ? short(box, 2500) : null, chain,
+           automation: [...new Set(prompts)].slice(0, 40) };
+}
+"""
+
+
+async def _desk_steps(page: Any, loc: Any, fid: str, typed: str) -> dict[str, Any]:
+    """The desk's own steps for a pick from the list a box opens with (browser._type_and_pick's), each one's
+    result recorded: the options read on opening, the pills a moment after the click, and the options read
+    after it (a group's own list, which the desk didn't see at Air Products, ASML and Wells Fargo in run 44).
+    The run is over; nothing is sent."""
+    from job_apply.formjs import FIELD_OPTIONS_JS, WORKDAY_CHOSEN_JS
+
+    b, out = server.browser, {}
+    try:
+        await b._open(page, fid, loc)
+        out["options"] = opened = await b._field_options(page, fid, loc, 2500)
+        out["geometry_open"] = await loc.evaluate(_GEOMETRY_JS)
+        if typed not in opened:
+            return out
+        await b._click_option(page, fid, typed)
+        await page.wait_for_timeout(150)
+        out["pills"] = await loc.evaluate(WORKDAY_CHOSEN_JS)
+        await page.wait_for_timeout(1600)
+        out["inner"] = await b._new_options(page, fid, loc, opened, 1500)
+        out["raw"] = await loc.evaluate(FIELD_OPTIONS_JS)
+        out["geometry_after"] = await loc.evaluate(_GEOMETRY_JS)
+        out["menu_after"] = await loc.evaluate(_MENU_JS)
+    except Exception as e:  # noqa: BLE001 - a probe
+        out["error"] = f"{type(e).__name__}: {str(e)[:300]}"
+    finally:
+        with contextlib.suppress(Exception):
+            await b._close_menus(page)
+    return out
+
+
+# Where a box, its open menu and the page's other dropdowns are (FIELD_OPTIONS_JS's measures): which menu it
+# takes for the box's own
+_GEOMETRY_JS = r"""
+(el) => {
+  const r = (n) => { const b = n.getBoundingClientRect(); return [Math.round(b.top), Math.round(b.bottom),
+                                                                  Math.round(b.left), Math.round(b.right)]; };
+  const outer = (f) => f.closest('[role="combobox"]') || f;
+  const shown = (o) => o.getClientRects().length > 0 && getComputedStyle(o).visibility !== 'hidden';
+  const opts = [...document.querySelectorAll('[role="option"]')].filter(shown);
+  const lists = [...new Set(opts.map((o) => o.closest('[role="listbox"]') || o.parentElement))];
+  const others = [...document.querySelectorAll('[role="combobox"], [aria-haspopup="listbox"], input[aria-autocomplete]')]
+    .map(outer).filter((f) => f !== outer(el) && !f.contains(el) && !el.contains(f) && f.getClientRects().length > 0);
+  return { el: r(el), outer: r(outer(el)), parent: r(el.closest('[role="combobox"]') || el.parentElement || el),
+           controls: el.getAttribute('aria-controls') || el.getAttribute('aria-owns') || '',
+           lists: lists.map((l) => ({ at: r(l), auto: l.getAttribute('data-automation-id') || l.tagName.toLowerCase(),
+                                      n: opts.filter((o) => (o.closest('[role="listbox"]') || o.parentElement) === l).length,
+                                      before: opts.filter((o) => o.getAttribute('data-ja-before')).length })),
+           others: others.slice(0, 12).map((f) => ({ at: r(f), name: (f.getAttribute('aria-label') || f.id || '').slice(0, 40) })) };
+}
+"""
+
+
 FINAL_BOXES = 12  # boxes final_form keeps
 FINAL_CHOICES = 30  # choices it keeps of each
 
@@ -1275,18 +1370,52 @@ async def list_probe(questions: list[dict[str, Any]]) -> list[dict[str, Any]]:
             if not m or len(out) >= 3:
                 continue
             loc = page.locator(f'[data-ja-id="{q["id"]}"]')
+            if not await loc.count():
+                # drawn again since it was read (ASML's Workday, runs 45 and 46): found by its label, and given the
+                # id again, for the desk's own steps below
+                said = re.sub(r"\s*\*\s*$", "", q.get("label") or "")
+                loc = page.locator('[data-automation-id^="formField-"]').filter(has_text=said).locator(
+                    'input:not([type=hidden]), button[aria-haspopup]').first
+                with contextlib.suppress(Exception):
+                    await loc.evaluate("(el, id) => el.setAttribute('data-ja-id', id)", str(q["id"]), timeout=5000)
+            opened: dict[str, Any] = {}
             try:
                 # focus and type without a pointer click: a cookie banner may cover the page
                 # (TI's has no Reject, so it stays), and typing goes in under it
                 await loc.scroll_into_view_if_needed(timeout=5000)
+                typed = m.group(1) or m.group(2) or m.group(3)
+                if m.group(2):
+                    # first as the desk picked it: from the list the box opens with, before anything is typed
+                    # (Workday's groups: run 44's "Website" at Air Products, "ASML" at ASML), the menu as the desk
+                    # reads it (_MENU_JS), and as it is a moment and a few seconds after the click
+                    try:
+                        await loc.click(timeout=3000)
+                    except Exception:  # noqa: BLE001 - covered: as the desk does, focus and open it from the keys
+                        await loc.evaluate("el => el.focus()")
+                        await loc.press("ArrowDown")
+                    await asyncio.sleep(2)
+                    opened["on_opening"] = await loc.evaluate(_MENU_JS)
+                    entry = page.locator('[role="option"]:visible').filter(
+                        has_text=re.compile(rf"^\s*{re.escape(typed)}\s*$"))
+                    opened["matching"] = await entry.count()
+                    if opened["matching"]:
+                        await entry.first.click(timeout=5000)
+                        await asyncio.sleep(0.8)
+                        opened["after_opening_click"] = await loc.evaluate(_MENU_JS)
+                        await asyncio.sleep(2.5)
+                        opened["later"] = await loc.evaluate(_MENU_JS)
+                        await print_shot(f"after picking {typed!r} from the opening list", page)
+                    await page.keyboard.press("Escape")
+                    await asyncio.sleep(0.5)
+                    opened["desk"] = await _desk_steps(page, loc, str(q["id"]), typed)
                 await loc.evaluate("el => el.focus()")
                 await loc.fill("")
-                typed = m.group(1) or m.group(2) or m.group(3)
                 await loc.press_sequentially(typed, delay=80)
                 if m.group(2) or m.group(3):  # (a Workday prompt lists its matches after Enter)
                     await loc.press("Enter")
                 await asyncio.sleep(3)
                 info = await page.evaluate(_LIST_JS, str(q["id"])) or {}
+                info["menu_typed"] = await loc.evaluate(_MENU_JS)
                 await print_shot(f"list for {q.get('label')}", page)
                 if m.group(2):  # the entry pressed, and the box as it is a moment after (a pill, a group's list)
                     entry = page.get_by_role("option", name=typed, exact=True).first
@@ -1298,7 +1427,7 @@ async def list_probe(questions: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 await page.keyboard.press("Escape")
             except Exception as e:  # noqa: BLE001
                 info = {"error": f"{type(e).__name__}: {str(e)[:200]}"}
-            out.append({"label": q.get("label"), "typed": m.group(1) or m.group(2) or m.group(3), **info})
+            out.append({"label": q.get("label"), "typed": m.group(1) or m.group(2) or m.group(3), **opened, **info})
     except Exception as e:  # noqa: BLE001 - a probe; the run's record stands without it
         out.append({"error": f"{type(e).__name__}: {str(e)[:200]}"})
     return out
@@ -1337,7 +1466,8 @@ async def check_pipeline(company: dict[str, Any], out: Path, rec: dict[str, Any]
     run = None
     try:
         run = applier.enqueue(job["id"])
-        for _ in range(3 + (MAIL_ROUNDS if TEST_IDENTITY else 0)):
+        rounds = 3 + (MAIL_ROUNDS if TEST_IDENTITY else 0)
+        for n in range(rounds):
             start = time.monotonic()
             while run.status in ("queued", "running"):
                 if time.monotonic() - start > PIPELINE_WAIT:
@@ -1354,6 +1484,11 @@ async def check_pipeline(company: dict[str, Any], out: Path, rec: dict[str, Any]
             if run.need in ("stuck", "sign_in"):  # (an account's step it stopped on, too: UKG Pro's, Oct 2026)
                 await print_shot(company["name"], run.page)
             if run.status == "needs_you" and run.need == "questions":
+                if n == rounds - 1:
+                    # the last round: its questions stay as they are, for the list probe below (answered and queued
+                    # again, they were cleared, and the job was still running when the run was stopped: run 44's
+                    # Workday lists at Air Products, ASML and Wells Fargo were never probed)
+                    break
                 labels = [q.get("label") or "" for q in run.questions]
                 for q in run.questions:
                     # (as the desk's card keys them: a label more than one box has, a date's Month, Day and Year,

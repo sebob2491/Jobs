@@ -196,6 +196,19 @@ _LASTS = re.compile(r"\byour (?:agreement|consent|acceptance) (?:is|will be|rema
                     r"\b(?:privacy|data protection) (?:notice|policy|statement)\b)", re.I)
 # A box whose words say it agrees to the words above it ("the documents above"): what it agrees to is up there
 _READ_ABOVE = re.compile(r"\b(?:documents?|terms|text|information|notices?|statements?|policy|policies) above\b", re.I)
+# A box that says only that the words above it were read (Avnet's Workday Create Account, run 44: "Yes, I have read and
+# understood." under "you acknowledge Avnet will collect and process your personal data as outlined in our Applicant
+# Data Protection and Privacy Statement"): ticked only where those words are the site's terms or privacy statement
+_READ_UNDERSTOOD = re.compile(r"^\W*(?:yes,? )?i have read,? and (?:understood|understand)(?: (?:it|this|them|the above))?\W*$",
+                              re.I)
+# What the words above any such box (a bare "I agree", "the documents above", "read and understood") must name for the
+# desk to tick it: the site's terms or privacy statement, or its processing of personal data; never the terms of
+# employment, and never an attestation (the reviews of 0.3.133's: a paragraph that names none of these, "Join our
+# Careers Community", is the person's however it's worded)
+_SITES_TERMS = re.compile(r"\b(?:privacy|data protection)\b[\w ]{0,25}\b(?:policy|notice|statement)\b|"
+                          r"\bterms (?:of (?:use|service)|and conditions)\b|\bpersonal (?:data|information)\b|\bgdpr\b",
+                          re.I)
+_ATTESTS_ABOVE = re.compile(r"of employment|certif|true and complete|background check", re.I)
 # An attestation or privacy agreement that also signs the person up: "... and consent to receive email communications
 # from Acme", "... and would like to receive updates" (the safety audit of Oct 12): never ticked for them
 _SIGNS_UP_TOO = re.compile(r"\breceiv\w*\b.{0,40}\b(?:e-?mails?|communications?|updates?|messages?|news\w*|offers|"
@@ -227,7 +240,11 @@ _SIGN_UP_ABOVE = re.compile(r"talent (?:community|network|pool)|job alerts?|news
                             r"contact(?:ed)? me|be contacted|share my|"
                             r"other (?:\w+ )?(?:roles|positions|jobs|openings|opportunities)|"
                             r"\breceiv\w*\b.{0,40}\b(?:news\w*|offers|updates?|alerts?|promotions?|(?:job|career) "
-                            r"opportunities|marketing)\b", re.I)
+                            r"opportunities|marketing)\b|"
+                            # (the review of 0.3.133's: kept for later vacancies, shared with partners or agencies)
+                            r"talent database|future (?:\w+ )?vacanc|keep\w* (?:my|your) (?:personal )?data|"
+                            r"share (?:my|your)|partners|staffing|recruit\w* agenc|"
+                            r"careers? (?:community|network)|\balerts?\b|\btexts?\b|\bcalls?\b", re.I)
 # A box whose own words say only that the person agrees: what it agrees to is in the words above it
 _BARE_AGREE = re.compile(r"^\W*(?:yes,? )?i (?:agree|consent|accept)\W*$", re.I)
 # A Create Account box that says the person applies from outside, not as one of the employer's staff
@@ -407,6 +424,7 @@ class Run:
     reason: str = ""
     questions: list[dict[str, Any]] = field(default_factory=list)
     log: list[str] = field(default_factory=list)
+    logged: int = 0  # lines ever logged (the log keeps the last 40): something done since
     url: str = ""
     blocking: bool = False  # the queue waits on this one
     paused_at: float = 0.0
@@ -1350,6 +1368,7 @@ class Applier:
     # ------------------------------------------------------------- one job
     def _log(self, run: Run, text: str) -> None:
         run.log.append(text)
+        run.logged += 1
         del run.log[:-40]
         run.updated = time.time()
 
@@ -1490,7 +1509,10 @@ class Applier:
         run.try_later = False
         if not await self._open(run):
             return
-        stalls, entries_done, waited, refilled, dismissed = 0, set(), False, set(), set()
+        stalls, entries_done, refilled, dismissed = 0, set(), set(), set()
+        # pages waited on to draw their buttons late, once a page each time it's reached (Baker Tilly's Workday, run 44:
+        # the step after its sign-in drew them late too, and once a pass left it unwaited)
+        waited: set[tuple[Any, ...]] = set()
         step_waited: set[tuple[Any, ...]] = set()  # pages (as drawn) waited on for a greyed-out step button
         retyped: set[tuple[Any, ...]] = set()  # pages whose lost boxes were typed again (once a page)
         refilled_pages: set[tuple[Any, ...]] = set()  # pages whose emptied boxes were filled again (once a page)
@@ -1502,7 +1524,10 @@ class Applier:
         pressed: list[tuple[Any, ...]] = []  # (page, button) for each button pressed on this pass
         pressed_on: list[str] = []  # and where, in words
         agreed: set[str] = set()  # notices agreed to for the person on this pass (settings.accept_notices)
-        for _ in range(MAX_STEPS):
+        since = 0  # where the presses that count for a circle start (after a refresh the site asked for)
+        steps, more = 0, 0  # (more: the steps that refresh made it take again)
+        while steps < MAX_STEPS + more:
+            steps += 1
             if run.status in ("skipped", "submitted"):  # Skip, or "I submitted it", pressed while it ran
                 return
             data, text = await self._look()
@@ -1581,7 +1606,11 @@ class Applier:
                 # KLA's Workday right after its sign-in (live, Oct 2026): "Something went wrong. Please refresh
                 # the page and then try again." Done, once a job
                 run.refreshed = True
-                waited = False  # (a new page: its late buttons waited on, whatever was before it)
+                waited.clear()  # (a new page: its late buttons waited on, whatever was before it)
+                # and the steps it goes through again after that are no circle (Circle K's Workday, run 44: asked
+                # on Voluntary Disclosures, it started again at My Information), nor more steps than expected. Once a
+                # job, so a real circle after it is still caught on its next lap
+                since, more = len(pressed), steps
                 self._log(run, f"{_site(run, data)} said something went wrong and asked for the page to be "
                           "refreshed, so I reloaded it")
                 with contextlib.suppress(Exception):
@@ -1886,8 +1915,10 @@ class Applier:
                 bare_waited.add(_page_key(data))
                 if await self._wait_for_step(STEP_LOAD_WAIT, data):
                     continue
-            elif action is None and kind == "page" and not waited and not gate_now:
-                waited = True  # slow pages (Intel's Workday, Eightfold forms) draw their buttons late
+            elif action is None and kind == "page" and (_page_key(data), run.logged) not in waited and not gate_now:
+                # slow pages (Intel's Workday, Eightfold forms) draw their buttons late (and a page reached again, the
+                # desk having done something since, is a new visit: its address can be the same)
+                waited.add((_page_key(data), run.logged))
                 wait = SIGN_IN_STEP_WAIT if sign_in_step else BLANK_PAGE_WAIT if blank else LATE_BUTTONS_WAIT
                 if await self._wait_for_progress(wait):
                     continue
@@ -1999,26 +2030,27 @@ class Applier:
             # (and which visit to the job: its Apply pressed again once it's opened again isn't a third press, EY's,
             # Freeport's and SRP's SuccessFactors, nightly Oct 11: "Apply now", then its menu's "Apply Now", before)
             key = (data.get("url"), tuple(data.get("headings") or []), action["text"].strip().lower(), run.reopened)
-            if key in pressed and pressed[-1] != key:
+            lately = pressed[since:]  # (the presses since a refresh the site asked for: the steps it takes again are new)
+            if key in lately and pressed[-1] != key:
                 # Round in a circle (Oracle sent its sites back to the posting from "Continue"):
                 # going round again only repeats it, and may email the person another code.
-                lap = " \u2192 ".join(pressed_on[pressed.index(key):])
+                lap = " \u2192 ".join(pressed_on[pressed.index(key, since):])
                 return self._pause(run, "stuck", f"I went round in a circle ({lap}, then back to {_where(data)}), so "
                                    "the site isn't letting this application on. Have a look in the browser, then press "
                                    "Resume.")
             test = _assessment_button(data)
-            if test and (kind == "page" and [p[:1] + p[2:] for p in pressed[-2:]] == [key[:1] + key[2:]] * 2
-                         or kind == "form" and pressed[-3:] == [key] * 3):
+            if test and (kind == "page" and [p[:1] + p[2:] for p in lately[-2:]] == [key[:1] + key[2:]] * 2
+                         or kind == "form" and lately[-3:] == [key] * 3):
                 # a step that won't go on until the applicant takes the employer's assessment (Circle K's Workday,
                 # the nightly of Oct 12: "Take Assessment" beside its Save and Continue): a test of the person
                 return await self._assessment_pause(run, data, test)
-            if kind == "page" and [p[:1] + p[2:] for p in pressed[-2:]] == [key[:1] + key[2:]] * 2:
+            if kind == "page" and [p[:1] + p[2:] for p in lately[-2:]] == [key[:1] + key[2:]] * 2:
                 # "next" on a list of jobs (a link to a search page): its pages differ, but no
                 # application ever opens
                 return self._pause(run, "stuck", f"I pressed \u201c{action['text'].strip()}\u201d three times on "
                                    f"{_where(data)} and no application opened. Have a look in the browser, then press "
                                    "Resume.")
-            if kind == "form" and pressed[-3:] == [key] * 3 and key not in saved_waited:
+            if kind == "form" and lately[-3:] == [key] * 3 and key not in saved_waited:
                 # a step still saving: KLA's Workday took a while over its Application Questions 2 of 2 (live run
                 # 11, Oct 11: the desk stopped after the fourth press, and the next step was there a little later).
                 # Waited on once, with nothing said wrong, before the step counts as stuck
@@ -2026,7 +2058,7 @@ class Applier:
                 if not any(_errorish(e) for e in data.get("errors") or []) and \
                         await self._wait_for_step_change(key, STEP_SAVE_WAIT):
                     continue
-            if kind == "form" and pressed[-3:] == [key] * 3:
+            if kind == "form" and lately[-3:] == [key] * 3:
                 # the same step button pressed three times on the same step: Cornerstone's (Matheson's,
                 # under load, Oct 10) redraws its page a little after each press, so no single press
                 # looked like a stall, and the desk pressed Next fifteen times
@@ -2242,11 +2274,15 @@ class Applier:
         person's."""
         kept = []
         for box in boxes:
-            if _BARE_AGREE.match(box.get("label") or "") or _READ_ABOVE.search(box.get("label") or ""):
+            label = box.get("label") or ""
+            if _BARE_AGREE.match(label) or _READ_ABOVE.search(label) or _READ_UNDERSTOOD.match(label):
                 above = await self.srv.browser.words_before(box["id"])
-                # (gone, or not read: not ticked; the words of a sign-up, not the terms' passing mentions: the review's)
-                if not above or _SIGN_UP_ABOVE.search(above):  # (unread, or nothing to read: the person's)
-                    continue
+                # (gone, or not read: not ticked; the words of a sign-up, not the terms' passing mentions: the review's;
+                # nor anything never agreed to for the person, a waiver among them: the review of 0.3.133's)
+                if not above or _SIGN_UP_ABOVE.search(above) or _NEVER_AGREED.search(above) or _WAIVES.search(above):
+                    continue  # (unread, or nothing to read: the person's)
+                if not _SITES_TERMS.search(above) or _ATTESTS_ABOVE.search(above):
+                    continue  # (agreed to, or read and understood, anything else: the person's)
             kept.append(box)
         return kept
 
@@ -4165,9 +4201,10 @@ def _terms_boxes(data: dict[str, Any]) -> list[dict[str, Any]]:
     ones, or its terms, or a privacy notice read. Never a newsletter's, job alerts' or text
     messages' (_NOT_TERMS)."""
     return [f for f in data.get("fields") or [] if f.get("kind") == "checkbox" and is_empty_value(f.get("value"))
-            and _TERMS_BOX.search(f.get("label") or "") and not _NOT_TERMS.search(f.get("label") or "")
-            and not _MORE_THAN_TERMS.search(_LASTS.sub("", f.get("label") or ""))
-            and (f.get("required") or _TERMS_ONLY.search(f.get("label") or ""))]
+            and (_READ_UNDERSTOOD.match(f.get("label") or "")  # (what it agrees to is above it: _said_terms reads it)
+                 or _TERMS_BOX.search(f.get("label") or "") and not _NOT_TERMS.search(f.get("label") or "")
+                 and not _MORE_THAN_TERMS.search(_LASTS.sub("", f.get("label") or ""))
+                 and (f.get("required") or _TERMS_ONLY.search(f.get("label") or "")))]
 
 
 def _privacy_statement(data: dict[str, Any]) -> dict[str, Any] | None:

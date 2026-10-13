@@ -2082,13 +2082,16 @@ class BrowserSession:
                   const out = [];
                   for (let n = el, d = 0; n && n !== document.body && d < 8; n = n.parentElement, d++) {
                     const level = [];
+                    let boxed = false;
                     for (let s = n.previousSibling; s && level.join(' ').length < 400; s = s.previousSibling) {
-                      if (s.nodeType === 1 && (s.matches(boxes) || s.querySelector(boxes))) break;
+                      if (s.nodeType === 1 && (s.matches(boxes) || s.querySelector(boxes))) { boxed = true; break; }
                       const t = said(s);
                       if (t && !own.includes(t)) level.unshift(t);
                     }
                     out.unshift(...level);
-                    if (out.join(' ').length > 15) return out.join(' ').slice(-500);
+                    // (and never past another box: the words above a form's email and password aren't this box's,
+                    // the review of 0.3.133's)
+                    if (out.join(' ').length > 15 || boxed) return out.join(' ').slice(-500);
                   }
                   // nothing before it: the widest of the few blocks around it that's still short, less its own label's
                   // (more words only make the box the person's, never the desk's: the review's)

@@ -1,0 +1,42 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Field Service Engineer</title></head>
+<body>
+<!-- like Circle K's Workday (run 44, Oct 13): Save and Continue on Voluntary Disclosures showed "Something went
+     wrong. Please refresh the page and then try again.", and the page reloaded went back to the application's first
+     step. Going through again, Voluntary Disclosures goes on to the review page. Its step and whether it went wrong
+     are kept for the tab (sessionStorage's wm). -->
+<a href="#">Back to Job Posting</a>
+<h2>Field Service Engineer</h2>
+<div id="app"></div>
+<script>
+  const names = ['My Information', 'My Experience', 'Voluntary Disclosures'];
+  const st = JSON.parse(sessionStorage.getItem('wm') || '{"step": 1, "erred": false}');
+  const save = () => sessionStorage.setItem('wm', JSON.stringify(st));
+  function render() {
+    const name = names[st.step - 1];
+    document.getElementById('app').innerHTML =
+      `<div data-automation-id="progressBarActiveStep">current step ${st.step} of 3 ${name}</div><h3>${name}</h3>`
+      // (My Experience with nothing to fill, as Circle K's showed only its Add buttons: a page, not a form)
+      + (st.step === 2 ? '<button type="button">Add</button>'
+         : `<label for="note${st.step}">Anything else for ${name}</label><input id="note${st.step}">`)
+      + '<button type="button" id="next">Save and Continue</button>';
+    document.getElementById('next').onclick = () => {
+      if (st.step === 3 && !st.erred) {
+        st.erred = true;
+        st.step = 1;  // (what the reload shows: the application from its first step)
+        save();
+        document.getElementById('app').innerHTML = '<h3>Something went wrong</h3>'
+          + '<p>Please refresh the page and then try again.</p><p>Error Code: VPS|0000</p>';
+        return;
+      }
+      if (st.step === 3) { location.href = 'review.html'; return; }
+      st.step += 1;
+      save();
+      render();
+    };
+  }
+  render();
+</script>
+</body>
+</html>

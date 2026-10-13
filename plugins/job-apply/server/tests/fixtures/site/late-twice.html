@@ -1,0 +1,21 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Field Service Engineer</title></head>
+<body>
+<!-- like Baker Tilly's Workday (run 44, Oct 13): the posting draws its Apply late, and the application's first step,
+     after it, draws its questions and Save and Continue late too (?step=2). -->
+<header><a href="#">Careers</a> <a href="#">Search for Jobs</a></header>
+<h2>Field Service Engineer</h2>
+<div id="app"></div>
+<script>
+  const step2 = location.search.includes('step=2');
+  setTimeout(() => {
+    document.getElementById('app').innerHTML = step2
+      ? '<h3>My Information</h3><form onsubmit="return false"><label for="m">Middle Name</label><input id="m" type="text">'
+        + '<button type="button" onclick="location.href = \'review.html\'">Save and Continue</button></form>'
+      : '<p>Field service for our tools in Chandler.</p>'
+        + '<button type="button" onclick="location.href = \'late-twice.html?step=2\'">Apply</button>';
+  }, 1500);
+</script>
+</body>
+</html>

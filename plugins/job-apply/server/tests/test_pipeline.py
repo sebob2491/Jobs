@@ -3186,6 +3186,54 @@ def test_a_page_that_asks_to_be_refreshed_is_reloaded_once(srv, monkeypatch, job
     assert len(said) == 1 and r.seen_form and "went-wrong" not in r.url, (r.url, r.reason, r.log)
 
 
+def test_each_page_that_draws_its_buttons_late_is_waited_on(srv, monkeypatch, job_apply_home):
+    """Baker Tilly's Workday (run 44, Oct 13): the page after its sign-in drew its questions and Save and Continue
+    late, and the desk, having waited on an earlier page's late buttons on that pass, stopped at once: "I couldn't
+    find the button that moves this application on". Each page is waited on once."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 4)
+    job = srv.add_job(url=fixture_url("site/late-twice.html"), title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), timeout=120, about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert r.status == "ready" and r.url.endswith("review.html"), (r.status, r.reason, r.log)
+
+
+def test_a_refresh_the_site_asked_for_midway_is_no_circle(srv, monkeypatch, job_apply_home):
+    """Circle K's Workday (run 44, Oct 13): Save and Continue on Voluntary Disclosures said "Something went wrong.
+    Please refresh the page", and the page reloaded went back to the first step. The desk, going through again, took
+    that for going round in a circle and stopped. A refresh the site asked for starts a new lap (once a job), and the
+    steps it takes again aren't counted against the application's (the review's)."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "MAX_STEPS", 5)  # (3 steps, the refresh, then the same 3 and the review page)
+    monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 1)
+    job = srv.add_job(url=fixture_url("site/workday-went-wrong-midway.html"), title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), timeout=120, about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert "round in a circle" not in r.reason, (r.status, r.reason, r.log)
+    assert r.status == "ready" and r.url.endswith("review.html"), (r.status, r.reason, r.log)
+    assert sum("asked for the page to be refreshed" in line for line in r.log) == 1, r.log
+
+
 def test_a_workday_sign_in_presses_the_cover_over_its_hidden_button(srv, monkeypatch, job_apply_home):
     """KLA's Workday (live, Oct 2026) draws its Sign In as a hidden "Sign In" button (aria-hidden) under a
     div of its own named "Submit" (data-automation-id="click_filter") that takes the click. The desk
@@ -5267,12 +5315,14 @@ def test_a_job_picked_up_again_carries_on_with_the_form_in_its_tab(srv, monkeypa
         assert r.page is tab and after[0] == before[0], r.log
         assert loads.count(posting) == 1 and not any(line.startswith(("opened", "its tab")) for line in since), r.log
     else:
-        said = {"crashed": "its tab crashed", "closed": "its tab was closed",
-                "browser": "the browser had closed", "home": "its tab had gone back to the site's careers home"}[how]
+        said: tuple[str, ...] = ({"crashed": "its tab crashed", "closed": "its tab was closed",
+                                  "browser": "the browser had closed",
+                                  "home": "its tab had gone back to the site's careers home"}[how],)
         if how == "crashed" and tab.context is not srv.browser._ctx:
             # Chromium sometimes goes down whole with the crashed tab (Windows CI, and a loaded machine, Oct 13):
-            # then that's what the desk saw, and says
-            said = "the browser had closed"
+            # then the desk may have seen the browser closed, and says so. (A browser started again since, to open
+            # the job, is no sign of that: the desk said "its tab crashed" then, on Linux CI, Oct 13)
+            said += ("the browser had closed",)
         assert r.page is not tab and loads.count(posting) == 2, (loads, r.log)
         # (in full, as a string: a list is cut short in pytest's report, and on Windows CI this has failed now and
         # then with the line that says why cut off, Oct 11)
@@ -7556,6 +7606,7 @@ def test_a_sign_in_that_led_elsewhere_is_told_from_an_email_first_one():
     ("I consent", True),  # Entegris'
     ("I confirm Hitachi will process my personal data as per the GDPR Notice for Candidates", True),
     ("You acknowledge having read the documents above. Your agreement is valid for 24 months.", True),  # Air Liquide's
+    ("Yes, I have read and understood.", True),  # Avnet's (the words above it read too: _said_terms)
     ("I agree to receive job alerts and the newsletter", False),
     ("I agree to create an account and be contacted about other open positions", False),
     ("I agree to join the talent community", False),
@@ -7631,6 +7682,78 @@ def test_a_bare_i_agree_is_ticked_only_where_the_words_above_it_are_the_sites_te
     assert len(boxes) == 12, data["fields"]  # (by their labels alone, all but the last)
     kept = run(Applier(srv)._said_terms(boxes))
     assert [b["id"] for b in kept] == [boxes[0]["id"], boxes[3]["id"], boxes[5]["id"], boxes[7]["id"]], (boxes, kept)
+
+
+def test_an_agreement_box_is_ticked_only_where_the_words_above_it_name_the_sites_terms(srv, tmp_path):
+    """The review of 0.3.133's: a bare "I agree" was ticked whenever the words above it named no sign-up the desk
+    knew, though they named no terms either ("Join our Careers Community", "Sign up for career alerts", a heading
+    "Email updates" under the password). Its words must name the site's terms, privacy statement or its processing of
+    personal data, and never attest or sign the person up (texts and calls among them)."""
+    page = tmp_path / "account.html"
+    page.write_text('<!doctype html><h2>Create Account</h2><form><label for="e">Email Address</label>'
+                    '<input id="e" type="email"><label for="pw">Password</label><input id="pw" type="password">'
+                    '<div>Email updates</div><label><input type="checkbox" id="a"> I agree</label></form>'
+                    '<div><p>Join our Careers Community to hear about new roles at Acme.</p>'
+                    '<label><input type="checkbox" id="b"> I agree</label></div>'
+                    '<div><p>Sign up for career alerts.</p><label><input type="checkbox" id="c"> I consent</label></div>'
+                    '<div><p>I agree to receive recruiting texts and calls from Acme, as our Privacy Policy describes.</p>'
+                    '<label><input type="checkbox" id="d"> I agree</label></div>'
+                    '<div><p>I certify that my answers are true and complete. See our Privacy Policy.</p>'
+                    '<label><input type="checkbox" id="f"> I agree</label></div>'
+                    '<div><p>Acme processes your personal data to consider your application.</p>'
+                    '<label><input type="checkbox" id="g"> I agree</label></div>'
+                    '<button type="submit">Create Account</button>', encoding="utf-8")
+    run(srv.browser.goto(page.as_uri()))
+    data = run(srv.browser.inspect(include_dropdown_options=False))
+    boxes = pipeline._terms_boxes(data)
+    assert len(boxes) == 6, data["fields"]
+    kept = run(Applier(srv)._said_terms(boxes))
+    assert [b["id"] for b in kept] == [boxes[5]["id"]], (boxes, kept)
+
+
+def test_a_read_and_understood_box_is_ticked_only_under_the_sites_privacy_statement(srv, tmp_path):
+    """Avnet's Workday Create Account (run 44, Oct 13): its box says only "Yes, I have read and understood.", under
+    the paragraph that names its Applicant Data Protection and Privacy Statement, and no account was made without it.
+    What it was read and understood is above it: the site's terms or privacy statement, ticked; anything else (a
+    sign-up, an attestation), the person's."""
+    page = tmp_path / "account.html"
+    page.write_text('<!doctype html><p>By using this site you agree to our Terms of Use.</p><h2>Create Account</h2>'
+                    '<form><label for="e">Email Address</label><input id="e" type="email">'
+                    '<label for="pw">Password</label><input id="pw" type="password">'
+                    # the review of 0.3.133's: the words above the form's email and password aren't this box's (its
+                    # paragraph is below it)
+                    '<div><label><input type="checkbox" id="z"> Yes, I have read and understood.</label></div>'
+                    '<p>Acme will keep your profile in its talent database and may contact you about future vacancies.</p>'
+                    '</form>'
+                    # Avnet's: the paragraph a block of its own, the box a few wrappers down in the next
+                    '<div><div dir="ltr"><div><p>By creating an Avnet Candidate Home account, you acknowledge Avnet will '
+                    'collect and process your personal data as outlined in our <a href="#">Applicant Data Protection and '
+                    'Privacy Statement.</a></p></div></div></div><div><div><div><input id="a" type="checkbox"><span></span>'
+                    '</div><label for="a">Yes, I have read and understood.</label></div></div>'
+                    '<div><p>Join our talent community to hear about new openings by email.</p>'
+                    '<label><input type="checkbox" id="b"> Yes, I have read and understood.</label></div>'
+                    '<div><p>I certify that the information I give is true and complete.</p>'
+                    '<label><input type="checkbox" id="c"> I have read and understand</label></div>'
+                    '<label><input type="checkbox" id="d"> Yes, I have read and understood the job description.</label>'
+                    # the review of 0.3.133's: a privacy notice named in words that keep the profile for later, share
+                    # it, attest, or waive
+                    '<div><p>I consent to Acme keeping my personal data in its talent database for 24 months, as '
+                    'described in the Privacy Notice, so that I may be considered for future vacancies.</p>'
+                    '<label><input type="checkbox" id="f"> Yes, I have read and understood.</label></div>'
+                    '<div><p>Acme may share your profile with its recruiting partners and staffing agencies, per our '
+                    'Privacy Policy.</p><label><input type="checkbox" id="g"> Yes, I have read and understood.</label></div>'
+                    '<div><p>I certify the information I provide is true. I understand any offer is subject to the terms '
+                    'and conditions of employment, including a background check.</p>'
+                    '<label><input type="checkbox" id="h"> Yes, I have read and understood.</label></div>'
+                    '<div><p>By applying you agree to binding arbitration under our Terms of Use.</p>'
+                    '<label><input type="checkbox" id="i"> I have read and understood</label></div>'
+                    '<button type="submit">Create Account</button>', encoding="utf-8")
+    run(srv.browser.goto(page.as_uri()))
+    data = run(srv.browser.inspect(include_dropdown_options=False))
+    boxes = pipeline._terms_boxes(data)
+    assert len(boxes) == 8, data["fields"]  # (by their labels alone: not one that says what was read)
+    kept = run(Applier(srv)._said_terms(boxes))
+    assert [b["id"] for b in kept] == [boxes[1]["id"]], (boxes, kept)
 
 
 def test_a_round_holds_while_the_person_is_at_a_review_page_and_ends_once_it_is_sent(srv):
