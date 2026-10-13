@@ -530,12 +530,16 @@ class Desk:
                     continue
                 try:
                     config.save_answer(label, kept, run.company)
-                    run.once.pop(question_key(label), None)  # an earlier answer for this application only
-                    continue
+                    if kept == value:
+                        run.once.pop(question_key(label), None)  # an earlier answer for this application only
+                        continue
+                    # (remembered in its general form: this application gets the choice as picked, which a
+                    # list with two of the employer's own sites can't be told from "Company Website")
                 except (ValueError, OSError) as e:
                     problem = f"Couldn't remember your answers ({e}); they're used for this application only."
             run.once[question_key(label)] = value
         self.applier.enqueue(job_id, submit=run.submit, front=True)
+        self.applier.pressed.add(job_id)  # (answered on its card: it goes even while the queue is paused)
         return problem
 
     # ------------------------------------------------------------- state

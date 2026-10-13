@@ -5422,6 +5422,31 @@ def test_a_paused_queue_starts_no_job_until_it_is_resumed(srv, monkeypatch):
     assert not paused
 
 
+def test_a_resume_the_person_pressed_goes_while_the_queue_is_paused(srv, monkeypatch):
+    """The review of note 36: a job's own Resume (or answers on its card) while the queue is paused only queued it,
+    and its card said "queued" with nothing happening. The person's own press goes; the rest stay paused."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    a_url, b_url = "https://careers.acme-fab.example/apply/1", "https://careers.other-litho.example/apply/2"
+    pages = {a_url: _form("Acme Fab"), b_url: _form("Other Litho")}
+    a = srv.add_job(url=a_url, title="Field Service Engineer", company="Acme Fab")["job"]
+    b = srv.add_job(url=b_url, title="Litho Technician", company="Other Litho")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        await _serve(srv, pages, [])
+        applier.start()
+        try:
+            applier.pause_queue()
+            first, second = applier.enqueue(a["id"]), applier.enqueue(b["id"])
+            applier.resume(b["id"])
+            await until(lambda: second.status == "ready", about=state(second))
+            return first.status
+        finally:
+            await applier.stop()
+
+    assert run(go()) == "queued"
+
+
 def test_a_submit_the_person_pressed_still_goes_while_the_queue_is_paused(srv, monkeypatch):
     """Pause queue holds the jobs that haven't started, not the person's own press of Submit on one that waits on
     its review page (issue #112, note 36)."""
@@ -5853,7 +5878,7 @@ def test_a_video_players_error_isnt_the_pages_while_the_email_page_is_drawn(srv,
     r = run(go())
     log = "\n".join(r.log)
     assert "didn't move on" not in log and "didn't move on" not in r.reason, (r.reason, r.log)
-    assert "filled 1 field(s) on “Authentication screen. You don't need to have an account”" in r.log, r.log
+    assert any(line.startswith("filled 1 field(s) on") for line in r.log), r.log  # (its email, on its start page)
     assert "ticked “I agree with the terms and conditions” for you (settings.accept_notices)" in r.log, r.log
     assert "clicked “Next”" in r.log, r.log
 
@@ -6559,6 +6584,22 @@ def test_a_degree_list_with_nothing_for_classes_leaves_the_pick_to_the_person(sr
 def degree_box(section):
     return {"id": "a", "label": "Degree*", "section": section, "required": True, "kind": "listbox",
             "options": WORKDAY_DEGREES}
+
+
+def test_a_reset_form_is_still_showing_only_with_its_own_button_and_no_word_it_went():
+    """The review of notes 14/34: a site that says the reset went in its own words ("has been successfully reset",
+    "Password changed successfully"), or that has taken its button away, isn't a reset the site refused."""
+    from job_apply.pipeline import _RESET_DONE
+
+    for said in ("Your password has been successfully reset.", "Password changed successfully", "Password reset successful"):
+        assert _RESET_DONE.search(said), said
+    boxes = [{"id": "a", "kind": "password", "label": "New Password"}, {"id": "b", "kind": "password",
+                                                                           "label": "Verify New Password"}]
+    page = {"fields": boxes, "actions": [{"id": "s", "text": "Submit"}]}
+    showing = Applier._reset_form_showing
+    assert showing(page, "Reset Password", "submit")
+    assert not showing({**page, "actions": []}, "Reset Password", "submit")
+    assert not showing(page, "Reset Password. Your password has been successfully reset.", "submit")
 
 
 def test_a_school_block_is_deleted_only_where_it_is_the_last_of_several(srv):

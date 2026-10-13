@@ -857,12 +857,22 @@ COVERED_JS = r"""
 UPLOAD_NOT_KEPT_JS = r"""
 () => {
   const named = /resume|(^|[_-])cv([_-]|$)/i;
-  const kept = Array.from(document.querySelectorAll('input[type="hidden"]'))
+  const hidden = Array.from(document.querySelectorAll('input[type="hidden"]'))
     .filter((el) => named.test(el.id || '') || named.test(el.name || ''));
-  if (kept.length < 2 || kept.some((el) => (el.value || '').trim())) return '';
-  for (const el of document.querySelectorAll('input[type="file"]')) {
-    if (el.__jaUploaded) return String(el.__jaUploaded);
-    if (el.files && el.files.length) return el.files[0].name;
+  // (the resume's own file box, and the hidden fields beside it: its form's, or within a few levels of it; not a
+  // cover letter's box, nor a "resumeToken" of a save-for-later elsewhere on the page: the review of note 28)
+  const near = (box, el) => {
+    if (box.form || el.form) return box.form === el.form;
+    for (let n = box.parentElement, d = 0; n && d < 6; n = n.parentElement, d++) if (n.contains(el)) return true;
+    return false;
+  };
+  for (const box of document.querySelectorAll('input[type="file"]')) {
+    const file = box.__jaUploaded ? String(box.__jaUploaded) : (box.files && box.files.length ? box.files[0].name : '');
+    const said = [box.id, box.name, box.getAttribute('aria-label') || '',
+                  ...Array.from(box.labels || []).map((l) => l.textContent || '')].join(' ');
+    if (!file || !named.test(said)) continue;
+    const kept = hidden.filter((el) => near(box, el));
+    if (kept.length >= 2 && !kept.some((el) => (el.value || '').trim())) return file;
   }
   return '';
 }

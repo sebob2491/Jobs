@@ -792,8 +792,18 @@ def test_a_question_remembered_from_a_long_notice_is_the_same_question_in_anothe
     entry = config.save_answer(acme, "Yes", "Acme")
     assert entry["core"] == ask and entry["question"] == acme
     assert remembered(acme, "Acme") == "Yes"  # the same wording, as before
-    assert remembered(example, "Example Fab") == "Yes"  # the same question, in another's
+    # (the review's: a Yes to a talent community, a consent or terms never goes to another employer's by its question)
+    assert remembered(example, "Example Fab") is None
+    config.save_answer(acme, "No", "Acme")
+    assert remembered(example, "Example Fab") == "No"  # the same question, in another's: a No is kept
     assert remembered(alerts, "Example Fab") is None  # another question in the same notice
+    # a question that means something only with its notice is never matched by itself
+    terms = ("Arbitration: Example Fab and you agree to settle any dispute by binding arbitration, as the agreement "
+             "on this page sets out, instead of in court. Do you agree to the terms described above?")
+    config.save_answer(terms.replace("Arbitration: Example Fab and you agree to settle any dispute by binding "
+                                     "arbitration", "Privacy: Acme keeps your details safe and deletes them on "
+                                     "request"), "No", "Acme")
+    assert remembered(terms, "Example Fab") is None
     assert remembered(f"{example} Do you want job alerts by email?", "Example Fab") is None  # and the same, with it
     # a short question has no core: it is the whole label or nothing ("Are you currently employed?" isn't "... by ASML?")
     assert "core" not in config.save_answer("Are you currently employed?", "Yes", "Acme")
@@ -842,6 +852,10 @@ def test_what_names_the_employer_isnt_remembered_as_it_was_said():
     assert answer_to_remember("What would you like to do at Acme?", "Acme website", "Acme") is None
     assert answer_to_remember("Preferred shift", "Nights", "Acme") == "Nights"
     assert answer_to_remember(how, "Acme website", "") == "Acme website"
+    # (the review's) an employer whose first word is an everyday or a place's: only its whole name names it
+    assert answer_to_remember("Where do you live?", "Phoenix, Arizona", "Phoenix Children's") == "Phoenix, Arizona"
+    assert answer_to_remember("Have you applied before?", "No, never applied", "Applied Materials") == "No, never applied"
+    assert answer_to_remember(how, "Applied Materials website", "Applied Materials") == "Company Website"
     # remembered so, it's the employer's own website wherever it's asked: the list's "<employer> website"
     p = _person(preferences={"how_did_you_hear": "LinkedIn"})
     p.data["answers"] = [{"match": "how did you hear about us", "answer": "Company Website", "question": how,
@@ -850,6 +864,12 @@ def test_what_names_the_employer_isnt_remembered_as_it_was_said():
     assert _answer("How Did You Hear About Us?*", p, "combobox", {"company": "Example Fab"}, options=lists) == \
         "Example Fab website"
     assert _answer("How Did You Hear About Us?*", p, "combobox", {"company": "Example Fab"}, options=["Job Board"]) is None
+    # (the review's) a lone site that's another source's is never the employer's own
+    for other in ("Indeed Website", "University Career Site", "Other Website"):
+        assert _answer("How Did You Hear About Us?*", p, "combobox", {"company": "Example Fab"},
+                       options=["Advertisement", other]) is None, other
+    assert _answer("How Did You Hear About Us?*", p, "combobox", {"company": "Example Fab"},
+                   options=["Advertisement", "Careers Site"]) == "Careers Site"
 
 
 def test_travel_willingness_answers_only_how_much_travel():

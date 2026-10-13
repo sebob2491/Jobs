@@ -563,6 +563,20 @@ def test_a_file_put_in_the_sites_open_upload_dialog_is_sent_with_its_upload(srv,
     assert run(page.inner_text("#resume")) == "resume.pdf is on file.", run(page.inner_text("body"))
 
 
+@pytest.mark.parametrize("page,said", [("phenom-resume-not-kept.html", "resume.pdf"), ("phenom-resume-not-kept.html?kept", None),
+                                       ("upload-cover-letter.html", None)])
+def test_a_resume_the_site_didnt_keep_is_told_from_any_other_upload(srv, tmp_path, page, said):
+    """Issue #112, note 28 and its review: the resume's own file box, its hidden fields beside it all empty, is a
+    resume the site didn't keep; a cover letter's box, beside "resume" fields of a save-for-later elsewhere, isn't."""
+    doc = tmp_path / "resume.pdf"
+    doc.write_bytes(b"%PDF-1.4 test")
+    name, _, query = page.partition("?")
+    run(srv.browser.goto(fixture_url(f"site/{name}") + (f"?{query}" if query else "")))
+    box = next(f for f in run(srv.inspect_form(include_dropdown_options=False))["fields"] if f["kind"] == "file")
+    run(srv.fill_form([{"id": box["id"], "value": str(doc)}]))
+    assert run(srv.browser.upload_not_kept()) == said
+
+
 def test_a_dialog_that_isnt_an_uploads_alone_is_never_pressed(srv, tmp_path):
     """The review of the open upload dialog's press: an application drawn as a dialog, its resume box beside a name
     box and a "Save" that sends it, would have been sent (around the guard every press goes through). Only a dialog

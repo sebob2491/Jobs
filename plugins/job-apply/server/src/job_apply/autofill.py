@@ -1355,6 +1355,14 @@ def _bare_question(text: str) -> str:
     return " ".join(re.sub(r"\(required\)|\*", " ", text or "", flags=re.I).strip(" :?.").split()).lower()
 
 
+# A question that means something only with the text around it, and the notices whose remembered Yes never goes to
+# another employer's by their question alone (issue #112, note 29's review)
+_POINTS_AWAY = re.compile(r"\b(?:above|below|following|these|those|this|that|it|them|such|said)\b", re.I)
+_NOTICE_OF_CONSENT = re.compile(r"talent (?:community|network|pool)|job alerts?|newsletter|subscribe|marketing|mailing "
+                                r"list|text messages?|\bsms\b|promotion|arbitration|terms|privacy|consent|agree|"
+                                r"authori[sz]|acknowledg|certif|attest|signature", re.I)
+
+
 def _answer_bank(prof: Profile, label: str, job: dict | None = None, common: bool = False) -> Answer | None:
     """The person's own answers (answers.yaml, profile.yaml's answers:) to this question; with `common`, only the
     common questions' (the question bank's), which resolve_field tries last."""
@@ -1375,6 +1383,12 @@ def _answer_bank(prof: Profile, label: str, job: dict | None = None, common: boo
                 # label that asks two things has no one question, and isn't answered from this
                 asked = question_core(label)
                 if not item.get("core") or _bare_question(asked) != _bare_question(str(item["core"])):
+                    continue
+                # never a question that only means something with the notice around it ("Do you agree to the
+                # terms described above?"), nor a Yes to a notice of consent, terms or sign-ups: another
+                # employer's may be an arbitration agreement or a talent community's. A No to one is kept
+                if _POINTS_AWAY.search(asked) or (_NOTICE_OF_CONSENT.search(f"{label} {item['question']}")
+                                                  and not _NO.match(str(item.get("answer")).strip())):
                     continue
             source = norm(str(item.get("from") or ""))
             if source and source != company and (_EMPLOYER_SPECIFIC.search(asked) or source in norm(label)
@@ -2148,8 +2162,23 @@ def _own_website(value: Any, options: list[str], job: dict) -> str | None:
     if not sites:  # no website among them, but the employer itself (ASML's "ASML", nightly live check Oct 11)
         # (its whole name, never a word of it: "Texas" isn't Texas Instruments)
         sites = [o for o in options if norm(o) and set(norm(o).split()) == employer]
-    return sites[0] if len(sites) == 1 else None
+    if len(sites) != 1:
+        return None
+    # one site: the employer's, or one any employer's could be called ("Careers Site"), never another source's
+    # ("Indeed Website", "University Career Site": review of issue #112, note 27)
+    named = bool(employer & set(norm(sites[0]).split()))
+    generic = re.search(r"\b(company|employer|career|careers|corporate|our)\b", sites[0], re.I) \
+        and not re.search(r"\b(indeed|linkedin|glassdoor|monster|ziprecruiter|handshake|university|college|school|"
+                          r"other|board|social|agency|recruiter|referral)\b", sites[0], re.I)
+    return sites[0] if named or generic else None
 
+
+# Employers' first words that are everyday or places' words too: an answer that has one doesn't name the employer
+# ("No, I've never applied" at Applied Materials; "Phoenix, Arizona" at Phoenix Children's)
+_EVERYDAY_NAMES = {"applied", "phoenix", "arizona", "texas", "american", "national", "global", "united", "general",
+                   "first", "advanced", "early", "blue", "capital", "bank", "state", "city", "county", "university",
+                   "college", "health", "banner", "western", "southern", "northern", "eastern", "central", "pacific",
+                   "digital", "public", "home", "valley", "desert", "mountain", "sun", "salt", "river"}
 
 # What doesn't make an employer's name its own ("The Boeing Company", "Acme Technologies Inc")
 _NAME_FILLER = {"the", "inc", "incorporated", "corp", "corporation", "co", "company", "group", "llc", "ltd", "plc",
@@ -2167,8 +2196,16 @@ def answer_to_remember(label: str, answer: Any, company: str) -> Any | None:
     that names the employer it was given to ("Acme website", to how they heard of the job) isn't another's: for
     that question it's kept as "Company Website", which each form's list words as its own employer's site
     (_own_website); any other is for this application only (issue #112, note 27)."""
-    first = next((w for w in norm(company).split() if w not in _NAME_FILLER), "")
-    if not first or first not in norm(answer).split():
+    words = [w for w in norm(company).split() if w not in _NAME_FILLER]
+    if not words:
+        return answer
+    # its first word, or (where that's an everyday or a place's word: "Applied", "Phoenix") its whole name
+    said = norm(answer).split()
+    if words[0] in _EVERYDAY_NAMES:
+        joined = " ".join(said)
+        if not re.search(rf"\b{re.escape(' '.join(words))}\b", joined):
+            return answer
+    elif words[0] not in said:
         return answer
     if re.search(HOW_HEARD, norm(label)) and _WEBSITE.search(str(answer)):
         return "Company Website"

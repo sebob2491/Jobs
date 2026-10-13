@@ -1735,7 +1735,8 @@ def test_the_applications_ready_for_the_persons_submit_are_reviewed_in_one_round
                 await page.wait_for_selector("#notices [data-act=review-submit]")
                 assert shown == [jobs[0]["id"]], shown
                 await page.click("#notices [data-act=review-submit]")
-                await page.wait_for_selector("#notices [data-act=review-applied]")
+                # (its own "I submitted it", the site's last button pressed: the round is on the second)
+                await page.wait_for_selector("#notices :text('Reviewing Technician (Example Litho)')")
                 assert sent == [jobs[0]["id"]] and shown == [jobs[0]["id"], jobs[1]["id"]], (sent, shown)
                 await page.click("#notices [data-act=review-applied]")
                 for _ in range(40):

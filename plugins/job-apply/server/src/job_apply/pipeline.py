@@ -98,7 +98,8 @@ _BOT_TITLE = re.compile(r"just a moment|attention required|access denied|pardon 
 # A bare "403 Forbidden" (Valleywise Health's postings, to the desk's browser) or "406 Not Acceptable"
 # (Deloitte's sign-in, to a headless browser): the site turns the browser away. There's nothing to
 # solve, so it holds nothing up: the person applies elsewhere
-_RESET_DONE = re.compile(r"\b(?:your )?password (?:has been|was|is) (?:reset|changed|updated)\b", re.I)
+_RESET_DONE = re.compile(r"\b(?:your )?password (?:has been|was|is)(?: successfully)? (?:reset|changed|updated)\b|"
+                         r"\bpassword (?:reset|change|changed|updated?) (?:was |is )?(?:a )?success", re.I)
 _STEPISH = re.compile(r"\b(next|continue|save|submit|review|apply|finish|done|proceed)\b", re.I)
 _REFRESH_ASKED = re.compile(r"\bsomething went wrong\b.{0,200}\b(?:refresh|reload) (?:the|this) page\b", re.I | re.S)
 _TURNED_AWAY = re.compile(r"^\s*(?:403\s*)?forbidden\s*$|^\s*(?:406\s*)?not acceptable\s*$|"
@@ -589,8 +590,10 @@ class Applier:
         self.tasks: deque[tuple[str, int]] = deque()
         self.auto_submit = False
         self.tailor = False  # hold each job until Claude has written a resume for it
-        # The person pressed Pause queue: no new job starts until Resume queue (in memory, like the queue it holds).
+        # The person pressed Pause queue: no new job starts until Resume queue (in memory, like the queue it holds),
+        # but those they pressed Resume on, or answered on their card (pressed)
         self.paused = False
+        self.pressed: set[int] = set()
         self.current: int | None = None
         # The bot check the person is solving in the desk's round (Bot checks: "Solve them"), and since when: while
         # it waits, no other job is started (nothing opens over the tab they're at), and the solved one is noticed
@@ -655,6 +658,7 @@ class Applier:
         if run is not None and run.entries_told:
             run.entries_ok = dict(run.entries_told)  # (a card said a section was short: gone on with, if unchanged)
         run = self.enqueue(job_id, submit=bool(run and run.submit), front=True)
+        self.pressed.add(job_id)  # (the person's own press: it goes even while the queue is paused)
         if signing_in:
             run.sign_in_tries = min(run.sign_in_tries, SIGN_IN_TRIES - 1)
         return run
@@ -912,13 +916,16 @@ class Applier:
             # with a job left waiting on the person, look at its tab again soon
             await self._sleep(POLL_SECONDS if any(r.left and r.status == "needs_you" for r in self.runs.values()) else 30)
             return
-        if self.paused and submit is None:  # (a Submit the person pressed is their own press: it still goes)
+        # paused: only what the person pressed for a job goes (its Submit, its Resume, its answers on its card)
+        pressed = next((t for t in self.tasks if t[1] in self.pressed), None) if self.paused and submit is None else None
+        if self.paused and submit is None and pressed is None:
             self._wake.clear()
             await self._sleep(POLL_SECONDS)
             return
         if submit is None and self._in_round():
             return  # a round begun meanwhile (the desk's Solve them): nothing started over the tab the person is at
-        task = submit or self.tasks[0]
+        task = submit or pressed or self.tasks[0]
+        self.pressed.discard(task[1])
         self.tasks.remove(task)
         kind, job_id = task
         run = self.runs[job_id]
@@ -3064,11 +3071,13 @@ class Applier:
                 and time.time() - run.paused_at > RESET_MAIL_WAIT)
 
     @staticmethod
-    def _reset_form_showing(data: dict[str, Any], text: str) -> bool:
-        """Still a password reset's form: its new-password boxes, its reset words, and not the site's word that
-        the password is reset."""
+    def _reset_form_showing(data: dict[str, Any], text: str, button: str) -> bool:
+        """Still a password reset's form: its new-password boxes, its reset words, the button that was pressed, and
+        not the site's word that the password is reset."""
         boxes = [f for f in data.get("fields") or [] if f.get("kind") == "password" and not _code_box(f)]
-        return len(boxes) >= 2 and bool(_RESET_PAGE.search(text[:2000])) and not _RESET_DONE.search(text[:2000])
+        pressed = any(final_text(a.get("text") or "").lower() == button for a in data.get("actions") or [])
+        return (len(boxes) >= 2 and pressed and bool(_RESET_PAGE.search(text[:2000]))
+                and not _RESET_DONE.search(text[:2000]))
 
     async def _set_new_password(self, run: Run, data: dict[str, Any], text: str) -> str | None:
         """A password reset's page (opened from its email): the saved password in its new-password
@@ -3101,15 +3110,16 @@ class Applier:
         except Exception:
             pressed = False
         after, after_text = await self._look()
+        said_on = final_text(button.get("text") or "").lower() if button is not None else ""
         # A site that takes a moment over the new password leaves its reset form on show, with no error, until it goes
         # on to its sign-in (Workday's, live, issue #112, note 34): waited for, or the form is read as a sign-in
         # with no email box and the person is asked to sign in. Still there after RESET_SETTLE, it wasn't taken.
         deadline = time.monotonic() + RESET_SETTLE
-        while (pressed and time.monotonic() < deadline and self._reset_form_showing(after, after_text)
+        while (pressed and time.monotonic() < deadline and self._reset_form_showing(after, after_text, said_on)
                and not after.get("errors")):
             await asyncio.sleep(1)
             after, after_text = await self._look()
-        if not pressed or self._reset_form_showing(after, after_text):
+        if not pressed or self._reset_form_showing(after, after_text, said_on):
             await self._bring_forward(run)
             said = f" It says \u201c{after['errors'][0][:160]}\u201d." if after.get("errors") else ""
             self._pause(run, "sign_in", f"I put your saved password in {site}'s new-password boxes, and it didn't take it "

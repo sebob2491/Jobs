@@ -301,13 +301,29 @@ def test_an_anonymous_report_says_an_address_with_parentheses_and_an_employers_s
 
 def test_an_employers_short_forms_are_its_name_less_its_last_words_its_first_word_and_its_tenant():
     forms = report._employer_forms("Acme Semiconductor Group, Inc.", ["https://acme.wd5.myworkdayjobs.com/x", None])
-    assert forms == ["Acme Semiconductor Group, Inc.", "Acme Semiconductor Group", "Acme Semiconductor", "Acme"]
+    assert set(forms) == {"Acme Semiconductor Group, Inc.", "Acme Semiconductor Group", "Acme Semiconductor", "Acme",
+                          "acme", "ACME"}  # (its tenant as a host has it, and as a page may)
     # an everyday first word stays (it is a page's too), and so does a short one and a job system's own label
     assert report._employer_forms("American Wafer Co", ["https://boards.greenhouse.io/x"]) == [
         "American Wafer Co", "American Wafer"]
     assert report._employer_forms("TI", ["https://www.linkedin.com/jobs/1"]) == ["TI"]
-    assert report._employer_forms("Example Fab", ["https://exfab.wd1.myworkdayjobs.com/x"]) == [
-        "Example Fab", "Example", "exfab"]
+    assert set(report._employer_forms("Example Fab", ["https://exfab.wd1.myworkdayjobs.com/x"])) == {
+        "Example Fab", "Example", "exfab", "EXFAB", "Exfab"}
+    # (the review's) an all-capitals short name, and one in parentheses
+    assert "NXP" in report._employer_forms("NXP Semiconductors", [])
+    assert "TEL" in report._employer_forms("Tokyo Electron (TEL)", [])
+
+
+def test_an_employers_one_word_forms_are_taken_out_as_written_and_never_inside_an_email():
+    """The review of issue #112, note 35: "How early can you start?" kept at Early Warning, an email whose first
+    name is the employer's first word left whole (for the scrubber to take out whole), "Careers at NXP" said."""
+    say, _ = report._anonymous({"company": "Early Warning Services"}, None, [], [])
+    assert say("How early can you start? Early Warning thanks you.") == "How early can you start? the employer thanks you."
+    say, _ = report._anonymous({"company": "Grant Thornton"}, None, [], ["grant.lee@mail.example.org"])
+    said = say("Reply to grant.lee@mail.example.org about Grant Thornton")
+    assert "lee" not in said and "mail.example" not in said and "Grant" not in said, said  # (the email whole)
+    say, _ = report._anonymous({"company": "NXP Semiconductors"}, None, [], [])
+    assert "NXP" not in say("Careers at NXP")
     assert report._employer_forms("Example Fab", ["https://careers.example-fab.example/x"]) == [
         "Example Fab", "Example"]  # an employer's own address names no tenant
 

@@ -46,11 +46,12 @@ _SEEN = 1000  # the stops already noted that are remembered, so one isn't noted 
 _URL = re.compile(r"https?://(?:[^\s\"'<>()\]]|\([^\s()]*\))+")
 # The last words of an employer's name that aren't its name ("Acme Semiconductor Group, Inc.")
 _COMPANY_WORDS = {"inc", "corp", "corporation", "co", "group", "holdings", "llc", "ltd", "technologies",
-                  "technology", "semiconductor", "semiconductors", "company"}
+                  "technology", "semiconductor", "semiconductors", "company", "services", "solutions"}
 # The first words of employers' names that are everyday words too: a page uses them for other things
 _COMMON_WORDS = {"american", "national", "global", "united", "general", "first", "advanced", "applied",
                  "international", "western", "northern", "southern", "eastern", "central", "pacific", "digital",
-                 "state", "city", "county", "public", "home", "health", "university", "college"}
+                 "state", "city", "county", "public", "home", "health", "university", "college", "early", "blue",
+                 "capital", "bank", "texas", "arizona", "phoenix", "valley", "desert", "mountain", "river", "sun"}
 # A job system's host labels that are the system's own, not an employer's tenant
 _SYSTEM_LABELS = {"www", "jobs", "job-boards", "boards", "careers", "career", "external", "apply", "hire",
                   "recruiting", "talent", "careersite"}
@@ -131,8 +132,8 @@ def _employer_forms(company: str, urls: list[Any]) -> list[str]:
     "Acme Semiconductor", "Acme": a heading says "Acme Career", a title "Apply I Acme Group"), its
     first word unless an everyday one, and the tenant label of a job system's host
     (acme.wd5.myworkdayjobs.com -> "acme")."""
-    words = company.split()
-    forms: set[str] = set()
+    forms: set[str] = set(re.findall(r"\(([A-Z][A-Za-z]{1,5})\)", company))  # "Tokyo Electron (TEL)"
+    words = re.sub(r"\([^)]*\)", " ", company).split()
     for last in range(len(words) - 1, 0, -1):
         if words[last].strip(".,").lower() not in _COMPANY_WORDS:
             break
@@ -141,10 +142,22 @@ def _employer_forms(company: str, urls: list[Any]) -> list[str]:
         forms.add(words[0].strip(".,"))
     for url in urls:
         tenant = (urlparse(str(url)).hostname or "").lower().split(".")[0] if url and shared_system(str(url)) else ""
-        if tenant and tenant not in {f.lower() for f in forms}:
-            forms.add(tenant)
-    kept = {f for f in forms if len(f) >= 4 and f not in _SYSTEM_LABELS}
+        if tenant and tenant not in _SYSTEM_LABELS and tenant not in _COMMON_WORDS:
+            forms |= {tenant, tenant.upper(), tenant.capitalize()}  # (a one-word form is matched as written: _as_written)
+    # (a short form of 4 letters or more, or an all-capitals one of 3: "NXP", "ASM", "TEL")
+    kept = {f for f in forms if (len(f) >= 4 or len(f) >= 3 and f.isupper()) and f.lower() not in _SYSTEM_LABELS}
     return sorted({*kept, *([company.strip()] if len(company.strip()) >= 2 else [])}, key=len, reverse=True)
+
+
+def _as_written(form: str, company: str) -> bool:
+    """A one-word short form of an employer's name is taken out only as it's written ("Early", "SCREEN"), not
+    where a page uses the word ("How early can you start?"): the review of issue #112, note 35."""
+    return " " not in form.strip() and form.strip().lower() != company.strip().lower()
+
+
+# Never inside an email address: one at a domain an employer's word is, or a person's whose first name is one
+# ("grant.lee@…" at Grant Thornton), is taken out whole after
+_NOT_IN_EMAIL = r"(?<![\w@])(?:{})(?!\w)(?![\w.+-]*@)"
 
 
 def _anonymous(job: dict[str, Any], run: Any, urls: list[Any],
@@ -160,9 +173,12 @@ def _anonymous(job: dict[str, Any], run: Any, urls: list[Any],
                             (getattr(run, "company", ""), "the employer")):
         if len(name := str(value or "").strip()) >= 2:
             said.setdefault(name, stand_in)
+    exact = set()
     for company in (job.get("company"), getattr(run, "company", "")):
         for form in _employer_forms(str(company or ""), urls):
             said.setdefault(form, "the employer")
+            if _as_written(form, str(company or "")):
+                exact.add(form)
     sites = set()
     for url in urls:
         host = (urlparse(str(url or "")).hostname or "").lower().removeprefix("www.")
@@ -176,7 +192,11 @@ def _anonymous(job: dict[str, Any], run: Any, urls: list[Any],
     def say(text: Any) -> str:
         text = _URL.sub(lambda m: _address_said(m.group(0)), str(text or ""))
         for name in names:
-            text = re.sub(_pattern(name), said[name], text, flags=re.I if len(name) >= 3 else 0)
+            if said[name] == "the employer":
+                text = re.sub(_NOT_IN_EMAIL.format(_pattern(name)), said[name], text,
+                              flags=0 if name in exact or len(name) < 3 else re.I)
+            else:
+                text = re.sub(_pattern(name), said[name], text, flags=re.I if len(name) >= 3 else 0)
         return scrub(_EMPLOYER_TAIL.sub(r"\1", text))
     return say, secrets
 
@@ -343,14 +363,20 @@ def _note_scrubber(job: dict[str, Any], run: Any, prof: config.Profile) -> Calla
     form of it, called "the employer"."""
     scrub = _scrubber(report_strings(prof))
     urls = [job.get("url"), job.get("apply_url"), getattr(run, "url", ""), (getattr(run, "page_info", None) or {}).get("url")]
-    forms = {f for n in (job.get("company"), getattr(run, "company", "")) for f in _employer_forms(str(n or ""), urls)}
-    spaced = [r"[\s.,]+".join(map(re.escape, f.split())) for f in sorted(forms, key=len, reverse=True)]
-    # (never after an "@": the person's own email, at a domain the employer's first word is, is taken out whole after)
-    employer = re.compile(r"(?<![\w@])(?:" + "|".join(spaced) + r")(?!\w)", re.I) if spaced else None
+    forms = {(f, _as_written(f, str(n or ""))) for n in (job.get("company"), getattr(run, "company", ""))
+             for f in _employer_forms(str(n or ""), urls)}
+    exact = {f for f, as_written in forms if as_written}
+
+    def pattern(names: set[str], flags: int) -> re.Pattern[str] | None:
+        spaced = [r"[\s.,]+".join(map(re.escape, f.split())) for f in sorted(names, key=len, reverse=True)]
+        return re.compile(_NOT_IN_EMAIL.format("|".join(spaced)), flags) if spaced else None
+    employer = [p for p in (pattern({f for f, _ in forms} - exact, re.I), pattern(exact, 0)) if p is not None]
 
     def unnamed(text: str) -> str:
         text = _URL.sub(lambda m: _address_said(m.group(0)), text)
-        return _EMPLOYER_TAIL.sub(r"\1", employer.sub("the employer", text)) if employer else text
+        for p in employer:
+            text = p.sub("the employer", text)
+        return _EMPLOYER_TAIL.sub(r"\1", text)
 
     return lambda text: scrub(unnamed(_ANSWER_SAID.sub("\\1\u2026", str(text or ""))))
 
