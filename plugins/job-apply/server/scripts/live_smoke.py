@@ -1580,6 +1580,11 @@ async def _take_assessment(run: Any, steps: list[dict[str, Any]], rec: dict[str,
             if vendor:
                 rec["assessment"]["back_at"] = _mask(page.url)[:300]
                 return "back on the application"
+            # (what it was instead, for the next look: Taylor Morrison's, run 60)
+            steps.append({"stopped_on": _mask(page.url)[:200], "title": _mask(data.get("title") or "")[:80],
+                          "headings": [_mask(h)[:80] for h in (data.get("headings") or [])[:4]],
+                          "applicants_page": _applicants_page(data), "known_system": detect_ats(page.url),
+                          "buttons": [_mask(a.get("text") or "")[:40] for a in data.get("actions") or []][:12]})
             return "it opened no assessment off the application's site"
         if data.get("captcha"):
             return "a CAPTCHA (the rules: never solved)"
