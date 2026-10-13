@@ -2232,6 +2232,12 @@ def test_more_questions_the_profile_answers():
                  "Are you able to work in the US, or will you require sponsorship in order to have work authorization?",
                  "Are you able to work in the US now, or will you need sponsorship to obtain work authorization?"):
         assert answer(both) is None, both
+    # (and what it's for, "to be able to work", or a visa they have now, is still the one question)
+    for one in ("Will you require sponsorship to be able to work in the United States?",
+                "Will you require employer sponsorship in order to be permitted to work in the US?",
+                "Will you now or in the future require sponsorship to be allowed to work in the U.S.?",
+                "Do you currently have a visa that will require sponsorship in the future?"):
+        assert answer(one) == "No", one
     # both halves in one question stay the person's
     assert answer("Are you authorized to work in the U.S., or will you require sponsorship to obtain work "
                   "authorization?") is None

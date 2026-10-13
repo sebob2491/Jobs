@@ -678,7 +678,7 @@ def _plans_none(field: dict, prof: Profile) -> Any:
 # only)" (Desert Financial's UKG Pro, run 56), "I am an external candidate". Never one that says more ("...or former",
 # "...and not related to any employee"), nor a new applicant's (whether they applied before isn't the profile's)
 _NOT_STAFF = re.compile(r"^(?:(?:n a|not applicable|no) )?(?:i am |i m )?(?:not (?:a |an )?current (?P<who>(?:\w+ ){0,4}?)"
-                        r"(?:employee|associate|team member|staff member)(?: (?:of|at|with) (?:the )?(?P<of>(?:\w+ ?){1,6}))?|"
+                        r"(?:employee|associate|team member|staff member)(?: (?:of|at|with) (?:the )?(?P<of>(?:\w+ ){0,5}\w+))?|"
                         r"(?:an )?external (?:candidate|applicant))$")
 _SAYS_MORE = re.compile(r"\b(?:or|and|nor|former\w*|previous\w*|past|prior|ever|been|relat\w*|famil\w*|last|within)\b")
 # a question only for the employer's own staff ("(internal candidates only)", "Current employees only: ...")
@@ -797,8 +797,10 @@ _FOR_AUTHORIZATION = re.compile(r"\b((in order )?to (obtain|maintain|keep|retain
                                 r"( work| employment)? (authori[sz]ation|eligibility)\b|\bfor (work |employment )?authori[sz]ation\b")
 # and the other half of a question that also asks whether they can work now ("Are you able to work in the US now, or
 # will you need sponsorship to obtain work authorization?"): a single Yes or No can't answer both (the review of 0.3.146)
-_ABLE_NOW = re.compile(r"\b(able|permitted|allowed|eligible) to (legally |lawfully )?work\b|\b(currently|already) (have|hold|"
-                       r"possess)\b")
+# (never what the sponsorship is for: "...require sponsorship to be able to work in the United States?"; nor a visa they
+# have now: "Do you currently have a visa that will require sponsorship?")
+_ABLE_NOW = re.compile(r"(?<!\bto be )\b(able|permitted|allowed|eligible) to (legally |lawfully )?work\b|\b(currently|already) "
+                       r"(have|hold|possess)( it| (the right to work|work authori[sz]ation|authori[sz]ation))?( or| and|$)")
 
 
 def _sponsorship(prof: Profile, job: dict, label: str = "") -> Any:
