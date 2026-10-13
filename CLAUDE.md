@@ -51,6 +51,9 @@ the scrubber (`python -m job_apply.fixtures`) before they become test fixtures.
     for HR (or finance) jobs as an applicant with that background (the default is technician jobs).
   - It forces a fake profile and `JOB_APPLY_NEVER_SUBMIT=1`, so nothing can be submitted. The fake profile has
     `accept_cookies` on, so a banner with no way to decline (Texas Instruments') is accepted (the owner asked, Oct 13).
+  - Each application goes as far as the rules let it, for the most to fix from (the owner, Oct 13): 5 minutes a round,
+    up to 5 rounds of questions answered, and one Resume pressed on a stop. Keep it so: what the rules leave to the
+    person (bot checks, CAPTCHAs, submitting) still stops it.
     The fake profile has a test resume made for the run. With `LIVE_TEST_EMAIL` set, the employers
     that refuse its example.com address (`live_identity.INBOX_AT`: Onto Innovation, Robert Half) get
     the test inbox's address instead (masked; still no accounts, no mail read: the owner's call, Oct 11).

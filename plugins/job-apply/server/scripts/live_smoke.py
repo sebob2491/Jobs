@@ -1023,7 +1023,14 @@ async def main() -> int:
     return 0
 
 
-PIPELINE_WAIT = 180
+# Each application goes as far as the rules let it, for the most to fix from (the owner, Oct 13): a round of the
+# desk's work is given 5 minutes (ASML's and NXP's Workday took longer than 3 after their sign-in, run 56), the
+# questions it asks are answered for up to 5 rounds, and a stop on a page is pressed Resume once, as a person
+# would, to see what a second try does (a site's error that clears, a step that saves late). Bot checks, sign-ins
+# and what the rules leave to the person stay where they stop
+PIPELINE_WAIT = 300
+QUESTION_ROUNDS = 5
+RESUME_ROUNDS = 1
 
 
 def _cell(value: Any) -> str:
@@ -1473,7 +1480,8 @@ async def check_pipeline(company: dict[str, Any], out: Path, rec: dict[str, Any]
     run = None
     try:
         run = applier.enqueue(job["id"])
-        rounds = 3 + (MAIL_ROUNDS if TEST_IDENTITY else 0)
+        rounds = QUESTION_ROUNDS + RESUME_ROUNDS + (MAIL_ROUNDS if TEST_IDENTITY else 0)
+        resumes = RESUME_ROUNDS
         for n in range(rounds):
             start = time.monotonic()
             while run.status in ("queued", "running"):
@@ -1503,6 +1511,12 @@ async def check_pipeline(company: dict[str, Any], out: Path, rec: dict[str, Any]
                     key = placed_key(q) if labels.count(q.get("label") or "") > 1 else question_key(q.get("label") or "")
                     run.once[key] = fake_answer(q)
                 applier.enqueue(job["id"], front=True)
+                continue
+            if run.status == "needs_you" and run.need == "stuck" and resumes and n < rounds - 1:
+                # pressed Resume once, as a person would with nothing else done: what a second try gets to
+                resumes -= 1
+                rec["rounds"][-1]["resumed"] = True
+                applier.resume(job["id"])
                 continue
             if TEST_IDENTITY and await wait_for_mail(applier, run):
                 continue  # the desk read the emailed code or link, and went on by itself
@@ -1573,7 +1587,7 @@ async def report_inbox(company: str, applier: Any, run: Any) -> None:
 
 async def pipeline_main(companies: list[dict[str, Any]], out: Path, fixtures: bool = False) -> int:
     records = []
-    wait = 3 * PIPELINE_WAIT + 60 + (MAIL_ROUNDS * MAIL_WAIT if TEST_IDENTITY else 0)
+    wait = (QUESTION_ROUNDS + RESUME_ROUNDS) * PIPELINE_WAIT + 60 + (MAIL_ROUNDS * MAIL_WAIT if TEST_IDENTITY else 0)
     for company in [c for c in companies if c.get("search")]:
         started = time.time()
         rec: dict[str, Any] = {"company": company["name"]}

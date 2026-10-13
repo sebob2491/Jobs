@@ -2187,7 +2187,9 @@ class Applier:
                     if any(_ROBOT.search(p) for p in problems):  # Randstad's "verify that you are not a robot"
                         await self._bring_forward(run)
                         return self._pause(run, "bot_check", _BOT_CHECK_SAYS)
-                    if any(_SAVED_ALREADY.search(p) for p in problems) and looked not in reloaded and run.page is not None:
+                    # (the page's words as they are too: the sentence alone may read as no error, the review's)
+                    if _SAVED_ALREADY.search(" ".join([*problems, *(clicked.get("errors") or [])])) \
+                            and looked not in reloaded and run.page is not None:
                         # the step saved part of itself on an earlier press, and won't save it twice: reloaded, it shows
                         # what it saved, and goes on (once a page; the error again after it is the person's)
                         reloaded.add(looked)

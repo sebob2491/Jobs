@@ -19,8 +19,9 @@
     presses += 1;
     if (saved) { location.href = 'review.html'; return; }
     if (presses === 1) { sessionStorage.setItem('saved', '1'); return; }  // (saved, but the step stays)
-    document.getElementById('errors').innerHTML = '<div role="alert">Errors Found. Error: A phone number already '
-      + 'exists for this application. Update or delete the phone number.</div>';
+    // (the sentence alone, in an alert: words that don't read as an error by themselves)
+    document.getElementById('errors').innerHTML = '<div role="alert">A phone number already exists for this '
+      + 'application. Update or delete the phone number.</div>';
   });
 </script>
 </body>

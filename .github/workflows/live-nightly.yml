@@ -87,17 +87,17 @@ jobs:
     if: needs.fresh.outputs.go == 'true'
     name: ${{ matrix.slot || matrix.check }} check
     runs-on: ubuntu-latest
-    timeout-minutes: ${{ matrix.check == 'accounts' && 100 || 45 }}
+    timeout-minutes: ${{ matrix.check == 'accounts' && 120 || 60 }}
     strategy:
       fail-fast: false  # each check reports on its own; one that fails leaves its employers' last results
       matrix:
         include:
           - check: pipeline  # the Job Desk pipeline, semiconductor list
             args: --pipeline --fake-passwords --parallel 4 --fixtures
-            minutes: 20
+            minutes: 35
           - check: hr  # HR jobs, phoenix-metro list
             args: --pipeline --fake-passwords --parallel 4 --lists phoenix-metro --role hr --fixtures
-            minutes: 30
+            minutes: 45
           # finance jobs, phoenix-metro list: paused (the owner's call, Oct 10). To resume, put back:
           # - check: finance
           #   args: --pipeline --fake-passwords --parallel 4 --lists phoenix-metro --role finance
@@ -105,20 +105,22 @@ jobs:
           - check: search  # whether each phoenix-metro employer's search works
             args: --lists phoenix-metro --parallel 4
             minutes: 30
+          # (each application goes as far as the rules let it: up to 5 minutes a round, more rounds and one Resume, the
+          # owner's call, Oct 13; the minutes leave room for that)
           # the test identity, its accounts made, at every employer on both lists (the owner's call, Oct 11), on three
           # machines at once, four groups each (a code-sending system's employers stay in one group: one inbox)
           - check: accounts
             slot: accounts-0
             args: --pipeline --test-identity --everywhere --parallel 4 --machine 0/3 --fixtures
-            minutes: 90
+            minutes: 105
           - check: accounts
             slot: accounts-1
             args: --pipeline --test-identity --everywhere --parallel 4 --machine 1/3 --fixtures
-            minutes: 90
+            minutes: 105
           - check: accounts
             slot: accounts-2
             args: --pipeline --test-identity --everywhere --parallel 4 --machine 2/3 --fixtures
-            minutes: 90
+            minutes: 105
     defaults:
       run:
         working-directory: plugins/job-apply/server
