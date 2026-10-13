@@ -3186,6 +3186,28 @@ def test_a_page_that_asks_to_be_refreshed_is_reloaded_once(srv, monkeypatch, job
     assert len(said) == 1 and r.seen_form and "went-wrong" not in r.url, (r.url, r.reason, r.log)
 
 
+def test_a_review_page_whose_submit_is_greyed_while_it_draws_is_waited_on(srv, monkeypatch, job_apply_home):
+    """Wells Fargo's Workday (run 49, Oct 13): its review page drew Submit greyed out for a moment, and the desk
+    stopped with "“Submit” is greyed out, so the site still wants something" though the page wanted nothing. A
+    button greyed out while a page draws is waited on, and the page as it is after the wait is the one read."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 6)
+    job = srv.add_job(url=fixture_url("site/late-submit-step.html"), title="Teller", company="Example Bank")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), timeout=120, about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert r.status == "ready" and r.url.endswith("late-submit-review.html"), (r.status, r.reason, r.log)
+
+
 def test_each_page_that_draws_its_buttons_late_is_waited_on(srv, monkeypatch, job_apply_home):
     """Baker Tilly's Workday (run 44, Oct 13): the page after its sign-in drew its questions and Save and Continue
     late, and the desk, having waited on an earlier page's late buttons on that pass, stopped at once: "I couldn't
