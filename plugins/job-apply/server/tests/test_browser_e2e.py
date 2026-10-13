@@ -418,6 +418,22 @@ def test_ukg_blocks_named_only_by_their_region_are_counted_and_named(srv):
             ("Education 1", "School"), (None, "First Name")} <= sections, sections  # (the step's region isn't a block)
 
 
+def test_ukg_saved_items_count_as_blocks(srv):
+    """Desert Financial's, Nikon's and UCT's UKG Pro (run 56, Oct 13): the job the resume's parse saved is a read-only
+    row with its own "Edit Experience Item 1" and no box, so none was counted; "Add Experience" opened an empty editor
+    above it, whose Job Title, Company / Organization and From month and year the person was asked, and the job went
+    in twice. A saved row counts as its section's block: nothing is added for a job or school already there."""
+    job = srv.add_job(url=fixture_url("site/ukg-saved-items.html"), title="HR Analyst", company="Example Credit Union")["job"]
+    run(srv.open_application(job_id=job["id"]))
+    work = run(srv.add_entries("work"))
+    assert (work["before"], work["clicks"], work["after"]) == (2, 0, 2), work
+    edu = run(srv.add_entries("education"))
+    assert (edu["before"], edu["clicks"], edu["after"]) == (1, 0, 1), edu
+    # (a third job wanted: one row added, its editor open and its own Edit hidden, counted as a block all the same)
+    more = run(srv.add_entries("work", count=3))
+    assert (more["before"], more["clicks"], more["after"]) == (2, 1, 3), more
+
+
 def test_workday_experience_entries(srv):
     job = srv.add_job(url=fixture_url("workday_experience.html"), title="FSE", company="Example Litho")["job"]
     run(srv.open_application(job_id=job["id"]))

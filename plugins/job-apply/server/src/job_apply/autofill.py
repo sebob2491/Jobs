@@ -673,6 +673,48 @@ def _plans_none(field: dict, prof: Profile) -> Any:
     return [neither[0]] if _said_no(prof, "outside_work") and _said_no(prof, "board_member") else None
 
 
+# A choice that says the person isn't one of the employer's staff, and nothing more: "I am not a current Desert
+# Financial employee" beside the Yes and No of "Have you notified your leader of your application? (internal candidates
+# only)" (Desert Financial's UKG Pro, run 56), "I am an external candidate". Never one that says more ("...or former",
+# "...and not related to any employee"), nor a new applicant's (whether they applied before isn't the profile's)
+_NOT_STAFF = re.compile(r"^(?:(?:n a|not applicable|no) )?(?:i am |i m )?(?:not (?:a |an )?current (?P<who>(?:\w+ ){0,4}?)"
+                        r"(?:employee|associate|team member|staff member)(?: (?:of|at|with) (?:the )?(?P<of>(?:\w+ ){0,5}\w+))?|"
+                        r"(?:an )?external (?:candidate|applicant))$")
+_SAYS_MORE = re.compile(r"\b(?:or|and|nor|former\w*|previous\w*|past|prior|ever|been|relat\w*|famil\w*|last|within)\b")
+# a question only for the employer's own staff ("(internal candidates only)", "Current employees only: ...")
+_STAFF_ONLY = re.compile(r"\binternal (?:candidates?|applicants?|employees?|only)\b|\bcurrent (?:employees?|associates?|"
+                         r"team members?) only\b|\b(?:if|for) (?:you are )?(?:an? )?(?:current|internal) (?:employee|associate|"
+                         r"team member|candidate|applicant)s?\b")
+
+
+def _not_staff_choice(field: dict, prof: Profile, job: dict) -> str | None:
+    """A question only for the employer's own staff (_STAFF_ONLY), answered with its one choice that says the person
+    isn't on that staff and nothing more (_NOT_STAFF), naming no employer or this one alone, as a Create Account's
+    "new candidate, not a current employee" box is ticked (pipeline._new_candidate_boxes): where the profile says
+    where the person works and has never had this employer there (a job there with no end may be one they have now,
+    and "former" is theirs to say)."""
+    company = norm(job.get("company"))
+    if not company or not _STAFF_ONLY.search(norm(field.get("label"))):
+        return None
+    entries = [e for e in _listed(prof.get("work_history")) if isinstance(e, dict)]
+    if not (entries or prof.get("experience.current_company")):
+        return None  # (a profile that says nothing of their work says nothing of this either)
+    known = [norm(e.get("company")) for e in entries] + [norm(c) for c in _listed(prof.get("history.previous_employers"))]
+    known.append(norm(prof.get("experience.current_company")))
+    if any(_same_employer(c, company) for c in known if c):
+        return None
+    fits = []
+    for o in field.get("options") or []:
+        said = norm(o)
+        m = _NOT_STAFF.fullmatch(said)
+        if not m or _SAYS_MORE.search(said):
+            continue
+        named = [n.strip() for n in (m.group("who"), m.group("of")) if n and n.strip()]
+        if all(_same_employer(n, company) for n in named):
+            fits.append(o)
+    return fits[0] if len(fits) == 1 else None
+
+
 def _employee_id(prof: Profile, job: dict) -> str | None:
     """The person's ID at the employer applied to (history.employee_ids, by employer), for its
     "Employee ID (if applicable)" or "please provide your WWID": never another employer's."""
@@ -748,16 +790,25 @@ def _no_sponsorship(prof: Profile, job: dict, label: str = "") -> Any:
 
 
 # what the sponsorship would be for, not a second question: "...require visa sponsorship...
-# to maintain your work authorization?" (Grant Thornton)
-_FOR_AUTHORIZATION = re.compile(r"\b(in order )?to (obtain|maintain|keep|retain|continue|extend)( your| my| the)?( current)?"
+# to maintain your work authorization?" (Grant Thornton), "...require sponsorship in order to have work authorization in the
+# United States?" (APS's SuccessFactors, run 56)
+_FOR_AUTHORIZATION = re.compile(r"\b((in order )?to (obtain|maintain|keep|retain|continue|extend)|in order to (have|get|gain|"
+                                r"secure|receive))( your| my| the)?( current)?"
                                 r"( work| employment)? (authori[sz]ation|eligibility)\b|\bfor (work |employment )?authori[sz]ation\b")
+# and the other half of a question that also asks whether they can work now ("Are you able to work in the US now, or
+# will you need sponsorship to obtain work authorization?"): a single Yes or No can't answer both (the review of 0.3.146)
+# (never what the sponsorship is for: "...require sponsorship to be able to work in the United States?"; nor a visa they
+# have now: "Do you currently have a visa that will require sponsorship?")
+_ABLE_NOW = re.compile(r"(?<!\bto be )\b(able|permitted|allowed|eligible) to (legally |lawfully )?work\b|\b(currently|already) "
+                       r"(have|hold|possess)( it| (the right to work|work authori[sz]ation|authori[sz]ation))?( or| and|$)")
 
 
 def _sponsorship(prof: Profile, job: dict, label: str = "") -> Any:
     """Will the person need sponsorship? Not answered when the same question also asks whether
     they're authorized ("Are you authorized … and will you require sponsorship?"), which a
     single Yes or No can't answer both halves of."""
-    if re.search(_AUTHORIZED, _FOR_AUTHORIZATION.sub(" ", norm(label))):
+    rest = _FOR_AUTHORIZATION.sub(" ", norm(label))
+    if re.search(_AUTHORIZED, rest) or _ABLE_NOW.search(rest):
         return None
     return _yn("work_authorization.requires_sponsorship")(prof, job)
 
@@ -851,7 +902,7 @@ def _studied_level(text: Any) -> int | None:
 _DEGREE_WORDS = "|".join(pattern[len(r"\b("):-len(r")\b")] for _, pattern in _DEGREES)
 _DEGREE_NAME = rf"(?:an? )?(?:{_DEGREE_WORDS})(?: ?degrees?)?"  # ("master s?" takes a trailing space)
 _DEGREE_ONLY = (r"^(?:do you (?:have|hold|possess) |have you (?:earned|completed|received) )?(?:an? |the )?"
-                r"(?P<deg>high school diploma(?: or (?:a )?ged)?|ged|(?:associate|bachelor|master)(?: s|s)? degree|"
+                r"(?P<deg>high school diploma(?: or (?:a |an |its )?(?:ged|equivalent))?|ged|(?:associate|bachelor|master)(?: s|s)? degree|"
                 r"doctorate(?: degree)?)(?P<higher> or (?:higher|above|greater)"
                 rf"(?: (?:{_DEGREE_NAME}|e g|eg|i e|such as|including|etc|or|and))*)?(?: (?:required|preferred))*$")
 _EXAMPLES_SPLIT = re.compile(r"[,/;()]|\b(?:or|and|e\.?\s?g|i\.?\s?e|such as|including|etc)\b\.?", re.I)
@@ -940,9 +991,11 @@ def _has_degree(prof: Profile, job: dict, label: str = "") -> Any:
         return None
     earned, unread = _degrees_earned(prof)
     higher = bool(shape.group("higher"))
-    # a high school diploma isn't a GED, nor a GED a diploma; "a high school diploma or GED" is either
+    # a high school diploma isn't a GED, nor a GED a diploma; "a high school diploma or GED" is either, and so is "a high
+    # school diploma or equivalent" (Desert Financial's UKG Pro, run 56), but not "...or equivalent experience"
     deg = shape.group("deg")
-    kinds = {"", "ged"} if rank > 0 or "diploma" in deg and "ged" in deg else {"ged"} if deg == "ged" else {""}
+    kinds = ({"", "ged"} if rank > 0 or "diploma" in deg and re.search(r"\b(ged|equivalent)$", deg)
+             else {"ged"} if deg == "ged" else {""})
     if kinds == {""} and rank == 0 and re.fullmatch(rf"(a )?({_EQUIVALENT})( diploma| certificate)?",
                                                     norm(prof.get("education.highest_degree"))):
         return None  # a diploma asked of someone whose highest is a GED (or HiSET...): theirs to say
@@ -1897,6 +1950,9 @@ def _resolve_field(field: dict, prof: Profile, job: dict | None = None, file_inp
                     return None  # recognised but the profile has no answer
                 ans = Answer(value, name)
                 break
+    if ans is None and kind in _CHOICE_KINDS - {"checkbox", "checkbox_group"} and not someone_else \
+            and (outside := _not_staff_choice(field, prof, job)):
+        return Answer(outside, "work_history")  # (one of its own choices, as it reads; only where no rule took the question)
     if ans is None and kind in _CHOICE_KINDS and field.get("options") and _INSTRUCTION_ONLY.match(label) \
             and _POINTS_AT_CHOICES.search(label):
         ans = _topic_from_options(field["options"], prof, job)
