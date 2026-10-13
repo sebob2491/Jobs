@@ -3288,16 +3288,18 @@ def test_only_a_greyed_submit_or_step_that_comes_on_ends_the_wait():
     assert not pipeline._came_on(page(), page(submit))  # (a button that wasn't there isn't one that came on)
 
 
-def test_a_step_that_goes_on_while_its_next_is_greyed_is_read_again(srv, monkeypatch, job_apply_home):
+@pytest.mark.parametrize("save", [6000, 60000])
+def test_a_step_that_goes_on_while_its_next_is_greyed_is_read_again(srv, monkeypatch, job_apply_home, save):
     """EMD's Phenom (run 51's practice check, Oct 13): Next, pressed, was greyed out while the step was saved, and the
     site went on to its next step at the same address but its query, with fewer boxes and Submit, no Next. The wait
     for the step's button ended only on that button, more boxes or a loading sign, so it ran out, and the desk stopped
     on the first step as it had read it: "“Next” is greyed out, so the site still wants something". A page that goes
-    on while the desk waits is read again."""
+    on while the desk waits is read again; one whose Next stays greyed past the wait is still said to want something
+    (the review)."""
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
     monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 2)  # (EMD's save took longer than this wait)
     monkeypatch.setattr(pipeline, "STEP_SAVE_WAIT", 12)
-    job = srv.add_job(url=fixture_url("site/greyed-next-then-step.html") + "?save=6000", title="Technician",
+    job = srv.add_job(url=fixture_url("site/greyed-next-then-step.html") + f"?save={save}", title="Technician",
                       company="Example Fab")["job"]
     applier = Applier(srv)
 
@@ -3311,6 +3313,9 @@ def test_a_step_that_goes_on_while_its_next_is_greyed_is_read_again(srv, monkeyp
             await applier.stop()
 
     r = run(go())
+    if save > 12000:
+        assert r.need == "stuck" and "“Next” is greyed out, so the site still wants something" in r.reason, r.reason
+        return
     assert r.status == "ready" and "step=2" in r.url, (r.status, r.reason, r.log)
 
 
