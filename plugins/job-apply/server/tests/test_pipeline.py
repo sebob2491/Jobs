@@ -3425,6 +3425,30 @@ def test_a_workday_step_whose_questions_come_late_isnt_a_list_of_jobs(srv, monke
     assert r.status == "ready" and r.url.endswith("review.html"), (r.status, r.reason, r.log[-3:])
 
 
+def test_a_workday_step_that_says_what_it_saved_already_exists_is_reloaded(srv, monkeypatch, job_apply_home):
+    """PayPal's Workday (run 56) and Grand Canyon Education's (run 55): My Information's first Save and Continue saved
+    the phone number (or the address) but the step stayed; pressed again, "A phone number already exists for this
+    application. Update or delete the phone number.", and the desk stopped. The page is reloaded, once a page, and
+    shows what it saved; the step goes on."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "STEP_SAVE_WAIT", 1)
+    job = srv.add_job(url=fixture_url("site/workday-saved-twice.html"), title="Engineer", company="Example Pay")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), timeout=120, about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert r.status == "ready" and r.url.endswith("review.html"), (r.status, r.reason, r.log[-3:])
+    assert any("already there" in line for line in r.log), r.log
+
+
 def test_each_page_that_draws_its_buttons_late_is_waited_on(srv, monkeypatch, job_apply_home):
     """Baker Tilly's Workday (run 44, Oct 13): the page after its sign-in drew its questions and Save and Continue
     late, and the desk, having waited on an earlier page's late buttons on that pass, stopped at once: "I couldn't

@@ -47,6 +47,7 @@
   group.addEventListener('focusout', (e) => {
     if (group.contains(e.relatedTarget)) return;
     if (shown() !== cameIn) model = shown();
+    if (model) document.getElementById('errors').innerHTML = '';  // (Workday's errors go once the date is taken)
   });
   inputs.forEach((input, i) => {
     input.addEventListener('keydown', (e) => {
@@ -70,7 +71,8 @@
     if (lost && model && model === shown()) { location.href = 'review.html'; return; }
     if (!lost) { lost = true; model = null; }
     // (only as Workday's links: its words under them aren't an error message the desk reads)
-    document.getElementById('errors').innerHTML = '<button type="button">Errors Found</button>'
+    // (Workday's "Errors Found" is a heading: the page reads as another while it shows, Intel's, run 56)
+    document.getElementById('errors').innerHTML = '<h3>Errors Found</h3>'
       + '<button type="button">Error-Date</button><span>The field Date is required and must have a value.</span>';
   });
 </script>

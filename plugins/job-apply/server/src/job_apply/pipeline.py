@@ -107,6 +107,9 @@ _BOT_TITLE = re.compile(r"just a moment|attention required|access denied|pardon 
 _RESET_DONE = re.compile(r"\b(?:your )?password (?:has been|was|is)(?: successfully)? (?:reset|changed|updated)\b|"
                          r"\bpassword (?:reset|change|changed|updated?) (?:was |is )?(?:a )?success", re.I)
 _STEPISH = re.compile(r"\b(next|continue|save|submit|review|apply|finish|done|proceed)\b", re.I)
+# Workday saving again what a step saved a moment ago: "A phone number already exists for this application. Update or
+# delete the phone number." (PayPal's, run 56; Grand Canyon Education's address, run 55)
+_SAVED_ALREADY = re.compile(r"\balready exists for this application\b", re.I)
 _REFRESH_ASKED = re.compile(r"\bsomething went wrong\b.{0,200}\b(?:refresh|reload) (?:the|this) page\b", re.I | re.S)
 _TURNED_AWAY = re.compile(r"^\s*(?:403\s*)?forbidden\s*$|^\s*(?:406\s*)?not acceptable\s*$|"
                           r"^\s*your request has been blocked\.?\s*$", re.I)  # (Workday's, its title empty)
@@ -1550,6 +1553,7 @@ class Applier:
         redone_pages: set[tuple[Any, ...]] = set()  # pages whose boxes said wrong were answered again (once a page)
         saved_waited: set[tuple[Any, ...]] = set()  # steps waited on as still saving (once a step)
         bare_waited: set[tuple[Any, ...]] = set()  # forms with no step button yet, waited on to be drawn (once a page)
+        reloaded: set[tuple[Any, ...]] = set()  # steps reloaded for saying what they saved already exists (once a page)
         account_waited = False
         sign_ins: dict[str, int] = {}  # what the saved password was used for on this pass
         pressed: list[tuple[Any, ...]] = []  # (page, button) for each button pressed on this pass
@@ -2075,13 +2079,14 @@ class Applier:
             # Freeport's and SRP's SuccessFactors, nightly Oct 11: "Apply now", then its menu's "Apply Now", before)
             key = (data.get("url"), tuple(data.get("headings") or []), action["text"].strip().lower(), run.reopened)
             lately = pressed[since:]  # (the presses since a refresh the site asked for: the steps it takes again are new)
-            # (and for a step pressed three times, those since the desk set right what the page said was wrong: Entegris'
-            # Self Identify, run 54, its Date typed again after the second press, then never pressed a third time)
+            # (and for a step pressed three times, or a circle, those since the desk set right what the page said was
+            # wrong: Entegris' Self Identify, run 54, its Date typed again after the second press, then never pressed a
+            # third time; Intel's, run 56, its "Errors Found" heading gone once the Date was, read as back where it was)
             tries = pressed[max(since, fixed_at):]
-            if key in lately and pressed[-1] != key:
+            if key in tries and pressed[-1] != key:
                 # Round in a circle (Oracle sent its sites back to the posting from "Continue"):
                 # going round again only repeats it, and may email the person another code.
-                lap = " \u2192 ".join(pressed_on[pressed.index(key, since):])
+                lap = " \u2192 ".join(pressed_on[pressed.index(key, max(since, fixed_at)):])
                 return self._pause(run, "stuck", f"I went round in a circle ({lap}, then back to {_where(data)}), so "
                                    "the site isn't letting this application on. Have a look in the browser, then press "
                                    "Resume.")
@@ -2182,6 +2187,16 @@ class Applier:
                     if any(_ROBOT.search(p) for p in problems):  # Randstad's "verify that you are not a robot"
                         await self._bring_forward(run)
                         return self._pause(run, "bot_check", _BOT_CHECK_SAYS)
+                    if any(_SAVED_ALREADY.search(p) for p in problems) and looked not in reloaded and run.page is not None:
+                        # the step saved part of itself on an earlier press, and won't save it twice: reloaded, it shows
+                        # what it saved, and goes on (once a page; the error again after it is the person's)
+                        reloaded.add(looked)
+                        self._log(run, f"{_site(run, clicked)} said what it saved a moment ago is already there, so I "
+                                  "reloaded the page")
+                        with contextlib.suppress(Exception):
+                            await run.page.reload(wait_until="load")
+                        stalls, fixed_at = 0, len(pressed)
+                        continue
                     if told := next((e for e in clicked.get("errors") or [] if _NO_ACCOUNT.search(e)), ""):
                         # an email-first sign-in with no account for the email (an Eightfold site: "We don't
                         # recognize this email. Create a new account"): the desk makes it with

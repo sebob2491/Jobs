@@ -1,0 +1,27 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Apply</title></head>
+<body>
+<!-- like PayPal's (run 56) and Grand Canyon Education's (run 55) Workday My Information: the first Save and Continue
+     saves the phone number but the step stays; pressed again, the page says "A phone number already exists for
+     this application. Update or delete the phone number."; once the page is reloaded, the step shows what it saved
+     and goes on -->
+<h2>My Information</h2>
+<label for="fn">First Name*</label><input id="fn" required>
+<label for="ph">Phone Number*</label><input id="ph" type="tel" required>
+<div id="errors"></div>
+<button type="button" id="save">Save and Continue</button>
+<script>
+  const saved = sessionStorage.getItem('saved') === '1';  // (loaded again after a save)
+  if (saved) { document.getElementById('fn').value = 'Sam'; document.getElementById('ph').value = '480-555-0100'; }
+  let presses = 0;
+  document.getElementById('save').addEventListener('click', () => {
+    presses += 1;
+    if (saved) { location.href = 'review.html'; return; }
+    if (presses === 1) { sessionStorage.setItem('saved', '1'); return; }  // (saved, but the step stays)
+    document.getElementById('errors').innerHTML = '<div role="alert">Errors Found. Error: A phone number already '
+      + 'exists for this application. Update or delete the phone number.</div>';
+  });
+</script>
+</body>
+</html>
