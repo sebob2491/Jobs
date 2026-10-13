@@ -72,8 +72,9 @@ below.
    `render_document(kind, markdown, job_id)`. It saves a PDF in the job's folder, and
    `autofill` uploads that PDF ahead of the profile defaults.
    - Tailoring means choosing, ordering and rewording what the real resume says, to
-     match the posting's wording. Never add tools, certifications, numbers or duties
-     the user didn't list.
+     match the posting's wording where the resume says the same thing. Never add tools,
+     certifications, numbers or duties the user didn't list, never widen how much or how
+     many, and keep the jobs newest first.
    - Show the user the text before rendering the first one in a batch. After they
      approve the style, keep going without asking.
    - If the result has a `warning` about length, tighten the text and render it again.

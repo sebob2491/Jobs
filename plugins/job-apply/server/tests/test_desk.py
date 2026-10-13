@@ -630,6 +630,9 @@ def test_tailoring_queue_hands_claude_the_jobs_and_the_real_resume(srv, job_appl
     assert "EUV tools" in out["jobs"][0]["description"]
     assert out["base_resume"].startswith("# Sam Rivera") and out["resume_file"].endswith("resume.pdf")
     assert any("Coursework is not a degree" in rule for rule in out["rules"])
+    # (the tailoring test of Oct 12: the posting's words leaked in, scope widened, the older job put first)
+    assert any("only where the resume says the same thing" in rule for rule in out["rules"])
+    assert any("Never widen" in rule for rule in out["rules"]) and any("newest first" in r for r in out["rules"])
 
 
 

@@ -128,9 +128,10 @@ resume:
    user's real resume (`base_resume`, or `resume_file` to read) with the profile's work
    and education history, and the `rules`.
 2. For each job, write the resume in Markdown. Choose, order and reword what the real
-   resume says so the parts the posting asks for come first, in its own words where
-   they're true. Never add a tool, certification, number, duty, employer, date or
-   degree; coursework is not a degree.
+   resume says so the parts the posting asks for come first, in its own words only
+   where the resume says the same thing. Never add a tool, certification, number, duty,
+   employer, date or degree; coursework is not a degree. Never widen how much, how many
+   or how often, and keep the jobs newest first.
 3. The first time, show the user one tailored resume and ask if the style is right.
    After that, carry on without asking.
 4. Call `render_document("resume", markdown, job_id)`. The desk carries on with that
