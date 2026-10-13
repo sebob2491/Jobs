@@ -1044,6 +1044,9 @@ def test_a_county_comes_from_an_arizona_citys():
     assert resolve_field(f("County *", "combobox", options=counties), p).value == "Maricopa, AZ"
     assert resolve_field(f("County"), p).value == "Maricopa"
     assert "Maricopa" in place_words("city", p)
+    # "County / State" is the state (Rogers' SuccessFactors lists the states under it, run 56: "Maricopa" wasn't there)
+    states = ["No Selection", "Alabama", "Alaska", "Arizona", "Arkansas", "California"]
+    assert resolve_field(f("County / State", "combobox", options=states), p).value == "Arizona"
 
     path = config.profile_path()
     data = yaml.safe_load(path.read_text())
