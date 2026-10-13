@@ -85,16 +85,22 @@ def norm(s: Any) -> str:
     return re.sub(r"\s+", " ", s).strip()
 
 
+def _without_aside(text: Any) -> str:
+    """A choice's own words, without the aside after them: Workday names each self-identification choice with the
+    form's country, "Undeclared (United States of America)" (probe 48, Oct 13)."""
+    return re.sub(r"\s*\([^()]*\)\s*$", "", str(text or ""))
+
+
 def is_decline(text: Any) -> bool:
     """A refusal to answer: a self-identification form's "I don't wish to answer", worded
     another way on every site."""
-    return bool(_DECLINE.search(norm(text)))
+    return bool(_DECLINE.search(norm(text)) or _DECLINE.search(norm(_without_aside(text))))
 
 
 def _only_declines(option: str) -> bool:
     """A choice that does nothing but decline: not onsemi's "I do not wish to Identify or I am
     not a Veteran", which is also the answer of someone who isn't a veteran."""
-    return all(is_decline(part) for part in re.split(r"\bor\b", norm(option)) if part.strip())
+    return all(is_decline(part) for part in re.split(r"\bor\b", norm(_without_aside(option))) if part.strip())
 
 
 def clean_label(label: str) -> str:
