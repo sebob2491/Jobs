@@ -476,30 +476,46 @@ def test_only_the_jobs_own_places_are_its_application(srv):
 
 
 def test_a_tab_that_cant_be_read_still_lets_the_queue_go_on(srv, monkeypatch):
-    """A paused tab that keeps failing to be read held the queue for the whole 45 minutes."""
-    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
-    monkeypatch.setattr(pipeline, "HANDS_ON_IDLE", 1)
-    job = srv.add_job(url=fixture_url("site/botcheck.html"), title="FSE", company="Example Fab")["job"]
+    """A paused tab that keeps failing to be read held the queue for the whole 45 minutes.
+    One look at the queue (a tick) is driven here, not the worker: a pause set on a running
+    worker raced it (it went on to a 30 s sleep meanwhile, unwoken: CI, Oct 13)."""
+    from job_apply.pipeline import Run
+
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0)
     applier = Applier(srv)
 
     async def broken(run):
         raise RuntimeError("the tab crashed")
 
-    async def go():
-        applier.start()
-        try:
-            r = applier.enqueue(job["id"])
-            await until(lambda: r.status == "needs_you")
-            # (a pause that holds the queue, as a sign-in's does: a bot check waits in its tab since 0.3.119)
-            applier._moved_on = broken
-            r.need, r.blocking, r.left = "sign_in", True, False
-            await until(lambda: r.left, timeout=15, about=state(r))
-            return r
-        finally:
-            await applier.stop()
+    applier._moved_on = broken
+    r = applier.runs[1] = Run(1, "FSE", "Example Fab", status="running")
+    applier._pause(r, "sign_in", "Sign in there, then press Resume.")  # a pause that holds the queue
+    assert r.blocking and not r.left
+    r.active_at -= pipeline.HANDS_ON_IDLE + 1  # nothing happened in its tab since
+    run(applier._tick())
+    assert r.left and not r.blocking and "nothing happened in its tab" in r.reason
 
-    r = run(go())
-    assert not r.blocking and "nothing happened in its tab" in r.reason
+
+def test_a_pause_on_a_bot_check_or_captcha_is_marked_as_one(srv):
+    """The desk marks a job stopped on a bot check or CAPTCHA (the owner, Oct 12), a sign-in's or Create
+    Account's own picture check among them (Edwards', live), and no other stop."""
+    from job_apply.pipeline import Run
+
+    applier = Applier(srv)
+    marks = {}
+    for need, seen in [("bot_check", None), ("captcha", None), ("sign_in", {"captcha": True}),
+                       ("sign_in", {"challenge": True}), ("sign_in", {}), ("questions", None)]:
+        r = Run(1, "FSE", "Example Fab", status="running")
+        applier._pause(r, need, "Waiting.", seen=seen)
+        marks[(need, str(seen))] = r.public()["captcha"]
+    assert marks == {("bot_check", "None"): True, ("captcha", "None"): True, ("sign_in", "{'captcha': True}"): True,
+                     ("sign_in", "{'challenge': True}"): True, ("sign_in", "{}"): False, ("questions", "None"): False}
+    # Submit pressed on a CAPTCHA's stop whose tab was closed meanwhile: a stop for Resume, no CAPTCHA's any more
+    job = srv.add_job(url="https://example.com/job/1", title="FSE", company="Example Fab")["job"]
+    r = applier.runs[job["id"]] = Run(job["id"], "FSE", "Example Fab", status="running")
+    applier._pause(r, "captcha", "Filled. The form has a CAPTCHA.")
+    run(applier._submit(r))
+    assert (r.status, r.need, r.captcha) == ("needs_you", "stuck", False), (r.status, r.need, r.reason)
 
 
 def test_a_this_application_answer_stays_on_its_page(srv):
