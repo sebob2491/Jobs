@@ -87,6 +87,7 @@ class Desk:
         self.token = secrets.token_urlsafe(18)
         self.port: int | None = None
         self.listings: list[dict[str, Any]] = []
+        self.handled_only = False  # the page shows only openings where the desk goes all the way (desk_handled.yaml)
         self.search: dict[str, Any] = {"status": "idle", "at": None, "error": None, "query": "", "location": None,
                                        "errors": {}, "browser_only": []}
         self._search_task: asyncio.Task | None = None
@@ -112,13 +113,15 @@ class Desk:
             saved = json.loads(_settings_path().read_text(encoding="utf-8"))
             self.applier.auto_submit = saved.get("auto_submit") is True
             self.applier.tailor = saved.get("tailor_resumes") is True
+            self.handled_only = saved.get("handled_only") is True
         except (OSError, ValueError, AttributeError):
             pass
 
     def _save_settings(self) -> None:
         config.ensure_home()
         _settings_path().write_text(json.dumps({"auto_submit": self.applier.auto_submit,
-                                                "tailor_resumes": self.applier.tailor}), encoding="utf-8")
+                                                "tailor_resumes": self.applier.tailor,
+                                                "handled_only": self.handled_only}), encoding="utf-8")
 
     # ------------------------------------------------------------- serving
     @property
@@ -336,9 +339,12 @@ class Desk:
             self.applier.auto_submit = body["auto_submit"] is True  # not "false", which bool() calls true
         if "tailor_resumes" in body:
             self.applier.set_tailor(body["tailor_resumes"] is True)
-        if "auto_submit" in body or "tailor_resumes" in body:
+        if "handled_only" in body:
+            self.handled_only = body["handled_only"] is True
+        if "auto_submit" in body or "tailor_resumes" in body or "handled_only" in body:
             self._save_settings()
-        return JSONResponse({"auto_submit": self.applier.auto_submit, "tailor_resumes": self.applier.tailor})
+        return JSONResponse({"auto_submit": self.applier.auto_submit, "tailor_resumes": self.applier.tailor,
+                             "handled_only": self.handled_only})
 
     async def bank_view(self, request: Request) -> Response:
         """An answer to one of the common questions (data/question_bank.yaml), kept in answers.yaml for
@@ -523,6 +529,7 @@ class Desk:
         t = self.srv.tracker()
         runs = {jid: r.public() for jid, r in self.applier.runs.items()}
         rows, seen = [], set()
+        handled = config.handled_employers()  # (where the desk goes all the way, in the live check)
         for item in self.listings:
             job = t.find_by_url(item["url"])
             jid = job["id"] if job else None
@@ -532,6 +539,7 @@ class Desk:
                 "location": item.get("location"), "posted": item.get("posted"), "fit": item.get("fit"),
                 "notes": item.get("notes") or [], "job_id": jid, "status": job["status"] if job else None,
                 "run": runs.get(jid) if jid is not None else None,
+                "handled": str(item.get("company") or "").strip().casefold() in handled,
             })
         tracked = t.list(limit=300)
         # what the person applied to, and where each stands (the page's My applications)
@@ -549,6 +557,7 @@ class Desk:
                 "location": job.get("location"), "posted": job.get("posted_at"),
                 "fit": score_listing(listing, prof, job.get("description") or "").to_dict(), "notes": [],
                 "job_id": job["id"], "status": job["status"], "run": runs.get(job["id"]), "added": True,
+                "handled": str(job.get("company") or "").strip().casefold() in handled,
             })
         others = []
         for jid, run in runs.items():
@@ -562,7 +571,8 @@ class Desk:
             "settings": {"submit_mode": settings.submit_mode, "dry_run": settings.dry_run,
                          "manage_accounts": settings.may_manage_accounts,
                          "manage_accounts_chosen": settings.manage_accounts_chosen,
-                         "auto_submit": self.applier.auto_submit, "tailor_resumes": self.applier.tailor},
+                         "auto_submit": self.applier.auto_submit, "tailor_resumes": self.applier.tailor,
+                         "handled_only": self.handled_only},
             "tailoring": len(self.applier.tailoring()),
             # saved or not, never the value
             "passwords": {name.removesuffix("_password"): saved for name, saved in

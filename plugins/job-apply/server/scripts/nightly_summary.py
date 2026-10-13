@@ -7,6 +7,7 @@ whole body or a run's logs.
         # expected (a site's or the rules': a bot check, an account step practice runs never take, a site
         # error, no openings), and to look at (likely the desk's: read these first)
     uv run python scripts/nightly_summary.py --tables              # Where It Stands' employer tables (markdown)
+    uv run python scripts/nightly_summary.py --handled             # data/desk_handled.yaml's employers (YAML)
     uv run python scripts/nightly_summary.py --artifacts DIR_OR_ZIP [--companies "KLA,Intel"]
         # each named employer's steps from a run's saved results (a live-* artifact, unzipped or not):
         # every round's status, reason, last log lines, questions (with their choices) and the page's
@@ -153,6 +154,16 @@ def why(outcome: str, said: str) -> tuple[str, str]:
     if outcome.startswith("needs_you"):
         return "Stopped (see the run)", "Being looked into"
     return outcome, ""
+
+
+def handled(state: dict[str, dict[str, str]], detail: dict[str, dict[str, str]]) -> list[str]:
+    """The employers where the accounts check took the test applicant all the way: to the review page, or filled
+    up to the site's own last button (data/desk_handled.yaml, the desk's "Only where the desk goes all the way").
+    Not one whose account is made as the person applies: that waits on their password."""
+    said = detail.get("accounts") or {}
+    return sorted((name for name, outcome in (state.get("accounts") or {}).items()
+                   if why(outcome, said.get(name, ""))[0] == "Review page"
+                   or why(outcome, said.get(name, ""))[0].startswith("Filled;")), key=str.casefold)
 
 
 def tables(state: dict[str, dict[str, str]], detail: dict[str, dict[str, str]]) -> str:
@@ -314,6 +325,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--check", choices=CHECKS, help="one line per employer of this check")
     ap.add_argument("--changes", action="store_true", help="the last run's changes (the issue's last comment)")
     ap.add_argument("--tables", action="store_true", help="Where It Stands' employer tables, in markdown")
+    ap.add_argument("--handled", action="store_true",
+                    help="the employers the accounts check took all the way, for data/desk_handled.yaml")
     ap.add_argument("--artifacts", type=Path, help="a run's live-* artifact (zip or unzipped folder)")
     ap.add_argument("--companies", default="",
                     help="with --artifacts or --import-fixtures: these employers only (comma-separated)")
@@ -341,7 +354,10 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     body = issue_body(args.issue_file)
     state = live_compare.read_state(body) or {}
-    if args.tables:
+    if args.handled:
+        quoted = [json.dumps(n) for n in handled(state, details(body))]  # (any name, quoted: YAML reads "No" as false)
+        print("employers:\n" + "\n".join(f"  - {n}" for n in quoted))
+    elif args.tables:
         print(tables(state, details(body)))
     elif args.check:
         print(per_employer(args.check, state, details(body)))

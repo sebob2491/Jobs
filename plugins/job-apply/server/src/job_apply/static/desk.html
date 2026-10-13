@@ -100,6 +100,8 @@ ul.rows { list-style: none; margin: 0; padding: 0; }
 .chip.minus { background: var(--warn-bg); color: var(--warn); }
 .chip.stop { background: var(--bad-bg); color: var(--bad); }
 .chip.new { background: var(--info-bg); color: var(--accent); font-weight: 600; }
+.chip.handled { background: var(--good-bg); color: var(--good); font-weight: 600; }
+.handled-switch { font-size: 13px; display: flex; align-items: center; gap: 6px; }
 .empty { padding: 28px 16px; text-align: center; color: var(--muted); }
 .side { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
 .task { padding: 12px 14px; border-top: 1px solid var(--line); }
@@ -158,6 +160,7 @@ footer { max-width: 1240px; margin: 0 auto; padding: 0 16px 24px; color: var(--m
         <button data-filter="all" aria-pressed="false">All</button>
         <button data-filter="mine" aria-pressed="false">My applications <span id="mine-count"></span></button>
       </div>
+      <label class="openings-only handled-switch" title="Only the employers where, in the plugin's live check, the desk took a test applicant all the way to the application's review page. Bot checks, CAPTCHAs and steps it can't do yet are elsewhere."><input type="checkbox" id="handled-only"> Only where the desk goes all the way</label>
       <span class="spacer"></span>
       <span class="openings-only links"><button class="link" data-act="select-recommended">Select recommended</button>
       <button class="link" data-act="select-none">Clear</button></span>
@@ -452,12 +455,15 @@ function renderRows() {
   $("mine-count").textContent = (state.applications || []).length ? `(${state.applications.length})` : "";
   if (mine) { renderApps(); return; }
   // links the person added (here, or through Claude) always show: they picked those themselves
-  const rows = (state.listings || []).filter((r) => filter === "all" || r.added || (r.fit && r.fit.recommended) || r.run);
+  const onlyHandled = !!(state.settings && state.settings.handled_only);
+  const listed = (state.listings || []).filter((r) => filter === "all" || r.added || (r.fit && r.fit.recommended) || r.run);
+  const rows = listed.filter(shown);
   const entries = rows.map((r) => {
     const fit = r.fit || {score: 0, reasons: [], concerns: []};
     const done = DONE.has(r.status) || (r.run && UNDER_WAY.has(r.run.status));
     const chips = [
       ...(isNew(r) ? [`<span class="chip new">New</span>`] : []),
+      ...(r.handled ? [`<span class="chip handled" title="In the plugin's live check, the desk took a test applicant at this employer all the way to the review page.">Desk goes all the way</span>`] : []),
       ...fit.reasons.map((x) => `<span class="chip plus">${esc(x)}</span>`),
       ...fit.concerns.map((x) => `<span class="chip ${fit.blocked ? "stop" : "minus"}">${esc(x)}</span>`),
     ].join("");
@@ -476,6 +482,7 @@ function renderRows() {
   });
   if (!entries.length) {
     const msg = state.search.status === "running" ? "Searching employers' career sites…"
+      : onlyHandled && listed.length ? "Nothing here from the employers where the desk goes all the way. Turn off that switch to see the rest."
       : (state.listings || []).length ? "Nothing recommended. Switch to All to see every opening."
       : "Press Find jobs to search every employer's career site for openings that fit your profile.";
     entries.push({key: "empty", html: `<li class="empty">${esc(msg)}</li>`});
@@ -632,6 +639,8 @@ function renderHeader() {
   $("auto-hint").textContent = s.dry_run ? "Off in practice mode (settings.submit_mode: dry_run)." : s.auto_submit ? "On: complete applications are submitted without asking." : "Off: you press Submit for each one.";
   const tailor = $("tailor");
   if (document.activeElement !== tailor) tailor.checked = !!s.tailor_resumes;
+  const handledOnly = $("handled-only");
+  if (document.activeElement !== handledOnly) handledOnly.checked = !!s.handled_only;
   $("plugin-version").textContent = state.version ? `job-apply ${state.version}` : "";
   $("tailor-hint").textContent = s.tailor_resumes ? "On: each job waits for Claude to write a resume for it." : "Off: your usual resume goes with every application.";
   const systems = {workday: "Workday", successfactors: "SuccessFactors", icims: "iCIMS", applicantstack: "ApplicantStack",
@@ -863,8 +872,15 @@ async function act(fn, hold = true) {
 const UNDER_WAY = new Set(["submitted", "running", "queued", "ready", "needs_you"]);
 function selectable(url) {
   const r = (state.listings || []).find((x) => x.url === url);
-  return !!r && !DONE.has(r.status) && !(r.run && UNDER_WAY.has(r.run.status));
+  return !!r && shown(r) && !DONE.has(r.status) && !(r.run && UNDER_WAY.has(r.run.status));
 }
+
+// What "Only where the desk goes all the way" leaves showing: those employers' openings, and what the person has
+// already had to do with (a link they added, a job under way or tracked); nothing hidden is ever applied to
+function shown(r) {
+  return !(state.settings && state.settings.handled_only) || kept(r);
+}
+const kept = (r) => !!(r.handled || r.added || r.run || (r.job_id != null && r.status && r.status !== "skipped"));
 
 // A problem report for a job, shown in a dialog with a link: the person's own click opens GitHub,
 // which a pop-up opened after the wait would not (browsers block those). Made again for the same
@@ -957,7 +973,9 @@ document.addEventListener("click", (e) => {
     }
   }
   if (a === "select-recommended") {
-    (state.listings || []).forEach((r) => { if (r.fit && r.fit.recommended && !DONE.has(r.status) && !r.run) selected.add(r.url); });
+    const onlyHandled = !!(state.settings && state.settings.handled_only);
+    (state.listings || []).forEach((r) => { if (r.fit && r.fit.recommended && !DONE.has(r.status) && !r.run
+                                             && (!onlyHandled || r.handled)) selected.add(r.url); });
     renderRows();
   }
   if (a === "select-none") { selected.clear(); renderRows(); }
@@ -1032,6 +1050,11 @@ document.addEventListener("change", (e) => {
     act(() => api("/api/settings", {auto_submit: t.checked}));
   }
   if (t.id === "tailor") act(() => api("/api/settings", {tailor_resumes: t.checked}));
+  if (t.id === "handled-only") {
+    // what the switch hides isn't applied to unseen
+    if (t.checked) (state.listings || []).forEach((r) => { if (!kept(r)) selected.delete(r.url); });
+    act(() => api("/api/settings", {handled_only: t.checked}));
+  }
   if (t.dataset.bank) act(() => api("/api/bank", {id: t.dataset.bank, answer: t.value}));
   if (t.id === "report-anonymous" && reportShown) makeReport(reportShown.job, true);
 });

@@ -520,8 +520,12 @@ async def render_document(kind: str, markdown: str, job_id: int | None = None, d
 TAILOR_RULES = [
     "Use only what the user's real resume and profile say: choose, order and reword. Never add a tool, "
     "certification, number, duty, employer, date or degree they didn't list.",
-    "Lead with the experience and skills the posting asks for, in the posting's own words where they're true.",
-    "Keep every title, employer and date exactly as the profile has them. Coursework is not a degree.",
+    "Lead with the experience and skills the posting asks for, in the posting's own words only where the resume "
+    "says the same thing (\"customer sites\" isn't \"accounts in a territory\"; \"kept a maintenance log\" isn't "
+    "\"accurate part-replacement records\").",
+    "Never widen how much, how many or how often: \"maintained 18 machines\" and \"diagnosed faults\" don't make "
+    "\"diagnosed faults on 18 machines\"; \"helped start up\" isn't \"led start-ups\". Keep past jobs in the past tense.",
+    "Keep every title, employer and date exactly as the profile has them, jobs newest first. Coursework is not a degree.",
     "At most 2 pages. Same layout as render_document's: # Name, a contact line, ## sections, "
     "### Title — Company, City *dates*, bullets.",
     "The first time, show the user one tailored resume before rendering the rest; after they approve the "

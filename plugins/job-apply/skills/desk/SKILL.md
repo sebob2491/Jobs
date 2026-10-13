@@ -98,6 +98,9 @@ The desk is a local web page served by this plugin. It does what the `find-jobs`
 - **A newer version**: the desk looks at the plugin's published version when it starts and
   every few hours, and says when a newer one is out, with the two update commands (then a
   restart of the Claude app). Best done between runs. `JOB_APPLY_NO_UPDATE_CHECK=1` turns the look off.
+- **Only where the desk goes all the way** shows only openings at employers where the
+  plugin's live check took a test applicant to the review page (a chip marks them in
+  the list either way). Bot checks, CAPTCHAs and steps it can't do yet are elsewhere.
 - **Tailor my resume for each job** holds each picked job, before its browser tab
   opens, until Claude has written a resume for it (see Tailoring resumes). The page
   says how many are waiting. **Use my usual resume** sends one on without.
@@ -128,9 +131,10 @@ resume:
    user's real resume (`base_resume`, or `resume_file` to read) with the profile's work
    and education history, and the `rules`.
 2. For each job, write the resume in Markdown. Choose, order and reword what the real
-   resume says so the parts the posting asks for come first, in its own words where
-   they're true. Never add a tool, certification, number, duty, employer, date or
-   degree; coursework is not a degree.
+   resume says so the parts the posting asks for come first, in its own words only
+   where the resume says the same thing. Never add a tool, certification, number, duty,
+   employer, date or degree; coursework is not a degree. Never widen how much, how many
+   or how often, and keep the jobs newest first.
 3. The first time, show the user one tailored resume and ask if the style is right.
    After that, carry on without asking.
 4. Call `render_document("resume", markdown, job_id)`. The desk carries on with that

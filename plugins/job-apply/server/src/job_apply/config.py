@@ -502,6 +502,18 @@ def question_pattern(label: str) -> str:
 
 
 QUESTION_BANK = PLUGIN_ROOT / "data" / "question_bank.yaml"
+HANDLED = PLUGIN_ROOT / "data" / "desk_handled.yaml"
+
+
+def handled_employers() -> set[str]:
+    """The employers where the desk goes all the way (data/desk_handled.yaml: in the live check, a test applicant
+    reached the review page there), by name in lower case. A file that can't be read names none."""
+    try:
+        with HANDLED.open(encoding="utf-8") as f:
+            names = (yaml.safe_load(f) or {}).get("employers") or []
+    except (OSError, yaml.YAMLError, AttributeError):
+        return set()
+    return {str(n).strip().casefold() for n in names if n}
 
 
 def question_bank() -> list[dict[str, Any]]:

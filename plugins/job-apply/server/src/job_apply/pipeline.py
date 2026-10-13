@@ -2100,6 +2100,17 @@ class Applier:
                             continue
                     if test := _assessment_button(data):  # (a step waiting on the applicant's assessment)
                         return await self._assessment_pause(run, data, test)
+                    form = _screening_button(data)
+                    if form or _SCREENING_SAID.search(" ".join(problems)):
+                        # (a step waiting on a questionnaire about the applicant; what else the page says, said too:
+                        # the review's)
+                        await self._bring_forward(run)
+                        also = "; ".join(p for p in problems if not _SCREENING_SAID.search(p))[:240].rstrip(" .")
+                        return self._pause(run, "stuck", f"{_site(run, data)} wants its tax credit screening filled in "
+                                           "before the application goes on" + (f" (its \u201c{form}\u201d)" if form else "")
+                                           + ": questions about you that only you can answer. Fill it in in the browser "
+                                           "window" + (f" (the page also says: {also})" if also else "")
+                                           + ", then press Resume.")
                     errors = "; ".join(problems)[:300].rstrip(" .")
                     return self._pause(run, "stuck", "The page didn't move on" + (f": {errors}." if errors else ".")
                                        + " Fix it in the browser, then press Resume.")
@@ -4044,6 +4055,26 @@ def _account_wants(left: dict[str, Any], filled: dict[str, Any]) -> str:
 
 _ASSESSMENT = re.compile(r"^(?:take|start|begin|launch|complete|go to)\s+(?:the\s+|your\s+|an?\s+)?"
                          r"(?:online\s+)?assessments?$", re.I)
+
+
+# A step's link to a questionnaire about the applicant for a hiring tax credit (Kforce's Taleo, live run 41, Oct 12:
+# ". Required Complete Tax Credit Screening Questionnaire", and "You must provide the information requested in the
+# following section: Employment Tax Credit Screening"): answers about the person only they can give
+_SCREENING = re.compile(r"^\W*(?:required\s+)?(?:complete|start|take|begin|launch|go to|open)\s+(?:the\s+|your\s+|an?\s+)?"
+                        r"(?:employment\s+)?(?:tax credit|wotc)(?:\s+screening)?(?:\s+(?:questionnaire|survey|form))?$",
+                        re.I)
+
+
+# What a step's errors say when it waits on that questionnaire ("...the following section: Employment Tax Credit
+# Screening"), where its link isn't one the form reader lists
+_SCREENING_SAID = re.compile(r"\btax credit screening\b|\bwotc\b", re.I)
+
+
+def _screening_button(data: dict[str, Any]) -> str:
+    """The link that opens a tax credit screening questionnaire about the applicant, if the page has one."""
+    return next((re.sub(r"^\W*(?:required\s+)?", "", final_text(a.get("text") or "").strip(), flags=re.I)
+                 for a in data.get("actions") or []
+                 if _SCREENING.match(final_text(a.get("text") or "").strip()) and not a.get("disabled")), "")
 
 
 def _assessment_button(data: dict[str, Any]) -> str:
