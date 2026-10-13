@@ -702,6 +702,10 @@ async def autofill(job_id: int | None = None, overwrite: bool = False, redo: lis
                                    "near": place_words(f.get("rule") or "", prof),
                                    "pick_only": is_eeo_rule(f.get("rule") or "")}
                                   for f in plan["to_fill"]]) if plan["to_fill"] else []
+    if plan.get("judged"):  # (one whose fill didn't go in isn't judged yet: it's tried again, or asked)
+        went, filling = {r["id"] for r in results if r.get("ok")}, {f["id"] for f in plan["to_fill"]}
+        await browser.mark_judged([i for i in plan["judged"] if i not in filling],
+                                  [i for i in plan["judged"] if i in filling and i in went])
     by_id = {f["id"]: f for f in plan["to_fill"]}
     fields = {f["id"]: f for f in data["fields"]}
     # an answer that matched only a group (Robert Half's "Website / Job Board Posting", holding

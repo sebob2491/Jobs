@@ -508,6 +508,9 @@ function question(jobId, q, i, repeated = false) {
   // its words alone, one answer would go in every box with that label.
   const key = repeated ? `${q.section || ""} | ${q.label} | ${q.sublabel || ""}` : q.label;
   const consent = /agree|consent|certify|acknowledge|terms|attest/i.test(q.label);
+  // a list without the profile's answer among its choices (a gender list with no decline): what's picked here is
+  // for this site, and remembered it would go in where your profile's answer is a choice
+  const forced = !!q.unmatched;
   const opts = (q.options || []).filter((o) => o && !/^(select|choose|--|no selection$)/i.test(o));
   let input;
   if (q.kind === "checkbox") {
@@ -527,7 +530,7 @@ function question(jobId, q, i, repeated = false) {
   // where it is, for a box whose words alone don't say ("Contact Details: Phone", "Date (Month)")
   const where = `${q.section ? `${esc(q.section)}: ` : ""}${esc(q.label)}${q.sublabel ? ` (${esc(q.sublabel)})` : ""}`;
   return `<label class="q"><span>${where}${q.error ? ` <span class="small">(${esc(q.error)})</span>` : ""}</span>${input}
-    ${repeated ? "" : `<span class="remember"><input type="checkbox" data-remember="${esc(q.label)}" ${consent ? "" : "checked"}> Remember for later applications</span>`}</label>`;
+    ${repeated ? "" : `<span class="remember"><input type="checkbox" data-remember="${esc(q.label)}" ${consent || forced ? "" : "checked"}> Remember for later applications</span>`}</label>`;
 }
 
 function jobButtons(r, which) {

@@ -1304,6 +1304,40 @@ def test_a_list_still_on_its_not_specified_first_choice_is_filled():
     assert plan["already_filled"] == ["g", "t"], plan
 
 
+def test_a_list_on_its_first_choice_with_no_empty_one_is_the_sites_and_takes_the_profiles_answer():
+    """A list with no empty choice to start on opens on its first ("Male", a country code's "Afghanistan +93"): it read
+    as answered, and went out as the person's answer whatever the profile said. The profile's answer goes in where it's
+    another; where the list has no choice for it, the person is asked; where the profile says nothing, or the same, or
+    the list starts on an empty choice (someone picked what it shows), it's left as it is."""
+    decliner = Profile({"eeo": {"gender": "Decline to self-identify"}, "personal": {"address": {"country": "United States"}}})
+    gender = {"id": "g", "label": "Gender", "kind": "select", "value": "Male",
+              "options": ["Male", "Female", "I don't wish to answer"]}
+    plan = plan_autofill([gender], decliner, {})
+    assert [(t["id"], t["value"]) for t in plan["to_fill"]] == [("g", "I don't wish to answer")], plan
+    no_decline = {**gender, "id": "n", "options": ["Male", "Female"]}
+    assert [q["id"] for q in plan_autofill([no_decline], decliner, {})["needs_input"]] == ["n"]
+    same = {"id": "c", "label": "Country", "kind": "select", "value": "United States", "options": ["United States", "Canada"]}
+    picked = {**gender, "id": "p", "options": ["Select...", "Male", "Female", "I don't wish to answer"]}
+    nothing = {"id": "s", "label": "Salutation", "kind": "select", "value": "Mr.", "options": ["Mr.", "Ms.", "Dr."]}
+    plan = plan_autofill([same, picked, nothing], decliner, {})
+    assert plan["to_fill"] == [] and plan["needs_input"] == [] and plan["already_filled"] == ["c", "p", "s"], plan
+    assert plan["judged"] == ["c", "s"]  # (marked on the page: judged once)
+    # the review: the same answer word for word ("Bachelor's Degree" isn't the "Associate's Degree" a list opens on)
+    graduate = Profile({"education": {"degree": "Bachelor's Degree", "field": "Physics", "school": "Example State"},
+                        "education_history": [{"school": "Example State", "degree": "Bachelor's Degree"}]})
+    degree = {"id": "d", "label": "Highest degree", "kind": "select", "value": "Associate's Degree",
+              "options": ["Associate's Degree", "Bachelor's Degree", "Master's Degree"]}
+    assert [(t["id"], t["value"]) for t in plan_autofill([degree], graduate, {})["to_fill"]] == \
+        [("d", "Bachelor's Degree")]
+    # an optional list with no choice for the profile's answer is asked all the same: what it shows goes out
+    asked = plan_autofill([{**no_decline, "required": False}], decliner, {})["needs_input"]
+    assert [(q["id"], q.get("required")) for q in asked] == [("n", True)], asked
+    # a list of several picks, a list judged once already, or the desk told to fill everything again: as before
+    assert plan_autofill([{**gender, "multiple": True}], decliner, {})["already_filled"] == ["g"]
+    assert plan_autofill([{**gender, "judged": True}], decliner, {})["already_filled"] == ["g"]
+    assert [t["id"] for t in plan_autofill([gender], decliner, {}, overwrite=True)["to_fill"]] == ["g"]
+
+
 def test_a_list_the_page_marks_invalid_takes_the_profiles_answer_and_a_required_self_id_is_answered():
     """Live run 13 (Oct 2026). Northrop's Eightfold drew its phone "Country code" on Mexico (+52) and marked it
     invalid ("Enter a valid phone number and country code"); the desk left it, as a box with a value. A list

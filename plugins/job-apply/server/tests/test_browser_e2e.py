@@ -1355,6 +1355,31 @@ def test_a_pick_list_with_no_match_is_reported(srv):
     assert not out["ok"] and "nothing in its list matched 'Atlantis'" in out["results"][0]["error"]
 
 
+def test_a_gender_list_opening_on_male_takes_the_profiles_decline_once(srv):
+    """A list with no empty choice opens on its first ("Male"): it read as answered, and went out whatever the profile
+    said. The profile's decline goes in, once: a pick of "Male" afterwards (the person's, in the browser) stays."""
+    run(srv.open_application(url=fixture_url("jsonld_posting.html")))
+    page = run(srv.browser.page())
+    run(page.set_content("""
+      <form><label for="gender">Gender</label>
+        <select id="gender"><option>Male</option><option>Female</option><option>I don't wish to answer</option></select>
+      </form>"""))
+    run(srv.autofill())
+    assert run(page.input_value("#gender")) == "I don't wish to answer"
+    run(page.select_option("#gender", "Male"))
+    run(srv.autofill())
+    assert run(page.input_value("#gender")) == "Male"
+    # a list that didn't take the answer (it went back to its first choice) isn't judged yet: tried again, or asked
+    run(page.set_content("""
+      <form><label for="gender">Gender</label>
+        <select id="gender" onchange="setTimeout(() => { this.selectedIndex = 0; }, 0)">
+          <option>Male</option><option>Female</option><option>I don't wish to answer</option></select>
+      </form>"""))
+    run(srv.autofill())
+    assert run(page.input_value("#gender")) == "Male"
+    assert not run(page.evaluate("() => document.getElementById('gender').hasAttribute('data-ja-default-judged')"))
+
+
 def test_a_search_whose_list_says_its_empty_is_asked_about_not_left_typed(srv):
     """A list's word that it's empty ("No results found") is no choice (0.3.136), but it still says the box is one to
     pick from: the words typed are cleared and the question asked, not left in the box as an answer (the review)."""

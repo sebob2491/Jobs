@@ -446,6 +446,8 @@ EXTRACT_JS = r"""
     // SuccessFactors' paginated select: lists 100 entries at a time, the rest by search
     if (kind === 'combobox' && el.classList.contains('rcmpaginatedselectinput')) f.paged = true;
     if (el.multiple) f.multiple = true;
+    // a list whose first choice the desk judged the site's default once: a pick of it since is the person's
+    if (kind === 'select' && el.hasAttribute('data-ja-default-judged')) f.judged = true;
     if (el.disabled || el.getAttribute('aria-disabled') === 'true') f.disabled = true;
     if (el.readOnly) f.readonly = true;
     if (el.getAttribute('aria-invalid') === 'true') f.invalid = true;
