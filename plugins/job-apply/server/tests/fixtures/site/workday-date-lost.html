@@ -10,9 +10,8 @@
 <body>
 <!-- like Entegris' and Analog Devices' Workday Self Identify (runs 53 and 54, Oct 13): its signature Date showed
      10/13/2026, typed in, but Save and Continue said "Error-Date The field Date is required and must have a value."
-     The date's parts (as site/workday-date-sections.html?sticky&arrows: digits go to the part with focus, a part
-     full moves focus on; each input shows its number) lose the date's record on the first press, and say so only in
-     Workday's "Error-Date" link; the date is taken once each part is typed again -->
+     Workday's own words under it said "current value is 10/13/2026": the date had it, the form didn't. Typed again
+     as it was, it stayed so (run 55, Tokyo Electron). Said only in Workday's "Error-Date" link -->
 <h2>Self Identify</h2>
 <h3>Voluntary Self-Identification of Disability</h3>
 <label for="name">Name<abbr title="required">*</abbr></label><input id="name" type="text" aria-required="true">
@@ -23,6 +22,10 @@
 <div id="errors"></div>
 <button type="button" id="save">Save and Continue</button>
 <script>
+  // As Workday's date seems to work: its parts take digits in the part with focus (a part full moves focus on), and the
+  // date goes to the form as focus leaves it, only where it's another date than it was as focus came in. The first
+  // Save and Continue loses the form's record of it (the date still shown); typed again as it is, it's the same date,
+  // and the form never gets it; cleared and left, then typed, it does
   const KINDS = { Month: [12, 'MM', 2], Day: [31, 'DD', 2], Year: [9999, 'YYYY', 4] };
   const kinds = ['Month', 'Day', 'Year'];
   const group = document.getElementById("sid--dateSignedOn");
@@ -32,31 +35,40 @@
              data-automation-id="dateSection${k}-input"></div>`).join('<div>/</div>');
   const inputs = [...group.querySelectorAll('input')];
   const typed = kinds.map(() => '');
-  const fresh = new Set();  // the parts typed since the date's record was lost
-  let lost = false;
+  let model = null, lost = false, cameIn = null;  // the form's date; the date as focus came in
+  const shown = () => (typed.every((t) => t) ? typed.join('/') : null);
   const show = (i) => {
     const n = typed[i] ? Number(typed[i]) : null;
     inputs[i].setAttribute('aria-valuenow', n === null ? '' : String(n));
     inputs[i].value = n === null ? '' : String(n).padStart(KINDS[kinds[i]][2], '0');
     group.querySelectorAll('[aria-hidden=true]')[i].textContent = n === null ? KINDS[kinds[i]][1] : String(n).padStart(KINDS[kinds[i]][2], '0');
   };
+  group.addEventListener('focusin', (e) => { if (!group.contains(e.relatedTarget)) cameIn = shown(); });
+  group.addEventListener('focusout', (e) => {
+    if (group.contains(e.relatedTarget)) return;
+    if (shown() !== cameIn) model = shown();
+  });
   inputs.forEach((input, i) => {
     input.addEventListener('keydown', (e) => {
+      if (e.key === 'Backspace') {
+        e.preventDefault();
+        if (typed[i]) { typed[i] = typed[i].slice(0, -1); show(i); } else if (i > 0) inputs[i - 1].focus();
+        return;
+      }
       if (!/^\d$/.test(e.key)) return;
       e.preventDefault();
       const [max, , width] = KINDS[kinds[i]];
       let next = typed[i].length >= width ? e.key : typed[i] + e.key;
       if (next.length === 1 && width === 2 && Number(next) * 10 > max) next = '0' + next;
       typed[i] = next;
-      fresh.add(i);
       show(i);
       if (next.length >= width && i < kinds.length - 1) inputs[i + 1].focus();
     });
     input.addEventListener('input', () => show(i));  // (what's pasted in isn't taken: the part shows what was typed)
   });
   document.getElementById('save').addEventListener('click', () => {
-    if (lost && fresh.size === kinds.length && typed.every((t) => t)) { location.href = 'review.html'; return; }
-    if (!lost) { lost = true; fresh.clear(); }
+    if (lost && model && model === shown()) { location.href = 'review.html'; return; }
+    if (!lost) { lost = true; model = null; }
     // (only as Workday's links: its words under them aren't an error message the desk reads)
     document.getElementById('errors').innerHTML = '<button type="button">Errors Found</button>'
       + '<button type="button">Error-Date</button><span>The field Date is required and must have a value.</span>';

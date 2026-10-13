@@ -1,0 +1,40 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Apply</title></head>
+<body>
+<!-- like Wells Fargo's Workday (run 55, Oct 13): every step at the same address, with its own heading; the third,
+     Application Questions, draws its questions a moment after its heading. The desk, finding no boxes there yet, took
+     the two steps' Save and Continue before it for "next" on a list of jobs pressed again and again, and stopped:
+     "I pressed “Save and Continue” three times on “Application Questions” and no application opened" -->
+<h2 id="step"></h2>
+<div id="app"></div>
+<script>
+  const steps = ['My Information', 'My Experience', 'Application Questions'];
+  const app = document.getElementById('app');
+  let at = 0;
+  function draw() {
+    document.getElementById('step').textContent = `current step ${at + 1} of 3 ${steps[at]}`;
+    app.innerHTML = '';
+    const boxes = () => {
+      if (at === 0) app.insertAdjacentHTML('afterbegin', '<label for="fn">First Name*</label><input id="fn" required>');
+      if (at === 1) app.insertAdjacentHTML('afterbegin', '<label for="ln">Last Name*</label><input id="ln" required>');
+      if (at === 2) app.insertAdjacentHTML('afterbegin', '<label for="em">Email Address*</label>'
+        + '<input id="em" type="email" required>');
+    };
+    if (at === 2) setTimeout(boxes, 1500); else boxes();
+    const save = document.createElement('button');
+    save.type = 'button';
+    save.textContent = 'Save and Continue';
+    save.addEventListener('click', () => {
+      const box = app.querySelector('input, select');
+      if (!box || !box.value) return;  // (nothing to save yet: the step stays)
+      if (at === 2) { location.href = 'review.html'; return; }
+      at += 1;
+      draw();
+    });
+    app.appendChild(save);
+  }
+  draw();
+</script>
+</body>
+</html>
