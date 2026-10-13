@@ -4349,7 +4349,9 @@ def _came_on(before: dict[str, Any], data: dict[str, Any]) -> bool:
     Submit greyed for a moment, run 49.) Only those: another button coming on says nothing of the way on."""
     def way_on(a: dict[str, Any]) -> bool:
         return not a.get("aside") and bool(a.get("is_submit") or _FORWARD.match(final_text(a.get("text") or "")))
-    was = {final_text(a.get("text") or "") for a in before.get("actions") or [] if a.get("disabled") and way_on(a)}
+    # (not a text a button already on had then: a covered Workday twin of a greyed Submit isn't one that came on)
+    was = ({final_text(a.get("text") or "") for a in before.get("actions") or [] if a.get("disabled") and way_on(a)}
+           - {final_text(a.get("text") or "") for a in before.get("actions") or [] if not a.get("disabled") and way_on(a)})
     return any(not a.get("disabled") and way_on(a) and final_text(a.get("text") or "") in was
                for a in data.get("actions") or [])
 

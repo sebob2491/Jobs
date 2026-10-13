@@ -534,6 +534,19 @@ def test_a_workday_year_that_reads_back_wrong_is_typed_once_more(srv):
                              ".getAttribute('aria-valuenow')")) == "2016"
 
 
+def test_a_dates_second_try_never_takes_a_part_the_first_left_wrong(srv):
+    """The review of 0.3.136: a month typed with its year empty, on a date that reads a lone number as its year as
+    focus leaves it (Intel's and U.S. Bank's), came back as the year 2010. A second try that took the date as it
+    then read typed the month alone and kept that year, which the profile never gave. The second try types the same
+    parts with the same digits, and a part it didn't type must read as it did before: here it's still said."""
+    run(srv.browser.goto(fixture_url("site/workday-date-sections.html") + "?sticky&arrows"))
+    by = {(f.get("section") or f["label"], f.get("sublabel")): f["id"]
+          for f in run(srv.inspect_form(include_dropdown_options=False))["fields"]}
+    out = run(srv.fill_form([{"id": by[("From", "Month")], "value": "10"}]))
+    assert not out["results"][0].get("ok"), out["results"]
+    assert "reads" in out["results"][0]["error"], out["results"]
+
+
 def test_a_workday_date_whose_current_part_stays_put_gets_its_month(srv):
     """Intel's Workday (nightly live check, Oct 11): the date's current part stays where it was when focus
     leaves the date, and is marked so; with the year typed first, the month's digits went into the year and the

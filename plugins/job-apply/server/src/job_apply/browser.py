@@ -1564,8 +1564,7 @@ class BrowserSession:
             await page.wait_for_timeout(500)
         raise ValueError(f"the page didn't show {path.name} after its upload; check it in the browser")
 
-    async def _type_date_part(self, page: Page, loc: Locator, text: str, given: dict[str, Any] | None = None,
-                              again: bool = False) -> str:
+    async def _type_date_part(self, page: Page, loc: Locator, text: str, given: dict[str, Any] | None = None) -> str:
         """A date's part (Workday's MM / DD / YYYY), which reacts to keystrokes, not a pasted value.
 
         Some Workday dates send their digits to the part the date counts as current, which starts at the
@@ -1580,9 +1579,9 @@ class BrowserSession:
         wrong. Those dates also read the whole date again as focus leaves it, from its parts with a number, a lone
         one as the year (Intel's and U.S. Bank's month, typed with the year still empty, came back as the year
         2003, traced live Oct 12): the later parts given in the same fill (`given`, by id) are typed in the same
-        run, so the date is never left half typed. A date that doesn't read back as typed is typed once more (`again`),
-        a little slower: HonorHealth's school year now and then lost the keys typed as it took focus, and read 1900
-        (run 49, Oct 13)."""
+        run, so the date is never left half typed. A date that doesn't read back as typed is typed once more, the
+        same parts with the same digits, a little slower: HonorHealth's school year now and then lost the keys typed as
+        it took focus, and read 1900 (run 49, Oct 13)."""
         count = await loc.evaluate(DATE_PARTS_JS, timeout=FOCUS_TIMEOUT)  # marks the date's parts in order
         # (found from this box, so in its own frame: the nearest box around it holding them all)
         parts = loc if count == 1 else loc.locator(
@@ -1630,52 +1629,63 @@ class BrowserSession:
             for i in range(start, end + 1):  # (only the parts typed now take what was given)
                 want[i] = filled[i]
             await said(f"typing {digits} into part {mine} (want {want}, from part {start} to {end})")
-            for i in range(start, end + 1):
-                part = parts.nth(i)
-                display = part.locator("xpath=preceding-sibling::*[@aria-hidden='true'][1]")
-                if i == start and await display.count() and (start > 0 or await part.evaluate(_ANOTHER_PART_CURRENT_JS)):
-                    # a later part with an earlier one empty, or a date that marks another of its parts current
-                    # (Intel's keeps it where it was when focus left the date, nightly live check Oct 11: the month
-                    # typed after the year went into the year): Workday's display over it is pressed, which makes it
-                    # the date's current part (focus alone leaves the current part as it is)
-                    with contextlib.suppress(PlaywrightError, PlaywrightTimeout):
-                        await display.click(timeout=2000)
-                    await said(f"part {i}: its display pressed")
-                if not await part.evaluate("el => el === el.ownerDocument.activeElement"):
-                    # Where a hint is drawn over the boxes (Workday's "MM/DD/YYYY" or each part's "MM"), a click
-                    # never reaches them: focus takes the keys just the same. Checked first, so no click timeout
-                    covered = await _covered(part)
-                    if not covered:
-                        try:
-                            await part.click(timeout=2000)
-                        except PlaywrightTimeout:
-                            covered = True
-                    if covered:
-                        await part.focus(timeout=FOCUS_TIMEOUT)
-                # Workday types into the part with focus, whichever its date marks current (a live trace of
-                # Intel's and Entegris', Oct 12: its arrows only moved focus away, wrapping to the year, so the month
-                # went into the year): no arrows, only this part focused before its digits
-                await said(f"part {i}: focused")
-                if again:  # (the second time: a moment for the part to take its focus)
-                    await page.wait_for_timeout(250)
-                if i == start:  # (the part as it was: its digits replaced, as Workday selects a part it's given)
-                    await part.evaluate("el => { try { el.select(); } catch (e) {} }")
-                await page.keyboard.type(want[i], delay=80 if again else 40)
-                await said(f"part {i}: typed {want[i]}")
-            await loc.evaluate("el => el.ownerDocument.activeElement && el.ownerDocument.activeElement.blur()")
-            await page.wait_for_timeout(100)
-            await said("left the date")
             read_js = "el => el.getAttribute('aria-valuenow') || (el.value || '').replace(/\\D/g, '')"
-            read = [await parts.nth(i).evaluate(read_js) for i in range(count)]
+            was = [str(info["now"]) for info in infos]  # (the date as it read before it was typed)
+
+            async def type_run(slow: bool) -> list[Any]:
+                for i in range(start, end + 1):
+                    part = parts.nth(i)
+                    display = part.locator("xpath=preceding-sibling::*[@aria-hidden='true'][1]")
+                    if i == start and await display.count() and (start > 0 or await part.evaluate(_ANOTHER_PART_CURRENT_JS)):
+                        # a later part with an earlier one empty, or a date that marks another of its parts current
+                        # (Intel's keeps it where it was when focus left the date, nightly live check Oct 11: the month
+                        # typed after the year went into the year): Workday's display over it is pressed, which makes it
+                        # the date's current part (focus alone leaves the current part as it is)
+                        with contextlib.suppress(PlaywrightError, PlaywrightTimeout):
+                            await display.click(timeout=2000)
+                        await said(f"part {i}: its display pressed")
+                    if not await part.evaluate("el => el === el.ownerDocument.activeElement"):
+                        # Where a hint is drawn over the boxes (Workday's "MM/DD/YYYY" or each part's "MM"), a click
+                        # never reaches them: focus takes the keys just the same. Checked first, so no click timeout
+                        covered = await _covered(part)
+                        if not covered:
+                            try:
+                                await part.click(timeout=2000)
+                            except PlaywrightTimeout:
+                                covered = True
+                        if covered:
+                            await part.focus(timeout=FOCUS_TIMEOUT)
+                    # Workday types into the part with focus, whichever its date marks current (a live trace of
+                    # Intel's and Entegris', Oct 12: its arrows only moved focus away, wrapping to the year, so the month
+                    # went into the year): no arrows, only this part focused before its digits
+                    await said(f"part {i}: focused")
+                    if slow:  # (the second time: a moment for the part to take its focus)
+                        await page.wait_for_timeout(250)
+                    if i == start:  # (the part as it was: its digits replaced, as Workday selects a part it's given)
+                        await part.evaluate("el => { try { el.select(); } catch (e) {} }")
+                    await page.keyboard.type(want[i], delay=80 if slow else 40)
+                    await said(f"part {i}: typed {want[i]}")
+                await loc.evaluate("el => el.ownerDocument.activeElement && el.ownerDocument.activeElement.blur()")
+                await page.wait_for_timeout(100)
+                await said("left the date")
+                return [await parts.nth(i).evaluate(read_js) for i in range(count)]
+
+            def off(read: list[Any]) -> list[int]:  # every part with an answer, not only those typed now
+                return [i for i in range(count) if want[i] and not (str(read[i]).isdigit() and int(read[i]) == int(want[i]))]
+
+            read = await type_run(False)
+            wrong = off(read)
+            if wrong:
+                # once more, the same parts with the same digits, a little slower (HonorHealth's school year lost
+                # the keys typed as it took focus, and read 1900: run 49); taken only where the parts not typed read
+                # as they did before (never a year the first run left from a month alone: the review's)
+                await said("not as typed: once more")
+                read = await type_run(True)
+                wrong = off(read) + [i for i in range(count) if not start <= i <= end and str(read[i]) != was[i]]
         finally:
             with contextlib.suppress(PlaywrightError):
                 await loc.evaluate("el => el.ownerDocument.querySelectorAll('[data-ja-date-part]').forEach((p) => {"
                                    " p.removeAttribute('data-ja-date-part'); p.removeAttribute('data-ja-date-mine'); })")
-        # every part with an answer, not only those typed now
-        wrong = [i for i in range(count)
-                 if want[i] and not (str(read[i]).isdigit() and int(read[i]) == int(want[i]))]
-        if wrong and not again:
-            return await self._type_date_part(page, loc, text, given, again=True)
         if wrong:
             shown = "/".join(str(r) or "?" for r in read)
             raise ValueError(f"typed {digits}, but the date reads {shown}; check it in the browser")
