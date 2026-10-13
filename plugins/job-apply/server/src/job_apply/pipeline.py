@@ -1996,7 +1996,9 @@ class Applier:
                 # site down are said for what they are, the review of 0.3.147)
                 if loading and _agreement_button(data) is None and not data.get("captcha") and not _BOT_BADGE.search(
                         " ".join([text[:3000], *(a.get("text") or "" for a in data.get("actions") or [])])) \
-                        and not _closed_notice(data, text) and not _maintenance_page(data):
+                        and not _closed_notice(data, text) and not _maintenance_page(data) and not _account_step(data) \
+                        and not any(g.startswith(f"{_page_key(data)} ") for g in agreed) \
+                        and not any(_errorish(e) for e in data.get("errors") or []):
                     # still loading after the wait (Wells Fargo's and Hitachi's Workday My Information after the account's
                     # sign-in, run 57: its Address, Email and Phone stayed loading placeholders, its Save and Continue
                     # greyed, and the desk said it couldn't find the way on): reloaded once a job, the reload waited on as
