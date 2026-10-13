@@ -862,15 +862,26 @@ UPLOAD_NOT_KEPT_JS = r"""
   // (the resume's own file box, and the hidden fields beside it: its form's, or within a few levels of it; not a
   // cover letter's box, nor a "resumeToken" of a save-for-later elsewhere on the page: the review of note 28)
   const near = (box, el) => {
-    if (box.form || el.form) return box.form === el.form;
+    if (box.form) return box.form === el.form;
     for (let n = box.parentElement, d = 0; n && d < 6; n = n.parentElement, d++) if (n.contains(el)) return true;
-    return false;
+    // (a box outside every form, on a page with one: that form's are its fields, EMD's as it is, run 49)
+    return !!el.form && document.forms.length === 1;
+  };
+  // a box that names nothing itself: the words of its own block ("Your resume/CV is required", its "Upload
+  // Resume/CV": EMD's, run 49), the nearest that says anything, and only a short one
+  const block = (box) => {
+    for (let n = box.parentElement, d = 0; n && d < 4; n = n.parentElement, d++) {
+      const t = (n.innerText || n.textContent || '').trim();
+      if (t.length > 400) break;
+      if (t) return t;
+    }
+    return '';
   };
   for (const box of document.querySelectorAll('input[type="file"]')) {
     const file = box.__jaUploaded ? String(box.__jaUploaded) : (box.files && box.files.length ? box.files[0].name : '');
     const said = [box.id, box.name, box.getAttribute('aria-label') || '',
-                  ...Array.from(box.labels || []).map((l) => l.textContent || '')].join(' ');
-    if (!file || !named.test(said)) continue;
+                  ...Array.from(box.labels || []).map((l) => l.textContent || '')].join(' ').trim();
+    if (!file || !named.test(said || block(box))) continue;
     const kept = hidden.filter((el) => near(box, el));
     if (kept.length >= 2 && !kept.some((el) => (el.value || '').trim())) return file;
   }

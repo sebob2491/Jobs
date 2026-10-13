@@ -615,7 +615,10 @@ def test_a_file_put_in_the_sites_open_upload_dialog_is_sent_with_its_upload(srv,
 
 
 @pytest.mark.parametrize("page,said", [("phenom-resume-not-kept.html", "resume.pdf"), ("phenom-resume-not-kept.html?kept", None),
-                                       ("upload-cover-letter.html", None)])
+                                       ("upload-cover-letter.html", None),
+                                       # EMD's page as it is (run 49): the resume's box above the form, unnamed
+                                       ("phenom-resume-not-kept.html?outside", "resume.pdf"),
+                                       ("phenom-resume-not-kept.html?outside&kept", None)])
 def test_a_resume_the_site_didnt_keep_is_told_from_any_other_upload(srv, tmp_path, page, said):
     """Issue #112, note 28 and its review: the resume's own file box, its hidden fields beside it all empty, is a
     resume the site didn't keep; a cover letter's box, beside "resume" fields of a save-for-later elsewhere, isn't."""
