@@ -133,6 +133,14 @@ def why(outcome: str, said: str) -> tuple[str, str]:
         return "Cookie banner with no decline", "Choose in the banner (or turn on accept_cookies)"
     if "Something went wrong" in d:
         return "Site error (\"Something went wrong\")", "Being looked into"
+    # steps that are the person's by the desk's rules (run 51: Circle K's and Taylor Morrison's assessments, Kforce's
+    # screening, the State of Arizona's name and email sent first)
+    if "take its assessment" in d:
+        return "An assessment to take", "Take it, then press Resume"
+    if "tax credit screening" in d:
+        return "A tax credit screening", "Fill it in, then press Resume"
+    if "name and email first" in d:
+        return "Sends your name and email first", "Press its Apply yourself"
     if "Degree list" in d:
         return "Degree list without the profile's degree", "Choose the closest honest one"
     if "turned the desk" in d or "blocked" in d:

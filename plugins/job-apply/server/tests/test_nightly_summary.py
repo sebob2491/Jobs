@@ -50,6 +50,12 @@ def test_where_it_stands_tables_say_where_each_employer_stops_and_what_the_perso
     assert "| KLA | Account needed (Workday) | Review page | Save its password; it reaches the review page |" in md
     assert "| Example / Fab | Review page | — | Check it, press Submit |" in md  # (a "|" in a name never splits a row)
     assert "| Aerotek | Bot check | — | Solve it; the desk carries on |" in md
+    # steps that are the person's by the desk's rules are said as such, not "Stopped (see the run)" (run 51)
+    for said, where in (("Workday wants you to take its assessment before the application goes on", "An assessment to take"),
+                        ("Oracle Taleo wants its tax credit screening filled in before the application goes on",
+                         "A tax credit screening"),
+                        ("State of Arizona's site asks for your name and email first", "Sends your name and email first")):
+        assert ns.why("needs_you stuck", f"HR Generalist · {said}")[0] == where
 
 
 def test_a_runs_saved_results_say_each_employers_rounds_and_where_it_stopped(tmp_path):
