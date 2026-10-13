@@ -107,6 +107,9 @@ _BOT_TITLE = re.compile(r"just a moment|attention required|access denied|pardon 
 _RESET_DONE = re.compile(r"\b(?:your )?password (?:has been|was|is)(?: successfully)? (?:reset|changed|updated)\b|"
                          r"\bpassword (?:reset|change|changed|updated?) (?:was |is )?(?:a )?success", re.I)
 _STEPISH = re.compile(r"\b(next|continue|save|submit|review|apply|finish|done|proceed)\b", re.I)
+# Workday saving again what a step saved a moment ago: "A phone number already exists for this application. Update or
+# delete the phone number." (PayPal's, run 56; Grand Canyon Education's address, run 55)
+_SAVED_ALREADY = re.compile(r"\balready exists for this application\b", re.I)
 _REFRESH_ASKED = re.compile(r"\bsomething went wrong\b.{0,200}\b(?:refresh|reload) (?:the|this) page\b", re.I | re.S)
 _TURNED_AWAY = re.compile(r"^\s*(?:403\s*)?forbidden\s*$|^\s*(?:406\s*)?not acceptable\s*$|"
                           r"^\s*your request has been blocked\.?\s*$", re.I)  # (Workday's, its title empty)
@@ -1550,6 +1553,7 @@ class Applier:
         redone_pages: set[tuple[Any, ...]] = set()  # pages whose boxes said wrong were answered again (once a page)
         saved_waited: set[tuple[Any, ...]] = set()  # steps waited on as still saving (once a step)
         bare_waited: set[tuple[Any, ...]] = set()  # forms with no step button yet, waited on to be drawn (once a page)
+        reloaded: set[tuple[Any, ...]] = set()  # steps reloaded for saying what they saved already exists (once a page)
         account_waited = False
         sign_ins: dict[str, int] = {}  # what the saved password was used for on this pass
         pressed: list[tuple[Any, ...]] = []  # (page, button) for each button pressed on this pass
@@ -2075,13 +2079,14 @@ class Applier:
             # Freeport's and SRP's SuccessFactors, nightly Oct 11: "Apply now", then its menu's "Apply Now", before)
             key = (data.get("url"), tuple(data.get("headings") or []), action["text"].strip().lower(), run.reopened)
             lately = pressed[since:]  # (the presses since a refresh the site asked for: the steps it takes again are new)
-            # (and for a step pressed three times, those since the desk set right what the page said was wrong: Entegris'
-            # Self Identify, run 54, its Date typed again after the second press, then never pressed a third time)
+            # (and for a step pressed three times, or a circle, those since the desk set right what the page said was
+            # wrong: Entegris' Self Identify, run 54, its Date typed again after the second press, then never pressed a
+            # third time; Intel's, run 56, its "Errors Found" heading gone once the Date was, read as back where it was)
             tries = pressed[max(since, fixed_at):]
-            if key in lately and pressed[-1] != key:
+            if key in tries and pressed[-1] != key:
                 # Round in a circle (Oracle sent its sites back to the posting from "Continue"):
                 # going round again only repeats it, and may email the person another code.
-                lap = " \u2192 ".join(pressed_on[pressed.index(key, since):])
+                lap = " \u2192 ".join(pressed_on[pressed.index(key, max(since, fixed_at)):])
                 return self._pause(run, "stuck", f"I went round in a circle ({lap}, then back to {_where(data)}), so "
                                    "the site isn't letting this application on. Have a look in the browser, then press "
                                    "Resume.")
@@ -2182,6 +2187,18 @@ class Applier:
                     if any(_ROBOT.search(p) for p in problems):  # Randstad's "verify that you are not a robot"
                         await self._bring_forward(run)
                         return self._pause(run, "bot_check", _BOT_CHECK_SAYS)
+                    # (the page's words as they are too: the sentence alone may read as no error, the review's)
+                    if _SAVED_ALREADY.search(" ".join([*problems, *(clicked.get("errors") or [])])) \
+                            and looked not in reloaded and run.page is not None:
+                        # the step saved part of itself on an earlier press, and won't save it twice: reloaded, it shows
+                        # what it saved, and goes on (once a page; the error again after it is the person's)
+                        reloaded.add(looked)
+                        self._log(run, f"{_site(run, clicked)} said what it saved a moment ago is already there, so I "
+                                  "reloaded the page")
+                        with contextlib.suppress(Exception):
+                            await run.page.reload(wait_until="load")
+                        stalls, fixed_at = 0, len(pressed)
+                        continue
                     if told := next((e for e in clicked.get("errors") or [] if _NO_ACCOUNT.search(e)), ""):
                         # an email-first sign-in with no account for the email (an Eightfold site: "We don't
                         # recognize this email. Create a new account"): the desk makes it with
@@ -3328,7 +3345,8 @@ class Applier:
         # about AI screening of applications, or the employer's privacy notice or terms of use (whose
         # "Ok" takes it in, beside a Cancel, where its heading names it)
         terms, takes_ok = _terms_notice(heading, notice.get("text") or "")
-        ai = bool(_AI_NOTICE.search(said) and _ABOUT_APPLYING.search(said)) or terms
+        ai = bool(_AI_NOTICE.search(said) and _ABOUT_APPLYING.search(said)) or terms \
+            or _test_identity_agrees(heading, said, _test_identity())
         agree = next((b for b in notice.get("buttons") or [] if not b.get("disabled")
                       and (_AGREES.match(final_text(b.get("text") or ""))
                            or takes_ok and _TAKES_IN.match(final_text(b.get("text") or "")))), None)
@@ -4079,6 +4097,31 @@ def _manage_hint() -> str:
     except ValueError:  # a profile with a typo has chosen nothing
         chosen = False
     return "" if chosen else " (manage_accounts: false in profile.yaml leaves this to you)"
+
+
+# The live check's test identity agrees to the notices a person's desk leaves to them (a waiver of rights in
+# Freeport-McMoRan's data privacy statement on its Create Account, run 56): the owner's call, Oct 13, for the most to
+# fix from. A notice of any of these sorts, never an error's or an existing profile's; and only by an agree button
+# (_AGREES): never a Submit, which stays the person's (Insight Enterprises' notice confirms with one)
+_TEST_NOTICE = re.compile(r"\b(?:privacy|terms|consent|agreement|notice|statement|policy)\b", re.I)
+
+
+def _test_identity_agrees(heading: str, said: str, test_identity: bool) -> bool:
+    """Whether the live check's test identity agrees to a notice the person's own desk leaves to them: only the
+    test identity (config.live_test_identity: never a person's profile), only a notice (_TEST_NOTICE), never a
+    dialog about an error, an overwrite, a deletion, a withdrawal or one that sends or applies (by its opening), and
+    never one that signs up for anything (_SIGNS_UP: newsletters, job alerts, a talent community, marketing)."""
+    opening = said[:300]  # (its heading and first words say what it is; a long statement's later words don't)
+    return (test_identity and bool(_TEST_NOTICE.search(said)) and not _NOT_A_NOTICE.search(opening)
+            and not re.search(r"\bwent wrong\b|\bsubmit\w*|\bapply\b|\bwithdraw", opening, re.I)
+            and not _SIGNS_UP.search(said))  # (never a sign-up, CLAUDE.md's rule, test identity or not)
+
+
+def _test_identity() -> bool:
+    try:
+        return config.Profile.load().settings.test_identity
+    except ValueError:  # a profile with a typo: never the test identity
+        return False
 
 
 def _may_accept_notices() -> bool:

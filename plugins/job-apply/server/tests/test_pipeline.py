@@ -2777,6 +2777,27 @@ def test_a_code_from_a_shared_sender_naming_another_employer_is_never_this_jobs(
     assert pipeline._another_employers_mail("", frozenset()) is None
 
 
+def test_the_test_identity_agrees_to_the_notices_a_persons_desk_leaves_to_them():
+    """Run 56: Freeport-McMoRan's data privacy statement on its SuccessFactors Create Account (a waiver of rights in it,
+    and its heading not a privacy notice's) is the person's on their own desk. The live check's test identity agrees to
+    it (the owner's call, Oct 13); never a dialog about an error or an existing profile, nor anything but a notice."""
+    heading = "Freeport-McMoRan Consent Statement"
+    text = ("Freeport Data Privacy Statement ... If you are from a jurisdiction outside of the United States, please note "
+            "in particular the waiver of rights provision (bolded) below")
+    assert pipeline._terms_notice(heading, text) == (False, False)  # (the person's own desk: theirs)
+    said = f"{heading} {text}"
+    assert not pipeline._test_identity_agrees(heading, said, False)
+    assert pipeline._test_identity_agrees(heading, said, True)
+    assert not pipeline._test_identity_agrees("Something went wrong", "Something went wrong. Privacy notice failed", True)
+    assert not pipeline._test_identity_agrees("Overwrite your existing profile?",
+                                              "Overwrite your existing profile? Your profile and its terms", True)
+    assert not pipeline._test_identity_agrees("Upload your resume", "Choose a file to upload", True)
+    # (the review: by its opening, not its heading alone; never a sign-up, nor one that sends)
+    assert not pipeline._test_identity_agrees("Notice", "Notice Your existing profile will be overwritten. I agree", True)
+    assert not pipeline._test_identity_agrees("Privacy", "Privacy Join our talent community and receive job alerts", True)
+    assert not pipeline._test_identity_agrees("Terms", "Terms By continuing you submit your application and agree", True)
+
+
 def test_an_employers_mail_domains_are_only_its_own(job_apply_home):
     """The review of 0.3.137: a site several employers on the lists search (Nikon's, UCT's and Desert Financial's UKG
     Pro, recruiting2.ultipro.com) names none of them, so another employer's job there never reads a credit union's mail;
@@ -3423,6 +3444,30 @@ def test_a_workday_step_whose_questions_come_late_isnt_a_list_of_jobs(srv, monke
 
     r = run(go())
     assert r.status == "ready" and r.url.endswith("review.html"), (r.status, r.reason, r.log[-3:])
+
+
+def test_a_workday_step_that_says_what_it_saved_already_exists_is_reloaded(srv, monkeypatch, job_apply_home):
+    """PayPal's Workday (run 56) and Grand Canyon Education's (run 55): My Information's first Save and Continue saved
+    the phone number (or the address) but the step stayed; pressed again, "A phone number already exists for this
+    application. Update or delete the phone number.", and the desk stopped. The page is reloaded, once a page, and
+    shows what it saved; the step goes on."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "STEP_SAVE_WAIT", 1)
+    job = srv.add_job(url=fixture_url("site/workday-saved-twice.html"), title="Engineer", company="Example Pay")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), timeout=120, about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert r.status == "ready" and r.url.endswith("review.html"), (r.status, r.reason, r.log[-3:])
+    assert any("already there" in line for line in r.log), r.log
 
 
 def test_each_page_that_draws_its_buttons_late_is_waited_on(srv, monkeypatch, job_apply_home):

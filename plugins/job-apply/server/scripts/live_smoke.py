@@ -103,7 +103,9 @@ FAKE_PROFILE = {
     # as setup writes it: the degrees confirmed finished answer "Do you have a Bachelor's degree?"
     "education": {"highest_degree": "Bachelor's Degree",
                   "degrees_earned": [{"level": "high_school"}, {"level": "bachelor", "field": "Electrical Engineering"}]},
-    "settings": {"submit_mode": "dry_run", "browser_channel": "chromium", "headless": True},
+    # (accept_cookies, as a person may set it: a banner with no way to decline, Texas Instruments' Oracle one, is
+    # accepted, so the check sees past it; one that can be declined still is: the owner asked, Oct 13)
+    "settings": {"submit_mode": "dry_run", "browser_channel": "chromium", "headless": True, "accept_cookies": True},
 }
 (_HOME / "profile.yaml").write_text(yaml.safe_dump(FAKE_PROFILE))
 
@@ -112,6 +114,7 @@ from job_apply.fixtures import convert  # noqa: E402
 from job_apply.postings import fetch_posting  # noqa: E402
 from job_apply.search import title_matches  # noqa: E402
 from job_apply.autofill import is_empty_value, polarity  # noqa: E402
+from job_apply.ats import detect_ats  # noqa: E402
 from job_apply.search import load_companies, sitecore_search  # noqa: E402
 
 import live_identity  # noqa: E402  (scripts/live_identity.py, beside this one)
@@ -1021,7 +1024,14 @@ async def main() -> int:
     return 0
 
 
-PIPELINE_WAIT = 180
+# Each application goes as far as the rules let it, for the most to fix from (the owner, Oct 13): a round of the
+# desk's work is given 5 minutes (ASML's and NXP's Workday took longer than 3 after their sign-in, run 56), the
+# questions it asks are answered for up to 5 rounds, and a stop on a page is pressed Resume once, as a person
+# would, to see what a second try does (a site's error that clears, a step that saves late). Bot checks, sign-ins
+# and what the rules leave to the person stay where they stop
+PIPELINE_WAIT = 300
+QUESTION_ROUNDS = 5
+RESUME_ROUNDS = 1
 
 
 def _cell(value: Any) -> str:
@@ -1445,6 +1455,140 @@ def best_posting(results: list[dict[str, Any]]) -> dict[str, Any]:
     return next((r for r in results if title_matches(r.get("title") or "", f"{QUERY_AZ} | {QUERY_ANY}")), results[0])
 
 
+# The test identity takes an employer's assessment with random answers, to see what comes after it (the owner's
+# call, Oct 13: "it shouldn't matter how well you do"; Circle K's and Taylor Morrison's Workday stopped at "Take
+# Assessment"). Never the person's desk: an assessment is theirs. The application itself never goes: the assessment is
+# answered and pressed on only on a vendor's site, one first reached after "Take Assessment", that no job system runs
+# (detect_ats: a company's own site), and none of whose boxes hold the applicant's details; on any other page (the
+# employer's application, on its own address or another of its job system's) nothing is filled or pressed, and it
+# ends. A CAPTCHA, a page it can't answer or one that won't move ends it too, and what it saw is kept
+ASSESSMENT_PAGES = 40
+ASSESSMENT_SECONDS = 600
+_TAKE_ASSESSMENT = re.compile(r"^(?:take|start|begin|launch|continue)\s+(?:the\s+|your\s+)?assessment\b", re.I)
+_ASSESSMENT_ON = re.compile(r"^(?:next|continue|start|begin|get started|let'?s (?:begin|start)|proceed|ok|okay|"
+                            r"i agree|agree|accept|i accept|i understand|i'?m ready|ready|"
+                            r"(?:start|begin|continue|resume)\s+(?:the\s+)?(?:assessment|test|questionnaire|survey|section))$",
+                            re.I)
+_ASSESSMENT_DONE = re.compile(r"^(?:submit|finish|done|complete|submit\s+(?:the\s+)?(?:assessment|test|answers?|questionnaire|"
+                              r"survey)|finish\s+(?:the\s+)?(?:assessment|test))$", re.I)
+# (never these, whatever they say: a cookie banner's, a sign-in with another site, a way back, an application's)
+_NOT_PRESSED = re.compile(r"cookie|google|linkedin|facebook|apple|microsoft|\bback\b|application|\bapply\b", re.I)
+# (and never ticked: a sign-up of any sort)
+_SIGN_UP_BOX = re.compile(r"marketing|newsletter|job alerts?|talent (?:community|network|pool)|\bsms\b|text messages?|"
+                          r"promotion|offers|updates", re.I)
+
+
+def assessment_answer(field: dict[str, Any]) -> Any:
+    """A random answer for an assessment's question (this run only): any of its choices, or a few words. None for
+    a box that signs up for something (never ticked)."""
+    import random
+    options = [o for o in field.get("options") or [] if o and not is_empty_value(o)
+               and not re.match(r"^(select|choose|--|please)", o, re.I) and not _SIGN_UP_BOX.search(o)]
+    kind = field.get("kind")
+    if kind == "checkbox":
+        return None if _SIGN_UP_BOX.search(field.get("label") or "") else True
+    if kind == "checkbox_group":
+        return [random.choice(options)] if options else None
+    if options:
+        return random.choice(options)
+    if re.search(r"year|number|how many|\bage\b|percent|amount", field.get("label") or "", re.I):
+        return str(random.randint(1, 9))
+    return "Test answer"
+
+
+def _applicants_page(data: dict[str, Any]) -> bool:
+    """A page with the applicant's own details in its boxes (an application's, not an assessment's)."""
+    email = os.environ.get("LIVE_TEST_EMAIL", "").strip().lower()
+    own = {v for v in (email, live_identity.LAST_NAME.lower(), f"{live_identity.FIRST_NAME} {live_identity.LAST_NAME}".lower(),
+                       FAKE_PROFILE["personal"]["email"].lower()) if v}
+    return any(str(f.get("value") or "").strip().lower() in own for f in data.get("fields") or [])
+
+
+async def take_assessment(run: Any, rec: dict[str, Any]) -> None:
+    """The assessment the desk stopped at, taken with random answers: its "Take Assessment" pressed, then page by
+    page on the vendor's site, every question answered at random and the page's way on pressed, until it leaves the
+    vendor's site. What it saw is kept in rec["assessment"]; anything unforeseen ends it (never the whole check)."""
+    steps: list[dict[str, Any]] = []
+    rec["assessment"] = {"steps": steps}
+    try:
+        rec["assessment"]["end"] = await _take_assessment(run, steps, rec)
+    except Exception as e:  # noqa: BLE001
+        rec["assessment"]["end"] = f"stopped: {type(e).__name__}: {str(e)[:160]}"
+    browser = server.browser
+    browser.use_tab(run.page)
+    with contextlib.suppress(Exception):
+        await run.page.reload(wait_until="load")  # (the application's step as it is now)
+    print("LIVE_ASSESSMENT " + _mask(json.dumps({"company": rec.get("company"), "end": rec["assessment"].get("end"),
+                                                 "pages": len(steps)}, default=str)), flush=True)
+
+
+async def _take_assessment(run: Any, steps: list[dict[str, Any]], rec: dict[str, Any]) -> str:
+    browser = server.browser
+    browser.use_tab(run.page)
+    home = (urlsplit(run.page.url).hostname or "").lower()
+    application = {h for h in (home, (urlsplit(getattr(run, "url", "") or "").hostname or "").lower()) if h}
+    start = time.monotonic()
+    data = await server.inspect_form(include_dropdown_options=False)
+    take = next((a for a in data.get("actions") or [] if not a.get("disabled")
+                 and _TAKE_ASSESSMENT.match((a.get("text") or "").strip())), None)
+    if take is None:
+        return "no Take Assessment button"
+    out = await server.click(take["id"])  # (the desk's own guard)
+    steps.append({"pressed": take["text"], "url": _mask(str(out.get("url") or ""))[:200]})
+    if not out.get("clicked"):
+        return f"Take Assessment wasn't pressed: {str(out.get('blocked') or '')[:120]}"
+    vendor: set[str] = set()  # (the hosts first reached after it that are an assessment's)
+    seen: list[tuple[Any, ...]] = []
+    for _ in range(ASSESSMENT_PAGES):
+        if time.monotonic() - start > ASSESSMENT_SECONDS:
+            return "time limit"
+        page = await browser.page()
+        with contextlib.suppress(Exception):
+            await page.wait_for_load_state("load", timeout=15000)
+        host = (urlsplit(page.url).hostname or "").lower()
+        if not host:  # (a tab just opened, its address not there yet)
+            await page.wait_for_timeout(1000)
+            continue
+        data = await server.inspect_form(include_dropdown_options=True)
+        if host not in vendor and host not in application and detect_ats(page.url) == "company_site" \
+                and not _applicants_page(data):
+            vendor.add(host)
+        if host not in vendor:
+            # on the application (its own address, another of its job system's, or a page with the applicant's
+            # details): nothing filled or pressed there
+            if vendor:
+                rec["assessment"]["back_at"] = _mask(page.url)[:300]
+                return "back on the application"
+            return "it opened no assessment off the application's site"
+        if data.get("captcha"):
+            return "a CAPTCHA (the rules: never solved)"
+        actions = [a for a in data.get("actions") or [] if not a.get("disabled") and not a.get("cookie")
+                   and not _NOT_PRESSED.search(a.get("text") or "")]
+        fields = [f for f in data.get("fields") or [] if not f.get("disabled") and f.get("kind") not in ("file", "password")
+                  and is_empty_value(f.get("value"))]
+        answers = [{"id": f["id"], "value": v} for f in fields if (v := assessment_answer(f)) is not None]
+        filled = (await server.fill_form(answers))["results"] if answers else []
+        on = next((a for a in actions if _ASSESSMENT_ON.match((a.get("text") or "").strip())), None) \
+            or next((a for a in actions if _ASSESSMENT_DONE.match((a.get("text") or "").strip())), None)
+        steps.append({"host": host, "title": (data.get("title") or "")[:80],
+                      "headings": [h[:80] for h in (data.get("headings") or [])[:4]],
+                      "kinds": sorted({str(f.get("kind")) for f in data.get("fields") or []}),
+                      "questions": [{"label": (f.get("label") or "")[:120], "kind": f.get("kind"),
+                                     "options": (f.get("options") or [])[:8]} for f in fields[:12]],
+                      "answered": sum(1 for r in filled if r.get("ok")), "buttons": [a.get("text") for a in actions][:12],
+                      "pressed": on.get("text") if on else None})
+        if on is None:
+            return "no way on it knows"
+        key = (page.url, tuple(data.get("headings") or []), tuple(f.get("label") for f in data.get("fields") or []),
+               on.get("text"))
+        if seen[-2:] == [key, key]:  # pressed three times, and the page stays
+            return "the page didn't move on"
+        seen.append(key)
+        await browser._locator(page, on["id"]).click(timeout=10000)  # (a vendor's page: never the application's)
+        await page.wait_for_timeout(1500)
+    return "page limit"
+
+
 async def check_pipeline(company: dict[str, Any], out: Path, rec: dict[str, Any], fixtures: bool = False) -> None:
     from job_apply.pipeline import Applier, placed_key, question_key
 
@@ -1471,7 +1615,8 @@ async def check_pipeline(company: dict[str, Any], out: Path, rec: dict[str, Any]
     run = None
     try:
         run = applier.enqueue(job["id"])
-        rounds = 3 + (MAIL_ROUNDS if TEST_IDENTITY else 0)
+        rounds = QUESTION_ROUNDS + RESUME_ROUNDS + (MAIL_ROUNDS if TEST_IDENTITY else 0)
+        resumes = RESUME_ROUNDS
         for n in range(rounds):
             start = time.monotonic()
             while run.status in ("queued", "running"):
@@ -1501,6 +1646,18 @@ async def check_pipeline(company: dict[str, Any], out: Path, rec: dict[str, Any]
                     key = placed_key(q) if labels.count(q.get("label") or "") > 1 else question_key(q.get("label") or "")
                     run.once[key] = fake_answer(q)
                 applier.enqueue(job["id"], front=True)
+                continue
+            if (TEST_IDENTITY and run.status == "needs_you" and run.need == "stuck" and "assessment" not in rec
+                    and re.search(r"\bassessment\b", run.reason or "", re.I) and n < rounds - 1):
+                # its assessment taken with random answers, then the application carried on (take_assessment)
+                await take_assessment(run, rec)
+                applier.resume(job["id"])
+                continue
+            if run.status == "needs_you" and run.need == "stuck" and resumes and n < rounds - 1:
+                # pressed Resume once, as a person would with nothing else done: what a second try gets to
+                resumes -= 1
+                rec["rounds"][-1]["resumed"] = True
+                applier.resume(job["id"])
                 continue
             if TEST_IDENTITY and await wait_for_mail(applier, run):
                 continue  # the desk read the emailed code or link, and went on by itself
@@ -1571,7 +1728,7 @@ async def report_inbox(company: str, applier: Any, run: Any) -> None:
 
 async def pipeline_main(companies: list[dict[str, Any]], out: Path, fixtures: bool = False) -> int:
     records = []
-    wait = 3 * PIPELINE_WAIT + 60 + (MAIL_ROUNDS * MAIL_WAIT if TEST_IDENTITY else 0)
+    wait = (QUESTION_ROUNDS + RESUME_ROUNDS) * PIPELINE_WAIT + 60 + (MAIL_ROUNDS * MAIL_WAIT if TEST_IDENTITY else 0)
     for company in [c for c in companies if c.get("search")]:
         started = time.time()
         rec: dict[str, Any] = {"company": company["name"]}

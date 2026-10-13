@@ -49,7 +49,11 @@ the scrubber (`python -m job_apply.fixtures`) before they become test fixtures.
   - Add `--pipeline --fake-passwords --parallel 4` to drive the Job Desk pipeline. The full run takes about 6 minutes.
   - Add `--lists phoenix-metro` to check another list, and `--role hr` (or `--role finance`) to look
     for HR (or finance) jobs as an applicant with that background (the default is technician jobs).
-  - It forces a fake profile and `JOB_APPLY_NEVER_SUBMIT=1`, so nothing can be submitted.
+  - It forces a fake profile and `JOB_APPLY_NEVER_SUBMIT=1`, so nothing can be submitted. The fake profile has
+    `accept_cookies` on, so a banner with no way to decline (Texas Instruments') is accepted (the owner asked, Oct 13).
+  - Each application goes as far as the rules let it, for the most to fix from (the owner, Oct 13): 5 minutes a round,
+    up to 5 rounds of questions answered, and one Resume pressed on a stop. Keep it so: what the rules leave to the
+    person (bot checks, CAPTCHAs, submitting) still stops it.
     The fake profile has a test resume made for the run. With `LIVE_TEST_EMAIL` set, the employers
     that refuse its example.com address (`live_identity.INBOX_AT`: Onto Innovation, Robert Half) get
     the test inbox's address instead (masked; still no accounts, no mail read: the owner's call, Oct 11).
@@ -135,7 +139,11 @@ the scrubber (`python -m job_apply.fixtures`) before they become test fixtures.
   - The live check's test identity (the owner's call, Oct 10) is the one exception to "never in
     practice mode", for accounts and notices alike: a clearly fake applicant ("Jobdesk Test")
     with its own inbox, at the employers in `test_identity_employers.yaml`, or (the nightly's accounts check, `--everywhere`:
-    the owner's call, Oct 11) at every employer on both lists, and which never submits. It's on
+    the owner's call, Oct 11) at every employer on both lists, and which never submits. It also takes an employer's
+    assessment with random answers ("Take Assessment": the owner's call, Oct 13), pressing the assessment's own
+    Submit or Finish only off the application's site; on the person's desk an assessment stays theirs. And it agrees
+    to the notices a person's desk leaves to them (a waiver of rights in Freeport-McMoRan's data privacy statement: the
+    owner's call, Oct 13), by an agree button only, never a Submit (`_test_identity_agrees`). It's on
     only with `JOB_APPLY_LIVE_TEST_IDENTITY=1` and `JOB_APPLY_NEVER_SUBMIT=1` set and the
     profile's email being `LIVE_TEST_EMAIL` (`config.live_test_identity`), so a person's own
     profile never turns it on; Submit stays refused in it.
