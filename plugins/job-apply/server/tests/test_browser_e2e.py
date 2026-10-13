@@ -465,6 +465,17 @@ def test_a_covered_add_button_is_left_and_said(srv):
     assert work["clicks"] == 1 and not work.get("add_button_covered"), work
 
 
+def test_an_add_button_a_toast_covers_for_a_moment_is_pressed_once_it_clears(srv):
+    """Workday's My Experience (issue #112, note 32): "added 1 work block(s)", then the work section's Add button
+    was "covered" and its other blocks were left off (the page reached the form with 2 of 5 jobs). A cover that
+    goes away on its own, a toast or a re-render, is waited on: the button is pressed again a little later. (The
+    note here goes after 6 s; the one press that found it there gave up after 3.)"""
+    run(srv.browser.goto(fixture_url("site/workday-my-experience.html") + "?toast"))
+    education = run(srv.add_entries("education"))
+    assert (education["clicks"], education["after"]) == (1, 1), education
+    assert not education.get("add_button_covered") and "note" not in education, education
+
+
 def test_workday_date_parts_read_back_as_typed_whatever_the_order(srv):
     """Workday's date boxes (issue #112, note 13, live test 2, Oct 2026): every job's month came out 02
     (its year right) and the self-identify "Date" 02/02/2006, on two employers' sites, and the desk said

@@ -850,6 +850,24 @@ COVERED_JS = r"""
 }
 """
 
+# A resume the page shows as uploaded (the file's name, a Delete link) though the hidden fields it keeps the upload
+# in stayed empty (EMD's Phenom, issue #112, note 28: #isResume, #resumeBucketId, #resumeFileSize, #resumeName and
+# #resumePath all empty, so Next did nothing and said nothing). Two or more hidden fields named for the resume, every
+# one empty, and a file sent into a file box of the page (by the desk, or one that reads a value): the file's name.
+UPLOAD_NOT_KEPT_JS = r"""
+() => {
+  const named = /resume|(^|[_-])cv([_-]|$)/i;
+  const kept = Array.from(document.querySelectorAll('input[type="hidden"]'))
+    .filter((el) => named.test(el.id || '') || named.test(el.name || ''));
+  if (kept.length < 2 || kept.some((el) => (el.value || '').trim())) return '';
+  for (const el of document.querySelectorAll('input[type="file"]')) {
+    if (el.__jaUploaded) return String(el.__jaUploaded);
+    if (el.files && el.files.length) return el.files[0].name;
+  }
+  return '';
+}
+"""
+
 # Text boxes the page marks invalid while they show a value: shown, editable, not a menu's
 # box, and not the one the person is typing in.
 LOST_BOXES_JS = r"""

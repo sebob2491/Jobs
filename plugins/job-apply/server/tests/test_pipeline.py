@@ -2078,6 +2078,39 @@ def test_boxes_the_pages_errors_say_are_empty_though_filled_are_typed_again(srv,
         assert any(line.startswith("typed again") and "Address 1" in line for line in r.log), r.log
 
 
+@pytest.mark.parametrize("query", ["", "?kept"])
+def test_a_resume_the_page_shows_but_never_kept_is_said_not_typed_around(srv, monkeypatch, query):
+    """EMD's Phenom (issue #112, note 28): the page showed the resume as uploaded (its name, Download and Delete
+    links), but the hidden fields it keeps the upload in stayed empty, so Next did nothing and said nothing. The desk
+    pressed Next three times, typed the required boxes again, and stopped with "The page didn't move on". It says what
+    is wrong instead (the upload, for the person to delete and do again) and doesn't type the boxes again.
+    ?kept: the upload is kept, and Next goes on."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "STEP_SAVE_WAIT", 1)
+    monkeypatch.setattr(pipeline, "NEW_TAB_WAIT", 1)
+    job = srv.add_job(url=fixture_url("site/phenom-resume-not-kept.html") + query, title="Equipment Technician",
+                      company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    if query:
+        assert "review.html" in r.url, (r.url, r.reason, r.log)
+        return
+    assert (r.status, r.need) == ("needs_you", "stuck"), (r.status, r.reason, r.log)
+    assert "resume.pdf" in r.reason and "resume didn't upload" in r.reason and "Delete link" in r.reason, r.reason
+    assert "page didn't move on" not in r.reason, r.reason
+    assert not any("required box(es) again" in line for line in r.log), r.log
+
+
 def test_a_box_the_page_says_is_wrong_showing_what_it_wrote_itself_takes_the_profiles_answer(srv, monkeypatch):
     """EMD Electronics' Phenom (live run 41, Oct 12): its resume parse wrote the phone as "4805550199" in a box
     asking for "+1##########" with no spaces or dashes, and Next called it invalid. The desk had left the box (it
@@ -6200,6 +6233,73 @@ def test_a_resume_workday_already_lists_isnt_uploaded_again(srv, monkeypatch, jo
 
     r, uploads = run(go())
     assert (r.status, r.need) == ("needs_you", "stuck") and uploads == 1, (uploads, r.reason, r.log)
+
+
+def test_a_section_left_short_by_a_covered_add_button_stops_the_job_until_the_person_says_go_on(srv, monkeypatch):
+    """Workday's My Experience (issue #112, note 32): "added 1 work block(s)", then the Add button "covered", and the
+    log only said so: 2 of 5 jobs reached the form and the card spoke of a Degree box alone; on another site the
+    education Add was covered and the job went on to its review page, and was submitted, with education missing. The
+    job stops on the page with what is short said first, and the Next isn't pressed. A Resume on it with nothing
+    added goes on (it would only stop again), and says so."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 1)
+    monkeypatch.setattr(pipeline, "STEP_SAVE_WAIT", 1)
+    monkeypatch.setattr(pipeline, "NEW_TAB_WAIT", 1)
+    monkeypatch.setattr(browser_module, "ADD_PRESS_TIMEOUT", 500, raising=False)  # (short: the cover stays)
+    monkeypatch.setattr(browser_module, "ADD_COVER_WAIT", 100, raising=False)
+    job = srv.add_job(url=fixture_url("site/workday-my-experience.html") + "?covered", title="Equipment Technician",
+                      company="Example Litho")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            first = (r.status, r.need, r.reason, list(r.log), r.paused_at)
+            applier.resume(job["id"])
+            await until(lambda: r.paused_at > first[4] and r.status not in ("queued", "running"), about=state(r))
+            return first, r
+        finally:
+            await applier.stop()
+
+    first, r = run(go())
+    status, need, reason, log, _ = first
+    assert (status, need) == ("needs_you", "stuck"), (status, reason, log)
+    assert reason.startswith("Example Litho's site shows only 0 of your 1 school: the Add button is covered"), reason
+    assert "then press Resume" in reason, reason
+    assert not any(line.startswith("clicked") or "review page" in line for line in log), log  # (stopped on the page)
+    assert any(line == "added 1 work block(s)" for line in log), log
+    # the Resume with nothing added: gone on with, said, and the page pressed on (this fixture's Next goes nowhere)
+    assert any(line.startswith("went on with 0 of your 1 school") for line in r.log), r.log
+    assert any(line.startswith("clicked") for line in r.log), r.log
+    assert "Add button is covered" not in r.reason, r.reason
+
+
+def test_a_review_page_reached_with_a_section_left_short_is_never_submitted_for_the_person(srv, monkeypatch):
+    """"Submit for me" on a job whose school (or job) blocks were left short on a covered Add button (issue #112,
+    note 32: it went on to its review page and was submitted with education missing): the review page waits for the
+    person, with what's short said on its card."""
+    job = srv.add_job(url=fixture_url("site/review.html"), title="Equipment Technician", company="Example Litho")["job"]
+    applier = Applier(srv)
+    applier.auto_submit = True
+    sent = []
+
+    async def submit(r, by_person=True):
+        sent.append(r.job_id)
+
+    monkeypatch.setattr(applier, "_submit", submit)
+    data = {"url": "https://example.wd1.myworkdayjobs.com/x/review", "headings": ["Review"], "fields": [], "actions": [],
+            "errors": []}
+    r = Run(job["id"], "Equipment Technician", "Example Litho", submit=True)
+    r.entries_short = {"work": (3, 5), "education": (0, 1)}
+    run(applier._finish(r, data, ""))
+    assert (r.status, sent) == ("ready", []), (r.status, r.reason, sent)
+    assert "Note: Workday shows only 3 of your 5 jobs and 0 of your 1 school" in r.reason, r.reason
+    assert "before you press Submit" in r.reason, r.reason
+    r = Run(job["id"], "Equipment Technician", "Example Litho", submit=True)  # (nothing short: sent as asked)
+    run(applier._finish(r, data, ""))
+    assert sent == [job["id"]], sent
 
 
 def test_a_school_the_sites_list_refuses_is_not_called_missing_from_the_profile(srv):

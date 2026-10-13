@@ -453,6 +453,12 @@ class Run:
     # Submit was pressed for this job before and no confirmation showed (its folder keeps the
     # record): it may have gone, so it's never pressed again without the person
     pressed_before: bool = False
+    # Sections ("work", "education") whose Add button stayed covered with fewer blocks on the page than the profile
+    # has entries, as (blocks there, entries wanted): the job stops for them (issue #112, note 32). What a card said
+    # of them, and what a Resume was pressed on: an unchanged shortfall is gone on with once, noted on the review card
+    entries_short: dict[str, tuple[int, int]] = field(default_factory=dict)
+    entries_told: dict[str, tuple[int, int]] = field(default_factory=dict)
+    entries_ok: dict[str, tuple[int, int]] = field(default_factory=dict)
     page_info: dict[str, Any] = field(default_factory=dict)  # what the page looked like when it paused
     page: Any = None  # its browser tab
     updated: float = field(default_factory=time.time)
@@ -462,7 +468,8 @@ class Run:
                                                                      "reset_asked", "reset_from", "reset_waited",
                                                                      "reset_no_mail", "reopened_elsewhere", "reopened", "sign_in_tries", "sign_in_key",
                                                                      "accounts_tried", "account_made", "account_page",
-                                                                     "account_finished", "verifying", "mail_looks", "mail_last")}
+                                                                     "account_finished", "verifying", "mail_looks", "mail_last",
+                                                                     "entries_short", "entries_told", "entries_ok")}
 
 
 def classify(data: dict[str, Any], text: str) -> str:
@@ -644,6 +651,8 @@ class Applier:
         the job by itself."""
         run = self.runs.get(job_id)
         signing_in = run is not None and run.need == "sign_in"  # (before enqueue clears it)
+        if run is not None and run.entries_told:
+            run.entries_ok = dict(run.entries_told)  # (a card said a section was short: gone on with, if unchanged)
         run = self.enqueue(job_id, submit=bool(run and run.submit), front=True)
         if signing_in:
             run.sign_in_tries = min(run.sign_in_tries, SIGN_IN_TRIES - 1)
@@ -1336,6 +1345,7 @@ class Applier:
         if run.status in ("skipped", "submitted"):  # skipped, or marked applied, while it ran
             return
         run.pause_sig = _page_sig(seen) if seen else None
+        run.entries_told = {}  # (the card that says a section is short sets it again, after this)
         run.status, run.need, run.reason = "needs_you", need, reason
         run.questions = questions or []
         run.blocking = need in HANDS_ON
@@ -1772,6 +1782,7 @@ class Applier:
                         if added.get("add_button_covered"):
                             self._log(run, f"couldn't press the {section} section's Add button: something on the page "
                                       "covers it, so its blocks are left as they are")
+                        self._note_short_entries(run, section, added)
                 result = await srv.autofill(job_id=run.job_id)
                 if result["filled"]:
                     self._log(run, f"filled {len(result['filled'])} field(s) on {_where(data)}")
@@ -1812,7 +1823,12 @@ class Applier:
                 if await self._drop_unfit_school(run, data, pending):
                     continue  # the page looked at again without that school's block
                 gaps, pending = self._entry_gaps(run, data, pending)
+                on_experience = _EXPERIENCE_PAGE.search(" ".join(data.get("headings") or []))
+                short = self._short_entries(run) if on_experience else {}
+                if short:  # (first on the card: the rest of what it needs comes after)
+                    gaps = f"{_short_said(_site(run, data), short)} {gaps}".strip()
                 if self._stop_for_what_is_left(run, gaps, pending, missing_files):
+                    run.entries_told = short
                     return
                 actions = data.get("actions") or []
                 entry_here = any(_ENTRY.match(final_text(a["text"])) and not a.get("disabled") for a in actions)
@@ -2002,6 +2018,8 @@ class Applier:
                 problems = _flagged(data) or [
                     f"\u201c{a['text'].strip()}\u201d is greyed out, so the site still wants something (a file, say, "
                     "or a box to tick)" for a in _greyed_step(data)[:1]]
+                if not problems and await self._resume_not_kept(run, data):
+                    return
                 errors = "; ".join(problems)[:300].rstrip(" .")
                 return self._pause(run, "stuck", "The page didn't move on" + (f": {errors}." if errors else ".")
                                    + " Fix it in the browser, then press Resume.")
@@ -2130,6 +2148,8 @@ class Applier:
                         if await srv.browser.challenge_showing():  # a bot check drawn while it was waited on
                             await self._bring_forward(run)
                             return self._pause(run, "bot_check", _BOT_CHECK_SAYS)
+                    if not problems and await self._resume_not_kept(run, data):
+                        return  # (it never kept the resume: typing the boxes again can't fix that)
                     if not problems and looked not in retyped:
                         # nothing said wrong, and the page didn't move: it may have lost its own record of boxes that
                         # still show their values (EMD's Phenom, live check Oct 11: it drops some of the boxes filled
@@ -2165,6 +2185,20 @@ class Applier:
                 stalls = 0
         self._pause(run, "stuck", "This application has more steps than I expected. Have a look in the browser, "
                     "then press Resume.")
+
+    async def _resume_not_kept(self, run: Run, data: dict[str, Any]) -> bool:
+        """A step that won't go on with nothing said wrong, whose page shows the resume as uploaded while the hidden
+        fields it keeps the upload in are empty (EMD's Phenom, issue #112, note 28: Next did nothing and said nothing,
+        and the desk pressed it three times and typed the required boxes again): the person's to put right, by deleting
+        the file and uploading it again. Not tried again by the desk. True when it paused."""
+        name = await self.srv.browser.upload_not_kept()
+        if not name:
+            return False
+        await self._bring_forward(run)
+        self._pause(run, "stuck", f"{_site(run, data)} shows {name} as uploaded, but the resume didn't upload: its own "
+                    "upload fields are empty, so its Next does nothing. In the browser window, delete the file with "
+                    "its Delete link, upload your resume again, then press Resume.")
+        return True
 
     async def _new_tab_soon(self, run: Run, seconds: float) -> bool:
         """Follow a tab that opens a little after a click (the browser makes it current)."""
@@ -2350,6 +2384,24 @@ class Applier:
         self._log(run, f"deleted {last} ({school}): its Degree list has no choice for classes without a degree, and "
                   "the desk never picks a degree you didn't earn (your resume still shows the classes)")
         return True
+
+    def _note_short_entries(self, run: Run, section: str, added: dict[str, Any]) -> None:
+        """A section whose Add button stayed covered, with fewer blocks on the page than the profile has entries
+        (Workday's My Experience, issue #112, note 32: 2 of 5 jobs reached the form, and on another site the job went
+        on to its review page with its school missing), is remembered on the run: the job stops for it."""
+        after, wanted = added.get("after", 0), added.get("wanted", 0)
+        if not added.get("add_button_covered") or after >= wanted:
+            run.entries_short.pop(section, None)
+            return
+        run.entries_short[section] = (after, wanted)
+        if run.entries_ok.get(section) == (after, wanted):
+            self._log(run, f"went on with {_blocks(section, after, wanted)}: the Add button is still covered, and you "
+                      "pressed Resume on it")
+
+    def _short_entries(self, run: Run) -> dict[str, tuple[int, int]]:
+        """The sections left short that the person hasn't pressed Resume on, as they stand (one pressed on, with the
+        shortfall unchanged, is gone on with: pressing Resume on a page nothing was added to would only stop again)."""
+        return {s: n for s, n in run.entries_short.items() if run.entries_ok.get(s) != n}
 
     def _entry_gaps(self, run: Run, data: dict[str, Any],
                     pending: list[dict[str, Any]]) -> tuple[str, list[dict[str, Any]]]:
@@ -3440,7 +3492,7 @@ class Applier:
         if shown and run.submit and self.auto_submit:  # Insight's review page lists what's still missing
             return self._pause(run, "stuck", f"The review page shows errors: {shown}. Fix them in the browser, then "
                                "press Submit.")
-        if run.submit and self.auto_submit:
+        if run.submit and self.auto_submit and not run.entries_short:  # (jobs or schools left off: the person's)
             return await self._submit(run, by_person=False)
         srv._mark_ready(job, "filled by the Job Desk")
         run.status, run.need = "ready", ""
@@ -3452,6 +3504,10 @@ class Applier:
             run.reason = ("Filled and waiting on the review page. Submit was pressed for this job before and no "
                           "confirmation showed, so it may have gone through: check your email or the site before you "
                           "press Submit." + (f" The review page also shows errors: {shown}." if shown else ""))
+        if run.entries_short:  # gone on with, on the person's Resume (note 32): said where Submit is
+            names = " and ".join(_blocks(s, *n) for s, n in run.entries_short.items())
+            run.reason += (f" Note: {_site(run, data)} shows only {names} (the Add button was covered): add the rest "
+                           "in the browser before you press Submit.")
         self._log(run, "reached the review page")
 
     async def _submit(self, run: Run, by_person: bool = True) -> None:
@@ -4288,6 +4344,20 @@ def _closed_notice(data: dict[str, Any], text: str) -> str:
             start, end = said.rfind(".", 0, m.start()) + 1, said.find(".", m.end())
             return " ".join(said[start:end + 1 if end >= 0 else len(said)].split())[:200]
     return ""
+
+
+def _blocks(section: str, have: int, wanted: int) -> str:
+    """"1 of your 3 jobs", "0 of your 1 school": a section's blocks on the page against the profile's entries."""
+    what = "job" if section == "work" else "school"
+    return f"{have} of your {wanted} {what}{'' if wanted == 1 else 's'}"
+
+
+def _short_said(site: str, short: dict[str, tuple[int, int]]) -> str:
+    """The card for sections left short by a covered Add button: what is there, and what to do."""
+    names = " and ".join(_blocks(s, *n) for s, n in short.items())
+    return (f"{site} shows only {names}: the Add button is covered by something on the page, so the rest weren't "
+            "added. Press Add in the browser until all are there (the desk fills them in), or close what covers it, "
+            "then press Resume. A Resume with nothing added goes on without them.")
 
 
 def _site(run: Run, data: dict[str, Any]) -> str:

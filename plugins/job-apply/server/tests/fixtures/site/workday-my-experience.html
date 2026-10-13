@@ -144,14 +144,23 @@
   document.getElementById('we-add').click();
   // ?covered: a note of the site's own drawn over Education's Add button, so a click there lands on the
   // note (Nikon's UKG Pro, live, Oct 2026: "Add Education" timed out after "Add Experience" was pressed)
-  if (new URLSearchParams(location.search).has('covered')) {
-    const add = document.getElementById('ed-add').getBoundingClientRect();
+  // ?toast: the same note, taking itself away after a few seconds like a toast over Workday's Add button (issue #112,
+  // note 32: "added 1 work block(s)", then the Add button "covered"), so a press a moment later goes through
+  const query = new URLSearchParams(location.search);
+  if (query.has('covered') || query.has('toast')) {
     const note = document.createElement('div');
     note.id = 'note';
     note.textContent = 'Accessibility Note';
-    note.style.cssText = `position: absolute; z-index: 10; background: #ffd; left: ${add.left + scrollX - 20}px; `
-      + `top: ${add.top + scrollY - 10}px; width: ${add.width + 40}px; height: ${add.height + 20}px`;
+    // (stays over the button as the page above it grows and shrinks)
+    const place = () => {
+      const add = document.getElementById('ed-add').getBoundingClientRect();
+      note.style.cssText = `position: absolute; z-index: 10; background: #ffd; left: ${add.left + scrollX - 20}px; `
+        + `top: ${add.top + scrollY - 10}px; width: ${add.width + 40}px; height: ${add.height + 20}px`;
+    };
+    place();
     document.body.appendChild(note);
+    setInterval(place, 50);
+    if (query.has('toast')) setTimeout(() => note.remove(), 6000);
   }
 </script>
 </body>

@@ -34,7 +34,7 @@ from .ats import detect_ats
 from .autofill import choose_option, choose_place, is_empty_value, norm, polarity
 from .formjs import (CHALLENGE_JS, CLICK_CHOICE_JS, COVERED_JS, ELEMENT_INFO_JS, ENTRIES_JS, EXTRACT_JS, FIELD_OPTIONS_JS,
                      LOST_BOXES_JS, MARK_OPTIONS_JS, NOTICE_OVER_JS, OPEN_MENU_JS, OUTSIDE_CLICK_JS, QUIET_JS, SHOWN_VALUE_JS,
-                     VISIBLE_TEXT_JS, WORKDAY_CHOSEN_JS, WORKDAY_PROMPT_JS)
+                     UPLOAD_NOT_KEPT_JS, VISIBLE_TEXT_JS, WORKDAY_CHOSEN_JS, WORKDAY_PROMPT_JS)
 
 SUBMIT_RE = re.compile(r"\bsubmit\b|send (my )?application|finish (my )?application|complete (my )?application", re.I)
 # A form's own submit button with one of these labels is the final step too ("Apply", "Send").
@@ -147,6 +147,10 @@ SETTLE_WAIT = 8  # seconds for a job board's page to stop loading things, at mos
 LOST_FILL_WAIT = 0.5  # seconds after filling for a page to mark the boxes whose answers it lost
 LOST_FILL_TRIES = 3  # times a box is typed again on a page, at most (one the page refuses stays marked)
 BLOCK_DRAW_WAIT = 6000  # ms for blocks just added (Workday's Education 2) to draw their boxes, at most
+# A section's Add button that a click can't reach (a toast or a re-render drawn over it for a moment, Workday's My
+# Experience, issue #112, note 32): pressed up to this many times, each for this many ms, and between them
+# the page is given a little longer each time (this many ms times the try) to clear
+ADD_TRIES, ADD_PRESS_TIMEOUT, ADD_COVER_WAIT = 3, 3000, 1500
 # How long a click may wait for its button to become clickable, in ms.
 CLICK_TIMEOUT = 8000
 FORM_DRAW_TRIES, FORM_DRAW_WAIT = 5, 500  # a page read with no form is read again, each this many ms apart
@@ -940,6 +944,21 @@ class BrowserSession:
                 except PlaywrightError:  # a frame that went away meanwhile
                     continue
             return False
+
+    async def upload_not_kept(self) -> str | None:
+        """The name of a file the page shows as uploaded though its own upload fields stayed empty (EMD's Phenom,
+        issue #112, note 28: the resume's name and a Delete link, with every hidden field it keeps the upload in
+        empty, so its Next did nothing), or None: the page's hidden fields named for the resume, two or more, all
+        empty, with a file sent into a file box of the page."""
+        async with self._lock:
+            page = await self.page()
+            for frame in page.frames:
+                try:
+                    if name := await frame.evaluate(UPLOAD_NOT_KEPT_JS):
+                        return str(name)
+                except PlaywrightError:  # a frame that went away meanwhile
+                    continue
+            return None
 
     async def peek(self, tab: Page, max_chars: int = 4000) -> tuple[dict[str, Any], str]:
         """What a tab shows (its fields, buttons, text and any CAPTCHA), read without making it
@@ -1947,13 +1966,32 @@ class BrowserSession:
             while state["entries"] < count and clicks < count + 2:
                 if not state["buttons"]:
                     break
-                try:
-                    await frame.locator(f'[data-ja-id="{state["buttons"][-1]["id"]}"]').click(timeout=5000)
-                except PlaywrightTimeout:
-                    # something drawn over it (Nikon's UKG Pro, live, Oct 2026: the error ended the whole
-                    # application): left as it is, as a press beneath a note or a dialog may not be its
-                    covered = True
+                pressed = False
+                for attempt in range(1, ADD_TRIES + 1):
+                    button = frame.locator(f'[data-ja-id="{state["buttons"][-1]["id"]}"]')
+                    try:
+                        await button.click(timeout=ADD_PRESS_TIMEOUT)
+                        pressed = True
+                        break
+                    except PlaywrightTimeout:
+                        # something drawn over it (Nikon's UKG Pro, live, Oct 2026: the error ended the whole
+                        # application). A toast or a re-render clears in a moment (Workday's My Experience, note 32:
+                        # "added 1 work block(s)", then the rest left off): the button is scrolled to the middle of the
+                        # page and looked at again, the page given longer each time, then pressed again. A cover that
+                        # stays is left as it is, as a press beneath a note or a dialog may not be its: never
+                        # pressed through
+                        covered = attempt == ADD_TRIES
+                        if covered:
+                            break
+                        if await _covered(button):
+                            await page.wait_for_timeout(ADD_COVER_WAIT * attempt)
+                        state = await frame.evaluate(ENTRIES_JS, kind_pattern)
+                        if state["entries"] >= count or not state["buttons"]:
+                            break  # (the blocks came by themselves, or the button is gone: the loop's to say)
+                if covered:
                     break
+                if not pressed:
+                    continue
                 clicks += 1
                 await page.wait_for_timeout(600)
                 new = await frame.evaluate(ENTRIES_JS, kind_pattern)
