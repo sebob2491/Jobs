@@ -1,0 +1,46 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Apply</title></head>
+<body>
+<!-- like Robert Half's Workday Application Questions (run 59, Oct 13, a returning candidate): the person's answers to
+     "What is your desired Compensation?" and the non-compete question went in, and its Next came back to the same step
+     with Workday's "Errors Found" heading and those lists on "Select One" again. The desk kept each answer to the page
+     it first went in on, and the heading made it another page: the answers were never put back, and the questions
+     were asked round after round. Here the first Next loses the compensation list's answer (and says so); the second
+     goes on to the review page. -->
+<ol aria-label="Application Progress">
+  <li data-automation-id="progressBarActiveStep">current step 3 of 5 Application Questions</li>
+  <li>Voluntary Disclosures</li><li>Review</li>
+</ol>
+<div id="errors"></div>
+<h2>Application Questions</h2>
+<form id="q" onsubmit="return false">
+  <label for="comp">What is your desired Compensation?*</label>
+  <select id="comp" required><option value="">Select One</option><option>$35,000-$50,000</option>
+    <option>$50,000-$75,000</option><option>Negotiable</option></select>
+  <label for="nc">Have you ever entered in to a non-compete agreement or any other agreement to restrict your employment?*</label>
+  <select id="nc" required><option value="">Select One</option><option>Yes</option><option>No</option></select>
+</form>
+<button type="button" id="next">Next</button>
+<script>
+  let presses = 0;
+  document.getElementById('next').addEventListener('click', () => {
+    const comp = document.getElementById('comp'), nc = document.getElementById('nc');
+    if (!comp.value || !nc.value) {
+      document.getElementById('errors').innerHTML = '<h3>Errors Found</h3><a href="#comp">Error-What is your desired '
+        + 'Compensation?</a>';
+      return;
+    }
+    presses += 1;
+    if (presses === 1) {  // (the site lost what was picked)
+      comp.value = '';
+      document.getElementById('errors').innerHTML = '<h3>Errors Found</h3><a href="#comp">Error-What is your desired '
+        + 'Compensation?</a>';
+      return;
+    }
+    document.body.innerHTML = '<div>current step 5 of 5</div><h2>Review</h2>'
+      + '<form onsubmit="return false"><button type="submit">Submit</button></form>';
+  });
+</script>
+</body>
+</html>

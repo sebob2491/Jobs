@@ -2459,8 +2459,10 @@ class Applier:
             by_id = {fid: placed if (placed := placed_key(f)) in run.once else question_key(f.get("label") or "")
                      for fid, f in fields.items()}
             # an answer stays with the page it first went in on: "If yes, please explain" about
-            # relatives isn't the answer to a later page's "If yes, please explain"
-            here = _page_key(data)
+            # relatives isn't the answer to a later page's "If yes, please explain" (the same step with its errors
+            # shown is the same page: Robert Half's Workday, run 59, came back with "Errors Found" over it and an
+            # answer lost, which was never put back)
+            here = _answers_page(data)
             if attempt == 0:  # (an answer that is the site's first choice a list shows: the person's now, never asked
                 # again for being the site's: the review of 0.3.138)
                 same = [fid for fid, key in by_id.items() if key in run.once and run.once_page.get(key, here) == here
@@ -4509,6 +4511,16 @@ def _boxes(data: dict[str, Any]) -> int:
 def _page_key(data: dict[str, Any]) -> tuple:
     """Which page of an application this is: its address and headings."""
     return _bare(data.get("url") or ""), tuple(data.get("headings") or [])
+
+
+# A heading the page shows over its own step when something on it is wrong (Workday's "Errors Found")
+_ERRORS_HEADING = re.compile(r"^(?:\d+\s+)?errors?\s+(?:found|on (?:this|the) page)\b", re.I)
+
+
+def _answers_page(data: dict[str, Any]) -> tuple:
+    """The page an answer the person gave went in on (_fill_once): _page_key without an errors heading, which
+    the same step shows once it's pressed with something wrong (Workday's "Errors Found")."""
+    return _bare(data.get("url") or ""), tuple(h for h in data.get("headings") or [] if not _ERRORS_HEADING.match(h.strip()))
 
 
 def _code_only_submit(data: dict[str, Any]) -> dict[str, Any] | None:

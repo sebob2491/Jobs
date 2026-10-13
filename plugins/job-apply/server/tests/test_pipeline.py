@@ -2369,6 +2369,34 @@ def test_a_step_whose_sections_never_finish_loading_is_reloaded_once_then_said(s
         assert "didn't finish loading" in r.reason and "couldn't find the button" not in r.reason, r.reason
 
 
+def test_an_answer_the_site_lost_is_put_back_on_its_own_step_with_workdays_errors_found(srv, monkeypatch):
+    """Robert Half's Workday (run 59): the person's answers to its compensation and non-compete lists went in, and Next
+    came back to the same step with "Errors Found" over it and the compensation list on "Select One" again. Each answer
+    is kept to the page it first went in on, and the heading made the step another page: the answer was never put
+    back, and the question was asked round after round. The step is the same step with its errors shown."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 1)
+    job = srv.add_job(url=fixture_url("site/workday-answers-lost.html"), title="Talent Manager",
+                      company="Example Staffing")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        r = applier.enqueue(job["id"])
+        r.seen_form = True  # (past My Information and My Experience)
+        r.once[pipeline.question_key("What is your desired Compensation?*")] = "Negotiable"
+        r.once[pipeline.question_key("Have you ever entered in to a non-compete agreement or any other agreement to "
+                                     "restrict your employment?*")] = "No"
+        applier.start()
+        try:
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert r.status == "ready", (r.status, r.need, r.reason, [q.get("label") for q in r.questions], r.log)
+
+
 def test_a_first_step_that_thanks_the_person_isnt_taken_for_a_confirmation(srv, monkeypatch):
     """A careers site's first step thanks the person ("Thanks for applying to Acme!") over its required
     First Name and Email and their Next, and its footer asks them to join its talent community. Back on
