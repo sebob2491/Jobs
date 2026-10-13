@@ -2075,6 +2075,8 @@ def test_a_step_waiting_on_a_tax_credit_screening_says_so_and_leaves_it_to_the_p
     r = run(go())
     assert r.status == "needs_you" and r.need == "stuck", (r.status, r.reason, r.log)
     assert "tax credit screening" in r.reason and "Complete Tax Credit Screening Questionnaire" in r.reason, r.reason
+    # (the review's) what else the page says is said too
+    assert "the page also says: Please enter a valid start date for your last job" in r.reason, r.reason
 
 
 def test_a_resume_parse_notice_is_not_an_error(srv, monkeypatch):

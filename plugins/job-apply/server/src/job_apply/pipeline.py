@@ -2100,12 +2100,17 @@ class Applier:
                             continue
                     if test := _assessment_button(data):  # (a step waiting on the applicant's assessment)
                         return await self._assessment_pause(run, data, test)
-                    if form := _screening_button(data):  # (a step waiting on a questionnaire about the applicant)
+                    form = _screening_button(data)
+                    if form or _SCREENING_SAID.search(" ".join(problems)):
+                        # (a step waiting on a questionnaire about the applicant; what else the page says, said too:
+                        # the review's)
                         await self._bring_forward(run)
+                        also = "; ".join(p for p in problems if not _SCREENING_SAID.search(p))[:240].rstrip(" .")
                         return self._pause(run, "stuck", f"{_site(run, data)} wants its tax credit screening filled in "
-                                           f"before the application goes on (its \u201c{form}\u201d): questions about "
-                                           "you that only you can answer. Fill it in in the browser window, then press "
-                                           "Resume.")
+                                           "before the application goes on" + (f" (its \u201c{form}\u201d)" if form else "")
+                                           + ": questions about you that only you can answer. Fill it in in the browser "
+                                           "window" + (f" (the page also says: {also})" if also else "")
+                                           + ", then press Resume.")
                     errors = "; ".join(problems)[:300].rstrip(" .")
                     return self._pause(run, "stuck", "The page didn't move on" + (f": {errors}." if errors else ".")
                                        + " Fix it in the browser, then press Resume.")
@@ -4058,6 +4063,11 @@ _ASSESSMENT = re.compile(r"^(?:take|start|begin|launch|complete|go to)\s+(?:the\
 _SCREENING = re.compile(r"^\W*(?:required\s+)?(?:complete|start|take|begin|launch|go to|open)\s+(?:the\s+|your\s+|an?\s+)?"
                         r"(?:employment\s+)?(?:tax credit|wotc)(?:\s+screening)?(?:\s+(?:questionnaire|survey|form))?$",
                         re.I)
+
+
+# What a step's errors say when it waits on that questionnaire ("...the following section: Employment Tax Credit
+# Screening"), where its link isn't one the form reader lists
+_SCREENING_SAID = re.compile(r"\btax credit screening\b|\bwotc\b", re.I)
 
 
 def _screening_button(data: dict[str, Any]) -> str:
