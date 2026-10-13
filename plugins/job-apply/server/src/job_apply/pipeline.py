@@ -1793,7 +1793,7 @@ class Applier:
                         if added.get("add_button_covered"):
                             self._log(run, f"couldn't press the {section} section's Add button: something on the page "
                                       "covers it, so its blocks are left as they are")
-                        self._note_short_entries(run, section, added)
+                        self._note_short_entries(run, section, added, data)
                 result = await srv.autofill(job_id=run.job_id)
                 if result["filled"]:
                     self._log(run, f"filled {len(result['filled'])} field(s) on {_where(data)}")
@@ -2396,11 +2396,13 @@ class Applier:
                   "the desk never picks a degree you didn't earn (your resume still shows the classes)")
         return True
 
-    def _note_short_entries(self, run: Run, section: str, added: dict[str, Any]) -> None:
+    def _note_short_entries(self, run: Run, section: str, added: dict[str, Any], data: dict[str, Any]) -> None:
         """A section whose Add button stayed covered, with fewer blocks on the page than the profile has entries
         (Workday's My Experience, issue #112, note 32: 2 of 5 jobs reached the form, and on another site the job went
-        on to its review page with its school missing), is remembered on the run: the job stops for it."""
-        after, wanted = added.get("after", 0), added.get("wanted", 0)
+        on to its review page with its school missing), is remembered on the run: the job stops for it. Its blocks
+        are counted by their own Deletes too: UKG Pro's, filled from the resume, have no numbered heading ("Delete
+        Work Experience 1"; run 44 stopped Nikon, UCT and Desert Financial on "0 of your 1 job")."""
+        after, wanted = max(added.get("after", 0), _blocks_by_delete(data, section)), added.get("wanted", 0)
         if not added.get("add_button_covered") or after >= wanted:
             run.entries_short.pop(section, None)
             return
@@ -4351,6 +4353,16 @@ def _sent_already(data: dict[str, Any], text: str, moved: bool) -> str:
     if moved and (gone := sorted(confirmations(text))) and not _mid_application(data, text):
         return gone[0]
     return _applied_before(data, text)
+
+
+_BLOCK_KINDS = {"work": r"work|experience|employment|employer|job|position",
+                "education": r"education|school|college|university|degree"}
+
+
+def _blocks_by_delete(data: dict[str, Any], section: str) -> int:
+    """How many of a section's blocks the page shows, by their own numbered Delete ("Delete Education 2")."""
+    kind = re.compile(rf"^(?:delete|remove)\b.*\b(?:{_BLOCK_KINDS.get(section, section)})\w*\b.*?(\d+)\s*$", re.I)
+    return len({m.group(1) for a in data.get("actions") or [] if (m := kind.match(final_text(a.get("text") or "")))})
 
 
 def _applied_before(data: dict[str, Any], text: str) -> str:
