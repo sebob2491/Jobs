@@ -4,6 +4,7 @@ from job_apply.autofill import (
     choose_option,
     clean_label,
     choose_place,
+    is_decline,
     is_empty_value,
     place_words,
     plan_autofill,
@@ -1382,6 +1383,27 @@ def test_a_decline_finds_the_lists_own_way_to_decline_and_is_never_a_no():
         assert choose_option(said, ["Female", "Male"]) is None, said
     # a "no" about something else than answering is an answer, not a decline
     assert choose_option("No", ["Yes, I am willing to relocate", "I do not wish to relocate"]) == "I do not wish to relocate"
+
+
+def test_a_decline_is_found_where_workday_names_each_choice_with_its_country():
+    """Probe 48 (Oct 13): Workday names each self-identification choice with the form's country, "Undeclared (United
+    States of America)", so its declines weren't found, and Air Products' gender and ASML's race lists were asked
+    of the person whose profile declines. A choice's own words are read without that aside; an answer is never a
+    decline for it."""
+    gender = ["Select One", "Female (United States of America)", "Male (United States of America)",
+              "Non-Binary (United States of America)", "Undeclared (United States of America)"]
+    race = ["Select One", "American Indian or Alaska Native (United States of America)", "Asian (United States of America)",
+            "Hispanic or Latino (United States of America)", "Not Declared (United States of America)",
+            "Not Specified (United States of America)", "Two or More Races (United States of America)",
+            "White (United States of America)"]
+    assert choose_option("Decline to self-identify", gender) == "Undeclared (United States of America)"
+    assert choose_option("I don't wish to answer", race) == "Not Declared (United States of America)"
+    assert choose_option("Female", gender) == "Female (United States of America)"
+    assert not is_decline("Female (United States of America)") and not is_decline("Asian (Not Declared)")
+    # only a country is put aside: a bracket that holds an answer is read (the review's: gender X)
+    assert not is_decline("Unspecified (X)")
+    assert choose_option("Decline to self-identify", ["Male", "Female", "Unspecified (X)", "Decline to answer"]) == \
+        "Decline to answer"
 
 
 def test_an_answer_is_never_a_refusal_to_answer():
