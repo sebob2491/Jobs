@@ -124,3 +124,15 @@ def test_a_runs_scrubbed_stop_pages_are_imported_into_the_tests(tmp_path):
     assert ns.import_fixtures(tmp_path, [], into) == []  # (onsemi's is there already)
     assert ns.import_fixtures(tmp_path, [], into, replace=True) == ["pipeline-kla", "pipeline-onsemi"]
     assert (into / "pipeline-onsemi.expect.json").read_text(encoding="utf-8") == '{"fields": []}'
+
+
+def test_the_employers_the_desk_goes_all_the_way_at_are_the_accounts_checks_finished_ones():
+    """data/desk_handled.yaml (the desk's "Only where the desk goes all the way", Oct 12): the accounts check's
+    employers at their review page, or filled up to the site's own last button; not one whose account waits on
+    the person's password as they apply, nor one stopped anywhere else."""
+    state = {"accounts": {"Intel": "ready", "Arizona Public Service": "needs_you your_submit",
+                          "Qorvo": "needs_you your_submit", "Aerotek": "needs_you bot_check"}}
+    detail = {"accounts": {"Arizona Public Service": "Analyst · Filled. Its button that sends the application reads "
+                                                     "“Apply”: check it, then press it.",
+                           "Qorvo": "Technician · Choose a password for its account, then press its Apply."}}
+    assert ns.handled(state, detail) == ["Arizona Public Service", "Intel"]

@@ -29,6 +29,9 @@ the scrubber (`python -m job_apply.fixtures`) before they become test fixtures.
 - `data/question_bank.yaml`: the common questions the desk's "Common questions" card asks once (answers go to the
   person's own `answers.yaml` with the entry's pattern). `scripts/question_bank.py <run's artifacts>` lists the
   questions a nightly asked that no entry covers yet. Only questions whose answer is the person's own everywhere.
+- `data/desk_handled.yaml`: the employers where the desk goes all the way (the live check's test applicant reached
+  the review page there), for the desk's "Only where the desk goes all the way" switch. Refresh it before a release
+  from the last full nightly (`scripts/nightly_summary.py --handled`), plus employers a probe since has taken there.
 - `skills/`: the plugin's skills (setup, apply, find-jobs, desk, track-responses,
   interview-prep). `templates/`: profile and companies templates.
 

@@ -597,7 +597,7 @@ def test_the_tailoring_switch_is_kept_and_its_waiting_jobs_listed(srv, job_apply
             h = {"x-desk-token": desk.token}
             async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{desk.port}", timeout=20, trust_env=False) as c:
                 r = await c.post("/api/settings", headers=h, json={"tailor_resumes": True})
-                assert r.json() == {"auto_submit": False, "tailor_resumes": True}
+                assert r.json() == {"auto_submit": False, "tailor_resumes": True, "handled_only": False}
                 await desk.applier.stop()  # hold the queue still while the waiting job is set up
                 desk.applier.runs[job["id"]] = Run(job["id"], "FSE", "Example Fab", status="needs_you", need="tailor")
                 state = (await c.get("/api/state", headers=h)).json()
@@ -611,6 +611,49 @@ def test_the_tailoring_switch_is_kept_and_its_waiting_jobs_listed(srv, job_apply
     run(go())
     assert json.loads((job_apply_home / "desk.json").read_text())["tailor_resumes"] is True
     assert Desk(srv).applier.tailor is True  # still on next time the desk opens
+
+
+def test_only_where_the_desk_goes_all_the_way_shows_those_employers_alone_and_is_kept(srv, job_apply_home):
+    """The owner (Oct 12): a switch to show only the openings where the plugin works all the way. The employers
+    are the live check's (data/desk_handled.yaml: a test applicant reached the review page there); their openings
+    carry a chip, the switch hides the rest (and drops them from what's picked), and it's kept for next time."""
+    from playwright.async_api import async_playwright
+
+    from job_apply import config
+
+    assert "intel" in config.handled_employers() and "example fab" not in config.handled_employers()
+    fit = {"score": 80, "reasons": [], "concerns": [], "blocked": False, "recommended": True}
+    desk = Desk(srv)
+    desk.listings = [{"company": "Intel", "title": "Module Equipment Technician", "url": "https://example.com/intel",
+                      "location": "Phoenix, AZ", "fit": fit},
+                     {"company": "Example Fab", "title": "Field Service Engineer", "url": "https://example.com/fab",
+                      "location": "Phoenix, AZ", "fit": fit}]
+    desk.applier.start = lambda: None  # the queue isn't worked in this test
+    desk.search.update(status="done", at=time.time())  # recent, so opening the page doesn't search the real sites
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with async_playwright() as pw:
+                browser = await pw.chromium.launch(**launch_options())
+                page = await browser.new_page()
+                await page.goto(desk.url)
+                await page.wait_for_selector("text=Field Service Engineer")
+                row = page.locator("li.row", has_text="Module Equipment Technician")
+                assert await row.locator(".chip.handled").count() == 1
+                assert await page.locator("li.row", has_text="Field Service Engineer").locator(".chip.handled").count() == 0
+                await page.click("text=Select recommended")
+                await page.check("#handled-only")
+                await page.wait_for_selector("text=Field Service Engineer", state="detached")
+                assert await page.locator("text=Module Equipment Technician").count() == 1
+                assert await page.locator("#apply").inner_text() == "Apply to 1 selected"
+                await browser.close()
+        finally:
+            await desk.stop()
+
+    run(go())
+    assert json.loads((job_apply_home / "desk.json").read_text())["handled_only"] is True
+    assert Desk(srv).handled_only is True  # still on next time the desk opens
 
 
 def test_tailoring_queue_hands_claude_the_jobs_and_the_real_resume(srv, job_apply_home):

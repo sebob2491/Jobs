@@ -98,6 +98,9 @@ The desk is a local web page served by this plugin. It does what the `find-jobs`
 - **A newer version**: the desk looks at the plugin's published version when it starts and
   every few hours, and says when a newer one is out, with the two update commands (then a
   restart of the Claude app). Best done between runs. `JOB_APPLY_NO_UPDATE_CHECK=1` turns the look off.
+- **Only where the desk goes all the way** shows only openings at employers where the
+  plugin's live check took a test applicant to the review page (a chip marks them in
+  the list either way). Bot checks, CAPTCHAs and steps it can't do yet are elsewhere.
 - **Tailor my resume for each job** holds each picked job, before its browser tab
   opens, until Claude has written a resume for it (see Tailoring resumes). The page
   says how many are waiting. **Use my usual resume** sends one on without.
