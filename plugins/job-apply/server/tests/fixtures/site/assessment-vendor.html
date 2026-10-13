@@ -4,7 +4,8 @@
 <body>
 <!-- an assessment vendor's pages: an introduction with Start, a page of questions (a scale of agreement for each)
      with Next, a last page (a list and a box) with Submit, which goes back to the application (?back=). A page whose
-     questions aren't all answered stays, saying so -->
+     questions aren't all answered stays, saying so. ?boxes: its question page is Circle K's (run 60): "1 Question", its
+     "Answers" a row of boxes to tick one of, and its Next drawn only once one is ticked -->
 <h1 id="h">Work Styles Assessment</h1>
 <form id="f" onsubmit="return false"></form>
 <div id="err" role="alert"></div>
@@ -15,9 +16,13 @@
   const radios = (n, text) => `<fieldset><legend>${text}</legend>` + scale.map((s, i) =>
     `<label><input type="radio" name="q${n}" value="${i}"> ${s}</label>`).join('') + '</fieldset>';
   let page = 0;
+  const choose = () => '<h2>1 Question</h2><p>How often do you finish what you start?</p><h3>Answers</h3>'
+    // (?boxes=apart: each box its own, as Circle K's read)
+    + ['Always', 'Often', 'Sometimes', 'Never'].map((a, i) => `<label><input type="checkbox" name="${q.get('boxes') === 'apart' ? 'a' + i : 'a'}" value="${i}"> ${a}</label>`)
+      .join('') + '<button type="button" class="go" hidden>Next</button>';
   const pages = [
     () => '<p>This assessment takes about 5 minutes.</p><button type="button" class="go">Start</button>',
-    () => radios(1, 'I like to plan my work ahead.') + radios(2, 'I stay calm under pressure.')
+    q.has('boxes') ? choose : () => radios(1, 'I like to plan my work ahead.') + radios(2, 'I stay calm under pressure.')
       + radios(3, 'I enjoy working with customers.') + '<button type="button" class="go">Next</button>',
     () => '<label for="shift">Which shift suits you best?</label><select id="shift"><option value="">Select one</option>'
       + '<option>Morning</option><option>Evening</option><option>Night</option></select>'
@@ -27,9 +32,14 @@
   function draw() {
     f.innerHTML = pages[page]();
     document.getElementById('err').textContent = '';
+    f.querySelectorAll('input[type=checkbox]').forEach((b) => b.addEventListener('change', () => {
+      f.querySelector('.go').hidden = !f.querySelector('input[type=checkbox]:checked');
+    }));
     f.querySelector('.go').addEventListener('click', () => {
+      const ticked = f.querySelectorAll('input[type=checkbox]:checked').length;
       const missing = [...f.querySelectorAll('fieldset')].some((fs) => !fs.querySelector('input:checked'))
-        || [...f.querySelectorAll('select, input:not([type=radio])')].some((b) => !b.value);
+        || [...f.querySelectorAll('select, input:not([type=radio]):not([type=checkbox])')].some((b) => !b.value)
+        || (f.querySelector('input[type=checkbox]') && ticked !== 1);
       if (missing) { document.getElementById('err').textContent = 'Please answer every question.'; return; }
       if (page === pages.length - 1) { location.href = q.get('back'); return; }
       page += 1;

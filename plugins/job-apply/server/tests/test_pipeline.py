@@ -1543,6 +1543,33 @@ def test_a_data_privacy_statements_link_and_its_long_text_are_told_from_the_rest
         assert notice("Data Privacy Consent Statement", statement + " " + waiver) == (False, False), waiver
 
 
+def test_a_create_account_drawn_a_moment_after_its_link_is_waited_for(srv, monkeypatch, job_apply_home):
+    """Edwards Vacuum's SuccessFactors (run 60): after its saved password was refused, the desk pressed "Don't have an
+    account yet?", read the sign-in page again at once (the Create Account form comes a few seconds later), pressed the
+    link again (which starts it over) and stopped: "Sign in (or create your account)". The page is given a moment to
+    change after Create Account is pressed, and the form that comes is filled."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    saved_password(monkeypatch)
+    manage_accounts(job_apply_home)
+    job = srv.add_job(url=fixture_url("site/signin-slow-create.html"), title="Field Service Engineer",
+                      company="Example Vacuum")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r, await r.page.evaluate("() => [sessionStorage.getItem('slow.create'), sessionStorage.getItem('slow.made')]")
+        finally:
+            await applier.stop()
+
+    r, (presses, made) = run(go())
+    assert presses == "1", (presses, r.log)
+    assert any(line.startswith("pressed “Submit” to create your account") for line in r.log), (r.reason, r.log)
+    assert made == "1", (r.status, r.reason, r.log)
+
+
 def as_test_identity(monkeypatch, job_apply_home, email="sam.rivera@example.com"):
     """The nightly live check's switches on (live_smoke.py --test-identity), with `email` as the test
     identity's: the conftest profile's own makes it the test identity, in practice mode."""
@@ -1758,6 +1785,35 @@ def test_an_agreement_a_bot_check_holds_is_said_to_be_the_persons(srv, monkeypat
     assert any(line.startswith("agreed to Example Financial's “I Acknowledge the Privacy Notice”") for line in r.log), r.log
     assert (r.status, r.need) == ("needs_you", "stuck"), (r.status, r.reason, r.log)
     assert "I pressed “I Acknowledge the Privacy Notice” for you" in r.reason and f"({check})" in r.reason, r.reason
+    assert "couldn't find the button" not in r.reason
+
+
+def test_after_a_resume_an_agreement_a_bot_check_holds_is_still_said_to_be_the_persons(srv, monkeypatch, job_apply_home):
+    """Charles Schwab's iCIMS in the live check (run 57): after the person's Resume, the greyed "I Acknowledge the Privacy
+    Notice" behind the page's hCaptcha (pressed on the pass before) read as a page with no way on: "I couldn't find the
+    button". It's the bot check's, on any pass."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 1)
+    job = srv.add_job(url=fixture_url("site/icims-privacy-gate.html") + "?bot&keep", title="Analyst",
+                      company="Example Financial")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            first = r.reason
+            r = applier.resume(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return first, r
+        finally:
+            await applier.stop()
+
+    first, r = run(go())
+    assert "I pressed “I Acknowledge the Privacy Notice” for you" in first, first
+    assert (r.status, r.need) == ("needs_you", "stuck"), (r.status, r.reason, r.log)
+    assert "is greyed out, and the page is protected by a bot check (hCaptcha)" in r.reason, r.reason
     assert "couldn't find the button" not in r.reason
 
 
@@ -3317,6 +3373,33 @@ def test_a_workday_account_is_said_made_only_once_its_sign_in_gets_in(srv, monke
     pressed = [line for line in r.log[:signed_in] if line.startswith("pressed \u201cCreate Account\u201d")]
     assert len(pressed) == 1 and "after ticking \u201cYes, I confirm that I have read the privacy notice.\u201d" in pressed[0]
     assert r.seen_form, (r.reason, r.log)
+
+
+def test_a_create_account_shown_again_after_the_account_was_made_goes_to_its_sign_in(srv, monkeypatch, job_apply_home):
+    """Applied Materials' Workday (run 60): the account was made and signed in, then Workday's "something went wrong"
+    refresh signed the applicant out and showed Create Account again; the desk filled it and stopped ("it wants
+    something more"), as a Create Account is never pressed twice for a job. The account is made: its Sign In is the
+    way back in."""
+    saved_password(monkeypatch)
+    manage_accounts(job_apply_home)
+    run(srv.open_application(url=fixture_url("site/workday-account.html") + "?create"))
+    data = run(srv.inspect_form(include_dropdown_options=False))
+    applier = Applier(srv)
+    r = Run(1, "FSE", "Example Fab")
+    r.accounts_tried, r.account_in = 1, True  # (made, and signed in to: the desk said so)
+    tried: dict = {}
+    assert run(applier._sign_in(r, data, tried)) == "email_step", r.log
+    assert "your account there is made already, so I went to its Sign In" in r.log
+    now = run(srv.inspect_form(include_dropdown_options=False))
+    assert sum(f.get("kind") == "password" for f in now["fields"]) == 1, now["fields"]  # (Sign In's one password box)
+    # (and an account not made for this job, or only pressed for and not yet signed in to: its Create Account is
+    # filled, as before, and what the site wants of it is said: the review of 0.3.148)
+    for made in ("", "created your account on Workday with your saved password"):
+        run(srv.open_application(url=fixture_url("site/workday-account.html") + "?create"))
+        data = run(srv.inspect_form(include_dropdown_options=False))
+        other = Run(2, "FSE", "Example Fab")
+        other.account_made = made
+        assert run(applier._sign_in(other, data, {})) == "prefilled", made
 
 
 def test_an_assessment_step_is_said_to_be_the_applicants(srv, monkeypatch, job_apply_home):

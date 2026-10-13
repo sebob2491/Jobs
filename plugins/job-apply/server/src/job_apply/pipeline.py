@@ -450,6 +450,7 @@ class Run:
     reset_from: str = ""  # the sign-in page a reset was asked from: back there once it's done elsewhere
     reset_waited: bool = False  # paused for the reset email (a Resume after that means it's done)
     refreshed: bool = False  # reloaded once for a page that asked for it ("Please refresh the page")
+    account_in: bool = False  # an account made for this job, and signed in to (Run.account_made said)
     load_reloaded: bool = False  # reloaded once for a step still loading after its wait (Workday's placeholders, run 57)
     invalid_redone: bool = False  # the review page's invalid lists answered again from the profile (once a job)
     reset_no_mail: bool = False  # and none came in RESET_MAIL_WAIT: no account there, most likely, so one is made
@@ -503,7 +504,7 @@ class Run:
         return {k: v for k, v in self.__dict__.items() if k not in ("page", "tab_mark", "cookies_asked", "resetting",
                                                                      "reset_asked", "reset_from", "reset_waited",
                                                                      "reset_no_mail", "reopened_elsewhere", "reopened", "sign_in_tries", "sign_in_key",
-                                                                     "accounts_tried", "account_made", "account_page",
+                                                                     "accounts_tried", "account_made", "account_in", "account_page",
                                                                      "account_finished", "verifying", "mail_looks", "mail_last",
                                                                      "entries_short", "entries_told", "entries_ok")}
 
@@ -1635,6 +1636,7 @@ class Applier:
                 # for its Sign In) isn't that, nor the account's own next step
                 self._log(run, run.account_made)
                 run.account_made = ""
+                run.account_in = True
             if str(data.get("url") or "").startswith("chrome-error://"):
                 host = unreached_host(data, text)
                 where = f"{host}, which" if host else "a page that"
@@ -1738,6 +1740,10 @@ class Applier:
                 done = await self._sign_in(run, data, sign_ins, reset_first=reset_first)
                 if done in ("email_step", "submitted", "create_account"):
                     sign_ins[done] = sign_ins.get(done, 0) + 1
+                    if done == "create_account":
+                        # its form a moment after the press (Edwards Vacuum's SAP screen set, run 60: the sign-in read
+                        # again at once, its link pressed again, which starts it over, and the desk stopped)
+                        await self._wait_for_change(data, LATE_BUTTONS_WAIT)
                     continue
                 if done == "refused":
                     run.account_made = ""  # (its sign-in is refused: no account was made)
@@ -2087,6 +2093,17 @@ class Applier:
                     return self._pause(run, "stuck", f"I pressed \u201c{held}\u201d for you (settings.accept_notices), "
                                        "but the page stayed: it may want a box filled or a check passed first. "
                                        "Look at it in the browser window, then press Resume.")
+                # an agreement's button greyed out on a page a bot check guards, not pressed on this pass (Charles Schwab's
+                # iCIMS, run 57, after the person's Resume: read as a page with no way on)
+                badge = _BOT_BADGE.search(" ".join([text, *(a.get("text") or "" for a in data.get("actions") or [])]))
+                greyed_agree = next((a["text"].strip() for a in data.get("actions") or [] if a.get("disabled")
+                                     and not a.get("cookie") and _AGREEMENT.search(a["text"].strip())), "")
+                if badge and greyed_agree:
+                    check = "reCAPTCHA" if "re" in badge.group(0).lower() else "hCaptcha"
+                    return self._pause(run, "stuck", f"\u201c{greyed_agree}\u201d is greyed out, and the page is protected "
+                                       f"by a bot check ({check}), which may want you to show you're not a robot; or the "
+                                       "page wants a box ticked or its text read to the end first. Those are yours: look "
+                                       "at it in the browser window, then press Resume.")
                 if run.reset_from and not run.reopened_elsewhere and _no_sign_in_here(run, data) and _job_search(data):
                     # mid sign-in, the site's session gone, on its job search with no way on (Edwards' SuccessFactors
                     # after the reset email's wait, the probe of Oct 12, without the desk going back): the job opened
@@ -2438,6 +2455,16 @@ class Applier:
             await asyncio.sleep(1)
             data, _ = await self._look()
             if (data.get("url"), tuple(data.get("headings") or [])) != key[:2]:
+                return True
+        return False
+
+    async def _wait_for_change(self, before: dict[str, Any], seconds: float) -> bool:
+        """Wait for the page to be other than `before` (its address, headings or boxes). True once it is."""
+        deadline = time.monotonic() + seconds
+        while time.monotonic() < deadline:
+            await asyncio.sleep(0.5)
+            now, _ = await self._look()
+            if _page_sig(now) != _page_sig(before):
                 return True
         return False
 
@@ -3572,6 +3599,23 @@ class Applier:
         if not address or not 1 <= len(passwords) <= 2:
             return None
         new_account = len(passwords) == 2 or signing_up
+        if new_account and run.account_in and not tried.get("to_sign_in"):
+            # the account made for this job already, and signed in to (never one only pressed for: a form the site turned
+            # down is said for what it wants, the review of 0.3.148), its Create Account on show again (Applied Materials'
+            # Workday, run 60: signed out by its "something went wrong" refresh, it showed Create Account, and the desk
+            # filled it and stopped): its own Sign In is the way back in, never a second account. The form's own link
+            # first ("Already have an account? Sign In"), then the page's; never another site's sign-in
+            ways = [a for a in actions if not a.get("cookie") and not _SOCIAL.search(a["text"])
+                    and re.match(r"^(sign|log) ?in$", a["text"].strip(), re.I)]
+            way = next((a for a in ways if a.get("in_account_form") or a.get("after_password")), None) or next(iter(ways), None)
+            if way is not None:
+                tried["to_sign_in"] = 1
+                try:
+                    await srv.click(way["id"])
+                except KeyError:
+                    return None
+                self._log(run, "your account there is made already, so I went to its Sign In")
+                return "email_step"
         if not boxes:
             # No box for the email: the password alone only on a sign-in that shows it knows who's signing in
             # ("Signing in as <email>", as Workday's after its own password reset may: issue #112, note 14),
