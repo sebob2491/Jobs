@@ -581,6 +581,8 @@ class Applier:
         self.tasks: deque[tuple[str, int]] = deque()
         self.auto_submit = False
         self.tailor = False  # hold each job until Claude has written a resume for it
+        # The person pressed Pause queue: no new job starts until Resume queue (in memory, like the queue it holds).
+        self.paused = False
         self.current: int | None = None
         # The bot check the person is solving in the desk's round (Bot checks: "Solve them"), and since when: while
         # it waits, no other job is started (nothing opens over the tab they're at), and the solved one is noticed
@@ -659,6 +661,17 @@ class Applier:
 
     def wake(self) -> None:
         """Look again now (a tailored resume was just written)."""
+        self._wake.set()
+
+    def pause_queue(self) -> None:
+        """The person pressed Pause queue: the job under way finishes its pass, and none starts after it
+        until Resume queue (issue #112, note 36: a queue of about 90 had no way to stop but quitting Claude
+        Code, which broke the job in progress). A Submit they press still goes, and the tabs left waiting
+        are still watched."""
+        self.paused = True
+
+    def resume_queue(self) -> None:
+        self.paused = False
         self._wake.set()
 
     def set_tailor(self, on: bool) -> None:
@@ -889,6 +902,10 @@ class Applier:
             # with a job left waiting on the person, look at its tab again soon
             await self._sleep(POLL_SECONDS if any(r.left and r.status == "needs_you" for r in self.runs.values()) else 30)
             return
+        if self.paused and submit is None:  # (a Submit the person pressed is their own press: it still goes)
+            self._wake.clear()
+            await self._sleep(POLL_SECONDS)
+            return
         if submit is None and self._in_round():
             return  # a round begun meanwhile (the desk's Solve them): nothing started over the tab the person is at
         task = submit or self.tasks[0]
@@ -908,8 +925,11 @@ class Applier:
             if run.status != "skipped":
                 run.status, run.need = "failed", ""
                 run.reason = f"Something went wrong: {type(e).__name__}: {str(e).splitlines()[0][:200] if str(e) else ''}"
-                if run.page is not None and self.srv.browser.lost(run.page) == "crashed":  # (Playwright: "Page crashed")
+                lost = self.srv.browser.lost(run.page) if run.page is not None else ""
+                if lost == "crashed":  # (Playwright: "Page crashed")
                     run.reason = "Its tab crashed. Press Resume to start this application again."
+                elif lost == "browser":  # (Playwright: "Target page, context or browser has been closed", issue #112, note 36)
+                    run.reason = "The automation browser was closed. Press Resume to start this application again."
                 self._log(run, run.reason)
                 logging.getLogger(__name__).warning("job %s stopped on an error", run.job_id, exc_info=True)
         finally:

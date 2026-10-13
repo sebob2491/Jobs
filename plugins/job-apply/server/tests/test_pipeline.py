@@ -5215,6 +5215,106 @@ def test_a_tab_that_crashes_while_its_job_runs_is_opened_again_on_resume(srv, mo
     assert any(line.startswith("its tab crashed, so I opened the job again") for line in r.log), r.log
 
 
+def test_a_browser_closed_while_its_job_runs_is_said_so_and_opened_again_on_resume(srv, monkeypatch):
+    """The automation browser closed under a job in progress (issue #112, note 36: the person quit to stop the queue)
+    said "Something went wrong: TargetClosedError: Target page, context or browser has been closed". It says that
+    the browser was closed, and Resume opens the application again in a new one."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    posting = _example_corp(srv, monkeypatch, [])
+    job = srv.add_job(url=posting, title="Field Service Engineer", company="Example Corp")["job"]
+    applier = Applier(srv)
+    real_click = srv.click
+    closed = []
+
+    async def click_then_close(target):
+        out = await real_click(target)
+        if not closed:
+            closed.append(srv.browser.current_tab)
+            await srv.browser.close()
+            await closed[0].title()  # (raises as Playwright does for a page of a browser that's gone)
+        return out
+
+    monkeypatch.setattr(srv, "click", click_then_close)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            said = r.reason
+            applier.enqueue(job["id"], front=True)  # Resume
+            await until(lambda: r.status == "needs_you", about=state(r))
+            return r, said
+        finally:
+            await applier.stop()
+
+    r, said = run(go())
+    assert said == "The automation browser was closed. Press Resume to start this application again.", said
+    assert r.need == "questions" and r.page is not closed[0] and closed[0].is_closed(), (r.reason, r.log)
+
+
+def test_a_paused_queue_starts_no_job_until_it_is_resumed(srv, monkeypatch):
+    """A queue of about 90 jobs had no way to stop but quitting Claude Code, which broke the job in progress
+    (issue #112, note 36). With the queue paused nothing new starts; Resume queue carries on with all of it."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    a_url, b_url = "https://careers.acme-fab.example/apply/1", "https://careers.other-litho.example/apply/2"
+    pages = {a_url: _form("Acme Fab"), b_url: _form("Other Litho")}
+    a = srv.add_job(url=a_url, title="Field Service Engineer", company="Acme Fab")["job"]
+    b = srv.add_job(url=b_url, title="Litho Technician", company="Other Litho")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        await _serve(srv, pages, [])
+        applier.start()
+        try:
+            applier.pause_queue()
+            first, second = applier.enqueue(a["id"]), applier.enqueue(b["id"])
+            await asyncio.sleep(1.5)  # (five polls)
+            held = (first.status, second.status, list(applier.tasks), applier.current)
+            applier.resume_queue()
+            await until(lambda: first.status == second.status == "ready", about=state(second))
+            return held, applier.paused
+        finally:
+            await applier.stop()
+
+    held, paused = run(go())
+    assert held == ("queued", "queued", [("apply", a["id"]), ("apply", b["id"])], None), held
+    assert not paused
+
+
+def test_a_submit_the_person_pressed_still_goes_while_the_queue_is_paused(srv, monkeypatch):
+    """Pause queue holds the jobs that haven't started, not the person's own press of Submit on one that waits on
+    its review page (issue #112, note 36)."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    a_url, b_url = "https://careers.acme-fab.example/apply/1", "https://careers.other-litho.example/apply/2"
+    pages = {a_url: _form("Acme Fab"), b_url: _form("Other Litho")}
+    posts: list[str] = []
+    a = srv.add_job(url=a_url, title="Field Service Engineer", company="Acme Fab")["job"]
+    b = srv.add_job(url=b_url, title="Litho Technician", company="Other Litho")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        await _serve(srv, pages, posts)
+        applier.start()
+        try:
+            first = applier.enqueue(a["id"])
+            await until(lambda: first.status == "ready", about=state(first))
+            applier.pause_queue()
+            second = applier.enqueue(b["id"])
+            applier.submit_now(a["id"])
+            await until(lambda: first.status == "submitted", about=state(first))
+            await asyncio.sleep(1)
+            held = second.status
+            applier.resume_queue()
+            await until(lambda: second.status == "ready", about=state(second))
+            return held
+        finally:
+            await applier.stop()
+
+    held = run(go())
+    assert held == "queued" and posts == ["https://careers.acme-fab.example/posted"], (held, posts)
+
+
 def test_submit_presses_the_applications_button_not_a_footer_alerts_one(srv, monkeypatch):
     """A one-page application, and the site's footer job-alerts box with a "Submit" of its own
     (whose "Thank you for your interest!" reads like a confirmation). The person's Submit

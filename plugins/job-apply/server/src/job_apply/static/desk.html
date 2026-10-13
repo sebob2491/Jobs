@@ -147,6 +147,7 @@ footer { max-width: 1240px; margin: 0 auto; padding: 0 16px 24px; color: var(--m
     <span class="small" id="searched"></span>
     <button class="link" id="notes-btn" data-act="notes" title="Notes the desk took where it stopped on something it most likely got wrong, for you to file" hidden>Notes</button>
     <button class="link" id="alerts" data-act="alerts" hidden>Alert me</button>
+    <button id="pause-btn" data-act="pause" title="The job under way finishes what it is doing; no other job starts until you press Resume queue" hidden>Pause queue</button>
     <button id="find" data-act="find">Find jobs</button>
   </div>
 </header>
@@ -584,7 +585,8 @@ function renderSide() {
   const queued = runs.filter((r) => r.status === "queued").length;
   const workEntries = working.map((r) => ({key: "w" + r.job_id, html: `<div class="task"><h3><span class="spin"></span> ${esc(r.title)} <span class="small">· ${esc(r.company)}</span></h3>
     <ul class="log">${(r.log || []).slice(-4).map((l) => `<li>${esc(l)}</li>`).join("")}</ul>${jobButtons(r, [])}</div>`}));
-  if (queued) workEntries.push({key: "q", html: `<div class="task small">${queued} more queued.</div>`});
+  if (state.paused) workEntries.push({key: "p", html: `<div class="task small">Paused: ${queued} waiting. Press Resume queue to carry on.</div>`});
+  else if (queued) workEntries.push({key: "q", html: `<div class="task small">${queued} more queued.</div>`});
   if (!workEntries.length) workEntries.push({key: "idle", html: `<div class="empty">Idle.</div>`});
   patch($("work"), workEntries);
 
@@ -604,7 +606,7 @@ function renderSide() {
     .map((k) => `<span class="pill ${STATUS[k][1]}">${esc(STATUS[k][0])}: ${c[k]}</span>`).join("") || `<span class="small">No applications tracked yet.</span>`;
   if ($("counts").dataset.html !== counts) { $("counts").innerHTML = counts; $("idle-counts").innerHTML = counts; $("counts").dataset.html = counts; }
   // nothing in any of the three: one short card instead of three saying "nothing"
-  const idle = !needs.length && !working.length && !queued && !done.length;
+  const idle = !needs.length && !working.length && !queued && !done.length && !state.paused;
   $("idle-card").hidden = !idle;
   for (const id of ["needs-h", "work-h", "done-h"]) $(id).closest("section").hidden = idle;
 }
@@ -637,6 +639,11 @@ function renderHeader() {
   const sr = state.search;
   $("find").innerHTML = sr.status === "running" ? `<span class="spin"></span> Searching…` : "Find jobs";
   $("find").disabled = sr.status === "running";
+  // Pause queue while jobs are queued or running; Resume queue (with how many wait) while paused
+  const lined = allRuns(), lineWaits = lined.filter((r) => r.status === "queued").length;
+  $("pause-btn").hidden = !state.paused && !lineWaits && !lined.some((r) => r.status === "running");
+  $("pause-btn").dataset.act = state.paused ? "resume" : "pause";
+  $("pause-btn").textContent = state.paused ? `Resume queue${lineWaits ? ` (${lineWaits} waiting)` : ""}` : "Pause queue";
   const fresh = (state.listings || []).filter((r) => isNew(r) && (r.added || (r.fit && r.fit.recommended))).length;
   $("searched").textContent = sr.status === "failed" ? "Search failed: " + (sr.error || "")
     : sr.at ? "Searched " + ago(sr.at) + (fresh ? ` · ${fresh} new` : "") : "";
@@ -939,6 +946,7 @@ document.addEventListener("click", (e) => {
   const a = t.dataset.act, job = t.dataset.job, jobAct = t.dataset.jobAct;
   if (!state && (a || jobAct)) return;  // the page hasn't loaded yet
   if (a === "find") act(() => api("/api/search", {}));
+  if (a === "pause" || a === "resume") act(() => api(`/api/queue/${a}`, {}));
   // (a review round given way to: its hold is replaced by the bot round's, never ended after it)
   if (a === "bot-round") { reviewRound = false; reviewShown = null; reviewPassed.clear(); botRound = true; botShown = null; botPassed.clear(); botStep(); renderHeader(); }
   if (a === "bot-next" && botShown !== null) { botPassed.add(botShown); botStep(); renderHeader(); }

@@ -613,6 +613,72 @@ def test_the_tailoring_switch_is_kept_and_its_waiting_jobs_listed(srv, job_apply
     assert Desk(srv).applier.tailor is True  # still on next time the desk opens
 
 
+def test_the_queue_is_paused_and_resumed_through_the_api(srv):
+    """Pause queue and Resume queue (issue #112, note 36): behind the page's key like the rest, an unknown action is
+    no action, and the state says whether the queue is paused. Not one of the settings: kept in memory only."""
+    desk = Desk(srv)
+    desk.applier.start = lambda: None
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            h = {"x-desk-token": desk.token}
+            async with _client(desk) as c:
+                assert (await c.post("/api/queue/pause")).status_code == 403
+                assert (await c.post("/api/queue/everything", headers=h)).status_code == 404
+                assert not desk.applier.paused and (await c.get("/api/state", headers=h)).json()["paused"] is False
+                r = await c.post("/api/queue/pause", headers=h)
+                assert r.json() == {"paused": True} and desk.applier.paused
+                assert (await c.get("/api/state", headers=h)).json()["paused"] is True
+                r = await c.post("/api/queue/resume", headers=h)
+                assert r.json() == {"paused": False} and not desk.applier.paused
+                assert (await c.get("/api/state", headers=h)).json()["paused"] is False
+        finally:
+            await desk.stop()
+
+    run(go())
+    assert Desk(srv).applier.paused is False  # (a new desk starts with the queue going)
+
+
+def test_the_pause_button_pauses_and_resumes_the_queue(srv):
+    """The header's Pause queue shows while jobs are queued or running, turns into Resume queue (with how many wait)
+    once pressed, and the Working on card says the queue is paused (issue #112, note 36)."""
+    from playwright.async_api import async_playwright
+
+    from job_apply.pipeline import Run
+
+    job = srv.add_job(url=fixture_url("generic_form.html"), title="Technician", company="Example Litho")["job"]
+    desk = Desk(srv)
+    desk.applier.start = lambda: None  # the queue isn't worked in this test
+    desk.search.update(status="done", at=time.time())  # recent, so opening the page doesn't search the real sites
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with async_playwright() as pw:
+                browser = await pw.chromium.launch(**launch_options())
+                page = await browser.new_page()
+                await page.goto(desk.url)
+                await page.wait_for_selector("#plugin-version:not(:empty)")  # the page has its state
+                assert await page.locator("#pause-btn").is_hidden()  # nothing queued or running
+                desk.applier.runs[job["id"]] = Run(job["id"], "Technician", "Example Litho", status="queued")
+                desk.applier.tasks.append(("apply", job["id"]))
+                await page.wait_for_selector("#pause-btn:visible:text-is('Pause queue')")
+                await page.click("#pause-btn")
+                await page.wait_for_selector("#pause-btn:text-is('Resume queue (1 waiting)')")
+                assert desk.applier.paused
+                assert "Paused: 1 waiting" in await page.locator("#work").inner_text()
+                await page.click("#pause-btn")
+                await page.wait_for_selector("#pause-btn:text-is('Pause queue')")
+                assert not desk.applier.paused
+                assert "Paused" not in await page.locator("#work").inner_text()
+                await browser.close()
+        finally:
+            await desk.stop()
+
+    run(go())
+
+
 def test_only_where_the_desk_goes_all_the_way_shows_those_employers_alone_and_is_kept(srv, job_apply_home):
     """The owner (Oct 12): a switch to show only the openings where the plugin works all the way. The employers
     are the live check's (data/desk_handled.yaml: a test applicant reached the review page there); their openings
