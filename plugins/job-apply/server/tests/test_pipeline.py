@@ -10,6 +10,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 import pytest
+import yaml
 from conftest import browser_available, fixture_url, run
 
 import job_apply.browser as browser_module
@@ -66,6 +67,14 @@ def test_pick_next_and_classify():
     assert classify({"title": "Apply", "fields": form, "actions": []}, "I'm not a robot") == "form"
 
 
+@pytest.fixture(autouse=True)
+def _no_mail_taken():
+    """Each test starts with no code from the inbox put in yet (the desk keeps them for its whole process)."""
+    pipeline._MAIL_TAKEN.clear()
+    yield
+    pipeline._MAIL_TAKEN.clear()
+
+
 def test_what_a_page_flags_is_named():
     """Onto's Workday lists what's wrong as links ("Error-Email") in an "Errors Found" box and
     marks the field invalid; a stalled page says so in words."""
@@ -77,6 +86,14 @@ def test_what_a_page_flags_is_named():
     assert pipeline._flagged({"errors": ["Field Service Engineer page is loaded"], "actions": ["Next"]}) == []
     # a click's summary: the actions' texts and how many fields there are (Onto's run crashed on it)
     assert pipeline._flagged({"fields": 16, "actions": ["Error-Email", "Next"], "errors": []}) == ["“Email” needs fixing"]
+    # a question whose label runs on is named in a few words, and what's wrong with it still said (Maricopa County's
+    # Workday, run 49: "The page didn't move on: “Salary offers are based on … was made.” is mar.")
+    salary = ("Salary offers are based on the candidate's equivalent experience and internal equity with other Maricopa "
+              "County employees within the same job classification. To ensure we are able to meet your needs, please "
+              "specify the minimum wage/salary you would accept if an offer of employment was made.*")
+    said = pipeline._flagged({"fields": [{"label": salary, "invalid": True}], "actions": ["Next"]})
+    assert said == ["“Salary offers are based on the candidate's equivalent experience and internal…” is marked invalid"], \
+        said
 
 
 def test_what_a_create_account_form_wants_is_named():
@@ -2710,6 +2727,52 @@ def test_whose_mail_a_workday_job_reads_a_reset_from(srv):
     assert mailbox.sender_allowed("Workday <noreply@workday.kla.com>", senders)
     assert not mailbox.sender_allowed("someone@kla.com", senders)
     assert not mailbox.sender_allowed("noreply@workday.intel.com", senders)
+
+
+@pytest.mark.parametrize("company, url, sender", [
+    ("BDO", "https://ebqb.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/BDOExperiencedCareers/job/14240",
+     "Careers <no-reply@careers.bdo.com>"),
+    ("American Express", "https://egug.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1/job/26013283",
+     "no-reply@recruitment.americanexpress.com"),
+    ("Grant Thornton", "https://ehzq.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1/job/115912",
+     "no-reply@us.gt.com"),  # (not its careers site's grantthornton.com: its entry names gt.com)
+    ("Mayo Clinic", "https://fa-euwp-saasfaprod1.fa.ocs.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1/job/377528",
+     "no-reply@administrativesystem.mayoclinic.org"),
+    # (named otherwise, as a posting may name it: known by the site its entry searches)
+    ("BDO USA, P.C.", "https://ebqb.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/BDOExperiencedCareers/job/1",
+     "no-reply@careers.bdo.com"),
+])
+def test_whose_mail_an_oracle_job_reads_its_code_from(srv, job_apply_home, company, url, sender):
+    """Oracle Recruiting mails its code from the employer's own domain, not Oracle's (run 49, Oct 13: American
+    Express, BDO, Grant Thornton and Mayo Clinic each waited out a code their inbox had). An employer on the lists
+    mails from its careers site's domain and any its entry names; an employer not on them only from Oracle's."""
+    job = srv.add_job(url=url, title="Analyst", company=company)["job"]
+    senders = Applier(srv)._mail_senders(Run(job["id"], "Analyst", company, url=url))
+    assert mailbox.sender_allowed(sender, senders), senders
+    assert not mailbox.sender_allowed("no-reply@another-employer.com", senders)
+    other = "https://abcd.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1/job/1"
+    job = srv.add_job(url=other, title="Analyst", company="Unlisted Example")["job"]
+    assert Applier(srv)._mail_senders(Run(job["id"], "Analyst", "Unlisted Example", url=other)) == {"oracle.com",
+                                                                                                  "oraclecloud.com"}
+
+
+def test_an_employers_mail_domains_are_only_its_own(job_apply_home):
+    """The review of 0.3.137: a site several employers on the lists search (Nikon's, UCT's and Desert Financial's UKG
+    Pro, recruiting2.ultipro.com) names none of them, so another employer's job there never reads a credit union's mail;
+    a mail service's domain is never an employer's, nor the person's own address's; and an entry written oddly in the
+    person's own list leaves the others as they are."""
+    assert pipeline._employer_mail_domains("Acme Unlisted", {"recruiting2.ultipro.com"}) == set()
+    assert pipeline._employer_mail_domains("Desert Financial Credit Union", {"recruiting2.ultipro.com"}) == \
+        {"desertfinancial.com"}  # (by its name)
+    (job_apply_home / "companies.yaml").write_text(yaml.safe_dump({"lists": ["phoenix-metro"], "companies": [
+        {"name": "Odd One", "search": {"query": "Test [x"}, "mail_domains": 5},
+        {"name": "Example Mailer", "careers_url": "https://mail.google.com/careers",
+         "mail_domains": ["gmail.com", "careers.outlook.com", "examplemailer.com", "acme-person.example",
+                          "mail.acme-person.example"]}]}),
+        encoding="utf-8")
+    assert pipeline._employer_mail_domains("Example Mailer", set(), own="acme-person.example") == {"examplemailer.com"}
+    assert pipeline._employer_mail_domains("BDO", set()) == {"bdo.com"}
+    assert pipeline._employer_mail_domains("Odd One", {"test"}) == set()
 
 
 def test_a_job_search_reached_mid_sign_in_opens_the_job_again_once(srv, monkeypatch, job_apply_home):
@@ -5850,6 +5913,54 @@ def test_an_emailed_code_is_read_only_from_its_own_mail_and_its_own_site(srv, mo
     for url in ("https://evil.example/myworkdayjobs.com/verify", "https://evil.example/greenhouse.io/confirm?t=1",
                 "https://other.wd5.myworkdayjobs.com/activate/x", "javascript:alert(1)"):
         assert not own_link(url), url
+
+
+@pytest.mark.parametrize("kind", ["code", "link"])
+def test_a_code_put_in_for_one_job_is_never_put_in_for_another(srv, monkeypatch, kind):
+    """onsemi's and Mayo Clinic's Oracle sites (run 49, Oct 13) mail their codes from the same Oracle address. Mayo's
+    wait began a minute after onsemi's code came, was given that code too, and stopped on it. A code the inbox gave
+    one job is never another's: the other waits for its own. A link is the account's, and two jobs on one site share
+    it: each opens it (the review)."""
+    monkeypatch.setattr(pipeline, "MAIL_POLL_SECONDS", 0)
+    monkeypatch.setenv("JOB_APPLY_SECRET_EMAIL_PASSWORD", "an-app-password")
+    monkeypatch.setattr(pipeline.mailbox, "imap_host", lambda address: "imap.example.com")
+    verify = "https://careers.acme-fab.example/verify"
+    pages = {verify: '<html><body><h1>Confirm your email</h1><label for="code">Enter the verification code we sent to '
+                     'your email</label><input id="code" type="text"><button type="button">Verify</button></body></html>',
+             verify + "/confirmed": "<html><body><h1>Your email is confirmed</h1></body></html>"}
+    now = time.time()
+    first = "482913" if kind == "code" else verify + "/confirmed?t=1"
+    inbox = [pipeline.mailbox.Found(kind, first, "oraclecloud.com", now - 60)]  # the first job's
+    monkeypatch.setattr(pipeline.mailbox, "search", lambda *args, **kwargs: inbox[-1])
+    applier = Applier(srv)
+
+    async def go():
+        await _serve(srv, pages, [])
+        runs = []
+        for i, paused in enumerate((now - 90, now)):
+            job = srv.add_job(url=f"{verify}?job={i}", title=f"FSE {i}", company="Acme Fab")["job"]
+            tab = await srv.browser.new_tab()
+            await tab.goto(verify)
+            r = Run(job["id"], f"FSE {i}", "Acme Fab", status="needs_you", need="email_code", page=tab, url=verify,
+                    paused_at=paused, paused_host="careers.acme-fab.example")
+            applier.runs[job["id"]] = r
+            runs.append(r)
+        first, second = runs
+        await applier._check_mail(first)
+        await applier._check_mail(second)
+        given = (second.mail_done, second.mail_last, await second.page.input_value("#code"))
+        inbox.append(pipeline.mailbox.Found("code", "551234", "careers.acme-fab.example", now + 5))  # its own
+        await applier._check_mail(second)
+        return first, second, given
+
+    first, second, given = run(go())
+    if kind == "link":
+        assert given[0] and "opened the confirmation link from your email (sent from oraclecloud.com)" in second.log
+        return
+    assert "entered the code from your email (sent from oraclecloud.com)" in first.log, first.log
+    assert not given[0] and "another job's" in given[1] and given[2] == "", given
+    assert second.mail_done and "entered the code from your email (sent from careers.acme-fab.example)" in second.log
+    assert run(second.page.input_value("#code")) == "551234"
 
 
 def test_a_job_that_never_paused_goes_on_only_at_its_own_addresses(srv):
