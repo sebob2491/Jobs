@@ -504,7 +504,7 @@ class Run:
         return {k: v for k, v in self.__dict__.items() if k not in ("page", "tab_mark", "cookies_asked", "resetting",
                                                                      "reset_asked", "reset_from", "reset_waited",
                                                                      "reset_no_mail", "reopened_elsewhere", "reopened", "sign_in_tries", "sign_in_key",
-                                                                     "accounts_tried", "account_made", "account_page",
+                                                                     "accounts_tried", "account_made", "account_in", "account_page",
                                                                      "account_finished", "verifying", "mail_looks", "mail_last",
                                                                      "entries_short", "entries_told", "entries_ok")}
 
