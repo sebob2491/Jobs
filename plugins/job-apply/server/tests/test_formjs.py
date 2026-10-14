@@ -387,3 +387,65 @@ def test_a_button_marked_aria_live_is_never_read_as_the_pages_error(srv, tmp_pat
                     '<div role="alert">Your session will expire in 5 minutes</div></body></html>', encoding="utf-8")
     run(srv.browser.goto(page.resolve().as_uri()))
     assert run(srv.browser.inspect(include_dropdown_options=False))["errors"] == ["Your session will expire in 5 minutes"]
+
+
+def test_a_job_alert_sign_up_with_three_boxes_is_beside_the_application(srv, tmp_path):
+    """CommonSpirit's careers search (Dignity Health, run 82): its job alert sign-up, "Sign up for Job Alerts", has five
+    boxes (an email, a job category, a location, Remote and Job Type) and a spam trap hidden from the eye, more than a
+    footer's one or two, so it was read as the page's form: the desk filled the person's email into it and asked for its
+    category and location. A form whose own heading says it's a sign-up for job alerts is beside the application, and
+    so is its Submit."""
+    run(srv.browser.goto(fixture_url("site/careers-search-job-alert.html")))
+    page = run(srv.browser.inspect(include_dropdown_options=False))
+    aside = {f["label"].rstrip("*"): bool(f.get("aside")) for f in page["fields"]}
+    assert set(aside) >= {"Email Address", "Job Category", "Location", "Remote", "Job Type"} and all(aside.values()), aside
+    assert [bool(a.get("aside")) for a in page["actions"] if a["text"].strip() == "Submit"] == [True], page["actions"]
+
+
+_APPLICATION = ('<label for="fn">First name*</label><input id="fn" required><label for="ln">Last name*</label><input '
+                'id="ln" required><label for="em">Email*</label><input id="em" type="email" required>')
+
+
+@pytest.mark.parametrize("body", [
+    # a last step headed about job alerts, whose own button sends the application
+    '<form><h2>Job Alerts and Communication Preferences</h2><p>Would you like to receive text messages about your '
+    'application?</p><label><input type="radio" name="sms" value="y" required> Yes</label><label><input type="radio" '
+    'name="sms" value="n"> No</label><label><input type="checkbox" name="certify" required> I certify that the '
+    'information I provided is true</label><label for="sig">Electronic signature</label><input id="sig" name="sig" '
+    'required><button type="button">Back</button><button type="submit">Submit Application</button></form>',
+    # a form around the whole page: a newsletter's heading hidden in it, a sign-in in its main
+    '<form id="aspnetForm"><div style="display:none"><h2>Subscribe to our newsletter</h2></div><header><a href="#">Home'
+    '</a></header><main><h1>Candidate Login</h1><label for="u">Email</label><input id="u" type="email"><label for="p">'
+    'Password</label><input id="p" type="password"><button type="submit">Sign In</button></main></form>',
+    # and one with a list of similar jobs beside the application
+    '<form id="form1"><aside><h3>Similar Jobs</h3><a href="#">Technician II</a></aside><main><h1>Apply: Technician</h1>'
+    '<label for="n">Full name</label><input id="n" required><label for="e">Email</label><input id="e" type="email" '
+    'required><label for="ph">Phone</label><input id="ph" type="tel" required><button type="submit">Submit</button>'
+    '</main></form>',
+    # (the second review's) an evergreen posting for a talent pool, its title the form's heading
+    '<form><h2>Manufacturing Technician - Talent Pool</h2>' + _APPLICATION + '<button type="submit">Submit</button></form>',
+    # a way on read by its words, not its value alone ("Submit Application", value "Submit"), and Taleo's input buttons
+    '<form><h2>Job Alerts and Communication Preferences</h2><p>Would you like texts?</p><label><input type="radio" '
+    'name="sms" value="y" required> Yes</label><label><input type="radio" name="sms" value="n"> No</label><label><input '
+    'type="checkbox" name="certify" required> I certify</label><label for="sig">Electronic signature</label><input '
+    'id="sig" required><button type="submit" name="act" value="Submit">Submit Application</button></form>',
+    '<form><h2>Newsletter</h2>' + _APPLICATION + '<input type="button" value="Save and Continue"></form>',
+    '<form><h2>Get Job Alerts</h2><label for="ph">Mobile phone</label><input id="ph" type="tel"><a class="btn" '
+    'href="javascript:void(0)">Next</a></form>',
+    # and a sign-up's heading far above the application's boxes in a form around the page
+    '<form id="aspnetForm"><div class="top"><h3>Get Job Alerts</h3><a href="/alerts">Sign up</a></div><div><div>'
+    'Technician</div><p>' + 'We are hiring. ' * 30 + '</p>' + _APPLICATION + '<button type="submit">Submit</button></div></form>',
+], ids=["last step", "whole page", "similar jobs", "talent pool", "button value", "input button", "link", "far above"])
+def test_a_form_whose_heading_isnt_its_own_or_that_applies_isnt_a_job_alert_sign_up(srv, tmp_path, body):
+    """The reviews of 0.3.164: the job alert rule reads a form's own heading, the nearest one shown before its boxes and
+    close above them, that names a sign-up, in a form that isn't the page's frame, and never one whose own way on goes
+    on with an application, by any of its words."""
+    assert not any(f.get("aside") for f in fields_of(srv, tmp_path, body))
+
+
+def test_a_form_whose_kind_is_a_job_alert_is_beside_the_application(srv, tmp_path):
+    """A form the site itself names a job alert's (data-form-type "JobAlert", however it's spelled), heading or not."""
+    fields = fields_of(srv, tmp_path, '<form data-form-type="JobAlert"><label for="e">Email</label><input id="e" '
+                       'type="email"><label for="c">Category</label><select id="c"><option>A</option></select><label '
+                       'for="l">Location</label><input id="l"><button type="submit">Submit</button></form>')
+    assert fields and all(f.get("aside") for f in fields), fields
