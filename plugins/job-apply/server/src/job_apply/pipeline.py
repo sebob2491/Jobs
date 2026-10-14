@@ -35,7 +35,7 @@ from . import config, mailbox, report
 from .search import every_employer
 from .ats import ATS_NAMES, detect_ats, shared_system
 from .autofill import (classes_only, clean_label, degree_kinds_listed, degree_not_listed, entry_list_unloaded, entry_of,
-                       is_empty_value, no_choice_for_no_degree, norm,
+                       _CHOICE_KINDS, is_empty_value, no_choice_for_no_degree, norm,
                        plan_autofill, profile_entries, site_default, unset_choice,
                        polarity, tailored_document, works_there_now)
 from .browser import (_SENDS_TOO, CONFIRMATION_RE, SubmitBlocked, TabClosed, _accepts_cookies, _cookie_setting,
@@ -213,10 +213,14 @@ _TERMS_ONLY = re.compile(r"terms|conditions|(?:privacy|data protection) (?:polic
                          # processing of one's personal data (a GDPR notice), the documents above read
                          r"|\b(?:agree|consent)\w*\b.{0,40}\bcreat\w*\b.{0,60}\baccount\b|^\s*(?:yes,? )?i (?:agree|consent|accept)\W*$"
                          r"|\bgdpr\b|process\w* (?:of )?my personal data|acknowledge having read", re.I)
+# Texts and automated calls to the person (BrassRing's "consenting to Texting or automated calling", Edward Jones' run 83):
+# kept out of what's agreed to or attested for them, as text messages are (the review of 0.3.165)
+_CALLS_OR_TEXTS = (r"\btexting\b|\btext (?:messag\w*|me|you)\b|\bcall(?:s|ing)? (?:or|and|&) text\w*\b|autodial\w*|"
+                   r"\bautomated (?:calls?|calling|dial\w*|messag\w*|texts?)\b|pre-?recorded|\bwhatsapp\b")
 _TERMS_BOX = re.compile(r"terms|conditions|privacy|consent|agree|acknowledge|policy|notice", re.I)
 _NOT_TERMS = re.compile(r"newsletter|mailing list|marketing|job alerts?|text messages?|\bsms\b|promotion|offers|subscribe|similar jobs|"
                         r"talent (?:community|network)|keep me|stay informed|send me|contact(?:ed)? me|be contacted|"
-                        r"share my|other (?:\w+ )?(?:roles|positions|jobs|openings|opportunities)|affiliat", re.I)
+                        r"share my|other (?:\w+ )?(?:roles|positions|jobs|openings|opportunities)|affiliat|" + _CALLS_OR_TEXTS, re.I)
 # And on an account's own box, what else its agreement may take in (the review of 0.3.117's wider account terms):
 # a box's words only, never a statement's (whose text names most of these in passing)
 _MORE_THAN_TERMS = re.compile(r"receiv\w*|e-?mails?|updates?|notifications?|messages?|partners?|third[- ]part|future|"
@@ -374,8 +378,8 @@ _ATTESTS = re.compile(r"\b(?:certif(?:y|ies)|attest|affirm|declare|acknowledge|c
                       r"statements?|responses?|facts)\b.{0,200}?\b(?:true|correct|complete|accurate)\b|"
                       r"\b(?:consent|authori[sz]e|agree)\b.{0,120}?\bbackground (?:check|screening|investigation)", re.I | re.S)
 _NOT_ATTESTED = re.compile(r"newsletter|marketing|job alerts?|text messages?|\bsms\b|promotion|subscribe|"
-                           r"talent (?:community|network)", re.I)
-_ATTEST_KINDS = {"select", "listbox", "combobox", "checkbox", "checkbox_group"}
+                           r"talent (?:community|network)|" + _CALLS_OR_TEXTS, re.I)
+_ATTEST_KINDS = {"select", "listbox", "combobox", "checkbox", "checkbox_group", "radio_group"}
 # and, the owner's call (Oct 10), an employer's privacy notice and terms of use: a gate's "I Accept"
 # (Kforce's Taleo privacy agreement), "I Acknowledge the Privacy Notice" (Schwab's iCIMS), a dialog,
 # or a required box ("I have read and agree to the Privacy notice and Terms of use": ASM's;
@@ -1611,6 +1615,8 @@ class Applier:
         retyped: set[tuple[Any, ...]] = set()  # pages whose lost boxes were typed again (once a page)
         refilled_pages: set[tuple[Any, ...]] = set()  # pages whose emptied boxes were filled again (once a page)
         redone_pages: set[tuple[Any, ...]] = set()  # pages whose boxes said wrong were answered again (once a page)
+        asked_back: set[tuple[Any, ...]] = set()  # steps gone back to for the boxes their errors name (once a step)
+        back_from: tuple[tuple[Any, ...], str] | None = None  # the step gone back to, and its stop as it would be said
         saved_waited: set[tuple[Any, ...]] = set()  # steps waited on as still saving (once a step)
         bare_waited: set[tuple[Any, ...]] = set()  # forms with no step button yet, waited on to be drawn (once a page)
         reloaded: set[tuple[Any, ...]] = set()  # steps reloaded for saying what they saved already exists (once a page)
@@ -1975,10 +1981,16 @@ class Applier:
                 _required_by_errors(result, data)
                 pending, missing_files = _pending(result, once_failed)
                 self._note_skipped(run, result)
+                left = len(pending)
                 pending = await self._attest(run, pending)
+                attested = len(pending) < left
                 before, page_key = data, (data.get("url"), tuple(data.get("headings") or []))
                 data, text = await self._look()  # filling can add or enable things (State after Country, Submit)
                 run.page_info = _page_info(data)  # what the person sees on the desk: the page as filled
+                if back_from is not None and (result["filled"] or attested or _values(before) != _values(data)):
+                    # something went in on the way back (the profile's, the person's own answers put back, an agreement):
+                    # the step is pressed again, whatever comes up first (a notice the tick opened: the second review)
+                    back_from = None
                 if (notice := _notice(data)) is not None:  # one the fills brought up (Eightfold's, as the resume went up)
                     said = await self._answer_notice(run, data, notice, agreed, over_form=True)
                     if said in ("agreed", "started"):
@@ -2036,6 +2048,10 @@ class Applier:
                 if self._stop_for_what_is_left(run, gaps, pending, missing_files):
                     run.entries_told = short
                     return
+                if back_from is not None:
+                    (back_page, stuck), back_from = back_from, None
+                    if back_page == _step_page(data):
+                        return self._pause(run, "stuck", stuck)  # (nothing to fill, tick or ask: pressing again won't do)
                 actions = data.get("actions") or []
                 entry_here = any(_ENTRY.match(final_text(a["text"])) and not a.get("disabled") for a in actions)
             # a step button beside a Submit (a footer "Submit" on step 1 of 4) means there's more to
@@ -2572,8 +2588,21 @@ class Applier:
                                            "window" + (f" (the page also says: {also})" if also else "")
                                            + ", then press Resume.")
                     errors = "; ".join(problems)[:300].rstrip(" .")
-                    return self._pause(run, "stuck", "The page didn't move on" + (f": {errors}." if errors else ".")
-                                       + " Fix it in the browser, then press Resume.")
+                    stuck = "The page didn't move on" + (f": {errors}." if errors else ".") \
+                        + " Fix it in the browser, then press Resume."
+                    if kind == "form" and (page := _step_page(data)) not in asked_back \
+                            and _named_by_errors((await self._look())[0]):
+                        # boxes taken as optional, left empty, that the errors name or the page marks wrong (BrassRing's
+                        # consents, Edward Jones' run 83: each a lone "I agree" marked required only by a class and a
+                        # star beside it, "Required" once pressed): the form's questions after all. Gone back to, once
+                        # a step, where they're asked (or agreed to, a notice's, with settings.accept_notices); with
+                        # nothing there to fill, tick or ask after all, the stop is said as it was (the review's)
+                        asked_back.add(page)
+                        back_from = (page, stuck)
+                        self._log(run, f"{_site(run, data)} wants boxes it hadn't marked as required, so I went back to them")
+                        stalls, fixed_at = 0, len(pressed)
+                        continue
+                    return self._pause(run, "stuck", stuck)
             else:
                 stalls = stalled_in_a_row = 0
         self._pause(run, "stuck", "This application has more steps than I expected. Have a look in the browser, "
@@ -4243,6 +4272,22 @@ def _required_by_errors(result: dict[str, Any], data: dict[str, Any]) -> None:
             f["required"] = True
 
 
+def _values(data: dict[str, Any]) -> dict[Any, Any]:
+    """A page's boxes and what they show."""
+    return {f.get("id"): str(f.get("value")) for f in data.get("fields") or []}
+
+
+def _named_by_errors(data: dict[str, Any]) -> bool:
+    """After a press the page didn't go on from: does it name in its errors, or mark wrong, a box of the application's
+    left empty as optional (_required_by_errors)? Then that box is what holds it up, and its question is asked."""
+    # (as autofill takes them: a read-only text box is never filled or asked)
+    empty = [dict(f) for f in _app_fields(data) if not f.get("required") and not f.get("aside") and not f.get("disabled")
+             and not (f.get("readonly") and f.get("kind") not in _CHOICE_KINDS)
+             and f.get("kind") not in ("file", "password") and (is_empty_value(f.get("value")) or unset_choice(f))]
+    _required_by_errors({"needs_input": empty}, data)
+    return any(f.get("required") for f in empty)
+
+
 def _pending(result: dict[str, Any], once_failed: dict[str, dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """After autofill: the required questions to put to the person (with any answer of theirs
     the page turned down), and the required file inputs nothing could go in."""
@@ -4325,11 +4370,17 @@ def _attestation(q: dict[str, Any]) -> Any:
     (Eightfold's "Terms and Conditions" dropdown, its one choice certifying the application is
     correct), or accepts the employer's privacy notice or terms of use: a tick, its one real choice
     where that agrees, or its one Yes. A group of one tick whose own words accept them (EMD's)
-    is ticked. None for any other box."""
+    is ticked, and a lone radio's one choice is picked. None for any other box."""
     label = q.get("label") or ""
-    if not q.get("required") or q.get("error") or q.get("kind") not in _ATTEST_KINDS:
+    # (never a legal waiver in its words, an arbitration agreement or a jury trial waived: the review of 0.3.165)
+    if not q.get("required") or q.get("error") or q.get("kind") not in _ATTEST_KINDS or _WAIVES.search(label):
         return None
     choices = [str(o) for o in q.get("options") or [] if not is_empty_value(o)]
+    if q["kind"] == "radio_group" and (len(choices) != 1 or not (polarity(choices[0]) is True or _AGREES.match(
+            choices[0].strip())) or _CLAIMS.search(label) or _OTHER_QUESTION.search(label)):
+        # (a lone "I agree" is a tick box: BrassRing's consents, Edward Jones' run 83; a Yes / No isn't picked, nor a
+        # lone "I disagree", nor one whose words say something about the person: the review's)
+        return None
     if q["kind"] == "checkbox_group":
         # its ticks that accept the terms, and only those: EMD's required pair is its Terms of Use &
         # Data Privacy Statement and its "Email Communications" (marketing, left unticked)
@@ -4344,7 +4395,12 @@ def _attestation(q: dict[str, Any]) -> Any:
     if q["kind"] == "checkbox":
         return True
     if len(choices) == 1:
-        return choices[0] if polarity(choices[0]) is not False else None
+        # (and only a choice that says no more than that: not "I agree, and send me text messages and job alerts", "I
+        # agree to binding arbitration" or "I am authorized to work in the US", the second review of 0.3.165)
+        one = choices[0]
+        more = _NEVER_AGREED.search(one) or _WAIVES.search(one) or _NOT_ATTESTED.search(one) or _signs_up(one) \
+            or _CLAIMS.search(one)
+        return one if polarity(one) is not False and not more else None
     if _CLAIMS.search(label) or _OTHER_QUESTION.search(label):
         return None  # a Yes there would answer something else too ("Have you ever been convicted ...?")
     yes = [o for o in choices if polarity(o) is True]
@@ -4999,6 +5055,13 @@ def _answers_page(data: dict[str, Any]) -> tuple:
     """The page an answer the person gave went in on (_fill_once): _page_key without an errors heading, which
     the same step shows once it's pressed with something wrong (Workday's "Errors Found")."""
     return _bare(data.get("url") or ""), tuple(h for h in data.get("headings") or [] if not _ERRORS_HEADING.match(h.strip()))
+
+
+def _step_page(data: dict[str, Any]) -> tuple:
+    """A step, as it is before and after it's pressed with something wrong: its bare address and headings, without
+    any heading that says what's wrong ("Errors Found", "There are 2 errors on this page": the review of 0.3.165)."""
+    return _bare(data.get("url") or ""), tuple(h for h in data.get("headings") or []
+                                               if not _ERRORS_HEADING.match(h.strip()) and not _errorish(h))
 
 
 def _code_only_submit(data: dict[str, Any]) -> dict[str, Any] | None:
