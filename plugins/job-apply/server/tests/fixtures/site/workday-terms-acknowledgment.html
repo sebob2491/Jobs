@@ -1,0 +1,25 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Voluntary Disclosures</title></head>
+<body>
+<!-- Workday's Voluntary Disclosures step (Taylor Morrison's, run 71): its "Terms and Conditions" box is labelled only
+     "Acknowledgment*", and what it acknowledges is the employer's words above it (made up here) -->
+<h2>Voluntary Disclosures</h2>
+<div data-automation-id="personalDataStatement">
+  <label for="gender">What is your gender?</label>
+  <select id="gender" data-ja-id="q1"><option>Select One</option><option>Male</option><option>Female</option></select>
+</div>
+<div data-automation-id="termsAndConditions">
+  <h3>Terms and Conditions</h3>
+  <div><p>By checking the box below, I certify that the information in my application is true and complete.</p></div>
+  <div>
+    <div>
+      <input type="checkbox" id="termsAndConditions--acceptTermsAndAgreements" data-ja-id="q2" aria-required="true">
+      <label for="termsAndConditions--acceptTermsAndAgreements">Acknowledgment*</label>
+    </div>
+  </div>
+</div>
+<!-- a box right under another, with no words between: none of the one above's -->
+<div><input type="text" id="first" aria-label="First name"><input type="text" id="second" data-ja-id="q3" aria-label="Middle"></div>
+</body>
+</html>

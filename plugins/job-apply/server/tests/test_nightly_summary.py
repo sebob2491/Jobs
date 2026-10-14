@@ -80,6 +80,15 @@ def test_a_runs_saved_results_say_each_employers_rounds_and_where_it_stopped(tmp
     assert "== Onto Innovation: Field Service Engineer" in said
     assert "Q: Degree* (listbox) ['BA', 'BS']" in said and "errors: ['Email needs fixing']" in said
     assert "buttons: ['Next', 'Back']" in said and "box: {'label': 'Email*', 'kind': 'text'}" in said
+    # and the words above a question, where the run recorded them (Taylor Morrison's "Acknowledgment*", run 71)
+    rec["rounds"][0]["questions"].append({"label": "Acknowledgment*", "kind": "checkbox", "options": None})
+    rec["rounds"][0]["above"] = ["Highest degree", "Terms and Conditions I certify that it's all true."]
+    said = ns.steps(rec).splitlines()
+    at = said.index("      Q: Acknowledgment* (checkbox) []")
+    assert said[at + 1] == "         above it: Terms and Conditions I certify that it's all true.", said
+    assert said[at - 1] == "         above it: Highest degree", said
+    rec["rounds"][0]["above"] = []  # (a run from before it recorded them)
+    assert "above it" not in ns.steps(rec)
 
 
 COMMENT = """6 changes since the last nightly live check ([run](https://example.com/run/2)):
