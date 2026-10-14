@@ -374,3 +374,16 @@ def test_a_security_box_reads_as_answered_only_with_its_answer_seen_going_in(srv
     after = {f["label"]: f["value"] for f in run(srv.browser.inspect(include_dropdown_options=False))["fields"]}
     assert after == {"Question 1": "", "Question 2": "", "Question 1 Answer": "(unconfirmed)",
                      "Question 3": "(unconfirmed)"}, after
+
+
+def test_a_button_marked_aria_live_is_never_read_as_the_pages_error(srv, tmp_path):
+    """BrassRing's application page (probe 81) marks its "Let's get started" button and its "Save and finish later"
+    link aria-live, so the form reader read them as the page's errors. A button or a link is never one; the page's
+    own alert still is."""
+    page = tmp_path / "apply.html"
+    page.write_text('<!doctype html><html><body><h1>Senior Analyst</h1><div role="navigation">'
+                    '<button type="button" aria-live="assertive">Let\'s get started</button> '
+                    '<a href="#" aria-live="assertive">Save and finish later</a></div>'
+                    '<div role="alert">Your session will expire in 5 minutes</div></body></html>', encoding="utf-8")
+    run(srv.browser.goto(page.resolve().as_uri()))
+    assert run(srv.browser.inspect(include_dropdown_options=False))["errors"] == ["Your session will expire in 5 minutes"]

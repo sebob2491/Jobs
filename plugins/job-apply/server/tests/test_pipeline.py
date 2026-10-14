@@ -3027,6 +3027,43 @@ def test_brassrings_security_question_is_answered_on_the_card_for_that_form_alon
     assert '"(set)"' in shown and "screenshot" not in shown and r.account_answers == {}, shown[-3000:]
 
 
+def test_brassrings_application_is_begun_with_lets_get_started_once_the_account_is_made(srv, monkeypatch,
+                                                                                         job_apply_home):
+    """Edward Jones' BrassRing (probe 81): its security questions answered on the card and the account made, its
+    application's first page offers "Let's get started" and "Save and finish later" (both marked aria-live). "Let's
+    get started" wasn't a step to the desk, so it said "I couldn't find the button". It begins the application."""
+    from job_apply.desk import Desk
+
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    saved_password(monkeypatch)
+    as_test_identity(monkeypatch, job_apply_home)
+    inbox_with_code(monkeypatch)
+    job = srv.add_job(url=fixture_url("site/brassring-signin.html") + "?selectmenu&apply", title="Senior Analyst",
+                      company="Example Corp")["job"]
+    desk = Desk(srv)
+    applier = desk.applier
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.need == "sign_in" and r.status not in ("queued", "running") and r.questions,
+                        timeout=90, about=state(r))
+            desk.answer(job["id"], [
+                {"label": f"{q.get('section') or ''} | {q['label']} | {q.get('sublabel') or ''}",
+                 "value": "In what city were you born?" if q.get("options") else "Flagstaff Ridge 1987"}
+                for q in r.questions])
+            await until(lambda: r.seen_form or (r.status not in ("queued", "running") and not r.questions),
+                        timeout=90, about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert any(line.startswith("clicked") and "get started" in line for line in r.log), r.log
+    assert r.seen_form and "couldn't find the button" not in r.reason, (r.reason, r.log)
+
+
 @pytest.mark.parametrize("case", ["redrawn", "failed", "unpicked", "captcha"])
 def test_an_account_form_is_never_pressed_with_its_security_questions_unanswered(srv, monkeypatch, job_apply_home,
                                                                                    case):
