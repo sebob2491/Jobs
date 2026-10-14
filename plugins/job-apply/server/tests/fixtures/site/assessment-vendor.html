@@ -16,7 +16,9 @@
      Statement", "Answers" drawn as tiles to click (no box) and an Auto Advance switch, on: a click goes on at once;
      below them a Privacy Policy link and a Help tile, never answers. ?tiles=fixed: its heading stays "1 Statement"
      (only the statement changes). Each tile sits in a column of its own (a wrapper with only it). A click on the link
-     or Help leaves the assessment (a page with nothing on it). ?tiles=dead: the tiles take no click -->
+     or Help leaves the assessment (a page with nothing on it). ?tiles=dead: the tiles take no click. ?bestworst: its
+     questions are Circle K's (run 64): "Answers", each with a check mark (most likely) and an X (least likely), icons
+     with no words; one answer's check and another's X go on at once (its Auto Advance) -->
 <h1 id="h">Work Styles Assessment</h1>
 <form id="f" onsubmit="return false"></form>
 <div id="err" role="alert"></div>
@@ -53,7 +55,15 @@
     + 'one</option><option>Morning</option><option>Evening</option><option>Night</option></select>'
     + '<label for="why">Why do you want this job?</label><input id="why">'
     + '<button type="button" class="go">Submit</button>';
-  const middle = q.has('tiles') ? [tile(1), tile(2)] : q.has('words') ? [words] : q.has('boxes') ? [choose] : [scaleQuestions];
+  const mark = (word) => `<div class="iconBorder" style="cursor: pointer"><span class="${word}"><svg width="16" `
+    + 'height="16"><rect width="16" height="16"></rect></svg></span></div>';
+  const bestWorst = (n) => () => `<h2>${n} Question</h2><p>A customer is waiting while you stock shelves.</p>`
+    + '<h2>Answers</h2><h3>Select the check next to your most likely response, then the X next to your least likely.</h3>'
+    + '<div class="Answercards">' + ['Help the customer now.', 'Finish the shelf first.', 'Ask a coworker to help.']
+      .map((a) => `<div class="options"><div class="option">${a}</div><div class="icons">${mark('bestIcon')}`
+        + `${mark('worstIcon')}</div></div>`).join('') + '</div>';
+  const middle = q.has('tiles') ? [tile(1), tile(2)] : q.has('bestworst') ? [bestWorst(1), bestWorst(2)]
+    : q.has('words') ? [words] : q.has('boxes') ? [choose] : [scaleQuestions];
   const pages = [q.has('welcome') ? welcome : intro, ...middle, last];
   let page = 0;
   const on = () => {
@@ -73,6 +83,12 @@
     }));
     if (q.get('tiles') !== 'dead') f.querySelectorAll('.tile').forEach((t) => t.addEventListener('click', on));  // (Auto Advance)
     f.querySelectorAll('.away').forEach((t) => t.addEventListener('click', () => { document.body.innerHTML = ''; }));
+    // (a check on one answer and an X on another: on at once; the same answer's both, or two of one kind, wait)
+    let best = null, worst = null;
+    f.querySelectorAll('.options').forEach((row, i) => {
+      row.querySelector('.bestIcon').addEventListener('click', () => { best = i; if (worst !== null && worst !== best) on(); });
+      row.querySelector('.worstIcon').addEventListener('click', () => { worst = i; if (best !== null && worst !== best) on(); });
+    });
     const go = f.querySelector('.go');
     if (!go) return;
     go.addEventListener('click', () => {

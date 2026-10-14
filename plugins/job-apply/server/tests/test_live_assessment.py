@@ -189,6 +189,9 @@ def test_an_assessments_answer_tiles_are_clicked_and_a_word_list_that_wants_more
         assert len(clicked) == 2 and clicked[0]["tiles"] == ["Strongly disagree", "Disagree", "Neutral", "Agree",
                                                              "Strongly agree"], (mode, tiles)  # (no link, no Help)
         assert all(not s.get("questions") for s in clicked), tiles  # (its Auto Advance switch is no question to answer)
+    marks = take("bestworst")  # (Circle K's "most likely / least likely" marks, run 64)
+    assert marks["end"] == "back on the application", marks
+    assert [s["clicked"].split(" of ")[1] for s in marks["steps"] if s.get("clicked")] == ["3", "3"], marks
     dead = take("tiles=dead")  # (tiles that take no click: three clicks that change nothing end it)
     assert dead["end"] == "the page didn't move on" and sum(1 for s in dead["steps"] if s.get("clicked")) == 3, dead
     words = take("words")
