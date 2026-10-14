@@ -1910,9 +1910,10 @@ def test_security_questions_are_read_by_a_box_or_by_the_forms_heading():
     assert not pipeline._shows_address("sam.rivera@example.com.au", "sam.rivera@example.com")
 
 
-@pytest.mark.parametrize("then,slow", [("", 0), ("done", 0), ("alone", 0), ("", 3000)],
-                         ids=["plain", "done", "alone", "slow"])
-def test_with_manage_accounts_a_refused_saved_password_is_reset(srv, monkeypatch, job_apply_home, then, slow):
+@pytest.mark.parametrize("then,slow,late", [("", 0, False), ("done", 0, False), ("alone", 0, False), ("", 3000, False),
+                                            ("", 0, True)],
+                         ids=["plain", "done", "alone", "slow", "slowforgot"])
+def test_with_manage_accounts_a_refused_saved_password_is_reset(srv, monkeypatch, job_apply_home, then, slow, late):
     """The email has an account there, and the saved password isn't its password. With the
     inbox watched, the desk asks for a password reset before trying a new account (the owner's
     choice), opens the emailed link in the job's tab, sets the saved password as the new one,
@@ -1922,7 +1923,9 @@ def test_with_manage_accounts_a_refused_saved_password_is_reset(srv, monkeypatch
     Again live (note 34) the site took a moment over the new password, its reset form still on show with no
     error (slow): that read as a taken password, then as a sign-in with no email box, and the desk asked the
     person to sign in. It waits for the sign-in; and the reset form, two password boxes like a Create Account
-    form, doesn't spend the wait kept for one."""
+    form, doesn't spend the wait kept for one. A "Forgot your password?" whose script goes to the reset a moment
+    after the click (slowforgot): the sign-in still on show was read as a reset the desk can't fill in, and it made a
+    new account instead, never asking for the reset."""
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
     monkeypatch.setattr(pipeline, "MAIL_POLL_SECONDS", 0)
     saved_password(monkeypatch)
@@ -1946,7 +1949,8 @@ def test_with_manage_accounts_a_refused_saved_password_is_reset(srv, monkeypatch
         await wait_for_application(self)
 
     monkeypatch.setattr(Applier, "_wait_for_application", counted)
-    job = srv.add_job(url=fixture_url("site/signin-forgot.html"), title="FSE", company="Example Fab")["job"]
+    job = srv.add_job(url=fixture_url("site/signin-forgot.html") + ("?slowforgot" if late else ""), title="FSE",
+                      company="Example Fab")["job"]
     applier = Applier(srv)
 
     async def go():
