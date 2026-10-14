@@ -278,10 +278,13 @@ def steps(rec: dict[str, Any], log_lines: int = 6) -> str:
     for i, r in enumerate(rec.get("rounds") or []):
         out.append(f"  [{i}] {r.get('status')} {r.get('need') or ''}: {str(r.get('reason') or '')[:400]}")
         out += [f"      log: {line[:200]}" for line in (r.get("log") or [])[-log_lines:]]
-        for q in r.get("questions") or []:
+        above = r.get("above") or []
+        for i, q in enumerate(r.get("questions") or []):
             options = q.get("options") or []
             out.append(f"      Q: {str(q.get('label'))[:160]} ({q.get('kind')}) {options[:12]}"
                        + (f" error: {q['error']}" if q.get("error") else ""))
+            if i < len(above) and above[i]:
+                out.append(f"         above it: {above[i][-300:]}")
     final = rec.get("final_form") or {}
     if final:
         out.append(f"  page: {final.get('url', '')[:150]}")
