@@ -21,7 +21,9 @@ from job_apply import server
 async def main(url):
     await server.browser.goto(url)
     run = types.SimpleNamespace(page=await server.browser.page(),
-                                questions=[{"id": "q1"}, {"id": "q2"}, {"id": "q3"}, {"id": "gone"}])
+                                questions=[{"id": "q1"}, {"id": "q2"}, {"id": "q3"}, {"id": "gone"}, {
+                                    "id": "q4", "label": "I understand that checking this box is the legal "
+                                    "equivalent of a signature*"}])
     print("RESULT " + json.dumps(await live_smoke._words_above(run)))
     await server.close_browser()
 
@@ -38,8 +40,10 @@ def test_the_words_above_each_asked_about_box_are_recorded():
                          encoding="utf-8", timeout=120)
     line = next((x for x in out.stdout.splitlines() if x.startswith("RESULT ")), None)
     assert line, out.stdout[-2000:] + out.stderr[-3000:]
-    gender, terms, middle, gone = json.loads(line[len("RESULT "):])
-    assert gender.endswith("What is your gender?"), gender
+    gender, terms, middle, gone, signature = json.loads(line[len("RESULT "):])
+    assert gender == "Voluntary Disclosures", gender  # (the heading above it: its own label isn't)
     assert terms == ("Terms and Conditions By checking the box below, I certify that the information in my "
                      "application is true and complete."), terms
     assert middle == "" and gone is None, (middle, gone)
+    # (and never a box's own label just before it: Arizona State University's signature box, probe 76)
+    assert signature == "The terms above apply to everything in this application.", signature

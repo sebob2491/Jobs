@@ -1116,19 +1116,23 @@ async def _question_markup(run: Any) -> list[str]:
 
 # The words just above a box, up to another box: what a question with no words of its own asks (Taylor Morrison's
 # Workday "Acknowledgment*" box under its "Terms and Conditions", run 71: what it acknowledges is above it)
-_WORDS_ABOVE_JS = r"""(id) => {
+_WORDS_ABOVE_JS = r"""([id, label]) => {
   const el = document.querySelector(`[data-ja-id="${CSS.escape(id)}"]`)
     || document.querySelector(`[data-ja-gid-member="${CSS.escape(id)}"]`);
   if (!el) return null;
   const boxes = 'input:not([type=hidden]), select, textarea';
   const said = (n) => ((n.nodeType === 3 ? n.textContent : n.nodeType === 1 ? n.innerText : '') || '').trim();
+  // (never the box's own label, wherever it sits: Arizona State University's signature box, probe 76, had its label
+  // just before it, and that was all that was read)
+  const bare = (t) => t.replace(/[\s*:]+$/, '').replace(/\s+/g, ' ').trim().toLowerCase();
+  const own = new Set([...(el.labels || [])].map((l) => bare(l.innerText || '')).concat([bare(label || '')]));
   const out = [];
   for (let n = el, d = 0; n && n !== document.body && d < 8; n = n.parentElement, d++) {
     let boxed = false;
     for (let s = n.previousSibling; s && out.join(' ').length < 1200; s = s.previousSibling) {
       if (s.nodeType === 1 && (s.matches(boxes) || s.querySelector(boxes))) { boxed = true; break; }
       const t = said(s);
-      if (t) out.unshift(t);
+      if (t && !own.has(bare(t))) out.unshift(t);
     }
     if (boxed || out.join(' ').length > 40) break;
   }
@@ -1143,7 +1147,7 @@ async def _words_above(run: Any) -> list[str | None]:
     out: list[str | None] = []
     for q in run.questions[:12]:
         try:
-            above = await run.page.evaluate(_WORDS_ABOVE_JS, str(q.get("id")))
+            above = await run.page.evaluate(_WORDS_ABOVE_JS, [str(q.get("id")), str(q.get("label") or "")])
         except Exception as e:  # noqa: BLE001
             above = f"{type(e).__name__}: {str(e)[:100]}"
         out.append(_mask(above) if isinstance(above, str) else None)
