@@ -3854,6 +3854,91 @@ def test_a_workday_date_the_page_lost_is_typed_in_again_as_a_date(srv, monkeypat
     assert r.status == "ready" and r.url.endswith("review.html"), (r.status, r.reason, r.log[-4:])
 
 
+def test_a_workday_date_the_person_gave_that_the_page_lost_is_typed_in_again(srv, monkeypatch, job_apply_home):
+    """Robert Half's Workday (run 72): "Anticipated eligibility time for employment?", a date the profile doesn't
+    answer, was given on the desk as 10/14/2026, went in and showed so, and Next said "The field ... is required and
+    must have a value". Only a profile's date was typed again; the person's stayed as it was, and the desk stopped
+    with "needs fixing". Theirs is typed again as a date is, once a page."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    job = srv.add_job(url=fixture_url("site/workday-date-lost.html") + "?asked", title="Talent Manager",
+                      company="Example Staffing")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), timeout=120, about=state(r))
+            assert (r.status, r.need) == ("needs_you", "questions"), (r.status, r.reason, r.log[-3:])
+            assert [q.get("sublabel") for q in r.questions] == ["Month", "Day", "Year"], r.questions
+            assert all(q.get("role") == "spinbutton" for q in r.questions), r.questions  # (the card's: a date's parts)
+            for q in r.questions:  # (as the desk's card keys a date's parts: each by its own box)
+                r.once[pipeline.placed_key(q)] = {"Month": "10", "Day": "14", "Year": "2026"}[q["sublabel"]]
+            applier.enqueue(job["id"], front=True)
+            await until(lambda: r.status not in ("queued", "running"), timeout=120, about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert r.status == "ready" and r.url.endswith("review.html"), (r.status, r.reason, r.log[-4:])
+    assert ("typed your answer again where the page said it was missing: Anticipated eligibility time for "
+            "employment") in r.log, r.log
+
+
+def test_a_date_the_person_gave_is_typed_again_only_where_the_page_still_shows_it():
+    """The review of 0.3.159: the person's date is typed again only in the parts that still show their answer. Never
+    over a part they have changed in the browser since, nor with an answer from another page, nor a part asked alone
+    (answered by the date's label) put into the date's other parts."""
+    data = {"url": "https://example.com/apply", "headings": ["Application Questions", "Errors Found"]}
+
+    def part(sub: str, value: str) -> dict:
+        return {"id": sub[0].lower(), "label": "Start date*", "sublabel": sub, "role": "spinbutton", "kind": "text",
+                "value": value}
+
+    month, day, year = part("Month", "10"), part("Day", "14"), part("Year", "2026")
+    r = Run(1, "Technician", "Example Fab")
+    for f, given in ((month, "10"), (day, "14"), (year, "2026")):
+        r.once[pipeline.placed_key(f)] = given
+    assert pipeline._lost_answers(r, data, [month, day, year]) == {"m": "10", "d": "14", "y": "2026"}
+    assert pipeline._lost_answers(r, data, [{**month, "value": "11"}, day, year]) == {"d": "14", "y": "2026"}
+    r.once_page[pipeline.placed_key(month)] = ("https://example.com/other", ("Other Questions",))
+    assert pipeline._lost_answers(r, data, [month, day, year]) == {"d": "14", "y": "2026"}
+    alone = Run(2, "Technician", "Example Fab")
+    alone.once[question_key("Start date*")] = "14"  # (its Day asked alone, its Month and Year typed in the browser)
+    assert pipeline._lost_answers(alone, data, [month, day, year]) == {"d": "14"}
+
+
+def test_a_box_whose_own_words_say_little_is_asked_with_the_words_above_it(srv, monkeypatch, job_apply_home):
+    """Taylor Morrison's Workday (runs 71 and 73): a required box labelled only "Acknowledgment*", whose paragraph above
+    acknowledges the employer's privacy notice and certifies that the applicant shared it with their emergency
+    contacts. A fact about the person: never ticked for them. The card asked "Terms and Conditions: Acknowledgment"
+    with nothing to say what it acknowledges; it now shows the site's words above the box."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    job = srv.add_job(url=fixture_url("site/workday-acknowledgment.html"), title="Benefits Coordinator",
+                      company="Example Homes")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), timeout=120, about=state(r))
+            ticked = await r.page.evaluate(
+                "document.getElementById('termsAndConditions--acceptTermsAndAgreements').checked")
+            return r, ticked
+        finally:
+            await applier.stop()
+
+    r, ticked = run(go())
+    assert (r.status, r.need) == ("needs_you", "questions") and not ticked, (r.status, r.reason, ticked, r.log)
+    [q] = r.questions
+    assert q["label"].startswith("Acknowledgment"), q
+    assert q.get("about", "").endswith("I also certify that I have shared a copy of it with my emergency contacts "
+                                       "before giving their details."), q
+    assert "Acknowledgment" not in q["about"], q  # (its own label isn't the words above it)
+
+
 def test_a_workday_step_whose_questions_come_late_isnt_a_list_of_jobs(srv, monkeypatch, job_apply_home):
     """Wells Fargo's Workday (run 55, Oct 13): every step is at the same address, and Application Questions drew its
     questions a moment after its heading. With no boxes there yet, the two steps' Save and Continue before it read as

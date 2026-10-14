@@ -11,17 +11,21 @@
 <!-- like Entegris' and Analog Devices' Workday Self Identify (runs 53 and 54, Oct 13): its signature Date showed
      10/13/2026, typed in, but Save and Continue said "Error-Date The field Date is required and must have a value."
      Workday's own words under it said "current value is 10/13/2026": the date had it, the form didn't. Typed again
-     as it was, it stayed so (run 55, Tokyo Electron). Said only in Workday's "Error-Date" link -->
+     as it was, it stayed so (run 55, Tokyo Electron). Said only in Workday's "Error-Date" link.
+     ?asked: a date the profile doesn't answer, the person's (Robert Half's Application Questions, run 72: "Anticipated
+     eligibility time for employment?", given as 10/14/2026, shown so, and "required" all the same) -->
 <h2>Self Identify</h2>
 <h3>Voluntary Self-Identification of Disability</h3>
 <label for="name">Name<abbr title="required">*</abbr></label><input id="name" type="text" aria-required="true">
 <div data-automation-id="formField-dateSignedOn">
-  <label for="sid--dateSignedOn">Date<abbr title="required">*</abbr></label>
+  <label for="sid--dateSignedOn"><span id="asks">Date</span><abbr title="required">*</abbr></label>
   <div id="sid--dateSignedOn" role="group" data-automation-id="dateInputWrapper"></div>
 </div>
 <div id="errors"></div>
 <button type="button" id="save">Save and Continue</button>
 <script>
+  const asks = new URLSearchParams(location.search).has('asked') ? 'Anticipated eligibility time for employment?' : 'Date';
+  document.getElementById('asks').textContent = asks;
   // As Workday's date seems to work: its parts take digits in the part with focus (a part full moves focus on), and the
   // date goes to the form as focus leaves it, only where it's another date than it was as focus came in. The first
   // Save and Continue loses the form's record of it (the date still shown); typed again as it is, it's the same date,
@@ -73,7 +77,7 @@
     // (only as Workday's links: its words under them aren't an error message the desk reads)
     // (Workday's "Errors Found" is a heading: the page reads as another while it shows, Intel's, run 56)
     document.getElementById('errors').innerHTML = '<h3>Errors Found</h3>'
-      + '<button type="button">Error-Date</button><span>The field Date is required and must have a value.</span>';
+      + `<button type="button">Error-${asks}</button><span>The field ${asks} is required and must have a value.</span>`;
   });
 </script>
 </body>

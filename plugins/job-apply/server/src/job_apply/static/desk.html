@@ -505,9 +505,13 @@ function renderRows() {
 function question(jobId, q, i, repeated = false) {
   // A label more than one box has (Workday's "Date" Month and Year boxes) is answered for its own
   // box ("section | label | sub-label"), for this application only: remembered, or answered by
-  // its words alone, one answer would go in every box with that label.
+  // its words alone, one answer would go in every box with that label. So is a date's Month, Day or Year asked
+  // alone (its other parts filled already): its day, remembered by the date's label, would go in every part.
+  repeated = repeated || (q.role === "spinbutton" && /^(month|day|year)$/i.test(q.sublabel || ""));
   const key = repeated ? `${q.section || ""} | ${q.label} | ${q.sublabel || ""}` : q.label;
-  const consent = /agree|consent|certify|acknowledge|terms|attest/i.test(q.label);
+  // An agreement's "Remember" starts unticked, and so does one whose own words say little ("Acknowledgment"): what
+  // it agrees to is the site's words above it, and another site's "Acknowledgment" is another thing
+  const consent = /agree|consent|certify|acknowledg|terms|attest/i.test(q.label) || !!q.about;
   // a list without the profile's answer among its choices (a gender list with no decline): what's picked here is
   // for this site, and remembered it would go in where your profile's answer is a choice
   const forced = !!q.unmatched;
@@ -529,7 +533,9 @@ function question(jobId, q, i, repeated = false) {
   }
   // where it is, for a box whose words alone don't say ("Contact Details: Phone", "Date (Month)")
   const where = `${q.section ? `${esc(q.section)}: ` : ""}${esc(q.label)}${q.sublabel ? ` (${esc(q.sublabel)})` : ""}`;
-  return `<label class="q"><span>${where}${q.error ? ` <span class="small">(${esc(q.error)})</span>` : ""}</span>${input}
+  // and, for one whose words say little, the site's words above it (what it agrees to or certifies)
+  const about = q.about ? `<span class="small">“${esc(q.about)}”</span>` : "";
+  return `<label class="q"><span>${where}${q.error ? ` <span class="small">(${esc(q.error)})</span>` : ""}</span>${about}${input}
     ${repeated ? "" : `<span class="remember"><input type="checkbox" data-remember="${esc(q.label)}" ${consent || forced ? "" : "checked"}> Remember for later applications</span>`}</label>`;
 }
 

@@ -1,0 +1,28 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Voluntary Disclosures</title></head>
+<body>
+<!-- like Taylor Morrison's Workday Voluntary Disclosures (runs 71 and 73): its "Terms and Conditions" box is labelled
+     only "Acknowledgment*", and what it acknowledges is the paragraph above it: the employer's privacy notice, and a
+     certification of something the applicant did (the words made up here, in the same vein). Never the desk's to tick -->
+<h2>Voluntary Disclosures</h2>
+<div data-automation-id="termsAndConditions">
+  <h3>Terms and Conditions</h3>
+  <div><p>Privacy Notice: we collect the personal information in your application to consider you for employment.</p>
+    <p>By checking the box below, I acknowledge that I have read and understood the above Privacy Notice. I also certify
+      that I have shared a copy of it with my emergency contacts before giving their details.</p></div>
+  <div>
+    <div>
+      <input type="checkbox" id="termsAndConditions--acceptTermsAndAgreements" aria-required="true">
+      <label for="termsAndConditions--acceptTermsAndAgreements">Acknowledgment<abbr title="required">*</abbr></label>
+    </div>
+  </div>
+</div>
+<button type="button" id="save">Save and Continue</button>
+<script>
+  document.getElementById('save').addEventListener('click', () => {
+    if (document.getElementById('termsAndConditions--acceptTermsAndAgreements').checked) location.href = 'review.html';
+  });
+</script>
+</body>
+</html>
