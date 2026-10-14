@@ -17,7 +17,9 @@
      the next box; a value set by a script is wiped (live run 9, Oct 11: the code went in and Verify Passcode was
      pressed, and the step stayed with its boxes empty). What happened is kept for the tab
      (sessionStorage's br.* keys), so a reload doesn't lose it: signIns, resetPresses, captcha (anything
-     typed in a picture code), accountEmail (the email Create Account's Continue sent) -->
+     typed in a picture code), accountEmail (the email Create Account's Continue sent). After the passcode, its
+     account form (run 67): the email shown, a password twice, a security question and its answer; accountForm
+     (what's in it) and accountMade (its Continue's presses). ?other: that form shows another email -->
 <header><a href="javascript:void(0)" id="top-sign-in">Sign In</a> <a href="javascript:void(0)">Example Corp Careers</a></header>
 <main id="view"></main>
 <footer><a href="javascript:void(0)">Contact Us</a> <a href="javascript:void(0)">Privacy Policy</a></footer>
@@ -153,7 +155,36 @@
         $('perr').innerHTML = '<p>Please enter the 6-digit passcode.</p>';
         return;
       }
-      view.innerHTML = '<h2>Let\'s Get Started</h2><p>Your email address has been validated.</p>';
+      account(address);
+    });
+  }
+
+  // the account itself, once the passcode is verified (run 67): the email shown, not asked; a password twice; a
+  // security question to choose and its answer, the person's; Continue makes the account (accountMade)
+  function account(address) {
+    view.innerHTML = '<div role="status"><h3>Passcode successfully validated.</h3></div><h2>Let\'s Get Started</h2>'
+      + '<div role="tablist"><span role="tab" aria-selected="true">Create new account</span></div>'
+      + '<form id="made" novalidate><p>Fields marked with an asterisk (*) are required.</p><h3>Account Information</h3>'
+      + '<p>*Email address</p><p>' + (q.has('other') ? 'someone.else@example.org' : address) + '</p>'
+      + '<label><input type="checkbox" id="twofa"> Enable 2-Factor Sign In by Email</label>'
+      + '<label for="np">*Password</label><input id="np" type="password" required>'
+      + '<label for="np2">*Re-enter password</label><input id="np2" type="password" required>'
+      + '<h3>Security questions</h3><label for="sq">* Question 1</label><select id="sq" required>'
+      + '<option value="">Select question</option><option>What was the name of your first pet?</option>'
+      + '<option>In what city were you born?</option></select>'
+      + '<input id="sa" type="text" placeholder="Answer" aria-label="Question 1 Answer">'
+      + '<button type="submit">Continue</button> <a href="javascript:void(0)" id="cancel">Cancel</a>'
+      + '<div id="aerr" role="alert"></div></form>';
+    const typed = () => put('accountForm', {passwords: [$('np').value, $('np2').value].filter(Boolean).length,
+      question: $('sq').value, answer: $('sa').value, twofa: $('twofa').checked});
+    ['np', 'np2', 'sq', 'sa', 'twofa'].forEach((id) => $(id).addEventListener('change', typed));
+    ['np', 'np2', 'sa'].forEach((id) => $(id).addEventListener('input', typed));
+    $('made').addEventListener('submit', (e) => {
+      e.preventDefault();
+      bump('accountMade');
+      if (!$('np').value || !$('sq').value || !$('sa').value) {
+        $('aerr').innerHTML = '<p>Required field</p><p>Select question</p>';
+      }
     });
   }
 

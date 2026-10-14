@@ -276,6 +276,9 @@ _RESET_SET = re.compile(r"\b(?:reset|update|change|save|set|submit|continue|conf
 _NOT_A_STEP = re.compile(r"\b(?:back|cancel|sign in|log ?in|return)\b", re.I)
 _NEW_PASSWORD = re.compile(r"\bnew\b|confirm|verify|re-?enter|re-?type|again", re.I)
 _OLD_PASSWORD = re.compile(r"\b(?:current|old|existing|temporary)\b", re.I)
+# A page's title or heading that makes an account (BrassRing's "Create new account" over its "Account Information")
+_MAKES_ACCOUNT = re.compile(r"\b(?:create|new|register|sign ?up|open)\b[^.]{0,20}\baccount\b|"
+                            r"\baccount (?:creation|registration|set ?up)\b", re.I)
 # A reset's page saying its email is on the way: "We have sent a link", "Check your inbox", and Workday's
 # "You will receive an email with instructions ... if an account exists for this email address"
 _RESET_SENT = re.compile(r"\b(?:sent|emailed)\b.{0,80}\b(?:link|e-?mail|instructions)|check your (?:e-?mail|inbox)|"
@@ -1794,7 +1797,7 @@ class Applier:
                         _user_name_box(f) for f in fields if f.get("kind") in ("text", "email")) else "")
                     asks = ("Fill in anything it still asks for (a picture code, say), tick their terms box if there is "
                             "one and create the account (then verify your email if they ask)")
-                    if _security_boxes(fields):  # (never made up, so never pressed for the person: _make_account)
+                    if _security_asked(data):  # (never made up, so never pressed for the person: _make_account)
                         asks = ("It also asks for security questions and their answers: those are yours to choose (the "
                                 "desk never makes up answers). Fill them in there and create the account")
                     elif _captcha_on(data):  # (never touched, so never pressed for the person either)
@@ -2850,7 +2853,7 @@ class Applier:
         when it was pressed; the account is said to be made only once the site shows it
         (Run.account_made, in _drive). Nor with security questions on the form (some Taleo sites'):
         their answers are the person's."""
-        if _captcha_on(data) or _security_boxes(data.get("fields") or []):
+        if _captcha_on(data) or _security_asked(data):
             return False
         srv = self.srv
         statement = _privacy_statement(data)
@@ -2935,7 +2938,7 @@ class Applier:
         srv = self.srv
         site = _site(run, data)
         said = button["text"].strip()
-        if await self._fill_account_details(data.get("fields") or []):
+        if await self._fill_account_details(data.get("fields") or [], data.get("headings")):
             self._log(run, f"filled the rest of {site}'s Create Account form with your details")
         why = ""
         if _may_manage_accounts() and not run.account_finished and not (data.get("captcha") or data.get("challenge")):
@@ -3735,19 +3738,30 @@ class Applier:
             # No box for the email: the password alone only on a sign-in that shows it knows who's signing in
             # ("Signing in as <email>", as Workday's after its own password reset may: issue #112, note 14),
             # with no other box to fill (a "User ID" the reader doesn't know stays the person's) and a box
-            # that isn't a new, old or temporary password's (a reset's, a Create Account's, an emailed one)
+            # that isn't a new, old or temporary password's (a reset's, a Create Account's, an emailed one).
+            # Or a Create Account form that shows the email it's for (BrassRing's, after its emailed passcode,
+            # run 67: "Email address" and the address, then its two password boxes): under an account heading,
+            # its two boxes neither an old nor a temporary password's
             others = [f for f in fields if f["kind"] not in ("password", "checkbox", "radio", "radio_group",
                                                                "checkbox_group", "file", "hidden")]
             label = passwords[0].get("label") or "" if passwords else ""
-            if (new_account or others or len(passwords) != 1 or _NEW_PASSWORD.search(label) or _OLD_PASSWORD.search(label)
-                    or address.lower() not in (await srv.page_text(4000)).lower()):
+            alone = not (new_account or others or len(passwords) != 1 or _NEW_PASSWORD.search(label)
+                         or _OLD_PASSWORD.search(label))
+            # (the Create Account's: two boxes, neither a new, old or temporary password's, under a title or heading
+            # that makes an account, never a reset's nor a password change's: the review of 0.3.154)
+            said = " ".join([data.get("title") or "", *(data.get("headings") or [])])
+            for_it = (len(passwords) == 2 and not any(re.search(r"\bnew\b", f.get("label") or "", re.I)
+                                                      or _OLD_PASSWORD.search(f.get("label") or "") for f in passwords)
+                      and bool(_MAKES_ACCOUNT.search(said)) and not _RESET_PAGE.search(said))
+            if not (alone or for_it) or not _shows_address(await srv.page_text(4000), address):
                 return None
         if new_account:
             # The email in every box that asks for it ("Retype Email Address"; the user name
             # SCREEN's and Taleo's forms ask for is the email too), and the rest from the profile.
             if details:
-                await self._fill_account_details(fields)
-            await srv.fill_form([{"id": f["id"], "value": address} for f in boxes])
+                await self._fill_account_details(fields, data.get("headings"))
+            if boxes:
+                await srv.fill_form([{"id": f["id"], "value": address} for f in boxes])
         elif boxes:
             await srv.fill_form([{"id": boxes[0]["id"], "value": address}])
         for box in passwords:
@@ -3774,12 +3788,12 @@ class Applier:
                   + (" and your email as the user name" if as_user else ""))
         return "submitted"
 
-    async def _fill_account_details(self, fields: list[dict[str, Any]]) -> int:
+    async def _fill_account_details(self, fields: list[dict[str, Any]], headings: list[str] | None = None) -> int:
         """A Create Account form's other boxes, from the profile: names, country. Its check
         boxes (a newsletter, the site's terms) and file boxes ("upload your resume now?") are
         left alone, as is anything the profile doesn't answer (Benchmark's picture code), and
         its security questions and answers (the person's). How many it filled."""
-        questions = {f["id"] for f in _security_boxes(fields)}
+        questions = {f["id"] for f in _security_boxes(fields, headings)}
         empty = [f for f in fields if f.get("kind") in _ACCOUNT_KINDS and is_empty_value(f.get("value"))
                  and f["id"] not in questions]
         plan = plan_autofill(empty, config.Profile.load(), {})
@@ -4193,10 +4207,25 @@ def _user_name_box(field: dict[str, Any]) -> bool:
     return bool(_USER_NAME.search(label)) and not re.search(r"e-?mail", label, re.I)
 
 
-def _security_boxes(fields: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _shows_address(text: str, address: str) -> bool:
+    """Does the page show the profile email, whole ("Signing in as <email>"; never inside a longer address)?"""
+    return bool(address) and re.search(r"(?<![\w.+-])" + re.escape(address) + r"(?![\w-]|\.\w)", text, re.I) is not None
+
+
+def _security_asked(data: dict[str, Any]) -> bool:
+    """Security questions on a form, the person's: boxes for them, or a heading that says so (BrassRing's "Security
+    questions", run 67: its question a list the form reader doesn't see, the review of 0.3.154)."""
+    headings = data.get("headings") or []
+    return bool(_security_boxes(data.get("fields") or [], headings)) or any(
+        _SECURITY_QUESTION.search(h or "") for h in headings)
+
+
+def _security_boxes(fields: list[dict[str, Any]], headings: list[str] | None = None) -> list[dict[str, Any]]:
     """A Create Account form's security questions and their answer boxes (a plain "Answer"
-    beside them too): the person's to choose and answer, never made up."""
-    if not any(_SECURITY_QUESTION.search(f.get("label") or "") for f in fields):
+    beside them too): the person's to choose and answer, never made up. Named so by a box, or by the
+    form's heading (BrassRing's "Security questions" over "Question 1" and "Question 1 Answer", run 67)."""
+    if not any(_SECURITY_QUESTION.search(f.get("label") or "") for f in fields) and not any(
+            _SECURITY_QUESTION.search(h or "") for h in headings or []):
         return []
     return [f for f in fields if f.get("kind") not in ("password", "checkbox", "file")
             and re.search(r"\bquestions?\b|\banswers?\b|\bhint\b", f.get("label") or "", re.I)]
