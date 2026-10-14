@@ -155,6 +155,7 @@ ROLE = "technician"  # the run's role (--role)
 # (The test identity keeps its own, for the accounts check: TEST_IDENTITY.md says its address can show there)
 INBOX_IN_PROFILE = False
 TEST_IDENTITY = False  # --test-identity: the test identity applies, in place of the throwaway profile
+SECURITY_ANSWERS = False  # --security-answers: it answers an account form's security questions on the desk's card
 PLUS = False  # --plus: with its inbox's own "+employer" address at each employer (which sites take one?)
 ROLE_AT: dict[str, str] = {}  # with it, each of its employers' role (test_identity_employers.yaml, or --everywhere's)
 EMPLOYERS: list[dict[str, str]] = []  # with it, its employers (name, list, role, system, why)
@@ -886,7 +887,14 @@ async def main() -> int:
                          "LIVE_TEST_SITE_PASSWORD; scripts/TEST_IDENTITY.md) at the employers in "
                          "scripts/test_identity_employers.yaml: it makes accounts and reads their emailed codes, "
                          "and never submits")
+    ap.add_argument("--security-answers", action="store_true",
+                    help="with --test-identity: answer an account form's security questions on the desk's card, as "
+                         "a person would there (a question from its list, an answer made from the site password), "
+                         "so the run goes on into the application (the owner's call, Oct 14; Edward Jones' BrassRing)")
     args = ap.parse_args()
+    if args.security_answers and not args.test_identity:
+        print("--security-answers goes with --test-identity. Nothing was run.", file=sys.stderr)
+        return 2
     if args.machine and not args.test_identity:
         print("--machine goes with --test-identity. Nothing was run.", file=sys.stderr)
         return 2
@@ -905,8 +913,9 @@ async def main() -> int:
     args.out.mkdir(parents=True, exist_ok=True)
     if args.test_identity:
         EMPLOYERS[:] = start_test_identity(announce=not args.shard, everywhere=args.everywhere)
-        global PLUS
+        global PLUS, SECURITY_ANSWERS
         PLUS = args.plus
+        SECURITY_ANSWERS = args.security_answers
     else:
         mask_broad_email()
     use_role(args.role)
@@ -1960,6 +1969,17 @@ async def check_pipeline(company: dict[str, Any], out: Path, rec: dict[str, Any]
                     run.once[key] = fake_answer(q)
                 applier.enqueue(job["id"], front=True)
                 continue
+            if (TEST_IDENTITY and SECURITY_ANSWERS and run.status == "needs_you" and run.need == "sign_in"
+                    and "security_answered" not in rec and run.questions
+                    and all(q.get("account") for q in run.questions) and n < rounds - 1):
+                # an account form's security questions on the desk's card, answered as a person would there
+                # (--security-answers: the owner's call, Oct 14), for the test identity alone; the desk then
+                # creates the account and goes on
+                rec["security_answered"] = True
+                seed = live_identity.credentials(os.environ)[2]
+                run.account_answers = {placed_key(q): live_identity.security_answer(q, seed) for q in run.questions}
+                applier.enqueue(job["id"], front=True)
+                continue
             if (TEST_IDENTITY and run.status == "needs_you" and run.need == "sign_in" and "account_choice" not in rec
                     and "that choice is yours" in (run.reason or "") and n < rounds - 1):
                 # a Create Account choice the desk leaves to the person, made as they would (finish_account_choices)
@@ -2094,6 +2114,7 @@ async def parallel_main(args: argparse.Namespace) -> int:
               *(["--fake-passwords"] if args.fake_passwords and not args.test_identity else []),
               *(["--test-identity"] if args.test_identity else []),  # (its inbox and passwords: in the environment)
               *(["--everywhere"] if args.everywhere else []), *(["--plus"] if args.plus else []),
+              *(["--security-answers"] if args.security_answers else []),
               *(["--machine", args.machine] if args.machine else []),
               *(["--lists", args.lists] if args.lists else []), "--role", args.role]
     children = [await asyncio.create_subprocess_exec(
