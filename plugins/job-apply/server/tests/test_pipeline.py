@@ -3165,12 +3165,40 @@ def test_a_sign_in_page_good_for_one_visit_is_reached_again_through_the_posting(
     posting = fixture_url("site/sf-posting.html") + {"error": "", "home": "?home", "menu": "?menu"}[gone]
     job = srv.add_job(url=posting, title="Energy Analyst", company="Example Utility")["job"]
     applier = Applier(srv)
+    # What each tab loaded, and what sessionStorage held as each page started: on CI, now and then, the sign-in opened
+    # again drew its form, not its error (the 0.3.154 run). Under load the page didn't see the token its first visit
+    # stored: the reset page after it already found sf.used empty, in the same tab (a lost write, the browser's)
+    seen: list[str] = []
+    tabs: list = []
+
+    def watch(tab):
+        name = f"tab {len(tabs)}"
+        tabs.append(tab)
+        tab.on("framenavigated", lambda f: f == tab.main_frame and seen.append(f"{name}: {f.url.rsplit('/', 1)[-1]}"))
+        tab.on("console", lambda m: m.text.startswith("sf.used") and seen.append(f"{name}: {m.text}"))
+
+    back = Applier._back_to_sign_in
+
+    async def back_to_sign_in(self, run_):  # (which tab the tools read when the desk went back: the job's?)
+        seen.append(f"going back: the tools' tab is the job's: {srv.browser._page is run_.page}")
+        await back(self, run_)
+
+    monkeypatch.setattr(Applier, "_back_to_sign_in", back_to_sign_in)
 
     async def go():
+        await srv.browser.page()
+        for tab in srv.browser._ctx.pages:
+            watch(tab)
+        srv.browser._ctx.on("page", watch)
+        await srv.browser._ctx.add_init_script("if (location.protocol === 'file:' && sessionStorage) "
+                                               "console.log('sf.used at the start: ' + sessionStorage.getItem('sf.used'))")
         applier.start()
         try:
             r = applier.enqueue(job["id"])
             await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            with contextlib.suppress(Exception):
+                seen.append("at the end: " + await r.page.evaluate("() => location.href.split('/').pop() + "
+                                                                   "', sf.used ' + sessionStorage.getItem('sf.used')"))
             return r
         finally:
             await applier.stop()
@@ -3179,7 +3207,7 @@ def test_a_sign_in_page_good_for_one_visit_is_reached_again_through_the_posting(
     log = "\n".join(r.log)
     assert "so I went back to make an account there instead" in log, log
     said = ", opened again, led to the site's job search, not its sign-in" if gone == "home" else " couldn't be opened again"
-    assert f"sign-in page{said}, so I opened the job again" in log, log
+    assert f"sign-in page{said}, so I opened the job again" in log, log + "\n--- the browser:\n" + "\n".join(seen)
     assert "created your account" in log and r.seen_form, (r.reason, r.log)
 
 
