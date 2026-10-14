@@ -334,7 +334,10 @@ EXTRACT_JS = r"""
   const passwordBoxes = [];
   const seen = new Set();
   const groups = new Map();
-  const sel = 'input, textarea, select, button[aria-haspopup="listbox"], [role="combobox"], [role="radio"], [role="checkbox"], [role="switch"]';
+  // (and a jQuery UI selectmenu's button, a span standing in for its hidden select: BrassRing's security questions,
+  // run 67, never read, so the desk could only leave them to the person)
+  const sel = 'input, textarea, select, button[aria-haspopup="listbox"], [role="button"][aria-haspopup="listbox"], '
+    + '[role="combobox"], [role="radio"], [role="checkbox"], [role="switch"]';
   for (const el of document.querySelectorAll(sel)) {
     if (seen.has(el)) continue;
     seen.add(el);
@@ -376,6 +379,13 @@ EXTRACT_JS = r"""
     let kind = 'text';
     let options = null;
     let value = el.value;
+    // a jQuery UI selectmenu's button ("<id>-button") and the hidden select it stands for: its choices and whether
+    // it's required are the select's
+    const twin = role === 'button' && el.id && el.id.endsWith('-button')
+      ? document.getElementById(el.id.slice(0, -'-button'.length)) : null;
+    const native = twin && twin.tagName === 'SELECT' ? twin : null;
+    // (and no other element acting as a button: a site's own menus, a header's language picker, aren't its form)
+    if (role === 'button' && !['button', 'input', 'select', 'textarea'].includes(tagName) && !native) continue;
     if (tagName === 'textarea') kind = 'textarea';
     else if (tagName === 'select') {
       kind = 'select';
@@ -386,7 +396,17 @@ EXTRACT_JS = r"""
       value = Array.from(el.files || []).map((f) => f.name).join(', ') || uploadedNear(el);
     }
     else if (type === 'password') { kind = 'password'; value = el.value ? '(set)' : ''; }
-    else if (tagName === 'button' || (role === 'combobox' && tagName !== 'input')) { kind = 'listbox'; value = txt(el); }
+    else if (tagName === 'button' || native || (role === 'combobox' && tagName !== 'input')) {
+      kind = 'listbox';
+      value = txt(el);
+      if (native) {
+        options = Array.from(native.options).map((o) => clean(o.text)).filter(Boolean);
+        // (its button shows the placeholder, "Select question", whatever its value: "", or "-1")
+        const chosen = Array.from(native.selectedOptions).filter((o) => o.value !== '' && !o.disabled
+          && !(o.index === 0 && /^\s*(?:-+\s*)?(?:select|choose|please select|pick)\b/i.test(o.text)));
+        if (!chosen.length) value = '';
+      }
+    }
     else if (role === 'combobox' || el.getAttribute('aria-autocomplete') === 'list'
              || el.getAttribute('data-uxi-widget-type') === 'selectinput') {  // Workday's search prompts (2026)
       kind = 'combobox';
@@ -424,8 +444,24 @@ EXTRACT_JS = r"""
     // Bot traps ("for robots only, do not enter if you're human") must never be filled.
     if (HONEYPOT.test(label) || HONEYPOT.test(el.name || '')) continue;
     const f = {
-      id: idOf(el), kind, label, required: isRequired(el, label), value: kind === 'password' ? value : clean(String(value || '')),
+      id: idOf(el), kind, label, value: kind === 'password' ? value : clean(String(value || '')),
+      required: isRequired(el, label) || !!(native && (native.required || native.getAttribute('aria-required') === 'true'
+        || native.getAttribute('ng-required') === 'true')),
     };
+    // an account's security answer the desk put in for the person (browser.fill's `secret`): never read back. "(set)"
+    // only for a real answer the desk saw go in; a list or menu still on its placeholder (whatever its value: "-1", or a
+    // button's "Select question") has nothing; anything else in it, "(unconfirmed)"
+    if (el.hasAttribute('data-ja-secret') && f.value) {
+      const placeholder = /^\s*(?:-+\s*)?(?:select|choose|please select|pick)\b/i;
+      const list = tagName === 'select' ? el : native;
+      const unchosen = list
+        ? !Array.from(list.selectedOptions).some((o) => o.value !== '' && !o.disabled
+                                                      && !(o.index === 0 && placeholder.test(o.text)))
+        : (kind === 'listbox' || kind === 'combobox') && placeholder.test(f.value);
+      const kept = el.getAttribute('data-ja-secret-index');  // (the choice confirmed: another since is the person's)
+      const moved = !!list && kept !== null && list.selectedIndex !== Number(kept);
+      f.value = unchosen ? '' : el.getAttribute('data-ja-secret') === 'in' && !moved ? '(set)' : '(unconfirmed)';
+    }
     if (tagName === 'input' && type && type !== 'text') f.input_type = type;
     // a box the site marks as a phone's (iCIMS's "Number" beside its Phone Country Code: tel-national)
     const autocomplete = (el.getAttribute('autocomplete') || '').trim().toLowerCase().split(/\s+/).pop();

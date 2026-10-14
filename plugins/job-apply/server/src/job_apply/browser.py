@@ -80,13 +80,15 @@ _INPUT_TAG = re.compile(r'<input\b(?:[^>"]|"[^"]*")*>', re.I)
 _PASSWORD_TYPE = re.compile(r'\stype="password"', re.I)
 _ONE_TIME_CODE = re.compile(r"passcode|one[- ]time (?:pass(?:word|code)|code)|verification code|security code|\botp\b", re.I)
 _VALUE_ATTR = re.compile(r'\svalue="[^"]*"', re.I)
+# a box holding an account's security answer, marked when the desk put it in (Browser._keep_secret)
+_SECRET_BOX = re.compile(r'\sdata-ja-secret\b', re.I)
 
 
 def _without_passwords(html: str) -> str:
-    """A page's HTML with nothing in its password boxes: a site that writes what's typed into its
-    HTML (React keeps a box's value attribute in step) would leave a password in a saved page."""
-    return _INPUT_TAG.sub(lambda m: _VALUE_ATTR.sub("", m.group()) if _PASSWORD_TYPE.search(m.group())
-                          else m.group(), html)
+    """A page's HTML with nothing in its password boxes, nor in an account's security answer's: a site that writes
+    what's typed into its HTML (React keeps a box's value attribute in step) would leave one in a saved page."""
+    return _INPUT_TAG.sub(lambda m: _VALUE_ATTR.sub("", m.group())
+                          if _PASSWORD_TYPE.search(m.group()) or _SECRET_BOX.search(m.group()) else m.group(), html)
 
 
 CAPTCHA_SAYS = ("A CAPTCHA (a bot check: an \"I'm not a robot\" box or pictures) is on this page. It's for the "
@@ -1196,18 +1198,21 @@ class BrowserSession:
             page = await self.page()
             dest.mkdir(parents=True, exist_ok=True)
             data = await self._extract(page)
-            frames = []
+            frames, secret = [], False
             for i, frame in enumerate(f for f in page.frames if not f.is_detached()):
                 name = "page.html" if frame is page.main_frame else f"frame-{i}.html"
                 try:
-                    (dest / name).write_text(_without_passwords(await frame.content()), encoding="utf-8")
+                    html = await frame.content()
+                    secret = secret or bool(_SECRET_BOX.search(html))
+                    (dest / name).write_text(_without_passwords(html), encoding="utf-8")
                     frames.append({"file": name, "url": frame.url})
                 except PlaywrightError:
                     continue
             try:
-                (dest / "screenshot.jpg").write_bytes(
-                    await page.screenshot(type="jpeg", quality=60, full_page=True)
-                )
+                if not secret:  # (never a picture of an account's security answer)
+                    (dest / "screenshot.jpg").write_bytes(
+                        await page.screenshot(type="jpeg", quality=60, full_page=True)
+                    )
             except PlaywrightError:
                 pass
             meta = {"url": page.url, "title": await page.title(), "note": note, "frames": frames,
@@ -1288,6 +1293,8 @@ class BrowserSession:
                         continue
                     try:
                         field = await self._current(page, known.get(fid) or await self._field(page, fid))
+                        if item.get("secret"):  # (the box as found now, marked before anything goes in: _keep_secret)
+                            await self._keep_secret(page, field["id"])
                         if item.get("names"):  # a school or an employer: matched by name only
                             field = {**field, "names": True}
                         if item.get("near"):  # an address part: the rest of the address, for a place lookup
@@ -1297,12 +1304,16 @@ class BrowserSession:
                         if item.get("again"):  # answered again where the page lost it (a date: cleared first)
                             field = {**field, "again": True}
                         if not item.get("again") and await self._holds(page, field, item.get("value")):
+                            if item.get("secret"):
+                                await self._keep_secret(page, field["id"], confirmed=True)
                             results.append({"id": fid, "label": field.get("label", ""), "ok": True, "result": "already set"})
                             continue
                         await self._clear_of_dialogs(page, field)
                         outcome = await self._fill_one(page, field, item.get("value"), given)
+                        if item.get("secret"):
+                            await self._keep_secret(page, field["id"], confirmed=True)
                         results.append({"id": fid, "label": field.get("label", ""), "ok": True, "result": outcome})
-                        if outcome in ("filled", "typed"):
+                        if outcome in ("filled", "typed") and not item.get("secret"):
                             typed = self._typed.setdefault(page.url, set())
                             if len(typed) < 200:
                                 typed.add(norm(str(item.get("value"))))
@@ -1315,6 +1326,23 @@ class BrowserSession:
             finally:
                 await self._close_menus(page)  # none left open over the buttons, or over its own field
             return results
+
+    async def _keep_secret(self, page: Page, element_id: str, confirmed: bool = False) -> None:
+        """A box for an account's security answer, the person's (the desk's card), marked before it's filled
+        ("pending"), and once its answer is in ("in", `confirmed`): the form reader never reads it back (a real answer
+        reads "(set)" only once it's in, anything else in it "(unconfirmed)": formjs), a saved page never holds it, it's
+        never typed again, and what's typed in it shows as dots, as a password's does (in a screenshot too; a chosen
+        question shows as chosen; a list's choice is kept as confirmed, and another one since reads "(unconfirmed)").
+        Raises when it can't be marked, and then nothing goes in (or it isn't confirmed)."""
+        await self._frame_for(page, element_id).locator(f'[data-ja-id="{element_id}"]').first.evaluate(
+            """(el, state) => {
+              el.setAttribute('data-ja-secret', state);
+              const list = el.tagName === 'SELECT' ? el
+                : el.id && el.id.endsWith('-button') ? document.getElementById(el.id.slice(0, -'-button'.length)) : null;
+              if (state === 'in' && list && list.tagName === 'SELECT')
+                el.setAttribute('data-ja-secret-index', String(list.selectedIndex));
+              if (['INPUT', 'TEXTAREA'].includes(el.tagName)) el.style.setProperty('-webkit-text-security', 'disc');
+            }""", "in" if confirmed else "pending", timeout=3000)
 
     async def _clear_of_dialogs(self, page: Page, field: dict) -> None:
         """Nothing is filled behind a dialog open over the page: the boxes under it time out or

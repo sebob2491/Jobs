@@ -121,3 +121,21 @@ def test_a_common_answer_comes_last_and_never_in_a_past_jobs_block(job_apply_hom
     past = autofill.resolve_field({"kind": "text", "label": "Preferred shift", "section": "Work Experience 2"},
                                   prof, {"company": "X"})
     assert past is None or past.value != "Days", past
+
+
+def test_an_account_forms_security_questions_are_never_listed_for_the_bank():
+    """scripts/question_bank.py lists the questions a nightly asked that no common question covers. An account form's
+    security questions (BrassRing's, on the desk's card) are that account's alone, never a common question."""
+    import importlib.util
+    from pathlib import Path
+
+    path = Path(__file__).resolve().parents[1] / "scripts" / "question_bank.py"
+    spec = importlib.util.spec_from_file_location("question_bank", path)
+    qb = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(qb)
+    rounds = [{"need": "sign_in", "questions": [
+        {"label": "* Question 1", "kind": "listbox", "options": ["In what city were you born?"], "account": True},
+        {"label": "Question 1 Answer", "kind": "text", "account": True}]},
+        {"need": "questions", "questions": [{"label": "Do you have a forklift license?", "kind": "select"}]}]
+    found = qb.uncovered([{"company": "Example Corp", "rounds": rounds}], [])
+    assert [label for label, _, _ in found] == ["Do you have a forklift license"], found

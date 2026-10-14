@@ -1997,6 +1997,69 @@ def test_a_box_whose_words_say_little_shows_the_words_above_it_and_isnt_remember
     assert day == (1, 0, 1), day
 
 
+def test_an_account_forms_security_questions_on_the_card_go_into_that_form_alone(srv, job_apply_home):
+    """BrassRing's Create Account (Edward Jones, runs 67 to 77) asks for a security question and its answer, the
+    person's to choose. On the card they say they're for that account only, with no "Remember" box; answered, they're
+    kept apart for that form (Run.account_answers): never remembered, never among the application's answers (which go
+    into every box with its label), never on the desk page. The application's own questions beside them are as ever."""
+    from playwright.async_api import async_playwright
+
+    from job_apply.pipeline import Run, placed_key, question_key
+
+    desk = Desk(srv)
+    desk.applier.start = lambda: None
+    desk.search.update(status="done", at=time.time())
+    job = srv.add_job(url="https://example.com/job/1", title="Analyst", company="Example Corp")["job"]
+    chooser = {"id": "q", "kind": "listbox", "label": "* Question 1", "required": True, "section": "Security questions",
+               "options": ["Select question", "What was the name of your first pet?", "In what city were you born?"],
+               "account": True}
+    answer = {"id": "a", "kind": "text", "label": "Question 1 Answer", "section": "Security questions", "account": True}
+    desk.applier.runs[job["id"]] = Run(job["id"], "Analyst", "Example Corp", status="needs_you", need="sign_in",
+                                       reason="Waiting.", questions=[chooser, answer], blocking=True)
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with async_playwright() as pw:
+                browser = await pw.chromium.launch(**launch_options())
+                page = await browser.new_page()
+                await page.goto(desk.url)
+                await page.wait_for_selector('[data-q="Security questions | Question 1 Answer | "]')
+                seen = (await page.locator("#needs").inner_text(), await page.locator("[data-remember]").count(),
+                        await page.locator('[data-q="Security questions | * Question 1 | "] option').all_inner_texts(),
+                        await page.locator('[data-job-act="later"]').count())
+                await browser.close()
+                return seen
+        finally:
+            await desk.stop()
+
+    card, remember, choices, later = run(go())
+    assert card.count("For this account only: never remembered.") == 2 and remember == 0, (card, remember)
+    assert choices == ["", "What was the name of your first pet?", "In what city were you born?"], choices
+    assert later == 1  # (the sign-in holds the queue: Later lets it go on, as on any sign-in card)
+    secret = "Flagstaff Ridge 1987"
+    # all of them, or none: one answer alone is turned down, and nothing is kept
+    with pytest.raises(ValueError, match="each of its security questions"):
+        desk.answer(job["id"], [{"label": "Security questions | Question 1 Answer | ", "value": secret}])
+    assert desk.applier.runs[job["id"]].account_answers == {} and config.saved_answers() == []
+    # (a page from before, sending a box's label alone: still that form's alone)
+    assert desk.answer(job["id"], [{"label": "* Question 1", "value": "In what city were you born?"},
+                                   {"label": "Question 1 Answer", "value": secret, "remember": True}]) is None
+    assert desk.applier.runs[job["id"]].account_answers == {
+        placed_key(chooser): "In what city were you born?", placed_key(answer): secret}
+    assert desk.applier.runs[job["id"]].once == {} and config.saved_answers() == []
+    desk.applier.runs[job["id"]] = Run(job["id"], "Analyst", "Example Corp", status="needs_you", need="sign_in",
+                                       reason="Waiting.", questions=[chooser, answer], blocking=True)
+    assert desk.answer(job["id"], [
+        {"label": "Security questions | * Question 1 | ", "value": "In what city were you born?", "remember": True},
+        {"label": "Security questions | Question 1 Answer | ", "value": secret, "remember": True},
+        {"label": "Are you willing to relocate?", "value": "No", "remember": False}]) is None
+    r = desk.applier.runs[job["id"]]
+    assert r.account_answers == {placed_key(chooser): "In what city were you born?", placed_key(answer): secret}
+    assert r.once == {question_key("Are you willing to relocate?"): "No"} and config.saved_answers() == []
+    assert secret not in json.dumps(r.public()) and secret not in json.dumps(desk.state(), default=str)
+
+
 def test_every_card_says_i_submitted_it_already(srv):
     """Issue #112, note 31 (the owner's ask): an application sent on the site itself, whatever the desk's card
     waited on, is marked applied from that card: "I submitted it already" on the questions, sign-in, stuck,
