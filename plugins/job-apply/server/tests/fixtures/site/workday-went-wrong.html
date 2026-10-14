@@ -15,7 +15,10 @@
 <h2>Field Service Engineer</h2>
 <div>current step 1 of 6 My Information</div>
 <script>
-  const loads = Number(sessionStorage.getItem('ww.loads') || 0) + 1;
+  // (a reload counts as a later load even when sessionStorage lost the first load's count: on CI, under load, its
+  // headless browser now and then drops a write a moment before a reload, and the page said the same again)
+  const reloaded = (performance.getEntriesByType('navigation')[0] || {}).type === 'reload';
+  const loads = Math.max(Number(sessionStorage.getItem('ww.loads') || 0) + 1, reloaded ? 2 : 1);
   sessionStorage.setItem('ww.loads', String(loads));
   const late = new URLSearchParams(location.search).has('late');
   const again = new URLSearchParams(location.search).has('again');

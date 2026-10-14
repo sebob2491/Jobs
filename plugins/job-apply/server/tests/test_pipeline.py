@@ -3686,6 +3686,53 @@ def test_a_posting_page_with_no_way_on_is_reloaded_once_then_said(srv, monkeypat
         assert "couldn't find the button" not in r.reason, r.reason
 
 
+@pytest.mark.parametrize("query", ["", "?heal"])
+def test_an_empty_posting_page_is_reloaded_once_then_said(srv, monkeypatch, job_apply_home, query):
+    """Linde's Cornerstone requisition page (run 75; in runs 62 and 77 it drew): nothing of the job on it but the site's
+    bar with its language list, unlabelled and empty. The list made the page a form to the desk, so it was never reloaded
+    as a posting page with no way on is, and the desk said "I couldn't find the button". A page's language list isn't
+    the application's: the page is reloaded once (heal: then it draws its Apply and goes on), and still empty, it's
+    said for what it is."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 1)
+    job = srv.add_job(url=fixture_url("site/posting-empty.html") + query, title="Engineering Manager",
+                      company="Example Gas")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert sum("showed no way on to the application, so I reloaded it" in line for line in r.log) == 1, r.log
+    if query:
+        assert r.seen_form and "posting-empty" not in r.url, (r.url, r.reason, r.log)
+    else:
+        assert (r.status, r.need) == ("needs_you", "stuck") and "came up empty, even after I reloaded it" in r.reason, \
+            (r.reason, r.log)
+
+
+def test_a_pages_own_language_picker_never_makes_it_a_form():
+    """What kind of page it is (classify, on the desk's own looks and on its peeks at a paused tab alike) leaves out the
+    page's language picker, while the page as read keeps it (the review of 0.3.161: left out of the desk's looks alone,
+    a paused tab's peek, which has it, read as moved on, and a press's summary never matched the look before it). A
+    list the page requires, or a box of another kind with that label, is a question."""
+    lang = {"id": "l", "kind": "select", "label": "", "options": []}
+    picker = {"id": "p", "kind": "combobox", "label": "Language", "value": "English (US)"}
+    verify = "Verify your email. We sent a link to your email address: open it to carry on."
+    assert classify({"fields": [lang, picker], "actions": []}, "Powered by Example Talent Cloud.") == "page"
+    assert classify({"fields": [lang], "actions": []}, verify) == "email_code"
+    assert classify({"fields": [{**picker, "required": True}]}, "") == "form"
+    assert classify({"fields": [{**picker, "invalid": True}]}, "") == "form"
+    assert classify({"fields": [{"id": "t", "kind": "text", "label": "Language"}]}, "") == "form"
+    assert classify({"fields": [{**lang, "label": "Country", "options": ["United States"]}]}, "") == "form"
+
+
 def test_a_page_a_sign_in_led_to_is_never_reloaded_for_having_no_way_on(srv, monkeypatch):
     """The review of 0.3.152: a page with no way on is reloaded only where it's the posting's own, opened on this pass
     with nothing done on it since. A page the desk's sign-in led to (its form's POST answered with a candidate home)

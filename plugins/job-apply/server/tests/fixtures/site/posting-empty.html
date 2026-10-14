@@ -1,0 +1,24 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Careers</title></head>
+<body>
+<!-- like Linde's Cornerstone requisition page (run 75; in runs 62 and 77 it drew): the site's bar with its language list,
+     unlabelled and empty, a back arrow, and nothing of the job: no title, no description, nothing to press. ?heal: the
+     page reloaded draws the job and its Apply (to the application, step1.html) -->
+<div class="page"><div class="header"><div class="bar"><div class="lang"><select data-tag="LanguageSelector" aria-label=""></select></div></div></div></div>
+<a href="#" class="back"><svg width="12" height="12" aria-hidden="true"><path d="M8 2 L3 6 L8 10"></path></svg></a>
+<div id="job"></div>
+<div class="footer"><p>Powered by Example Talent Cloud. We value your privacy and the security of your data.</p></div>
+<script>
+  // (reloaded, by the browser's own word too: CI's headless browser, under load, now and then loses a sessionStorage
+  // write a moment before a reload)
+  const reloaded = (performance.getEntriesByType('navigation')[0] || {}).type === 'reload';
+  const healed = new URLSearchParams(location.search).has('heal') && (sessionStorage.getItem('seen') === '1' || reloaded);
+  sessionStorage.setItem('seen', '1');
+  if (healed) {
+    document.getElementById('job').innerHTML = '<h1>Electronics Engineering Manager</h1><p>Mesa, AZ.</p>'
+      + '<a href="step1.html">Apply</a>';
+  }
+</script>
+</body>
+</html>
