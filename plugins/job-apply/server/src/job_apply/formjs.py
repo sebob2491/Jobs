@@ -743,7 +743,21 @@ EXTRACT_JS = r"""
   const bones = () => [...document.querySelectorAll('div, span')].some((el) => el.childElementCount === 0
     && /^loading(?:\.\.\.|\u2026)?$/i.test((el.textContent || '').trim()) && el.nextElementSibling
     && el.nextElementSibling.getAttribute('aria-hidden') === 'true' && visible(el.nextElementSibling));
-  const busy = [...document.querySelectorAll(LOADING)].some(visible) || bones();
+  // and Workday's step still drawing: under its progress bar, only its loading dots, boxes with no words, no names and
+  // nothing to press (Grand Canyon University's Create Account/Sign In, run 69: no automation id on them)
+  const drawing = () => {
+    const flow = document.querySelector('[data-automation-id="applyFlowPage"]');
+    let bar = flow && flow.querySelector('[data-automation-id="progressBar"]');
+    while (bar && bar !== flow && !bar.nextElementSibling) bar = bar.parentElement;
+    const body = bar && bar !== flow ? bar.nextElementSibling : null;
+    return !!body && visible(body) && !(body.innerText || '').trim()
+      && !body.querySelector('input, select, textarea, button, a, [role="button"], [role="link"], iframe, img')
+      && [...body.querySelectorAll('div, span')].filter((el) => {  // (drawn: the dots themselves, not empty wrappers)
+        const r = el.getBoundingClientRect();
+        return r.width > 0 && r.height > 0 && !el.childElementCount && visible(el);
+      }).length >= 3;
+  };
+  const busy = [...document.querySelectorAll(LOADING)].some(visible) || bones() || drawing();
   return { fields, actions, errors, headings, dialogs, ...(busy ? { busy: true } : {}) };
 }
 """.replace("/*SIGN_IN_FORM*/", SIGN_IN_FORM_JS).replace("/*OPEN_DIALOGS*/", OPEN_DIALOGS_JS)

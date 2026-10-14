@@ -7,7 +7,9 @@
 <!-- like Baker Tilly's Workday (run 62, Oct 13): Apply Manually opened "current step 1 of 7 Create Account/Sign In"
      with Workday's whole-step loading skeleton (applyFlowLoadingPage: grey bars) and only its header's Sign In, and it
      never drew the step's sign-in; the desk said "Sign in (or create your account)". ?heal: the page reloaded draws
-     the step (here a form with its Submit); ?late=<ms>: it draws that long after it opens, with no reload. -->
+     the step (here a form with its Submit); ?late=<ms>: it draws that long after it opens, with no reload. ?dots: like
+     Grand Canyon University's (run 69): the step's body under the progress bar (applyFlowPage's) only Workday's three
+     loading dots, empty boxes with no automation id -->
 <header><button type="button" data-automation-id="utilityButtonSignIn">Sign In</button></header>
 <ol aria-label="Application Progress">
   <li data-automation-id="progressBarActiveStep">current step 1 of 7 Create Account/Sign In</li>
@@ -18,6 +20,15 @@
 </main>
 <script>
   const q = new URLSearchParams(location.search);
+  if (q.has('dots')) {
+    document.querySelector('ol').setAttribute('data-automation-id', 'progressBar');
+    document.body.innerHTML = '<header>' + document.querySelector('header').innerHTML + '</header>'
+      + '<div data-automation-id="applyFlowPage"><main><div>' + document.querySelector('ol').outerHTML + '</div>'
+      + '<div id="step"><div class="dots" style="display: flex; gap: 6px; padding: 12px">'
+      + '<div style="width: 8px; height: 8px; border-radius: 4px; background: #ccd"></div>'
+      + '<div style="width: 8px; height: 8px; border-radius: 4px; background: #ccd"></div>'
+      + '<div style="width: 8px; height: 8px; border-radius: 4px; background: #ccd"></div></div></div></main></div>';
+  }
   const healed = q.has('heal') && sessionStorage.getItem('seen') === '1';
   sessionStorage.setItem('seen', '1');
   const draw = () => {

@@ -71,6 +71,31 @@ def test_workdays_whole_step_loading_page_is_busy_while_on_show(srv, tmp_path):
         assert bool(run(srv.browser.inspect(include_dropdown_options=False)).get("busy")) is busy, style
 
 
+def test_workdays_step_body_with_only_its_loading_dots_is_busy(srv, tmp_path):
+    """Grand Canyon University's Workday (run 69): its Create Account/Sign In step's body under the progress bar was
+    only Workday's three loading dots, boxes with no words and no automation id: busy. Not a body with words, a box to
+    fill or a picture, nor one with fewer than three drawn boxes (empty wrappers aren't dots), nor one hidden, nor the
+    same outside Workday's apply flow; and never a real step drawn (Onto's and Intel's, captured live)."""
+    dot = '<div style="width: 8px; height: 8px; background: #ccd"></div>'
+    dots = f'<div style="display: flex; gap: 6px">{dot * 3}</div>'
+    flow = ('<div data-automation-id="applyFlowPage"><main><div><ol data-automation-id="progressBar"><li>current step 1 '
+            'of 6 Create Account/Sign In</li></ol></div><div{style}>{body}</div></main></div>')
+    page = tmp_path / "form.html"
+    for html, busy in ((flow.format(style="", body=dots), True),
+                       (flow.format(style="", body=dots + '<p>Sign in to apply</p>'), False),
+                       (flow.format(style="", body=dots + '<input aria-label="">'), False),
+                       (flow.format(style="", body=dots + '<img alt="" src="data:,">'), False),
+                       (flow.format(style="", body=f'<div>{dot * 2}</div><div><div><div></div></div></div>'), False),
+                       (flow.format(style=' style="display: none"', body=dots), False),
+                       ('<main><div><ol><li>step 1</li></ol></div><div>' + dots + '</div></main>', False)):
+        page.write_text(f"<!doctype html><html><body>{html}</body></html>", encoding="utf-8")
+        run(srv.browser.goto(page.resolve().as_uri()))
+        assert bool(run(srv.browser.inspect(include_dropdown_options=False)).get("busy")) is busy, html
+    for live in ("live-onto-innovation.html", "live-intel.html"):  # (Workday steps drawn, captured live)
+        run(srv.browser.goto(fixture_url(f"live/{live}")))
+        assert not run(srv.browser.inspect(include_dropdown_options=False)).get("busy"), live
+
+
 def test_a_hidden_file_box_is_named_by_its_own_upload_button(srv, tmp_path):
     """EMD Electronics' Phenom application (Oct 2026): the resume's file box is hidden beside its
     "Upload Resume/CV" button, after an "or" between it and Apply With LinkedIn, under a header
