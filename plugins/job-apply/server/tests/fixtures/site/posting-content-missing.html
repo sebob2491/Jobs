@@ -1,0 +1,25 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Human Resources Analyst</title></head>
+<body>
+<!-- like the State of Arizona's posting page (runs 61 and 63, Oct 13): the job's description, the site's header links
+     ("Applicant Login", "SEARCH"), and the block with its APPLY a part loaded on its own (a Turbo frame) that came back
+     "Content missing", so the page had no way on. In run 62 the block drew. ?heal: the page reloaded draws it (an
+     "Apply" link to the application, step1.html). -->
+<nav><a href="#">Applicant Login</a> <a href="#">SEARCH</a></nav>
+<h1>HUMAN RESOURCES ANALYST</h1>
+<div id="description"></div>
+<div id="block"></div>
+<script>
+  // (a long description, the block after it, and the block's words a moment after the page loads, as its own fetch's)
+  document.getElementById('description').innerHTML = '<p>Interpret human resources policies and procedures, and apply '
+    + 'State and Federal Laws, as well as Classification and Compensation Guidelines.</p>'.repeat(60);
+  const healed = new URLSearchParams(location.search).has('heal') && sessionStorage.getItem('seen') === '1';
+  sessionStorage.setItem('seen', '1');
+  setTimeout(() => {
+    document.getElementById('block').innerHTML = healed ? '<a href="step1.html">Apply</a>'
+      : '<strong class="turbo-frame-error">Content missing</strong>';
+  }, 400);
+</script>
+</body>
+</html>
