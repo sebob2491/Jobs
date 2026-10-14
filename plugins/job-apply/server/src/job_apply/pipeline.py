@@ -3263,9 +3263,20 @@ class Applier:
             if forgot is None:
                 return await stop("couldn't find its way to a password reset", data)
         run.reset_from = data.get("url") or ""
+        before, _ = await self._look()  # (the page as it is now, the refused sign-in drawn: what the press changes)
+        forgot = _forgot_action(before.get("actions") or []) or forgot  # (its own, drawn again since, if it was)
         if not await press(forgot):
             return await instead("couldn't open its password reset", data)
-        data, text = await self._look()
+        # The reset drawn, not the sign-in still on show nor a page between the two, still loading: a script's way
+        # there can take a moment, and the sign-in read again was taken for a reset the desk can't fill in, so a reset
+        # it could do was never asked for (the review of 0.3.156)
+        deadline = time.monotonic() + LATE_BUTTONS_WAIT
+        while True:
+            data, text = await self._look()
+            if (_page_sig(data) != _page_sig(before) and not data.get("busy") and data.get("fields")
+                    or time.monotonic() > deadline):
+                break
+            await asyncio.sleep(0.5)
         address = config.Profile.load().get("personal.email")
         boxes = [f for f in data.get("fields") or [] if f.get("kind") in ("text", "email")
                  and re.search(r"e-?mail|user ?name|login", f.get("label") or "", re.I)]
