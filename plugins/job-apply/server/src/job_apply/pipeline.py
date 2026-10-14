@@ -111,6 +111,8 @@ _STEPISH = re.compile(r"\b(next|continue|save|submit|review|apply|finish|done|pr
 # Workday saving again what a step saved a moment ago: "A phone number already exists for this application. Update or
 # delete the phone number." (PayPal's, run 56; Grand Canyon Education's address, run 55)
 _SAVED_ALREADY = re.compile(r"\balready exists for this application\b", re.I)
+# A part of a page that failed to load, in the words of Hotwire's Turbo (the State of Arizona's posting page, run 63)
+_CONTENT_MISSING = re.compile(r"\bcontent missing\b", re.I)
 _REFRESH_ASKED = re.compile(r"\bsomething went wrong\b.{0,200}\b(?:refresh|reload) (?:the|this) page\b", re.I | re.S)
 _TURNED_AWAY = re.compile(r"^\s*(?:403\s*)?forbidden\s*$|^\s*(?:406\s*)?not acceptable\s*$|"
                           r"^\s*your request has been blocked\.?\s*$", re.I)  # (Workday's, its title empty)
@@ -451,6 +453,8 @@ class Run:
     reset_from: str = ""  # the sign-in page a reset was asked from: back there once it's done elsewhere
     reset_waited: bool = False  # paused for the reset email (a Resume after that means it's done)
     refreshed: bool = False  # reloaded once for a page that asked for it ("Please refresh the page")
+    start_reloaded: bool = False  # reloaded once for a posting page with no way on (the State of Arizona's, run 63)
+    opened_fresh: bool = False  # this pass opened the job in a new tab (its page the posting's own, by its address)
     account_in: bool = False  # an account made for this job, and signed in to (Run.account_made said)
     load_reloaded: bool = False  # reloaded once for a step still loading after its wait (Workday's placeholders, run 57)
     list_reloaded: bool = False  # reloaded once for a school's list with no choices at all (GCU's Degree list, run 61)
@@ -1486,6 +1490,7 @@ class Applier:
                 self._log(run, "its tab had gone back to the site's careers home, so I opened the job again in a "
                           "new tab")
                 run.page = None
+        run.opened_fresh = False
         if srv.browser.use_tab(run.page):
             srv.browser.current_job_id = run.job_id
             return True
@@ -1509,6 +1514,7 @@ class Applier:
             self._log(run, run.reason)
             return False
         self._log(run, f"opened {opened['url']}")
+        run.opened_fresh = True
         return True
 
     def _already_done(self, run: Run) -> bool:
@@ -2152,6 +2158,31 @@ class Applier:
                                        "asked for the page to be refreshed, and I had reloaded once already for this "
                                        "application. That's the site's own trouble: reload the page in the browser window "
                                        "(now, or later if it still says so), then press Resume.")
+                if (run.opened_fresh and not pressed and not sign_ins and not agreed and not dismissed
+                        and not run.seen_form and not run.start_reloaded and not run.hands_on and not run.pressed_before
+                        and not run.refreshed and not run.load_reloaded and not run.accounts_tried
+                        and not run.account_made and not run.resetting and not run.reset_from
+                        and not data.get("fields") and run.page is not None):
+                    # the posting's own page (opened on this pass by its address, nothing done on it since) with no way
+                    # on (the State of Arizona's, runs 61 and 63: the block with its APPLY said "Content missing"; in run
+                    # 62 it drew): reloaded once a job. Never a page a press or a sign-in led to: a reload may send its
+                    # form again
+                    run.start_reloaded = True
+                    self._log(run, f"{_site(run, data)}'s page showed no way on to the application, so I reloaded it")
+                    with contextlib.suppress(Exception):
+                        await run.page.reload(wait_until="load")
+                    continue
+                full = ""
+                if not run.seen_form:
+                    with contextlib.suppress(Exception):
+                        full = await srv.page_text(40000)  # (the page as it is now, whole: the block comes after its text)
+                if _CONTENT_MISSING.search(full):
+                    await self._bring_forward(run)
+                    return self._pause(run, "stuck", f"{_site(run, data)}'s page didn't draw its way to apply: part of "
+                                       "it says \u201cContent missing\u201d" + (", even after I reloaded it" if
+                                                                             run.start_reloaded else "")
+                                       + ". That's the site's own trouble: reload the page in the browser window (now, or "
+                                       "later), then press Resume.")
                 return self._pause(run, "stuck", "I couldn't find the button that moves this application on. "
                                    "Take it a step further in the browser, then press Resume.")
             if (kind == "form" and action.get("form_fields") == len(data.get("fields") or [])

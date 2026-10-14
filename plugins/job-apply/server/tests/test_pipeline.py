@@ -3545,6 +3545,71 @@ def test_a_page_that_asks_to_be_refreshed_again_after_its_reload_is_said_for_wha
     assert "then press Resume" in r.reason and "couldn't find the button" not in r.reason, r.reason
 
 
+@pytest.mark.parametrize("query", ["", "?heal"])
+def test_a_posting_page_with_no_way_on_is_reloaded_once_then_said(srv, monkeypatch, job_apply_home, query):
+    """The State of Arizona's posting page (runs 61 and 63; in run 62 it drew): the block with its APPLY came back
+    "Content missing", and the desk said "I couldn't find the button that moves this application on". A posting page
+    with no way on, before anything was pressed, is reloaded once (heal: then it draws its Apply and goes on), and a
+    part that says "Content missing" is said for what it is."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 1)
+    job = srv.add_job(url=fixture_url("site/posting-content-missing.html") + query, title="HR Analyst",
+                      company="Example State")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert sum("showed no way on to the application, so I reloaded it" in line for line in r.log) == 1, r.log
+    if query:
+        assert r.seen_form and "content-missing" not in r.url, (r.url, r.reason, r.log)
+    else:
+        assert (r.status, r.need) == ("needs_you", "stuck") and "\u201cContent missing\u201d, even after I reloaded it" \
+            in r.reason, (r.reason, r.log)
+        assert "couldn't find the button" not in r.reason, r.reason
+
+
+def test_a_page_a_sign_in_led_to_is_never_reloaded_for_having_no_way_on(srv, monkeypatch):
+    """The review of 0.3.152: a page with no way on is reloaded only where it's the posting's own, opened on this pass
+    with nothing done on it since. A page the desk's sign-in led to (its form's POST answered with a candidate home)
+    is never reloaded: a reload may send the sign-in again."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 1)
+    saved_password(monkeypatch)
+    login = "https://careers.example-advisors.example/login"
+    pages = {login: '<html><body><h1>Sign In</h1><form method="post" action="/login"><label for="em">Email</label>'
+                    '<input id="em" name="em" type="email"><label for="pw">Password</label><input id="pw" name="pw" '
+                    'type="password"><button type="submit">Sign In</button></form></body></html>',
+             ("POST", login): '<html><body><h1>Welcome back to your candidate home</h1><p>Your applications and saved '
+                              'jobs are listed here.</p><a href="#help">Help</a></body></html>'}
+    posts: list[str] = []
+    job = srv.add_job(url=login, title="HR Business Partner", company="Example Advisors")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        await _serve(srv, pages, posts)
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert posts == [login], (posts, r.log)  # (the sign-in sent once)
+    assert not any("showed no way on to the application" in line for line in r.log), r.log
+    # (and it got as far as the page with no way on, where the reload would have been)
+    assert (r.status, r.need) == ("needs_you", "stuck") and "couldn't find the button" in r.reason, (r.reason, r.log)
+
+
 def test_a_review_page_whose_submit_is_greyed_while_it_draws_is_waited_on(srv, monkeypatch, job_apply_home):
     """Wells Fargo's Workday (run 49, Oct 13): its review page drew Submit greyed out for a moment, and the desk
     stopped with "“Submit” is greyed out, so the site still wants something" though the page wanted nothing. A
