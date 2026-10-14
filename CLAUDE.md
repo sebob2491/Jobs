@@ -128,8 +128,10 @@ the scrubber (`python -m job_apply.fixtures`) before they become test fixtures.
   chose; setup tells each person; never in practice mode, except the live check's test identity)
   the desk creates an account with that system's saved password, ticking only the site's terms
   (never a newsletter), and resets a saved password the site refuses, through the site's own
-  "Forgot password" and its emailed link. A CAPTCHA or security question on the way stays the
-  person's. With it off, it never creates one.
+  "Forgot password" and its emailed link. A CAPTCHA on the way stays the person's; security
+  questions are the person's to answer, in the browser or on the desk's card (for that form alone,
+  never remembered, logged or saved with a page), and the desk never makes up an answer. With it
+  off, it never creates one.
   - From the profile, it also ticks a "new candidate, not a current employee" box (Banner's) where
     the profile says where the person works and it isn't there.
   - A consent to be considered for other open positions too (Northrop's "Contact Consent") is given
@@ -143,7 +145,10 @@ the scrubber (`python -m job_apply.fixtures`) before they become test fixtures.
     assessment with random answers ("Take Assessment": the owner's call, Oct 13), pressing the assessment's own
     Submit or Finish only off the application's site; on the person's desk an assessment stays theirs. And it agrees
     to the notices a person's desk leaves to them (a waiver of rights in Freeport-McMoRan's data privacy statement: the
-    owner's call, Oct 13), by an agree button only, never a Submit (`_test_identity_agrees`). It's on
+    owner's call, Oct 13), by an agree button only, never a Submit (`_test_identity_agrees`). With `--security-answers`
+    (the nightly's accounts check: the owner's call, Oct 14) the live check answers an account form's security questions
+    on the desk's card for it, as a person would there: a question from the list, an answer made from its site password
+    (`live_identity.security_answer`), so it goes on into the application. It's on
     only with `JOB_APPLY_LIVE_TEST_IDENTITY=1` and `JOB_APPLY_NEVER_SUBMIT=1` set and the
     profile's email being `LIVE_TEST_EMAIL` (`config.live_test_identity`), so a person's own
     profile never turns it on; Submit stays refused in it.

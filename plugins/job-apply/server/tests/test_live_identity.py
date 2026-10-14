@@ -427,3 +427,21 @@ def test_the_plus_probe_applies_with_the_inboxs_own_plus_address_and_nothing_els
     assert "jobdesk_test_not_real" not in mask(f"signed up as {plus} and {plus.upper()}").lower()
     short = li.masker("ab@gmail.com", [])  # (an inbox with a short name: its plus addresses too)
     assert short("as ab+kla@gmail.com, then AB+X@GMAIL.COM") == f"as {li.EMAIL_MASK}, then {li.EMAIL_MASK}"
+
+
+def test_the_test_identitys_security_answers_are_a_listed_question_and_one_of_its_own(tmp_path):
+    """--security-answers (the owner's call, Oct 14): the live check answers an account form's security questions on
+    the desk's card for the test identity (Edward Jones' BrassRing), so it goes on into the application. The list's
+    first real question, and an answer made from its site password: the same each run (the account keeps it), its own
+    for each box, and never the password itself. Without --test-identity the switch is refused."""
+    chooser = {"label": "Question 1", "kind": "listbox", "account": True,
+               "options": ["Select question", "What is the name of your first school?", "Where is your favorite "
+                           "vacation spot?"]}
+    box = {"label": "Question 1 Answer", "kind": "text", "account": True}
+    assert li.security_answer(chooser, SITE_PASSWORD) == "What is the name of your first school?"
+    answer = li.security_answer(box, SITE_PASSWORD)
+    assert answer == li.security_answer(box, SITE_PASSWORD) and answer != li.security_answer(box, "another password")
+    assert answer != li.security_answer({**box, "label": "Question 2 Answer"}, SITE_PASSWORD)
+    assert SITE_PASSWORD not in answer and len(answer) >= 12
+    code, said = _smoke(tmp_path, ENV, "--pipeline", "--security-answers")
+    assert code == 2 and "--security-answers goes with --test-identity" in said, said

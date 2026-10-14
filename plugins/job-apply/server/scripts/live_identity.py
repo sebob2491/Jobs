@@ -14,6 +14,7 @@ are never printed: every line the run prints, and every file it writes, has them
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import re
 from collections.abc import Callable, Iterable, Mapping
@@ -78,6 +79,19 @@ def secret_env(site_password: str, email_password: str) -> dict[str, str]:
 
 def _env_key(name: str) -> str:
     return "JOB_APPLY_SECRET_" + re.sub(r"[^A-Z0-9]", "_", name.upper())  # (as config.get_secret spells it)
+
+
+def security_answer(question: Mapping[str, Any], seed: str) -> str:
+    """With --security-answers (the owner's call, Oct 14): the test identity's answer to an account form's security
+    question on the desk's card, as a person would give it there, so the live check goes on into the application
+    (Edward Jones' BrassRing). A list's first real question; in an answer box, one made from its site password
+    (`seed`) and the box's label: the same every run, so the account made with it keeps it, and never in this public
+    repository nor anything the run prints (the desk never logs an answer)."""
+    options = [str(o) for o in question.get("options") or []
+               if o and not re.match(r"^\s*(?:-+\s*)?(?:select|choose|please|pick)\b", str(o), re.I)]
+    if options:
+        return options[0]
+    return "jd" + hashlib.sha256(f"{seed}|{question.get('label') or ''}".encode("utf-8")).hexdigest()[:12]
 
 
 def plus_address(email: str, employer: str) -> str:
