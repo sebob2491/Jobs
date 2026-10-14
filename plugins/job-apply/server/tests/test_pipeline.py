@@ -6364,11 +6364,20 @@ def _example_corp(srv, monkeypatch, loads: list[str]) -> str:
 
 
 async def _crash(tab):
-    """Crash a tab's page, as Chrome's "Aw, Snap!" is."""
+    """Crash a tab's page, as Chrome's "Aw, Snap!" is: by the browser's own Page.crash (on CI, under load, a navigation
+    to chrome://crash now and then never crashed it, #215), and that navigation only if it didn't."""
     crashed = []
     tab.once("crash", lambda _: crashed.append(True))
     with contextlib.suppress(Exception):
-        await tab.goto("chrome://crash", timeout=5000)
+        cdp = await tab.context.new_cdp_session(tab)
+        await asyncio.wait_for(cdp.send("Page.crash"), 5)  # (it never answers: its page is gone)
+    for _ in range(50):
+        if crashed:
+            break
+        await asyncio.sleep(0.2)
+    if not crashed:
+        with contextlib.suppress(Exception):
+            await tab.goto("chrome://crash", timeout=5000)
     await until(lambda: crashed)
 
 
