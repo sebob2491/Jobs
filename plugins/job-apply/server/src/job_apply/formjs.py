@@ -741,6 +741,10 @@ EXTRACT_JS = r"""
   for (const el of document.querySelectorAll('[role="alert"], [aria-live="assertive"], [data-automation-id="errorMessage"], [class*="error" i]:not(input):not(select):not(textarea)')) {
     // without icon-font glyphs (Amkor's "\ue0b1 Invalid email address or password"; an alert
     // that's only an icon says nothing)
+    // (never a button or a link marked aria-live, as BrassRing's "Let's get started" is: probe 81; one that marks itself
+    // as an error still is)
+    if (el.matches('button, a[href], [role="button"], [role="link"]')
+        && !el.matches('[role="alert"], [data-automation-id="errorMessage"], [class*="error" i]')) continue;
     const t = txt(el).replace(/[\uE000-\uF8FF]/g, '').trim();
     if (!/[\p{L}\p{N}]/u.test(t)) continue;
     const r = el.getBoundingClientRect();

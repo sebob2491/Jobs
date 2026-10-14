@@ -19,7 +19,9 @@
      (sessionStorage's br.* keys), so a reload doesn't lose it: signIns, resetPresses, captcha (anything
      typed in a picture code), accountEmail (the email Create Account's Continue sent). After the passcode, its
      account form (run 67): the email shown, a password twice, a security question and its answer; accountForm
-     (what's in it) and accountMade (its Continue's presses). ?other: that form shows another email -->
+     (what's in it) and accountMade (its Continue's presses). ?other: that form shows another email. ?apply: the
+     account made, its application's first page (probe 81): "Let's get started" (to step1.html) and "Save and
+     finish later", both marked aria-live as BrassRing's are -->
 <header><a href="javascript:void(0)" id="top-sign-in">Sign In</a> <a href="javascript:void(0)">Example Corp Careers</a></header>
 <main id="view"></main>
 <footer><a href="javascript:void(0)">Contact Us</a> <a href="javascript:void(0)">Privacy Policy</a></footer>
@@ -217,8 +219,22 @@
       bump('accountMade');
       if (!$('np').value || !$('sq').value || !$('sa').value) {
         $('aerr').innerHTML = '<p>Required field</p><p>Select question</p>';
+      } else if (q.has('apply')) {
+        applyPage();
       }
     });
+  }
+
+  // ?apply: the application's first page once the account is made (probe 81, Edward Jones): its buttons marked
+  // aria-live, as BrassRing's are
+  function applyPage() {
+    history.replaceState(null, '', '#Applypage');
+    view.innerHTML = '<h1 id="ApplyPageHead">Senior Analyst</h1><div id="introductionContainer"><p>Thank you for '
+      + 'your interest. This application takes about 15 minutes to complete.</p></div>'
+      + '<div class="buttonContainer" role="navigation" aria-label="Actions"><button type="button" id="startapply" '
+      + 'aria-live="assertive" aria-labelledby="ApplyPageHead introductionContainer"><span>Let\'s get started</span>'
+      + '</button> <a href="javascript:void(0)" id="draft" aria-live="assertive">Save and finish later</a></div>';
+    $('startapply').addEventListener('click', () => { location.href = 'step1.html'; });
   }
 
   $('top-sign-in').addEventListener('click', signIn);

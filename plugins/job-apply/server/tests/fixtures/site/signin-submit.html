@@ -28,7 +28,10 @@
 <script>
   const q = new URLSearchParams(location.search);
   // ?s=<token> (from sf-posting.html): SuccessFactors' sign-in page, good for one visit
-  const used = JSON.parse(sessionStorage.getItem('sf.used') || '[]');
+  // (and in the tab's name too: CI's headless browser, under load, now and then shows a page sessionStorage without
+  // what the page before it stored, either way round: #215 and #216. The tab's name goes with it from page to page)
+  const named = (window.name || '').split(';').filter((x) => x.startsWith('sf.used:')).map((x) => x.slice(8));
+  const used = [...JSON.parse(sessionStorage.getItem('sf.used') || '[]'), ...named];
   if (q.get('s') && used.includes(q.get('s')) && q.has('home')) {
     // ?home: its session gone, the sign-in opened again leads to the careers search home (Edwards', Oct 11)
     location.replace('sf-careers-home.html');
@@ -39,7 +42,10 @@
       'request. Please go back to your original page and check the URL. Then try your request again.</b></p>';
     throw new Error('sign-in page opened again');
   }
-  if (q.get('s')) sessionStorage.setItem('sf.used', JSON.stringify([...used, q.get('s')]));
+  if (q.get('s')) {
+    sessionStorage.setItem('sf.used', JSON.stringify([...used, q.get('s')]));
+    window.name = (window.name ? window.name + ';' : '') + 'sf.used:' + q.get('s');
+  }
   window.signInTries = 0;
   if (q.has('extra')) {
     document.getElementById('extra').innerHTML = '<label for="ph">Phone</label><input id="ph" type="tel" name="phone">';

@@ -327,8 +327,9 @@ _QUESTION_LIKE = re.compile(r"\?|^\s*(?:what|which|who|whose|where|when|why|how|
                             r"\b(?:maiden|born|birth|childhood|favou?rite|first (?:pet|car|school|job|employer|street|"
                             r"teacher|concert))\b", re.I)
 _SOCIAL = re.compile(r"\b(google|apple|linked ?in|facebook|microsoft|indeed|seek)\b", re.I)
+# (and BrassRing's "Let's get started", its application's first page once the account is made: probe 81)
 _STEP = re.compile(r"^(save (?:and|&) continue|continue|next|next step|review|review (?:and|&) submit|"
-                   r"review application|proceed|go to next step|start)$", re.I)
+                   r"review application|proceed|go to next step|start|let[\u2019']?s get started)$", re.I)
 _FORWARD = re.compile(r"^(save (?:and|&) continue|continue|next|next step|review|review application|proceed|"
                       r"go to next step)$", re.I)
 _STEP_OF = re.compile(r"\bstep (\d+) of (\d+)\b", re.I)  # a progress bar's place: "current step 3 of 6"
