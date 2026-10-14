@@ -3620,14 +3620,20 @@ def test_a_page_that_asks_to_be_refreshed_is_reloaded_once(srv, monkeypatch, job
     assert len(said) == 1 and r.seen_form and "went-wrong" not in r.url, (r.url, r.reason, r.log)
 
 
-def test_a_page_that_asks_to_be_refreshed_again_after_its_reload_is_said_for_what_it_is(srv, monkeypatch, job_apply_home):
+@pytest.mark.parametrize("query", ["?again", "?empty", "?empty&bare", "?later"])
+def test_a_page_that_asks_to_be_refreshed_again_after_its_reload_is_said_for_what_it_is(srv, monkeypatch, job_apply_home,
+                                                                                       query):
     """Circle K's Workday (run 63): its Take Assessment step said "Something went wrong. Please refresh the page and
     then try again." The desk reloaded it once, went through the steps again, and the step said the same; the desk
     then said "I couldn't find the button that moves this application on". Asked again after its one reload, it says
-    the site went wrong again, and that it's the site's."""
+    the site went wrong again, and that it's the site's. Northern Trust's (run 71, "empty"): reloaded, the page came
+    back only the site's header and footer, and the desk said the same "couldn't find the button": it's said to have
+    come back without the application, the site's (with no heading at all too: "bare"). Only the page the reload
+    brought back: a step after it that went on to such a page ("later") is the plain no-way-on (the review of
+    0.3.158)."""
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
     monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 1)
-    job = srv.add_job(url=fixture_url("site/workday-went-wrong.html") + "?again", title="FSE", company="Example Fab")["job"]
+    job = srv.add_job(url=fixture_url("site/workday-went-wrong.html") + query, title="FSE", company="Example Fab")["job"]
     applier = Applier(srv)
 
     async def go():
@@ -3641,8 +3647,11 @@ def test_a_page_that_asks_to_be_refreshed_again_after_its_reload_is_said_for_wha
 
     r = run(go())
     assert sum("so I reloaded it" in line for line in r.log) == 1, r.log
-    assert (r.status, r.need) == ("needs_you", "stuck") and "said \u201cSomething went wrong\u201d again" in r.reason, \
-        (r.reason, r.log)
+    if query == "?later":
+        assert (r.status, r.need) == ("needs_you", "stuck") and "couldn't find the button" in r.reason, (r.reason, r.log)
+        return
+    said = "said \u201cSomething went wrong\u201d again" if query == "?again" else "came back without the application"
+    assert (r.status, r.need) == ("needs_you", "stuck") and said in r.reason, (r.reason, r.log)
     assert "then press Resume" in r.reason and "couldn't find the button" not in r.reason, r.reason
 
 

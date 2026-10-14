@@ -1588,6 +1588,7 @@ class Applier:
         pressed_on: list[str] = []  # and where, in words
         agreed: set[str] = set()  # notices agreed to for the person on this pass (settings.accept_notices)
         since = 0  # where the presses that count for a circle start (after a refresh the site asked for)
+        refreshed_at: int | None = None  # the presses made on this pass when the page was reloaded for its "went wrong"
         fixed_at = 0  # and those that count as a step pressed again and again (after the desk set right what it said)
         steps, more = 0, 0  # (more: the steps that refresh made it take again)
         while steps < MAX_STEPS + more:
@@ -1676,6 +1677,7 @@ class Applier:
                 # on Voluntary Disclosures, it started again at My Information), nor more steps than expected. Once a
                 # job, so a real circle after it is still caught on its next lap
                 since, more = len(pressed), steps
+                refreshed_at = len(pressed)
                 self._log(run, f"{_site(run, data)} said something went wrong and asked for the page to be "
                           "refreshed, so I reloaded it")
                 with contextlib.suppress(Exception):
@@ -2195,6 +2197,17 @@ class Applier:
                                                                              run.start_reloaded else "")
                                        + ". That's the site's own trouble: reload the page in the browser window (now, or "
                                        "later), then press Resume.")
+                if (refreshed_at == len(pressed) and not run.pressed_before and not data.get("fields") and all(
+                        h.strip() == str(data.get("title") or "").strip() for h in data.get("headings") or [])):
+                    # the page the reload for its "Something went wrong" brought back (nothing pressed since, nor a Submit
+                    # before) with nothing but the site's own header and footer, no step at all (Northern Trust's
+                    # Workday, run 71): the site's own trouble, said so (the review of 0.3.158)
+                    await self._bring_forward(run)
+                    return self._pause(run, "stuck", f"{_site(run, data)} said \u201cSomething went wrong\u201d and asked "
+                                       "for the page to be refreshed; I reloaded it, and it came back without the "
+                                       "application, only the site's header and footer. That's the site's "
+                                       "own trouble: reload the page in the browser window (now, or later if it's still "
+                                       "so), then press Resume.")
                 return self._pause(run, "stuck", "I couldn't find the button that moves this application on. "
                                    "Take it a step further in the browser, then press Resume.")
             if (kind == "form" and action.get("form_fields") == len(data.get("fields") or [])
