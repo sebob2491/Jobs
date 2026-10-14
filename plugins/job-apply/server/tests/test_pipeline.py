@@ -3064,6 +3064,34 @@ def test_brassrings_application_is_begun_with_lets_get_started_once_the_account_
     assert r.seen_form and "couldn't find the button" not in r.reason, (r.reason, r.log)
 
 
+def test_a_job_alert_sign_up_on_the_page_is_never_filled_asked_or_sent(srv, monkeypatch, job_apply_home):
+    """Dignity Health (run 82): the posting's link led to CommonSpirit's careers search, whose "Sign up for Job Alerts"
+    form (an email, a job category and a location) the desk took for the application: it typed the person's email
+    into it and asked for the rest, and answered, its Submit would have signed them up. Job alerts are never the
+    person's to be signed up for by the desk: nothing in it is filled, asked or sent."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 1)
+    job = srv.add_job(url=fixture_url("site/careers-search-job-alert.html"), title="HR Coordinator",
+                      company="Example Health")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r, await r.page.evaluate("() => [document.getElementById('em').value, "
+                                            "sessionStorage.getItem('alerts.submits')]")
+        finally:
+            await applier.stop()
+
+    r, (email, submits) = run(go())
+    assert email == "" and submits is None, (email, submits, r.log)
+    assert not any(q.get("label", "").startswith(("Job Category", "Location", "Email")) for q in r.questions or []), \
+        (r.questions, r.reason)
+    assert not any(line.startswith("filled") for line in r.log), r.log
+
+
 @pytest.mark.parametrize("case", ["redrawn", "failed", "unpicked", "captcha"])
 def test_an_account_form_is_never_pressed_with_its_security_questions_unanswered(srv, monkeypatch, job_apply_home,
                                                                                    case):

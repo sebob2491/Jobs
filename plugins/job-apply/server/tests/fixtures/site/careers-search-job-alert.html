@@ -1,0 +1,47 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Search Jobs | Example Health Careers</title></head>
+<body>
+<!-- like CommonSpirit's careers search page (Dignity Health, run 82): the posting's link led to the search, whose
+     job alert sign-up is a form of its own, "Sign up for Job Alerts", with five boxes (Email Address, Job Category, a
+     Location to search, Remote and Job Type), a spam trap hidden from the eye (Confirm Email) and its own Add and
+     Submit. Never the application's: nothing in it is filled or asked, and its Submit is never pressed (submits counts
+     the presses) -->
+<header><a href="#">Working Here</a> <a href="#">Our Opportunities</a></header>
+<h1>49 Content pages found</h1>
+<section><label for="kw">Search jobs</label><input id="kw" type="search" name="keyword"> <button type="button">Search</button></section>
+<div>
+  <form action="#" class="data-form" data-form-type="Job Alert" id="alerts" novalidate>
+    <div class="data-form__text-container"><h2>Sign up for Job Alerts</h2></div>
+    <p><label for="em">Email Address<span aria-hidden="true">*</span></label><input id="em" type="email" name="EmailAddress" required></p>
+    <fieldset>
+      <legend>Interested In</legend>
+      <span>Select a job category from the list of options. Search for a location and select one from the list of
+        suggestions. Finally, click “Add” to create your job alert.</span>
+      <p><label for="cat">Job Category<span aria-hidden="true">*</span></label><select id="cat" name="Category">
+        <option value="">Select a Job Category</option><option value="1">Accounting and Finance</option>
+        <option value="2">Administrative and Clerical</option></select></p>
+      <p><label for="loc">Location<span aria-hidden="true">*</span></label><input id="loc" type="text" role="combobox"
+        name="Location" aria-expanded="false"></p>
+      <p><label for="remote">Remote</label><select id="remote" name="Facet_0"><option value="">Select Remote</option>
+        <option>Yes</option><option>No</option></select></p>
+      <p><label for="jobtype">Job Type</label><select id="jobtype" name="Facet_1"><option value="">Select Job Type</option>
+        <option>Full Time</option><option>Part Time</option></select></p>
+      <button type="button" disabled aria-label="Add Job Alert">Add</button>
+    </fieldset>
+    <p aria-hidden="true" style="display:block;height:0;overflow:hidden;position:absolute;text-indent:-9999em;width:0;z-index:-1">
+      <label aria-hidden="true" for="trap">Confirm Email</label>
+      <input aria-hidden="true" autocomplete="off" id="trap" name="EmailConfirm" tabindex="-1" type="text" value="">
+    </p>
+    <input name="FormType" type="hidden" value="JobAlert">
+    <button type="submit">Submit</button>
+  </form>
+</div>
+<script>
+  document.getElementById('alerts').addEventListener('submit', (e) => {
+    e.preventDefault();
+    sessionStorage.setItem('alerts.submits', String(Number(sessionStorage.getItem('alerts.submits') || 0) + 1));
+  });
+</script>
+</body>
+</html>

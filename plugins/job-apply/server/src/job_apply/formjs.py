@@ -609,12 +609,42 @@ EXTRACT_JS = r"""
   /*OPEN_DIALOGS*/
   const boxesIn = (form) => [...form.elements].filter((e) => /^(INPUT|SELECT|TEXTAREA)$/.test(e.tagName)
     && !/^(hidden|submit|button|image|reset)$/i.test(e.type || '') && e.getClientRects().length > 0);
+  // a heading that says its form signs the person up ("Sign up for Job Alerts", "Get Job Alerts", "Newsletter")
+  const SIGN_UP = /^(?:(?:sign ?up|subscribe|register) (?:for|to)|get|create|set up|receive)\b.{0,30}\b(?:job alerts?|e-?mail alerts?|newsletter)|^(?:job alerts?|newsletter)$/i;
   const sideBox = (el) => {
     const boxes = formOf(el) ? boxesIn(formOf(el)) : null;
     // one or two boxes, one of them for typing (an email address), and words about alerts
     const small = boxes && boxes.length >= 1 && boxes.length <= 2
       && boxes.some((e) => e.tagName === 'INPUT' && /^(text|email|search|)$/i.test(e.getAttribute('type') || ''));
     if (small && SIDE_BOX.test(formOf(el).innerText || '')) return true;
+    // a few boxes in a form that says, by its own heading or its kind, it's a sign-up for job alerts or a newsletter
+    // (CommonSpirit's "Sign up for Job Alerts", Dignity Health, run 82: an email, a job category, a location, Remote
+    // and Job Type, and a spam trap hidden from the eye). Its heading is the nearest one shown before the boxes shown,
+    // in a form that isn't the page's frame (one around its header, main or h1), and none of its own buttons goes on
+    // with an application ("Submit Application" under "Job Alerts and Communication Preferences": the review's)
+    const form = formOf(el);
+    if (form && !form.querySelector('header, main, nav, aside, h1, [role="main"], [role="banner"]')) {
+      const shown = boxes.filter((e) => visible(e) && !e.closest('[aria-hidden="true"]'));
+      const heads = shown.length ? [...form.querySelectorAll('h2, h3, h4, h5, [role="heading"]')].filter((h) => visible(h)
+        && (h.compareDocumentPosition(shown[0]) & Node.DOCUMENT_POSITION_FOLLOWING)) : [];
+      const head = heads[heads.length - 1];
+      // (all its ways on, by their words, values and names: "Submit Application" with the value "Submit", Taleo's
+      // input "Save and Continue", a link's Next; and a heading that names the sign-up, close above its boxes, not a
+      // talent pool's evergreen posting or a banner far above: the second review's)
+      const own = [...form.querySelectorAll('button, input[type="submit"], input[type="button"], input[type="image"], '
+        + 'a[href], [role="button"], [role="link"]')]
+        .map((b) => [b.value, txt(b), b.getAttribute('aria-label'), b.getAttribute('alt')].join(' '));
+      let gap = '';
+      if (head) {
+        const r = document.createRange();
+        r.setStartAfter(head);
+        r.setEndBefore(shown[0]);
+        gap = clean(r.toString());
+      }
+      if (shown.length && shown.length <= 6 && !own.some((t) => /applica|apply|next|continue|review|save/i.test(t))
+          && (head && gap.length < 200 && SIGN_UP.test(txt(head))
+              || /job[\s_-]?alert|newsletter/i.test(form.getAttribute('data-form-type') || ''))) return true;
+    }
     const foot = el.closest('footer, [role="contentinfo"]');
     return !!foot && !(boxes && boxes.length > 2) && SIDE_BOX.test(foot.innerText || '');
   };
