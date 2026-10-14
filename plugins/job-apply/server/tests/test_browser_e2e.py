@@ -687,6 +687,40 @@ def test_a_resume_the_site_didnt_keep_is_told_from_any_other_upload(srv, tmp_pat
     assert run(srv.browser.upload_not_kept()) == said
 
 
+@pytest.mark.parametrize("query,said", [("again", "deleted"), ("again&twin", "deleted"), ("outside&again", "deleted"),
+                                        ("twice", ""),
+                                        ("submit", ""), ("reset", ""), ("sends", ""), ("neighbour", ""),
+                                        ("confirm", "pressed"), ("toast", "gone"), ("chosen", "")])
+def test_only_the_resumes_own_delete_is_pressed_for_it_to_go_up_again(srv, tmp_path, query, said):
+    """The review of 0.3.153: the Delete beside a resume the page never kept is pressed only where it's sure. Its own
+    row's (in the form, or beside the resume's box above it: EMD's page, ?outside, its Delete an icon), shown (a hidden copy of the row before it, ?twin, isn't), the name shown once (?twice: a cover letter's
+    of the same name, each with a Delete: neither), never a button that sends or empties the form (?submit, ?reset)
+    nor one whose own name says it sends (?sends: the check every press goes through), never a Delete in a list of
+    files (?neighbour: the resume's own an icon with no words, a cover letter's beside it), and only a file the desk
+    sent (?chosen: one the person chose, its box never given it by the desk). A Delete that asks first is turned
+    down by the browser (?confirm): pressed, and the file still there, so it isn't said to be gone; a Delete that
+    goes, leaving a note naming the file (?toast), is told apart."""
+    doc = tmp_path / "resume.pdf"
+    doc.write_bytes(b"%PDF-1.4 test")
+    run(srv.browser.goto(fixture_url("site/phenom-resume-not-kept.html") + f"?{query}"))
+    page = run(srv.browser.page())
+    if query == "chosen":
+        run(page.set_input_files("#resumeFile", str(doc)))
+    else:
+        box = next(f for f in run(srv.inspect_form(include_dropdown_options=False))["fields"] if f["kind"] == "file")
+        run(srv.fill_form([{"id": box["id"], "value": str(doc)}]))
+    assert run(srv.browser.upload_not_kept()) == "resume.pdf"
+    assert run(srv.browser.delete_unkept_upload("resume.pdf")) == said
+    assert run(page.evaluate("() => [window.sent, window.coverDeleted]")) == [False, False]
+    shown = run(page.evaluate("() => document.body.innerText.includes('resume.pdf')"))
+    assert shown is (said != "deleted"), run(page.inner_text("body"))
+    if said == "deleted":  # (the box forgot it was given the file: the next fill sends it again, and it's kept)
+        assert run(srv.browser.upload_state("resume.pdf")) == ""
+        box = next(f for f in run(srv.inspect_form(include_dropdown_options=False))["fields"] if f["kind"] == "file")
+        run(srv.fill_form([{"id": box["id"], "value": str(doc)}]))
+        assert run(srv.browser.upload_state("resume.pdf")) == "kept"
+
+
 def test_a_dialog_that_isnt_an_uploads_alone_is_never_pressed(srv, tmp_path):
     """The review of the open upload dialog's press: an application drawn as a dialog, its resume box beside a name
     box and a "Save" that sends it, would have been sent (around the guard every press goes through). Only a dialog

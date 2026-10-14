@@ -5,16 +5,26 @@
 <!-- like EMD Electronics' Phenom application (issue #112, note 28): after the resume goes up the page shows it as
      uploaded (the file's name and Download / Delete links), but the hidden fields it keeps the upload in
      (#isResume, #resumeBucketId, #resumeFileSize, #resumeName, #resumePath) stay empty, and Next does nothing and
-     says nothing. ?kept: the upload is kept (the hidden fields are filled), and Next goes on. ?outside: as EMD's
+     says nothing. ?kept: the upload is kept (the hidden fields are filled), and Next goes on. ?again: only an upload
+     after the file's Delete is kept (EMD's, runs 53 to 64: its server had the file, the page hadn't kept it); the
+     Delete empties the row and the fields, and counts (kept: deletes, sessionStorage). ?outside: as EMD's
      page is (run 49): the resume's file box is above the form, with no name or label of its own, beside "Your
-     resume/CV is required" and its "Upload Resume/CV" button. -->
+     resume/CV is required" and its "Upload Resume/CV" button, and the row with the file's name and Delete beside it,
+     above the form too (run 64's page: its Delete an icon named by its aria-label). For the desk's Delete (the review of 0.3.153):
+     ?confirm: the Delete asks first (a confirm() the browser turns down: the file stays); ?twin: a hidden copy of
+     the row (the name, a Delete) before the real one; ?twice: the name shown twice, each with a Delete (a cover
+     letter's of the same name); ?submit: the Delete is a "Remove" button with no type, so it sends the form
+     (window.sent); ?reset: a "Remove" button that empties the form; ?sends: a Delete whose own name is "Submit
+     application"; ?neighbour: the resume's Delete an icon with no words, beside a cover letter's row (cover.pdf)
+     with its own Delete (window.coverDeleted); ?toast: the Delete leaves a note naming the file. -->
 <h2>My information</h2>
 <div id="outside"></div>
-<form onsubmit="return false">
+<form onsubmit="window.sent = true; return false">
   <label for="firstName">First Name *</label><input id="firstName" required>
   <label for="lastName">Last Name *</label><input id="lastName" required>
   <label for="email">Email *</label><input id="email" type="email" required>
   <label for="resumeFile">Resume</label><input id="resumeFile" type="file">
+  <div class="twin" hidden><span class="uploadedFileName"></span> <a href="#" class="delete">Delete</a></div>
   <div class="has-resume resume-info" hidden>
     <div class="pdf after-upload"><span class="uploadedFileName"></span>
       <a href="#" class="download">Download</a> <a href="#" class="delete">Delete</a></div>
@@ -27,7 +37,42 @@
   <button type="button" id="next">Next</button>
 </form>
 <script>
-  const kept = new URLSearchParams(location.search).has('kept');
+  const q = new URLSearchParams(location.search);
+  const kept = q.has('kept');
+  const again = q.has('again');
+  window.sent = false;
+  let deleted = false;
+  if (q.has('submit')) {
+    document.querySelector('.resume-info .delete').outerHTML = '<button class="delete">Remove</button>';
+  }
+  if (q.has('reset')) {
+    document.querySelector('.resume-info .delete').outerHTML = '<button type="reset" class="delete">Remove</button>';
+  }
+  if (q.has('sends')) document.querySelector('.resume-info .delete').setAttribute('aria-label', 'Submit application');
+  window.coverDeleted = false;
+  if (q.has('neighbour')) {
+    document.querySelector('.resume-info .delete').textContent = '\u{1F5D1}';
+    document.querySelector('.resume-info').insertAdjacentHTML('beforeend', '<div class="pdf"><span>cover.pdf</span> '
+      + '<a href="#" class="cover-del">Delete</a></div>');
+    document.querySelector('.cover-del').addEventListener('click', (e) => { e.preventDefault(); window.coverDeleted = true; });
+  }
+  if (q.has('twice')) {
+    document.querySelector('.resume-info').insertAdjacentHTML('afterend', '<div class="cover-info" hidden><div>'
+      + '<span class="uploadedFileName"></span> <a href="#" class="cover-delete">Delete</a></div></div>');
+  }
+  document.querySelector('.resume-info .delete').addEventListener('click', (e) => {
+    if (!q.has('submit')) e.preventDefault();  // (?submit: the button sends its form, as one with no type does)
+    if (q.has('confirm') && !confirm('Delete this file?')) return;
+    deleted = true;
+    sessionStorage.setItem('deletes', String(Number(sessionStorage.getItem('deletes') || 0) + 1));
+    const info = document.querySelector('.resume-info');
+    info.hidden = true;
+    if (q.has('toast')) document.querySelector('h2').insertAdjacentHTML('afterend', `<p>${info.querySelector('.uploadedFileName').textContent} was deleted</p>`);
+    info.querySelector('.uploadedFileName').textContent = '';
+    for (const id of ['isResume', 'resumeBucketId', 'resumeFileSize', 'resumeName', 'resumePath']) {
+      document.getElementById(id).value = '';
+    }
+  });
   if (new URLSearchParams(location.search).has('outside')) {
     const old = document.getElementById('resumeFile');
     document.querySelector('label[for=resumeFile]').remove();
@@ -40,6 +85,11 @@
     box.removeAttribute('id');
     old.remove();
     box.setAttribute('data-was', 'resumeFile');
+    holder.appendChild(document.querySelector('.resume-info'));
+    const del = holder.querySelector('.resume-info .delete');
+    del.setAttribute('role', 'button');
+    del.setAttribute('aria-label', 'Delete');
+    del.innerHTML = '<i class="icon icon-delete" style="display: inline-block; width: 12px; height: 12px"></i>';
   }
   const resumeBox = document.querySelector('[data-was=resumeFile]') || document.getElementById('resumeFile');
   resumeBox.addEventListener('change', (e) => {
@@ -48,7 +98,11 @@
     const info = document.querySelector('.resume-info');
     info.querySelector('.uploadedFileName').textContent = file.name;
     info.hidden = false;
-    if (kept) {
+    // (the copies: a hidden twin of the row, or a cover letter's row shown with the same name)
+    if (q.has('twin')) document.querySelector('.twin .uploadedFileName').textContent = file.name;
+    const cover = document.querySelector('.cover-info');
+    if (cover) { cover.querySelector('.uploadedFileName').textContent = file.name; cover.hidden = false; }
+    if (kept || again && deleted) {
       document.getElementById('isResume').value = 'true';
       document.getElementById('resumeBucketId').value = 'bucket-1';
       document.getElementById('resumeFileSize').value = String(file.size);

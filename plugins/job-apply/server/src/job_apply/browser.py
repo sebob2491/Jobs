@@ -34,7 +34,9 @@ from .ats import detect_ats
 from .autofill import choose_option, choose_place, is_empty_value, norm, polarity
 from .formjs import (CHALLENGE_JS, CLICK_CHOICE_JS, COVERED_JS, ELEMENT_INFO_JS, ENTRIES_JS, EXTRACT_JS, FIELD_OPTIONS_JS,
                      LOST_BOXES_JS, MARK_OPTIONS_JS, NOTICE_OVER_JS, OPEN_MENU_JS, OUTSIDE_CLICK_JS, QUIET_JS, SHOWN_VALUE_JS,
-                     UPLOAD_NOT_KEPT_JS, VISIBLE_TEXT_JS, WORKDAY_CHOSEN_JS, WORKDAY_PROMPT_JS)
+                     UNKEPT_DELETE_JS, UNKEPT_FORGET_JS, UNKEPT_PRESSED_SHOWN_JS, UNKEPT_SHOWN_JS, UPLOAD_NOT_KEPT_JS,
+                     UPLOAD_STATE_JS,
+                     VISIBLE_TEXT_JS, WORKDAY_CHOSEN_JS, WORKDAY_PROMPT_JS)
 
 SUBMIT_RE = re.compile(r"\bsubmit\b|send (my )?application|finish (my )?application|complete (my )?application", re.I)
 # A form's own submit button with one of these labels is the final step too ("Apply", "Send").
@@ -981,6 +983,55 @@ class BrowserSession:
                 except PlaywrightError:  # a frame that went away meanwhile
                     continue
             return None
+
+    async def delete_unkept_upload(self, name: str) -> str:
+        """Press the Delete beside a file the page shows as uploaded but never kept (upload_not_kept), for it to go
+        up again: only the desk's own upload, and only a control that deletes (UNKEPT_DELETE_JS), past the same check
+        as every press the desk makes. "deleted" when the page then shows the file's name no more (its upload boxes
+        forget they were given it, so the next fill sends it again), "pressed" when it still does with its Delete
+        (a site that asks first, say), "gone" when the Delete went but the name is still on the page (a note of it),
+        "" when there was no such Delete to press."""
+        pressed = None
+        async with self._lock:
+            page = await self.page()
+            for frame in page.frames:
+                try:
+                    if not await frame.evaluate(UNKEPT_DELETE_JS, name):
+                        continue
+                    button = frame.locator('[data-ja-unkept="1"]').first
+                    self._check_clickable(await button.evaluate(ELEMENT_INFO_JS, timeout=3000), page.url)
+                    await button.click(timeout=5000)
+                except SubmitBlocked:
+                    return ""
+                except (PlaywrightError, PlaywrightTimeout):
+                    continue
+                pressed = frame
+                break
+        if pressed is None:
+            return ""
+        for _ in range(12):  # (a site's delete takes a moment: waited on with the browser free for the desk's looks)
+            await asyncio.sleep(0.5)
+            async with self._lock:
+                with contextlib.suppress(PlaywrightError):
+                    if not await pressed.evaluate(UNKEPT_SHOWN_JS, name):
+                        await pressed.evaluate(UNKEPT_FORGET_JS, name)
+                        return "deleted"
+        async with self._lock:
+            with contextlib.suppress(PlaywrightError):
+                if not await pressed.evaluate(UNKEPT_PRESSED_SHOWN_JS):
+                    return "gone"
+        return "pressed"
+
+    async def upload_state(self, name: str) -> str:
+        """Whether the page kept the file `name` sent into its resume box (UPLOAD_STATE_JS): "kept", "not kept", or
+        "" when no resume box holds it."""
+        async with self._lock:
+            page = await self.page()
+            states = []
+            for frame in page.frames:
+                with contextlib.suppress(PlaywrightError):
+                    states.append(await frame.evaluate(UPLOAD_STATE_JS, name))
+            return "kept" if "kept" in states else "not kept" if "not kept" in states else ""
 
     async def peek(self, tab: Page, max_chars: int = 4000) -> tuple[dict[str, Any], str]:
         """What a tab shows (its fields, buttons, text and any CAPTCHA), read without making it
