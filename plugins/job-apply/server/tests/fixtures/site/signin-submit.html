@@ -50,7 +50,11 @@
     else document.getElementById('err').textContent = 'Invalid login or password';
   });
   document.getElementById('forgot').addEventListener('click', () => {
-    location.href = 'forgot-password.html' + (q.has('unknown') ? '?unknown' : q.get('reset') ? '?' + q.get('reset') : '');
+    // (the visit's token along too, in the hash: the reset page records it again. CI's headless browser, under load,
+    // now and then loses this page's sessionStorage write before the next page reads it, and the sign-in opened
+    // again drew its form)
+    location.href = 'forgot-password.html' + (q.has('unknown') ? '?unknown' : q.get('reset') ? '?' + q.get('reset') : '')
+      + (q.get('s') ? '#used=' + encodeURIComponent(q.get('s')) : '');
   });
   document.getElementById('create').addEventListener('click', () => { location.href = 'create-account.html'; });
 </script>
