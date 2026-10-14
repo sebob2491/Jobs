@@ -9,7 +9,8 @@
      after the file's Delete is kept (EMD's, runs 53 to 64: its server had the file, the page hadn't kept it); the
      Delete empties the row and the fields, and counts (kept: deletes, sessionStorage). ?outside: as EMD's
      page is (run 49): the resume's file box is above the form, with no name or label of its own, beside "Your
-     resume/CV is required" and its "Upload Resume/CV" button. For the desk's Delete (the review of 0.3.153):
+     resume/CV is required" and its "Upload Resume/CV" button, and the row with the file's name and Delete beside it,
+     above the form too (run 64's page: its Delete an icon named by its aria-label). For the desk's Delete (the review of 0.3.153):
      ?confirm: the Delete asks first (a confirm() the browser turns down: the file stays); ?twin: a hidden copy of
      the row (the name, a Delete) before the real one; ?twice: the name shown twice, each with a Delete (a cover
      letter's of the same name); ?submit: the Delete is a "Remove" button with no type, so it sends the form
@@ -84,6 +85,11 @@
     box.removeAttribute('id');
     old.remove();
     box.setAttribute('data-was', 'resumeFile');
+    holder.appendChild(document.querySelector('.resume-info'));
+    const del = holder.querySelector('.resume-info .delete');
+    del.setAttribute('role', 'button');
+    del.setAttribute('aria-label', 'Delete');
+    del.innerHTML = '<i class="icon icon-delete" style="display: inline-block; width: 12px; height: 12px"></i>';
   }
   const resumeBox = document.querySelector('[data-was=resumeFile]') || document.getElementById('resumeFile');
   resumeBox.addEventListener('change', (e) => {

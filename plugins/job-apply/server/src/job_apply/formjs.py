@@ -953,7 +953,8 @@ UPLOAD_STATE_JS = "(name) => {" + _RESUME_UPLOADS + r"""
 
 # The Delete beside a file the page shows as uploaded but never kept (UPLOAD_NOT_KEPT_JS: EMD's Phenom, runs 53 to 64),
 # for the file to go up again. Only a file the desk sent itself (a box it gave the file to: never one the person
-# chose), shown once (one row with its name, within the form holding the empty fields the upload is kept in), and
+# chose), shown once (one row with its name, within the form holding the empty fields the upload is kept in, or
+# around the resume's box), and
 # the one control in that row (its name, its Download, its Delete; never further up than a row with a file box or a
 # form in it) that says it deletes or removes, and nothing else: shown, and only deleting (never a form's submit
 # button, a box, or a link to another page; the review of 0.3.153). Marked data-ja-unkept; true when there was one
@@ -962,8 +963,13 @@ UNKEPT_DELETE_JS = "(name) => {" + _RESUME_UPLOADS + r"""
   const mine = uploads.find((u) => u.file === name && u.box.__jaUploaded === name && u.kept.length >= 2
                                    && !u.kept.some(filled));
   if (!mine) return false;
+  // (within the form holding those fields, or the resume box's own part of the page: the blocks around it up to
+  // one with a form in it. EMD's row with the file's name and Delete is beside its box, above the form, run 64)
   const forms = [...new Set(mine.kept.map((el) => el.form).filter(Boolean))];
-  const within = (el) => !forms.length || forms.some((f) => f.contains(el));
+  let area = null;
+  for (let n = mine.box.parentElement, d = 0; n && n !== document.body && d < 6 && !n.querySelector('form');
+       n = n.parentElement, d++) area = n;
+  const within = (el) => !forms.length || forms.some((f) => f.contains(el)) || !!area && area.contains(el);
   const shown = (el) => el.getClientRects().length > 0 && getComputedStyle(el).visibility !== 'hidden';
   const txt = (el) => (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim();
   const says = (el) => [el.getAttribute('aria-label') || '', el.getAttribute('title') || '', txt(el)]

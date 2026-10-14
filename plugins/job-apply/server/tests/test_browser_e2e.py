@@ -687,12 +687,13 @@ def test_a_resume_the_site_didnt_keep_is_told_from_any_other_upload(srv, tmp_pat
     assert run(srv.browser.upload_not_kept()) == said
 
 
-@pytest.mark.parametrize("query,said", [("again", "deleted"), ("again&twin", "deleted"), ("twice", ""),
+@pytest.mark.parametrize("query,said", [("again", "deleted"), ("again&twin", "deleted"), ("outside&again", "deleted"),
+                                        ("twice", ""),
                                         ("submit", ""), ("reset", ""), ("sends", ""), ("neighbour", ""),
                                         ("confirm", "pressed"), ("toast", "gone"), ("chosen", "")])
 def test_only_the_resumes_own_delete_is_pressed_for_it_to_go_up_again(srv, tmp_path, query, said):
     """The review of 0.3.153: the Delete beside a resume the page never kept is pressed only where it's sure. Its own
-    row's, shown (a hidden copy of the row before it, ?twin, isn't), the name shown once (?twice: a cover letter's
+    row's (in the form, or beside the resume's box above it: EMD's page, ?outside, its Delete an icon), shown (a hidden copy of the row before it, ?twin, isn't), the name shown once (?twice: a cover letter's
     of the same name, each with a Delete: neither), never a button that sends or empties the form (?submit, ?reset)
     nor one whose own name says it sends (?sends: the check every press goes through), never a Delete in a list of
     files (?neighbour: the resume's own an icon with no words, a cover letter's beside it), and only a file the desk
