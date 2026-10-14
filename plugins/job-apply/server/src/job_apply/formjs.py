@@ -893,12 +893,10 @@ COVERED_JS = r"""
 }
 """
 
-# A resume the page shows as uploaded (the file's name, a Delete link) though the hidden fields it keeps the upload
-# in stayed empty (EMD's Phenom, issue #112, note 28: #isResume, #resumeBucketId, #resumeFileSize, #resumeName and
-# #resumePath all empty, so Next did nothing and said nothing). Two or more hidden fields named for the resume, every
-# one empty, and a file sent into a file box of the page (by the desk, or one that reads a value): the file's name.
-UPLOAD_NOT_KEPT_JS = r"""
-() => {
+# The resume's file boxes, each with the file sent into it (by the desk, or one that reads a value) and the hidden
+# fields beside it that the page keeps the upload in (EMD's Phenom: #isResume, #resumeBucketId, #resumeFileSize,
+# #resumeName, #resumePath). The body of the scripts below: `uploads`, and `filled` for a hidden field with a value
+_RESUME_UPLOADS = r"""
   const named = /resume|(^|[_-])cv([_-]|$)/i;
   // (only the fields an upload is kept in: a save-for-later's "resumeToken" isn't one, the review of 0.3.136's)
   const kept_in = /resume.?(?:path|name|file|size|bucket|relative|url|id)|^isresume$/i;
@@ -922,16 +920,89 @@ UPLOAD_NOT_KEPT_JS = r"""
     }
     return '';
   };
+  const filled = (el) => !!(el.value || '').trim();
+  const uploads = [];
   for (const box of document.querySelectorAll('input[type="file"]')) {
     const file = box.__jaUploaded ? String(box.__jaUploaded) : (box.files && box.files.length ? box.files[0].name : '');
     const said = [box.id, box.name, box.getAttribute('aria-label') || '',
                   ...Array.from(box.labels || []).map((l) => l.textContent || '')].join(' ').trim();
     const words = said || block(box);
     if (!file || !named.test(words) || !said && /cover letter|transcript|other documents?|additional/i.test(words)) continue;
-    const kept = hidden.filter((el) => near(box, el));
-    if (kept.length >= 2 && !kept.some((el) => (el.value || '').trim())) return file;
+    uploads.push({box, file, kept: hidden.filter((el) => near(box, el))});
   }
-  return '';
+"""
+
+# A resume the page shows as uploaded (the file's name, a Delete link) though the hidden fields it keeps the upload
+# in stayed empty (EMD's Phenom, issue #112, note 28: #isResume, #resumeBucketId, #resumeFileSize, #resumeName and
+# #resumePath all empty, so Next did nothing and said nothing). Two or more hidden fields named for the resume, every
+# one empty, and a file sent into a file box of the page (by the desk, or one that reads a value): the file's name.
+UPLOAD_NOT_KEPT_JS = "() => {" + _RESUME_UPLOADS + r"""
+  const unkept = uploads.find((u) => u.kept.length >= 2 && !u.kept.some(filled));
+  return unkept ? unkept.file : '';
+}
+"""
+
+# Whether the file `name` is in a resume box and kept by the page (UPLOAD_NOT_KEPT_JS's fields beside it have a
+# value): "kept", "not kept", or "" when no resume box holds it
+UPLOAD_STATE_JS = "(name) => {" + _RESUME_UPLOADS + r"""
+  const mine = uploads.filter((u) => u.file === name && u.kept.length >= 2);
+  if (!mine.length) return '';
+  return mine.some((u) => u.kept.some(filled)) ? 'kept' : 'not kept';
+}
+"""
+
+# The Delete beside a file the page shows as uploaded but never kept (UPLOAD_NOT_KEPT_JS: EMD's Phenom, runs 53 to 64),
+# for the file to go up again. Only a file the desk sent itself (a box it gave the file to: never one the person
+# chose), shown once (one row with its name, within the form holding the empty fields the upload is kept in), and
+# the one control in that row (its name, its Download, its Delete; never further up than a row with a file box or a
+# form in it) that says it deletes or removes, and nothing else: shown, and only deleting (never a form's submit
+# button, a box, or a link to another page; the review of 0.3.153). Marked data-ja-unkept; true when there was one
+UNKEPT_DELETE_JS = "(name) => {" + _RESUME_UPLOADS + r"""
+  document.querySelectorAll('[data-ja-unkept]').forEach((el) => el.removeAttribute('data-ja-unkept'));
+  const mine = uploads.find((u) => u.file === name && u.box.__jaUploaded === name && u.kept.length >= 2
+                                   && !u.kept.some(filled));
+  if (!mine) return false;
+  const forms = [...new Set(mine.kept.map((el) => el.form).filter(Boolean))];
+  const within = (el) => !forms.length || forms.some((f) => f.contains(el));
+  const shown = (el) => el.getClientRects().length > 0 && getComputedStyle(el).visibility !== 'hidden';
+  const txt = (el) => (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim();
+  const says = (el) => [el.getAttribute('aria-label') || '', el.getAttribute('title') || '', txt(el)]
+    .some((t) => /^(?:delete|remove)(?: file| (?:the )?(?:resume|cv|document))?$/i.test(t.trim()));
+  const only = (el) => el.tagName === 'A' ? /^(?:#.*|javascript:.*)?$/i.test((el.getAttribute('href') || '').trim())
+    : el.tagName === 'BUTTON' ? !el.form || el.type === 'button' : el.tagName !== 'INPUT';
+  const rows = [...document.querySelectorAll('span, div, p, a, li, td')]
+    .filter((el) => el.childElementCount === 0 && txt(el) === name && shown(el) && within(el));
+  if (rows.length !== 1) return false;  // (the name twice, a cover letter's say: which is the resume's isn't sure)
+  // (a row with another file's name in it is a list of files: a Delete there may be the other file's)
+  const another = (row) => [...row.querySelectorAll('*')].some((el) => el.childElementCount === 0 && el !== rows[0]
+    && /\.[a-z][a-z0-9]{1,4}$/i.test(txt(el)) && txt(el) !== name);
+  for (let row = rows[0].parentElement, d = 0; row && d < 3; row = row.parentElement, d++) {
+    if (row.matches('form') || row.querySelector('form, input[type="file"]') || txt(row).length > 300
+        || another(row)) break;
+    const controls = [...row.querySelectorAll('a, button, [role="button"]')].filter((el) => shown(el) && says(el));
+    if (controls.length > 1 || controls.length && !only(controls[0])) return false;
+    if (controls.length) {
+      controls[0].setAttribute('data-ja-unkept', '1');
+      return true;
+    }
+  }
+  return false;
+}
+"""
+
+# After that Delete: whether the page still shows the file's name anywhere (a site that asks first, or takes a
+# moment); once it doesn't, the boxes the desk gave it to forget they were (UNKEPT_FORGET_JS), so it goes up again.
+# UNKEPT_PRESSED_SHOWN_JS: whether the Delete pressed is still there (the name shown elsewhere too: a note of it)
+UNKEPT_SHOWN_JS = "(name) => (document.body.innerText || '').includes(name)"
+UNKEPT_PRESSED_SHOWN_JS = """() => {
+  const el = document.querySelector('[data-ja-unkept="1"]');
+  return !!el && el.isConnected && el.getClientRects().length > 0;
+}"""
+UNKEPT_FORGET_JS = r"""
+(name) => {
+  document.querySelectorAll('input[type="file"]').forEach((box) => {
+    if (box.__jaUploaded === name) { delete box.__jaUploaded; box.value = ''; }
+  });
 }
 """
 

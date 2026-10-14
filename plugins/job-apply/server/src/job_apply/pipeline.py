@@ -454,6 +454,7 @@ class Run:
     reset_waited: bool = False  # paused for the reset email (a Resume after that means it's done)
     refreshed: bool = False  # reloaded once for a page that asked for it ("Please refresh the page")
     start_reloaded: bool = False  # reloaded once for a posting page with no way on (the State of Arizona's, run 63)
+    reuploaded: bool = False  # a resume the page showed but never kept: its Delete tried, to upload it again (EMD's, once a job)
     opened_fresh: bool = False  # this pass opened the job in a new tab (its page the posting's own, by its address)
     account_in: bool = False  # an account made for this job, and signed in to (Run.account_made said)
     load_reloaded: bool = False  # reloaded once for a step still loading after its wait (Workday's placeholders, run 57)
@@ -2240,7 +2241,10 @@ class Applier:
                 problems = _flagged(data) or [
                     f"\u201c{a['text'].strip()}\u201d is greyed out, so the site still wants something (a file, say, "
                     "or a box to tick)" for a in _greyed_step(data)[:1]]
-                if not problems and await self._resume_not_kept(run, data):
+                if not problems and (kept := await self._resume_not_kept(run, data)):
+                    if kept == "again":
+                        stalls, fixed_at = 0, len(pressed)  # (a new start on the step: its way on pressed again)
+                        continue
                     return
                 errors = "; ".join(problems)[:300].rstrip(" .")
                 return self._pause(run, "stuck", "The page didn't move on" + (f": {errors}." if errors else ".")
@@ -2407,7 +2411,10 @@ class Applier:
                         if await srv.browser.challenge_showing():  # a bot check drawn while it was waited on
                             await self._bring_forward(run)
                             return self._pause(run, "bot_check", _BOT_CHECK_SAYS)
-                    if not problems and await self._resume_not_kept(run, data):
+                    if not problems and (kept := await self._resume_not_kept(run, data)):
+                        if kept == "again":
+                            stalls, fixed_at = 0, len(pressed)
+                            continue
                         return  # (it never kept the resume: typing the boxes again can't fix that)
                     if not problems and looked not in retyped:
                         # nothing said wrong, and the page didn't move: it may have lost its own record of boxes that
@@ -2445,19 +2452,44 @@ class Applier:
         self._pause(run, "stuck", "This application has more steps than I expected. Have a look in the browser, "
                     "then press Resume.")
 
-    async def _resume_not_kept(self, run: Run, data: dict[str, Any]) -> bool:
+    async def _resume_not_kept(self, run: Run, data: dict[str, Any]) -> str:
         """A step that won't go on with nothing said wrong, whose page shows the resume as uploaded while the hidden
         fields it keeps the upload in are empty (EMD's Phenom, issue #112, note 28: Next did nothing and said nothing,
-        and the desk pressed it three times and typed the required boxes again): the person's to put right, by deleting
-        the file and uploading it again. Not tried again by the desk. True when it paused."""
-        name = await self.srv.browser.upload_not_kept()
+        and the desk pressed it three times and typed the required boxes again). Once a job, the file's own Delete is
+        pressed and the resume goes up again (EMD's, runs 53 to 64: its server had the file; only the page hadn't
+        kept it): "again" when the page then keeps it (its fields have a value). Otherwise the person's to put right,
+        said as it stands: "paused". "" when it's not that."""
+        srv = self.srv
+        name = await srv.browser.upload_not_kept()
         if not name:
-            return False
+            return ""
+        said = (f"{_site(run, data)} shows {name} as uploaded, but the resume didn't upload: its own upload fields "
+                "are empty, so its Next does nothing. In the browser window, delete the file with its Delete link, "
+                "upload your resume again, then press Resume.")
+        if not run.reuploaded:
+            run.reuploaded = True
+            if (deleted := await srv.browser.delete_unkept_upload(name)) == "gone":  # (the row went; its name stays)
+                said = (f"{_site(run, data)} showed {name} as uploaded, but hadn't kept it: I pressed its Delete to "
+                        "upload it again, but the page still shows the file's name. In the browser window, delete the "
+                        "file if it's still there, upload your resume again, then press Resume.")
+            elif deleted == "deleted":
+                await srv.autofill(job_id=run.job_id)  # (the resume's box, empty again: its file goes up again)
+                state = ""
+                for _ in range(20):  # (the page takes a moment to keep it)
+                    await asyncio.sleep(0.5)
+                    if (state := await srv.browser.upload_state(name)) == "kept":
+                        self._log(run, f"{_site(run, data)} showed {name} as uploaded but hadn't kept it, so I "
+                                  "deleted it and uploaded it again")
+                        return "again"
+                said = (f"{_site(run, data)} showed {name} as uploaded, but hadn't kept it: I deleted it and uploaded "
+                        "it again, and it still didn't upload (its own upload fields are empty, so its Next does "
+                        "nothing). In the browser window, delete the file with its Delete link, upload your resume "
+                        "again, then press Resume." if state == "not kept" else
+                        f"{_site(run, data)} showed {name} as uploaded, but hadn't kept it: I deleted it to upload it "
+                        "again, and it didn't go up. In the browser window, upload your resume, then press Resume.")
         await self._bring_forward(run)
-        self._pause(run, "stuck", f"{_site(run, data)} shows {name} as uploaded, but the resume didn't upload: its own "
-                    "upload fields are empty, so its Next does nothing. In the browser window, delete the file with "
-                    "its Delete link, upload your resume again, then press Resume.")
-        return True
+        self._pause(run, "stuck", said)
+        return "paused"
 
     async def _new_tab_soon(self, run: Run, seconds: float) -> bool:
         """Follow a tab that opens a little after a click (the browser makes it current)."""

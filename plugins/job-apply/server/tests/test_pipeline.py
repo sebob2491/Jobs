@@ -2239,13 +2239,16 @@ def test_boxes_the_pages_errors_say_are_empty_though_filled_are_typed_again(srv,
         assert any(line.startswith("typed again") and "Address 1" in line for line in r.log), r.log
 
 
-@pytest.mark.parametrize("query", ["", "?kept"])
+@pytest.mark.parametrize("query", ["", "?kept", "?again", "?outside&again", "?confirm&again", "?toast&again"])
 def test_a_resume_the_page_shows_but_never_kept_is_said_not_typed_around(srv, monkeypatch, query):
     """EMD's Phenom (issue #112, note 28): the page showed the resume as uploaded (its name, Download and Delete
     links), but the hidden fields it keeps the upload in stayed empty, so Next did nothing and said nothing. The desk
-    pressed Next three times, typed the required boxes again, and stopped with "The page didn't move on". It says what
-    is wrong instead (the upload, for the person to delete and do again) and doesn't type the boxes again.
-    ?kept: the upload is kept, and Next goes on."""
+    pressed Next three times, typed the required boxes again, and stopped with "The page didn't move on". It deletes the
+    file with its own Delete and uploads it again, once a job (?again: then it's kept, and Next goes on: EMD's, runs
+    53 to 64, and ?outside: its page as it is). Still not kept, it says so (the upload, for the person to delete and
+    do again) and doesn't type the boxes again; a Delete that asks first (?confirm: turned down, the file stays) is
+    said as it stands, never as deleted, and one that goes leaving a note naming the file (?toast) is said as
+    pressed (the reviews of 0.3.153). ?kept: the upload is kept, and Next goes on."""
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
     monkeypatch.setattr(pipeline, "STEP_SAVE_WAIT", 1)
     monkeypatch.setattr(pipeline, "NEW_TAB_WAIT", 1)
@@ -2258,17 +2261,30 @@ def test_a_resume_the_page_shows_but_never_kept_is_said_not_typed_around(srv, mo
         try:
             r = applier.enqueue(job["id"])
             await until(lambda: r.status not in ("queued", "running"), about=state(r))
-            return r
+            return r, await r.page.evaluate("() => sessionStorage.getItem('deletes')")
         finally:
             await applier.stop()
 
-    r = run(go())
-    if query:
+    r, deletes = run(go())
+    again = [line for line in r.log if "hadn't kept it, so I deleted it and uploaded it again" in line]
+    if query in ("?kept", "?again", "?outside&again"):
         assert "review.html" in r.url, (r.url, r.reason, r.log)
+        assert len(again) == (query != "?kept"), r.log
+        assert deletes == (None if query == "?kept" else "1"), deletes
         return
     assert (r.status, r.need) == ("needs_you", "stuck"), (r.status, r.reason, r.log)
-    assert "resume.pdf" in r.reason and "resume didn't upload" in r.reason and "Delete link" in r.reason, r.reason
-    assert "page didn't move on" not in r.reason, r.reason
+    if query == "?toast&again":  # (the Delete went, but a note still names the file: nothing goes up over it)
+        assert "I pressed its Delete to upload it again, but the page still shows the file's name" in r.reason \
+            and deletes == "1" and not again, (r.reason, deletes, r.log)
+        return
+    assert "resume.pdf" in r.reason and "Delete link" in r.reason, r.reason
+    if query:  # (the Delete turned down: nothing was deleted, and nothing is said to have been)
+        assert "the resume didn't upload" in r.reason and "I deleted" not in r.reason and deletes is None, \
+            (r.reason, deletes)
+    else:
+        assert "I deleted it and uploaded it again, and it still didn't upload" in r.reason and deletes == "1", \
+            (r.reason, deletes)
+    assert "page didn't move on" not in r.reason and not again, (r.reason, r.log)
     assert not any("required box(es) again" in line for line in r.log), r.log
 
 
