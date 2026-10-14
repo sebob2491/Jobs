@@ -122,6 +122,23 @@ _TURNED_AWAY = re.compile(r"^\s*(?:403\s*)?forbidden\s*$|^\s*(?:406\s*)?(?:reque
 _ERROR_PAGE = re.compile(r"\bsomething went wrong\b|\btechnical details\b", re.I)
 # A page's own language picker: nothing to apply with (iCIMS's error page, run 74: "Language", English (US))
 _LANGUAGE_PICKER = re.compile(r"^\W*(?:language|select (?:a |your )?language)\W*$", re.I)
+
+
+def _page_chrome(f: dict[str, Any]) -> bool:
+    """A list that's the page's, not the application's: its language picker (iCIMS's error page's "Language", run 74),
+    or a list with no label and nothing in it (Cornerstone's language list on Linde's empty requisition page, run 75).
+    Never one the page requires or marks wrong: that's a question."""
+    if f.get("required") or f.get("invalid") or f.get("kind") not in ("select", "listbox", "combobox"):
+        return False
+    label = clean_label(f.get("label") or "")
+    return bool(_LANGUAGE_PICKER.match(label)) or (f.get("kind") == "select" and not label and not f.get("options"))
+
+
+def _app_fields(data: dict[str, Any]) -> list[dict[str, Any]]:
+    """A page's boxes that are the application's: all but its own language picker (_page_chrome). Whether a page is a
+    form, and has a way on, is told by these alone; the page as read keeps them all (what's filled, and what's
+    compared from one look to the next, sees every box)."""
+    return [f for f in data.get("fields") or [] if not _page_chrome(f)]
 # A posting that has closed: "The job posting you are looking for has expired or the position has
 # already been filled" (Edward Jones' BrassRing), "This job is no longer available"
 _CLOSED = re.compile(
@@ -538,7 +555,9 @@ def classify(data: dict[str, Any], text: str) -> str:
     """bot_check, sign_in, email_code, form or page."""
     if data.get("challenge"):  # a CAPTCHA's pictures over the page (iCIMS after its email step)
         return "bot_check"
-    fields = [f for f in data.get("fields", []) if not f.get("disabled")]
+    # (never the page's own language picker: Linde's Cornerstone requisition page, run 75, came up empty but for its
+    # unlabelled language list, and was read as a form, so it was never reloaded)
+    fields = [f for f in _app_fields(data) if not f.get("disabled")]
     if not fields and (_BOT_TITLE.search(data.get("title") or "") or _BOT_TEXT.search(text[:3000])
                        or data.get("captcha")):  # (a page with only a CAPTCHA's box on it, and its button)
         return "bot_check"
@@ -1693,7 +1712,7 @@ class Applier:
             # system's error page with no way on: iCIMS's edge's, run 74, at four employers at once, said "Request Not
             # Acceptable" under "Oops, something went wrong" and "Technical Details:". Never a posting's own words, a dress
             # code's "Not Acceptable", nor a frame's 403 on a posting with its Apply: the review of 0.3.160)
-            bare = all(_LANGUAGE_PICKER.match(clean_label(f.get("label") or "")) for f in data.get("fields") or [])
+            bare = not _app_fields(data)
             heads = data.get("headings") or []
             deep = heads[1:] if (_ERROR_PAGE.search(text[:2000])
                                  and pick_next(data.get("actions") or [], kind == "form") is None) else []
@@ -1871,7 +1890,9 @@ class Applier:
                                    "browser, so the tab doesn't change by itself. The desk carries on after that."
                                    + watching, seen=data)
             if (notice := _notice(data)) is not None:  # the boxes behind it are filled once it's answered
-                said = await self._answer_notice(run, data, notice, agreed, over_form=kind == "form")
+                # (over a page with boxes, its language picker alone too, as before 0.3.161: its review)
+                said = await self._answer_notice(run, data, notice, agreed,
+                                                 over_form=kind == "form" or bool(data.get("fields")))
                 if said in ("agreed", "started"):
                     continue
                 if said == "paused":
@@ -2002,7 +2023,8 @@ class Applier:
                 self._log(run, f"dismissed a note (\u201c{note['text'].strip()}\u201d)")
                 continue
             sign_in_step = bool(_SIGN_IN_STEP.search(" ".join(data.get("headings") or [])))
-            blank = not (data.get("fields") or data.get("actions") or data.get("headings")) and len(text.strip()) < 40
+            # (a page with nothing but its language picker too: _app_fields, the review of 0.3.161)
+            blank = not (_app_fields(data) or data.get("actions") or data.get("headings")) and len(text.strip()) < 40
             gate_now = action is None and (button := _agreement_button(data)) is not None \
                 and f"{_page_key(data)} {button['text'].strip()}" not in agreed and _terms_gate(button, data) \
                 and _may_accept_notices()
@@ -2102,7 +2124,7 @@ class Applier:
                                        " Fix it in the browser, then press Resume.")
                 if blank:  # still, after the wait? (it was read before it)
                     now, now_text = await self._look()
-                    blank = not (now.get("fields") or now.get("actions") or now.get("headings")) \
+                    blank = not (_app_fields(now) or now.get("actions") or now.get("headings")) \
                         and len(now_text.strip()) < 40
                 if blank:
                     return self._pause(run, "stuck", "The page stayed blank: the site may be slow or down. Reload it "
@@ -2192,7 +2214,7 @@ class Applier:
                         and not run.seen_form and not run.start_reloaded and not run.hands_on and not run.pressed_before
                         and not run.refreshed and not run.load_reloaded and not run.accounts_tried
                         and not run.account_made and not run.resetting and not run.reset_from
-                        and not data.get("fields") and run.page is not None):
+                        and not _app_fields(data) and run.page is not None):
                     # the posting's own page (opened on this pass by its address, nothing done on it since) with no way
                     # on (the State of Arizona's, runs 61 and 63: the block with its APPLY said "Content missing"; in run
                     # 62 it drew): reloaded once a job. Never a page a press or a sign-in led to: a reload may send its
@@ -2213,6 +2235,17 @@ class Applier:
                                                                              run.start_reloaded else "")
                                        + ". That's the site's own trouble: reload the page in the browser window (now, or "
                                        "later), then press Resume.")
+                if (run.start_reloaded and run.opened_fresh and not pressed and not run.seen_form
+                        and not run.pressed_before and not _app_fields(data) and not data.get("actions")
+                        and not data.get("headings")):
+                    # the posting's own page, reloaded once (above) and nothing pressed since, still with nothing on it:
+                    # no job, nothing to press (Linde's Cornerstone requisition page, run 75; in runs 62 and 77 it drew).
+                    # The site's trouble, or a posting taken down: never a later page the reload had nothing to do with
+                    await self._bring_forward(run)
+                    return self._pause(run, "stuck", f"{_site(run, data)}'s page for this job came up empty, even after I "
+                                       "reloaded it: nothing of the job on it, and nothing to press. The site may be having "
+                                       "trouble, or the posting may have been taken down: look at it in the browser window "
+                                       "(reload it later, or skip the job), then press Resume.")
                 if (refreshed_at == len(pressed) and not run.pressed_before and not data.get("fields") and all(
                         h.strip() == str(data.get("title") or "").strip() for h in data.get("headings") or [])):
                     # the page the reload for its "Something went wrong" brought back (nothing pressed since, nor a Submit
