@@ -6942,13 +6942,16 @@ def test_apply_online_and_a_page_with_only_a_captcha():
 
 
 @pytest.mark.parametrize("page, said", [("forbidden.html", "403 Forbidden"), ("not-acceptable.html", "406 Not Acceptable"),
-                                        ("request-blocked.html", "Your request has been blocked.")])
+                                        ("request-blocked.html", "Your request has been blocked."),
+                                        ("icims-not-acceptable.html", "Request Not Acceptable")])
 def test_a_site_that_turns_the_browser_away_holds_nothing_up(srv, monkeypatch, page, said):
     """Valleywise Health's postings answer the desk's browser with a bare "403 Forbidden", and
     Deloitte's sign-in a headless one with "406 Not Acceptable", and Banner Health's Workday the live
     check's with a heading alone, "Your request has been blocked." (live, Oct 2026; the desk said it
-    couldn't find the button). There's nothing to solve: the person applies in their own browser,
-    and the queue isn't held for it as for a bot check."""
+    couldn't find the button). So did iCIMS's edge at four employers at once (run 74): its error page,
+    "Oops, something went wrong", with "Request Not Acceptable" under its technical details and a Language
+    picker. There's nothing to solve: the person applies in their own browser, and the queue isn't held
+    for it as for a bot check."""
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
     job = srv.add_job(url=fixture_url("site/" + page), title="Analyst", company="Example Health")["job"]
     applier = Applier(srv)
@@ -6965,6 +6968,28 @@ def test_a_site_that_turns_the_browser_away_holds_nothing_up(srv, monkeypatch, p
     r = run(go())
     assert r.need == "stuck" and not r.blocking, (r.need, r.reason)
     assert f"turned the desk's browser away ({said})" in r.reason
+
+
+def test_a_postings_own_words_or_a_frames_403_never_read_as_the_site_turning_the_browser_away(srv, monkeypatch):
+    """The review of 0.3.160: only iCIMS's error page has its "Request Not Acceptable" in a later heading. A posting with
+    its "Apply Now", whose own words have a "Not Acceptable" heading (a dress code) and whose frame from another site
+    shows a 403 page, is applied to as before."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    job = srv.add_job(url=fixture_url("site/posting-not-acceptable-words.html"), title="Store Associate",
+                      company="Example Store")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert r.seen_form and "turned the desk's browser away" not in r.reason, (r.status, r.reason, r.log)
 
 
 def test_a_page_that_doesnt_move_on_says_its_next_is_greyed_out(srv, monkeypatch):

@@ -116,8 +116,12 @@ _SAVED_ALREADY = re.compile(r"\balready exists for this application\b", re.I)
 # A part of a page that failed to load, in the words of Hotwire's Turbo (the State of Arizona's posting page, run 63)
 _CONTENT_MISSING = re.compile(r"\bcontent missing\b", re.I)
 _REFRESH_ASKED = re.compile(r"\bsomething went wrong\b.{0,200}\b(?:refresh|reload) (?:the|this) page\b", re.I | re.S)
-_TURNED_AWAY = re.compile(r"^\s*(?:403\s*)?forbidden\s*$|^\s*(?:406\s*)?not acceptable\s*$|"
+_TURNED_AWAY = re.compile(r"^\s*(?:403\s*)?forbidden\s*$|^\s*(?:406\s*)?(?:request )?not acceptable\s*$|"
                           r"^\s*your request has been blocked\.?\s*$", re.I)  # (Workday's, its title empty)
+# A job system's own error page (iCIMS's, run 74: "Oops, something went wrong", then "Technical Details:")
+_ERROR_PAGE = re.compile(r"\bsomething went wrong\b|\btechnical details\b", re.I)
+# A page's own language picker: nothing to apply with (iCIMS's error page, run 74: "Language", English (US))
+_LANGUAGE_PICKER = re.compile(r"^\W*(?:language|select (?:a |your )?language)\W*$", re.I)
 # A posting that has closed: "The job posting you are looking for has expired or the position has
 # already been filled" (Edward Jones' BrassRing), "This job is no longer available"
 _CLOSED = re.compile(
@@ -1685,11 +1689,20 @@ class Applier:
                 with contextlib.suppress(Exception):
                     await run.page.reload(wait_until="load")
                 continue
-            refused = next((t for t in [data.get("title") or "", *(data.get("headings") or [])[:1]] if _TURNED_AWAY.search(t)), "")
-            if kind == "page" and not data.get("fields") and refused:
+            # (on a page with nothing to fill but its language, and its later headings only where the page is a job
+            # system's error page with no way on: iCIMS's edge's, run 74, at four employers at once, said "Request Not
+            # Acceptable" under "Oops, something went wrong" and "Technical Details:". Never a posting's own words, a dress
+            # code's "Not Acceptable", nor a frame's 403 on a posting with its Apply: the review of 0.3.160)
+            bare = all(_LANGUAGE_PICKER.match(clean_label(f.get("label") or "")) for f in data.get("fields") or [])
+            heads = data.get("headings") or []
+            deep = heads[1:] if (_ERROR_PAGE.search(text[:2000])
+                                 and pick_next(data.get("actions") or [], kind == "form") is None) else []
+            refused = next((t for t in [data.get("title") or "", *heads[:1], *deep] if _TURNED_AWAY.search(t)), "")
+            if kind in ("page", "form") and bare and refused:
                 refusal = re.sub(r"\s+", " ", refused).strip()
                 return self._pause(run, "stuck", f"{_site(run, data)} turned the desk's browser away ({refusal}). "
-                                   "Open the posting in your own browser to apply there.")
+                                   "Open the posting in your own browser to apply there, or press Resume to try again "
+                                   "later.")
             if kind == "bot_check":
                 await self._bring_forward(run)
                 return self._pause(run, "bot_check", _BOT_CHECK_SAYS, seen=data)
