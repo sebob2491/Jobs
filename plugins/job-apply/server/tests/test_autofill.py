@@ -1422,6 +1422,10 @@ def test_a_text_box_the_page_says_is_wrong_takes_the_profiles_answer_only_where_
     assert plan_autofill([parsed], p, {})["already_filled"] == ["p"]  # (never on an ordinary pass)
     same = {**parsed, "value": "+14805550199"}
     assert plan_autofill([same], p, {}, redo={"p"})["already_filled"] == ["p"]
+    # never a text area, whose answer is the person's own (the review of 0.3.166: Microchip's Workday marks one it lost
+    # invalid, and the desk types it again as it shows)
+    area = {**parsed, "kind": "textarea"}
+    assert plan_autofill([area], p, {}, redo={"p"})["already_filled"] == ["p"]
     unknown = {"id": "u", "label": "Badge number", "kind": "text", "value": "12", "required": True}
     plan = plan_autofill([unknown], p, {}, redo={"u"})
     assert plan["to_fill"] == [] and plan["already_filled"] == ["u"], plan

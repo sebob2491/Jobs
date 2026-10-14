@@ -162,13 +162,23 @@ _CODE_FIELD = re.compile(r"verification code|one[- ]time (?:pass)?code|passcode|
                          r"(?:sent|email)|enter (?:the )?(?:\d-digit )?code|\botp\b", re.I)
 
 
+# A box that asks for a phone number, though its words speak of codes sent to it (Edward Jones' BrassRing, run 85:
+# "... an Authentication Code sent to you ... Please enter the phone number you would like to use to receive your
+# code(s) ... in the following format: ###-###-####"): the application's, never a code's. (Not a code the number names,
+# "Enter your phone number verification code", "the mobile number OTP", nor a "Re-enter your phone number" beside one:
+# the review's)
+_ASKS_A_PHONE = re.compile(r"(?<![\w-])enter (?:the|your|a) (?:\w+ ){0,2}(?:phone|mobile|cell|telephone) number\b"
+                           r"(?!'?s? (?:verification |security |one[- ]time |sms )?(?:code|otp|passcode|pin)\b)|#{3}-#{3}-#{4}",
+                           re.I)
+
+
 def _code_box(f: dict[str, Any]) -> bool:
     """An emailed code's box: a text or number box named for one, or a password box named for one
     (SuccessFactors' "*Passcode:" after making an account, live, Oct 2026: the desk put the saved
-    password in it). Never the saved password's."""
-    return f.get("kind") in ("text", "number", "password") and bool(
-        _CODE_FIELD.search(f.get("label") or "") or f.get("kind") == "password"
-        and re.search(r"one[- ]time password", f.get("label") or "", re.I))
+    password in it). Never the saved password's, nor one that asks for a phone number (_ASKS_A_PHONE)."""
+    label = f.get("label") or ""
+    return f.get("kind") in ("text", "number", "password") and not _ASKS_A_PHONE.search(label) and bool(
+        _CODE_FIELD.search(label) or f.get("kind") == "password" and re.search(r"one[- ]time password", label, re.I))
 _SIGN_IN_ACTION = re.compile(r"^(sign in|log ?in|sign in with email)$", re.I)
 # What else a form holding only the sign-in calls its button (SuccessFactors': "Submit")
 _SIGN_IN_SUBMIT = re.compile(r"^(submit|continue|next|go|enter|log ?on|sign ?on|sign in now|log ?in now)$", re.I)
@@ -2475,7 +2485,11 @@ class Applier:
                     links = [a.get("text") or "" for a in seen_now.get("actions") or []
                              if re.match(r"\s*error\s*[-\u2013:]", a.get("text") or "", re.I)]
                     said = norm(" ".join([*(e for e in seen_now.get("errors") or [] if _errorish(e)), *links]))
-                    lost = [f for f in seen_now.get("fields") or [] if f.get("kind") == "text" and not f.get("disabled")
+                    # (a text area too: Microchip's Workday "Please specify your preferred work location.", run 84; one
+                    # short enough to be typed again key by key, as a cover letter isn't in the time it's given: the review)
+                    lost = [f for f in seen_now.get("fields") or [] if (f.get("kind") == "text" or f.get("kind") == "textarea"
+                                                                        and len(str(f.get("value"))) <= 300)
+                            and not f.get("disabled")
                             and not is_empty_value(f.get("value")) and len(norm(clean_label(f.get("label") or ""))) >= 3
                             and re.search(rf"\b{re.escape(norm(clean_label(f.get('label') or '')))}\b", said)]
                     # a date's parts (Workday's Month / Day / Year) are answered again as a date is, in one run: typed
@@ -2485,7 +2499,8 @@ class Applier:
                     for f in seen_now.get("fields") or []:
                         if f.get("role") == "spinbutton":
                             blocks.setdefault(norm(clean_label(f.get("label") or "")), set()).add(str(f.get("section") or ""))
-                    wrong = [f for f in lost if f.get("invalid") or f.get("role") == "spinbutton"
+                    # (never a text area: the profile never answers one again over what it shows, the review of 0.3.166)
+                    wrong = [f for f in lost if f.get("kind") != "textarea" and f.get("invalid") or f.get("role") == "spinbutton"
                              and len(blocks.get(norm(clean_label(f.get("label") or "")), ())) <= 1]
                     if wrong and looked not in redone_pages:
                         # of those, the ones the page marks invalid themselves (not a box whose label an error about
