@@ -508,6 +508,8 @@ function question(jobId, q, i, repeated = false) {
   // its words alone, one answer would go in every box with that label. So is a date's Month, Day or Year asked
   // alone (its other parts filled already): its day, remembered by the date's label, would go in every part.
   repeated = repeated || (q.role === "spinbutton" && /^(month|day|year)$/i.test(q.sublabel || ""));
+  // (and an account form's security questions: that form's alone, never remembered)
+  repeated = repeated || !!q.account;
   const key = repeated ? `${q.section || ""} | ${q.label} | ${q.sublabel || ""}` : q.label;
   // An agreement's "Remember" starts unticked, and so does one whose own words say little ("Acknowledgment"): what
   // it agrees to is the site's words above it, and another site's "Acknowledgment" is another thing
@@ -534,7 +536,9 @@ function question(jobId, q, i, repeated = false) {
   // where it is, for a box whose words alone don't say ("Contact Details: Phone", "Date (Month)")
   const where = `${q.section ? `${esc(q.section)}: ` : ""}${esc(q.label)}${q.sublabel ? ` (${esc(q.sublabel)})` : ""}`;
   // and, for one whose words say little, the site's words above it (what it agrees to or certifies)
-  const about = q.about ? `<span class="small">“${esc(q.about)}”</span>` : "";
+  // (and, for an account form's security questions, that the answers go nowhere else)
+  const about = q.about ? `<span class="small">“${esc(q.about)}”</span>`
+    : q.account ? `<span class="small">For this account only: never remembered.</span>` : "";
   return `<label class="q"><span>${where}${q.error ? ` <span class="small">(${esc(q.error)})</span>` : ""}</span>${about}${input}
     ${repeated ? "" : `<span class="remember"><input type="checkbox" data-remember="${esc(q.label)}" ${consent || forced ? "" : "checked"}> Remember for later applications</span>`}</label>`;
 }
@@ -577,7 +581,9 @@ function renderSide() {
     const repeated = new Set(qs.map((q) => q.label).filter((l, i, all) => all.indexOf(l) !== i));
     const form = qs.length ? `<form data-answer="${r.job_id}">${qs.map((q, i) => question(r.job_id, q, i, repeated.has(q.label))).join("")}</form>` : "";
     // questions (with Resume, for answers typed into the page itself), or a missing file plus questions
-    if (form || r.need === "questions") body = form + jobButtons(r, ["fill", "show", "resume", "skip", "already"]);
+    // (and Later on a sign-in holding the queue: an account form's security questions, put on its card)
+    if (form || r.need === "questions") body = form + jobButtons(r, ["fill", "show", "resume",
+      ...(r.blocking && r.need === "sign_in" ? ["later"] : []), "skip", "already"]);
     // a sign-in holding the queue keeps Resume beside Later: its card may ask for Resume after a
     // password reset by hand (the desk then presses its sign-in once more)
     else if (["sign_in", "bot_check", "email_code"].includes(r.need))

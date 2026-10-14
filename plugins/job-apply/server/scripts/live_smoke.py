@@ -1934,8 +1934,8 @@ async def check_pipeline(company: dict[str, Any], out: Path, rec: dict[str, Any]
                 await asyncio.sleep(0.5)
             rec["rounds"].append({
                 "status": run.status, "need": run.need, "reason": run.reason, "url": run.url, "log": list(run.log),
-                "questions": [{k: q.get(k) for k in ("label", "kind", "required", "options", "error")}
-                              for q in run.questions],
+                "questions": [{k: q.get(k) for k in ("label", "kind", "required", "options", "error", "account")
+                               if k != "account" or q.get(k)} for q in run.questions],
                 # each asked-about field's markup, to see what kind of control it is
                 "markup": await _question_markup(run),
                 # and the words just above each, for one with none of its own

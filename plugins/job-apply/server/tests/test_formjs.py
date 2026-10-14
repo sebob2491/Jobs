@@ -303,3 +303,74 @@ def test_what_isnt_a_dialog_over_the_form(srv, tmp_path):
                     '<button>OK</button></div></body></html>')
     run(srv.browser.goto(page.resolve().as_uri()))
     assert [d["heading"] for d in run(srv.browser.inspect(include_dropdown_options=False))["dialogs"]] == ["Before you apply"]
+
+
+def test_a_jquery_ui_selectmenu_is_read_as_its_hidden_select(srv, tmp_path):
+    """BrassRing's security question (runs 67 to 77): a jQuery UI selectmenu, a span button ("<id>-button") standing in
+    for a hidden select, whose choices and whether it's required are the select's. Its placeholder chosen is no
+    choice, whatever its value ("", or "-1"). Another element acting as a list's button with no select behind it (a
+    header's language picker) isn't the form's; an input with that role still is."""
+    def menu(sid: str, label: str, placeholder: str, picked: str = "") -> str:
+        return (f'<label for="{sid}-button">{label}</label><select id="{sid}" required style="display:none">'
+                f'<option value="{placeholder}">Select question</option><option value="0"'
+                f'{" selected" if picked else ""}>In what city were you born?</option></select>'
+                f'<span id="{sid}-button" role="button" tabindex="0" aria-haspopup="listbox" aria-owns="{sid}-menu">'
+                f'<span class="ui-selectmenu-text">{picked or "Select question"}</span></span>'
+                f'<ul id="{sid}-menu" role="listbox"></ul>')
+
+    fields = fields_of(srv, tmp_path, menu("q1", "Question 1", "") + menu("q2", "Question 2", "-1")
+                       + menu("q3", "Question 3", "", "In what city were you born?")
+                       + '<span role="button" aria-haspopup="listbox" id="lang">English</span>'
+                       + '<input role="button" aria-haspopup="listbox" id="pick" aria-label="Pick a site">')
+    got = {f["label"]: (f["kind"], f.get("value"), f.get("required")) for f in fields}
+    assert got == {"Question 1": ("listbox", "", True), "Question 2": ("listbox", "", True),
+                   "Question 3": ("listbox", "In what city were you born?", True),
+                   "Pick a site": ("text", "", False)}, got
+
+
+def test_a_security_answer_put_in_is_never_read_back_nor_saved(srv, tmp_path):
+    """An account's security answer from the desk's card (the review of the card): its box is marked before it's filled,
+    so it reads back "(set)", as a password, even where the box held it already ("already set"), shows as dots, and
+    a saved page (a stop's, a problem report's) holds neither it nor a picture of it."""
+    fields = fields_of(srv, tmp_path, '<label for="a">Question 1 Answer</label><input id="a" value="Flagstaff Ridge 1987">'
+                                      '<label for="b">Nickname</label><input id="b">')
+    ids = {f["label"]: f["id"] for f in fields}
+    done = run(srv.browser.fill([{"id": ids["Question 1 Answer"], "value": "Flagstaff Ridge 1987", "secret": True},
+                                 {"id": ids["Nickname"], "value": "Sam"}]))
+    assert all(r["ok"] for r in done), done
+    after = {f["label"]: f["value"] for f in run(srv.browser.inspect(include_dropdown_options=False))["fields"]}
+    assert after == {"Question 1 Answer": "(set)", "Nickname": "Sam"}, after
+    page = run(srv.browser.page())
+    assert run(page.evaluate("() => getComputedStyle(document.getElementById('a')).webkitTextSecurity")) == "disc"
+    dest = run(srv.browser.snapshot(tmp_path / "saved"))
+    saved = "".join(f.read_text(encoding="utf-8") for f in dest.iterdir() if f.suffix in (".html", ".json"))
+    assert "Flagstaff" not in saved and "Sam" in saved and not (dest / "screenshot.jpg").exists()
+
+
+def test_a_security_box_reads_as_answered_only_with_its_answer_seen_going_in(srv, tmp_path):
+    """The second review of the card: a list for a security question picked but not taken (the choice isn't one it
+    has) stays on its placeholder, whose value can be "-1", or a menu button showing "Select question": marked as the
+    person's, it read "(set)" and the account was pressed. A list or menu on its placeholder reads empty, and anything
+    in a box the desk marked but didn't see its answer go in reads "(unconfirmed)", never its value; so does a list
+    put back on another choice since (the third review: a placeholder "-- Please choose --" the pattern misses)."""
+    fields = fields_of(srv, tmp_path, '<label for="q">Question 1</label><select id="q"><option value="-1">Select question'
+                                      '</option><option value="0">In what city were you born?</option></select>'
+                                      '<label for="m">Question 2</label><button type="button" id="m" '
+                                      'aria-haspopup="listbox">Select question</button>'
+                                      '<label for="a">Question 1 Answer</label><input id="a" value="Flagstaff">'
+                                      '<label for="c">Question 3</label><select id="c"><option value="0">-- Please '
+                                      'choose --</option><option value="1">In what city were you born?</option>'
+                                      '</select>')
+    ids = {f["label"]: f["id"] for f in fields}
+    done = run(srv.browser.fill([{"id": ids["Question 1"], "value": "What was your first car?", "secret": True},
+                                 {"id": ids["Question 3"], "value": "In what city were you born?", "secret": True}]))
+    assert [r["ok"] for r in done] == [False, True], done
+    assert {f["label"]: f["value"] for f in run(srv.browser.inspect(include_dropdown_options=False))["fields"]}[
+        "Question 3"] == "(set)"
+    page = run(srv.browser.page())
+    run(page.evaluate("ids => ids.forEach((id) => document.querySelector(`[data-ja-id='${id}']`)"
+                      ".setAttribute('data-ja-secret', 'pending'))", [ids["Question 2"], ids["Question 1 Answer"]]))
+    run(page.evaluate("() => { document.getElementById('c').selectedIndex = 0; }"))  # (put back by the person)
+    after = {f["label"]: f["value"] for f in run(srv.browser.inspect(include_dropdown_options=False))["fields"]}
+    assert after == {"Question 1": "", "Question 2": "", "Question 1 Answer": "(unconfirmed)",
+                     "Question 3": "(unconfirmed)"}, after

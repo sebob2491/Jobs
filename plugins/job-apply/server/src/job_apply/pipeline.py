@@ -511,6 +511,9 @@ class Run:
     account_page: str = ""
     statement_accepted: bool = False  # a Create Account's data privacy statement accepted for them (_accept_statement)
     account_finished: bool = False  # pressed the Create Account's second step (UKG Pro's "Almost there!"): never again
+    # the person's answers to an account form's security questions, given on the desk's card, by box (placed_key): for
+    # that form alone, used once, never remembered, logged, nor shown anywhere (never in public())
+    account_answers: dict[str, Any] = field(default_factory=dict)
     try_later: bool = False  # left on a "Try Again Later" page: only the person's Resume goes on from it
     active_at: float = 0.0  # when its paused tab last changed: someone at work in it
     captcha: bool = False  # paused on a bot check or CAPTCHA (the person's to solve): marked so on the desk
@@ -548,7 +551,8 @@ class Run:
                                                                      "reset_no_mail", "reopened_elsewhere", "reopened", "sign_in_tries", "sign_in_key",
                                                                      "accounts_tried", "account_made", "account_in", "account_page",
                                                                      "account_finished", "verifying", "mail_looks", "mail_last",
-                                                                     "entries_short", "entries_told", "entries_ok")}
+                                                                     "entries_short", "entries_told", "entries_ok",
+                                                                     "account_answers")}
 
 
 def classify(data: dict[str, Any], text: str) -> str:
@@ -830,6 +834,7 @@ class Applier:
         self.runs[job_id] = run
         self._cancel(job_id)
         run.status, run.need, run.blocking, run.reason = "skipped", "", False, "Skipped. Undo puts it back."
+        run.account_answers = {}  # (an account form's answers from its card, for that form alone: never kept)
         self._log(run, "skipped")
         self.srv.tracker().update(job_id, status="skipped", note="skipped in the Job Desk")
         for tab in self.srv.browser.lineage(run.page):  # its application tab, and the tab that opened it
@@ -1464,6 +1469,8 @@ class Applier:
         run.entries_told = {}  # (the card that says a section is short sets it again, after this)
         run.status, run.need, run.reason = "needs_you", need, reason
         run.questions = questions or []
+        if not any(q.get("account") for q in run.questions):
+            run.account_answers = {}  # (answers from an account form's card go into that form alone, on the way back)
         run.blocking = need in HANDS_ON
         # a sign-in's or Create Account's own picture check (Edwards', live) counts too: the page it paused on shows it
         run.captcha = need in ("bot_check", "captcha") or bool(seen and (seen.get("captcha") or seen.get("challenge")))
@@ -1818,6 +1825,16 @@ class Applier:
                     run.page_info = _page_info(data)  # the page as filled
                 if done == "prefilled" and _account_and_application(data):
                     return await self._apply_with_account(run, data)  # its application was drawn after all
+                if (done == "prefilled" and manage and not run.accounts_tried and run.account_answers
+                        and _security_asked(data) and not _security_answered(data)):
+                    # as answered on the card: in, its button is pressed next (_make_account)
+                    if await self._fill_account_answers(run, data) == "failed":
+                        return self._pause(run, "sign_in", f"I filled in {_site(run, data)}'s Create Account form with "
+                                           "your details and saved password, but couldn't put your answers to its "
+                                           "security questions into it. Fill them in in the browser window, tick their "
+                                           "terms box if there is one and create the account; the desk carries on after "
+                                           "that.", seen=data)
+                    data, _ = await self._look()
                 if done == "prefilled" and manage and not run.accounts_tried and await self._make_account(run, data):
                     # a new account: its sign-in (where the site asks for one) is tried afresh, once more
                     # however many the refused password had
@@ -1841,9 +1858,26 @@ class Applier:
                         _user_name_box(f) for f in fields if f.get("kind") in ("text", "email")) else "")
                     asks = ("Fill in anything it still asks for (a picture code, say), tick their terms box if there is "
                             "one and create the account (then verify your email if they ask)")
+                    card: list[dict[str, Any]] = []
                     if _security_asked(data):  # (never made up, so never pressed for the person: _make_account)
-                        asks = ("It also asks for security questions and their answers: those are yours to choose (the "
-                                "desk never makes up answers). Fill them in there and create the account")
+                        captcha = _captcha_on(data)
+                        if _security_answered(data):  # (yours from the card, in: its button wasn't pressed)
+                            statement = _privacy_statement(data) is not None and not run.statement_accepted
+                            asks = ("Your answers to its security questions are in" + (
+                                    ", and its CAPTCHA is yours to solve: solve it" if captcha else "") + (
+                                    ". It asks you to read and accept its data privacy statement, which agrees to "
+                                    "something in your name, so it's yours: open it in the browser window and accept it "
+                                    "if you're happy to" if statement else "") + ". Tick their terms box if there is one "
+                                    "and create the account (then verify your email if they ask)")
+                        else:  # (a CAPTCHA too: the person's whatever's answered here, so no card)
+                            card = [] if run.accounts_tried or captcha else await self._account_card(run, data)
+                            asks = ("It also asks for security questions and their answers: those are yours to choose "
+                                    "(the desk never makes up answers). " + (
+                                        "Answer them here (they go into this form alone, and are never remembered) and "
+                                        "the desk creates the account, or fill them in in the browser window and create "
+                                        "the account yourself" if card else "Fill them in there" + (
+                                            ", solve its CAPTCHA (that's yours)" if captcha else "")
+                                        + " and create the account"))
                     elif _captcha_on(data):  # (never touched, so never pressed for the person either)
                         asks = ("Its CAPTCHA is yours to solve: solve it, tick their terms box if there is one and create "
                                 "the account (then verify your email if they ask)")
@@ -1857,7 +1891,7 @@ class Applier:
                         data, _ = await self._look()  # (the statement it opened for them is open still: paused on)
                     return self._pause(run, "sign_in", f"I filled in {_site(run, data)}'s Create Account form with your "
                                        f"details and saved password{user}. {asks}; the desk carries on after that."
-                                       + first, seen=data)
+                                       + first, card or None, seen=data)
                 if done == "filled":
                     return self._pause(run, "sign_in", f"I filled in your email and saved password on {_site(run, data)}'s "
                                        "sign-in form. Press its sign-in button in the browser window; the desk carries on "
@@ -2942,7 +2976,7 @@ class Applier:
         when it was pressed; the account is said to be made only once the site shows it
         (Run.account_made, in _drive). Nor with security questions on the form (some Taleo sites'):
         their answers are the person's."""
-        if _captcha_on(data) or _security_asked(data):
+        if _captcha_on(data) or _security_asked(data) and not _security_answered(data):
             return False
         srv = self.srv
         statement = _privacy_statement(data)
@@ -2976,6 +3010,44 @@ class Applier:
                             + _manage_hint())
         await self._wait_for_account(data)
         return True
+
+    async def _account_card(self, run: Run, data: dict[str, Any]) -> list[dict[str, Any]]:
+        """An account form's security questions put to the person on the desk's card (_account_card_boxes), with their
+        choices (a list's, opened to read them), with settings.manage_accounts: answered there, they go into this form
+        alone (Run.account_answers), never remembered, and the desk creates the account. Empty when there's nothing it
+        can ask there."""
+        if not _may_manage_accounts() or not _account_card_boxes(data.get("fields") or [], data.get("headings")):
+            return []
+        try:
+            full = await self.srv.inspect_form(include_dropdown_options=True)
+        except Exception:  # (gone, or changed: the card as it was)
+            return []
+        keep = ("id", "kind", "label", "section", "sublabel", "required", "options", "role")
+        return [{**{k: f[k] for k in keep if f.get(k) not in (None, [])}, "account": True}
+                for f in _account_card_boxes(full.get("fields") or [], full.get("headings"))]
+
+    async def _fill_account_answers(self, run: Run, data: dict[str, Any]) -> str:
+        """The person's answers to an account form's security questions (given on the card: Run.account_answers) put
+        into it, only with an answer for every one of its boxes, straight into the browser, each box marked as theirs
+        first (Browser._keep_secret: never in a snapshot, a log or a report, said only as answers filled in). Used once,
+        whatever comes of it. "filled" once every box reads back as filled by the desk (_security_answered), which lets
+        its button be pressed; "failed" when they didn't all go in (what went wrong unsaid: it may name an answer);
+        "" with no answers for its boxes."""
+        boxes = _account_card_boxes(data.get("fields") or [], data.get("headings"))
+        answers, run.account_answers = run.account_answers, {}
+        if not boxes or not all(placed_key(f) in answers for f in boxes):
+            if answers:  # (the form changed since its card: asked again, said so)
+                self._log(run, f"your answers to the security questions didn't match the form on {_site(run, data)} "
+                          "any more, so they're asked again")
+            return ""
+        results = await self.srv.browser.fill([{"id": f["id"], "value": answers[placed_key(f)], "secret": True}
+                                               for f in boxes])
+        now, _ = await self._look()
+        if not results or not all(r.get("ok") for r in results) or not _security_answered(now):
+            self._log(run, f"couldn't put your answers to the security questions into the form on {_site(run, data)}")
+            return "failed"
+        self._log(run, f"filled in your answers to the security questions on {_site(run, data)}")
+        return "filled"
 
     async def _accept_statement(self, run: Run, data: dict[str, Any], link: dict[str, Any]) -> bool:
         """A Create Account form's data privacy statement (_privacy_statement), which the site makes no
@@ -3031,9 +3103,15 @@ class Applier:
         if await self._fill_account_details(data.get("fields") or [], data.get("headings")):
             self._log(run, f"filled the rest of {site}'s Create Account form with your details")
         why = ""
-        # (a CAPTCHA, and security questions' answers, are the person's, never made up: never pressed for them)
-        captcha, security = _captcha_on(data), _security_asked(data)
-        if _may_manage_accounts() and not run.account_finished and not captcha and not security:
+        # (a CAPTCHA, and security questions' answers, are the person's, never made up: never pressed for them; theirs
+        # given on the card go in, and it's pressed then)
+        if (_may_manage_accounts() and not run.account_finished and run.account_answers and _security_asked(data)
+                and not _security_answered(data)):
+            if await self._fill_account_answers(run, data) == "failed":
+                why = "your answers to its security questions wouldn't go into it"
+            data, _ = await self._look()
+        captcha, security = _captcha_on(data), _security_asked(data) and not _security_answered(data)
+        if _may_manage_accounts() and not run.account_finished and not captcha and not security and not why:
             now, _ = await self._look()
             terms = await self._said_terms(_terms_boxes(now))
             boxes = terms + _other_positions_boxes(now)
@@ -3050,7 +3128,7 @@ class Applier:
                     await asyncio.sleep(0.5)
                 if pressable is None:
                     why = f"“{said}” stayed greyed out"
-                elif _captcha_on(now) or _security_asked(now):  # (drawn since the page was first read)
+                elif _captcha_on(now) or _security_asked(now) and not _security_answered(now):  # (drawn since it was read)
                     pressable = None
                     why = ("it shows a CAPTCHA, which is yours to solve" if _captcha_on(now) else
                            "it asks security questions too, whose answers are yours to choose")
@@ -3078,6 +3156,15 @@ class Applier:
             self._pause(run, "sign_in", f"{site} asked for a few more details to create your account, and {done}; it "
                         f"wants something more: {wants} Finish it there; the desk carries on after that.", seen=now)
         else:
+            card = await self._account_card(run, now) if security and not captcha else []
+            if card:
+                self._pause(run, "sign_in", f"{site} asks for a few more details to create your account. I filled in what "
+                            "your profile has; its security questions and their answers are yours to choose (the desk "
+                            "never makes up answers): answer them here (they go into this form alone, and are never "
+                            "remembered) and the desk finishes the account, or fill them in in the browser window, tick "
+                            f"its terms box if you agree and press “{said}” there; the desk carries on after that.",
+                            card, seen=now)
+                return False
             asks = (" its security questions and their answers are yours to choose (the desk never makes up answers): "
                     "fill them in," if security else "") + (" solve its CAPTCHA (that's yours)," if captcha else "")
             self._pause(run, "sign_in", f"{site} asks for a few more details to create your account. I filled in what "
@@ -4361,6 +4448,34 @@ def _security_boxes(fields: list[dict[str, Any]], headings: list[str] | None = N
         return []
     return [f for f in fields if f.get("kind") not in ("password", "checkbox", "file")
             and re.search(r"\bquestions?\b|\banswers?\b|\bhint\b", f.get("label") or "", re.I)]
+
+
+def _account_card_boxes(fields: list[dict[str, Any]], headings: list[str] | None = None) -> list[dict[str, Any]]:
+    """An account form's security questions the desk can put to the person on its card: its boxes for them, where
+    there's a question to choose or write as well as an answer to give (a heading over an answer box alone means a
+    question the desk can't read: those stay in the browser), each told apart from the others on the card (by
+    placed_key: two "Question" boxes under one heading can't be). Empty when there's nothing to ask."""
+    boxes = _security_boxes(fields, headings)
+    asks = [f for f in boxes if re.search(r"\bquestions?\b", f.get("label") or "", re.I)
+            and not re.search(r"\banswers?\b", f.get("label") or "", re.I)]
+    answers = [f for f in boxes if f not in asks]
+    if len({placed_key(f) for f in boxes}) < len(boxes):
+        return []
+    # (an answer for each question: one the label patterns miss, "Your response", leaves the form to the browser)
+    return boxes if asks and len(answers) >= len(asks) else []
+
+
+def _security_answered(data: dict[str, Any]) -> bool:
+    """An account form's security questions all hold the person's answers, as the desk put them in from its card: each
+    box marked and filled (read back "(set)": Browser._keep_secret). Told from the form as it is, never from what was
+    done before: a form drawn again since has them empty, and isn't pressed (the review of the card)."""
+    fields = data.get("fields") or []
+    boxes = _account_card_boxes(fields, data.get("headings"))
+    # (and nothing under its security questions' heading left empty: a box the label patterns miss)
+    left = [f for f in fields if f not in boxes and f.get("kind") not in (
+                "password", "checkbox", "checkbox_group", "radio", "radio_group", "file") and not _page_chrome(f)
+            and _SECURITY_QUESTION.search(f.get("section") or "") and is_empty_value(f.get("value"))]
+    return bool(boxes) and all(f.get("value") == "(set)" for f in boxes) and not left
 
 
 def _captcha_on(data: dict[str, Any]) -> bool:

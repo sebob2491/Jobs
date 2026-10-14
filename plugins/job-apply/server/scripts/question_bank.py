@@ -31,7 +31,8 @@ def uncovered(records: list[dict], bank: list[dict]) -> list[tuple[str, set[str]
         for rnd in rec.get("rounds") or []:
             for q in rnd.get("questions") or []:
                 label = bare(q.get("label") or "")
-                if not label or any(p.search(label) for p in patterns):
+                # (never an account form's security questions: their answers are that account's alone)
+                if not label or q.get("account") or any(p.search(label) for p in patterns):
                     continue
                 shown, who, choices = asked.setdefault(label.lower(), (label, set(), set()))
                 who.add(str(rec.get("company") or "?"))

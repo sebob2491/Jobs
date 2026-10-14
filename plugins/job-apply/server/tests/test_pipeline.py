@@ -2966,6 +2966,176 @@ def test_brassrings_account_after_its_passcode_gets_the_saved_password_and_leave
         and "security questions and their answers: those are yours" in r.reason, (r.reason, r.log)
 
 
+def test_brassrings_security_question_is_answered_on_the_card_for_that_form_alone(srv, monkeypatch, job_apply_home):
+    """Edward Jones' BrassRing (runs 67 to 77): its Create Account asks for a security question, chosen from a jQuery UI
+    selectmenu (a span standing in for a hidden select, its choices in a menu drawn when it's clicked), and its answer.
+    The desk never read the chooser, and could only leave both to the person in the browser window. With
+    manage_accounts they're put to the person on the card, the chooser with its choices. Answered there, they go into
+    that form alone (never remembered, never among the application's answers, never in its log or on the desk page)
+    and the desk creates the account."""
+    from job_apply.desk import Desk
+
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    saved_password(monkeypatch)
+    as_test_identity(monkeypatch, job_apply_home)
+    inbox_with_code(monkeypatch)
+    job = srv.add_job(url=fixture_url("site/brassring-signin.html") + "?selectmenu", title="Senior Analyst",
+                      company="Example Corp")["job"]
+    desk = Desk(srv)
+    applier = desk.applier
+    secret = "Flagstaff Ridge 1987"
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: "pressed “Verify Passcode”" in r.log, about=state(r))
+            await until(lambda: r.need not in ("", "email_code") and r.status not in ("queued", "running"),
+                        about=state(r))
+            asked, reason = [dict(q) for q in r.questions or []], r.reason
+            keys = [f"{q.get('section') or ''} | {q['label']} | {q.get('sublabel') or ''}" for q in asked]
+            chooser = next((k for k, q in zip(keys, asked) if q.get("options")), None)
+            if chooser is None:
+                return r, asked, reason, {}, ""
+            desk.answer(job["id"], [{"label": chooser, "value": "In what city were you born?", "remember": True},
+                                    *({"label": k, "value": secret} for k in keys if k != chooser)])
+            shown = json.dumps(r.public(), default=str)
+            await until(lambda: any(line.startswith("filled in your answers") for line in r.log), about=state(r))
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            # (the form as read now, and as a saved page keeps it: Claude's tools, a stop's page, a problem report)
+            srv.browser.use_tab(r.page)
+            read = json.dumps(await srv.inspect_form(include_dropdown_options=False))
+            dest = await srv.browser.snapshot(job_apply_home / "saved-page")
+            saved = "".join(f.read_text(encoding="utf-8") for f in dest.iterdir() if f.suffix in (".html", ".json"))
+            shown += read + saved + ("screenshot" if (dest / "screenshot.jpg").exists() else "")
+            return r, asked, reason, await brassring_did(r.page), shown
+        finally:
+            await applier.stop()
+
+    r, asked, reason, did, shown = run(go())
+    assert [q["kind"] for q in asked] == ["listbox", "text"] and all(q.get("account") for q in asked), asked
+    assert "What was the name of your first pet?" in asked[0]["options"] and asked[0]["required"], asked
+    assert r.need == "sign_in" and "Answer them here" in reason, (reason, r.log)
+    form = did.get("accountForm") or {}
+    assert (form.get("question"), form.get("answer"), did.get("accountMade")) == (
+        "In what city were you born?", secret, 1), (did, r.log)
+    assert [line for line in r.log if "your answers" in line] == [
+        "filled in your answers to the security questions on Example Corp's site"], r.log
+    # that form's alone: never remembered, never the application's, said nowhere
+    assert config.saved_answers() == [] and r.once == {}, (config.saved_answers(), r.once)
+    assert secret not in shown and secret not in json.dumps(r.public(), default=str) and secret not in "\n".join(r.log)
+    assert '"(set)"' in shown and "screenshot" not in shown and r.account_answers == {}, shown[-3000:]
+
+
+@pytest.mark.parametrize("case", ["redrawn", "failed", "unpicked", "captcha"])
+def test_an_account_form_is_never_pressed_with_its_security_questions_unanswered(srv, monkeypatch, job_apply_home,
+                                                                                   case):
+    """The review of the security questions' card. "redrawn": the person's answers went in, the button wasn't pressed
+    (held back here once), and the form was drawn again, empty, before Resume: the desk had kept "answered" for the job
+    and pressed it with the questions empty. Told from the form as it is now, it isn't pressed, and the card asks again
+    (and the pause before says the answers are in). "failed": they wouldn't go in: said so, and left to the browser
+    window, never pressed. "unpicked" (the second review): the question picked on the card isn't one its list has, so
+    its list stays on its placeholder, whose value is "-1": the answer box went in, and the list, marked as the
+    person's, read as answered, so a Resume pressed it. A list on its placeholder is unanswered, and a box reads as
+    answered only once the desk saw its answer go in. "captcha": a picture code on the form too: the account is the
+    person's to make, so no card (answered, it would only come back), and the CAPTCHA is said."""
+    from job_apply.desk import Desk
+
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    saved_password(monkeypatch)
+    as_test_identity(monkeypatch, job_apply_home)
+    inbox_with_code(monkeypatch)
+    query = "?minusone" if case == "unpicked" else "?selectmenu" + ("&formcaptcha" if case == "captcha" else "")
+    job = srv.add_job(url=fixture_url("site/brassring-signin.html") + query, title="Senior Analyst",
+                      company="Example Corp")["job"]
+    desk = Desk(srv)
+    applier = desk.applier
+    if case == "failed":
+        real_fill = srv.browser.fill
+
+        async def fill(values):
+            if any(v.get("secret") for v in values):
+                return [{"id": v["id"], "ok": False, "error": "TimeoutError: it wouldn't take it"} for v in values]
+            return await real_fill(values)
+
+        monkeypatch.setattr(srv.browser, "fill", fill)
+    held: list[int] = []
+    real_make = Applier._make_account
+
+    async def make_account(self, run_, data):
+        if case == "redrawn" and not held and any(line.startswith("filled in your answers") for line in run_.log):
+            held.append(1)  # (its button not found, say: nothing pressed)
+            return False
+        return await real_make(self, run_, data)
+
+    monkeypatch.setattr(Applier, "_make_account", make_account)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: "pressed \u201cVerify Passcode\u201d" in r.log, about=state(r))
+            await until(lambda: r.need not in ("", "email_code") and r.status not in ("queued", "running"),
+                        about=state(r))
+            pauses = [(r.reason, [dict(q) for q in r.questions or []])]
+            if case != "captcha":
+                desk.answer(job["id"], [
+                    {"label": f"{q.get('section') or ''} | {q['label']} | {q.get('sublabel') or ''}",
+                     "value": ("What was your first car?" if case == "unpicked" else "In what city were you born?")
+                     if q.get("options") else "Flagstaff Ridge 1987"}
+                    for q in pauses[0][1]])
+                await until(lambda: r.status not in ("queued", "running") and any(
+                    "your answers to the security questions" in line for line in r.log), about=state(r))
+                pauses.append((r.reason, [dict(q) for q in r.questions or []]))
+            if case in ("redrawn", "unpicked"):  # (redrawn: its boxes new, and empty; unpicked: as the desk left it)
+                await r.page.evaluate("""(redraw) => { if (!redraw) return;
+                    document.querySelectorAll('[data-ja-secret]').forEach((e) => {
+                      e.removeAttribute('data-ja-secret'); e.style.removeProperty('-webkit-text-security'); });
+                    document.getElementById('sa').value = ''; document.getElementById('sq').value = '';
+                    document.getElementById('sq-button_text').textContent = 'Select question'; }""", case == "redrawn")
+                told = len(r.log)
+                applier.resume(job["id"])
+                await until(lambda: r.status not in ("queued", "running") and len(r.log) > told, about=state(r))
+                pauses.append((r.reason, [dict(q) for q in r.questions or []]))
+            return r, pauses, await brassring_did(r.page)
+        finally:
+            await applier.stop()
+
+    r, pauses, did = run(go())
+    assert "accountMade" not in did, (did, r.log)  # (never pressed with them unanswered)
+    if case == "captcha":
+        (reason, card), = pauses
+        assert card == [] and "solve its CAPTCHA (that's yours)" in reason, (reason, card)
+        return
+    assert pauses[0][1] and all(q.get("account") for q in pauses[0][1]), pauses[0]
+    reason, card = pauses[1]
+    if case == "unpicked":
+        assert card == [] and "couldn't put your answers to its security questions into it" in reason, (reason, r.log)
+        reason, card = pauses[2]
+        assert card and "Answer them here" in reason, (reason, card, r.log)  # (on Resume: asked again, never pressed)
+        return
+    if case == "failed":
+        assert card == [] and "couldn't put your answers to its security questions into it" in reason, (reason, r.log)
+        assert "couldn't put your answers to the security questions into the form on Example Corp's site" in r.log
+        return
+    assert card == [] and "Your answers to its security questions are in" in reason, (reason, r.log)
+    reason, card = pauses[2]
+    assert card and all(q.get("account") for q in card) and "Answer them here" in reason, (reason, card, r.log)
+
+
+def test_an_account_forms_security_questions_go_on_the_card_only_told_apart():
+    """Two security questions under one heading, each "Question" with its "Answer" (the review of the card): their
+    boxes' keys on the card are the same, so one answer would go into both. No card then: they stay the person's in
+    the browser window."""
+    boxes = [{"id": i, "kind": "select" if n % 2 == 0 else "text", "label": "Question" if n % 2 == 0 else "Answer",
+              "options": ["In what city were you born?"] if n % 2 == 0 else None} for n, i in enumerate("abcd")]
+    assert pipeline._account_card_boxes(boxes, ["Security questions"]) == []
+    assert len(pipeline._account_card_boxes(boxes[:2], ["Security questions"])) == 2
+    assert not pipeline._security_answered({"fields": boxes[:2], "headings": ["Security questions"]})
+    assert pipeline._security_answered({"fields": [{**f, "value": "(set)"} for f in boxes[:2]],
+                                        "headings": ["Security questions"]})
+
+
 def test_a_code_the_page_wouldnt_take_is_said_in_the_log_and_tried_again(srv, monkeypatch, job_apply_home):
     """The inbox's code was found but didn't go into the page (a dialog open over it, a box that wouldn't
     take it): the desk looked again at the next poll and said nothing, so a run that ended waiting on its
@@ -6194,11 +6364,20 @@ def _example_corp(srv, monkeypatch, loads: list[str]) -> str:
 
 
 async def _crash(tab):
-    """Crash a tab's page, as Chrome's "Aw, Snap!" is."""
+    """Crash a tab's page, as Chrome's "Aw, Snap!" is: by the browser's own Page.crash (on CI, under load, a navigation
+    to chrome://crash now and then never crashed it, #215), and that navigation only if it didn't."""
     crashed = []
     tab.once("crash", lambda _: crashed.append(True))
     with contextlib.suppress(Exception):
-        await tab.goto("chrome://crash", timeout=5000)
+        cdp = await tab.context.new_cdp_session(tab)
+        await asyncio.wait_for(cdp.send("Page.crash"), 5)  # (it never answers: its page is gone)
+    for _ in range(50):
+        if crashed:
+            break
+        await asyncio.sleep(0.2)
+    if not crashed:
+        with contextlib.suppress(Exception):
+            await tab.goto("chrome://crash", timeout=5000)
     await until(lambda: crashed)
 
 

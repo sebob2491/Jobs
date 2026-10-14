@@ -32,7 +32,7 @@ from starlette.responses import HTMLResponse, JSONResponse, Response
 from starlette.routing import Route
 
 from . import autofill, config, report
-from .pipeline import DESK_PASSWORDS, Applier, question_key
+from .pipeline import DESK_PASSWORDS, Applier, placed_key, question_key
 from .ats import detect_ats
 from .postings import FetchError, Posting, fetch_posting, finalize, parse_html
 from .recommend import recommend, score_listing
@@ -541,9 +541,21 @@ class Desk:
             # nothing is remembered for a job that isn't asking (a stale page)
             raise ValueError("That job isn't waiting for answers any more.")
         problem = None
+        # an account form's security questions, the person's for that form alone: kept apart (Run.account_answers),
+        # never remembered, never among the application's answers, never shown again. By each box's own key, as the
+        # card sends it, or by its label alone where that's one box's (a page from before)
+        own = [placed_key(q) for q in run.questions if q.get("account")]
+        bare = [question_key(q.get("label") or "") for q in run.questions if q.get("account")]
+        account = {**{b: k for b, k in zip(bare, own) if bare.count(b) == 1}, **{k: k for k in own}}
+        given = {account[question_key(str(a.get("label") or ""))]: a.get("value") for a in answers
+                 if question_key(str(a.get("label") or "")) in account and a.get("value") not in (None, "")}
+        if given and len(given) < len(own):  # (all of them, or none: the form takes them together)
+            raise ValueError("Answer each of its security questions here, or none of them (and fill them in in the "
+                             "browser window).")
+        run.account_answers = given
         for a in answers:
             label, value = str(a.get("label") or ""), a.get("value")
-            if not label or value in (None, ""):
+            if not label or value in (None, "") or question_key(label) in account:
                 continue
             if a.get("remember", True) and " | " not in label:  # (one box's own answer is never remembered)
                 # an answer naming this employer ("Acme website") is remembered as "Company Website", or not at

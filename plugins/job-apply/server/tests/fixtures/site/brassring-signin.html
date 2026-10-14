@@ -169,14 +169,47 @@
       + '<label><input type="checkbox" id="twofa"> Enable 2-Factor Sign In by Email</label>'
       + '<label for="np">*Password</label><input id="np" type="password" required>'
       + '<label for="np2">*Re-enter password</label><input id="np2" type="password" required>'
-      + '<h3>Security questions</h3><label for="sq">* Question 1</label><select id="sq" required>'
-      + '<option value="">Select question</option><option>What was the name of your first pet?</option>'
-      + '<option>In what city were you born?</option></select>'
+      + '<h3>Security questions</h3>' + (q.has('selectmenu')
+        // ?selectmenu: as BrassRing draws it live (run 68), a jQuery UI selectmenu: the select hidden, a span button
+        // standing in for it ("<id>-button"), whose menu ("<id>-menu") lists the choices to click
+        ? '<label for="sq-button">* Question 1</label><select id="sq" required style="display: none">'
+          + '<option value="" disabled selected>Select question</option><option value="0">What was the name of your '
+          + 'first pet?</option><option value="1">In what city were you born?</option></select>'
+          + '<span tabindex="0" id="sq-button" role="button" aria-expanded="false" aria-owns="sq-menu" '
+          + 'aria-haspopup="listbox" class="ui-selectmenu-button"><span class="ui-selectmenu-icon"></span>'
+          + '<span class="ui-selectmenu-text" id="sq-button_text">Select question</span></span>'
+          + '<div class="ui-selectmenu-menu"><ul id="sq-menu" role="listbox" aria-hidden="true"></ul></div>'
+        // (?minusone: its placeholder's value is "-1", not empty)
+        : '<label for="sq">* Question 1</label><select id="sq" required>'
+          + '<option value="' + (q.has('minusone') ? '-1' : '') + '">Select question</option>'
+          + '<option>What was the name of your first pet?</option>'
+          + '<option>In what city were you born?</option></select>')
       + '<input id="sa" type="text" placeholder="Answer" aria-label="Question 1 Answer">'
+      + (q.has('formcaptcha') ? picture('fcode') : '')  // (?formcaptcha: a picture code on this form too)
       + '<button type="submit">Continue</button> <a href="javascript:void(0)" id="cancel">Cancel</a>'
       + '<div id="aerr" role="alert"></div></form>';
     const typed = () => put('accountForm', {passwords: [$('np').value, $('np2').value].filter(Boolean).length,
-      question: $('sq').value, answer: $('sa').value, twofa: $('twofa').checked});
+      question: $('sq').value && $('sq').options[$('sq').selectedIndex].text, answer: $('sa').value,
+      twofa: $('twofa').checked});
+    if (q.has('selectmenu')) {  // (the menu opens on a click on its button; a choice sets the select, as jQuery UI's)
+      const button = $('sq-button'), menu = $('sq-menu');
+      button.addEventListener('click', () => {
+        const open = button.getAttribute('aria-expanded') === 'true';
+        button.setAttribute('aria-expanded', String(!open));
+        menu.setAttribute('aria-hidden', String(open));
+        menu.innerHTML = open ? '' : Array.from($('sq').options).filter((o) => o.value !== '').map((o) =>
+          `<li class="ui-menu-item"><div role="option" tabindex="-1" class="ui-menu-item-wrapper" data-v="${o.value}">`
+          + `${o.text}</div></li>`).join('');
+        menu.querySelectorAll('[role="option"]').forEach((div) => div.addEventListener('click', () => {
+          $('sq').value = div.dataset.v;
+          $('sq-button_text').textContent = div.textContent;
+          $('sq').dispatchEvent(new Event('change'));
+          menu.innerHTML = '';
+          menu.setAttribute('aria-hidden', 'true');
+          button.setAttribute('aria-expanded', 'false');
+        }));
+      });
+    }
     ['np', 'np2', 'sq', 'sa', 'twofa'].forEach((id) => $(id).addEventListener('change', typed));
     ['np', 'np2', 'sa'].forEach((id) => $(id).addEventListener('input', typed));
     $('made').addEventListener('submit', (e) => {
