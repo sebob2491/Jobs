@@ -7,7 +7,9 @@
      words sit beside it, not in a label, and "Create account" is greyed out until it's ticked. A box
      for text messages about jobs (never ticked for the person) sits beside it here too. ?component:
      "Create account" is a web component, as live, whose own "form" property isn't a form (the desk's
-     click threw "el.form.elements is not iterable"). -->
+     click threw "el.form.elements is not iterable"). ?security: the page also asks a security question and its
+     answer (under a "Security questions" heading) and a "City of birth", the person's (security: what's in them);
+     ?captcha: a picture code to type ("Enter the text in image above") -->
 <div class="note">
   <h3>Accessibility Note:</h3>
   <p>If you need an accommodation to apply, see Accessibility Accommodation for Applicants.</p>
@@ -48,6 +50,20 @@
     button.textContent = 'Create account';
     button.disabled = true;
     old.replaceWith(button);
+  }
+  if (location.search.includes('security')) {
+    document.getElementById('texts').parentElement.parentElement.insertAdjacentHTML('afterend', '<h3>Security questions</h3>'
+      + '<div><label for="sq">Question 1 *</label><select id="sq"><option value="">Select question</option>'
+      + '<option>In what city were you born?</option></select></div>'
+      + '<div><input id="sa" type="text" placeholder="Answer" aria-label="Question 1 Answer"></div>'
+      + '<div><label for="cb">City of birth</label><input id="cb" type="text"></div>');
+    ['sq', 'sa', 'cb'].forEach((id) => document.getElementById(id).addEventListener('change', () => did('security',
+      ['sq', 'sa', 'cb'].map((k) => document.getElementById(k).value))));
+  }
+  if (location.search.includes('captcha')) {
+    document.getElementById('texts').parentElement.parentElement.insertAdjacentHTML('afterend', '<div>'
+      + '<img alt="" src="data:image/gif;base64,R0lGODlhAQABAAAAACw=" width="150" height="40">'
+      + '<label for="pc">Enter the text in image above</label><input id="pc" type="text"></div>');
   }
   const consent = document.getElementById('consent');
   consent.addEventListener('change', () => { document.getElementById('create').disabled = !consent.checked; });
