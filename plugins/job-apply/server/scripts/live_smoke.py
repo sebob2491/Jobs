@@ -1844,7 +1844,7 @@ async def finish_account_choices(run: Any) -> str:
         return ""
     # never with a CAPTCHA or security questions on it (the person's), nor on a page that is the application too, nor
     # for a choice that signs up for anything (job alerts, a newsletter, a talent community)
-    if pipeline._captcha_on(data) or pipeline._security_boxes(fields) or pipeline._account_and_application(data) \
+    if pipeline._captcha_on(data) or pipeline._security_asked(data) or pipeline._account_and_application(data) \
             or any(pipeline._NEVER_AGREED.search(" ".join([f.get("label") or "", *(f.get("options") or [])]))
                    or _SIGN_UP_BOX.search(f.get("label") or "") for f in left):
         return ""

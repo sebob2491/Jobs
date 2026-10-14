@@ -2,7 +2,7 @@
 # account there and the common questions answered) to the application's review page, or to its last button.
 # The desk's "Only where the desk goes all the way" switch shows these employers' openings alone.
 # Refresh it from each full nightly before a release: `uv run python scripts/nightly_summary.py --handled`.
-as_of: "2026-10-13: full run 63 (0.3.150), with Linde (its posting taken down that run) from run 62"
+as_of: "2026-10-13: full run 67 (0.3.153), with Infineon (a blank page that run) from run 66 and Linde (its posting taken down since run 63) from run 62"
 employers:
   - "Air Liquide"
   - "Air Products"
@@ -30,6 +30,7 @@ employers:
   - "Early Warning Services"
   - "Ebara Technologies"
   - "Edwards Vacuum"
+  - "EMD Electronics"
   - "Entegris"
   - "Freeport-McMoRan"
   - "Grand Canyon Education"

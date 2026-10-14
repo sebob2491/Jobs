@@ -1850,24 +1850,64 @@ def test_after_a_resume_an_agreement_a_bot_check_holds_is_still_said_to_be_the_p
     assert "couldn't find the button" not in r.reason
 
 
-@pytest.mark.parametrize("boxes", [
-    '<label for="u">User ID</label><input id="u" type="text"><label for="p">Password</label><input id="p" type="password">',
-    '<p>Signing in as sam.rivera@example.com</p><label for="p">New Password</label><input id="p" type="password">',
-    '<p>Signing in as sam.rivera@example.com</p><label for="p">Temporary Password</label><input id="p" type="password">',
-    '<label for="p">Password</label><input id="p" type="password">'])
-def test_the_password_alone_goes_only_where_the_sign_in_shows_whos_signing_in(srv, monkeypatch, boxes):
+_TWO = ('<label for="p">{}</label><input id="p" type="password">'
+        '<label for="p2">{}</label><input id="p2" type="password">')
+
+
+@pytest.mark.parametrize("head,boxes,want", [
+    ("Sign In", '<label for="u">User ID</label><input id="u" type="text"><label for="p">Password</label>'
+                '<input id="p" type="password">', None),
+    ("Sign In", '<p>Signing in as sam.rivera@example.com</p><label for="p">New Password</label>'
+                '<input id="p" type="password">', None),
+    ("Sign In", '<p>Signing in as sam.rivera@example.com</p><label for="p">Temporary Password</label>'
+                '<input id="p" type="password">', None),
+    ("Sign In", '<label for="p">Password</label><input id="p" type="password">', None),
+    # a Create Account that shows the email it's for (BrassRing's, run 67): both boxes, and only that
+    ("Create new account", '<p>Email address</p><p>sam.rivera@example.com</p>'
+                           + _TWO.format("Password", "Re-enter password"), "prefilled"),
+    ("Create new account", '<p>Email address</p><p>mysam.rivera@example.com</p>'
+                           + _TWO.format("Password", "Re-enter password"), None),  # (another address)
+    ("Reset your account password", '<p>sam.rivera@example.com</p>'
+                                    + _TWO.format("New Password", "Confirm New Password"), None),
+    ("My Account", '<p>Signed in as sam.rivera@example.com</p>' + _TWO.format("Password", "Confirm password"), None),
+    ("Create new account", '<p>sam.rivera@example.com</p>' + _TWO.format("Current password", "Password"), None),
+    ("Create new account", '<p>sam.rivera@example.com</p>' + _TWO.format("New password", "Confirm password"), None),
+    # (a single-page app's title stays "Create new account" over its other steps: its reset's step isn't one)
+    ("Create new account|Reset password", '<p>sam.rivera@example.com</p>'
+                                          + _TWO.format("Password", "Confirm password"), None)])
+def test_the_password_alone_goes_only_where_the_sign_in_shows_whos_signing_in(srv, monkeypatch, head, boxes, want):
     """A sign-in with no box for the email gets the saved password alone only where it shows the email
     ("Signing in as ...", Workday's after its own reset). Not beside a box the desk can't fill (a "User
-    ID", which would be sent empty), nor in a new, temporary or unexplained password box."""
+    ID", which would be sent empty), nor in a new, temporary or unexplained password box. A Create Account that
+    shows the email it's for, whole (BrassRing's after its passcode, run 67), gets it in both its boxes; never a
+    password reset's or change's two boxes, an account page's, nor a pair with an old or a new password's
+    (the review of 0.3.154)."""
     saved_password(monkeypatch)
     run(srv.open_application(url=fixture_url("jsonld_posting.html")))
     page = run(srv.browser.page())
-    run(page.set_content(f"<h2>Sign In</h2><form onsubmit='return false'>{boxes}<button>Sign In</button></form>"))
+    title, _, heading = head.partition("|")
+    run(page.set_content(f"<title>{title}</title><h2>{heading or title}</h2><form onsubmit='return false'>{boxes}"
+                         "<button>Continue</button></form>"))
     data = run(srv.inspect_form(include_dropdown_options=False))
     applier = Applier(srv)
     r = Run(1, "FSE", "Example Fab")
-    assert run(applier._sign_in(r, data, {})) is None
-    assert run(page.evaluate("() => document.getElementById('p').value")) == "", boxes
+    assert run(applier._sign_in(r, data, {})) == want, boxes
+    filled = run(page.evaluate("() => [...document.querySelectorAll('input[type=password]')].map((b) => !!b.value)"))
+    assert filled == ([True, True] if want else [False] * len(filled)), (boxes, filled)
+
+
+def test_security_questions_are_read_by_a_box_or_by_the_forms_heading():
+    """BrassRing's "Security questions" heading over "Question 1" (a list the form reader may not see) and its
+    "Question 1 Answer" (run 67): the person's, by the heading too. And the email shown, only whole."""
+    answer = {"id": "a", "label": "Question 1 Answer", "kind": "text"}
+    assert pipeline._security_boxes([answer]) == []
+    assert pipeline._security_boxes([answer], ["Account Information", "Security questions"]) == [answer]
+    assert pipeline._security_asked({"fields": [], "headings": ["Security questions"]})
+    assert pipeline._security_asked({"fields": [{"id": "q", "label": "Security question", "kind": "select"}]})
+    assert not pipeline._security_asked({"fields": [answer], "headings": ["Account Information"]})
+    assert pipeline._shows_address("Signing in as sam.rivera@example.com.", "sam.rivera@example.com")
+    assert not pipeline._shows_address("mysam.rivera@example.com", "sam.rivera@example.com")
+    assert not pipeline._shows_address("sam.rivera@example.com.au", "sam.rivera@example.com")
 
 
 @pytest.mark.parametrize("then,slow", [("", 0), ("done", 0), ("alone", 0), ("", 3000)],
@@ -2879,6 +2919,46 @@ def test_brassrings_six_box_passcode_is_entered_from_the_inbox_and_verified(srv,
     assert (did.get("passcode"), did.get("verifies"), did.get("accountPresses")) == ("123456", 1, 1), (did, r.log)
     assert "code" in asked and "link" not in asked, asked
     assert "entered the code from your email (sent from careers.example.com, in your Spam folder)" in r.log, r.log
+
+
+@pytest.mark.parametrize("query", ["", "?other"])
+def test_brassrings_account_after_its_passcode_gets_the_saved_password_and_leaves_its_security_question(
+        srv, monkeypatch, job_apply_home, query):
+    """Edward Jones' BrassRing (run 67): after its passcode, its Create Account shows the email (no box for it), a
+    password twice, and "Security questions": "Question 1" to choose and its answer. With no email box the desk took
+    it for no form of its own and said "Sign in (or create your account) on BrassRing". It's the account for the email
+    it shows: the saved password goes in both boxes, and the security question and its answer are the person's (named
+    so by the heading), so Continue isn't pressed and the card says so. A form that shows another email (?other)
+    isn't the account for the profile's: the saved password never goes on it."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    saved_password(monkeypatch)
+    as_test_identity(monkeypatch, job_apply_home)
+    inbox_with_code(monkeypatch)
+    job = srv.add_job(url=fixture_url("site/brassring-signin.html") + query, title="Senior Analyst",
+                      company="Example Corp")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: "pressed \u201cVerify Passcode\u201d" in r.log, about=state(r))
+            await until(lambda: r.need not in ("", "email_code") and r.status not in ("queued", "running"),
+                        about=state(r))  # (the desk goes on by itself after the code: _enter_code)
+            return r, await brassring_did(r.page)
+        finally:
+            await applier.stop()
+
+    r, did = run(go())
+    form = did.get("accountForm") or {}
+    if query:
+        assert not form.get("passwords") and "accountMade" not in did, (did, r.log)
+        assert r.need == "sign_in" and "saved password" not in r.reason.split(".")[0], (r.reason, r.log)
+        return
+    assert form.get("passwords") == 2 and not form.get("question") and not form.get("answer"), (did, r.reason, r.log)
+    assert not form.get("twofa") and "accountMade" not in did, (did, r.log)
+    assert r.need == "sign_in" and "Create Account form with your details and saved password" in r.reason \
+        and "security questions and their answers: those are yours" in r.reason, (r.reason, r.log)
 
 
 def test_a_code_the_page_wouldnt_take_is_said_in_the_log_and_tried_again(srv, monkeypatch, job_apply_home):
