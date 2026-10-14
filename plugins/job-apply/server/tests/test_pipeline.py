@@ -4397,6 +4397,45 @@ def test_with_manage_accounts_ukg_pros_second_account_step_is_finished(srv, monk
     assert any("“My Information”" in line for line in r.log), r.log  # on to the application
 
 
+@pytest.mark.parametrize("query", ["?register&security", "?register&captcha"])
+def test_an_account_step_with_security_questions_or_a_picture_code_is_the_persons(srv, monkeypatch, job_apply_home,
+                                                                                   query):
+    """UKG Pro's Register page, asking security questions too (under its "Security questions" heading: their answers
+    the person's, never made up) or a picture code to type (a CAPTCHA, the person's): the reviews of 0.3.154 and
+    0.3.155. The desk ticked its terms and pressed "Create account" all the same. Its name and phone are filled; its
+    security boxes, and a "City of birth" beside them (which would have taken the profile's city), are left empty;
+    its consent isn't ticked nor its button pressed, and the card says what's the person's."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    saved_password(monkeypatch)
+    manage_accounts(job_apply_home)
+    job = srv.add_job(url=fixture_url("site/signin-signup-link.html") + query, title="FSE",
+                      company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            values = await r.page.evaluate("() => Object.fromEntries(['fn', 'ph', 'sq', 'sa', 'cb', 'pc'].map((id) => "
+                                           "[id, document.getElementById(id) ? document.getElementById(id).value : null]))")
+            ticked = await r.page.evaluate("() => document.getElementById('consent').checked")
+            return r, await ukg_did(r.page), values, ticked
+        finally:
+            await applier.stop()
+
+    r, did, values, ticked = run(go())
+    assert "presses" not in did and not ticked, (did, r.log)
+    assert values["fn"] and values["ph"], values  # (the account's own details, from the profile)
+    assert any(line.startswith("filled the rest of") for line in r.log), r.log
+    assert r.need == "sign_in" and "“Create account”" in r.reason, (r.reason, r.log)
+    if "security" in query:
+        assert (values["sq"], values["sa"], values["cb"]) == ("", "", ""), values
+        assert "; its security questions and their answers are yours to choose" in r.reason, r.reason
+    else:
+        assert values["pc"] == "" and "solve its CAPTCHA (that's yours)" in r.reason, (values, r.reason)
+
+
 def test_without_manage_accounts_ukg_pros_second_account_step_is_the_persons(srv, monkeypatch):
     """The same Register page, with settings.manage_accounts off: the person pressed Continue on the
     sign-up the desk filled in, and the desk, carrying on, filled the next page as an application and

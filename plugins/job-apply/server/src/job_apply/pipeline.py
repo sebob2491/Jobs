@@ -295,6 +295,14 @@ _SPENT_PAGE = re.compile(r"an error occurred while processing your request|pleas
 # A page about making an account ("Create an account", amazon.jobs after an email it doesn't know)
 _ACCOUNT_PAGE = re.compile(r"\b(create (?:an |your |a new )?account|sign up|register)\b", re.I)
 _ACCOUNT_KINDS = {"text", "email", "tel", "select", "combobox", "listbox"}  # not check boxes or files
+# A Create Account's own details, the only ones filled beside security questions (_fill_account_details)
+_ACCOUNT_DETAIL_RULES = {"email", "first_name", "middle_name", "last_name", "preferred_last_name", "preferred_name",
+                         "preferred_full_name", "full_name", "phone_type", "phone_code", "phone_ext", "phone", "country"}
+# A box that asks a question of its own ("In what town were you born?", "Name of your first pet")
+# (never a plain "First name": a first pet's, car's, school's or street's is a question's)
+_QUESTION_LIKE = re.compile(r"\?|^\s*(?:what|which|who|whose|where|when|why|how|in what|name of)\b|"
+                            r"\b(?:maiden|born|birth|childhood|favou?rite|first (?:pet|car|school|job|employer|street|"
+                            r"teacher|concert))\b", re.I)
 _SOCIAL = re.compile(r"\b(google|apple|linked ?in|facebook|microsoft|indeed|seek)\b", re.I)
 _STEP = re.compile(r"^(save (?:and|&) continue|continue|next|next step|review|review (?:and|&) submit|"
                    r"review application|proceed|go to next step|start)$", re.I)
@@ -2930,7 +2938,8 @@ class Applier:
         """The rest of a Create Account, on a page of its own after the email and password (UKG Pro's
         "Almost there!", live, Oct 2026: a name and phone, a consent box, and "Create account", greyed
         out until the box is ticked). Its boxes are filled from the profile. With
-        settings.manage_accounts (and no CAPTCHA), its terms boxes are ticked (never a newsletter's or
+        settings.manage_accounts (and no CAPTCHA, a picture code's box among them, nor security questions: the
+        person's), its terms boxes are ticked (never a newsletter's or
         text messages': _terms_boxes) and its button pressed once it's enabled, once a job
         (Run.account_finished); the account is said made only once the site goes on from it
         (Run.account_made, in _drive). Otherwise, or when the page is still there after that, it's
@@ -2941,7 +2950,9 @@ class Applier:
         if await self._fill_account_details(data.get("fields") or [], data.get("headings")):
             self._log(run, f"filled the rest of {site}'s Create Account form with your details")
         why = ""
-        if _may_manage_accounts() and not run.account_finished and not (data.get("captcha") or data.get("challenge")):
+        # (a CAPTCHA, and security questions' answers, are the person's, never made up: never pressed for them)
+        captcha, security = _captcha_on(data), _security_asked(data)
+        if _may_manage_accounts() and not run.account_finished and not captcha and not security:
             now, _ = await self._look()
             terms = await self._said_terms(_terms_boxes(now))
             boxes = terms + _other_positions_boxes(now)
@@ -2958,6 +2969,10 @@ class Applier:
                     await asyncio.sleep(0.5)
                 if pressable is None:
                     why = f"“{said}” stayed greyed out"
+                elif _captcha_on(now) or _security_asked(now):  # (drawn since the page was first read)
+                    pressable = None
+                    why = ("it shows a CAPTCHA, which is yours to solve" if _captcha_on(now) else
+                           "it asks security questions too, whose answers are yours to choose")
             if pressable is not None:
                 try:
                     await srv.browser.click(pressable["id"], allow_submit=True)  # (it creates the account)
@@ -2982,8 +2997,10 @@ class Applier:
             self._pause(run, "sign_in", f"{site} asked for a few more details to create your account, and {done}; it "
                         f"wants something more: {wants} Finish it there; the desk carries on after that.", seen=now)
         else:
+            asks = (" its security questions and their answers are yours to choose (the desk never makes up answers): "
+                    "fill them in," if security else "") + (" solve its CAPTCHA (that's yours)," if captcha else "")
             self._pause(run, "sign_in", f"{site} asks for a few more details to create your account. I filled in what "
-                        f"your profile has; tick its terms box if you agree and press “{said}” in the "
+                        f"your profile has;{asks} tick its terms box if you agree and press “{said}” in the "
                         "browser window (then verify your email if they ask); the desk carries on after that.", seen=now)
         return False
 
@@ -3794,12 +3811,17 @@ class Applier:
         left alone, as is anything the profile doesn't answer (Benchmark's picture code), and
         its security questions and answers (the person's). How many it filled."""
         questions = {f["id"] for f in _security_boxes(fields, headings)}
+        # On a form that asks security questions, only the account's own details (a name, the email, a phone, the
+        # country), never a box asking a question: "In what town were you born?" or "City of birth" would get the
+        # profile's city, an answer made up (the review of 0.3.155)
+        guarded = _security_asked({"fields": fields, "headings": headings or []})
         empty = [f for f in fields if f.get("kind") in _ACCOUNT_KINDS and is_empty_value(f.get("value"))
-                 and f["id"] not in questions]
+                 and f["id"] not in questions and not (guarded and _QUESTION_LIKE.search(f.get("label") or ""))]
         plan = plan_autofill(empty, config.Profile.load(), {})
-        if not plan["to_fill"]:
+        to_fill = [f for f in plan["to_fill"] if not guarded or f.get("rule") in _ACCOUNT_DETAIL_RULES]
+        if not to_fill:
             return 0
-        out = await self.srv.fill_form([{"id": f["id"], "value": f["value"]} for f in plan["to_fill"]])
+        out = await self.srv.fill_form([{"id": f["id"], "value": f["value"]} for f in to_fill])
         return sum(1 for r in out.get("results") or [] if r.get("ok"))
 
     async def _apply_with_account(self, run: Run, data: dict[str, Any]) -> None:

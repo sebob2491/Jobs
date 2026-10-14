@@ -17,7 +17,8 @@
     window.created += 1;
     // ?register: like UKG Pro (live), the account's name and phone come next, on a Register page of their own
     if (location.search.includes('register') && document.getElementById('em').value && document.getElementById('pw').value) {
-      location.href = 'ukg-register.html' + (location.search.includes('component') ? '?component' : '');
+      const on = ['component', 'security', 'captcha'].filter((k) => location.search.includes(k));
+      location.href = 'ukg-register.html' + (on.length ? '?' + on.join('&') : '');
     }
   });
 </script>
