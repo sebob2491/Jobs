@@ -753,7 +753,7 @@ async def autofill(job_id: int | None = None, overwrite: bool = False, redo: lis
             options = r.get("options") or field.get("options")
             failed.append({**entry, "error": r["error"], "kind": field.get("kind"),
                            "required": bool(field.get("required", True)), **({"options": options} if options else {}),
-                           **{k: field[k] for k in ("section", "sublabel") if field.get(k)}})
+                           **{k: field[k] for k in ("section", "sublabel", "role") if field.get(k)}})
     after = await browser.inspect(include_dropdown_options=False)
     snapshot = await _auto_snapshot("autofill failures", failed) if failed else None
     return {

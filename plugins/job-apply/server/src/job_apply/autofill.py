@@ -2478,7 +2478,8 @@ def plan_autofill(fields: list[dict], prof: Profile, job: dict | None = None, ov
 
 
 def _asked(f: dict) -> dict:
-    return {k: f[k] for k in ("id", "kind", "label", "section", "sublabel", "required", "options")
+    # (and a date's part's role: the desk's card asks one for its own box, "spinbutton")
+    return {k: f[k] for k in ("id", "kind", "label", "section", "sublabel", "required", "options", "role")
             if k in f and f[k] not in (None, [])}
 
 

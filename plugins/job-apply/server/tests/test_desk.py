@@ -1946,6 +1946,57 @@ def test_a_question_asked_for_want_of_the_profiles_choice_isnt_remembered_by_def
     assert run(go()) == {"Gender": False, "Do you have a clean room certification?": True}
 
 
+def test_a_box_whose_words_say_little_shows_the_words_above_it_and_isnt_remembered_by_default(srv):
+    """Taylor Morrison's Workday "Acknowledgment*" (runs 71 and 73): what it acknowledges and certifies is the site's
+    words above it, now on its card. Its "Remember" box starts unticked: remembered, the answer would go in at every
+    later "Acknowledgment", whatever that one says (and "Acknowledgment" was missed as a consent, spelled without the
+    e)."""
+    from playwright.async_api import async_playwright
+
+    from job_apply.pipeline import Run
+
+    desk = Desk(srv)
+    desk.applier.start = lambda: None
+    desk.search.update(status="done", at=time.time())
+    job = srv.add_job(url="https://example.com/job/1", title="Coordinator", company="Example Homes")["job"]
+    said = "By checking the box below, I acknowledge the Privacy Notice <and> certify I shared it."
+    desk.applier.runs[job["id"]] = Run(job["id"], "Coordinator", "Example Homes", status="needs_you", need="questions",
+                                       reason="Waiting.", questions=[
+        {"id": "a", "kind": "checkbox", "label": "Acknowledgment*", "required": True, "section": "Terms and Conditions",
+         "about": said},
+        {"id": "y", "kind": "checkbox", "label": "Yes", "required": True, "about": "I have a forklift license."},
+        {"id": "c", "kind": "checkbox", "label": "Are you 18 or older?", "required": True},
+        # (and a date's Day asked alone, its Month and Year typed in the browser: answered for its own box, never
+        # remembered by the date's label, which would put the day in every part: the review of 0.3.159)
+        {"id": "d", "kind": "text", "label": "Start date*", "sublabel": "Day", "section": "Questions", "required": True,
+         "role": "spinbutton"},
+        {"id": "g", "kind": "text", "label": "Graduation", "sublabel": "Year", "required": True}])  # (a box, not a date's)
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with async_playwright() as pw:
+                browser = await pw.chromium.launch(**launch_options())
+                page = await browser.new_page()
+                await page.goto(desk.url)
+                await page.wait_for_selector("[data-remember]")
+                ticked = {label: await page.locator(f'[data-remember="{label}"]').is_checked()
+                          for label in ("Acknowledgment*", "Yes", "Are you 18 or older?")}
+                card = await page.locator("#needs").inner_text()
+                day = (await page.locator('[data-q="Questions | Start date* | Day"]').count(),
+                       await page.locator('[data-remember="Start date*"]').count(),
+                       await page.locator('[data-remember="Graduation"]').count())
+                await browser.close()
+                return ticked, card, day
+        finally:
+            await desk.stop()
+
+    ticked, card, day = run(go())
+    assert ticked == {"Acknowledgment*": False, "Yes": False, "Are you 18 or older?": True}, ticked
+    assert f"“{said}”" in card and "“I have a forklift license.”" in card, card
+    assert day == (1, 0, 1), day
+
+
 def test_every_card_says_i_submitted_it_already(srv):
     """Issue #112, note 31 (the owner's ask): an application sent on the site itself, whatever the desk's card
     waited on, is marked applied from that card: "I submitted it already" on the questions, sign-in, stuck,

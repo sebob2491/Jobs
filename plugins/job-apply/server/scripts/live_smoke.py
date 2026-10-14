@@ -1950,7 +1950,9 @@ async def check_pipeline(company: dict[str, Any], out: Path, rec: dict[str, Any]
                 for q in run.questions:
                     # (as the desk's card keys them: a label more than one box has, a date's Month, Day and Year,
                     # by its own box, or the year's answer goes in all three and the date is asked again and again)
-                    key = placed_key(q) if labels.count(q.get("label") or "") > 1 else question_key(q.get("label") or "")
+                    own = labels.count(q.get("label") or "") > 1 or (
+                        q.get("role") == "spinbutton" and str(q.get("sublabel") or "").lower() in ("month", "day", "year"))
+                    key = placed_key(q) if own else question_key(q.get("label") or "")
                     run.once[key] = fake_answer(q)
                 applier.enqueue(job["id"], front=True)
                 continue

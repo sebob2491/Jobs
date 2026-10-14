@@ -92,6 +92,8 @@ NOTICE_WAIT = 5  # seconds for a notice agreed to for the person to go (one may 
 # A job that went in keeps its tab (its confirmation, for the person to see) while it's among the newest
 # this many: one tab per job adds up over a long queue
 DONE_TABS_KEPT = 3
+ABOUT_SAID = 400  # characters of the words above a box that says little, on its question card (their end)
+ABOUT_LOOKS = 6  # and how many such boxes on one card are looked at (one gone since takes a few seconds)
 SHARED_LOOK_BACK = 30  # seconds looked back for a job's code while an earlier job waits on the same sender
 # The codes the inbox gave, each with the job it went to: one is never another job's (Mayo Clinic's
 # Oracle site, run 49, was given onsemi's code, mailed from the same Oracle address a minute before and put in
@@ -1961,6 +1963,7 @@ class Applier:
                 short = self._short_entries(run) if on_experience else {}
                 if short:  # (first on the card: the rest of what it needs comes after)
                     gaps = f"{_short_said(_site(run, data), short)} {gaps}".strip()
+                pending = await self._said_above(pending)
                 if self._stop_for_what_is_left(run, gaps, pending, missing_files):
                     run.entries_told = short
                     return
@@ -2397,9 +2400,28 @@ class Applier:
                         ids = {f["id"] for f in wrong}
                         given = {f.get("id") for f in (await srv.autofill(job_id=run.job_id, redo=sorted(ids))).get("filled")
                                  or [] if f.get("id") in ids}
-                        if given:
-                            names = ", ".join(clean_label(f.get("label") or "") for f in wrong if f["id"] in given)
-                            self._log(run, f"filled from your profile what the page said was wrong: {names}")
+                        # and a date the person gave for this application, where the profile has none (Robert Half's
+                        # Workday "Anticipated eligibility time for employment?", run 72: 10/14/2026 shown, and
+                        # "required and must have a value" all the same): typed again as a date is, from its first part
+                        theirs = _lost_answers(run, seen_now, [f for f in wrong if f["id"] not in given
+                                                               and f.get("role") == "spinbutton"])
+                        theirs_again: set[str] = set()
+                        if theirs:
+                            out = await srv.fill_form([{"id": fid, "value": value, "again": True}
+                                                       for fid, value in theirs.items()])
+                            results = out.get("results") or []
+                            # (said only where every part went in: a date's later parts read "typed" with its first
+                            # one, even where that one's run didn't read back as typed, the review's)
+                            if results and all(r.get("ok") for r in results):
+                                theirs_again = {str(r.get("id")) for r in results}
+                        if given or theirs_again:
+                            if given:
+                                names = ", ".join(clean_label(f.get("label") or "") for f in wrong if f["id"] in given)
+                                self._log(run, f"filled from your profile what the page said was wrong: {names}")
+                            if theirs_again:
+                                names = ", ".join(dict.fromkeys(clean_label(f.get("label") or "") for f in wrong
+                                                                if str(f["id"]) in theirs_again))
+                                self._log(run, f"typed your answer again where the page said it was missing: {names}")
                             stalls, fixed_at = 0, len(pressed)
                             continue
                     lost = [f for f in lost if f.get("role") != "spinbutton"]
@@ -3671,6 +3693,23 @@ class Applier:
                 self._log(run, f"{what} “{_short(q.get('label') or '')}” for you (settings.accept_notices)")
         return [q for q in pending if q["id"] not in done]
 
+    async def _said_above(self, pending: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """A box to tick whose own words don't say what it asks (Taylor Morrison's Workday "Acknowledgment*", run 73:
+        what it acknowledges, and certifies, is the paragraph above it) goes on the card with those words."""
+        out, looks = [], 0
+        for q in pending:
+            label = clean_label(q.get("label") or "")
+            if q.get("kind") == "checkbox" and q.get("id") and looks < ABOUT_LOOKS and (
+                    len(label.split()) <= 3 or _BARE_AGREE.match(label) or _READ_ABOVE.search(label)
+                    or _READ_UNDERSTOOD.match(label)):
+                looks += 1
+                with contextlib.suppress(Exception):  # (gone, or not read: the card as it was)
+                    above = await self.srv.browser.words_before(str(q["id"]))
+                    if above and norm(above) != norm(label):
+                        q = {**q, "about": above[-ABOUT_SAID:]}
+            out.append(q)
+        return out
+
     async def _signing_in_still(self) -> bool:
         """After a sign-in was sent, its form still on show and nothing said wrong: a site that takes a moment
         to sign in (Intel's and TEL's Workday took a few seconds, nightly live check Oct 11). True when the
@@ -3865,6 +3904,7 @@ class Applier:
         data, _ = await self._look()
         run.page_info = _page_info(data)  # the page as filled
         gaps, pending = self._entry_gaps(run, data, pending)
+        pending = await self._said_above(pending)
         if self._stop_for_what_is_left(run, gaps, pending, missing_files):
             return
         saved = await self._sign_in(run, data, {}, details=False) == "prefilled"  # filled in above
@@ -4089,7 +4129,7 @@ def _pending(result: dict[str, Any], once_failed: dict[str, dict[str, Any]]) -> 
     pending += [{"label": f.get("label") or "", "kind": f.get("kind") or ("combobox" if f.get("options") else "text"),
                  "required": True, "error": f.get("error"),
                  **({"options": f["options"]} if f.get("options") else {}),
-                 **{k: f[k] for k in ("section", "sublabel") if f.get(k)}, **turned_down(f), "id": f["id"]}
+                 **{k: f[k] for k in ("section", "sublabel", "role") if f.get(k)}, **turned_down(f), "id": f["id"]}
                 for f in result["failed"] if f.get("required", True)]
     # an answer of theirs the page turned down is asked again, even when the box isn't empty
     # (words left in a picker's search box read as an answer), unless the profile's answer
@@ -5000,6 +5040,23 @@ def question_key(label: str) -> str:
 def placed_key(field: dict[str, Any]) -> str:
     """The key of an answer given for one box: the desk sends "section | label | sub-label"."""
     return question_key(f"{field.get('section') or ''} | {field.get('label') or ''} | {field.get('sublabel') or ''}")
+
+
+def _lost_answers(run: Run, data: dict[str, Any], fields: list[dict[str, Any]]) -> dict[str, Any]:
+    """The person's answers for this application to these boxes that the page shows but says are missing, by id:
+    keyed as _fill_once keys them (a box's own answer, else its label's), only on the page each first went in on, and
+    only where the box still shows that answer, as a number (a date's part): never another answer in its place, nor
+    over what the person has typed in the browser since (the review of 0.3.159)."""
+    here = _answers_page(data)
+    out = {}
+    for f in fields:
+        key = placed if (placed := placed_key(f)) in run.once else question_key(f.get("label") or "")
+        if key not in run.once or run.once_page.get(key, here) != here:
+            continue
+        shown, given = re.sub(r"\D", "", str(f.get("value") or "")), re.sub(r"\D", "", str(run.once[key] or ""))
+        if shown and given and int(shown) == int(given):
+            out[str(f["id"])] = run.once[key]
+    return out
 
 
 def _page_said(data: dict[str, Any]) -> str:
