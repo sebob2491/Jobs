@@ -1575,6 +1575,24 @@ _NOT_A_TILE = re.compile(r"\bi agree\b|\bi accept\b|consent|\bshare\b|privacy|te
 _TAKEN_BEFORE = re.compile(r"(?:already|previously|before)\b.{0,40}\b(?:taken|completed|done)\b|\btaken\b.{0,20}\bbefore\b|"
                            r"score id|existing (?:score|results?)|\bshare\b", re.I)
 
+# An assessment's "most likely / least likely" question: each answer with a check mark to pick it as the most likely
+# response and an X as the least (Circle K's, run 64: "Select the ✓ next to the response you feel would be your most
+# likely response. Then, select the X next to the response you feel would be your least likely response."), the marks
+# icons with no words. Each gets data-ja-best / data-ja-worst; how many of each, in order
+_BEST_WORST_JS = """() => {
+  const vis = (el) => { const r = el.getBoundingClientRect(); return r.width > 2 && r.height > 2
+    && getComputedStyle(el).visibility !== 'hidden'; };
+  document.querySelectorAll('[data-ja-best], [data-ja-worst]').forEach((el) => {
+    el.removeAttribute('data-ja-best'); el.removeAttribute('data-ja-worst'); });
+  const marks = (word) => [...document.querySelectorAll(`[class*="${word}" i]`)].filter(vis)
+    .filter((el, i, all) => !all.some((o) => o !== el && o.contains(el)) && !el.closest('a[href], header, nav, footer'));
+  const best = marks('bestIcon'), worst = marks('worstIcon');
+  if (best.length < 2 || best.length !== worst.length) return [0, 0];
+  best.forEach((el, i) => el.setAttribute('data-ja-best', String(i)));
+  worst.forEach((el, i) => el.setAttribute('data-ja-worst', String(i)));
+  return [best.length, worst.length];
+}"""
+
 # A page's words (what a click on it changed, or not)
 _PAGE_WORDS_JS = "() => (document.body.innerText || '').slice(0, 5000)"
 
@@ -1721,17 +1739,30 @@ async def _take_assessment(run: Any, steps: list[dict[str, Any]], rec: dict[str,
                       "pressed": on.get("text") if on else None})
         if on is None and not answers and sends:
             # its answers as tiles to click (Circle K's, run 62): one at random, and the page read again (its Auto
-            # Advance goes on by itself; else its way on comes)
+            # Advance goes on by itself; else its way on comes). Or its "most likely / least likely" marks (Circle K's,
+            # run 64): one answer's check mark and another's X, at random
             tiles: list[str] = []
             with contextlib.suppress(Exception):
                 tiles = await page.evaluate(_ANSWER_TILES_JS)
             usable = [i for i, t in enumerate(tiles) if not _NOT_PRESSED.search(t) and not _SIGN_UP_BOX.search(t)
                       and not _NOT_A_TILE.search(t)]
-            if len(usable) > 1:
-                pick = random.choice(usable)
-                steps[-1]["tiles"], steps[-1]["clicked"] = [_mask(t)[:60] for t in tiles], _mask(tiles[pick])[:60]
+            marks = [0, 0]
+            if len(usable) < 2:
+                with contextlib.suppress(Exception):
+                    marks = await page.evaluate(_BEST_WORST_JS)
+            if len(usable) > 1 or marks[0] > 1:
                 shown = await page.evaluate(_PAGE_WORDS_JS)
-                await page.locator(f'[data-ja-tile="{pick}"]').first.click(timeout=10000)  # (a vendor's page)
+                if len(usable) > 1:
+                    pick = random.choice(usable)
+                    steps[-1]["tiles"], steps[-1]["clicked"] = [_mask(t)[:60] for t in tiles], _mask(tiles[pick])[:60]
+                    await page.locator(f'[data-ja-tile="{pick}"]').first.click(timeout=10000)  # (a vendor's page)
+                else:
+                    best, worst = random.sample(range(marks[0]), 2)
+                    steps[-1]["clicked"] = f"most likely {best + 1}, least likely {worst + 1} of {marks[0]}"
+                    await page.locator(f'[data-ja-best="{best}"]').first.click(timeout=10000)  # (a vendor's page)
+                    await page.wait_for_timeout(500)
+                    with contextlib.suppress(Exception):  # (gone on with the first, its Auto Advance)
+                        await page.locator(f'[data-ja-worst="{worst}"]').first.click(timeout=5000)
                 await page.wait_for_timeout(1500)
                 # (three clicks in a row that change nothing on the page: it doesn't take them. A page gone with the
                 # click, back to the application say, has changed)
