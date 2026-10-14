@@ -1,0 +1,72 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Senior Analyst | Example Corp Careers</title></head>
+<body>
+<!-- like BrassRing's "Communication Consent & Privacy Notice" step (Edward Jones, run 83): four consents, each one
+     radio choice, "I agree", under its own words, each marked required only by a class and an asterisk beside it.
+     Its "Save and continue" with any left unchosen lists them in its errors, each with "Required", and stays. Chosen
+     (sessionStorage's consents.chosen, the ids of those agreed to), it goes on to the application's next step.
+     ?dialog: the privacy notice's acknowledgement alone, which opens the notice itself in a dialog to agree to with its
+     Ok (sessionStorage's consents.dialog counts the Oks) -->
+<h1 id="ApplyPageHead">Communication Consent &amp; Privacy Notice</h1>
+<p>Fields marked with an asterisk (<span>*</span>) are required.</p>
+<div id="errs"></div>
+<form id="consents" onsubmit="return false">
+  <div class="fieldcontain" id="c-mail"><span class="requiredFieldIndicator">*</span>
+    <label class="ListView">By clicking the 'I agree' button below, you are consenting to receive electronic communications from Example Corp.</label>
+    <fieldset><legend><span class="screenReaderText">By clicking the 'I agree' button below, you are consenting to receive electronic communications from Example Corp.</span></legend>
+      <input type="radio" class="required crf" id="radio-mail" name="consent_mail" value="AGREE"><label for="radio-mail">I agree</label>
+    </fieldset></div>
+  <div class="fieldcontain" id="c-text"><span class="requiredFieldIndicator">*</span>
+    <label class="ListView">By clicking the 'I agree' button below, you are consenting to Texting or automated calling with Example Corp.</label>
+    <fieldset><legend><span class="screenReaderText">By clicking the 'I agree' button below, you are consenting to Texting or automated calling with Example Corp.</span></legend>
+      <input type="radio" class="required crf" id="radio-text" name="consent_text" value="AGREE"><label for="radio-text">I agree</label>
+    </fieldset></div>
+  <div class="fieldcontain" id="c-ai"><span class="requiredFieldIndicator">*</span>
+    <label class="ListView">Example Corp's success is built upon our long-standing human centered approach, embracing technological advances such as automation and AI, and fostering an environment of belonging and human-to-human interaction. Because of this, we ask you to refrain from augmenting your performance using AI or other advanced technology during the recruitment process.</label>
+    <fieldset><legend><span class="screenReaderText">Example Corp's success is built upon our long-standing human centered approach, embracing technological advances such as automation and AI, and fostering an environment of belonging and human-to-human interaction. Because of this, we ask you to refrain from augmenting your performance using AI or other advanced technology during the recruitment process.</span></legend>
+      <input type="radio" class="required crf" id="radio-ai" name="consent_ai" value="AGREE"><label for="radio-ai">I agree</label>
+    </fieldset></div>
+  <div class="fieldcontain" id="c-privacy"><span class="requiredFieldIndicator">*</span>
+    <label class="ListView">By clicking the 'I agree' button below, you are acknowledging you have received and had the opportunity to review the above Privacy Notice.</label>
+    <fieldset><legend><span class="screenReaderText">By clicking the 'I agree' button below, you are acknowledging you have received and had the opportunity to review the above Privacy Notice.</span></legend>
+      <input type="radio" class="required crf" id="radio-privacy" name="consent_privacy" value="AGREE"><label for="radio-privacy">I agree</label>
+    </fieldset></div>
+  <button type="button" id="save">Save and continue</button> <a href="javascript:void(0)">Save and finish later</a>
+</form>
+<div aria-labelledby="notice-head" aria-modal="true" role="dialog" id="notice" hidden>
+  <span aria-level="2" id="notice-head" role="heading">Privacy Policy of Example Corp</span>
+  <p>Example Corp protects the personal data you give it, as its privacy policy says.</p>
+  <button type="button" id="notice-ok">Ok</button>
+</div>
+<script>
+  const dialog = new URLSearchParams(location.search).has('dialog');
+  const blocks = dialog ? ['privacy'] : ['mail', 'text', 'ai', 'privacy'];
+  if (dialog) ['mail', 'text', 'ai'].forEach((b) => document.getElementById('c-' + b).remove());
+  document.getElementById('radio-privacy').addEventListener('change', () => {
+    if (dialog) document.getElementById('notice').hidden = false;
+  });
+  document.getElementById('notice-ok').addEventListener('click', () => {
+    document.getElementById('notice').hidden = true;
+    sessionStorage.setItem('consents.dialog', String(Number(sessionStorage.getItem('consents.dialog') || 0) + 1));
+  });
+  const chosen = () => blocks.filter((b) => document.getElementById('radio-' + b).checked);
+  document.querySelectorAll('input[type=radio]').forEach((r) => r.addEventListener('change', () => {
+    sessionStorage.setItem('consents.chosen', JSON.stringify(chosen()));
+  }));
+  document.getElementById('save').addEventListener('click', () => {
+    const missing = blocks.filter((b) => !document.getElementById('radio-' + b).checked);
+    if (!missing.length) { location.href = 'step1.html'; return; }
+    document.getElementById('errs').innerHTML = '<div class="errorContainer" role="alert"><span>One or more fields '
+      + 'require your attention.</span><ul>' + missing.map((b) => '<li><a href="#" role="link"><span class="errorLabel">'
+      + document.querySelector('#c-' + b + ' label.ListView').textContent.trim() + '</span></a> <span class="errorMsg">'
+      + 'Required</span></li>').join('') + '</ul></div>';
+    missing.forEach((b) => {
+      document.getElementById('radio-' + b).setAttribute('aria-invalid', 'true');
+      const block = document.getElementById('c-' + b);
+      if (!block.querySelector('.error')) block.insertAdjacentHTML('beforeend', '<span class="error">Required</span>');
+    });
+  });
+</script>
+</body>
+</html>

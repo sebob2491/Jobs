@@ -1181,7 +1181,37 @@ def test_what_attests_to_an_application_and_what_doesnt():
     assert attestation({"kind": "checkbox", "label": "I agree to the privacy policy and to receive emails about my "
                         "application", "required": True}) is True
     assert attestation({"kind": "radio_group", "label": "Do you accept our applicant privacy notice?", "required": True,
-                        "options": ["Yes", "No"]}) is None  # (a radio group isn't one of the kinds it picks in)
+                        "options": ["Yes", "No"]}) is None  # (a radio group of two isn't one it picks in)
+    # a lone radio is, as a tick box (BrassRing's consents, Edward Jones' run 83), but only one that accepts the notice
+    consent = "By clicking the 'I agree' button below, you are {}."
+    assert attestation({"kind": "radio_group", "label": consent.format(
+        "acknowledging you have received and had the opportunity to review the above Privacy Notice"),
+        "required": True, "options": ["I agree"]}) == "I agree"
+    for said in ("consenting to receive electronic communications from Example Corp",
+                 "consenting to Texting or automated calling with Example Corp",
+                 # (the review's: a privacy notice in the same words doesn't make texts or calls one)
+                 "consenting to Texting or automated calling with Example Corp, as described in our Privacy Notice",
+                 "acknowledging the Privacy Notice and agree that Example Corp may call or text you",
+                 "acknowledging the Privacy Notice and consenting to WhatsApp messages from Example Corp",
+                 # nor anything about the person, and never a lone "I disagree"
+                 "certifying the information is true and complete and that I am authorized to work in the United States"):
+        assert attestation({"kind": "radio_group", "label": consent.format(said), "required": True,
+                            "options": ["I agree"]}) is None, said
+    privacy = consent.format("acknowledging you have received and had the opportunity to review the above Privacy Notice")
+    for no in ("I disagree", "Decline", "Do not agree"):
+        assert attestation({"kind": "radio_group", "label": privacy, "required": True, "options": [no]}) is None, no
+    # nor a lone choice whose own words say more (the second review's), a radio's or a list's
+    for kind in ("radio_group", "select"):
+        for more in ("I agree, and I consent to receive text messages and job alerts",
+                     "Yes, and sign me up for the talent community", "I agree to binding arbitration of any dispute",
+                     "I am authorized to work in the US without sponsorship"):
+            assert attestation({"kind": kind, "label": privacy, "required": True, "options": [more]}) is None, more
+            assert attestation({"kind": kind, "label": certify, "required": True, "options": [more]}) is None, more
+    assert attestation({"kind": "checkbox", "label": "I acknowledge the Privacy Notice and agree that Example Corp may "
+                        "call or text you", "required": True}) is None
+    # nor ever a legal waiver, whatever else it attests (the review's)
+    assert attestation({"kind": "checkbox", "label": "I certify the information is true and complete, and I agree to "
+                        "resolve any dispute through binding arbitration", "required": True}) is None
     assert attestation({"kind": "select", "label": "Do you accept our applicant privacy notice?", "required": True,
                         "options": ["Select...", "Yes", "No"]}) == "Yes"
     for q in ({"kind": "select", "label": certify, "required": True, "options": ["I do not agree"]},
@@ -3532,7 +3562,9 @@ def test_infors_register_is_the_way_to_an_account_when_the_postings_apply_goes_n
         applier.start()
         try:
             r = applier.enqueue(job["id"])
-            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            # (about 25 s on Linux, waiting out the refused sign-in and a posting whose Apply goes nowhere: more than a
+            # minute on Windows CI, the run of 0.3.164's)
+            await until(lambda: r.status not in ("queued", "running"), timeout=150, about=state(r))
             return r, await r.page.evaluate("() => [window.result ? window.result() : location.href, window.created, "
                                             "sessionStorage.getItem('infor.logins')]")
         finally:
@@ -9111,3 +9143,120 @@ def test_a_round_holds_while_the_person_is_at_a_review_page_and_ends_once_it_is_
         applier.runs[7] = Run(7, "Technician", "Example Fab", status=status, need=need)
         applier.start_round(7)
         assert applier._in_round() is held, (status, need)
+
+
+def test_consents_the_page_says_are_required_are_asked_and_its_privacy_notice_agreed(srv, monkeypatch):
+    """Edward Jones (run 83): BrassRing's "Communication Consent & Privacy Notice" step, four consents, each a single
+    "I agree" radio marked required only by a class and an asterisk beside it, so read as optional and left. Its "Save
+    and continue" listed them in its errors, "Required", and the desk stopped: "The page didn't move on". Named by the
+    errors, they're asked once a step, as the form's own questions would be: the privacy notice's acknowledgement is
+    agreed to with settings.accept_notices, and the electronic communications, texting and AI pledge are the person's,
+    on the card. Answered there, the step goes on."""
+    from job_apply.desk import Desk
+
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 1)
+    job = srv.add_job(url=fixture_url("site/brassring-consents.html"), title="Senior Analyst",
+                      company="Example Corp")["job"]
+    desk = Desk(srv)
+    applier = desk.applier
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            asked = (r.status, r.need, list(r.questions or []), list(r.log),
+                     await r.page.evaluate("() => sessionStorage.getItem('consents.chosen')"))
+            if r.need == "questions":
+                desk.answer(job["id"], [{"label": q["label"], "value": "I agree", "remember": False}
+                                        for q in r.questions])
+                await until(lambda: r.status not in ("queued", "running") and "consents" not in (r.url or ""),
+                            about=state(r))
+            return r, asked, await r.page.evaluate("() => sessionStorage.getItem('consents.chosen')")
+        finally:
+            await applier.stop()
+
+    r, (status, need, questions, log, chosen), after = run(go())
+    assert status == "needs_you" and need == "questions", (status, need, r.reason, log)
+    assert sorted(q["label"][:40] for q in questions) == sorted([
+        "By clicking the 'I agree' button below, ", "By clicking the 'I agree' button below, ",
+        "Example Corp's success is built upon our"]), questions
+    assert all("Privacy Notice" not in q["label"] for q in questions), questions
+    assert chosen == '["privacy"]', (chosen, log)
+    assert any(line.startswith("picked “I agree” for “By clicking the 'I agree' button below, you are acknowledging")
+               and line.endswith("for you (settings.accept_notices)") for line in log), log
+    assert after == '["mail","text","ai","privacy"]', (after, r.log)
+
+
+@pytest.mark.parametrize("case", ["asked", "readonly", "never asked", "other heading"])
+def test_a_box_the_errors_name_is_gone_back_to_once_and_only_to_be_asked(srv, monkeypatch, case):
+    """The review of 0.3.165: a box taken as optional that the errors name ("Available Start Date is required.") is
+    gone back to once a step, where it's asked ("asked"), the step the same with Workday's "Errors Found" heading drawn
+    after. Never for a read-only box, which is never filled or asked ("readonly"), and a box the form's pass doesn't ask
+    after all ("never asked": one autofill leaves to the page) isn't pressed again for: both stop after the one press,
+    with what the page said. The same with another heading saying what's wrong ("There are 1 errors on this page": the
+    second review's), the step still the same."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 1)
+    monkeypatch.setattr(pipeline, "STEP_SAVE_WAIT", 1)
+    if case in ("never asked", "other heading"):
+        real = srv.autofill
+
+        async def autofill(*args, **kwargs):
+            out = await real(*args, **kwargs)
+            return {**out, "needs_input": [f for f in out.get("needs_input") or []
+                                           if not (f.get("label") or "").startswith("Available Start Date")]}
+
+        monkeypatch.setattr(srv, "autofill", autofill)
+    query = {"readonly": "?readonly", "other heading": "?heading=other"}.get(case, "")
+    job = srv.add_job(url=fixture_url("site/errors-name-optional-box.html") + query, title="Technician",
+                      company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r, await r.page.evaluate("() => sessionStorage.getItem('pressed')")
+        finally:
+            await applier.stop()
+
+    r, pressed = run(go())
+    assert pressed == "1", (pressed, r.reason, r.log)
+    went_back = any("hadn't marked as required, so I went back to them" in line for line in r.log)
+    if case == "asked":
+        assert r.need == "questions" and [q["label"] for q in r.questions] == ["Available Start Date"], \
+            (r.need, r.reason, r.questions, r.log)
+        assert went_back, r.log
+    else:
+        assert r.need == "stuck" and r.reason == ("The page didn't move on: Available Start Date is required. Fix it in "
+                                                  "the browser, then press Resume."), (r.reason, r.log)
+        assert went_back == (case != "readonly"), r.log
+
+
+def test_a_notice_the_way_back_opened_is_agreed_and_the_step_pressed_again(srv, monkeypatch):
+    """The second review of 0.3.165: on the way back to a step for what its errors name, the privacy notice's
+    acknowledgement picked (settings.accept_notices) opened the notice itself in a dialog, agreed to; on the look after
+    it, nothing was left to fill or pick, and the desk stopped with what the page had said before. Something went in on
+    the way back: the step is pressed again, and goes on."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 1)
+    job = srv.add_job(url=fixture_url("site/brassring-consents.html") + "?dialog", title="Senior Analyst",
+                      company="Example Corp")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r, await r.page.evaluate("() => [sessionStorage.getItem('consents.chosen'), "
+                                            "sessionStorage.getItem('consents.dialog')]")
+        finally:
+            await applier.stop()
+
+    r, (chosen, oks) = run(go())
+    assert chosen == '["privacy"]' and oks == "1", (chosen, oks, r.log)
+    assert "consents" not in (r.url or "") and r.need != "stuck", (r.url, r.reason, r.log)

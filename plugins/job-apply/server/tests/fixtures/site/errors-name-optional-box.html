@@ -1,0 +1,29 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Technician | Apply</title></head>
+<body>
+<!-- a step whose "Save and Continue" says a box it never marked required is ("Available Start Date is required."),
+     with Workday's "Errors Found" heading drawn a moment after (?heading=other: "There are 1 errors on this page").
+     ?readonly: the box is read-only (never filled or asked).
+     It never goes on: pressed counts the presses (the review of 0.3.165) -->
+<h2>My Questions</h2>
+<div id="errs"></div>
+<form onsubmit="return false">
+  <label for="first">First Name *</label><input id="first" required>
+  <label for="start">Available Start Date</label><input id="start">
+  <button type="button" id="save">Save and Continue</button>
+</form>
+<script>
+  if (new URLSearchParams(location.search).has('readonly')) document.getElementById('start').readOnly = true;
+  document.getElementById('save').addEventListener('click', () => {
+    sessionStorage.setItem('pressed', String(Number(sessionStorage.getItem('pressed') || 0) + 1));
+    document.getElementById('errs').innerHTML = '<p role="alert" class="error">Available Start Date is required.</p>';
+    if (!document.getElementById('ef')) {
+      const said = new URLSearchParams(location.search).get('heading') === 'other' ? 'There are 1 errors on this page'
+        : 'Errors Found';
+      setTimeout(() => document.body.insertAdjacentHTML('afterbegin', '<h2 id="ef">' + said + '</h2>'), 400);
+    }
+  });
+</script>
+</body>
+</html>
