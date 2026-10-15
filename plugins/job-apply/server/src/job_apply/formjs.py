@@ -106,6 +106,27 @@ EXTRACT_JS = r"""
     }
     return ticked;
   };
+  // BrassRing's search box for "check each applicable box" (Edward Jones' second race question, run 88): an input that
+  // names the hidden select it stands for in its "select" attribute. What's ticked shows as pills in the ".selectionList"
+  // after its box, each with a Remove button, and may never reach the select
+  const standsFor = (el) => {
+    const s = el.tagName === 'INPUT' && el.getAttribute('select') ? document.getElementById(el.getAttribute('select')) : null;
+    return s && s.tagName === 'SELECT' ? s : null;
+  };
+  const searchTicked = (el, select) => {
+    const ticked = Array.from(select.selectedOptions).filter((o) => o.value !== '').map((o) => clean(o.text)).filter(Boolean);
+    let list = el.id ? document.getElementById(el.id + '_selection-list') : null;
+    for (let s = el.parentElement && el.parentElement.nextElementSibling; s && !list; s = s.nextElementSibling) {
+      if (s.classList.contains('selectionList')) list = s;
+    }
+    for (const li of list ? list.querySelectorAll('li') : []) {
+      const copy = li.cloneNode(true);
+      copy.querySelectorAll('button, .screenReaderText').forEach((x) => x.remove());
+      const said = clean(copy.textContent);
+      if (said && !ticked.includes(said)) ticked.push(said);
+    }
+    return ticked;
+  };
   const byId = (id) => (id ? document.getElementById(id) : null);
   const visible = (el) => {
     if (!el || !el.getClientRects().length) return false;
@@ -397,8 +418,14 @@ EXTRACT_JS = r"""
     const twin = role === 'button' && el.id && el.id.endsWith('-button')
       ? document.getElementById(el.id.slice(0, -'-button'.length)) : null;
     const native = twin && twin.tagName === 'SELECT' ? twin : null;
+    // (BrassRing's search box standing for a select of several choices: the question itself, not a site's search)
+    const standIn = tagName === 'input' && role === 'combobox' && standsFor(el) && standsFor(el).multiple ? standsFor(el) : null;
     // (and no other element acting as a button: a site's own menus, a header's language picker, aren't its form)
     if (role === 'button' && !['button', 'input', 'select', 'textarea'].includes(tagName) && !native) continue;
+    // (the select such a search box stands for is that box's question, never one of its own: BrassRing's hides it only
+    // with its stylesheet, its style attribute garbled)
+    if (tagName === 'select' && el.multiple && el.id
+        && document.querySelector(`input[select="${CSS.escape(el.id)}"][role="combobox"]`)) continue;
     if (tagName === 'textarea') kind = 'textarea';
     else if (tagName === 'select') {
       kind = 'select';
@@ -429,14 +456,19 @@ EXTRACT_JS = r"""
       // its chosen items sit beside the input's own box, in the prompt's outer container
       const workday = el.closest('[data-automation-id="multiSelectContainer"]')
         || el.closest('[data-automation-id="multiselectInputContainer"]');
-      const pills = workday ? Array.from(workday.querySelectorAll('[data-automation-id="selectedItem"], [class*="selected" i] [class*="label" i]')).map(txt).filter(Boolean)
+      const pills = standIn ? searchTicked(el, standIn)
+        : workday ? Array.from(workday.querySelectorAll('[data-automation-id="selectedItem"], [class*="selected" i] [class*="label" i]')).map(txt).filter(Boolean)
         : pillsNear(el);
       if (pills.length) value = pills.join(', ');
-      else if (workday) value = '';  // text left in its search box isn't a choice; nor is "0 items selected"
+      else if (workday || standIn) value = '';  // text left in its search box isn't a choice; nor is "0 items selected"
       else if (!el.value) value = shownNear(el);  // react-select shows the choice beside an empty input
+      if (standIn) {  // (its choices, where the select holds them; BrassRing's lists them only once opened)
+        const named = Array.from(standIn.options).filter((o) => o.value !== '').map((o) => clean(o.text)).filter(Boolean);
+        if (named.length) options = named;
+      }
     }
     // A site's own search box (header, nav, search form) is not part of the application.
-    if (el.closest('[role="search"], header, nav') || type === 'search') continue;
+    if (el.closest('[role="search"], header, nav') || (type === 'search' && !standIn)) continue;
     const form = el.closest('form');
     if (form && [form.getAttribute('action'), form.id, form.getAttribute('class')].some(isSearchName)) continue;
     let label = labelFor(el);
@@ -461,8 +493,8 @@ EXTRACT_JS = r"""
     if (HONEYPOT.test(label) || HONEYPOT.test(el.name || '')) continue;
     const f = {
       id: idOf(el), kind, label, value: kind === 'password' ? value : clean(String(value || '')),
-      required: isRequired(el, label) || !!(native && (native.required || native.getAttribute('aria-required') === 'true'
-        || native.getAttribute('ng-required') === 'true')),
+      required: isRequired(el, label) || [native, standIn].some((s) => !!s && (s.required
+        || s.getAttribute('aria-required') === 'true' || s.getAttribute('ng-required') === 'true')),
     };
     // an account's security answer the desk put in for the person (browser.fill's `secret`): never read back. "(set)"
     // only for a real answer the desk saw go in; a list or menu still on its placeholder (whatever its value: "-1", or a
@@ -504,7 +536,7 @@ EXTRACT_JS = r"""
     if (kind === 'combobox' && el.getAttribute('aria-haspopup') === 'grid') f.search = true;
     // SuccessFactors' paginated select: lists 100 entries at a time, the rest by search
     if (kind === 'combobox' && el.classList.contains('rcmpaginatedselectinput')) f.paged = true;
-    if (el.multiple) f.multiple = true;
+    if (el.multiple || (standIn && standIn.multiple)) f.multiple = true;
     // a list whose first choice the desk judged the site's default once: a pick of it since is the person's
     if (kind === 'select' && el.hasAttribute('data-ja-default-judged')) f.judged = true;
     if (el.disabled || el.getAttribute('aria-disabled') === 'true') f.disabled = true;
@@ -1235,8 +1267,8 @@ WORKDAY_PROMPT_JS = r"""
 
 
 # A jQuery UI multiselect's button ("<id>-button" over a hidden <select multiple>: BrassRing's "Please check each
-# applicable box", Edward Jones' run 87): the choices it has ticked (its select's, and those its widget lists under the
-# button), or null for any other control
+# applicable box", Edward Jones' run 87), or BrassRing's search box standing for one (run 88): the choices it has ticked
+# (its select's, and those its widget lists beside it), or null for any other control
 TWIN_TICKED_JS = r"""
 (el) => {
   const clean = (s) => (s || '').replace(/\s+/g, ' ').trim();
@@ -1253,6 +1285,24 @@ TWIN_TICKED_JS = r"""
     }
     return ticked;
   };
+  // and BrassRing's search box for several choices (an input naming its select in its "select" attribute): the pills
+  // after its box, each read without its Remove button
+  const searchTicked = (input, select) => {
+    const ticked = Array.from(select.selectedOptions).filter((o) => o.value !== '').map((o) => clean(o.text)).filter(Boolean);
+    let list = input.id ? document.getElementById(input.id + '_selection-list') : null;
+    for (let s = input.parentElement && input.parentElement.nextElementSibling; s && !list; s = s.nextElementSibling) {
+      if (s.classList.contains('selectionList')) list = s;
+    }
+    for (const li of list ? list.querySelectorAll('li') : []) {
+      const copy = li.cloneNode(true);
+      copy.querySelectorAll('button, .screenReaderText').forEach((x) => x.remove());
+      const said = clean(copy.textContent);
+      if (said && !ticked.includes(said)) ticked.push(said);
+    }
+    return ticked;
+  };
+  const stood = el.tagName === 'INPUT' && el.getAttribute('select') ? document.getElementById(el.getAttribute('select')) : null;
+  if (stood && stood.tagName === 'SELECT') return stood.multiple ? searchTicked(el, stood) : null;
   const twin = el.id && el.id.endsWith('-button') ? document.getElementById(el.id.slice(0, -'-button'.length)) : null;
   if (!twin || twin.tagName !== 'SELECT' || !twin.multiple) return null;
   return multiTicked(el, twin);

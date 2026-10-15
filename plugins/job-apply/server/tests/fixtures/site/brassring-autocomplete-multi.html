@@ -1,0 +1,109 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Senior Analyst | Example Corp Careers</title></head>
+<body>
+<!-- like BrassRing's second race question on its EEO Information step (Edward Jones, run 88): "Please check each
+     applicable box" drawn as a search box (input type=search, role=combobox) that names the hidden <select multiple> it
+     stands for in its "select" attribute; the select holds only "Choose...". Its list (ul "<input id>_listbox",
+     role=listbox, in #menuContainer) opens on the Down key in the empty box or on its triangle, not on a click, and
+     shows 15 choices a page; typing narrows it. A click on a choice ticks it or unticks it (the list stays open), and
+     what's ticked shows as pills in the ".selectionList" beside the box, each with its Remove button; the select is
+     never touched, and shown but for the site's stylesheet (its style attribute is garbled). Saved with something
+     ticked (sessionStorage's race.saved: what was), it goes on. As BrassRing's shared.min.js (Oct 2026): a mousedown
+     outside or Escape closes the list; leaving the box empties its typed words. The review's: ?reversed lists the
+     choices backwards ("South Asian" on the first page, "Asian" past it); ?hidden gives each row a screen reader's
+     " checkbox" besides its words; ?options has the select hold the choices too. -->
+<h1>EEO Information</h1>
+<p>Fields marked with an asterisk (<span class="requiredFieldIndicator">*</span>) are required.</p>
+<div id="errs"></div>
+<form id="applyForm" name="applyForm" novalidate="novalidate" onsubmit="return false">
+  <div class="fieldcontain custom autocomplete multiple">
+    <span class="requiredFieldIndicator">*</span>
+    <label class="ListView" id="race-label">How would you like to identify your race/ethnicity internally at Example
+      Corp? Please check each applicable box.</label>
+    <select placeholder="Choose..." multiple="multiple" id="race" name="race" aria-labelledby="race-label"
+            class="required ui-select" aria-required="true" style='"display:none"' tabindex="-1">
+      <option value="">Choose...</option>
+    </select>
+    <div class="ui-filterable">
+      <div class="ui-input-search ui-complete">
+        <input multiselect="" select="race" role="combobox" aria-required="true" aria-expanded="false" id="race-input"
+               aria-labelledby="race-label" class="ui-search-widget" type="search" maxlength="500" value="">
+        <span class="ui-icon ui-icon-triangle-1-s" id="race-all"></span>
+      </div><ul class="selectionList bvbv" aria-live="polite"></ul>
+    </div>
+  </div>
+  <button type="button" id="save">Save and continue</button>
+</form>
+<div role="dialog" id="menuContainer" aria-label="Overlay dialog"></div>
+<script>
+  const $ = (id) => document.getElementById(id);
+  const input = $('race-input'), pills = document.querySelector('.selectionList'), holder = $('menuContainer');
+  const CHOICES = ['American Indian/Alaska Native', 'Asian', 'Black/African American', 'Caribbean', 'Chinese',
+    'Filipino', 'First Peoples', 'Hispanic/Latino', 'Japanese', 'Korean', 'Middle Eastern/North African',
+    'Native Hawaiian/Other Pacific Islander', 'Other', 'Pakistani', 'Prefer Not to Disclose', 'South Asian',
+    'Southeast Asian', 'White'];
+  const q = new URLSearchParams(location.search);
+  if (q.has('reversed')) CHOICES.reverse();
+  if (q.has('options')) $('race').innerHTML += CHOICES.map((c) => `<option value="${c}">${c}</option>`).join('');
+  const aside = q.has('hidden') ? '<span class="screenReaderText" style="position:absolute;width:1px;height:1px;'
+    + 'overflow:hidden;clip:rect(0 0 0 0)"> checkbox</span>' : '';
+  const chosen = [];  // the widget's own record (BrassRing's aoSelections)
+  let menu = null;
+  function drawPills() {
+    pills.innerHTML = chosen.map((t) => `<li class="selection lightAccentBkg">${t}<button tabindex="0" type="button"`
+      + ` class="closeButton remove"><span class="screenReaderText">Remove selection ${t}</span></button></li>`).join('');
+  }
+  function close() {
+    if (menu) menu.remove();
+    menu = null;
+    input.setAttribute('aria-expanded', 'false');
+  }
+  function open(term) {
+    close();
+    const found = CHOICES.filter((c) => c.toLowerCase().includes(term.toLowerCase())).slice(0, 15);
+    menu = document.createElement('ul');
+    menu.id = input.id + '_listbox';
+    menu.setAttribute('role', 'listbox');
+    menu.className = 'ui-menu ui-widget ui-autocomplete';
+    const r = input.getBoundingClientRect();
+    menu.style.cssText = `position:absolute;left:${r.left + scrollX}px;top:${r.bottom + scrollY}px;width:300px;`
+      + 'background:#fff;border:1px solid #888;list-style:none;margin:0;padding:0;max-height:200px;overflow:auto';
+    menu.innerHTML = found.length ? found.map((c) => `<li role="option" aria-label="${c}" class="ui-menu-item"><div>`
+      + `<span class="pseudocheckbox${chosen.includes(c) ? ' checked' : ''}"></span>${c}${aside}</div></li>`).join('')
+      : '<li role="option" aria-label="No matches found" class="ui-menu-item"><div>No matches found</div></li>';
+    menu.querySelectorAll('li').forEach((li) => li.addEventListener('click', () => {
+      const c = li.getAttribute('aria-label');
+      if (!CHOICES.includes(c)) return;
+      const at = chosen.indexOf(c);
+      if (at >= 0) chosen.splice(at, 1); else chosen.push(c);  // (a tick, or untick: the list stays open)
+      li.querySelector('.pseudocheckbox').classList.toggle('checked');
+      setTimeout(drawPills, 10);
+    }));
+    holder.appendChild(menu);
+    input.setAttribute('aria-owns', menu.id);
+    input.setAttribute('aria-expanded', 'true');
+  }
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowDown' && !menu && !input.value) { open(''); e.preventDefault(); }
+    if (e.key === 'Escape') close();
+  });
+  input.addEventListener('input', () => (input.value ? open(input.value) : close()));
+  input.addEventListener('blur', () => { if (!menu) input.value = ''; });
+  $('race-all').addEventListener('click', () => open(''));
+  document.addEventListener('mousedown', (e) => {
+    if (menu && !menu.contains(e.target) && e.target !== input) { close(); input.value = ''; }
+  });
+  $('save').addEventListener('click', () => {
+    if (!chosen.length) {
+      $('errs').innerHTML = '<div class="errorContainer" role="alert"><span>One or more fields require your attention.'
+        + '</span><ul><li><a href="#" role="link"><span class="errorLabel">' + $('race-label').textContent.trim()
+        + '</span></a> <span class="errorMsg">Required</span></li></ul></div>';
+      return;
+    }
+    sessionStorage.setItem('race.saved', JSON.stringify(chosen.slice().sort()));
+    location.href = 'step1.html';
+  });
+</script>
+</body>
+</html>

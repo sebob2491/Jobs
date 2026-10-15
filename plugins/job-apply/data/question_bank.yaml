@@ -120,3 +120,11 @@ questions:
     kind: choice
     choices: ["Yes", "No"]
     seen: 1
+
+  - id: non_compete
+    example: "Are you currently subject to a non-compete or employment agreement with another employer?"
+    ask: Are you bound by a non-compete, non-solicitation or similar agreement with a current or past employer?
+    match: "^(?!.*\\b(?:competitor|willing|sign|if hired|if offered|agree[sd]?|acknowledg\\w*|consent\\w*|understand\\w*|read)\\b).*(?:\\bnon[- ]?compet\\w*|\\bnon[- ]?solicit\\w*|restrictive covenant|\\b(?:bound by|subject to|party to|entered into)\\b.{0,30}\\bagreements?\\b.{0,60}\\b(?:prohibit|restrict)\\w*)"
+    kind: choice
+    choices: ["No", "Yes"]
+    seen: 6

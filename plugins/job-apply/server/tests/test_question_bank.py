@@ -36,6 +36,17 @@ BANK = {q["id"]: q for q in config.question_bank()}
     ("community_college", "Have you ever attended a community college or taken classes/certifications at a community college?"),
     ("military_spouse", "Are you a current or former military spouse or domestic partner?"),
     ("proof_of_age", "If hired, can you furnish proof of age?"),
+    # run 88's (Oct 14): the HR applications at BDO, Knight-Swift and Robert Half, and EMD, ASM and Matheson
+    ("non_compete", "Are you currently subject to a non-compete or employment agreement with another employer?"),
+    ("non_compete", "Do you have a Non-Solicitation or Non-Compete Agreement?"),
+    ("non_compete", "Do you have any agreement with your current employer or any other employer that you had in the past "
+                    "2 years (such as any non-solicit, non-competition, or non-disclosure agreement)?"),
+    ("non_compete", "Have you entered into any restrictive covenant, non-compete agreement, or nondisclosure agreement "
+                    "with your current or any former employer that would restrict your employment?"),
+    ("non_compete", "Have you ever entered in to a non-disclosure or non-compete agreement or any other agreement to "
+                    "restrict your employment?"),
+    ("non_compete", "Are you a party to any agreement(s) that would: (a) prohibit you from working for Example Corp; "
+                    "(b) restrict your ability to solicit clients?"),
 ])
 def test_each_common_question_covers_the_wordings_employers_asked(bank_id, label):
     hits = [q["id"] for q in BANK.values() if re.search(q["match"], label, re.I)]
@@ -64,6 +75,17 @@ def test_each_common_question_covers_the_wordings_employers_asked(bank_id, label
     "Referral source name",
     "How did you hear about us? (If employee referral, please provide their name)",
     "Willing to relocate with relocation assistance?",
+    # another employer's own (a competitor of this one), or whether they'd sign one: not whether they're bound by one
+    "Do you currently work for a competitor of Example Corp and/or are you subject to any post-employment restrictions, "
+    "such as a noncompete?",
+    "Are you willing to sign a non-compete agreement?",
+    "If hired, will you agree to sign a non-disclosure and non-solicitation agreement?",
+    "Do you agree to the terms of our confidentiality agreement?",
+    # a consent to an agreement of the employer's (the review's): the person's each time, never their non-compete answer
+    "Do you agree to the arbitration agreement, which prohibits class action lawsuits?",
+    "I have read and agree to the confidentiality agreement that restricts use of company data.",
+    "Do you acknowledge the employment agreement restricts outside employment?",
+    "I acknowledge that I may be asked to sign a non-compete agreement.",
 ])
 def test_no_common_question_takes_one_that_isnt_the_persons_alone(label):
     """A past job's dates and type, the employer's own (worked there, relatives, a referral), a consent: never the

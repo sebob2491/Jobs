@@ -1193,8 +1193,10 @@ def _other_kind_of_phone(label: str, prof: Profile) -> bool:
     return box is not None and box != _phone_kind_of(re.sub(r" (?:tele)?phone$", "", norm(prof.get("personal.phone_type", "Mobile"))))
 
 
-_SOMEONE_ELSE = re.compile(r"\b(referen\w*|referee\w*|emergency|next of kin|supervisor\w*|manager\w*|referr\w*|contact person|"
-                           r"relatives?|family|spouse)\b")
+# A box for another person's details: a reference's, a supervisor's, an emergency contact's, a relative's
+# ("Family Name" is the person's own last name)
+_SOMEONE_ELSE = re.compile(r"\b(referen\w*|referee\w*|emergency|next of kin|supervisor\w*|manager\w*|referr\w*|"
+                           r"contact (?:person|name)|relationship|relatives?|family(?! (?:or )?(?:last name|surname|name)s?\b)|spouse)\b")
 # A box for another party's details, by its own words ("Employer Phone", "School Zip Code") or
 # its section's ("Most Recent Employer", "High School")
 _OTHER_PARTY_LABEL = re.compile(r"\b(employer\w*|company|business|school)\b")
@@ -2527,7 +2529,6 @@ _OTHER_CREDENTIAL = re.compile(r"\b(high school|ged|diploma|secondary)\b")
 
 
 _BARE_TITLE = re.compile(r"(job |position |work )?title|position|role")
-_SOMEONE_ELSE = re.compile(r"\b(references?|supervisor|manager|relationship|relative|emergency|referr\w*|contact name)\b")
 _COMPANY_BOX = re.compile(r"company( name)?|employer( name)?|organi[sz]ation( name)?")
 
 
