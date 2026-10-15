@@ -93,6 +93,19 @@ EXTRACT_JS = r"""
   const newId = () => prefix + W.__jaDoc + (++W.__jaCounter);
   const clean = (s) => (s || '').replace(/\s+/g, ' ').trim();
   const txt = (el) => clean(el ? (el.innerText || el.textContent || '') : '');
+  // what a jQuery UI multiselect has ticked: its hidden select's choices, and those its widget lists under its button
+  // ("<id>-button_selection-list"), each read as the choice it names (a widget may keep only its own list: the review)
+  const multiTicked = (button, select) => {
+    const names = Array.from(select.options).map((o) => clean(o.text)).filter(Boolean);
+    const ticked = Array.from(select.selectedOptions).map((o) => clean(o.text)).filter(Boolean);
+    const list = document.getElementById(button.id + '_selection-list');
+    for (const li of list ? list.querySelectorAll('li') : []) {
+      const said = clean(li.textContent);
+      const named = names.filter((n) => said === n || said.includes(n)).sort((a, b) => b.length - a.length)[0];
+      if (named && !ticked.includes(named)) ticked.push(named);
+    }
+    return ticked;
+  };
   const byId = (id) => (id ? document.getElementById(id) : null);
   const visible = (el) => {
     if (!el || !el.getClientRects().length) return false;
@@ -404,7 +417,10 @@ EXTRACT_JS = r"""
         // (its button shows the placeholder, "Select question", whatever its value: "", or "-1")
         const chosen = Array.from(native.selectedOptions).filter((o) => o.value !== '' && !o.disabled
           && !(o.index === 0 && /^\s*(?:-+\s*)?(?:select|choose|please select|pick)\b/i.test(o.text)));
-        if (!chosen.length) value = '';
+        // (a multiselect's button reads "Choose..." whatever is ticked: what's ticked is its value, BrassRing's
+        // "Please check each applicable box", run 87)
+        if (native.multiple) value = multiTicked(el, native).join(', ');
+        else if (!chosen.length) value = '';
       }
     }
     else if (role === 'combobox' || el.getAttribute('aria-autocomplete') === 'list'
@@ -1215,6 +1231,32 @@ CHALLENGE_JS = r"""
 WORKDAY_PROMPT_JS = r"""
 (el) => el.getAttribute('data-uxi-widget-type') === 'selectinput'
   || !!el.closest('[data-automation-id="multiSelectContainer"], [data-automation-id="multiselectInputContainer"]')
+"""
+
+
+# A jQuery UI multiselect's button ("<id>-button" over a hidden <select multiple>: BrassRing's "Please check each
+# applicable box", Edward Jones' run 87): the choices it has ticked (its select's, and those its widget lists under the
+# button), or null for any other control
+TWIN_TICKED_JS = r"""
+(el) => {
+  const clean = (s) => (s || '').replace(/\s+/g, ' ').trim();
+  // what a jQuery UI multiselect has ticked: its hidden select's choices, and those its widget lists under its button
+  // ("<id>-button_selection-list"), each read as the choice it names (a widget may keep only its own list: the review)
+  const multiTicked = (button, select) => {
+    const names = Array.from(select.options).map((o) => clean(o.text)).filter(Boolean);
+    const ticked = Array.from(select.selectedOptions).map((o) => clean(o.text)).filter(Boolean);
+    const list = document.getElementById(button.id + '_selection-list');
+    for (const li of list ? list.querySelectorAll('li') : []) {
+      const said = clean(li.textContent);
+      const named = names.filter((n) => said === n || said.includes(n)).sort((a, b) => b.length - a.length)[0];
+      if (named && !ticked.includes(named)) ticked.push(named);
+    }
+    return ticked;
+  };
+  const twin = el.id && el.id.endsWith('-button') ? document.getElementById(el.id.slice(0, -'-button'.length)) : null;
+  if (!twin || twin.tagName !== 'SELECT' || !twin.multiple) return null;
+  return multiTicked(el, twin);
+}
 """
 
 

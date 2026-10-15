@@ -36,7 +36,7 @@ from .formjs import (CHALLENGE_JS, CLICK_CHOICE_JS, COVERED_JS, ELEMENT_INFO_JS,
                      LOST_BOXES_JS, MARK_OPTIONS_JS, NOTICE_OVER_JS, OPEN_MENU_JS, OUTSIDE_CLICK_JS, QUIET_JS, SHOWN_VALUE_JS,
                      UNKEPT_DELETE_JS, UNKEPT_FORGET_JS, UNKEPT_PRESSED_SHOWN_JS, UNKEPT_SHOWN_JS, UPLOAD_NOT_KEPT_JS,
                      UPLOAD_STATE_JS,
-                     VISIBLE_TEXT_JS, WORKDAY_CHOSEN_JS, WORKDAY_PROMPT_JS)
+                     TWIN_TICKED_JS, VISIBLE_TEXT_JS, WORKDAY_CHOSEN_JS, WORKDAY_PROMPT_JS)
 
 SUBMIT_RE = re.compile(r"\bsubmit\b|send (my )?application|finish (my )?application|complete (my )?application", re.I)
 # A form's own submit button with one of these labels is the final step too ("Apply", "Send").
@@ -1866,6 +1866,8 @@ class BrowserSession:
 
     async def _pick_from_listbox(self, page: Page, loc: Locator, field: dict, value: Any) -> str:
         names = bool(field.get("names"))
+        if await loc.evaluate(TWIN_TICKED_JS) is not None:
+            return await self._tick_in_multiselect(page, loc, field, value)
         for attempt in range(2):
             await self._open(page, field["id"], loc)
             options = await self._field_options(page, field["id"], loc, 2500)
@@ -1901,6 +1903,35 @@ class BrowserSession:
                 continue
             return f"selected {choice}"
         raise AssertionError("unreachable")
+
+    async def _tick_in_multiselect(self, page: Page, loc: Locator, field: dict, value: Any) -> str:
+        """A jQuery UI multiselect (BrassRing's "Please check each applicable box", Edward Jones' run 87): its button
+        reads "Choose..." whatever is ticked, and a click on a choice ticks it or unticks it. The choice is clicked
+        once, only where it isn't ticked already, and taken where its hidden select has it ticked; never clicked
+        again, which would untick it."""
+        ticked = await loc.evaluate(TWIN_TICKED_JS) or []
+        options = field.get("options") or []
+        choice = choose_option(value, options, names=bool(field.get("names")))
+        if choice is None:
+            raise ValueError(f"{value!r} doesn't match any option: {options[:30]}")
+        if choice in ticked:
+            return f"selected {choice} (ticked already)"
+        try:
+            await self._open(page, field["id"], loc)
+            if not await self._field_options(page, field["id"], loc, 2500):
+                # its menu didn't open (the click closed one already open): closed, and opened once more
+                await self._close_menus(page)
+                await self._open(page, field["id"], loc)
+                if not await self._field_options(page, field["id"], loc, 3000):
+                    raise ValueError("its list of choices didn't open; tick it in the browser")
+            await self._click_option(page, field["id"], choice)
+            for _ in range(8):
+                await page.wait_for_timeout(150)
+                if choice in (await loc.evaluate(TWIN_TICKED_JS) or []):
+                    return f"selected {choice}"
+        finally:
+            await self._close_menus(page)  # (its menu stays open after a tick)
+        raise ValueError(f"Ticked {choice!r} but the list doesn't have it ticked; tick it in the browser")
 
     async def _confirm_choice(self, page: Page, loc: Locator, choice: str) -> None:
         """After picking from a menu, the field must show that choice (else the click
