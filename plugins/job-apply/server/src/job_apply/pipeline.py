@@ -296,6 +296,9 @@ _SIGN_UP_ABOVE = re.compile(r"talent (?:community|network|pool)|job alerts?|news
                             r"careers? (?:community|network)|\balerts?\b|\btexts?\b|\bcalls?\b", re.I)
 # A box whose own words say only that the person agrees: what it agrees to is in the words above it
 _BARE_AGREE = re.compile(r"^\W*(?:yes,? )?i (?:agree|consent|accept)\W*$", re.I)
+# A box that says only that the words above it were understood and agreed to (BrassRing's "Employment At Will", Edward
+# Jones' run 89: "I understand and agree"): on the card with those words. Never ticked for that alone
+_UNDERSTOOD_AGREE = re.compile(r"^\W*(?:yes,? )?i (?:understand|acknowledge),? and (?:agree|accept)\W*$", re.I)
 # A Create Account box that says the person applies from outside, not as one of the employer's staff
 # (Banner Health's Workday, live, Oct 2026: "Yes, I am a new candidate and not a current employee"; no
 # account without it, though it isn't marked required). That and nothing more: a box that says more
@@ -449,11 +452,20 @@ _BOT_BADGE = re.compile(r"\bh ?captcha\b|\brecaptcha\b", re.I)
 _NOT_A_NOTICE = re.compile(r"\berror\b|could ?n[o']t|failed|signed? (?:you )?out|overwrite|existing (?:profile|account)|"
                            r"\bdelete|\bremove|withdraw|expired?\b", re.I)
 
+# The terms of employment, never a site's terms of use: an at-will statement, "the terms and conditions of my
+# employment", an employment agreement (the review of 0.3.170: BrassRing's "Employment At Will" step). The person's
+_EMPLOYMENT_TERMS = re.compile(r"\bat[- ]will\b|\b(?:terms|conditions)\b[^.]{0,30}\bof (?:my |your |this |the )?employment\b|"
+                               r"\bemployment (?:agreement|contract)\b", re.I)
+# An attestation's words that certify the application's own information (beside which an at-will sentence may stand)
+_OWN_INFO_TRUE = re.compile(r"\b(?:information|answers?|responses?)\b[^.]{0,80}\b(?:true|correct|complete|accurate)\b", re.I)
+
+
 def _agrees_to_terms(text: str) -> bool:
     """Words that accept an employer's privacy notice or terms of use, and nothing more: not a
-    newsletter's or the like (_NEVER_AGREED), not a fact about the person, not another question."""
+    newsletter's or the like (_NEVER_AGREED), not the terms of employment, not a fact about the person, not another
+    question."""
     return bool(_TERMS.search(text) and _ACCEPTS.search(text) and not _NEVER_AGREED.search(text)
-                and not _CLAIMS.search(text) and not _OTHER_QUESTION.search(text))
+                and not _EMPLOYMENT_TERMS.search(text) and not _CLAIMS.search(text) and not _OTHER_QUESTION.search(text))
 
 
 def _terms_notice(heading: str, text: str) -> tuple[bool, bool]:
@@ -464,7 +476,8 @@ def _terms_notice(heading: str, text: str) -> tuple[bool, bool]:
     but all of it for a legal waiver (_WAIVES) or a sign-up (_SIGNS_UP)."""
     named = bool(_TERMS.search(heading))
     said = f"{heading} {text[:NOTICE_OPENING] if named else text}"
-    if _NEVER_AGREED.search(said) or _NOT_A_NOTICE.search(said) or _WAIVES.search(text) or _SIGNS_UP.search(text):
+    if _NEVER_AGREED.search(said) or _NOT_A_NOTICE.search(said) or _WAIVES.search(text) or _SIGNS_UP.search(text) \
+            or _EMPLOYMENT_TERMS.search(said):
         return False, False
     return named or bool(_TERMS.search(text) and _ACCEPTS.search(text)), named
 # A fill the page never let happen (it timed out, its script failed, a dialog stood over the box):
@@ -3879,7 +3892,7 @@ class Applier:
             label = clean_label(q.get("label") or "")
             if q.get("kind") == "checkbox" and q.get("id") and looks < ABOUT_LOOKS and (
                     len(label.split()) <= 3 or _BARE_AGREE.match(label) or _READ_ABOVE.search(label)
-                    or _READ_UNDERSTOOD.match(label)):
+                    or _READ_UNDERSTOOD.match(label) or _UNDERSTOOD_AGREE.match(label)):
                 looks += 1
                 with contextlib.suppress(Exception):  # (gone, or not read: the card as it was)
                     above = await self.srv.browser.words_before(str(q["id"]))
@@ -4268,13 +4281,16 @@ def _required_by_errors(result: dict[str, Any], data: dict[str, Any]) -> None:
     # none: Baker Tilly's, the probe of Oct 12)
     links = [a.get("text") or "" for a in data.get("actions") or [] if re.match(r"\s*error\s*[-\u2013:]", a.get("text") or "", re.I)]
     said = norm(" ".join([*(data.get("errors") or []), *links]))
+    wrong = bool(links) or any(_errorish(e) for e in data.get("errors") or [])  # (not a "Saved": the second review's)
     invalid = {f.get("id") for f in data.get("fields") or [] if f.get("invalid")}
     if not said and not invalid:
         return
     # (only a label the page has once: one error about "Job Title" isn't about every block's)
     names = [norm(clean_label(f.get("label") or "")) for f in data.get("fields") or []]
     for f in result.get("needs_input") or []:
-        if not f.get("required") and f.get("id") in invalid:  # the page marks it wrong as it is, empty
+        # the page marks it wrong as it is, empty (a lone box to tick only where the page also says something's wrong:
+        # one left marked from the start, an optional job alerts box, isn't a question to stop on: the review of 0.3.170)
+        if not f.get("required") and f.get("id") in invalid and (f.get("kind") != "checkbox" or wrong):
             f["required"] = True
             continue
         name = norm(clean_label(f.get("label") or ""))
@@ -4389,6 +4405,10 @@ def _attestation(q: dict[str, Any]) -> Any:
     label = q.get("label") or ""
     # (never a legal waiver in its words, an arbitration agreement or a jury trial waived: the review of 0.3.165)
     if not q.get("required") or q.get("error") or q.get("kind") not in _ATTEST_KINDS or _WAIVES.search(label):
+        return None
+    # (nor the terms of employment, an at-will statement acknowledged "accurate", unless its words certify the
+    # application's own information: the second review of 0.3.170)
+    if _EMPLOYMENT_TERMS.search(label) and not _OWN_INFO_TRUE.search(label):
         return None
     choices = [str(o) for o in q.get("options") or [] if not is_empty_value(o)]
     if q["kind"] == "radio_group" and (len(choices) != 1 or not (polarity(choices[0]) is True or _AGREES.match(
