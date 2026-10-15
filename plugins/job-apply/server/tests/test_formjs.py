@@ -328,6 +328,37 @@ def test_a_jquery_ui_selectmenu_is_read_as_its_hidden_select(srv, tmp_path):
                    "Pick a site": ("text", "", False)}, got
 
 
+@pytest.mark.parametrize("query", ["", "?modelonly"])
+def test_a_jquery_ui_multiselect_takes_its_choice_once_and_reads_it_back(srv, query):
+    """BrassRing's EEO step (Edward Jones, run 87): "Please check each applicable box" is a multiselect over a hidden
+    <select multiple>, its button always "Choose...", what's ticked listed under it. The desk ticked a choice, read the
+    button as not showing it, and clicked the choice again, which unticked it: "Required". A multiselect's choice is
+    confirmed by what it has ticked, never clicked twice, and read back as the box's value; the step then goes on.
+    ?modelonly (the review's): a widget that keeps its ticks in its own list alone, the hidden select untouched: read
+    from that list, so the same answer given again (a second pass, the person's card) never unticks it."""
+    page = page_of(srv, "site/brassring-multiselect.html", query)
+    eth = next(f for f in page["fields"] if f["label"].startswith("How would you like to identify your ethnicity"))
+    assert (eth["kind"], eth.get("value"), eth.get("required")) == ("listbox", "", True), eth
+    done = run(srv.browser.fill([{"id": eth["id"], "value": "Prefer Not to Disclose"}]))
+    assert all(r["ok"] for r in done), done
+    tab = run(srv.browser.page())
+    ticked = run(tab.evaluate("() => Array.from(document.querySelectorAll('#eth-button_selection-list li'))"
+                              ".map((li) => li.textContent.trim())"))
+    assert ticked == ["Prefer Not to Disclose"], ticked
+    after = next(f for f in run(srv.browser.inspect(include_dropdown_options=False))["fields"] if f["id"] == eth["id"])
+    assert after.get("value") == "Prefer Not to Disclose", after
+    # given again, it stays ticked; another answer ticks that one too, the menu opened afresh
+    again = run(srv.browser.fill([{"id": eth["id"], "value": "Prefer Not to Disclose"},
+                                  {"id": eth["id"], "value": "Asian"}]))
+    assert all(r["ok"] for r in again), again
+    ticked = run(tab.evaluate("() => Array.from(document.querySelectorAll('#eth-button_selection-list li'))"
+                              ".map((li) => li.textContent.trim())"))
+    assert ticked == ["Asian", "Prefer Not to Disclose"], ticked
+    run(tab.click("#save"))
+    run(tab.wait_for_url("**/step1.html", timeout=5000))
+    assert run(tab.evaluate("() => sessionStorage.getItem('multi.saved')")) == '["Asian","Prefer Not to Disclose"]'
+
+
 def test_a_security_answer_put_in_is_never_read_back_nor_saved(srv, tmp_path):
     """An account's security answer from the desk's card (the review of the card): its box is marked before it's filled,
     so it reads back "(set)", as a password, even where the box held it already ("already set"), shows as dots, and

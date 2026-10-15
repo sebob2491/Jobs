@@ -1,0 +1,90 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Senior Analyst | Example Corp Careers</title></head>
+<body>
+<!-- like BrassRing's EEO Information step (Edward Jones, run 87): "Please check each applicable box" is a jQuery UI
+     multiselect over a hidden <select multiple>. Its button ("<id>-button") always reads "Choose..."; its menu
+     ("<id>-menu") lists the choices, each with a pseudo-checkbox, and a click on one ticks it or unticks it (the menu
+     stays open); what's ticked shows as a list under the button ("<id>-button_selection-list"), and that's what its
+     "Save and continue" checks. Saved with something ticked (sessionStorage's multi.saved: what was), it goes on.
+     A mousedown outside closes its menu, as jQuery UI's. ?modelonly: a click keeps the tick in the widget's own list
+     alone, never in the hidden select (the review of 0.3.168) -->
+<h1>EEO Information</h1>
+<p>Fields marked with an asterisk (<span class="requiredFieldIndicator">*</span>) are required.</p>
+<div id="errs"></div>
+<form id="eeo" onsubmit="return false">
+  <div class="fieldcontain">
+    <span class="requiredFieldIndicator">*</span>
+    <label class="ListView" id="eth-label">How would you like to identify your ethnicity from a government reporting
+      perspective? Please check each applicable box.</label>
+    <select multiselect="" placeholder="Choose..." multiple="multiple" id="eth" aria-labelledby="eth-label"
+            class="required ui-select multiselect" aria-required="true" style="display: none;">
+      <option value="AMINALNA">American Indian/Alaska Native</option><option value="ASIAN">Asian</option>
+      <option value="BLKAFRAMC">Black/African American</option><option value="HSPLAT">Hispanic/Latino</option>
+      <option value="PRENODIS">Prefer Not to Disclose</option><option value="WHITE">White</option>
+    </select><span tabindex="0" id="eth-button" role="button" aria-expanded="false" aria-owns="eth-menu"
+      aria-labelledby="eth-label" aria-required="true" aria-haspopup="listbox"
+      class="ui-selectmenu-button ui-button"><span class="ui-selectmenu-icon"></span><span
+      class="ui-selectmenu-text prompt">Choose...</span></span>
+    <ul class="selectionList" aria-live="assertive" id="eth-button_selection-list"></ul>
+  </div>
+  <button type="button" id="save">Save and continue</button>
+</form>
+<div class="ui-selectmenu-menu"><ul id="eth-menu" role="listbox" aria-hidden="true" style="display: none"></ul></div>
+<script>
+  const $ = (id) => document.getElementById(id);
+  const select = $('eth'), button = $('eth-button'), menu = $('eth-menu'), list = $('eth-button_selection-list');
+  const modelOnly = new URLSearchParams(location.search).has('modelonly');
+  const model = new Set();  // (?modelonly: the widget's own record of what's ticked)
+  const on = (i) => (modelOnly ? model.has(i) : select.options[i].selected);
+  const ticked = () => Array.from(select.options).filter((o, i) => on(i)).map((o) => o.text);
+  function draw() {
+    list.innerHTML = ticked().map((t) => `<li class="selected"><span>${t}</span></li>`).join('');
+    menu.querySelectorAll('[role="option"]').forEach((div) => {
+      const yes = on(Number(div.dataset.i));
+      div.setAttribute('aria-selected', String(yes));
+      div.querySelector('.pseudocheckbox').setAttribute('aria-checked', String(yes));
+    });
+  }
+  const close = () => {
+    button.setAttribute('aria-expanded', 'false');
+    menu.setAttribute('aria-hidden', 'true');
+    menu.style.display = 'none';
+    menu.innerHTML = '';
+  };
+  document.addEventListener('mousedown', (e) => {
+    if (!menu.contains(e.target) && !button.contains(e.target)) close();
+  });
+  button.addEventListener('click', () => {
+    const open = button.getAttribute('aria-expanded') === 'true';
+    button.setAttribute('aria-expanded', String(!open));
+    menu.setAttribute('aria-hidden', String(open));
+    menu.style.display = open ? 'none' : 'block';
+    menu.innerHTML = open ? '' : Array.from(select.options).map((o, i) =>
+      `<li class="ui-menu-item"><div role="option" tabindex="-1" class="ui-menu-item-wrapper" data-i="${i}">`
+      + `<span class="pseudocheckbox" role="checkbox"></span>${o.text}</div></li>`).join('');
+    menu.querySelectorAll('[role="option"]').forEach((div) => div.addEventListener('click', () => {
+      const i = Number(div.dataset.i);
+      if (modelOnly) {
+        if (model.has(i)) model.delete(i); else model.add(i);
+      } else {
+        select.options[i].selected = !select.options[i].selected;  // (a tick, or untick: the menu stays open)
+        select.dispatchEvent(new Event('change'));
+      }
+      draw();
+    }));
+    draw();
+  });
+  $('save').addEventListener('click', () => {
+    if (!list.children.length) {
+      $('errs').innerHTML = '<div class="errorContainer" role="alert"><span>One or more fields require your attention.'
+        + '</span><ul><li><a href="#" role="link"><span class="errorLabel">' + $('eth-label').textContent.trim()
+        + '</span></a> <span class="errorMsg">Required</span></li></ul></div>';
+      return;
+    }
+    sessionStorage.setItem('multi.saved', JSON.stringify(ticked()));
+    location.href = 'step1.html';
+  });
+</script>
+</body>
+</html>
