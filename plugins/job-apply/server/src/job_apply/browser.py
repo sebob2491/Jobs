@@ -737,6 +737,8 @@ class BrowserSession:
                 # a loading indicator on show (Workday's dots while a step loads); not an embed's with nothing to fill (a
                 # chat widget's spinner: the review of 0.3.147)
                 result["busy"] = True
+            if data.get("empty_frame") and frame is page.main_frame:
+                result["empty_frame"] = True  # (Workday's application frame with nothing in it yet: formjs's unmounted)
             result["frame_headings"][prefix] = list(data.get("headings", []))
         self._fields = {f["id"]: f for f in result["fields"]}
         self._actions = {a["id"]: a for a in result["actions"]}

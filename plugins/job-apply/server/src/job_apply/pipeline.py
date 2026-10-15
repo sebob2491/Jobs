@@ -1809,6 +1809,10 @@ class Applier:
             if kind == "form" and finish is None:
                 run.resetting = False  # past the sign-in, however the password was set
                 run.sign_in_tries = 0  # (and none of its sign-ins was refused)
+            if kind == "sign_in":
+                # signed in (or an account made) since a refresh for "Something went wrong": the page after it is the
+                # account's, not what the refresh brought back (presses alone count the steps: the review of 0.3.172)
+                refreshed_at = None
             if kind == "sign_in" and manage and run.resetting:
                 done_reset = await self._set_new_password(run, data, text)
                 if done_reset == "set":
@@ -2146,7 +2150,11 @@ class Applier:
                 " ".join([text[:3000], *(a.get("text") or "" for a in data.get("actions") or [])])) \
                 and not _closed_notice(data, text) and not _maintenance_page(data) and not _account_step(data) \
                 and not any(g.startswith(f"{_page_key(data)} ") for g in agreed) \
-                and not any(_errorish(e) for e in data.get("errors") or [])
+                and not any(_errorish(e) for e in data.get("errors") or []) \
+                and not (data.get("empty_frame") and (refreshed_at == len(pressed) or run.came_back_empty and not pressed))
+            # (Workday's application frame left empty is a step still loading, GCU's after its sign-in, run 91; not the
+            # one its "Something went wrong" refresh brought back, nor that page after Resume: the site's, said below,
+            # 0.3.158 and 0.3.171, the review of 0.3.172)
             may_reload = reloadable and not run.load_reloaded and not run.pressed_before and run.page is not None
             if action is None and sign_in_step and not may_reload:
                 # Workday's sign-in step whose sign-in buttons never drew (Applied's, now and then):
@@ -2191,6 +2199,11 @@ class Applier:
                             await run.page.reload(wait_until="load")
                         continue
                     await self._bring_forward(run)
+                    if data.get("empty_frame"):
+                        return self._pause(run, "stuck", f"{_site(run, data)}'s page didn't finish loading: the "
+                                           "application never came up between the site's header and footer, after a wait "
+                                           "and a reload, so there's no way on yet. Reload it in the browser window (or "
+                                           "try again later), then press Resume.")
                     return self._pause(run, "stuck", f"{_site(run, data)}'s page didn't finish loading: parts of it still "
                                        "showed their loading placeholders after a wait and a reload, so there's no way on "
                                        "yet. Reload it in the browser window (or try again later), then press Resume.")

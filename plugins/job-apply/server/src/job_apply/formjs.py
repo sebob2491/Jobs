@@ -878,8 +878,14 @@ EXTRACT_JS = r"""
         return r.width > 0 && r.height > 0 && !el.childElementCount && visible(el);
       }).length >= 3;
   };
-  const busy = [...document.querySelectorAll(LOADING)].some(visible) || bones() || drawing();
-  return { fields, actions, errors, headings, dialogs, ...(busy ? { busy: true } : {}) };
+  // and Workday's application frame mounted with nothing in it yet: no step, no heading, not even its loading dots
+  // (Grand Canyon University's right after the account's sign-in, run 91: only the site's header and footer)
+  const unmounted = () => [...document.querySelectorAll('[data-mfe-id="applyFlow"]')]
+    .some((m) => !m.childElementCount && !(m.textContent || '').trim());
+  const empty = unmounted();
+  const busy = [...document.querySelectorAll(LOADING)].some(visible) || bones() || drawing() || empty;
+  return { fields, actions, errors, headings, dialogs, ...(busy ? { busy: true } : {}),
+           ...(empty ? { empty_frame: true } : {}) };
 }
 """.replace("/*SIGN_IN_FORM*/", SIGN_IN_FORM_JS).replace("/*OPEN_DIALOGS*/", OPEN_DIALOGS_JS)
 

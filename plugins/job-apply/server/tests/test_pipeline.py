@@ -2631,6 +2631,39 @@ def test_a_step_whose_sections_never_finish_loading_is_reloaded_once_then_said(s
         assert "didn't finish loading" in r.reason and "couldn't find the button" not in r.reason, r.reason
 
 
+@pytest.mark.parametrize("query", ["", "?heal"])
+def test_a_workday_application_frame_left_empty_is_reloaded_once_then_said(srv, monkeypatch, query):
+    """Grand Canyon University's Workday (run 91): right after the account's sign-in, its application frame (#mainContent,
+    data-mfe-id="applyFlow") stayed empty between the site's header and footer, no step, no loading dots, and the desk
+    said "I couldn't find the button that moves this application on". An application frame with nothing in it is a
+    step not drawn yet: waited on, reloaded once (heal: then it draws and goes on), and otherwise said as the page
+    that didn't finish loading."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 1)
+    monkeypatch.setattr(pipeline, "STEP_LOAD_WAIT", 2)
+    job = srv.add_job(url=fixture_url("site/workday-apply-unmounted.html") + query, title="Senior HR Generalist",
+                      company="Example University")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        r = applier.enqueue(job["id"])
+        applier.start()
+        try:
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert any("still loading" in line and "reloaded" in line for line in r.log), (r.reason, r.log)
+    if query:
+        assert r.status == "ready", (r.status, r.need, r.reason, r.log)
+    else:
+        assert (r.status, r.need) == ("needs_you", "stuck"), (r.status, r.need, r.reason, r.log)
+        assert "didn't finish loading" in r.reason and "never came up between the site's header and footer" in r.reason \
+            and "couldn't find the button" not in r.reason, r.reason
+
+
 def test_an_answer_the_site_lost_is_put_back_on_its_own_step_with_workdays_errors_found(srv, monkeypatch):
     """Robert Half's Workday (run 59): the person's answers to its compensation and non-compete lists went in, and Next
     came back to the same step with "Errors Found" over it and the compensation list on "Select One" again. Each answer
@@ -3955,11 +3988,13 @@ def test_a_page_that_asks_to_be_refreshed_again_after_its_reload_is_said_for_wha
     then said "I couldn't find the button that moves this application on". Asked again after its one reload, it says
     the site went wrong again, and that it's the site's. Northern Trust's (run 71, "empty"): reloaded, the page came
     back only the site's header and footer, and the desk said the same "couldn't find the button": it's said to have
-    come back without the application, the site's (with no heading at all too: "bare"). Only the page the reload
-    brought back: a step after it that went on to such a page ("later") is the plain no-way-on (the review of
-    0.3.158)."""
+    come back without the application, the site's (with no heading at all too: "bare"), and never reloaded again for
+    its empty application frame (the review of 0.3.172). Only the page the reload brought back: a step after it that
+    went on to such a page ("later") isn't the site's (the review of 0.3.158), but a step still loading, as Grand Canyon
+    University's (run 91): reloaded once, then said."""
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
     monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 1)
+    monkeypatch.setattr(pipeline, "STEP_LOAD_WAIT", 2)
     job = srv.add_job(url=fixture_url("site/workday-went-wrong.html") + query, title="FSE", company="Example Fab")["job"]
     applier = Applier(srv)
 
@@ -3973,22 +4008,62 @@ def test_a_page_that_asks_to_be_refreshed_again_after_its_reload_is_said_for_wha
             await applier.stop()
 
     r = run(go())
-    assert sum("so I reloaded it" in line for line in r.log) == 1, r.log
     if query == "?later":
-        assert (r.status, r.need) == ("needs_you", "stuck") and "couldn't find the button" in r.reason, (r.reason, r.log)
+        assert sum("so I reloaded it" in line for line in r.log) == 2, r.log
+        assert any("still loading" in line and "reloaded" in line for line in r.log), r.log
+        assert (r.status, r.need) == ("needs_you", "stuck") and "didn't finish loading" in r.reason \
+            and "came back without the application" not in r.reason, (r.reason, r.log)
         return
+    assert sum("so I reloaded it" in line for line in r.log) == 1, r.log
     said = "said \u201cSomething went wrong\u201d again" if query == "?again" else "came back without the application"
     assert (r.status, r.need) == ("needs_you", "stuck") and said in r.reason, (r.reason, r.log)
     assert "then press Resume" in r.reason and "couldn't find the button" not in r.reason, r.reason
 
 
-def test_a_page_still_empty_after_resume_is_still_said_to_be_the_sites(srv, monkeypatch, job_apply_home):
+@pytest.mark.parametrize("query", ["?signin", "?signin&heal"])
+def test_an_empty_frame_after_signing_in_past_a_refresh_is_a_step_still_loading(srv, monkeypatch, job_apply_home, query):
+    """The review of 0.3.172: Workday said "Something went wrong" (KLA's, after its Apply Manually), the reload brought
+    back its sign-in, and the desk signed in with the saved password to an empty application frame (Grand Canyon
+    University's and Blue Cross Blue Shield's after their sign-in). A sign-in isn't a press, so that page was taken for
+    the one the refresh brought back: never reloaded, and said to have come back without the application. It's a step
+    still loading: reloaded once (heal: then it draws and goes on), then said."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 1)
+    monkeypatch.setattr(pipeline, "STEP_LOAD_WAIT", 2)
+    saved_password(monkeypatch)
+    job = srv.add_job(url=fixture_url("site/workday-went-wrong.html") + query, title="HR Generalist",
+                      company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert any("still loading" in line and "reloaded" in line for line in r.log), (r.reason, r.log)
+    if "heal" in query:
+        assert r.status == "ready", (r.status, r.need, r.reason, r.log)
+    else:
+        assert (r.status, r.need) == ("needs_you", "stuck") and "never came up" in r.reason \
+            and "came back without the application" not in r.reason, (r.reason, r.log)
+
+
+@pytest.mark.parametrize("moved", [False, True])
+def test_a_page_still_empty_after_resume_is_still_said_to_be_the_sites(srv, monkeypatch, job_apply_home, moved):
     """Northern Trust's and Axcelis' Workday (runs 88 and 90): reloaded for its "Something went wrong", the page came
     back with only the site's header and footer, said as the site's trouble; pressed Resume on, it was still so, and the
     desk said "I couldn't find the button that moves this application on", as if the way on were the desk's to find.
-    It's said again as the site's, and nothing is reloaded or pressed for it."""
+    It's said again as the site's, and nothing is reloaded or pressed for it. The review of 0.3.172 ("moved"): the person
+    went back to the posting before Resume, and its Apply, pressed by the desk, led to an empty application frame again:
+    that one's said as a page that didn't finish loading (never reloaded after a Resume), not as no way on."""
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
     monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 1)
+    monkeypatch.setattr(pipeline, "STEP_LOAD_WAIT", 2)
     job = srv.add_job(url=fixture_url("site/workday-went-wrong.html") + "?empty", title="HR Analyst",
                       company="Example Bank")["job"]
     applier = Applier(srv)
@@ -3999,6 +4074,8 @@ def test_a_page_still_empty_after_resume_is_still_said_to_be_the_sites(srv, monk
             r = applier.enqueue(job["id"])
             await until(lambda: r.status not in ("queued", "running"), about=state(r))
             first = r.reason
+            if moved:  # (the person, in the browser)
+                await r.page.goto(fixture_url("site/workday-apply-unmounted.html"))
             applier.resume(job["id"])
             await until(lambda: r.status not in ("queued", "running"), about=state(r))
             return r, first
@@ -4008,8 +4085,12 @@ def test_a_page_still_empty_after_resume_is_still_said_to_be_the_sites(srv, monk
     r, first = run(go())
     assert "came back without the application" in first, (first, r.log)
     assert (r.status, r.need) == ("needs_you", "stuck"), (r.reason, r.log)
-    assert "still shows only its header and footer" in r.reason and "couldn't find the button" not in r.reason, \
-        (r.reason, r.log)
+    assert "couldn't find the button" not in r.reason, (r.reason, r.log)
+    if moved:
+        assert any("clicked \u201cApply\u201d" in line for line in r.log), r.log
+        assert "didn't finish loading" in r.reason and "never came up" in r.reason, (r.reason, r.log)
+    else:
+        assert "still shows only its header and footer" in r.reason, (r.reason, r.log)
     assert sum("so I reloaded it" in line for line in r.log) == 1, r.log
 
 
