@@ -9221,6 +9221,95 @@ def test_consents_the_page_says_are_required_are_asked_and_its_privacy_notice_ag
     assert after == '["mail","text","ai","privacy"]', (after, r.log)
 
 
+@pytest.mark.parametrize("query", ["", "?label=terms", "?label=agree"])
+def test_a_lone_box_the_page_marks_wrong_is_asked_and_an_at_will_statement_never_agreed_for_the_person(srv, monkeypatch,
+                                                                                                         query):
+    """Edward Jones (run 89): BrassRing's "Employment At Will" step, one check box ("I understand and agree") under the
+    at-will statement, required only by a class and an asterisk. Its "Save and continue" marked the box invalid and said
+    "Required", naming nothing, and the desk stopped: "The page didn't move on: Required." A lone box the page marks
+    wrong is asked, as a group so marked is. An at-will statement isn't one of the notices settings.accept_notices
+    agrees to, so it's the person's, on the card with its words; ticked there, the step goes on. Nor the terms and
+    conditions of employment, in the box's words or its statement's (the review's: those were agreed as a site's terms
+    of use)."""
+    from job_apply.desk import Desk
+
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 1)
+    monkeypatch.setattr(pipeline, "STEP_SAVE_WAIT", 1)
+    job = srv.add_job(url=fixture_url("site/brassring-at-will.html") + query, title="Senior Analyst",
+                      company="Example Corp")["job"]
+    desk = Desk(srv)
+    applier = desk.applier
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            asked = (r.status, r.need, list(r.questions or []), list(r.log),
+                     await r.page.evaluate("() => sessionStorage.getItem('atwill.agreed')"))
+            if r.need == "questions":
+                desk.answer(job["id"], [{"label": q["label"], "value": True, "remember": False} for q in r.questions])
+                await until(lambda: r.status not in ("queued", "running") and "at-will" not in (r.url or ""),
+                            about=state(r))
+            return r, asked
+        finally:
+            await applier.stop()
+
+    r, (status, need, questions, log, agreed) = run(go())
+    assert status == "needs_you" and need == "questions", (status, need, r.reason, log)
+    assert agreed is None, log  # (never ticked for the person)
+    said = f"{questions[0]['label']} {questions[0].get('about') or ''}" if len(questions) == 1 else ""
+    assert ("terms and conditions of employment" if query == "?label=terms" else "at will") in said, questions
+    if not query:
+        assert questions[0]["label"] == "I understand and agree", questions
+    assert "brassring-at-will" not in (r.url or "") and any(line == "clicked “Save and continue”" for line in r.log), \
+        (r.status, r.reason, r.url, r.log)
+
+
+def test_the_terms_of_employment_are_never_agreed_as_a_sites_terms():
+    """The review of 0.3.170: "the terms and conditions of employment", an at-will statement or an employment agreement
+    are the person's, never the site's terms of use that settings.accept_notices agrees to; those still are."""
+    for said in ("I understand and agree to the terms and conditions of employment",
+                 "I agree to the terms and conditions of my employment, which is at will",
+                 "I acknowledge my employment with Example Corp is at-will and I agree",
+                 "I have read and agree to the Employment Agreement"):
+        assert not pipeline._agrees_to_terms(said), said
+        assert not pipeline._attestation({"label": said, "required": True, "kind": "checkbox"}), said
+    # nor acknowledged as "accurate" through an attestation's words (the second review's); an application's own
+    # information certified true still is, an at-will sentence beside it or not
+    for said in ("I acknowledge that the statement above regarding at-will employment is accurate",
+                 "I acknowledge and confirm that the statements above about at-will employment are correct"):
+        assert not pipeline._attestation({"label": said, "required": True, "kind": "checkbox"}), said
+    assert pipeline._attestation({"label": "I certify that the information in my application is true and complete and I "
+                                           "understand my employment is at will", "required": True, "kind": "checkbox"})
+    assert pipeline._terms_notice("Terms and Conditions of Employment", "Please read and accept.") == (False, False)
+    assert pipeline._agrees_to_terms("I agree to the Terms of Use and the Privacy Policy")
+    assert pipeline._attestation({"label": "I agree to the Terms of Use and the Privacy Policy", "required": True,
+                                  "kind": "checkbox"})
+
+
+def test_a_lone_box_marked_wrong_on_a_page_that_says_nothing_wrong_is_left_as_it_is():
+    """The review of 0.3.170: a lone box a page leaves marked invalid from the start, with nothing on the page said wrong
+    (an optional "Send me job alerts by email"), is no question to stop on before the step is pressed; one the page
+    says is wrong (BrassRing's "Required" beside it) is."""
+    box = {"id": "a", "kind": "checkbox", "label": "Send me job alerts by email", "required": False, "value": False,
+           "invalid": True}
+    quiet = {"needs_input": [dict(box)]}
+    pipeline._required_by_errors(quiet, {"fields": [box], "errors": []})
+    assert not quiet["needs_input"][0]["required"]
+    saved = {"needs_input": [dict(box)]}  # (a word that's no error: the second review's)
+    pipeline._required_by_errors(saved, {"fields": [box], "errors": ["Saved"]})
+    assert not saved["needs_input"][0]["required"]
+    said = {"needs_input": [dict(box)]}
+    pipeline._required_by_errors(said, {"fields": [box], "errors": ["Required"]})
+    assert said["needs_input"][0]["required"]
+    text = {"id": "t", "kind": "text", "label": "Available Start Date", "required": False, "value": "", "invalid": True}
+    marked = {"needs_input": [dict(text)]}
+    pipeline._required_by_errors(marked, {"fields": [text], "errors": []})  # (a box to type in, as before)
+    assert marked["needs_input"][0]["required"]
+
+
 @pytest.mark.parametrize("case", ["asked", "readonly", "never asked", "other heading"])
 def test_a_box_the_errors_name_is_gone_back_to_once_and_only_to_be_asked(srv, monkeypatch, case):
     """The review of 0.3.165: a box taken as optional that the errors name ("Available Start Date is required.") is

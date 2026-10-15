@@ -599,6 +599,9 @@ EXTRACT_JS = r"""
         ? clean(first.title) : '';
       if (titled) label = titled;
       const single = { id: idOf(first), kind: 'checkbox', label, required: isRequired(first, label), value: checkedOf(first) };
+      // one the page marks wrong while it's unticked, as a group so marked (BrassRing's "Employment At Will", Edward
+      // Jones' run 89: "Required" beside it, naming nothing)
+      if (first.getAttribute('aria-invalid') === 'true' && !single.value) single.invalid = true;
       const row = titled && first.closest('tr');
       if (row) {
         const table = row.closest('table') || row.parentElement;

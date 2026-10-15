@@ -1,0 +1,46 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Senior Analyst | Example Corp Careers</title></head>
+<body>
+<!-- like BrassRing's "Employment At Will" step (Edward Jones, run 89): one check box, "I understand and agree", under
+     the at-will statement, marked required only by a class and an asterisk beside the statement. Its "Save and
+     continue" with it unticked marks the box aria-invalid and puts "Required" beside it, naming nothing, and stays.
+     Ticked (sessionStorage's atwill.agreed), it goes on to the application's next step. The review's: ?label=terms has
+     the box say "I understand and agree to the terms and conditions of employment"; ?label=agree has it say "I agree",
+     its legend the statement (which calls itself the terms and conditions of the applicant's employment). -->
+<h1 id="ApplyPageHead">Employment At Will</h1>
+<p>Fields marked with an asterisk (<span class="requiredFieldIndicator">*</span>) are required.</p>
+<form id="atwill" onsubmit="return false">
+  <div class="fieldcontain custom" id="block"><span class="requiredFieldIndicator">*</span>
+    <label class="ListView"><u>Employment at Will</u><br>I understand that if I am hired, my employment is considered an
+      “at will” arrangement. If I should receive and accept an offer of employment, I understand my employment does not
+      constitute any form of contract, implied or express, and that my employment will be terminable at will by either
+      myself or by Example Corp at any time, for any reason and with or without notice.</label>
+    <fieldset>
+      <legend><span class="screenReaderText"><u>Employment at Will</u><br>I understand that if I am hired, my employment
+        is considered an “at will” arrangement, and that these are the terms and conditions of my
+        employment.</span></legend>
+      <div class="ui-checkbox">
+        <input type="checkbox" class="required crf" role="checkbox" id="checkbox-AGREE" name="custom_atwill"
+               value="AGREE"><span aria-hidden="true" class="pseudocheckbox"></span>
+        <label for="checkbox-AGREE">I understand and agree</label>
+      </div>
+    </fieldset>
+  </div>
+  <button type="button" id="save">Save and continue</button> <a href="javascript:void(0)">Save and finish later</a>
+</form>
+<script>
+  const wording = new URLSearchParams(location.search).get('label');
+  if (wording) document.querySelector('label[for="checkbox-AGREE"]').textContent = wording === 'terms'
+    ? 'I understand and agree to the terms and conditions of employment' : 'I agree';
+  const box = document.getElementById('checkbox-AGREE');
+  box.addEventListener('change', () => sessionStorage.setItem('atwill.agreed', String(box.checked)));
+  document.getElementById('save').addEventListener('click', () => {
+    if (box.checked) { location.href = 'step1.html'; return; }
+    box.setAttribute('aria-invalid', 'true');
+    const block = document.getElementById('block');
+    if (!block.querySelector('.error')) block.insertAdjacentHTML('beforeend', '<span class="error">Required</span>');
+  });
+</script>
+</body>
+</html>
