@@ -10,7 +10,9 @@
      as Nikon's did in live run 12 (they're kept once filled again). ?slow: nothing is lost, and Save and continue
      takes a moment to go on with the parse's notice still showing, as Nikon's Skills did in live run 16 (the
      notice isn't an error). ?silent: as EMD's Phenom (live check, Oct 11), the page loses its record of the
-     two boxes and Save and continue says nothing at all: the page just doesn't move on. (kept for the tab: ukg.saves) -->
+     two boxes and Save and continue says nothing at all: the page just doesn't move on. ?textarea: Address 1 is a text
+     area, as Microchip's Workday "Please specify your preferred work location." was (run 84, Oct 14: shown, and
+     "required and must have a value" all the same). (kept for the tab: ukg.saves) -->
 <h2>Contact Information</h2>
 <div id="notice" role="alert"></div>
 <form onsubmit="return false">
@@ -23,6 +25,12 @@
   <button type="button" id="save">Save and continue</button>
 </form>
 <script>
+  if (new URLSearchParams(location.search).has('textarea')) {
+    const area = document.createElement('textarea');
+    area.id = 'address';
+    area.required = true;
+    document.getElementById('address').replaceWith(area);
+  }
   const model = {};
   let parsed = false;
   const slow = new URLSearchParams(location.search).has('slow');
@@ -51,6 +59,10 @@
     if (!model.zip) errs.push('Zip / Postal Code Please enter a valid zip/postal code.');
     const silent = new URLSearchParams(location.search).has('silent');  // (nothing said: it just doesn't move)
     if (!silent) document.getElementById('errors').innerHTML = errs.map((t) => '<p role="alert" class="error">' + t + '</p>').join('');
+    // (Workday marks the box it lost invalid: Microchip's text area, run 84)
+    if (new URLSearchParams(location.search).has('textarea')) {
+      document.getElementById('address').setAttribute('aria-invalid', model.address ? 'false' : 'true');
+    }
     if (!errs.length) setTimeout(() => { location.href = 'review.html'; }, slow ? 1500 : 0);
   });
 </script>

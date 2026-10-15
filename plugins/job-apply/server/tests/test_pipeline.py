@@ -67,6 +67,29 @@ def test_pick_next_and_classify():
     assert classify({"title": "Apply", "fields": form, "actions": []}, "I'm not a robot") == "form"
 
 
+def test_a_phone_box_that_speaks_of_codes_isnt_an_emailed_codes():
+    """Edward Jones' BrassRing (run 85): its personal information step asks for a phone number "to receive your
+    code(s)", in words that speak of "an Authentication Code sent to you", and the whole step was read as an emailed
+    code's: nothing on it was filled, and the desk said the site had emailed a code. A box that asks for a phone
+    number (or shows its ###-###-#### format) is never a code's; a box for a code sent to a phone still is."""
+    phone = ("As you go through the Selection Process, you may be required to enter an Authentication Code sent to you "
+             "by Example Corp in order to sign documents. Please enter the phone number you would like to use to "
+             "receive your code(s) in the field below. Please enter the phone number in the following format: "
+             "###-###-####. NOTE: Phone number MUST include dashes.")
+    fields = [{"id": "1", "kind": "text", "label": "Legal First Name", "required": True},
+              {"id": "2", "kind": "text", "label": "Primary Phone (ie. ###-###-####)", "required": True},
+              {"id": "3", "kind": "text", "label": phone, "required": True}]
+    assert not pipeline._code_box(fields[2])
+    assert classify({"title": "Apply", "fields": fields, "actions": []}, "") == "form"
+    for code in ("Enter the code sent to your phone number", "Enter the verification code we sent to your email",
+                 "Passcode", "Enter the 6-digit code sent to your mobile phone", "Security code",
+                 # (a code the number names, and a Re-enter beside one: the review's)
+                 "Enter your phone number verification code", "Enter the mobile number OTP",
+                 "Enter your mobile phone number's verification code",
+                 "Verification code. Didn't get it? Re-enter your phone number"):
+        assert pipeline._code_box({"id": "c", "kind": "text", "label": code}), code
+
+
 @pytest.fixture(autouse=True)
 def _no_mail_taken():
     """Each test starts with no code from the inbox put in yet (the desk keeps them for its whole process)."""
@@ -2281,24 +2304,33 @@ def test_a_form_page_that_thanks_the_person_isnt_taken_for_a_confirmation(srv, m
     assert srv.tracker().get(job["id"])["status"] != "applied"
 
 
-@pytest.mark.parametrize("query", ["", "?wipe", "?silent"])
+@pytest.mark.parametrize("query", ["", "?wipe", "?silent", "?textarea"])
 def test_boxes_the_pages_errors_say_are_empty_though_filled_are_typed_again(srv, monkeypatch, query):
     """Nikon's UKG Pro (live run 10, Oct 11): its resume parse overwrote the page's own record of Address 1 and
     Zip a moment after the desk typed them, so Save and continue said "Address 1 Please enter an address."
     beside the filled boxes, and the desk stopped. Boxes the page's errors name, though they show a value, are
     typed again, once, and the step is pressed again. ?silent: EMD's Phenom (live check, Oct 11) lost boxes the
-    same way and said nothing at all; its required boxes are typed again, once, all the same."""
+    same way and said nothing at all; its required boxes are typed again, once, all the same. ?textarea: a text area
+    too (Microchip's Workday, run 84: its "Please specify your preferred work location." showed the answer, and the
+    page said it was required and must have a value; only text boxes were typed again)."""
+    from job_apply.desk import Desk
+
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
     monkeypatch.setattr(pipeline, "STEP_SAVE_WAIT", 1)
     job = srv.add_job(url=fixture_url("site/ukg-prefill.html") + query, title="Field Service Engineer",
                       company="Example Fab")["job"]
-    applier = Applier(srv)
+    desk = Desk(srv)
+    applier = desk.applier
 
     async def go():
         applier.start()
         try:
             r = applier.enqueue(job["id"])
             await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            if query == "?textarea" and r.need == "questions":  # (the person's answer, as at Microchip)
+                desk.answer(job["id"], [{"label": q["label"], "value": "100 Main St", "remember": False}
+                                        for q in r.questions])
+                await until(lambda: r.status not in ("queued", "running"), about=state(r))
             return r
         finally:
             await applier.stop()
@@ -2307,7 +2339,7 @@ def test_boxes_the_pages_errors_say_are_empty_though_filled_are_typed_again(srv,
     assert "review.html" in r.url, (r.url, r.reason, r.log)
     if query == "?silent":
         assert any(line.startswith("typed ") and "required box(es) again" in line for line in r.log), r.log
-    elif query:  # (wiped: filled from the profile again, as in live run 12)
+    elif query == "?wipe":  # (wiped: filled from the profile again, as in live run 12)
         assert any(line.startswith("filled again") for line in r.log), r.log
     else:
         assert any(line.startswith("typed again") and "Address 1" in line for line in r.log), r.log
