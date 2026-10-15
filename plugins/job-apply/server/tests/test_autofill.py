@@ -1799,6 +1799,57 @@ def test_a_phone_box_that_names_no_type_or_the_profiles_is_filled():
         assert resolve_field(f(label), prof()) is None, label
 
 
+def test_a_long_box_that_asks_for_the_phone_number_takes_the_profiles():
+    """Edward Jones' BrassRing (run 86): its personal information step asks, in a long label, "... Please enter the phone
+    number you would like to use to receive your code(s) in the field below. Please enter the phone number in the
+    following format: ###-###-####. NOTE: Phone number MUST include dashes." No rule took a label that long, so it went
+    on the card. It's the profile's phone, written with dashes where the box shows ###-###-####."""
+    label = ("As you go through the Selection Process, you may be required to enter an Authentication Code sent to you by "
+             "Example Corp in order to sign documents. Please enter the phone number you would like to use to receive "
+             "your code(s) in the field below. Please enter the phone number in the following format: ###-###-####. "
+             "NOTE: Phone number MUST include dashes.")
+    for written in ("480-555-0123", "4805550123", "+1 480 555 0123", "(480) 555-0123"):
+        p = Profile({"personal": {"phone": written, "phone_country_code": "+1"}})
+        assert resolve_field(f(label), p).value == "480-555-0123", written
+    # never another's number, another kind's, a code's, an explanation's, or one that agrees to texts or calls (the review)
+    for other in ("Please enter your phone number verification code below, as sent to you by text message",
+                  "Please enter your mobile number to sign up for job alerts by text message from Example Corp",
+                  "Please enter the phone number of your next of kin, in case we cannot reach you directly",
+                  "Please enter the phone number of your spouse or domestic partner for our benefits records",
+                  "If you are under 18, please enter the phone number of a parent or guardian who can consent",
+                  "Do you have any relatives employed by Example Corp? If yes, please enter the name and phone number",
+                  "Please enter the name and phone number of a person who can verify your employment history",
+                  "Please enter the phone number of the recruiter or agency that referred you to this position",
+                  "To help us process your application, please enter your work phone number in the box below",
+                  "To help us process your application, please enter your home phone number in the box below",
+                  "If you are not able to enter your phone number above, please explain why in a few words",
+                  "If you prefer not to enter your phone number, please tell us another way to reach you",
+                  "Please enter your mobile number to receive SMS updates about your application status",
+                  "Please enter your mobile number so we can contact you on WhatsApp about your application",
+                  "Please enter your phone number to receive autodialer or prerecorded messages from Example Corp",
+                  "Please enter your mobile number confirmation code, which we sent to you a moment ago",
+                  "Please enter your phone number authentication code from the message we sent to you",
+                  # (the second review's: sign-ups and another's number in other words, another kind of phone, and a
+                  # phone box that shows no format: theirs to answer, on the card)
+                  "Would you like to hear about future opportunities? If so, please enter your phone number below",
+                  "Please enter your phone number so we can keep you informed of future career opportunities",
+                  "To be considered for other positions as well, please enter your best phone number here",
+                  "Please enter the phone number your previous boss can be reached at, so we can verify your work",
+                  "Please enter the phone number at your current job where we can verify your employment",
+                  "Please enter your cell phone number in the box below so we can reach you about your application",
+                  "Please enter the phone number you would like us to call you on about your application, below"):
+        ans = resolve_field(f(other + " (###-###-####)" if "below so" not in other and "call you on" not in other
+                              else other), prof())
+        assert ans is None or ans.rule != "phone", (other, ans)
+    # the dashes only for a US number, with its dial code where the box asks for it, never under a 1- mask
+    with_code = "Please enter your phone number including country code, in the format ###-###-#### please"
+    p = Profile({"personal": {"phone": "+1 480 555 0123", "phone_country_code": "+1"}})
+    assert resolve_field(f(with_code), p).value == "+1 480-555-0123"
+    uk = Profile({"personal": {"phone": "+44 20 7946 0958", "phone_country_code": "+44"}})
+    assert resolve_field(f(label), uk).value == "+44 20 7946 0958"
+    assert resolve_field(f("Phone Number (1-###-###-####)"), p).value != "480-555-0123"
+
+
 def test_text_messages_notice_is_no_sign_up_but_an_opt_in_or_marketing_is():
     """Kforce's Cellular box says it "may send non-marketing, employment-related text messages": that is no
     sign-up, the box is the application's number. A checkbox that agrees to texts is never ticked, and a box

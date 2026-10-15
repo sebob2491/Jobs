@@ -1131,12 +1131,24 @@ def _phone(prof: Profile, job: dict, label: str = "") -> Any:
                                           or code == "+1" and len(digits) == 11 and digits.startswith("1")) else digits
     if re.search(r"\bno (spaces|dashes)|without (spaces|dashes)|digits only|numbers only", asked):
         return f"{code}{national}" if with_code else national
+    if code == "+1" and len(national) == 10 and re.search(r"(?:^|[^\d+#\s-])\s*#{3}-#{3}-#{4}", label):
+        # a US number written as the box shows it (Edward Jones' "###-###-####. NOTE: Phone number MUST include dashes.",
+        # run 86), with its dial code where the box asks for it (never under a "1-###-..." or "+1 ###-..." mask: the
+        # review's)
+        dashed = f"{national[:3]}-{national[3:6]}-{national[6:]}"
+        return f"{code} {dashed}" if with_code else dashed
     if with_code and not written.startswith("+"):
         bare = re.sub(r"^\s*1[\s.-]*", "", written) if national != digits else written
         return f"{code} {bare}"
     if without and national != digits:
         return national
     return phone
+
+
+def _masked_phone(prof: Profile, job: dict, label: str = "") -> Any:
+    """The phone number for a long box that asks for it and shows the format it's written in (Edward Jones'
+    "###-###-####", run 86): only where the label shows that mask; else the box is the person's to answer."""
+    return _phone(prof, job, label) if re.search(r"#{3}-#{3}-#{4}", label or "") else None
 
 
 # The kinds of phone a form's boxes name (the alias groups of a phone's type, in _COUNTRY_ALIASES)
@@ -1152,6 +1164,15 @@ _PHONE_BOX_KIND = re.compile(rf"^(?:(?P<lead>{_ANY_PHONE_KIND})(?: (?:tele)?phon
 _PHONE_SIGN_UP = (r"(?<!non )\bmarketing|\bjob alerts?|\bnewsletters?|\bpromotion\w*|\bsubscri\w*|\bopt(?:ing)? in|"
                   r"\bconsent|\bagree|\bsend me|\bsimilar jobs|\btalent (?:community|network)")
 _LONG_PHONE_BOX = rf"^(?!.*(?:{_PHONE_SIGN_UP}))(?:{_ANY_PHONE_KIND})(?: (?:tele)?phone| number)\b"
+# What a long label that asks to "enter the phone number" may say that makes it not the person's own number to give:
+# someone else's, an explanation, texts or automated calls (the review of 0.3.167)
+_NOT_OWN_PHONE = (r"\b(?:next of kin|spouse|partner|family|relatives?|parents?|guardian|referee|referen\w*|supervisor\w*|"
+                  r"manager\w*|recruiter|agency|emergency|explain|why|reason|tell us|not able|unable|cannot|prefer not|"
+                  r"another way|sms|text\w*|updates|whatsapp|autodial\w*|automated|pre ?recorded|"
+                  # (a sign-up under other words, another's number under other words: the second review's)
+                  r"notif\w*|alerts?|inform\w*|future|other (?:positions|roles|opportunities)|new (?:roles|openings|jobs)|"
+                  r"similar roles|stay (?:connected|in touch)|hear about|boss|colleague\w*|co ?workers?|employ(?:er|ment)\w*|"
+                  r"current job|previous|former|prior)\b")
 
 
 def _phone_kind_of(word: str) -> str | None:
@@ -1201,6 +1222,7 @@ def _reads_question(getter: Getter) -> bool:
 
 
 _READS_QUESTION = {_relatives, _government, _travel, _previously_employed, _no_sponsorship, _sponsorship, _UNDER_18, _OVER_18, _phone,
+                   _masked_phone,
                    _local_or_relocate, _lives_in, _veteran, _has_degree}
 
 HOW_HEARD = r"(how|where) did you (first )?(hear|find|learn)|source of (application|referral)|^source$"
@@ -1233,6 +1255,17 @@ RULES: list[tuple[str, str, Getter, int | None, set[str] | None]] = [
     # Kforce's Taleo (live, Oct 2026): "Cellular Number Kforce may send non-marketing, employment-related text
     # messages to any number(s) you submit. Reply STOP any time to cancel." is the application's number box
     ("phone", _LONG_PHONE_BOX, _phone, None, {"text"}),
+    # Edward Jones' BrassRing (run 86): "... Please enter the phone number you would like to use to receive your code(s)
+    # in the field below ... ###-###-####": a box that asks for the person's own phone number in the format it shows,
+    # however long its words (only with that format shown: _masked_phone).
+    # Not another's ("... of your next of kin"), another kind's ("your work phone number"), a code's the number names,
+    # an explanation's, nor one that signs the person up or agrees to texts or automated calls (the review of 0.3.167)
+    ("phone", rf"^(?!.*(?:{_PHONE_SIGN_UP}|{_NOT_OWN_PHONE}))"
+              r".*\benter (?:the|your|a) (?:(?:best|preferred|primary|contact|daytime) ){0,2}"
+              r"(?:tele)?phone number\b(?! (?:of|for)\b)"
+              # (a code's or an extension's box the number names, not a number "including country code")
+              r"(?! (?:(?!including\b|incl\b|with\b|plus\b)\w+ ){0,2}(?:code|otp|passcode|pin|ext\w*)\b)",
+     _masked_phone, None, {"text"}),
     ("address2", r"address line 2|^address 2|apartment|suite|^apt|^unit", _p("personal.address.line2"), 45, None),
     ("address1", r"address line 1|^address 1|^street|^(home |mailing |street )?address$", _p("personal.address.line1"), 45, None),
     ("city", r"^city|town|location city|current city|city of residence|"
