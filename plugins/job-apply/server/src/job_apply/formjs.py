@@ -979,6 +979,47 @@ ENTRIES_JS = r"""
 }
 """
 
+# Before an Add is pressed (browser.add_entries): the numbered block headings of its kind on the page now are marked as
+# had, and the first new one drawn after the press is marked as the desk's own (data-ja-added). The account's saved
+# block drawn late beside it (Hitachi High-Tech America's Workday, run 92) is never taken for it: only a block so
+# marked is ever deleted again (pipeline._drop_added_extra). A list drawn again from scratch loses the marks: then
+# nothing is.
+ADD_WATCH_JS = r"""
+(kindPattern) => {
+  const kind = new RegExp(kindPattern, 'i');
+  const SEL = 'h1, h2, h3, h4, h5, h6, legend, [role="heading"]';
+  const txt = (el) => (el.textContent || '').replace(/\s+/g, ' ').trim();
+  const numbered = (el) => el.matches(SEL) && kind.test(txt(el)) && /\b\d+\s*$/.test(txt(el));
+  document.querySelectorAll(SEL).forEach((h) => { if (numbered(h)) h.setAttribute('data-ja-had', '1'); });
+  if (window.__jaAddWatch) window.__jaAddWatch.disconnect();
+  const watch = new MutationObserver((records) => {
+    for (const r of records) {
+      for (const n of r.addedNodes) {
+        if (n.nodeType !== 1) continue;
+        const drawn = [n, ...n.querySelectorAll(SEL)].find((h) => numbered(h) && !h.hasAttribute('data-ja-had'));
+        if (drawn) {
+          drawn.setAttribute('data-ja-added', '1');
+          watch.disconnect();
+          window.__jaAddWatch = null;
+          return;
+        }
+      }
+    }
+  });
+  watch.observe(document.body, { childList: true, subtree: true });
+  window.__jaAddWatch = watch;
+}
+"""
+
+# The watch above stopped (add_entries done), and the headings of the blocks so marked as they read now.
+ADD_UNWATCH_JS = r"""
+() => { if (window.__jaAddWatch) { window.__jaAddWatch.disconnect(); window.__jaAddWatch = null; } }
+"""
+ADDED_BLOCKS_JS = r"""
+() => [...document.querySelectorAll('[data-ja-added]')].filter((h) => h.getClientRects().length > 0)
+  .map((h) => (h.textContent || '').replace(/\s+/g, ' ').trim())
+"""
+
 # Facts click() needs about an element before deciding whether it may press it.
 ELEMENT_INFO_JS = r"""
 (el) => {

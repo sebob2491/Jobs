@@ -8313,6 +8313,133 @@ def test_a_workday_experience_page_is_filled_block_by_block(srv, monkeypatch, jo
     assert shown == ["03", "2021", "06", "2018", "02", "2021", school, "Bachelors", "2016", "2020"], shown
 
 
+def test_an_extra_block_is_deleted_only_when_empty_last_and_one_the_desk_added(srv):
+    """The review's limits on _drop_added_extra: never a block with anything in it, nor one of a kind the desk added
+    none of on this pass, nor the only block of its kind, nor one before others (Workday numbers those after it down),
+    nor more than the desk added, and each block's Delete pressed once."""
+    applier, clicked, gone, marked = Applier(srv), [], [], ["EDUCATION 3"]
+
+    class Browser:
+        async def added_blocks(self):
+            return marked
+
+    class Stub:
+        browser = Browser()
+
+        async def click(self, id):
+            clicked.append(id)
+            gone.append(id.split(":", 1)[1])
+            return {"clicked": True}
+    applier.srv = Stub()
+
+    def page(blocks, filled=(), boxless=()):
+        return {"fields": [{"id": f"s{i}", "label": "School or University*", "section": b, "required": True,
+                            "kind": "text", "value": "Example College" if b in filled else ""}
+                           for i, b in enumerate(blocks) if b not in gone and b not in boxless],
+                "actions": [{"id": f"d:{b}", "text": "Delete", "section": b, "names_block": True}
+                            for b in blocks if b not in gone]}
+
+    async def look():
+        return page(["Education 1", "Education 2", "Education 3"]), ""
+    applier._look = look
+
+    def extra(block):
+        return {"id": "x", "label": "School or University*", "section": block, "required": True, "kind": "text"}
+
+    r = Run(1, "Technician", "Example Litho")
+    two = ["Education 1", "Education 2"]
+    # none added, something in it, or the only one: never
+    assert not run(applier._drop_added_extra(r, page(two), [extra("Education 2")], {}, set()))
+    assert not run(applier._drop_added_extra(r, page(two, filled=two), [extra("Education 2")], {"education": 1}, set()))
+    assert not run(applier._drop_added_extra(r, page(["Education 2"]), [extra("Education 2")], {"education": 1}, set()))
+    # one before others, or a work block where only a school was added: never
+    three = ["Education 1", "Education 2", "Education 3"]
+    assert not run(applier._drop_added_extra(r, page(three), [extra("Education 2")], {"education": 1}, set()))
+    assert not run(applier._drop_added_extra(r, page(two), [extra("Education 2")], {"work": 1}, set()))
+    # one whose boxes aren't drawn yet (its Delete alone), or one no Add of the desk's drew (a saved one, empty for a
+    # moment): never
+    assert not run(applier._drop_added_extra(r, page(three, boxless=["Education 3"]), [extra("Education 3")],
+                                             {"education": 1}, set()))
+    assert not run(applier._drop_added_extra(r, page(two), [extra("Education 2")], {"education": 1}, set()))
+    # a job's block with only its "I currently work here" ticked: something in it
+    jobs = {"fields": [{"id": "c2", "label": "I currently work here", "section": "Work Experience 2", "kind": "checkbox",
+                        "value": True},
+                       {"id": "t2", "label": "Job Title*", "section": "Work Experience 2", "required": True, "kind": "text",
+                        "value": ""}],
+            "actions": [{"id": "d:Work Experience 1", "text": "Delete", "section": "Work Experience 1", "names_block": True},
+                        {"id": "d:Work Experience 2", "text": "Delete", "section": "Work Experience 2", "names_block": True}]}
+    job_box = {"id": "y", "label": "Job Title*", "section": "Work Experience 2", "required": True, "kind": "text"}
+    marked.append("Work Experience 2")
+    assert not run(applier._drop_added_extra(r, jobs, [job_box], {"work": 1}, set()))
+    assert not clicked
+    # the last, empty, of a kind the desk added: deleted, and no more than it added
+    added, tried = {"education": 1}, set()
+    assert run(applier._drop_added_extra(r, page(three), [extra("Education 2"), extra("Education 3")], added, tried))
+    assert clicked == ["d:Education 3"] and added == {"education": 0}
+    assert any(line.startswith("deleted Education 3: an empty block past your profile's schools") for line in r.log)
+    assert not run(applier._drop_added_extra(r, page(two), [extra("Education 2")], added, tried))
+    # once a block: its Delete pressed before (and the block back, or still there), never again
+    gone.clear()
+    assert not run(applier._drop_added_extra(r, page(three), [extra("Education 3")], {"education": 1}, tried))
+    assert clicked == ["d:Education 3"]
+
+
+def test_an_empty_block_the_desk_added_beside_a_saved_one_drawn_late_is_deleted_again(srv, monkeypatch, job_apply_home):
+    """Hitachi High-Tech America's Workday (run 92), and U.S. Bank's and Baker Tilly's (runs 52 and 62): My Experience
+    drew the account's saved school (or job) after the desk had looked for it and added a block, and the page then had
+    more blocks than the profile has entries: the desk stopped, "Remove the extra block in the browser". The block the
+    desk itself added, still empty, past the profile's entries, is deleted again with its own Delete, and the
+    application goes on; the saved one, filled, stays."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 1)
+    job = srv.add_job(url=fixture_url("site/workday-experience-blocks.html") + "?savedschool", title="Equipment Technician",
+                      company="Example Litho")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            # (on past the block deleted, to its Save and Continue, which goes nowhere here: the stall's waits)
+            await until(lambda: r.status not in ("queued", "running"), timeout=180, about=state(r))
+            return r, await r.page.evaluate(
+                "() => [...document.querySelectorAll('#ed-panels > div')].map((p) => [p.querySelector('h3').textContent, "
+                "p.dataset.saved || ''])")
+        finally:
+            await applier.stop()
+
+    r, blocks = run(go())
+    assert "more blocks than your profile has entries" not in r.reason, (r.status, r.reason, r.log)
+    assert any(line.startswith("deleted Education 2") for line in r.log), r.log
+    assert blocks == [["Education 1", "1"]], (blocks, r.log)  # (the saved one stays)
+
+
+def test_a_saved_block_drawn_after_the_desks_own_is_never_taken_for_it(srv, monkeypatch, job_apply_home):
+    """The review of 0.3.173: the account's saved school drawn after the block the desk added, last, and its boxes
+    filled a while after it shows (empty till then): that block is past the profile's entries and empty, but no Add of
+    the desk's drew it, so it's never deleted: the person's, as before."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 1)
+    job = srv.add_job(url=fixture_url("site/workday-experience-blocks.html") + "?savedschool&savedlast&valueslate=30000",
+                      title="Equipment Technician", company="Example Litho")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), timeout=180, about=state(r))
+            return r, await r.page.evaluate(
+                "() => [...document.querySelectorAll('#ed-panels > div')].map((p) => [p.querySelector('h3').textContent, "
+                "p.dataset.saved || ''])")
+        finally:
+            await applier.stop()
+
+    r, blocks = run(go())
+    assert not any(line.startswith("deleted Education") for line in r.log), r.log
+    assert blocks == [["Education 1", ""], ["Education 2", "1"]], (blocks, r.log)
+
+
 def test_a_posting_that_has_closed_says_so(srv, monkeypatch):
     """Edward Jones' BrassRing page for an expired posting (live, Oct 2026) says "The job posting
     you are looking for has expired or the position has already been filled", and the desk said

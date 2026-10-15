@@ -1632,6 +1632,10 @@ class Applier:
         if not await self._open(run):
             return
         stalls, entries_done, refilled, dismissed = 0, set(), set(), set()
+        # the blocks the desk added on this pass, by kind, and the empty ones past the profile's entries whose Delete it
+        # pressed (_drop_added_extra)
+        blocks_added: dict[str, int] = {}
+        extra_tried: set[str] = set()
         stalled_on: tuple[Any, ...] = ()  # the step (address and headings) the stalls were counted on
         stalled_in_a_row = 0  # and the stalls since a press last moved a page on, whatever step they were on
         # pages waited on to draw their buttons late, once a page each time it's reached (Baker Tilly's Workday, run 44:
@@ -2002,6 +2006,7 @@ class Applier:
                             if section == "education" and run.schools_dropped else {}))
                         if added.get("clicks"):
                             self._log(run, f"added {added['clicks']} {section} block(s)")
+                            blocks_added[section] = blocks_added.get(section, 0) + added["clicks"]
                         if added.get("add_button_covered"):
                             self._log(run, f"couldn't press the {section} section's Add button: something on the page "
                                       "covers it, so its blocks are left as they are")
@@ -2058,6 +2063,7 @@ class Applier:
                     # a school's block is deleted for having no fitting choice: an empty list has none for anything
                     run.list_reloaded = True
                     entries_done.clear()  # (the blocks it added are gone with the reload)
+                    blocks_added.clear()
                     refilled.discard(page_key)
                     bare_waited.discard(_page_key(data))
                     step_waited.difference_update({d for d in step_waited if d and d[0] == _page_key(data)})
@@ -2070,6 +2076,8 @@ class Applier:
                     continue
                 if await self._drop_unfit_school(run, data, pending):
                     continue  # the page looked at again without that school's block
+                if await self._drop_added_extra(run, data, pending, blocks_added, extra_tried):
+                    continue  # and without the empty block it had added beside a saved one
                 gaps, pending = self._entry_gaps(run, data, pending)
                 on_experience = _EXPERIENCE_PAGE.search(" ".join(data.get("headings") or []))
                 short = self._short_entries(run) if on_experience else {}
@@ -2891,11 +2899,7 @@ class Applier:
         last = blocks[-1] if blocks else ""
         if len(blocks) < 2 or last not in unfit:
             return False
-        # its own Delete: one that names the block, else the only Delete in it that names nothing else (not a
-        # file's or a pill's)
-        own = [a for a in deletes if a.get("section") == last]
-        bare = [a for a in own if not a.get("names_other")]
-        delete = next((a for a in own if a.get("names_block")), bare[0] if len(own) == 1 and bare else None)
+        delete = _own_delete(deletes, last)
         if delete is None or last in run.schools_tried:
             return False
         run.schools_tried.append(last)  # (pressed once a block, whatever comes of it)
@@ -2913,6 +2917,59 @@ class Applier:
         self._log(run, f"deleted {last} ({school}): its Degree list has no choice for classes without a degree, and "
                   "the desk never picks a degree you didn't earn (your resume still shows the classes)")
         return True
+
+    async def _drop_added_extra(self, run: Run, data: dict[str, Any], pending: list[dict[str, Any]],
+                                added: dict[str, int], tried: set[str]) -> bool:
+        """A block past the profile's entries, with nothing in it, where the desk added a block of that kind on this
+        pass: Workday's My Experience drew the account's saved school (or job) after the desk had looked for it and
+        added one (Hitachi High-Tech America's, run 92; U.S. Bank's and Baker Tilly's, runs 52 and 62), and the page
+        then had more blocks than the profile has entries. The empty one goes with its own Delete, as many as the
+        desk added (`added`, by kind: taken down as they go), only the last block of its kind, never its only one (a
+        block before others would hand its number on), and only the very block an Add the desk pressed drew
+        (browser.added_blocks); once a block (`tried`). A block with anything in it, or one the desk didn't add, stays
+        the person's (_entry_gaps says so). True when it deleted one."""
+        prof = config.Profile.load()
+        extra: dict[str, str] = {}  # block: its kind
+        for q in pending:
+            found = entry_of(q, prof)
+            if found is not None and found[1] == "extra" and q.get("section"):
+                extra[str(q["section"])] = "education" if "no school" in found[0] else "work"
+        deletes = [a for a in data.get("actions") or [] if not a.get("disabled")
+                   and re.match(r"^(?:delete|remove)\b", final_text(a.get("text") or ""), re.I)]
+        for block, kind in extra.items():
+            if added.get(kind, 0) < 1 or block in tried:
+                continue
+            numbered = re.compile(rf"^(?:{_BLOCK_KINDS[kind]})\s+(\d+)\s*$", re.I)
+            # the blocks of its kind by their boxes, and by their Deletes (a block's boxes can be drawn after it)
+            blocks = sorted({str(x.get("section") or "") for x in [*(data.get("fields") or []), *deletes]
+                             if numbered.match(str(x.get("section") or ""))}, key=lambda s: int(re.findall(r"\d+", s)[-1]))
+            if len(blocks) < 2 or blocks[-1] != block:
+                continue
+            boxes = [f for f in data.get("fields") or [] if f.get("section") == block]
+            if not boxes or any(not is_empty_value(f.get("value")) and not unset_choice(f) for f in boxes):
+                continue  # (something in it: someone's, never deleted)
+            delete = _own_delete(deletes, block)
+            if delete is None:
+                continue
+            # the very block the desk's own press drew (browser.add_entries marks it), never a saved one drawn beside
+            # it, empty for a moment (the review of 0.3.173): a block it can't tell so is the person's
+            if _block_key(block) not in {_block_key(h) for h in await self.srv.browser.added_blocks()}:
+                continue
+            tried.add(block)  # (pressed once a block, whatever comes of it)
+            try:
+                await self.srv.click(delete["id"])
+            except Exception:  # gone, or it won't take a click: the person's, as before
+                return False
+            await asyncio.sleep(0.5)  # (the block goes from the page)
+            now, _ = await self._look()
+            if any(f.get("section") == block for f in now.get("fields") or []):
+                return False  # still there (a "Are you sure?" over it, say): the person's
+            added[kind] -= 1
+            thing = "schools" if kind == "education" else "jobs"
+            self._log(run, f"deleted {block}: an empty block past your profile's {thing}, one I had added while the "
+                      f"page was still drawing the {thing} saved there")
+            return True
+        return False
 
     def _note_short_entries(self, run: Run, section: str, added: dict[str, Any], data: dict[str, Any]) -> None:
         """A section whose Add button stayed covered, with fewer blocks on the page than the profile has entries
@@ -5174,6 +5231,20 @@ def _sent_already(data: dict[str, Any], text: str, moved: bool) -> str:
 # A block's own Delete, and nothing else's ("Delete Military Experience 2", "Delete Job Reference 1" aren't a job's)
 _BLOCK_KINDS = {"work": r"(?:work|employment|professional)\s+(?:experience|history)|employment|experience",
                 "education": r"education(?:al)?(?:\s+(?:history|background))?"}
+
+
+def _block_key(name: str) -> str:
+    """A block's name as words alone ("WORK EXPERIENCE #2" is "work experience 2"), as the form reader's ENTRIES_JS keys
+    them."""
+    return re.sub(r"[^a-z0-9]+", " ", name.lower()).strip()
+
+
+def _own_delete(deletes: list[dict[str, Any]], block: str) -> dict[str, Any] | None:
+    """A block's own Delete: one that names the block, else the only Delete in it that names nothing else (not a file's
+    or a pill's)."""
+    own = [a for a in deletes if a.get("section") == block]
+    bare = [a for a in own if not a.get("names_other")]
+    return next((a for a in own if a.get("names_block")), bare[0] if len(own) == 1 and bare else None)
 
 
 def _blocks_by_delete(data: dict[str, Any], section: str) -> int:
