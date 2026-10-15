@@ -563,6 +563,9 @@ class Run:
     # Submit was pressed for this job before and no confirmation showed (its folder keeps the
     # record): it may have gone, so it's never pressed again without the person
     pressed_before: bool = False
+    # Its reload for "Something went wrong" brought back only the site's header and footer, and that was said: a Resume
+    # on that page, still so, is said the same (Northern Trust's and Axcelis' Workday, runs 88 and 90)
+    came_back_empty: bool = False
     # Sections ("work", "education") whose Add button stayed covered with fewer blocks on the page than the profile
     # has entries, as (blocks there, entries wanted): the job stops for them (issue #112, note 32). What a card said
     # of them, and what a Resume was pressed on: an unchanged shortfall is gone on with once, noted on the review card
@@ -1983,6 +1986,7 @@ class Applier:
                                    "by itself after that.", seen=data)
             if kind == "form":
                 run.seen_form = True
+                run.came_back_empty = False  # (the site's back: an empty page later is another's, the review of 0.3.171)
                 once_failed = await self._fill_once(run, data)
                 key = _fingerprint(data)
                 if key not in entries_done and _EXPERIENCE_PAGE.search(" ".join(data.get("headings") or [])):
@@ -2325,12 +2329,23 @@ class Applier:
                     # the page the reload for its "Something went wrong" brought back (nothing pressed since, nor a Submit
                     # before) with nothing but the site's own header and footer, no step at all (Northern Trust's
                     # Workday, run 71): the site's own trouble, said so (the review of 0.3.158)
+                    run.came_back_empty = True
                     await self._bring_forward(run)
                     return self._pause(run, "stuck", f"{_site(run, data)} said \u201cSomething went wrong\u201d and asked "
                                        "for the page to be refreshed; I reloaded it, and it came back without the "
                                        "application, only the site's header and footer. That's the site's "
                                        "own trouble: reload the page in the browser window (now, or later if it's still "
                                        "so), then press Resume.")
+                if (run.came_back_empty and not pressed and not run.pressed_before and not data.get("fields") and all(
+                        h.strip() == str(data.get("title") or "").strip() for h in data.get("headings") or [])):
+                    # Resume pressed on that page, nothing pressed since, and it's still only the header and footer (the
+                    # live check's Resume at Northern Trust and Axcelis, runs 88 and 90): still the site's, never reloaded
+                    # again here
+                    await self._bring_forward(run)
+                    return self._pause(run, "stuck", f"{_site(run, data)}'s page still shows only its header and footer, "
+                                       "without the application, as after its \u201cSomething went wrong\u201d. That's "
+                                       "the site's own trouble: reload the page in the browser window (later, if it's "
+                                       "still so), then press Resume.")
                 return self._pause(run, "stuck", "I couldn't find the button that moves this application on. "
                                    "Take it a step further in the browser, then press Resume.")
             if (kind == "form" and action.get("form_fields") == len(data.get("fields") or [])
