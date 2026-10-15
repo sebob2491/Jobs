@@ -12,7 +12,10 @@
 <div id="errors"></div>
 <button type="button" id="save">Save and Continue</button>
 <script>
-  const saved = sessionStorage.getItem('saved') === '1';  // (loaded again after a save)
+  // (loaded again after a save; or reloaded at all, since the desk reloads it only after one: CI's headless shell can
+  // lose a sessionStorage write under load, as workday-went-wrong.html's)
+  const saved = sessionStorage.getItem('saved') === '1'
+    || (performance.getEntriesByType('navigation')[0] || {}).type === 'reload';
   if (saved) { document.getElementById('fn').value = 'Sam'; document.getElementById('ph').value = '480-555-0100'; }
   let presses = 0;
   document.getElementById('save').addEventListener('click', () => {
