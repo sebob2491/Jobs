@@ -1,0 +1,44 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Senior HR Generalist</title></head>
+<body>
+<!-- like Grand Canyon University's Workday right after the account's sign-in (run 91, Oct 14): the site's header (its
+     Search for Jobs, Candidate Home and Job Alerts) and footer (Follow Us), and between them Workday's application frame
+     (#mainContent, data-mfe-id="applyFlow") with nothing in it: no step, no heading, no loading dots. The desk said "I
+     couldn't find the button that moves this application on". Opened plainly, the posting, whose Apply leads to that
+     page (?apply). ?heal: that page reloaded draws its step (a review with a box, as workday-signin-loading.html's),
+     counted by the reload itself (CI's headless shell can lose a sessionStorage write, workday-saved-twice.html). -->
+<div data-automation-id="header">
+  <a data-automation-id="logoLink" href="?home">Example University</a>
+  <nav data-automation-id="navigationContainer">
+    <a data-automation-id="navigationItem-Search for Jobs" href="?jobs">Search for Jobs</a>
+    <a data-automation-id="navigationItem-Candidate Home" href="?home">Candidate Home</a>
+    <a data-automation-id="navigationItem-Job Alerts" href="?alerts">Job Alerts</a>
+  </nav>
+</div>
+<div id="mainContent" tabindex="-1" data-mfe-id="applyFlow"></div>
+<div data-automation-id="footerContainer">
+  <h4 data-automation-id="followUs">Follow Us</h4>
+  <ul><li><a data-automation-id="socialIcon" aria-label="Facebook" href="?facebook">f</a></li></ul>
+</div>
+<script>
+  const q = new URLSearchParams(location.search);
+  const reloaded = (performance.getEntriesByType('navigation')[0] || {}).type === 'reload';
+  const frame = document.getElementById('mainContent');
+  if (!q.has('apply')) {
+    // (the posting: no application frame on it)
+    const posting = document.createElement('main');
+    posting.innerHTML = '<h2>Senior HR Generalist</h2><p>Partner with leaders across the university on hiring, '
+      + 'onboarding and employee relations.</p><button type="button" id="apply">Apply</button>';
+    frame.replaceWith(posting);
+    document.getElementById('apply').addEventListener('click', () => {
+      location.href = '?apply' + (q.has('heal') ? '&heal' : '');
+    });
+  } else if (q.has('heal') && reloaded) {
+    frame.innerHTML = '<div data-automation-id="applyFlowPage"><div>current step 5 of 5</div><h2>Review</h2><form '
+      + 'onsubmit="return false"><label for="fn">First Name</label><input id="fn"><button type="submit">Submit</button>'
+      + '</form></div>';
+  }
+</script>
+</body>
+</html>

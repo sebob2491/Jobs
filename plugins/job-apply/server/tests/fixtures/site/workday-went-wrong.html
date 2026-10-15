@@ -8,9 +8,11 @@
      ww.loads). ?late: as KLA's in the nightly of Oct 12, the desk's one wait for late buttons used before it (an
      "Apply Manually" drawn late, which leads to "Something went wrong"), and the reloaded page drawing its
      application a few seconds late. ?again: as Circle K's Take Assessment step (run 63), the reloaded page says the same
-     again. ?empty: as Northern Trust's (run 71), the reloaded page is only the site's header and footer, no step (with
-     &bare: not even the site's name as a heading); ?later: the reloaded page has a step whose Continue leads to such a
-     page (the refresh worked: what's empty later isn't what it brought back). -->
+     again. ?empty: as Northern Trust's (run 71), the reloaded page is only the site's header and footer, Workday's
+     application frame between them empty (with &bare: not even the site's name as a heading); ?later: the reloaded page
+     has a step whose Continue leads to such a page (the refresh worked: what's empty later isn't what it brought back,
+     but a step still loading, as Grand Canyon University's, run 91). ?signin: the reloaded page is Workday's sign-in,
+     which leads to workday-apply-unmounted.html's empty application frame (&heal: drawn after a reload). -->
 <a href="#">Back to Job Posting</a>
 <h2>Field Service Engineer</h2>
 <div>current step 1 of 6 My Information</div>
@@ -28,7 +30,8 @@
   const siteOnly = () => {
     document.title = 'Example Careers';
     document.body.innerHTML = '<header>' + (q.has('bare') ? '<p>Example Careers</p>' : '<h1>Example Careers</h1>')
-      + '<a href="#">Search for Jobs</a> <a href="#">Candidate Home</a> <a href="#">Job Alerts</a></header><main></main>'
+      + '<a href="#">Search for Jobs</a> <a href="#">Candidate Home</a> <a href="#">Job Alerts</a></header>'
+      + '<div id="mainContent" tabindex="-1" data-mfe-id="applyFlow"></div>'
       + '<footer><p>Follow Us</p><a href="#">Facebook</a> <a href="#">Candidate Privacy Notice</a>'
       + '<p>&copy; 2026 Workday, Inc. All rights reserved.</p></footer>';
   };
@@ -37,6 +40,15 @@
     document.body.innerHTML = '<h2>My Information</h2><form onsubmit="return false"><label for="fn">First Name</label>'
       + '<input id="fn"><button type="button" id="go">Continue</button></form>';
     document.getElementById('go').addEventListener('click', siteOnly);
+  } else if (loads > 1 && q.has('signin')) {
+    document.body.innerHTML = '<h2>Sign In</h2><form id="signin" novalidate><label for="em">Email Address</label>'
+      + '<input id="em" type="email" required><label for="pw">Password</label><input id="pw" type="password" required>'
+      + '<button type="submit">Sign In</button></form>';
+    document.getElementById('signin').addEventListener('submit', (e) => {
+      e.preventDefault();
+      if (document.getElementById('em').value && document.getElementById('pw').value)
+        location.href = 'workday-apply-unmounted.html?apply' + (q.has('heal') ? '&heal' : '');
+    });
   } else if (loads > 1 && !again) setTimeout(() => location.replace('step1.html'), late ? 3000 : 0);
   else if (late) setTimeout(() => {
     const b = document.createElement('button');
