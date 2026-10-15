@@ -3982,6 +3982,37 @@ def test_a_page_that_asks_to_be_refreshed_again_after_its_reload_is_said_for_wha
     assert "then press Resume" in r.reason and "couldn't find the button" not in r.reason, r.reason
 
 
+def test_a_page_still_empty_after_resume_is_still_said_to_be_the_sites(srv, monkeypatch, job_apply_home):
+    """Northern Trust's and Axcelis' Workday (runs 88 and 90): reloaded for its "Something went wrong", the page came
+    back with only the site's header and footer, said as the site's trouble; pressed Resume on, it was still so, and the
+    desk said "I couldn't find the button that moves this application on", as if the way on were the desk's to find.
+    It's said again as the site's, and nothing is reloaded or pressed for it."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 1)
+    job = srv.add_job(url=fixture_url("site/workday-went-wrong.html") + "?empty", title="HR Analyst",
+                      company="Example Bank")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            first = r.reason
+            applier.resume(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r, first
+        finally:
+            await applier.stop()
+
+    r, first = run(go())
+    assert "came back without the application" in first, (first, r.log)
+    assert (r.status, r.need) == ("needs_you", "stuck"), (r.reason, r.log)
+    assert "still shows only its header and footer" in r.reason and "couldn't find the button" not in r.reason, \
+        (r.reason, r.log)
+    assert sum("so I reloaded it" in line for line in r.log) == 1, r.log
+
+
 @pytest.mark.parametrize("query", ["", "?heal"])
 def test_a_posting_page_with_no_way_on_is_reloaded_once_then_said(srv, monkeypatch, job_apply_home, query):
     """The State of Arizona's posting page (runs 61 and 63; in run 62 it drew): the block with its APPLY came back
