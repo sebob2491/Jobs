@@ -152,6 +152,10 @@ def may_accept_cookies(info: dict[str, Any]) -> bool:
 # "Apply". With nothing in the form to fill, it opens the application; it sends nothing.
 POSTING_PAGE_RE = re.compile(r"career(?:_|%5f)ns=job(?:_|%5f)listing(?:&|#|$)", re.I)
 SHORT_MENU = 12  # a menu this short shows every choice; a longer one may show only some
+_SEARCH_PAGE = 15  # BrassRing's search box lists its choices 15 at a time: a full page may have more past it
+# a multiselect's row that shows its choice ticked (BrassRing's pseudo-checkbox, or its row's own class)
+_ROW_TICKED_JS = ("el => !!(el.closest('li.checked') "
+                  "|| el.querySelector('.pseudocheckbox.checked, .pseudocheckbox[aria-checked=\"true\"]'))")
 POPUP_FOLLOW = 15  # seconds after a click of ours in which a tab it opens is followed
 FRAME_WAIT = 8  # seconds for a job board's frame (iCIMS's openings) to load its page, all told
 SETTLE_WAIT = 8  # seconds for a job board's page to stop loading things, at most
@@ -409,6 +413,11 @@ _CHALLENGE_TITLE = re.compile(r"just a moment|attention required|checking your b
 class SiteDown(Exception):
     """A job board answered with a server error page (Daifuku's iCIMS, live: HTTP 521), which
     would otherwise read as a board with no openings."""
+
+
+def _among(choice: str, ticked: list[str]) -> bool:
+    """Is this choice among those a multiselect has ticked, however each is spaced or cased?"""
+    return norm(choice) in {norm(t) for t in ticked}
 
 
 def _search_words(text: str) -> str:
@@ -1557,6 +1566,8 @@ class BrowserSession:
         if kind == "combobox":
             if field.get("readonly"):  # pick-only: open the menu and choose, nothing to type into
                 return await self._pick_from_listbox(page, loc, field, value)
+            if await loc.evaluate(TWIN_TICKED_JS) is not None:  # BrassRing's search box for several choices (run 88)
+                return await self._tick_in_multiselect(page, loc, field, value)
             return await self._type_and_pick(page, loc, field, value)
         text = "" if value is None else str(value)
         if isinstance(value, bool):
@@ -1907,31 +1918,81 @@ class BrowserSession:
     async def _tick_in_multiselect(self, page: Page, loc: Locator, field: dict, value: Any) -> str:
         """A jQuery UI multiselect (BrassRing's "Please check each applicable box", Edward Jones' run 87): its button
         reads "Choose..." whatever is ticked, and a click on a choice ticks it or unticks it. The choice is clicked
-        once, only where it isn't ticked already, and taken where its hidden select has it ticked; never clicked
-        again, which would untick it."""
-        ticked = await loc.evaluate(TWIN_TICKED_JS) or []
+        once, only where it isn't ticked already (by what the widget lists as ticked, or its own row's tick), and
+        taken where it then shows ticked; never clicked again, which would untick it. BrassRing's search box for
+        several choices (run 88) works alike: its list opens on the Down key and shows a page of 15, its choices known
+        only once it's open; an answer that page doesn't show, or shows only a near neighbour of ("South Asian" for
+        "Asian": the review's), is searched for, and the exact one taken."""
+        names = bool(field.get("names"))
         options = field.get("options") or []
-        choice = choose_option(value, options, names=bool(field.get("names")))
-        if choice is None:
+        choice = choose_option(value, options, names=names) if options else None
+        if options and choice is None:
             raise ValueError(f"{value!r} doesn't match any option: {options[:30]}")
-        if choice in ticked:
+        if choice is not None and _among(choice, await loc.evaluate(TWIN_TICKED_JS) or []):
             return f"selected {choice} (ticked already)"
+        search = await loc.evaluate("el => el.tagName === 'INPUT'")
+        want = str(choice if choice is not None else value)
         try:
-            await self._open(page, field["id"], loc)
-            if not await self._field_options(page, field["id"], loc, 2500):
-                # its menu didn't open (the click closed one already open): closed, and opened once more
-                await self._close_menus(page)
-                await self._open(page, field["id"], loc)
-                if not await self._field_options(page, field["id"], loc, 3000):
-                    raise ValueError("its list of choices didn't open; tick it in the browser")
-            await self._click_option(page, field["id"], choice)
+            shown = await self._open_ticks(page, field["id"], loc, search)
+            pick = choose_option(want, shown, names=names)
+            if search and (pick is None or (norm(pick) != norm(want) and len(shown) >= _SEARCH_PAGE)):
+                await loc.fill("")
+                await loc.press_sequentially(_search_words(want), delay=30)
+                found = await self._new_options(page, field["id"], loc, shown, 2500)  # (a filter that waits a moment)
+                # the narrowed list judges better than the first page: its exact one, else its nearest
+                better = next((o for o in found if norm(o) == norm(want)), None) \
+                    or (choose_option(want, found, names=names) if found else None)
+                if better is not None:
+                    pick = better
+                elif pick is not None:  # nothing nearer: its first page's, from the list opened afresh
+                    await loc.fill("")
+                    shown = await self._open_ticks(page, field["id"], loc, search)
+                    if pick not in shown:
+                        raise ValueError(f"{pick!r} left its list when it opened again; tick it in the browser")
+            if pick is None:
+                if search:
+                    await self._clear_search(page, loc)  # (its typed words aren't an answer)
+                raise ValueError(f"{value!r} doesn't match any option: {shown[:30]}")
+            # (its row's tick alone isn't enough before a click: only where the widget's own list has it too)
+            ticked = await loc.evaluate(TWIN_TICKED_JS) or []
+            if _among(pick, ticked) or (await self._row_ticked(page, field["id"], pick)
+                                        and any(norm(t) in norm(pick) or norm(pick) in norm(t) for t in ticked if norm(t))):
+                return f"selected {pick} (ticked already)"
+            await self._click_option(page, field["id"], pick)
             for _ in range(8):
                 await page.wait_for_timeout(150)
-                if choice in (await loc.evaluate(TWIN_TICKED_JS) or []):
-                    return f"selected {choice}"
+                if _among(pick, await loc.evaluate(TWIN_TICKED_JS) or []) or await self._row_ticked(page, field["id"], pick):
+                    return f"selected {pick}"
         finally:
             await self._close_menus(page)  # (its menu stays open after a tick)
-        raise ValueError(f"Ticked {choice!r} but the list doesn't have it ticked; tick it in the browser")
+        raise ValueError(f"Ticked {pick!r} but the list doesn't have it ticked; tick it in the browser")
+
+    async def _open_ticks(self, page: Page, field_id: str, loc: Locator, search: bool) -> list[str]:
+        """Open a multiselect's list (a search box's on the Down key: a click only puts the cursor in it) and read
+        its choices; once more from closed if it showed none."""
+        await self._open(page, field_id, loc)
+        shown = await self._field_options(page, field_id, loc, 2500)
+        if not shown and search and not await loc.input_value():
+            await loc.press("ArrowDown")
+            shown = await self._field_options(page, field_id, loc, 3000)
+        if not shown:
+            # its menu didn't open (the click closed one already open): closed, and opened once more
+            await self._close_menus(page)
+            await self._open(page, field_id, loc)
+            if search:
+                await loc.press("ArrowDown")
+            shown = await self._field_options(page, field_id, loc, 3000)
+            if not shown:
+                raise ValueError("its list of choices didn't open; tick it in the browser")
+        return shown
+
+    async def _row_ticked(self, page: Page, field_id: str, text: str) -> bool:
+        """Does this choice's own row in the open list show it ticked (BrassRing's pseudo-checkbox)?"""
+        row = self._frame_for(page, field_id).locator(f'[data-ja-opt="{_css_string(text)}"]').first
+        try:
+            return bool(await row.count()) and bool(await row.evaluate(_ROW_TICKED_JS, timeout=FOCUS_TIMEOUT))
+        except (PlaywrightError, PlaywrightTimeout):
+            return False
 
     async def _confirm_choice(self, page: Page, loc: Locator, choice: str) -> None:
         """After picking from a menu, the field must show that choice (else the click

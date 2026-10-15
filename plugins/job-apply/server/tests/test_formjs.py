@@ -359,6 +359,53 @@ def test_a_jquery_ui_multiselect_takes_its_choice_once_and_reads_it_back(srv, qu
     assert run(tab.evaluate("() => sessionStorage.getItem('multi.saved')")) == '["Asian","Prefer Not to Disclose"]'
 
 
+def test_a_brassring_search_box_for_several_choices_is_read_ticked_once_and_read_back(srv):
+    """BrassRing's second race question (Edward Jones, run 88): "Please check each applicable box" drawn as a search box
+    (type=search, role=combobox) standing for a hidden <select multiple> that holds only "Choose...". The form reader
+    passed it over as a site's search box, so it was never answered and its "Required" stopped the step. It's read as
+    the question, with what's ticked (its pills) as its value; its list opens on the Down key, a choice past its first
+    page of 15 is found by typing, and each is clicked once: given again, it stays ticked."""
+    page = page_of(srv, "site/brassring-autocomplete-multi.html")
+    race = next((f for f in page["fields"] if f["label"].startswith("How would you like to identify your race")), None)
+    assert race is not None, page["fields"]
+    assert (race["kind"], race.get("value"), race.get("required"), race.get("multiple")) == ("combobox", "", True, True)
+    done = run(srv.browser.fill([{"id": race["id"], "value": "Decline to self-identify", "pick_only": True}]))
+    assert all(r["ok"] for r in done), done
+    tab = run(srv.browser.page())
+    pills = "() => Array.from(document.querySelectorAll('.selectionList li')).map((li) => li.firstChild.textContent)"
+    assert run(tab.evaluate(pills)) == ["Prefer Not to Disclose"]
+    after = next(f for f in run(srv.browser.inspect(include_dropdown_options=False))["fields"] if f["id"] == race["id"])
+    assert after.get("value") == "Prefer Not to Disclose", after
+    again = run(srv.browser.fill([{"id": race["id"], "value": "Prefer Not to Disclose", "pick_only": True},
+                                  {"id": race["id"], "value": "White", "pick_only": True}]))
+    assert all(r["ok"] for r in again), again
+    assert run(tab.evaluate(pills)) == ["Prefer Not to Disclose", "White"]
+    assert not run(tab.evaluate("() => !!document.getElementById('race-input_listbox')"))  # (its list closed after)
+    run(tab.click("#save"))
+    run(tab.wait_for_url("**/step1.html", timeout=5000))
+    assert run(tab.evaluate("() => sessionStorage.getItem('race.saved')")) == '["Prefer Not to Disclose","White"]'
+
+
+@pytest.mark.parametrize("query, given, ticked", [
+    ("?reversed", ["Asian"], ["Asian"]),  # never its first page's near neighbour ("South Asian")
+    ("?options", ["White"], ["White"]),  # past its first page though the select lists it: searched for
+    ("?hidden", ["Asian", "Asian", "Asian"], ["Asian"]),  # a row's words besides its pill's: given again, never unticked
+    ("?reversed&hidden", ["Asian", "Asian"], ["Asian"]),  # both: the narrowed list's nearest, not the first page's
+])
+def test_a_brassring_search_box_ticks_the_answer_itself_once(srv, query, given, ticked):
+    """The review of 0.3.169: on BrassRing's search box for several choices, the answer is the one ticked (searched for
+    where its first page shows only a near one, or none), and a choice already ticked is never clicked again, whatever
+    else its row says besides its words."""
+    page = page_of(srv, "site/brassring-autocomplete-multi.html", query)
+    race = next(f for f in page["fields"] if f["label"].startswith("How would you like to identify your race"))
+    for value in given:
+        done = run(srv.browser.fill([{"id": race["id"], "value": value, "pick_only": True}]))
+        assert all(r["ok"] for r in done), done
+    tab = run(srv.browser.page())
+    pills = "() => Array.from(document.querySelectorAll('.selectionList li')).map((li) => li.firstChild.textContent)"
+    assert run(tab.evaluate(pills)) == ticked
+
+
 def test_a_security_answer_put_in_is_never_read_back_nor_saved(srv, tmp_path):
     """An account's security answer from the desk's card (the review of the card): its box is marked before it's filled,
     so it reads back "(set)", as a password, even where the box held it already ("already set"), shows as dots, and

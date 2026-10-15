@@ -1850,6 +1850,21 @@ def test_a_long_box_that_asks_for_the_phone_number_takes_the_profiles():
     assert resolve_field(f("Phone Number (1-###-###-####)"), p).value != "480-555-0123"
 
 
+def test_another_persons_phone_box_never_takes_the_profiles():
+    """autofill.py named two lists _SOMEONE_ELSE, and the later one (0.3.110's, for a Job Title beside a reference's
+    row) took the place of the contact rules' own: next of kin, spouse, family, relatives, a contact person, a referee
+    and supervisors or managers were lost, so "Next of Kin Phone" or "Spouse Phone Number" took the person's own
+    phone. One list again, with both lists' words; "Family Name" stays the person's last name."""
+    for label in ("Next of Kin Phone", "Spouse Phone Number", "Family Member Phone", "Contact Person Phone",
+                  "Supervisors Phone", "Managers Phone", "Relatives Phone", "Referee Phone", "Relationship Phone",
+                  "Contact Name"):
+        assert resolve_field(f(label), prof()) is None, label
+    assert resolve_field(f("Phone", section="Next of Kin"), prof()) is None
+    for label in ("Family Name", "Last Name/Family Name", "Family name (surname)", "Family Names"):
+        assert resolve_field(f(label), prof()).rule == "last_name", label
+    assert resolve_field(f("Phone"), prof()).rule == "phone"
+
+
 def test_text_messages_notice_is_no_sign_up_but_an_opt_in_or_marketing_is():
     """Kforce's Cellular box says it "may send non-marketing, employment-related text messages": that is no
     sign-up, the box is the application's number. A checkbox that agrees to texts is never ticked, and a box
