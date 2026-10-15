@@ -32,7 +32,8 @@ from playwright.async_api import (
 from . import config
 from .ats import detect_ats
 from .autofill import choose_option, choose_place, is_empty_value, norm, polarity
-from .formjs import (CHALLENGE_JS, CLICK_CHOICE_JS, COVERED_JS, ELEMENT_INFO_JS, ENTRIES_JS, EXTRACT_JS, FIELD_OPTIONS_JS,
+from .formjs import (ADD_UNWATCH_JS, ADD_WATCH_JS, ADDED_BLOCKS_JS, CHALLENGE_JS, CLICK_CHOICE_JS, COVERED_JS,
+                     ELEMENT_INFO_JS, ENTRIES_JS, EXTRACT_JS, FIELD_OPTIONS_JS,
                      LOST_BOXES_JS, MARK_OPTIONS_JS, NOTICE_OVER_JS, OPEN_MENU_JS, OUTSIDE_CLICK_JS, QUIET_JS, SHOWN_VALUE_JS,
                      UNKEPT_DELETE_JS, UNKEPT_FORGET_JS, UNKEPT_PRESSED_SHOWN_JS, UNKEPT_SHOWN_JS, UPLOAD_NOT_KEPT_JS,
                      UPLOAD_STATE_JS,
@@ -2242,57 +2243,80 @@ class BrowserSession:
                 state = await frame.evaluate(ENTRIES_JS, kind_pattern)
             before = state["entries"]
             clicks, covered = 0, False
-            while state["entries"] < count and clicks < count + 2:
-                if not state["buttons"]:
-                    break
-                pressed = False
-                for attempt in range(1, ADD_TRIES + 1):
-                    button = frame.locator(f'[data-ja-id="{state["buttons"][-1]["id"]}"]')
-                    try:
-                        await button.click(timeout=ADD_PRESS_TIMEOUT)
-                        pressed = True
+
+            # the block a press draws is marked as the desk's own (only such a block is ever deleted again: the review
+            # of 0.3.173): watched from just before each press, and no longer after one that drew none
+            async def watch(on: bool) -> None:
+                with contextlib.suppress(PlaywrightError):
+                    await (frame.evaluate(ADD_WATCH_JS, kind_pattern) if on else frame.evaluate(ADD_UNWATCH_JS))
+
+            try:
+                while state["entries"] < count and clicks < count + 2:
+                    if not state["buttons"]:
                         break
-                    except PlaywrightTimeout:
-                        # something drawn over it (Nikon's UKG Pro, live, Oct 2026: the error ended the whole
-                        # application). A toast or a re-render clears in a moment (Workday's My Experience, note 32:
-                        # "added 1 work block(s)", then the rest left off): the button is scrolled to the middle of the
-                        # page and looked at again, the page given longer each time, then pressed again. A cover that
-                        # stays is left as it is, as a press beneath a note or a dialog may not be its: never
-                        # pressed through
-                        covered = attempt == ADD_TRIES
-                        if covered:
+                    pressed = False
+                    for attempt in range(1, ADD_TRIES + 1):
+                        button = frame.locator(f'[data-ja-id="{state["buttons"][-1]["id"]}"]')
+                        try:
+                            await watch(True)
+                            await button.click(timeout=ADD_PRESS_TIMEOUT)
+                            pressed = True
                             break
-                        if await _covered(button):
-                            await page.wait_for_timeout(ADD_COVER_WAIT * attempt)
-                        state = await frame.evaluate(ENTRIES_JS, kind_pattern)
-                        if state["entries"] >= count or not state["buttons"]:
-                            break  # (the blocks came by themselves, or the button is gone: the loop's to say)
-                if covered:
-                    break
-                if not pressed:
-                    continue
-                clicks += 1
-                await page.wait_for_timeout(600)
-                new = await frame.evaluate(ENTRIES_JS, kind_pattern)
-                if new["entries"] <= state["entries"]:
-                    await page.wait_for_timeout(1200)  # slow re-render; one more look
+                        except PlaywrightTimeout:
+                            await watch(False)
+                            # something drawn over it (Nikon's UKG Pro, live, Oct 2026: the error ended the whole
+                            # application). A toast or a re-render clears in a moment (Workday's My Experience, note 32:
+                            # "added 1 work block(s)", then the rest left off): the button is scrolled to the middle of
+                            # the page and looked at again, the page given longer each time, then pressed again. A cover
+                            # that stays is left as it is, as a press beneath a note or a dialog may not be its: never
+                            # pressed through
+                            covered = attempt == ADD_TRIES
+                            if covered:
+                                break
+                            if await _covered(button):
+                                await page.wait_for_timeout(ADD_COVER_WAIT * attempt)
+                            state = await frame.evaluate(ENTRIES_JS, kind_pattern)
+                            if state["entries"] >= count or not state["buttons"]:
+                                break  # (the blocks came by themselves, or the button is gone: the loop's to say)
+                    if covered:
+                        break
+                    if not pressed:
+                        continue
+                    clicks += 1
+                    await page.wait_for_timeout(600)
                     new = await frame.evaluate(ENTRIES_JS, kind_pattern)
                     if new["entries"] <= state["entries"]:
-                        state = new
-                        break
-                state = new
-            # Workday draws a new block's heading first and its boxes a moment later: the page is read
-            # next (autofill) once they're there, or the new block isn't filled
-            waited = 0
-            while clicks and state.get("empty") and waited < BLOCK_DRAW_WAIT:
-                await page.wait_for_timeout(250)
-                waited += 250
-                state = await frame.evaluate(ENTRIES_JS, kind_pattern)
-            if waited:
-                await self._settle(page, timeout=2000)  # the rest of their boxes
+                        await page.wait_for_timeout(1200)  # slow re-render; one more look
+                        new = await frame.evaluate(ENTRIES_JS, kind_pattern)
+                        if new["entries"] <= state["entries"]:
+                            await watch(False)  # (it drew none: a block drawn from here on isn't its)
+                            state = new
+                            break
+                    state = new
+                # Workday draws a new block's heading first and its boxes a moment later: the page is read
+                # next (autofill) once they're there, or the new block isn't filled
+                waited = 0
+                while clicks and state.get("empty") and waited < BLOCK_DRAW_WAIT:
+                    await page.wait_for_timeout(250)
+                    waited += 250
+                    state = await frame.evaluate(ENTRIES_JS, kind_pattern)
+                if waited:
+                    await self._settle(page, timeout=2000)  # the rest of their boxes
+            finally:
+                await watch(False)
             return {"before": before, "after": state["entries"], "clicks": clicks,
                     "add_button_found": bool(state["buttons"]) or clicks > 0,
                     **({"add_button_covered": True} if covered else {})}
+
+    async def added_blocks(self) -> list[str]:
+        """The headings of the blocks the desk's own Add drew (add_entries marks them), as they read now: a block
+        numbered again keeps its mark."""
+        async with self._lock:
+            page = await self.page()
+            try:
+                return list(await page.main_frame.evaluate(ADDED_BLOCKS_JS))
+            except PlaywrightError:
+                return []
 
     async def _page_text(self, page: Page) -> str:
         text = ""
