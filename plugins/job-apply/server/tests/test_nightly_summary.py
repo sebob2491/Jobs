@@ -207,3 +207,16 @@ def test_a_runs_time_is_summed_up_per_job_system():
     assert out[0] == "workday: 4 employer(s), 100 s middle, 400 s at 90%, 3 round(s) middle", out
     assert out[1].startswith("greenhouse: 1 employer(s), 20 s middle")
     assert out[-1] == "slowest: W3 (400 s), W2 (100 s)"
+
+
+def test_a_rounds_pick_list_probe_is_printed_with_it():
+    """The live check's look at a pick-only list that showed no choices (live_smoke.pick_list_probe, Edwards Vacuum's
+    Protected Veteran in run 113) shows under its round."""
+    rec = {"company": "Edwards Vacuum", "posting": {"title": "Field Service Engineer"}, "rounds": [
+        {"status": "needs_you", "need": "questions", "reason": "1 question", "log": [],
+         "questions": [{"label": "Protected Veteran", "kind": "combobox", "options": [],
+                        "error": "ValueError: its list showed no choices"}],
+         "pick_lists": [{"label": "Protected Veteran", "before": {"box": None}, "after_10s": {"roles": {"option": 5}}}]}]}
+    said = ns.steps(rec).splitlines()
+    at = next(i for i, line in enumerate(said) if line.startswith("      Q: Protected Veteran"))
+    assert said[at + 1].startswith('      pick list: {"label": "Protected Veteran", "before"'), said

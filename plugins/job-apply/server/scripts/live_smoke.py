@@ -1573,6 +1573,54 @@ async def list_probe(questions: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return out
 
 
+_NO_CHOICES = re.compile(r"its list showed no choices")
+PICK_PROBE_AT = (0.5, 2, 5, 10)  # seconds after the click a pick-only list is looked at again
+
+
+def _slim(state: dict[str, Any] | None) -> dict[str, Any]:
+    """A list's state as _LIST_JS reads it, its markup cut short (a timeline holds several)."""
+    state = dict(state or {})
+    for key in ("box", "around"):
+        if state.get(key):
+            state[key] = str(state[key])[:800]
+    return state
+
+
+async def pick_list_probe(run: Any) -> list[dict[str, Any]]:
+    """For up to two pick-only lists the desk read as showing no choices (Edwards Vacuum's SuccessFactors Protected
+    Veteran, run 113: its choices were read with the page, and then none showed when the desk opened it to pick, even
+    after 0.3.188's wait): the list before a click, PICK_PROBE_AT seconds after it, and three seconds after a second
+    opening. Nothing is picked (the run never submits; the desk fills the list again after the round's answers)."""
+    out: list[dict[str, Any]] = []
+    page = run.page
+    if page is None or page.is_closed():
+        return out
+    for q in [q for q in run.questions if _NO_CHOICES.search(q.get("error") or "")][:2]:
+        loc = page.locator(f'[data-ja-id="{q["id"]}"]')
+        seen: dict[str, Any] = {}
+        try:
+            seen["before"] = _slim(await page.evaluate(_LIST_JS, str(q["id"])))
+            await loc.scroll_into_view_if_needed(timeout=5000)
+            await loc.click(timeout=3000)
+            waited = 0.0
+            for at in PICK_PROBE_AT:
+                await asyncio.sleep(at - waited)
+                waited = at
+                seen[f"after_{at:g}s"] = {**_slim(await page.evaluate(_LIST_JS, str(q["id"]))),
+                                          "menu": await loc.evaluate(_MENU_JS)}
+            await page.keyboard.press("Escape")
+            await asyncio.sleep(1)
+            await loc.click(timeout=3000)
+            await asyncio.sleep(3)
+            seen["reopened_3s"] = {**_slim(await page.evaluate(_LIST_JS, str(q["id"]))),
+                                   "menu": await loc.evaluate(_MENU_JS)}
+            await page.keyboard.press("Escape")
+        except Exception as e:  # noqa: BLE001 - a probe; the round's record stands without it
+            seen["error"] = f"{type(e).__name__}: {str(e)[:200]}"
+        out.append({"label": q.get("label"), **seen})
+    return out
+
+
 def best_posting(results: list[dict[str, Any]]) -> dict[str, Any]:
     """The first posting whose title is the kind of job looked for. Workday's search matches
     words anywhere in a posting ("human resources" in its equal-opportunity text), so its first
@@ -2033,6 +2081,9 @@ async def check_pipeline(company: dict[str, Any], out: Path, rec: dict[str, Any]
             })
             if run.need in ("stuck", "sign_in"):  # (an account's step it stopped on, too: UKG Pro's, Oct 2026)
                 await print_shot(company["name"], run.page)
+            if run.status == "needs_you" and any(_NO_CHOICES.search(q.get("error") or "") for q in run.questions):
+                # a pick-only list that showed no choices, looked at before it's answered (pick_list_probe)
+                rec["rounds"][-1]["pick_lists"] = await pick_list_probe(run)
             if run.status == "needs_you" and run.need == "questions":
                 if n == rounds - 1:
                     # the last round: its questions stay as they are, for the list probe below (answered and queued
