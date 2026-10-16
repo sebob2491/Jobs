@@ -14,10 +14,13 @@ interview, grounded in their real experience and in this specific posting.
    company and status. Run `update_job(job_id, status="interviewing")` if it isn't
    already set.
 2. Read the user's resume (`documents.resume` in `get_profile`) and the profile.
-3. If a Gmail connector is available, search the user's email for the recruiter's or
-   company's thread and the booking or calendar emails: the time, who will call and
-   from what number, and what they said about the role, pay, shifts and locations.
-   The email may be in any of the user's linked accounts.
+3. If a Gmail connector is available and the profile's `settings.email_tracking` is on
+   (`get_profile`), search the user's email for the recruiter's or company's thread and
+   the booking or calendar emails: the time, who will call and from what number, and what
+   they said about the role, pay, shifts and locations. The email may be in any of the
+   user's linked accounts. With the setting off, ask once whether Claude may search their
+   email for this interview's messages, and search only if they say yes (the setting
+   stays as it is).
 4. Ask only what you still can't find: the date and time, the format (phone, video
    or onsite), the interviewers' names and roles, and whether there's a technical
    assessment.

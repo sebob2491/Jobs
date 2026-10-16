@@ -168,14 +168,17 @@ settings:
   # Accounts on job sites: the desk creates the account (ticking the site's terms, never a
   # newsletter) with the password you saved on the desk for that system, and, when a saved
   # password doesn't sign in, resets it through the site's "Forgot password" email (it reads that
-  # email with your email app password) to the one you saved. Never in practice mode; picture
-  # codes stay yours. Set this to false to have the desk fill in Create Account and leave the rest
-  # to you.
+  # email with your email app password) to the one you saved; for an account never verified it
+  # presses the site's "Resend Account Verification" and opens the new email's link. A form's
+  # security questions are asked on the desk's card (never remembered); picture codes stay yours.
+  # Never in practice mode. Set this to false to have the desk fill in Create Account and leave
+  # the rest to you.
   manage_accounts: true
   # Notices and attestations: the desk agrees for you to an employer's notice about AI screening
   # of your application (Eightfold's "Notice Related to … Use of the Eightfold AI Recruiting
   # Software") and to its privacy notice and terms of use (a privacy agreement's "I Accept", a
-  # terms box; never a newsletter or a talent community), and picks an application's attestation
+  # terms box; never a newsletter, job alerts or a talent community, texts or automated calls, a
+  # legal waiver, or your employment's terms), and picks an application's attestation
   # that its information is true and complete
   # (or your consent to the background check that comes with applying), saying each in the job's
   # log. Never in practice mode. Any other dialog over a form waits for you. Set this to false to

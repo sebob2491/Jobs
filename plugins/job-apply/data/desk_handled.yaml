@@ -2,7 +2,7 @@
 # account there and the common questions answered) to the application's review page, or to its last button.
 # The desk's "Only where the desk goes all the way" switch shows these employers' openings alone.
 # Refresh it from each full nightly before a release: `uv run python scripts/nightly_summary.py --handled`.
-as_of: "2026-10-14: full run 91 (0.3.171), with Grand Canyon University (its Workday application frame left empty that run, 0.3.172) from run 89"
+as_of: "2026-10-16: full run 103 (0.3.181)"
 employers:
   - "Air Liquide"
   - "Air Products"
@@ -44,6 +44,7 @@ employers:
   - "Intel"
   - "KLA"
   - "Knight-Swift Transportation"
+  - "KPMG"
   - "Lam Research"
   - "Linde"
   - "Maricopa County"
@@ -71,5 +72,6 @@ employers:
   - "U.S. Bank"
   - "Ultra Clean Holdings (UCT)"
   - "USAA"
+  - "Vanguard"
   - "Wells Fargo"
   - "Western Alliance Bank"

@@ -89,8 +89,9 @@ says what to do about anything that isn't right. It changes nothing.
 | **LinkedIn Easy Apply** and **Indeed Apply** | Fills everything, then **you click Submit** in the browser. Both sites' terms prohibit automated submission, and they restrict accounts that do it, so the plugin never presses that button. |
 
 Claude never invents experience, credentials or work-authorization answers.
-Anything that isn't in your profile or resume is a question for you. CAPTCHAs,
-email verification codes and sign-ins also stay with you. Passwords can be typed
+Anything that isn't in your profile or resume is a question for you. CAPTCHAs and
+bot checks stay with you; so do sign-ins and emailed codes, unless the Job Desk has
+your site passwords and email app password. Passwords can be typed
 from a local secrets file without passing through the chat.
 
 ## Install by hand
@@ -178,13 +179,16 @@ opens a page on your computer (served by the plugin on `127.0.0.1`):
      desk fills the form in behind it. It agrees for you to an employer's notice about AI
      screening of your application (Eightfold's employers show one as your resume goes up)
      and to its privacy notice and terms of use (a privacy agreement's "I Accept", a terms
-     box; never a newsletter or talent community), and picks an application's attestation
+     box; never a newsletter, job alerts or a talent community, texts or automated calls, a
+     legal waiver, or the terms of your employment), and picks an application's attestation
      that its information is true and complete, or
      your consent to the background check that comes with applying, noting each in the job's
      log. To answer those yourself, set `accept_notices: false` under `settings:` in your
      profile. Practice mode never agrees to them.
    - Sign-ins, bot checks, CAPTCHAs and emailed codes. You deal with those in the
-     browser window, and the desk carries on by itself. A link a site emails you to
+     browser window, and the desk carries on by itself (with a site's password and your
+     email app password saved in **Site passwords**, below, it does the sign-ins and the
+     codes itself). A link a site emails you to
      confirm your address opens in your usual browser, so reload that job's tab in the
      desk's window once you've opened it. The other jobs wait while you work in that
      tab. If nothing happens in it for 5 minutes, they go ahead without it, so you can
@@ -200,13 +204,15 @@ opens a page on your computer (served by the plugin on `127.0.0.1`):
    where it was, back in the queue or in the list, and sends nothing: it stops at its review page for you.
 
 Each employer has its own account on its job site. In the desk's **Site passwords**
-card, save one password for a job system: Workday (13 of the employers), SuccessFactors
+card, save one password for a job system: Workday (15 of the semiconductor employers and 27 of the
+Phoenix list's), SuccessFactors
 (Edwards, Qorvo, Amkor), iCIMS (Daifuku), ApplicantStack (SCREEN), UKG Pro (Nikon
 Precision) or Infor (Benchmark). The desk then creates your account at each of that system's
 employers (your email, the password, and your name and country from the profile; it ticks
 their terms, never a newsletter, and a consent to be considered for other open positions only
-where the site won't make the account without it, then presses the button; a picture code stays
-yours) and
+where the site won't make the account without it, then presses the button; the form's security
+questions come up on the job's card for you to answer, go into that form alone and are never
+remembered; a picture code stays yours) and
 signs you in after that (pressing the sign-in form's own button, even one that reads
 "Submit"). When the password doesn't sign in at an employer, the desk tries it once, then,
 with the email app password below saved, resets that employer's password to the saved one
@@ -293,7 +299,11 @@ Settings in `profile.yaml`:
 | `submit_mode` | `review` | Set to `auto` to let Claude submit complete applications without asking, for the ATSs in `auto_submit_ats`. `dry_run` fills everything and never submits, which is good for a first practice run. |
 | `email_codes` | `false` | Claude may read the sign-in codes and verification links that career sites email you (needs the Gmail connector) |
 | `email_tracking` | `false` | Claude may search your email for replies to your applications (needs the Gmail connector) |
-| `accept_notices` | `true` | The Job Desk agrees for you to an employer's notice about AI screening of your application and to its privacy notice and terms of use (never a newsletter or talent community), and picks an application's attestation that its information is true (or your consent to its background check), noting each in the job's log. Never in practice mode. `false` leaves them to you. |
+| `accept_notices` | `true` | The Job Desk agrees for you to an employer's notice about AI screening of your application and to its privacy notice and terms of use (never a newsletter, job alerts or a talent community, texts or automated calls, a legal waiver, or the terms of your employment), and picks an application's attestation that its information is true (or your consent to its background check), noting each in the job's log. Never in practice mode. `false` leaves them to you. |
+| `accept_cookies` | `false` | The Job Desk declines cookie banners. One with no way to decline (TI's "Agree and Proceed") waits for you, unless this is `true`: then the desk accepts it for you. |
+| `manage_accounts` | `true` | The Job Desk creates your account at a job system with the password you saved on the desk for it (ticking the site's terms, never a newsletter), resets a password the site refuses through its "Forgot password" email, and presses "Resend Account Verification" for an account never verified. A form's security questions are asked on the desk's card and never remembered; a picture code stays yours. Never in practice mode. `false`: the desk fills in Create Account for you to finish. |
+| `auto_submit_ats` | `[]` | With `submit_mode: auto`, the job systems Claude may submit on without asking (`workday`, `greenhouse`, `lever`, `eightfold`, `successfactors`). The Job Desk has its own switch, **Submit for me**. |
+| `browser_channel` | `chrome` | The browser the desk drives: `chrome`, `msedge`, or `chromium` (Playwright's bundled browser). `headless: true` hides its window. |
 
 ## What's inside
 
@@ -324,7 +334,7 @@ plugins/job-apply/
 | `search_company_jobs` | Search employers' own job boards (Workday, Greenhouse, Lever, Eightfold, SmartRecruiters, Oracle, and ASML's site) by keyword and location; sites that refuse direct requests are read through a background browser tab |
 | `ingest_job`, `add_job` | Save a posting. Parses Workday, Greenhouse, Lever and SmartRecruiters APIs, schema.org JobPosting data, or page text. |
 | `list_jobs`, `get_job`, `update_job`, `export_jobs_csv` | Application tracker |
-| `open_application`, `click`, `tabs` | Navigate the browser. `click` refuses final submit buttons. |
+| `open_application`, `click`, `tabs`, `close_browser` | Navigate the browser, and close it. `click` refuses final submit buttons, and a cookie banner unless `accept_cookies` is on. |
 | `inspect_form` | Every field on the page, including iframes and custom dropdowns: label, type, options, required |
 | `autofill` | Fill everything the profile answers and return the fields that still need a decision |
 | `add_entries` | Click "Add" until there's one Work Experience / Education block per profile entry |
@@ -332,6 +342,8 @@ plugins/job-apply/
 | `screenshot`, `page_text` | See the page |
 | `debug_snapshot` | Save the page (HTML of every frame, a screenshot, the extracted fields). This also happens automatically when a field fails. |
 | `render_document` | Markdown resume or cover letter → PDF in the job folder |
+| `tailoring_queue` | The Job Desk's jobs waiting for a tailored resume, with each posting, the resume and the rules |
+| `report_problem` | A problem report for a job, scrubbed, to file as an issue (`anonymous=True` leaves out which job it was) |
 | `submit_application` | Final submit, enforcing the rules above, and record the result |
 | `log_email`, `logged_emails` | Record employer replies; each email counts once and statuses only move forward |
 | `open_job_desk` | Open the Job Desk page: recommended openings ranked against the profile, one-button applying |
@@ -355,10 +367,11 @@ before opening a PR.
 
 The tests cover ATS detection, posting parsing, the profile-to-field matching
 rules, the tracker and email log, PDF rendering, fixture redaction, and
-end-to-end browser runs (headless Chromium) against mock forms: a generic form,
+end-to-end browser runs (headless Chromium) against mock forms (a generic form,
 Workday-style dropdowns, search pickers and My Experience blocks, an embedded
-iframe form, the submit guard, and the LinkedIn/Indeed submit rule. GitHub
-Actions runs them on Python 3.10 and 3.13 and validates the plugin manifests.
+iframe form, the submit guard, and the LinkedIn/Indeed submit rule) and against
+pages captured from real career sites and scrubbed (`tests/fixtures/live`). GitHub
+Actions runs them on Python 3.10 and 3.13, and on Windows, and validates the plugin manifests.
 
 ### Testing against real career sites
 
@@ -371,8 +384,12 @@ every company in `companies.yaml` it:
 - clicks through "Apply" and "Apply Manually";
 - lists the form's fields and autofills them with a fake test profile.
 
-It is read-only. Submitting is disabled, nothing is uploaded, it never signs in or
-creates accounts, and it never contacts LinkedIn or Indeed. The job summary shows
+Submitting is off (`JOB_APPLY_NEVER_SUBMIT=1`), the profile is a fake applicant's with a
+test resume made for the run, and it never contacts LinkedIn or Indeed. Without
+`--test-identity` it never signs in or creates accounts; with it (the nightly's accounts
+check) the test identity, a clearly fake applicant with an inbox of its own, makes
+accounts at the listed employers and reads their emailed codes, and still never submits
+(`scripts/TEST_IDENTITY.md`). The job summary shows
 a table, and the log has one `LIVE_RESULT` line of JSON per company. Tick
 "Commit captured pages" to save the pages as regression fixtures.
 
@@ -382,18 +399,23 @@ one-button pipeline instead. It checks the default semiconductor list; add
 each in a browser of its own; every site is still visited once. A full run then
 takes about 6 minutes instead of 22.
 
-**Nightly live check.** The `live-nightly` workflow runs every night at 3:17 AM
-Arizona time (or from the Actions tab), four employers at a time: the pipeline check on
-the semiconductor list (technician jobs), the pipeline check on the phoenix-metro list
-for HR jobs (`--role hr`, an applicant with an HR background), and the search check on
-the phoenix-metro list. Each has its own table in the issue.
+**Nightly live check.** The `live-nightly` workflow runs four checks, each on a machine
+of its own, four employers at a time: the pipeline check on the semiconductor list
+(technician jobs), the pipeline check on the phoenix-metro list for HR jobs (`--role hr`,
+an applicant with an HR background), the search check on both lists, and the accounts
+check (the test identity at every employer on both lists). It's scheduled for 3:17 AM
+Arizona time, but GitHub starts schedules hours late, so a routine dispatches it each
+morning (or run it from the Actions tab). Each check has its own table in the issue; the
+finance check is paused.
 `scripts/live_compare.py` boils each employer down to one result that holds steady
 from night to night: where the pipeline ended (`ready`, `needs_you sign_in`,
 `needs_you stuck`, ...), or whether the search works (`works`, `error`, or `no search`).
 How many openings a search finds changes daily and is never compared. The issue titled
 "Nightly live check" (label `live-check`) keeps the last results in its body, and gets
 a comment, which notifies you, only when an employer's result changes or an employer
-joins or leaves a list. It's reopened if it was closed. A check that doesn't finish
+joins or leaves a list. The body also names the employers an earlier run took to the
+review page that the last run didn't, with the date each last got there. It's reopened if
+it was closed. A check that doesn't finish
 fails the run, and the employers it didn't reach keep their last result. Each run's
 reports and logs are kept as an artifact for 7 days. GitHub pauses scheduled workflows
 in a repository with no activity for 60 days.
@@ -466,12 +488,15 @@ Install it like job-apply: `/plugin install dev-kit@sebob-jobs` in Claude Code, 
 
 ## Limitations
 
-- So far the tests run only against local mock forms. Real ATS pages change often,
-  so expect Claude to sometimes fall back to `inspect_form` and `screenshot` and
-  work field by field. The debug snapshots exist to turn those cases into fixes
-  quickly.
-- Many company ATSs (Workday, SuccessFactors) need an account per company. Creating
-  the account is up to you. So is the emailed verification code, unless you save an
-  email app password on the Job Desk (or turn on `email_codes` when working with Claude).
+- Real career sites change often. The tests run against local forms and pages captured
+  from real sites, and the nightly check runs the desk at every listed employer, but a
+  site can still change between runs: expect Claude to sometimes fall back to
+  `inspect_form` and `screenshot` and work field by field. The debug snapshots and the
+  desk's problem reports exist to turn those cases into fixes quickly.
+- Many company ATSs (Workday, SuccessFactors) need an account per employer. The Job Desk
+  creates them with a password you save on it (`manage_accounts`, on unless you turn it
+  off) and reads the emailed codes and links with an email app password saved there (or,
+  with Claude, `email_codes`); without those, the account and the code are yours. Bot
+  checks and CAPTCHAs are always yours.
 - The first launch of the MCP server installs its Python dependencies, which takes
   a minute. If `/mcp` shows `job-apply` as failed right after install, reconnect it.

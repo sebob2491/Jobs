@@ -677,10 +677,16 @@ def _fingerprint(page: dict[str, Any]) -> tuple:
 
 _TAILOR_SAYS = ("Waiting for a resume written for this job. In Claude Code, say \u201ctailor my resumes\u201d; the "
                 "desk carries on with this job as soon as its resume is ready. Or use your usual resume.")
-_BOT_CHECK_SAYS = ("The site is checking that you're a person (a bot check or CAPTCHA). It waits in its tab while "
-                   "the other jobs go on: solve it there (the desk's Bot checks round takes you to each) and the desk "
-                   "carries on with it by itself.")
+_BOT_CHECK_SAYS = ("The site is checking that you're a person (a bot check or CAPTCHA). Pass it in the browser "
+                   "window: the desk then carries on with this job by itself, and the other jobs go on meanwhile "
+                   "(the desk's Bot checks round takes you to each one waiting).")
 _ERROR_COUNT = re.compile(r"^\d+ errors? found\.?$", re.I)  # a section's count, not what's wrong
+
+
+def _count(n: int, noun: str) -> str:
+    """'1 question', '3 questions'."""
+    return f"{n} {noun}{'' if n == 1 else 's'}"
+
 _ROBOT = re.compile(r"not a robot|captcha|verify (?:that )?you(?:'re| are) (?:a )?human", re.I)
 # A page that still asks the person to prove they're one (not a "protected by reCAPTCHA" badge's words): a bot
 # check waiting on them isn't past it while it does (a form's "please verify you're not a robot" error, say)
@@ -1153,21 +1159,24 @@ class Applier:
         True when it paused."""
         unfilled, pending = _unfilled(pending)
         couldnt = f" {_couldnt_fill(unfilled)}" if unfilled else ""
+        them = "it" if len(pending) == 1 else "them"
         if missing_files:
-            self._pause(run, "stuck", "The form needs a file the profile doesn't point to (set documents.resume in "
-                        "profile.yaml): " + ", ".join(f["label"] for f in missing_files) + "."
+            self._pause(run, "stuck", "The form wants a file (" + ", ".join(f["label"] for f in missing_files)
+                        + ") and the profile doesn't say where yours is: ask Claude to set documents.resume (or "
+                        "documents.cover_letter) in profile.yaml, then press Resume."
                         + (f" {gaps}" if gaps else "")
-                        + (f" It also has {len(pending)} question(s) your profile doesn't answer." if pending else "")
+                        + (f" It also has {_count(len(pending), 'question')} your profile doesn't answer." if pending else "")
                         + couldnt, pending)
         elif gaps:
-            self._pause(run, "stuck", gaps + (f" It also has {len(pending)} other question(s), here." if pending else "")
+            self._pause(run, "stuck", gaps + (f" It also has {_count(len(pending), 'other question')}, here." if pending else "")
                         + couldnt, pending)
         elif pending:
-            self._pause(run, "questions", f"{len(pending)} question(s) your profile doesn't answer. Answer them here "
-                        "and the desk fills them in (and remembers them)." + couldnt, pending)
+            self._pause(run, "questions", f"{_count(len(pending), 'question')} your profile doesn't answer. Answer "
+                        f"{them} here: the desk fills {them} in, and remembers {them} for next time unless you untick "
+                        "that." + couldnt, pending)
         elif unfilled:
-            self._pause(run, "stuck", f"{couldnt.strip()} Fill {'it' if len(unfilled) == 1 else 'them'} in the browser, "
-                        "then press Resume (or press Resume for the desk to try again).")
+            self._pause(run, "stuck", f"{couldnt.strip()} Fill {'it' if len(unfilled) == 1 else 'them'} in the browser "
+                        "window, then press Resume; or press Resume now and the desk tries again.")
         else:
             return False
         return True
@@ -2312,9 +2321,10 @@ class Applier:
                     said = agree["text"].strip()
                     gate = f"{_page_key(data)} {said}"
                     if gate in agreed:  # pressed for them on this pass, and the page stayed
-                        return self._pause(run, "stuck", f"I pressed \u201c{said}\u201d for you (settings.accept_notices), "
-                                           "but the page stayed: it may want a box filled or a check passed first. "
-                                           "Look at it in the browser window, then press Resume.")
+                        return self._pause(run, "stuck", f"I pressed \u201c{said}\u201d for you (the desk agrees to notices "
+                                           "unless accept_notices is off in your profile), but the page stayed as it "
+                                           "was: it may want a box ticked or a check passed first. Look in the browser "
+                                           "window, then press Resume.")
                     if _terms_gate(agree, data, await srv.page_text(40000)) and _may_accept_notices():
                         try:
                             clicked = await self._press_agreement(agree["id"])
@@ -2354,12 +2364,14 @@ class Applier:
                     if badge:  # Charles Schwab's iCIMS (live check, Oct 2026): its hCaptcha held the press
                         check = "reCAPTCHA" if "re" in badge.group(0).lower() else "hCaptcha"
                         return self._pause(run, "stuck", f"I pressed \u201c{held}\u201d for you "
-                                           "(settings.accept_notices), and the page stayed with it greyed out. The page "
+                                           "(the desk agrees to notices unless accept_notices is off in your profile), and "
+                                           "the page stayed with it greyed out. The page "
                                            f"is protected by a bot check ({check}), which may want you to show you're "
                                            "not a robot: that's yours. Look at it in the browser window, then press Resume.")
-                    return self._pause(run, "stuck", f"I pressed \u201c{held}\u201d for you (settings.accept_notices), "
-                                       "but the page stayed: it may want a box filled or a check passed first. "
-                                       "Look at it in the browser window, then press Resume.")
+                    return self._pause(run, "stuck", f"I pressed \u201c{held}\u201d for you (the desk agrees to notices "
+                                       "unless accept_notices is off in your profile), but the page stayed as it "
+                                       "was: it may want a box ticked or a check passed first. Look in the browser "
+                                       "window, then press Resume.")
                 # an agreement's button greyed out on a page a bot check guards, not pressed on this pass (Charles Schwab's
                 # iCIMS, run 57, after the person's Resume: read as a page with no way on)
                 badge = _BOT_BADGE.search(" ".join([text, *(a.get("text") or "" for a in data.get("actions") or [])]))
@@ -2457,7 +2469,7 @@ class Applier:
                                        "the site's own trouble: reload the page in the browser window (later, if it's "
                                        "still so), then press Resume.")
                 return self._pause(run, "stuck", "I couldn't find the button that moves this application on. "
-                                   "Take it a step further in the browser, then press Resume.")
+                                   "Press it in the browser window, then press Resume.")
             if (kind == "form" and action.get("form_fields") == len(data.get("fields") or [])
                     and _sign_up_box(data, [action])):
                 return await self._sign_up_pause(run, data, action)  # the same box, sent by a plain button
@@ -2479,8 +2491,8 @@ class Applier:
                 # Round in a circle (Oracle sent its sites back to the posting from "Continue"):
                 # going round again only repeats it, and may email the person another code.
                 lap = " \u2192 ".join(pressed_on[pressed.index(key, max(since, fixed_at)):])
-                return self._pause(run, "stuck", f"I went round in a circle ({lap}, then back to {_where(data)}), so "
-                                   "the site isn't letting this application on. Have a look in the browser, then press "
+                return self._pause(run, "stuck", f"The site keeps sending me back to {_where(data)} instead of into "
+                                   f"the application ({lap}). Go one step into it in the browser window, then press "
                                    "Resume.")
             test = _assessment_button(data)
             # "next" on a list of jobs pressed again and again: its pages differ, but no application opens. Only
@@ -2536,7 +2548,8 @@ class Applier:
                 # practice mode: a button that sends a form and isn't a step button ("Quick Apply" on
                 # a posting) isn't pressed. That's no review page: nothing has been filled
                 return self._pause(run, "stuck", f"Practice mode: “{action['text'].strip()}” sends a form "
-                                   "and isn't a step button I know, so I didn't press it. Nothing was sent.")
+                                   "and isn't a step button I know, so I didn't press it. Nothing was sent. This is as "
+                                   "far as practice mode goes here: skip the job, or turn practice mode off to go on.")
             if clicked.get("clicked") is False and str(clicked.get("blocked") or "").startswith("Cookie"):
                 # never picked by the desk (it only declines banners), but never taken for the review page
                 return self._pause(run, "stuck", "A cookie or privacy banner is in the way, and the desk never accepts "
@@ -2758,8 +2771,8 @@ class Applier:
                     return self._pause(run, "stuck", stuck)
             else:
                 stalls = stalled_in_a_row = 0
-        self._pause(run, "stuck", "This application has more steps than I expected. Have a look in the browser, "
-                    "then press Resume.")
+        self._pause(run, "stuck", "This application has more pages than I expected, and I haven't reached its review "
+                    "page. Check where it is in the browser window, press its Next if there's more, then press Resume.")
 
     async def _resume_not_kept(self, run: Run, data: dict[str, Any]) -> str:
         """A step that won't go on with nothing said wrong, whose page shows the resume as uploaded while the hidden

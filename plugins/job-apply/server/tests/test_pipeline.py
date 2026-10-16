@@ -1173,7 +1173,7 @@ def test_a_box_that_wouldnt_fill_is_said_as_that_not_asked(srv, monkeypatch):
     r = run(go())
     assert (r.status, r.need, r.questions) == ("needs_you", "stuck", []), (r.status, r.reason, r.questions)
     assert r.reason.startswith("I couldn't fill “Country of Residence” (the page didn't respond in time). "
-                               "Fill it in the browser, then press Resume"), r.reason
+                               "Fill it in the browser window, then press Resume"), r.reason
     assert "TimeoutError" not in r.reason and "question" not in r.reason
 
 
@@ -5832,7 +5832,7 @@ def test_a_missing_file_brings_the_questions_along(srv, job_apply_home, monkeypa
         try:
             r = applier.enqueue(job["id"])
             await until(lambda: r.status not in ("queued", "running"))
-            assert r.need == "stuck" and "Resume/CV" in r.reason and "1 question(s)" in r.reason, r.reason
+            assert r.need == "stuck" and "Resume/CV" in r.reason and "1 question your profile" in r.reason, r.reason
             assert len(r.questions) == 1 and "non-compete" in r.questions[0]["label"]
         finally:
             await applier.stop()
@@ -6337,7 +6337,7 @@ def test_a_flow_that_goes_round_in_a_circle_stops_after_one_lap(srv, monkeypatch
             await applier.stop()
 
     r = run(go())
-    assert r.need == "stuck" and "went round in a circle" in r.reason, (r.status, r.reason, r.log)
+    assert r.need == "stuck" and "keeps sending me back to" in r.reason, (r.status, r.reason, r.log)
     assert "“Continue” on “Confirm Your Identity” (“We couldn't send a verification code" in r.reason
     assert [line for line in r.log if line.startswith("clicked")] == ["clicked “Apply Now”", "clicked “Next”",
                                                                        "clicked “Continue”"]
@@ -6589,7 +6589,7 @@ def test_an_answer_that_doesnt_stick_the_first_time_is_filled_again_not_asked_ag
 
     r, value = run(go())
     assert value == "Green"
-    assert sum("question(s) your profile doesn't answer" in line for line in r.log) == 1  # asked once
+    assert sum("your profile doesn't answer" in line for line in r.log) == 1  # asked once
 
 
 def test_a_turned_down_answer_is_asked_again_whatever_the_box_shows():
@@ -6923,7 +6923,7 @@ def test_a_job_picked_up_again_carries_on_with_the_form_in_its_tab(srv, monkeypa
     assert r.status == "ready" and r.page.url == f"{EXAMPLE_CORP}/careers/apply?pid=1", (r.status, r.reason, r.log)
     assert after[1:] == [1, "Sam", "No", "Decline to self-identify", "No"]
     assert not any("pid=2" in u for u in loads), loads  # the careers home's other job is never applied to
-    since = r.log[next(i for i, line in enumerate(r.log) if "question(s)" in line):]  # from the pause on
+    since = r.log[next(i for i, line in enumerate(r.log) if "your profile doesn't answer" in line):]  # from the pause on
     if how in ("answered", "resumed"):
         # the same tab, its page never loaded again: what was uploaded and filled there is kept
         assert r.page is tab and after[0] == before[0], r.log
@@ -9444,8 +9444,8 @@ def test_what_a_filled_page_still_needs_is_said_the_same_way_on_each_path(srv):
     unfilled = {"label": "Country of Residence", "kind": "combobox", "error": "TimeoutError: Locator.evaluate"}
     assert applier._stop_for_what_is_left(run_, "", [unfilled], [{"label": "Resume/CV*"}])
     assert run_.need == "stuck" and run_.reason.startswith(
-        "The form needs a file the profile doesn't point to (set documents.resume in profile.yaml): Resume/CV*. "), \
-        run_.reason
+        "The form wants a file (Resume/CV*) and the profile doesn't say where yours is: ask Claude to set "
+        "documents.resume (or documents.cover_letter) in profile.yaml, then press Resume. "), run_.reason
     nothing = Run(2)
     assert not applier._stop_for_what_is_left(nothing, "", [], []) and nothing.status != "needs_you"
 
