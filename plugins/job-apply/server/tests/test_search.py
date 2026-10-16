@@ -266,6 +266,20 @@ def test_workday_location_filter_outcomes():
     tx, az = location_terms("TX"), location_terms("AZ")
     assert _workday_location_facets(WD_FACETS, az) == {"locations": ["loc-chandler"]}
     assert _workday_location_facets(WD_FACETS, tx) == {}  # has places, none in the area
+    # the state's own value over its cities, whose counts add up higher (a multi-site posting counted under each
+    # town) and leave out the towns the plugin doesn't name (Banner's Workday, the review of Oct 15: 222 vs 192)
+    banner = [{"facetParameter": "locationMainGroup", "descriptor": "Locations", "values": [
+        {"facetParameter": "locationRegionStateProvince", "descriptor": "State", "values": [
+            {"descriptor": "Arizona", "id": "state-az", "count": 222}, {"descriptor": "Colorado", "id": "state-co", "count": 40}]},
+        {"facetParameter": "locations", "descriptor": "City", "values": [
+            {"descriptor": "Phoenix, AZ", "id": "loc-phx", "count": 150}, {"descriptor": "Mesa, AZ", "id": "loc-mesa", "count": 100},
+            {"descriptor": "Denver, CO", "id": "loc-den", "count": 40}]}]}]
+    assert _workday_location_facets(banner, az) == {"locationRegionStateProvince": ["state-az"]}
+    # (an area of cities alone asks for those cities, not the whole state)
+    assert _workday_location_facets(banner, location_terms("Phoenix|Mesa")) == {"locations": ["loc-phx", "loc-mesa"]}
+    for written in ("AZ", "US-AZ", "Arizona, United States", "United States - Arizona"):
+        banner[0]["values"][0]["values"][0]["descriptor"] = written
+        assert _workday_location_facets(banner, az) == {"locationRegionStateProvince": ["state-az"]}, written
     no_places = [{"facetParameter": "jobFamilyGroup", "descriptor": "Job Category",
                   "values": [{"descriptor": "Engineering", "id": "eng", "count": 9}]}]
     assert _workday_location_facets(no_places, tx) is None  # can't tell, so "N Locations" jobs stay
@@ -309,6 +323,80 @@ def test_a_workday_place_filter_that_finds_nothing_it_counted_is_read_around():
     facets[0]["values"][0]["values"][0]["count"] = 0
     calls.clear()
     assert asyncio.run(go())["results"] == [] and calls == [{}, {"locations": ["loc-az"]}]
+
+
+def test_a_posting_the_sites_own_area_filter_found_is_kept_however_the_site_names_its_place():
+    """Banner Health's Workday (the review of Oct 15): asked for Arizona through the site's own location filter, it
+    lists postings at "Banner Heart Hosp (6750 E Baywood Ave)", "Banner Thunderbird Med Ctr" and "Buckeye", and the
+    desk's own location check dropped three of its first twenty as nowhere. A posting the site's filter found in the
+    area is in it, whatever the site calls the place; and a bare Arizona town is a place the plugin knows now."""
+    calls = []
+    # (Banner's three ways of saying where, live: locationHierarchy2 the state; locationHierarchy1 bare towns, the
+    # plugin's and others', whose counts add up higher; locations the facilities)
+    facets = [{"facetParameter": "locationMainGroup", "values": [
+        {"facetParameter": "locationHierarchy2", "values": [{"descriptor": "Arizona", "id": "state-az", "count": 1033},
+                                                             {"descriptor": "Colorado", "id": "state-co", "count": 300}]},
+        {"facetParameter": "locationHierarchy1", "values": [
+            {"descriptor": "Phoenix", "id": "town-phx", "count": 600}, {"descriptor": "Mesa", "id": "town-mesa", "count": 400},
+            {"descriptor": "Buckeye", "id": "town-buckeye", "count": 150}, {"descriptor": "Tucson", "id": "town-tucson", "count": 100},
+            {"descriptor": "Ajo", "id": "town-ajo", "count": 5}, {"descriptor": "Page", "id": "town-page", "count": 8}]},
+        {"facetParameter": "locations", "values": [
+            {"descriptor": "Banner Heart Hosp (6750 E Baywood Ave)", "id": "loc-heart", "count": 20},
+            {"descriptor": "Banner Thunderbird Med Ctr", "id": "loc-tbird", "count": 30}]}]}]
+    postings = [
+        {"title": "Registered Nurse", "externalPath": "/job/Banner-Heart-Hosp/RN_R1", "locationsText": "Banner Heart Hosp (6750 E Baywood Ave)"},
+        {"title": "HR Generalist", "externalPath": "/job/Banner-Thunderbird/HR_R2", "locationsText": "Banner Thunderbird Med Ctr"},
+        {"title": "Recruiter", "externalPath": "/job/Page/REC_R3", "locationsText": "Page"},
+        {"title": "Nurse Recruiter", "externalPath": "/job/USA/NR_R4", "locationsText": "United States of America"}]
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        calls.append(body["appliedFacets"])
+        return httpx.Response(200, json={"total": 3, "facets": facets, "jobPostings": postings})
+
+    async def go():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(answer)) as client:
+            return await search_companies("nurse", location="AZ", client=client, companies=[
+                {"name": "Banner Health", "search": {"workday": "https://bannerhealth.wd1.myworkdayjobs.com/Banner"}}])
+
+    out = asyncio.run(go())
+    # (a place the plugin doesn't know, Page, is in the area by the site's filter; one the site says is only the
+    # country is still noted for the person)
+    assert sorted((r["title"], r["location"], r.get("notes")) for r in out["results"]) == [
+        ("HR Generalist", "Banner Thunderbird Med Ctr", []),
+        ("Nurse Recruiter", "United States of America", ["location given as 'United States of America'; check the posting"]),
+        ("Recruiter", "Page", []), ("Registered Nurse", "Banner Heart Hosp (6750 E Baywood Ave)", [])], out
+    assert calls == [{}, {"locationHierarchy2": ["state-az"]}], calls
+    assert all(r["in_area"] is True for r in out["results"]), out  # (recommend() reads it: never held for its place)
+    # (a bare town of the metro, or of the state, is a place the plugin knows; another state's stays out)
+    az = location_terms("AZ")
+    for town in ("Buckeye", "Tolleson", "Sun City", "Sun City West", "Prescott", "Flagstaff", "Litchfield Park"):
+        assert location_matches(town, az) is True, town
+    assert location_matches("Sun City, CA", az) is False and location_matches("Peoria, IL", az) is False
+
+
+def test_a_bare_town_filter_at_a_national_employer_doesnt_vouch_for_the_area():
+    """A Workday whose location values are bare towns ("Peoria": the review of 0.3.177) is filtered by them, but a
+    town's name says nothing of its state, so a posting whose own words say "Peoria, IL" is still dropped."""
+    calls = []
+    facets = [{"facetParameter": "locations", "values": [{"descriptor": "Peoria", "id": "loc-peoria", "count": 2},
+                                                          {"descriptor": "Dallas", "id": "loc-dallas", "count": 3}]}]
+    postings = [{"title": "Technician", "externalPath": "/job/Peoria-IL/T_R1", "locationsText": "Peoria, IL"},
+                {"title": "Technician II", "externalPath": "/job/Peoria-AZ/T_R2", "locationsText": "Peoria, AZ"}]
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        calls.append(body["appliedFacets"])
+        return httpx.Response(200, json={"total": 2, "facets": facets, "jobPostings": postings})
+
+    async def go():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(answer)) as client:
+            return await search_companies("technician", location="AZ", client=client, companies=[
+                {"name": "National Co", "search": {"workday": "https://national.wd5.myworkdayjobs.com/Careers"}}])
+
+    out = asyncio.run(go())
+    assert [(r["title"], r["location"]) for r in out["results"]] == [("Technician II", "Peoria, AZ")], out
+    assert calls == [{}, {"locations": ["loc-peoria"]}] and "in_area" not in out["results"][0], (calls, out)
 
 
 def test_company_filter_and_anywhere():

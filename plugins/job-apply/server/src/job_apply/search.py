@@ -101,11 +101,17 @@ class Listing:
     ats: str = ""
     company_url: str = ""  # the employer's own page for the posting, when it differs from url
     notes: list[str] = field(default_factory=list)
+    # the site's own location filter, applied with the area's state in its values, found it: its place is in the
+    # area however the site names it ("Banner Heart Hosp (6750 E Baywood Ave)": the review of Oct 15), so
+    # keep_listings keeps it and recommend() never holds it for that place
+    in_area: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         out = asdict(self)
         if not out["company_url"]:
             del out["company_url"]
+        if not out["in_area"]:
+            del out["in_area"]
         return out
 
 
@@ -244,8 +250,16 @@ def title_matches(title: str, query: str) -> bool:
 # Employers often list just the city ("Chandler (Office)"), so a state also matches its
 # main metro areas. Only states the plugin's company list covers need entries.
 STATE_CITIES = {
+    # (the metro's smaller towns and the state's other cities too, the review of Oct 15: Banner's Buckeye, Sun City
+    # and Tolleson postings were dropped as nowhere, a bare town's name saying nothing without them)
     "AZ": ["phoenix", "chandler", "tempe", "mesa", "scottsdale", "gilbert", "glendale", "peoria", "tucson",
-           "goodyear", "surprise", "avondale", "casa grande", "queen creek", "maricopa"],
+           "goodyear", "surprise", "avondale", "casa grande", "queen creek", "maricopa", "buckeye", "tolleson",
+           "sun city", "sun city west", "litchfield park", "fountain hills", "paradise valley", "cave creek", "carefree",
+           "anthem", "laveen", "ahwatukee", "apache junction", "san tan valley", "gold canyon", "el mirage",
+           "youngtown", "wickenburg", "coolidge", "eloy", "prescott", "prescott valley", "flagstaff", "yuma",
+           "sierra vista", "lake havasu city", "kingman", "bullhead city", "sedona", "show low",
+           "oro valley", "marana", "sahuarita", "green valley", "chino valley", "camp verde"],
+           # (not Nogales: Avnet's Workday lists "Nogales, Sonora, Mexico"; its Arizona namesake says "Nogales, AZ")
 }
 
 
@@ -346,8 +360,7 @@ def location_matches(text: str, terms: list[str]) -> bool | None:
     """True/False, or None when the listing is too broad to tell ("3 Locations", "Remote - US")."""
     if not terms:
         return True
-    wanted = {t.upper() for t in terms if t.upper() in US_STATES}
-    wanted |= {t[len(IN_STATE):].upper() for t in terms if t.startswith(IN_STATE)}
+    wanted = _area_states(terms)
     # Each place of a listing that names several on its own: "Austin, TX; Chandler" is in the
     # area by its Chandler, though Texas is named and Arizona isn't
     for place in re.split(r"\s*(?:[;|/]|\bor\b|\band\b)\s*", text or ""):
@@ -373,9 +386,10 @@ def location_matches(text: str, terms: list[str]) -> bool | None:
 
 def _workday_location_facets(facets: Any, terms: list[str]) -> dict[str, list[str]] | None:
     """Pick the location facet values (Workday's own location filter) that match the terms.
-    Returns {facetParameter: [ids]} for the one parameter covering the most postings, {} when
+    Returns {facetParameter: [ids]} for the parameter that names the area's state itself ("Arizona",
+    "US-AZ": every town, however small), else the one covering the most postings; {} when
     the site has location values but none in the area, and None when it has none at all."""
-    found: dict[str, list[tuple[str, int]]] = {}
+    found: dict[str, list[tuple[str, int, str]]] = {}
     any_location = False
 
     def walk(items: Any, param: str | None) -> None:
@@ -388,15 +402,61 @@ def _workday_location_facets(facets: Any, terms: list[str]) -> dict[str, list[st
                 # countries alone say nothing of which city a "2 Locations" job is in
                 any_location = any_location or not re.search(r"country", p, re.I)
                 if location_matches(str(item["descriptor"]), terms) is True:
-                    found.setdefault(p, []).append((str(item["id"]), int(item.get("count") or 0)))
+                    found.setdefault(p, []).append((str(item["id"]), int(item.get("count") or 0), str(item["descriptor"])))
             if item.get("values"):
                 walk(item["values"], p)
 
     walk(facets, None)
     if not found:
         return {} if any_location else None
-    best = max(found, key=lambda p: sum(c for _, c in found[p]))
-    return {best: [i for i, _ in found[best]]}
+    # (the state's own value over its cities: a town list counts a multi-site posting under each town and leaves out
+    # the towns the plugin doesn't name, so at Banner its locationHierarchy1 (Ahwatukee, Anthem, Buckeye, ...; 1,250)
+    # beat its locationHierarchy2 ("Arizona", 1,033), and Ajo's, Page's and Tonopah's postings were never fetched:
+    # the review of Oct 15. Among several parameters naming the state, the one whose state values count the most)
+    states = _area_states(terms)
+    statewide = [p for p in found if any(_names_a_state(d, states) for _, _, d in found[p])]
+    if statewide:
+        best = max(statewide, key=lambda p: sum(c for _, c, d in found[p] if _names_a_state(d, states)))
+    else:
+        best = max(found, key=lambda p: sum(c for _, c, _ in found[p]))
+    return {best: [i for i, _, _ in found[best]]}
+
+
+def _values_name_area(facets: Any, chosen: dict[str, list[str]], terms: list[str]) -> bool:
+    """Whether every facet value applied names the area's state ("Arizona", "Chandler, AZ"): then each posting the
+    filter finds is in the area, however the site names its place. A bare town's value ("Peoria") says nothing of
+    the state, so its postings keep their own check (a national employer's Peoria may be Illinois': the review's)."""
+    states = _area_states(terms)
+    ids = {i for values in chosen.values() for i in values}
+    names: list[str] = []
+
+    def walk(items: Any) -> None:
+        for item in items or []:
+            if isinstance(item, dict):
+                if str(item.get("id")) in ids and "descriptor" in item:
+                    names.append(str(item["descriptor"]))
+                walk(item.get("values"))
+
+    walk(facets)
+    return bool(states and names and all(_names_a_state(d, states) or _states_named(d) & states for d in names))
+
+
+def _area_states(terms: list[str]) -> set[str]:
+    """The states the area's terms name ("az", or "in:az" for a list of cities)."""
+    return ({t.upper() for t in terms if t.upper() in US_STATES}
+            | {t[len(IN_STATE):].upper() for t in terms if t.startswith(IN_STATE)})
+
+
+def _names_a_state(descriptor: str, states: set[str]) -> bool:
+    """Whether a facet value is one of the states itself: "Arizona", "AZ", "US-AZ", "Arizona, United States",
+    "United States of America - Arizona" (every state facet seen live says a bare "Arizona")."""
+    n = norm(descriptor)
+    country = r"(?:u s a?|us|usa|united states(?: of america)?)"
+    for code in states:
+        names = rf"(?:{code.lower()}|{re.escape(norm(US_STATES[code]))})"
+        if re.fullmatch(rf"(?:{country}\s+)?{names}(?:\s+{country})?(?:\s+{code.lower()})?", n):
+            return True
+    return False
 
 
 def _facet_count(facets: Any, chosen: dict[str, list[str]]) -> int:
@@ -440,7 +500,7 @@ async def _workday(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, 
 
     first = await page(0, {})
     applied: dict[str, list[str]] = {}
-    nowhere_near = False
+    nowhere_near = named_area = False
     if terms and first.get("facets"):
         # Use the site's own location filter when one of its values names the area;
         # otherwise scan unfiltered results and filter them afterwards.
@@ -451,6 +511,7 @@ async def _workday(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, 
             # there, its first place being "Remote - US": then read them all and check here
             if (int(filtered.get("total") or 0) or filtered.get("jobPostings")
                     or not _facet_count(first["facets"], match)):
+                named_area = _values_name_area(first["facets"], match, terms)
                 applied, first = match, filtered
         # The filter lists every place these results are in. If none is in the area,
         # neither is any "3 Locations" job.
@@ -476,6 +537,8 @@ async def _workday(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, 
             break
         data = await page(offset, applied)
     out = out[:limit]
+    for listing in out:  # (found by the site's own filter with the area's state named: in it, however it names the place)
+        listing.in_area = named_area
     await _workday_places(client, cxs, base, out, terms, in_area=bool(applied))
     return out
 
@@ -2343,6 +2406,8 @@ def keep_listings(company: str, listings: list[Listing], terms: list[str], limit
         seen.add(listing.url)
         listing.company = company
         where = location_matches(listing.location, terms)
+        if where is False and listing.in_area:
+            where = True  # (the site's own area filter found it: in the area, however the site names its place)
         if where is False:
             continue
         if where is None:
