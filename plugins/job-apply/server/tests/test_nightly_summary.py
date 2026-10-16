@@ -167,3 +167,19 @@ def test_the_counts_name_the_employers_still_back(tmp_path, capsys):
     out = capsys.readouterr().out
     assert "accounts (2): needs_you stuck 1, ready 1" in out
     assert "still back: KLA (accounts; last there 2026-10-14)" in out
+
+
+def test_an_employer_new_to_a_check_that_goes_as_far_as_it_can_is_listed_as_added():
+    """Run 104's thirty-nine chip employers, new to the search check, were filed under "look at" (nothing says
+    where a working search stops): an employer new to a check, as far as the check goes, is "added", apart."""
+    comment = """3 changes since the last nightly live check:
+
+**Search: does each employer's search work**
+
+- Matheson: *new* \u2192 `works` (`12 in AZ`)
+- TSMC Arizona: *new* \u2192 `no search` (`careers page opened`)
+- Odd Co: *new* \u2192 `error` (`SearchError: no results block`)
+"""
+    out = ns.triage(comment)
+    assert out["added"] == ["search: Matheson: new -> works: works", "search: TSMC Arizona: new -> no search: no search"]
+    assert out["look"] == ["search: Odd Co: new -> error: error"] and out["better"] == [] and out["expected"] == []
