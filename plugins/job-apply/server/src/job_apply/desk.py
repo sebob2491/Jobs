@@ -647,9 +647,7 @@ class Desk:
             "listings": rows,
             "others": others,
             "applications": applications,
-            # the common questions, with the person's answers (the patterns stay here); not one the profile answers
-            "bank": [{k: v for k, v in q.items() if k not in ("match", "example")} for q in config.question_bank()
-                     if q.get("answer") not in (None, "") or not _profile_answers(q, prof)],
+            "bank": autofill.common_questions(prof),  # the common questions, with the person's answers
             "current": self.applier.current,
             "queued": [jid for kind, jid in self.applier.tasks if kind == "apply"],
             "paused": self.applier.paused,  # (Pause queue: nothing new starts until Resume queue)
@@ -660,14 +658,6 @@ class Desk:
 
 # a job the person sent in (or is about to): listed under My applications with where it stands
 APPLICATION_STATUSES = ("ready_to_submit", "applied", "interviewing", "offer", "rejected", "withdrawn")
-
-
-def _profile_answers(q: dict[str, Any], prof: config.Profile) -> bool:
-    """Does the person's profile answer this common question already (its example wording, the bank aside)?"""
-    try:
-        return autofill._resolve_field({"kind": "text", "label": q.get("example") or q["ask"]}, prof) is not None
-    except Exception:  # a profile the rules can't read for it: asked, as before
-        return False
 
 
 def _first_line(e: BaseException) -> str:

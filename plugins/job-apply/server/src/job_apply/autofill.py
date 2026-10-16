@@ -18,6 +18,7 @@ from datetime import date
 from pathlib import Path
 from typing import Any, Callable
 
+from . import config
 from .config import Profile, expand, question_core
 
 US_STATES = {
@@ -2545,6 +2546,20 @@ def site_default(f: dict) -> bool:
     options = [str(o) for o in f.get("options") or []]
     return f.get("kind") == "select" and not f.get("multiple") and not f.get("judged") and len(options) > 1 \
         and norm(f.get("value")) == norm(options[0]) and not any(is_empty_value(o) for o in options)
+
+
+def common_questions(prof: Profile) -> list[dict[str, Any]]:
+    """The common questions (data/question_bank.yaml) the person is asked, on the desk's card and in setup: each with
+    their answer where they gave one, and not one their profile answers already (asked in its example's words), unless
+    they answered it anyway. The bank's patterns stay here."""
+    def profile_answers(q: dict[str, Any]) -> bool:
+        try:
+            return _resolve_field({"kind": "text", "label": q.get("example") or q["ask"]}, prof) is not None
+        except Exception:  # a profile the rules can't read for it: asked, as before
+            return False
+
+    return [{k: v for k, v in q.items() if k not in ("match", "example")} for q in config.question_bank()
+            if q.get("answer") not in (None, "") or not profile_answers(q)]
 
 
 def plan_autofill(fields: list[dict], prof: Profile, job: dict | None = None, overwrite: bool = False,

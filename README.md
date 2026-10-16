@@ -330,6 +330,7 @@ plugins/job-apply/
 | Tool | Purpose |
 |---|---|
 | `setup_status`, `get_profile` | Check what's missing and read the profile |
+| `common_questions` | List the questions most applications ask that the profile doesn't answer (desired pay, start date, shifts...) and save the person's answers, as the desk's Common questions card does |
 | `doctor` | Check this computer's setup (Python, uv, the plugin's version, the browser, the profile and resume) and say what to fix; the same as the `job-apply-doctor` command |
 | `search_company_jobs` | Search employers' own job boards (Workday, Greenhouse, Lever, Eightfold, SmartRecruiters, Oracle, and ASML's site) by keyword and location; sites that refuse direct requests are read through a background browser tab |
 | `ingest_job`, `add_job` | Save a posting. Parses Workday, Greenhouse, Lever and SmartRecruiters APIs, schema.org JobPosting data, or page text. |
