@@ -129,7 +129,10 @@ the scrubber (`python -m job_apply.fixtures`) before they become test fixtures.
   chose; setup tells each person; never in practice mode, except the live check's test identity)
   the desk creates an account with that system's saved password, ticking only the site's terms
   (never a newsletter), and resets a saved password the site refuses, through the site's own
-  "Forgot password" and its emailed link. A CAPTCHA on the way stays the person's; security
+  "Forgot password" and its emailed link. An account there from before that still needs verifying
+  (the site refuses the sign-in for it: Workday's "Verify your account before you sign in") isn't
+  reset: with the inbox watched the desk presses the site's own "Resend Account Verification",
+  once a job, and opens the new email's link, as it does a new account's. A CAPTCHA on the way stays the person's; security
   questions are the person's to answer, in the browser or on the desk's card (for that form alone,
   never remembered, logged or saved with a page), and the desk never makes up an answer. With it
   off, it never creates one.

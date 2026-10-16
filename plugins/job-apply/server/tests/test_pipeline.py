@@ -4881,6 +4881,8 @@ def test_with_the_inbox_a_new_account_to_verify_is_signed_in_to_once_its_link_is
     assert made < waited < opened and len(after) == 1 and opened < after[0], log  # (once the wait began: once, after the link)
     assert sum(line.startswith("created your account on") for line in log) == 1, log
     assert r.need not in ("sign_in", "email_code"), (r.reason, log)
+    # (the email it says it just sent is waited for: its "Resend Account Verification" isn't pressed)
+    assert did.get("resends", 0) == 0 and not any("Resend" in line for line in log), (did, log)
 
 
 def test_without_the_inbox_a_new_account_to_verify_waits_for_the_person_and_their_resume(srv, monkeypatch, job_apply_home):
@@ -4916,6 +4918,146 @@ def test_without_the_inbox_a_new_account_to_verify_waits_for_the_person_and_thei
     assert (before["created"], before.get("signIns", 0)) == (1, 0), before
     assert did["signIns"] == 1 and r.seen_form and r.need != "sign_in", (did, r.reason, r.log)
     assert sum(line.startswith("created your account on") for line in r.log) == 1, r.log
+
+
+def test_a_resume_before_the_new_accounts_link_tries_the_password_once_and_waits_again(srv, monkeypatch, job_apply_home):
+    """The same new account with no inbox, and a Resume pressed before the link was opened: the saved password
+    is tried once (as the card promised), the site refuses it with "An email has been sent to you. Please verify
+    your account" again, and the desk waits again, with the same card; never a password reset (the site sends
+    no email for an unverified account) or a second Create Account for an email that has one (the review of
+    0.3.178). The Resume after the link signs in."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    saved_password(monkeypatch)
+    manage_accounts(job_apply_home)
+    monkeypatch.setattr(pipeline.mailbox, "search", lambda *a, **k: pytest.fail("the inbox was read"))
+    job = srv.add_job(url=fixture_url("site/workday-account.html") + "?create&verify", title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            applier.resume(job["id"])  # (too soon: the link isn't opened)
+            await until(lambda: r.status not in ("queued", "running") and r.sign_in_tries > 0, about=state(r))
+            early = (r.status, r.need, r.reason, await workday_did(r.page))
+            await r.page.evaluate("() => sessionStorage.setItem('wd.verified', 'true')")  # the link, opened elsewhere
+            applier.resume(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r, early, await workday_did(r.page)
+        finally:
+            await applier.stop()
+
+    r, (status, need, reason, early), did = run(go())
+    assert (status, need) == ("needs_you", "sign_in") and "verify your new account" in reason, (reason, r.log)
+    assert "didn't sign in" not in reason and "reset" not in reason, reason
+    assert (early["created"], early["signIns"], early.get("resets", 0), early.get("presses")) == (1, 1, 0, 1), early
+    assert did["signIns"] == 2 and r.seen_form and r.need != "sign_in", (did, r.reason, r.log)
+    assert not any("password reset" in line for line in r.log), r.log
+
+
+@pytest.mark.parametrize("said, refused", [
+    ("Verify your account before you sign in or request a verification email.", True),  # Workday's (Vanguard)
+    ("You need to verify your account before you can sign in. Request a verification email.", True),
+    ("Please verify your email address before logging in.", True),
+    ("Your account has not been verified. Check your email for the verification link.", True),
+    ("An email has been sent to you. Please verify your account", False),  # a new account's (Banner Health's)
+    ("Sign in to this account or enter an email address that isn't already in use.", False),
+    ("You may have entered the wrong email address or password or your account might be locked.", False),
+])
+def test_the_words_of_a_sign_in_refused_for_want_of_the_accounts_verification(said, refused):
+    """A sign-in refused because the account was never verified (the site's own alert), as against a new
+    account's word that the email is on its way, or any other refusal."""
+    assert bool(pipeline._VERIFY_FIRST.search(said)) is refused, said
+
+
+def test_an_account_there_from_before_that_still_needs_verifying_gets_its_email_sent_again(srv, monkeypatch,
+                                                                                            job_apply_home):
+    """Vanguard's Workday (live, run 98, the test identity): the account made in an earlier run was never
+    verified (its link went unopened), so Sign In was refused with "Verify your account before you sign in or
+    request a verification email." and the page offered "Resend Account Verification". The desk waited for an
+    email sent days before (and in runs 96 and 97 asked for a password reset instead, which such an account
+    gets no email for, then stopped on the sign-in). With the inbox watched it presses that button, once, waits
+    for the new email, opens its link and signs in with the saved password, once; no reset is asked for and
+    no account made."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "MAIL_POLL_SECONDS", 0)
+    monkeypatch.setenv("JOB_APPLY_SECRET_EMAIL_PASSWORD", "an-app-password")
+    monkeypatch.setattr(pipeline.mailbox, "imap_host", lambda address: "imap.example.com")
+    saved_password(monkeypatch)
+    manage_accounts(job_apply_home)
+    asked = []
+
+    with served_fixtures() as site:
+        link = f"{site}site/workday-verify.html"
+
+        def inbox(address, password, since, senders, want, allowed_link, before=None, look_back=None, others=None):
+            asked.append(want)
+            return pipeline.mailbox.Found(want, link, "myworkday.com", time.time()) if want == "link" else None
+
+        monkeypatch.setattr(pipeline.mailbox, "search", inbox)
+        job = srv.add_job(url=f"{site}site/workday-account.html?exists=not-a-real-password&verify=stale", title="FSE",
+                          company="Example Fab")["job"]
+        applier = Applier(srv)
+
+        async def go():
+            applier.start()
+            try:
+                r = applier.enqueue(job["id"])
+                await until(lambda: r.seen_form and r.status not in ("queued", "running"), about=state(r))
+                return r, await workday_did(r.page)
+            finally:
+                await applier.stop()
+
+        r, did = run(go())
+    log = r.log
+    assert "link" in asked and "reset" not in asked, asked
+    assert (did.get("resends", 0), did.get("resets", 0), did.get("presses", 0), did["signIns"]) == (1, 0, 0, 2), (did, log)
+    resent = next(i for i, line in enumerate(log) if line.startswith("pressed \u201cResend Account Verification\u201d"))
+    waited = next(i for i, line in enumerate(log) if "verified from the link it emailed" in line)
+    opened = log.index("opened the confirmation link from your email (sent from myworkday.com)")
+    sign_ins = [i for i, line in enumerate(log) if line.startswith("pressed \u201cSign In\u201d")]
+    assert len(sign_ins) == 2 and sign_ins[0] < resent < waited < opened < sign_ins[1], log
+    assert "pressed \u201cResend Account Verification\u201d and is watching your inbox" in log[waited], log[waited]
+    assert "didn't sign in" not in "\n".join(log) and r.need not in ("sign_in", "email_code"), (r.reason, log)
+
+
+def test_without_the_inbox_an_account_that_still_needs_verifying_is_told_with_the_sites_resend_button(srv, monkeypatch,
+                                                                                                      job_apply_home):
+    """The same refusal with no inbox to read: nothing is pressed for the person (the email is theirs to find,
+    or to ask for again), no reset is asked for and no account made; the card says the account there still
+    needs verifying and names the site's "Resend Account Verification". Their Resume after the link signs in
+    once."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    saved_password(monkeypatch)
+    manage_accounts(job_apply_home)
+    monkeypatch.setattr(pipeline.mailbox, "search", lambda *a, **k: pytest.fail("the inbox was read"))
+    job = srv.add_job(url=fixture_url("site/workday-account.html") + "?exists=not-a-real-password&verify=stale", title="FSE",
+                      company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            await asyncio.sleep(1.5)  # (the queue's polls: none of them presses anything)
+            paused = (r.status, r.need, r.reason, await workday_did(r.page))
+            await r.page.evaluate("() => sessionStorage.setItem('wd.verified', 'true')")  # the link, opened elsewhere
+            applier.resume(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r, paused, await workday_did(r.page)
+        finally:
+            await applier.stop()
+
+    r, (status, need, reason, before), did = run(go())
+    assert (status, need) == ("needs_you", "sign_in"), (reason, r.log)
+    assert "verified from the link it emailed" in reason and "press Resume" in reason, reason
+    assert "(its \u201cResend Account Verification\u201d sends a new one)" in reason, reason
+    assert "didn't sign in" not in reason and "locked" not in reason, reason
+    assert (before.get("resends", 0), before.get("resets", 0), before.get("presses", 0), before["signIns"]) == (0, 0, 0, 1), before
+    assert did["signIns"] == 2 and r.seen_form and r.need != "sign_in", (did, r.reason, r.log)
+    assert not any(line.startswith("pressed \u201cResend") for line in r.log), r.log  # (named on the card, never pressed)
 
 
 @pytest.mark.parametrize("page, query, says", [

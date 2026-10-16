@@ -216,7 +216,11 @@ application there; the other jobs carry on meanwhile), or its reset isn't one th
 (a security question, say: those stay yours), it opens that employer's Create
 Account form ("Create an account", "Register", "Don't have an account yet?") and creates the
 account. Without the email app password it tries Create Account first, and asks you to
-open the reset email where the site says the email already has an account. To do these steps yourself, set
+open the reset email where the site says the email already has an account. An account you made
+there before that was never verified (the site refuses the sign-in with "Verify your account
+before you sign in") isn't reset: with the email app password the desk presses the site's
+"Resend Account Verification" once and opens the new email's link; without it the card names
+that button. To do these steps yourself, set
 `manage_accounts: false` under `settings:` in your profile: the desk then fills in Create
 Account for you to finish. Practice mode never creates an account. On Qorvo's one-page application
 it puts the password in both boxes. The password goes from the page straight into

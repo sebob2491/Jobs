@@ -19,6 +19,11 @@
      opened in another tab: over http its localStorage stands in for the site's own records, shared by the
      browser's tabs (a file:// page has none: there wd.verified, in this tab's sessionStorage, is the link
      opened elsewhere). ?verify=late: Sign In says so only once its button is pressed.
+     ?verify=stale (with ?exists): the email's account there was never verified (Vanguard's, live, Oct 2026,
+     the test identity's from an earlier run): Sign In is refused, whatever the password, with "Verify your
+     account before you sign in or request a verification email.", and from then on the page shows Workday's
+     "Still can't sign in?" blurb with its "Resend Account Verification" (presses counted in wd.resends, each
+     said to have sent a new email); once the link was opened, the password is checked as usual.
      ?cover: Sign In's button drawn as KLA's was (live, Oct 2026): a form's "Sign In" button, hidden
      (aria-hidden, tabindex -2), under a div of the site's own (role="button", data-automation-id="click_filter",
      named "Submit") that takes the click. The hidden button does nothing, and nothing is said. -->
@@ -35,10 +40,20 @@
   const step = document.getElementById('step');
   const $ = (id) => document.getElementById(id);
   const VERIFY = 'An email has been sent to you. Please verify your account';
+  const VERIFY_FIRST = 'Verify your account before you sign in or request a verification email.';
   const verified = () => {
     try { return got('verified', false) || localStorage.getItem('wd.verified') === 'yes'; } catch (e) { return got('verified', false); }
   };
-  const unverified = () => q.has('verify') && got('created', 0) > 0 && !verified();
+  const unverified = () => q.has('verify') && q.get('verify') !== 'stale' && got('created', 0) > 0 && !verified();
+  const stale = () => q.get('verify') === 'stale' && !verified();
+  // Workday's blurb beside a sign-in refused for want of the verification, and its button
+  const blurb = () => (unverified() && (q.get('verify') !== 'late' || got('refused', false)) || stale() && got('refused', false))
+    ? '<div id="blurb"><span>Still can\'t sign in? Be sure to check your spam folder, your account may need verification'
+      + '</span><button type="button" id="resend">Resend Account Verification</button></div>' : '';
+  const wireResend = () => {
+    const b = $('resend');
+    if (b) b.addEventListener('click', () => { bump('resends'); $('err').textContent = 'A new verification email has been sent.'; });
+  };
 
   function signIn() {
     step.innerHTML = '<h2>Sign In</h2>'
@@ -50,13 +65,25 @@
           + '</div><button type="submit" id="hidden-go" aria-hidden="true" tabindex="-2" style="width: 100%; height: 100%">'
           + 'Sign In</button></div>'
         : '<button type="button" id="go">Sign In</button>')
-      + '<div id="err" role="alert">' + (unverified() && q.get('verify') !== 'late' ? VERIFY : '') + '</div>'
+      + '<div id="err" role="alert">' + (unverified() && q.get('verify') !== 'late' ? VERIFY
+                                         : stale() && got('refused', false) ? VERIFY_FIRST : '') + '</div>'
+      + blurb()
       + '<button type="button" id="forgot">Forgot your password?</button>'
       + '<div>Don\'t have an account yet? <button type="button" id="create">Create Account</button></div>';
+    wireResend();
     $('go').addEventListener('click', () => {
       bump('signIns');
       const account = got('account', null);
-      if (unverified()) $('err').textContent = VERIFY;
+      if (stale()) {
+        put('refused', true);
+        $('err').textContent = VERIFY_FIRST;
+        if (!$('resend')) { $('err').insertAdjacentHTML('afterend', blurb()); wireResend(); }
+      }
+      else if (unverified()) {
+        put('refused', true);
+        $('err').textContent = VERIFY;
+        if (!$('resend')) { $('err').insertAdjacentHTML('afterend', blurb()); wireResend(); }
+      }
       else if (account !== null && $('pw').value === account) location.href = 'step1.html';
       else $('err').textContent = 'You may have entered the wrong email address or password or your account might be locked.';
     });
