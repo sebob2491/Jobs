@@ -190,6 +190,46 @@ def use_role(name: str, email: str | None = None) -> None:
     (_HOME / "profile.yaml").write_text(yaml.safe_dump(profile), encoding="utf-8")
 
 
+# Each box's live value written into the page's markup, so a saved page shows what the boxes held: a React form's
+# boxes (Oracle's, Eightfold's, UKG Pro's, Greenhouse's: run 107, 264 of Oracle's boxes without a value attribute)
+# keep their values as properties, which the saved markup (frame.content()) never carries. Never a password's or a
+# security answer's (data-ja-secret), nor a file box's; a list's chosen entry and a tick are marked too.
+BAKE_VALUES_JS = """
+() => {
+  const secret = (el) => (el.type || '').toLowerCase() === 'password' || el.hasAttribute('data-ja-secret')
+    || !!el.closest('[data-ja-secret]');
+  let n = 0;
+  for (const el of document.querySelectorAll('input')) {
+    if (secret(el)) continue;
+    const t = (el.type || 'text').toLowerCase();
+    if (t === 'checkbox' || t === 'radio') {
+      if (el.checked) el.setAttribute('checked', ''); else el.removeAttribute('checked');
+      continue;
+    }
+    if (['file', 'hidden', 'submit', 'button', 'image', 'reset'].includes(t)) continue;
+    if (el.value) { el.setAttribute('value', el.value); n += 1; } else el.removeAttribute('value');
+  }
+  for (const el of document.querySelectorAll('textarea')) {
+    if (!secret(el) && el.textContent !== el.value) { el.textContent = el.value; n += 1; }
+  }
+  for (const el of document.querySelectorAll('select')) {
+    for (const o of el.options) { if (o.selected) o.setAttribute('selected', ''); else o.removeAttribute('selected'); }
+  }
+  return n;
+}
+"""
+
+
+async def bake_values(page: Any) -> int:
+    """Each box's value written into the page's markup, in every frame, before a snapshot (BAKE_VALUES_JS): the
+    boxes written. A frame that won't take the script is left as it is."""
+    baked = 0
+    for frame in list(getattr(page, "frames", None) or []):
+        with contextlib.suppress(Exception):
+            baked += int(await frame.evaluate(BAKE_VALUES_JS) or 0)
+    return baked
+
+
 def profile_values(path: Path | None = None) -> dict[str, Any]:
     """What the review page should show of this run's applicant, noted in each employer's record ("profile") for
     the live audit's values check (live_audit.py): the name, the jobs and schools (title, company, start, end;
@@ -391,6 +431,8 @@ async def check_company(company: dict[str, Any], out: Path, fixtures: bool, rec:
             "failed": filled["failed"],
             "needs_input": [field_brief(f) for f in filled["needs_input"]],
         }
+    with contextlib.suppress(Exception):
+        await bake_values(await server.browser.page())  # (the boxes' values into the saved page)
     snap = await server.debug_snapshot(note=f"live smoke: {company['name']}")
     dest = out / "snapshots" / slug(company["name"])
     shutil.copytree(snap["saved_to"], dest, dirs_exist_ok=True)
@@ -1549,6 +1591,7 @@ def best_posting(results: list[dict[str, Any]]) -> dict[str, Any]:
 ASSESSMENT_PAGES = 100  # (Circle K's: a page for each statement, run 62)
 ASSESSMENT_SECONDS = 600
 ASSESSMENT_OPEN_WAIT = 20  # seconds for the assessment to open after Take Assessment (Circle K's: a moment after)
+TAKE_BUTTON_WAIT = 6  # seconds for the Take Assessment button itself to be drawn (a slow page, or a slow Windows runner)
 _TAKE_ASSESSMENT = re.compile(r"^(?:take|start|begin|launch|continue)\s+(?:the\s+|your\s+)?assessment\b", re.I)
 _ASSESSMENT_ON = re.compile(r"^(?:next|continue|start|begin|get started|let'?s (?:begin|start)|proceed|ok|okay|"
                             r"i agree|agree|accept|i accept|i understand|i'?m ready|ready|"
@@ -1713,11 +1756,15 @@ async def _take_assessment(run: Any, steps: list[dict[str, Any]], rec: dict[str,
     home = (urlsplit(run.page.url).hostname or "").lower()
     application = {h for h in (home, (urlsplit(getattr(run, "url", "") or "").hostname or "").lower()) if h}
     start = time.monotonic()
-    data = await server.inspect_form(include_dropdown_options=False)
-    take = next((a for a in data.get("actions") or [] if not a.get("disabled")
-                 and _TAKE_ASSESSMENT.match((a.get("text") or "").strip())), None)
-    if take is None:
-        return "no Take Assessment button"
+    take = None
+    while take is None:  # (drawn a moment after the page: looked for again for a few seconds, CI's Windows runner)
+        data = await server.inspect_form(include_dropdown_options=False)
+        take = next((a for a in data.get("actions") or [] if not a.get("disabled")
+                     and _TAKE_ASSESSMENT.match((a.get("text") or "").strip())), None)
+        if take is None and time.monotonic() - start > TAKE_BUTTON_WAIT:
+            return "no Take Assessment button"
+        if take is None:
+            await asyncio.sleep(0.5)
     ctx = run.page.context
     before = {id(p) for p in ctx.pages}
     out = await server.click(take["id"])  # (the desk's own guard)
@@ -2051,6 +2098,7 @@ async def check_pipeline(company: dict[str, Any], out: Path, rec: dict[str, Any]
         try:
             if run is not None:  # the job's own tab, not whichever the browser was last on (Benchmark's, run 11: blank)
                 server.browser.use_tab(run.page)
+                await bake_values(run.page)  # (the boxes' values into the saved page: the values audit reads them)
             snap = await server.debug_snapshot(note=f"live pipeline: {company['name']}")
             dest = out / "pipeline" / slug(company["name"])
             shutil.copytree(snap["saved_to"], dest, dirs_exist_ok=True)

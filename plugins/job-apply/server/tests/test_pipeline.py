@@ -8183,7 +8183,7 @@ def test_a_degree_list_with_no_choices_at_all_is_reloaded_once_then_said_to_have
         try:
             r = applier.enqueue(job["id"])
             r.hands_on = hands_on  # (as after the person's Resume on it)
-            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            await until(lambda: r.status not in ("queued", "running"), timeout=180, about=state(r))  # (two passes: slow on CI's Windows)
             return r, await r.page.evaluate("() => document.getElementById('dg-1').textContent")
         finally:
             await applier.stop()
