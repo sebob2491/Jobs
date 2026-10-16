@@ -204,10 +204,11 @@ def _aliases(n: str) -> set[str]:
 
 _DEGREES = [
     ("doctorate", r"\b(ph ?d|doctor(ate|al)?|d ?phil|ed ?d)\b"),
-    ("master", r"\b(master s?|masters|ms|m s|ma|m a|msc|meng|m eng|mba|m b a|mfa)\b"),
-    ("bachelor", r"\b(bachelor s?|bachelors|bs|b s|ba|b a|bsc|beng|b eng|bse|bsee|bsme)\b"),
-    ("associate", r"\b(associate s?|associates|aas|a a s)\b"),
-    ("high_school", r"\b(high school|ged)\b"),
+    # (each level in the bare singular too, "Bachelor", as Workday lists write it: the review of 0.3.175)
+    ("master", r"\b(master(?: s|s)?|ms|m s|ma|m a|msc|meng|m eng|mba|m b a|mfa)\b"),
+    ("bachelor", r"\b(bachelor(?: s|s)?|bs|b s|ba|b a|bsc|beng|b eng|bse|bsee|bsme)\b"),
+    ("associate", r"\b(associate(?: s|s)?|aas|a a s)\b"),
+    ("high_school", r"\b(high school|hs|h s|ged)\b"),
 ]
 
 
@@ -243,6 +244,22 @@ def degree_key(s: str) -> str | None:
         if re.search(pattern, n):
             return key
     return None
+
+
+# A diploma's equivalents (on norm()'s text)
+_GED = re.compile(r"\b(ged|equivalen\w*|hiset|tasc|hsed)\b")
+
+
+def _same_schooling(want: str, option: str) -> bool:
+    """Within the high-school level, a GED (or another equivalent) and a diploma are different schooling: a GED
+    matches a choice that names one ("GED", "High School Diploma or Equivalent") or the bare level ("High School",
+    the level most lists mean, which a GED is the equivalent of), never a diploma; a diploma one that says high
+    school or a diploma, not an equivalent alone ("High School Equivalent (GED)"). Both on norm()'s text."""
+    if degree_key(want) != "high_school":
+        return True
+    if _GED.search(want):
+        return bool(_GED.search(option) or re.search(r"\bhigh school\b(?! diploma)", option))
+    return bool(re.search(r"\bdiploma\b|\bhigh school\b(?! equivalen)", option))
 
 
 # Schooling begun but not finished: "Some High School", "Some College", "Associate's (in
@@ -405,7 +422,11 @@ def choose_option(desired: Any, options: list[str], exact_only: bool = False, na
     # 4. degrees: "BS Electrical Engineering" ~ "Bachelor's Degree"
     dk = degree_key(want)
     if dk:
-        same = [(o, n) for o, n in normed if degree_key(n) == dk]
+        same = [(o, n) for o, n in normed if degree_key(n) == dk and _same_schooling(want, n)]
+        if not same and any(degree_key(n) for _, n in normed):
+            # a level the list lacks is never another level, nor a GED a diploma ("Bachelor's Degree" among Master's,
+            # Doctorate and Other was Master's, by the words they share: the review of Oct 15): the person's to say
+            return None
         if len(same) == 1:
             return same[0][0]
         # several of that level ("Bachelor of Arts", "Bachelor of Science"): the kind the answer names, however
@@ -819,7 +840,9 @@ def _age(invert: bool) -> Getter:
     """Over 18 (or, inverted, under). Not answered from age alone when the question also asks
     about working or sponsorship ("at least 18 and legally authorized to work…?")."""
     def g(prof: Profile, job: dict, label: str = "") -> Any:
-        if re.search(r"authori[sz]|sponsor|eligib|legally|permitted to work|able to work|right to work", norm(label)):
+        # (nor from a count of 18 months, hours, credits or units, or 18 years of experience or work: the review of Oct 15)
+        if re.search(r"authori[sz]|sponsor|eligib|legally|permitted to work|able to work|right to work|"
+                     r"\b(months?|hours?|credits?|units?|experience|work(ed|ing)?)\b", norm(label)):
             return None
         return _yn("work_authorization.over_18", invert=invert)(prof, job)
     return g
@@ -1317,8 +1340,13 @@ RULES: list[tuple[str, str, Getter, int | None, set[str] | None]] = [
     ("signature", r"(electronic |e )?signature|sign your (full )?name", _full_name, 80, {"text"}),
     # questions (any length)
     # the same facts asked the other way round come first
-    ("under_18", r"(under|less than|below|younger than) (the age of )?(18|eighteen)", _UNDER_18, None, None),
-    ("over_18", r"(18|eighteen) years|at least 18|over the age of (18|eighteen)\b|age of 18|legal age", _OVER_18, None, None),
+    # (years of age: never 18 months, hours, credits or years of experience, the review of Oct 15; nor "if under 18,
+    # give your date of birth" after the age question, which asks the other way)
+    ("under_18", r"(?<!\bif )(under|less than|below|younger than) (the age of )?(18|eighteen)\b(?! ?(months?|hours?|days?|weeks?|"
+                 r"credits?|units?|yrs?|years? (of )?(experience|work|service)))", _UNDER_18, None, None),
+    ("over_18", r"(18|eighteen) years(?! (of )?(experience|work|service))|at least (18|eighteen)\b(?! ?(months?|hours?|days?|"
+                r"weeks?|credits?|units?|yrs?|years? (of )?(experience|work|service)))|over (the age of )?(18|eighteen)\b|"
+                r"\b(18|eighteen) or (older|over)\b|age of 18|legal age", _OVER_18, None, None),
     # Yes means no sponsorship: "…without sponsorship?", "…and do not require sponsorship?"
     # (only filler words between the "no" and the sponsorship: "Please answer yes or no: will
     # you require sponsorship?" asks the other way)

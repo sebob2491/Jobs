@@ -1220,6 +1220,29 @@ def test_what_attests_to_an_application_and_what_doesnt():
                  "certifying the information is true and complete and that I am authorized to work in the United States"):
         assert attestation({"kind": "radio_group", "label": consent.format(said), "required": True,
                             "options": ["I agree"]}) is None, said
+    # (the review of Oct 15: a box whose words also say something about the person, or ask another question, is
+    # theirs, as a lone choice's are)
+    for said in ("I certify that the information provided is true and complete, and that I am legally authorized to "
+                 "work in the United States",
+                 "I certify that the information provided is true and complete and I have never been convicted of a felony",
+                 "I certify the information is true and that I am at least 18 years of age",
+                 "I certify that the information provided is true and complete and that I am willing to undergo a "
+                 "background check",
+                 "Have you ever been convicted of a crime? I certify that the information provided is true"):
+        assert attestation({"kind": "checkbox", "label": said, "required": True}) is None, said
+    # but not for its consequence clauses, which say nothing about the person (the second review's)
+    for said in ("I certify that my answers are true and complete to the best of my knowledge. I understand that if I am "
+                 "employed, false statements on this application shall be considered sufficient cause for dismissal.",
+                 "I certify that the information provided is true and complete. I understand that I am subject to a "
+                 "background check as a condition of employment.",
+                 "I certify that the information provided is true and complete and understand that this employer is a "
+                 "drug-free workplace",
+                 "I certify that the information is true and understand that eligibility for employment is contingent "
+                 "on a background check",
+                 "I certify that the information provided is true and complete and that I may be required to present a "
+                 "valid driver's license if hired",
+                 "I acknowledge that I am applying with Example Corp and that the information provided is true and complete"):
+        assert attestation({"kind": "checkbox", "label": said, "required": True}) is True, said
     privacy = consent.format("acknowledging you have received and had the opportunity to review the above Privacy Notice")
     for no in ("I disagree", "Decline", "Do not agree"):
         assert attestation({"kind": "radio_group", "label": privacy, "required": True, "options": [no]}) is None, no
@@ -8158,6 +8181,19 @@ def test_a_degree_list_without_the_profiles_degree_says_so_not_that_the_profile_
     assert f"The Degree list has no choice for your GED ({school} in Education 1)" in said, said
     assert "doesn't have this for them" not in said and "Others" in said, said
     assert rest == []
+
+
+def test_a_degree_list_in_the_bare_singular_has_the_profiles_degree(srv):
+    """The review of 0.3.175: "Bachelor" alone (the list of issue #112, note 16) was no degree level, so with
+    0.3.175's "a level the list lacks is never another" the desk would have said the list has no choice for the
+    profile's bachelor's and stopped. The level in the bare singular is the level."""
+    applier = Applier(srv)
+    degree = {"id": "a", "label": "Degree*", "section": "Education 1", "required": True, "kind": "listbox",
+              "options": ["Certificate", "Foundation", "Associate", "Bachelor", "Master", "Doctor", "Ph.D.", "Others",
+                          "Some College", "No degree (Dropped out)"]}
+    said, rest = applier._entry_gaps(Run(1, "Technician", "Example Litho"),
+                                     {"url": "https://example.wd1.myworkdayjobs.com/x"}, [degree])
+    assert not any("Degree list" in s for s in said), said  # (the conftest profile's BS Electrical Engineering is there)
 
 
 def test_a_degree_list_with_several_kinds_of_the_profiles_degree_says_so(srv):

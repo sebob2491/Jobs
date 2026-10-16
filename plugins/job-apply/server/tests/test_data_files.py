@@ -14,12 +14,14 @@ def test_profile_template_loads_with_safe_defaults(tmp_path):
     assert (s.submit_mode, s.auto_submit_ats, s.email_codes, s.email_tracking) == ("review", [], False, False)
     assert "personal.first_name" in prof.missing_required()
     assert data["work_history"] == [] and data["education_history"] == []
+    assert data["preferences"]["how_did_you_hear"] is None  # (asked once on the desk, never preset: 0.3.175)
     assert all("match" in a for a in data["answers"])
 
 
 def test_accepting_cookies_is_the_persons_choice():
     """Off unless set to true, as written: "yes" or a missing setting leaves banners to the person."""
     assert config.Settings.from_dict({}).accept_cookies is False
+    assert config.Settings.from_dict({}).warnings == []
     assert config.Settings.from_dict({"accept_cookies": "yes"}).accept_cookies is False
     assert config.Settings.from_dict({"accept_cookies": True}).accept_cookies is True
 
@@ -317,3 +319,19 @@ def test_a_profile_from_an_older_template_answers_with_todays_patterns(job_apply
     assert _answer_bank(prof, "Are you willing to take a drug test?").value == "Yes"
     assert [a["match"] for a in prof.get("answers")][-1] == "drug-free"
     assert (job_apply_home / "profile.yaml").read_text() == old
+
+
+def test_a_settings_key_the_desk_doesnt_read_is_said():
+    """"accept_notice: false" (a letter short) was read as nothing, and the notices went on being agreed to (the
+    review of Oct 15): a key the desk doesn't read is said (setup_status's settings_warnings, the doctor), with
+    the nearest one it does read. The template's are all read."""
+    s = config.Settings.from_dict({"accept_notice": False, "submit_mode": "review", "colour": "blue"})
+    assert s.accept_notices is True and s.submit_mode == "review"
+    assert s.warnings == ["Unknown settings key 'accept_notice' (it has no effect); did you mean 'accept_notices'?",
+                          "Unknown settings key 'colour' (it has no effect)."]
+    template = yaml.safe_load(config.TEMPLATE_PROFILE.read_text(encoding="utf-8"))
+    assert config.Settings.from_dict(template["settings"]).warnings == []
+    # (a settings: line that isn't a section turns the accounts and notices off: said too, the review's)
+    broken = config.Settings.from_dict("review")
+    assert broken.manage_accounts is False and len(broken.warnings) == 1
+    assert broken.warnings[0].startswith("settings: should be a section") and "'review'" in broken.warnings[0]

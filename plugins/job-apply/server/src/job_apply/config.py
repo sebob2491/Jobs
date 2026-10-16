@@ -6,6 +6,7 @@ the plugin directory, so updating or reinstalling the plugin can't lose it.
 
 from __future__ import annotations
 
+import difflib
 import json
 import os
 import re
@@ -222,6 +223,11 @@ def _on_unless_off(raw: Any, malformed: bool, default: bool) -> bool:
     return raw is True or isinstance(raw, str) and raw.strip().lower() in ("true", "yes", "on")
 
 
+# The keys the desk reads under settings: (the template's); any other is said, as it has no effect ("accept_notice: false")
+KNOWN_SETTINGS = ("submit_mode", "auto_submit_ats", "browser_channel", "headless", "email_codes", "email_tracking",
+                  "accept_cookies", "manage_accounts", "accept_notices")
+
+
 @dataclass
 class Settings:
     submit_mode: str = "review"  # "review" | "auto" | "dry_run" (fill everything, never submit)
@@ -247,12 +253,21 @@ class Settings:
     def from_dict(cls, d: dict[str, Any] | None, email: Any = None) -> "Settings":
         """`email`: the profile's, which says whether it's the live check's test identity."""
         malformed = d is not None and not isinstance(d, dict)  # "settings: review": nothing in it can be read
-        d = d if isinstance(d, dict) else {}
+        raw, d = d, d if isinstance(d, dict) else {}
         mode, warnings = _submit_mode(d.get("submit_mode"))
+        if malformed:  # (said: every setting is at its default, and the desk acts in no one's name until it's fixed)
+            warnings.append(f"settings: should be a section with each setting on its own line under it, as the template "
+                            f"has it, not {raw!r}: nothing in it can be read, so the desk makes no accounts and agrees "
+                            "to no notices until it's fixed.")
         ats = d.get("auto_submit_ats") or []
         if isinstance(ats, str):  # "workday" or "workday, greenhouse", not a list
             ats = re.split(r"[,\s]+", ats)
         channel, warning = _channel(d.get("browser_channel"))
+        for key in d:  # a key the desk doesn't read, a letter short of one it does (the review of Oct 15): said
+            if str(key) not in KNOWN_SETTINGS:
+                near = difflib.get_close_matches(str(key), KNOWN_SETTINGS, n=1, cutoff=0.6)
+                warnings.append(f"Unknown settings key {key!r} (it has no effect)"
+                                + (f"; did you mean {near[0]!r}?" if near else "."))
         s = cls(
             submit_mode=mode,
             warnings=warnings + ([warning] if warning else []),
@@ -334,6 +349,7 @@ class Profile:
         if own:
             saved = saved_answers()
             if saved:  # exact questions answered in the Job Desk come before the general patterns
+                _current_bank_patterns(saved)
                 data["answers"] = saved + list(data.get("answers") or [])
         return cls(data, path)
 
@@ -562,16 +578,14 @@ def handled_employers() -> set[str]:
     return {str(n).strip().casefold() for n in names if n}
 
 
-def question_bank() -> list[dict[str, Any]]:
-    """The questions most applications ask that a profile doesn't answer (data/question_bank.yaml), each
-    with the person's answer from answers.yaml where they gave one ("answer"). A bank that can't be
-    read is no bank: the desk goes on without it."""
+def _bank_entries() -> list[dict[str, Any]]:
+    """data/question_bank.yaml's entries that can be used: an id, a question to ask, a pattern that compiles.
+    A bank that can't be read is no bank: the desk goes on without it."""
     try:
         with QUESTION_BANK.open(encoding="utf-8") as f:
             entries = (yaml.safe_load(f) or {}).get("questions") or []
     except (OSError, yaml.YAMLError, AttributeError):
         return []
-    given = {a.get("bank"): a.get("answer") for a in saved_answers() if a.get("bank")}
     out = []
     for e in entries:
         if not isinstance(e, dict) or not e.get("id") or not e.get("match") or not e.get("ask"):
@@ -580,9 +594,26 @@ def question_bank() -> list[dict[str, Any]]:
             re.compile(str(e["match"]))
         except re.error:
             continue
-        out.append({k: e[k] for k in ("id", "ask", "kind", "choices", "match", "example") if k in e}
-                   | {"answer": given.get(e["id"])})
+        out.append(e)
     return out
+
+
+def question_bank() -> list[dict[str, Any]]:
+    """The questions most applications ask that a profile doesn't answer (data/question_bank.yaml), each
+    with the person's answer from answers.yaml where they gave one ("answer")."""
+    given = {a.get("bank"): a.get("answer") for a in saved_answers() if a.get("bank")}
+    return [{k: e[k] for k in ("id", "ask", "kind", "choices", "match", "example") if k in e} | {"answer": given.get(e["id"])}
+            for e in _bank_entries()]
+
+
+def _current_bank_patterns(saved: list[dict[str, Any]]) -> None:
+    """An answer saved on the desk to one of the bank's questions keeps the bank's pattern of that day in
+    answers.yaml (save_bank_answer): in memory it takes the bank's pattern of today, so a pattern corrected
+    since reaches everyone who answered before (the review of 0.3.175). The file stays the person's."""
+    current = {str(e["id"]): str(e["match"]) for e in _bank_entries()}
+    for item in saved:
+        if isinstance(item.get("bank"), str) and item["bank"] in current:
+            item["match"] = current[item["bank"]]
 
 
 def save_bank_answer(bank_id: str, answer: Any) -> None:
