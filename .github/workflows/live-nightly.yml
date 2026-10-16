@@ -7,8 +7,8 @@ name: live-nightly
 #   - the same for HR jobs on the phoenix-metro list, as an applicant with an HR background,
 #     and for finance jobs there, as an applicant with a finance background (paused: the owner's call, Oct
 #     10, "put all finance on the back burner"; its last results stay in the issue as they were);
-#   - the search check on the phoenix-metro list: whether each employer's search works
-#     (how many openings it finds changes daily, and is never compared);
+#   - the search check on both lists: whether each employer's search works (how many openings
+#     it finds changes daily, and is never compared; the semiconductor list since Oct 16, 2026);
 #   - the accounts check: the pipeline as the test identity (a clearly fake applicant with an
 #     inbox of its own; the owner's call, Oct 10) at every employer on both lists (--everywhere:
 #     the owner's call, Oct 11): it makes their accounts and reads their emailed
@@ -102,8 +102,8 @@ jobs:
           # - check: finance
           #   args: --pipeline --fake-passwords --parallel 4 --lists phoenix-metro --role finance
           #   minutes: 30
-          - check: search  # whether each phoenix-metro employer's search works
-            args: --lists phoenix-metro --parallel 4
+          - check: search  # whether each employer's search works, on both lists
+            args: --lists phoenix-metro,semiconductor-az --parallel 4
             minutes: 30
           # (each application goes as far as the rules let it: up to 5 minutes a round, more rounds and one Resume, the
           # owner's call, Oct 13; the minutes leave room for that)

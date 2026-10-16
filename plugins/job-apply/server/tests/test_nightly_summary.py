@@ -151,3 +151,19 @@ def test_the_employers_the_desk_goes_all_the_way_at_are_the_accounts_checks_fini
                                                      "“Apply”: check it, then press it.",
                            "Qorvo": "Technician · Choose a password for its account, then press its Apply."}}
     assert ns.handled(state, detail) == ["Arizona Public Service", "Intel"]
+
+
+def test_the_counts_name_the_employers_still_back(tmp_path, capsys):
+    """An employer the accounts check took to its review page in an earlier run but not in the last is said under
+    the counts, with the date it last got there (the issue's body carries it; a quiet night has no comment)."""
+    state = {"accounts": {"KLA": "needs_you stuck", "onsemi": "ready"}}
+    current = {"accounts": {"KLA": lc.Result("needs_you stuck", "Technician · Workday didn't move on."),
+                            "onsemi": lc.Result("ready", "Technician")}}
+    text = lc.render_body(state, current, checked_at="2026-10-16 10:47 UTC",
+                          reached={"accounts": {"KLA": "2026-10-14", "onsemi": "2026-10-16"}})
+    path = tmp_path / "issue.json"
+    path.write_text(json.dumps({"body": text}), encoding="utf-8")
+    assert ns.main(["--issue-file", str(path)]) == 0
+    out = capsys.readouterr().out
+    assert "accounts (2): needs_you stuck 1, ready 1" in out
+    assert "still back: KLA (accounts; last there 2026-10-14)" in out

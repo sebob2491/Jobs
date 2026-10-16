@@ -379,6 +379,8 @@ def main(argv: list[str] | None = None) -> int:
         if m:
             print(f"last run: {m.group(1)}  {m.group(2)}")
         print(counted(state))
+        for check, name, date in live_compare.still_back(state, live_compare.read_reached(body)):
+            print(f"still back: {name} ({check}; last there {date})")
     return 0
 
 

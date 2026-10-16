@@ -4,7 +4,10 @@ employer, compared with the last run's, and the issue body that carries them bet
 import importlib.util
 import json
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
+
+import pytest
 
 _PATH = Path(__file__).resolve().parents[1] / "scripts" / "live_compare.py"
 _spec = importlib.util.spec_from_file_location("live_compare", _PATH)
@@ -222,7 +225,7 @@ def test_find_issue_takes_the_oldest_with_the_title():
 
 
 def _run(tmp_path, issues, pipeline_records, search_records=(), partial=(), hr_records=None, finance_records=None,
-         accounts_records=None):
+         accounts_records=None, expect=0):
     (tmp_path / "pipeline.log").write_text(log("LIVE_PIPELINE ", pipeline_records), encoding="utf-8")
     (tmp_path / "search.log").write_text(log("LIVE_RESULT ", search_records), encoding="utf-8")
     (tmp_path / "issues.json").write_text(json.dumps(issues), encoding="utf-8")
@@ -237,10 +240,10 @@ def _run(tmp_path, issues, pipeline_records, search_records=(), partial=(), hr_r
             "--log", f"pipeline={tmp_path / 'pipeline.log'}", "--log", f"search={tmp_path / 'search.log'}", *hr,
             "--body-out", str(tmp_path / "body.md"), "--comment-out", str(tmp_path / "comment.md"),
             "--github-output", str(out), *[a for p in partial for a in ("--partial", p)]]
-    assert lc.main(argv) == 0
+    assert lc.main(argv) == expect
     outputs = dict(line.split("=", 1) for line in out.read_text(encoding="utf-8").splitlines())
-    comment = tmp_path / "comment.md"
-    return ((tmp_path / "body.md").read_text(encoding="utf-8"),
+    body, comment = tmp_path / "body.md", tmp_path / "comment.md"
+    return (body.read_text(encoding="utf-8") if body.exists() else None,
             comment.read_text(encoding="utf-8") if comment.exists() else None, outputs)
 
 
@@ -396,3 +399,109 @@ def test_an_accounts_check_that_stopped_part_way_keeps_the_employers_it_didnt_re
     body, comment, outputs = _run(tmp_path, [issue], [pipeline_rec("ASM")], [search_rec("USAA")],
                                   accounts_records=[pipeline_rec("KLA")])
     assert outputs["changes"] == "1" and "Kforce: `needs_you stuck` → *no longer checked*" in comment
+
+
+# --- the issue's size, and the employers still back ---------------------------------
+
+def _saved(body):
+    return json.loads(body.split(lc.STATE_MARK, 1)[1].split("```json\n", 1)[1].split("\n```", 1)[0])
+
+
+def test_a_ready_rows_detail_is_its_title_and_the_saved_outcomes_are_grouped():
+    """The issue's body (#54) held 55k of GitHub's 65,536 characters on Oct 16, 2026: half of it the detail cells,
+    two hundred of them the review page's one sentence, and a fifth the saved outcomes, one line an employer. A
+    ready row's detail is its posting's title (the outcome says the rest), and the saved outcomes group each
+    check's employers by outcome, on one line."""
+    ready = pipeline_rec("ASM", reason="Filled and waiting on the review page. Check it in the browser, then press Submit.")
+    assert lc.pipeline_outcome(ready) == Result("ready", "Field Service Engineer")
+    stuck = pipeline_rec("KLA", "needs_you", "stuck", "Workday didn't move on.")
+    assert lc.pipeline_outcome(stuck).detail == "Field Service Engineer · Workday didn't move on."
+    # the real run's shape: 102 employers in three apply checks, 63 in one not run (finance), 68 searches
+    state = {c: {f"Employer {i}": "ready" if i % 3 else "needs_you stuck" for i in range(102)}
+             for c in ("pipeline", "hr", "accounts")}
+    state["finance"] = {f"Employer {i}": "needs_you sign_in" for i in range(63)}
+    state["search"] = {f"Employer {i}": "works" for i in range(68)}
+    current = {c: {n: Result(o, "Some Posting Title" if o == "ready" else "Some Posting Title · " + "said " * 30)
+                   for n, o in found.items()} for c, found in state.items() if c != "finance"}
+    body = lc.render_body(state, current, checked_at="2026-10-16 10:47 UTC", run_url="https://example.com/run/102")
+    assert lc.read_state(body) == state
+    assert len(body) < 52_000, len(body)  # (run 102's real body: 55,444 characters in the old shape, 42,207 in this)
+    saved = _saved(body)
+    assert saved["version"] == 2
+    assert len(body.split(lc.STATE_MARK, 1)[1]) < 8_000  # the saved outcomes (12k for run 102 in the old shape)
+    assert saved["outcomes"]["search"] == {"works": sorted((f"Employer {i}" for i in range(68)), key=str.lower)}
+    assert set(saved["outcomes"]["pipeline"]) == {"ready", "needs_you stuck"} and saved["reached"] == {}
+    assert body.split(lc.STATE_MARK, 1)[1].count("\n") <= 6  # the saved outcomes on one line
+    assert "| Employer 1 | `ready` | `Some Posting Title` |" in body and "Still back" not in body
+
+
+def test_a_version_1_state_block_still_reads():
+    """The body as the runs before Oct 16, 2026 wrote it: the outcomes one line an employer, no dates."""
+    v1 = json.dumps({"version": 1, "outcomes": {"pipeline": {"KLA": "needs_you sign_in", "ASM": "ready"},
+                                                "search": {"USAA": "works"}}}, indent=1)
+    body = f"Last checked: 2026-10-15 10:17 UTC\n\n{lc.STATE_MARK}\n```json\n{v1}\n```\n"
+    assert lc.read_state(body) == {"pipeline": {"ASM": "ready", "KLA": "needs_you sign_in"}, "search": {"USAA": "works"}}
+    assert list(lc.read_state(body)["pipeline"]) == ["ASM", "KLA"]  # by name, as the tables list them
+    assert lc.read_reached(body) == {}
+
+
+def test_a_body_too_long_for_github_is_shortened_then_refused(tmp_path, capsys):
+    """Past GitHub's 65,536 characters the body's edit fails after the comment is posted, the outcomes aren't
+    saved, and the next run reports every change again against stale ones: the details are shortened, then left
+    out, to fit; when even that doesn't fit, the run fails before the comment."""
+    many = {"accounts": {f"Employer {i}": "needs_you stuck" for i in range(400)}}
+    current = {"accounts": {n: Result("needs_you stuck", "Title · " + "x" * 132) for n in many["accounts"]}}
+    body = lc.render_body(many, current, checked_at="2026-10-16 10:47 UTC")
+    assert len(body) <= lc.BODY_LIMIT
+    assert "(The details are shortened to keep this page within GitHub's size for an issue.)" in body
+    assert "| Employer 1 | `needs_you stuck` | `Title · xxxx" in body and lc.read_state(body) == many
+    more = {"accounts": {f"Employer {i}": "needs_you stuck" for i in range(800)}}
+    current = {"accounts": {n: Result("needs_you stuck", "Title · " + "x" * 132) for n in more["accounts"]}}
+    body = lc.render_body(more, current, checked_at="2026-10-16 10:47 UTC")
+    assert len(body) <= lc.BODY_LIMIT and "(The details are left out to keep" in body
+    assert "| Employer 1 | `needs_you stuck` |  |" in body
+    with pytest.raises(lc.BodyTooLong, match="even with its details left out"):
+        lc.render_body({"accounts": {f"Employer {i}": "needs_you stuck" for i in range(2000)}}, {},
+                       checked_at="2026-10-16 10:47 UTC")
+    records = [pipeline_rec(f"Employer {i}", "needs_you", "stuck", "x" * 100) for i in range(2000)]
+    body, comment, _ = _run(tmp_path, [], records, [search_rec("USAA")], expect=1)
+    assert body is None and comment is None  # nothing written: nothing posted
+    assert "::error::the issue's body would be" in capsys.readouterr().out
+
+
+def test_an_employer_still_back_from_an_earlier_run_is_said_in_the_body(tmp_path, monkeypatch, capsys):
+    """The regression alarm fires in the comment the night an employer stops reaching its review page, and a
+    quiet night after that writes no comment: the body names the employers still back, with the date each last
+    got there, until one gets there again (a check that didn't reach the employer keeps its date)."""
+    clock = {"day": 14}
+    monkeypatch.setattr(lc, "_now", lambda: datetime(2026, 10, clock["day"], 10, 17, tzinfo=timezone.utc))
+    body, comment, _ = _run(tmp_path, [], [pipeline_rec("ASM"), pipeline_rec("KLA")], [search_rec("USAA")])
+    assert "Still back" not in body
+    assert lc.read_reached(body) == {"pipeline": {"ASM": "2026-10-14", "KLA": "2026-10-14"}}
+    issue = {"number": 7, "title": "Nightly live check", "state": "OPEN", "body": body}
+
+    clock["day"] = 15
+    back = [pipeline_rec("ASM"), pipeline_rec("KLA", "needs_you", "stuck", "Workday didn't move on.")]
+    body, comment, outputs = _run(tmp_path, [issue], back, [search_rec("USAA")])
+    assert outputs["went_back"] == "1" and "**Went backwards:**" in comment
+    assert ("**Still back:** 1 employer reached the review page in an earlier run but not in the last: "
+            "KLA (pipeline; last there 2026-10-14).") in body
+    issue["body"] = body
+
+    clock["day"] = 16
+    body, comment, outputs = _run(tmp_path, [issue], back, [search_rec("USAA")])
+    assert comment is None and outputs["changes"] == "0"  # a quiet night: no comment, so the body carries the alarm
+    assert "KLA (pipeline; last there 2026-10-14)" in body
+    assert "still back: KLA (pipeline; last there 2026-10-14)" in capsys.readouterr().out
+    assert lc.read_reached(body) == {"pipeline": {"ASM": "2026-10-16", "KLA": "2026-10-14"}}
+    issue["body"] = body
+
+    clock["day"] = 17  # the check didn't reach KLA: its date stands
+    body, comment, _ = _run(tmp_path, [issue], [pipeline_rec("ASM")], [search_rec("USAA")], partial=["pipeline"])
+    assert comment is None and "KLA (pipeline; last there 2026-10-14)" in body
+    issue["body"] = body
+
+    clock["day"] = 18
+    body, comment, _ = _run(tmp_path, [issue], [pipeline_rec("ASM"), pipeline_rec("KLA")], [search_rec("USAA")])
+    assert "KLA: `needs_you stuck` → `ready`" in comment
+    assert "Still back" not in body and lc.read_reached(body)["pipeline"]["KLA"] == "2026-10-18"
