@@ -174,10 +174,20 @@ def _channel(raw: Any) -> tuple[str, str]:
     return "chrome", f"Unknown settings.browser_channel {raw!r}; using Chrome. Use chrome, msedge or chromium."
 
 
+# What a yes/no setting says yes with, written in words or quotes ("yes", "on", "1"): one list for headless and the
+# settings that are on unless turned off (the review of Oct 15: `1` turned headless on but left manage_accounts off).
+# The opt-ins (email_codes, email_tracking, accept_cookies) take a real true only
+_YES_WORDS = ("true", "yes", "on", "1")
+
+
+def _says_yes(raw: Any) -> bool:
+    return raw is True or type(raw) is int and raw == 1 or isinstance(raw, str) and raw.strip().lower() in _YES_WORDS
+
+
 def _flag(raw: Any) -> bool:
     """A yes/no setting, also when it's written in quotes ("false")."""
     if isinstance(raw, str):
-        return raw.strip().lower() in ("true", "yes", "on", "1")
+        return _says_yes(raw)
     return bool(raw)
 
 
@@ -220,7 +230,7 @@ def _on_unless_off(raw: Any, malformed: bool, default: bool) -> bool:
         return False
     if raw is None:
         return default
-    return raw is True or isinstance(raw, str) and raw.strip().lower() in ("true", "yes", "on")
+    return _says_yes(raw)
 
 
 # The keys the desk reads under settings: (the template's); any other is said, as it has no effect ("accept_notice: false")
@@ -274,6 +284,8 @@ class Settings:
             auto_submit_ats=[str(a).strip().lower() for a in ats if str(a).strip()] if isinstance(ats, list) else [],
             headless=_flag(d.get("headless")),
             browser_channel=channel,
+            # (the opt-ins that read the person's mail or accept for them: on only for a real true, as written; a
+            # quoted "yes" leaves them off, test_accepting_cookies_is_the_persons_choice)
             email_codes=d.get("email_codes") is True,
             email_tracking=d.get("email_tracking") is True,
             accept_cookies=d.get("accept_cookies") is True,
