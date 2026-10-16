@@ -141,6 +141,7 @@ companies:
   - name: Vanguard
     careers_url: https://www.vanguardjobs.com/
     ats: workday              # vanguardjobs.com postings apply on this Workday site
+    mail_domains: [vanguardhr.com]  # its Workday's "Verify your candidate account" mails from here (live check, run 102)
     az_sites: Scottsdale, Chandler
     confidence: high          # live check, Oct 2026: 50 Scottsdale openings
     search: {workday: https://vanguard.wd5.myworkdayjobs.com/vanguard_external}
