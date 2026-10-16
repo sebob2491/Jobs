@@ -2463,9 +2463,14 @@ def plan_autofill(fields: list[dict], prof: Profile, job: dict | None = None, ov
             already.append(f["id"])
             continue
         missed: list[Answer] = []
-        # (a list on its own "Not Specified" first choice: answered from the others, never that placeholder again)
-        ans = resolve_field({**f, "options": (f.get("options") or [])[1:]} if unset else f, prof, job, file_inputs,
-                            unmatched=missed)
+        # (a list on its own "Not Specified" first choice: answered from the others, never that placeholder again;
+        # one read with a placeholder alone, "No Selection", hasn't shown its entries yet (SuccessFactors fetches
+        # them on the first open: Edwards Vacuum's veteran list, run 107), so the answer goes to the fill, which
+        # waits for them: never "not one of its choices" of a list that has shown none)
+        options = (f.get("options") or [])[1:] if unset else (f.get("options") or [])
+        if options and all(is_empty_value(o) for o in options):
+            options = []
+        ans = resolve_field({**f, "options": options}, prof, job, file_inputs, unmatched=missed)
         if defaulted and not overwrite and (ans is None and not missed or ans is not None and (
                 ans.value == SKIP or choose_option(str(ans.value), [str(f.get("value"))], exact_only=True) is not None)):
             # (the site's first choice, where the profile says nothing else, or says the same: left as it is; the same

@@ -1,0 +1,73 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Career Opportunities: Equipment Technician (10557)</title>
+<style>
+  .rcmpaginatedselectlist { display: none; border: 1px solid #999; max-height: 200px; overflow: auto; }
+  .rcmpaginatedselectlist.open { display: block; min-height: 1em; }
+  .rcmpaginatedselectlist [role="option"] { padding: 2px 4px; cursor: pointer; }
+</style>
+</head>
+<body>
+<!-- SuccessFactors' self-identification lists (Freeport-McMoRan's Ethnicity, Edwards Vacuum's Protected Veteran, Rogers'
+     Gender and Ethnicity, Oct 2026): a "paginated select" whose entries are fetched from the server the first time the
+     list opens, a few seconds on their servers (?slow=<ms>: the list opens empty, its entries drawn that long after;
+     every later opening shows them at once; &placeholderfirst: the first opening shows "No Selection" alone until
+     then, as Amkor's list opens). "No Selection" is the empty choice. -->
+<h1>Career Opportunities: Equipment Technician (10557)</h1>
+<form id="apply" novalidate>
+  <label for="fn">Legal First Name *</label><input id="fn" required>
+  <div class="sel paginatedPicklistContainer">
+    <input aria-label="Pre-Offer : Are you a Protected Veteran?" autocomplete="off" type="text"
+           placeholder="No Selection" role="combobox" aria-owns="52:_listSelect" aria-required="true"
+           aria-expanded="false" id="51:_input" class="rcmpaginatedselectinput rcmpaginatedselectitem">
+    <button aria-label="Pre-Offer : Are you a Protected Veteran?" tabindex="-1" type="button" id="51:_selectButton"
+            class="rcmpaginatedselectbutton fd-select__button">&#9662;</button>
+    <div id="52:_listSelect" role="listbox" class="rcmpaginatedselectlist"></div>
+  </div>
+  <button type="submit">Apply</button>
+</form>
+<script>
+  const SLOW = Number(new URLSearchParams(location.search).get('slow') || 0);
+  const PLACEHOLDER_FIRST = new URLSearchParams(location.search).has('placeholderfirst');
+  const all = ['No Selection', 'I am a protected veteran', 'I am a veteran but not a protected veteran',
+               'I am not a protected veteran', 'I choose not to self-identify'];
+  const box = document.getElementById('51:_input');
+  const list = document.getElementById(box.getAttribute('aria-owns'));
+  let fetched = false;
+  const draw = () => {
+    const q = box.value.trim().toLowerCase();
+    list.innerHTML = '';
+    for (const name of all.filter((n) => !q || n.toLowerCase().includes(q))) {
+      const o = document.createElement('div');
+      o.setAttribute('role', 'option');
+      o.textContent = name;
+      o.addEventListener('mousedown', (e) => e.preventDefault());
+      o.addEventListener('click', () => { box.value = name === 'No Selection' ? '' : name; close(); });
+      list.append(o);
+    }
+  };
+  const show = () => {
+    list.classList.add('open');
+    box.setAttribute('aria-expanded', 'true');
+    if (fetched || !SLOW) { fetched = true; draw(); return; }
+    list.innerHTML = '';  // (the entries still on their way from the server)
+    if (PLACEHOLDER_FIRST) {
+      const o = document.createElement('div');
+      o.setAttribute('role', 'option');
+      o.textContent = 'No Selection';
+      list.append(o);
+    }
+    setTimeout(() => { fetched = true; if (list.classList.contains('open')) draw(); }, SLOW);
+  };
+  const close = () => { list.classList.remove('open'); box.setAttribute('aria-expanded', 'false'); };
+  box.addEventListener('click', show);
+  document.getElementById('51:_selectButton').addEventListener('click', () => { box.focus(); show(); });
+  box.addEventListener('keyup', (e) => { if (e.key === 'Escape') close(); else show(); });
+  box.addEventListener('blur', close);
+  document.getElementById('apply').addEventListener('submit', (e) => {
+    e.preventDefault();
+    document.body.innerHTML = '<h1>Thank you for applying!</h1>';
+  });
+</script>
+</body>
+</html>

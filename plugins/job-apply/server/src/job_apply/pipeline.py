@@ -1701,6 +1701,8 @@ class Applier:
         # the blocks the desk added on this pass, by kind, and the empty ones past the profile's entries whose Delete it
         # pressed (_drop_added_extra)
         blocks_added: dict[str, int] = {}
+        filled_ids: set[str] = set()  # the boxes (by id) the desk's own fills went into on this pass
+        filled_values: set[str] = set()  # and what they put there (norm), the person's once-answers too
         extra_tried: set[str] = set()
         stalled_on: tuple[Any, ...] = ()  # the step (address and headings) the stalls were counted on
         stalled_in_a_row = 0  # and the stalls since a press last moved a page on, whatever step they were on
@@ -2123,6 +2125,7 @@ class Applier:
                 run.seen_form = True
                 run.came_back_empty = False  # (the site's back: an empty page later is another's, the review of 0.3.171)
                 once_failed = await self._fill_once(run, data)
+                filled_values |= {norm(v) for v in run.once.values() if isinstance(v, str) and v.strip()}
                 key = _fingerprint(data)
                 if key not in entries_done and _EXPERIENCE_PAGE.search(" ".join(data.get("headings") or [])):
                     entries_done.add(key)
@@ -2141,6 +2144,8 @@ class Applier:
                 result = await srv.autofill(job_id=run.job_id)
                 if result["filled"]:
                     self._log(run, f"filled {len(result['filled'])} field(s) on {_where(data)}")
+                filled_ids |= {str(f["id"]) for f in result["filled"] if f.get("id")}
+                filled_values |= {norm(f["value"]) for f in result["filled"] if f.get("value") not in (None, "")}
                 _required_by_errors(result, data)
                 pending, missing_files = _pending(result, once_failed)
                 self._note_skipped(run, result)
@@ -2191,6 +2196,8 @@ class Applier:
                     run.list_reloaded = True
                     entries_done.clear()  # (the blocks it added are gone with the reload)
                     blocks_added.clear()
+                    filled_ids.clear()
+                    filled_values.clear()
                     refilled.discard(page_key)
                     bare_waited.discard(_page_key(data))
                     step_waited.difference_update({d for d in step_waited if d and d[0] == _page_key(data)})
@@ -2203,7 +2210,7 @@ class Applier:
                     continue
                 if await self._drop_unfit_school(run, data, pending):
                     continue  # the page looked at again without that school's block
-                if await self._drop_added_extra(run, data, pending, blocks_added, extra_tried):
+                if await self._drop_added_extra(run, data, pending, blocks_added, extra_tried, filled_ids, filled_values):
                     continue  # and without the empty block it had added beside a saved one
                 gaps, pending = self._entry_gaps(run, data, pending)
                 on_experience = _EXPERIENCE_PAGE.search(" ".join(data.get("headings") or []))
@@ -2703,8 +2710,10 @@ class Applier:
                         # answer, once a page; a box already showing it is typed again below
                         redone_pages.add(looked)
                         ids = {f["id"] for f in wrong}
-                        given = {f.get("id") for f in (await srv.autofill(job_id=run.job_id, redo=sorted(ids))).get("filled")
-                                 or [] if f.get("id") in ids}
+                        redone = (await srv.autofill(job_id=run.job_id, redo=sorted(ids))).get("filled") or []
+                        given = {f.get("id") for f in redone if f.get("id") in ids}
+                        filled_ids |= {str(f["id"]) for f in redone if f.get("id")}
+                        filled_values |= {norm(f["value"]) for f in redone if f.get("value") not in (None, "")}
                         # and a date the person gave for this application, where the profile has none (Robert Half's
                         # Workday "Anticipated eligibility time for employment?", run 72: 10/14/2026 shown, and
                         # "required and must have a value" all the same): typed again as a date is, from its first part
@@ -2747,6 +2756,8 @@ class Applier:
                         refilled_pages.add(looked)
                         again_filled = [f for f in (await srv.autofill(job_id=run.job_id)).get("filled") or []
                                         if f.get("id") in {e["id"] for e in emptied}]
+                        filled_ids |= {str(f["id"]) for f in again_filled if f.get("id")}
+                        filled_values |= {norm(f["value"]) for f in again_filled if f.get("value") not in (None, "")}
                         if again_filled:
                             self._log(run, f"filled again {len(again_filled)} field(s) the page had emptied")
                             stalls, fixed_at = 0, len(pressed)
@@ -3069,7 +3080,8 @@ class Applier:
         return True
 
     async def _drop_added_extra(self, run: Run, data: dict[str, Any], pending: list[dict[str, Any]],
-                                added: dict[str, int], tried: set[str]) -> bool:
+                                added: dict[str, int], tried: set[str], filled: set[str] | None = None,
+                                given: set[str] | None = None) -> bool:
         """A block past the profile's entries, with nothing in it, where the desk added a block of that kind on this
         pass: Workday's My Experience drew the account's saved school (or job) after the desk had looked for it and
         added one (Hitachi High-Tech America's, run 92; U.S. Bank's and Baker Tilly's, runs 52 and 62), and the page
@@ -3077,7 +3089,12 @@ class Applier:
         desk added (`added`, by kind: taken down as they go), only the last block of its kind, never its only one (a
         block before others would hand its number on), and only the very block an Add the desk pressed drew
         (browser.added_blocks); once a block (`tried`). A block with anything in it, or one the desk didn't add, stays
-        the person's (_entry_gaps says so). True when it deleted one."""
+        the person's (_entry_gaps says so). Where the site drew the saved entry INTO the desk's block (Workday numbers
+        its blocks by place: Arizona State University's, run 108, the desk's mark left on a block now holding the saved
+        job, and a new empty block after it, unmarked), the marked block holds a value the desk never put there (a
+        text box or list neither among `filled`, the boxes its own fills went into on this pass, by id, nor showing
+        one of `given`, what they put there: a box drawn again under a new id, or a once-answer, is still the
+        desk's), and the empty last block is the desk's own. True when it deleted one."""
         prof = config.Profile.load()
         extra: dict[str, str] = {}  # block: its kind
         for q in pending:
@@ -3102,9 +3119,25 @@ class Applier:
             if delete is None:
                 continue
             # the very block the desk's own press drew (browser.add_entries marks it), never a saved one drawn beside
-            # it, empty for a moment (the review of 0.3.173): a block it can't tell so is the person's
-            if _block_key(block) not in {_block_key(h) for h in await self.srv.browser.added_blocks()}:
-                continue
+            # it, empty for a moment (the review of 0.3.173): a block it can't tell so is the person's. Unless the mark
+            # sits on a block of this kind the site filled (values in it the desk never typed: the saved entry drawn
+            # into the desk's own, the empty one after it then the desk's)
+            marked = [h for h in await self.srv.browser.added_blocks() if numbered.match(h)]
+            reused = _block_key(block) not in {_block_key(h) for h in marked}
+            if reused:
+                def site_filled(heading: str) -> bool:
+                    # a text box or list with a value the desk didn't put there: not one it filled (by id), nor showing
+                    # what it or the person gave (a box drawn again under a new id, a once-answer: the review's), nor a
+                    # list left on the site's own default; never a date's part or a tick
+                    return any(_block_key(str(f.get("section") or "")) == _block_key(heading)
+                               and f.get("kind") in _TEXTLIKE_KINDS and f.get("role") != "spinbutton"
+                               and str(f.get("id")) not in (filled or set())
+                               and norm(f.get("value")) not in (given or set())
+                               and not f.get("judged") and not site_default(f)
+                               and not is_empty_value(f.get("value")) and not unset_choice(f)
+                               for f in data.get("fields") or [])
+                if not any(site_filled(h) for h in marked):
+                    continue
             tried.add(block)  # (pressed once a block, whatever comes of it)
             try:
                 await self.srv.click(delete["id"])
@@ -3116,8 +3149,9 @@ class Applier:
                 return False  # still there (a "Are you sure?" over it, say): the person's
             added[kind] -= 1
             thing = "schools" if kind == "education" else "jobs"
-            self._log(run, f"deleted {block}: an empty block past your profile's {thing}, one I had added while the "
-                      f"page was still drawing the {thing} saved there")
+            self._log(run, f"deleted {block}: an empty block past your profile's {thing}, " + (
+                f"left over after the page drew the {thing} saved there into the one I had added" if reused
+                else f"one I had added while the page was still drawing the {thing} saved there"))
             return True
         return False
 
@@ -5459,6 +5493,9 @@ def _sent_already(data: dict[str, Any], text: str, moved: bool) -> str:
 # A block's own Delete, and nothing else's ("Delete Military Experience 2", "Delete Job Reference 1" aren't a job's)
 _BLOCK_KINDS = {"work": r"(?:work|employment|professional)\s+(?:experience|history)|employment|experience",
                 "education": r"education(?:al)?(?:\s+(?:history|background))?"}
+
+
+_TEXTLIKE_KINDS = {"text", "textarea", "select", "combobox", "listbox"}  # (a box whose value says who filled it)
 
 
 def _block_key(name: str) -> str:
