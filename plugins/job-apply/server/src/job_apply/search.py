@@ -44,10 +44,15 @@ requests are few and sequential per company.
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import contextvars
+import email.utils
 import html
 import json
+import math
 import re
 import time
+from collections.abc import AsyncIterator
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -67,6 +72,7 @@ WORKDAY_PAGE = 20  # Workday rejects larger pages
 MAX_ALTERNATIVES = 4
 FETCH_WHEN_FILTERING = 60  # results to scan per search when filtering by location ourselves
 EMPLOYERS_AT_ONCE = 8  # employers searched at the same time (each its own site; ~50 s for the Phoenix list, not ~100)
+EMPLOYER_SECONDS = 120  # one employer's searches, all its wordings, at most (the slowest take ~30 s); then they stop
 CLIENT_SIDE = {"greenhouse", "lever", "applicantstack", "paycom", "ukg", "sfclassic", "infor", "phoenixchildrens",
                "jobvite", "randstad", "kpmg"}  # whole board at once; titles filtered here
 # Searches that take the whole query and pace its wordings themselves (the State of Arizona's
@@ -88,6 +94,7 @@ def wordings_for(kind: str, query: str) -> list[str]:
 BROWSER_SEARCHES = {"sitecore", "icims", "paycom", "ukg", "rmk", "sfclassic", "infor"}
 RETRY_STATUS = {429, 500, 502, 503, 504}  # a passing problem on the site's side
 RETRY_DELAY = 1.0  # seconds, doubled on the second retry
+RETRY_AFTER_MOST = 10.0  # seconds a site may ask to be left before the next try (Retry-After); longer is its answer
 
 
 @dataclass
@@ -574,6 +581,9 @@ async def _workday(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, 
 
 
 WORKDAY_PLACE_PAGES = 20  # multi-site postings read for their places, per search
+# The places of the postings a search_companies run has read, by the posting's call: a posting
+# its next wording finds again isn't read again (the "7 Locations" ones turn up under most wordings)
+_PLACES_READ: contextvars.ContextVar[dict[str, list[str]] | None] = contextvars.ContextVar("places_read", default=None)
 
 
 def _workday_path_place(path: str) -> str:
@@ -599,21 +609,27 @@ async def _workday_places(client: httpx.AsyncClient, cxs: str, base: str, listin
     and the ranking see where they are. A posting the site's own location filter found is
     in the area: its places only replace "7 Locations" when they show that too."""
     sem = asyncio.Semaphore(4)
+    known = _PLACES_READ.get()  # read for an earlier wording of this search, if any
 
     async def one(listing: Listing) -> None:
         url = cxs + listing.url[len(base):]  # the posting's own call: /wday/cxs/<tenant>/<site>/job/...
-        async with sem:
-            try:
-                r = await _send(client, "GET", url, headers={"Accept": "application/json"})
-                _raise_for(r, url)
-                info = r.json().get("jobPostingInfo") or {}
-            except Exception:  # an unreadable posting stays "check the posting"
-                return
-        places = [str(x).strip() for x in [info.get("location"), *(info.get("additionalLocations") or [])] if x]
-        places = list(dict.fromkeys(x for x in places if x))
-        if not places:  # an empty "location", with the place in the requisition's ("TX - Burnet": Entegris, live, Oct 2026)
-            req = (info.get("jobRequisitionLocation") or {}).get("descriptor")
-            places = [str(req).strip()] if req and str(req).strip() else []
+        if known is not None and url in known:
+            places = list(known[url])
+        else:
+            async with sem:
+                try:
+                    r = await _send(client, "GET", url, headers={"Accept": "application/json"})
+                    _raise_for(r, url)
+                    info = r.json().get("jobPostingInfo") or {}
+                except Exception:  # an unreadable posting stays "check the posting" (and is tried again)
+                    return
+            places = [str(x).strip() for x in [info.get("location"), *(info.get("additionalLocations") or [])] if x]
+            places = list(dict.fromkeys(x for x in places if x))
+            if not places:  # an empty "location", with the place in the requisition's ("TX - Burnet": Entegris, live, Oct 2026)
+                req = (info.get("jobRequisitionLocation") or {}).get("descriptor")
+                places = [str(req).strip()] if req and str(req).strip() else []
+            if known is not None:
+                known[url] = list(places)
         places.sort(key=lambda x: location_matches(x, terms) is not True)
         where = "; ".join(places)
         if where and not (in_area and location_matches(where, terms) is not True):
@@ -783,11 +799,22 @@ def _titled(listings: list[Listing], query: str) -> list[Listing]:
     return [listing for listing in listings if title_matches(listing.title, query)]
 
 
+def _whole_board(listings: list[Listing], url: str, page: str, shell: str) -> list[Listing]:
+    """A board read whole: none on it, on a page without the board's own frame (`shell`, a selector), is what a
+    parser that no longer reads its page finds, so it's said, not taken for no openings. On the board's own page,
+    none is none (SCREEN's lists one opening some weeks)."""
+    if not listings and BeautifulSoup(page, "html.parser").select_one(shell) is None:
+        raise SearchError(f"No job list from {url} (neither openings nor the board's own page)")
+    return listings
+
+
 async def _applicantstack(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, terms: list[str]) -> list[Listing]:
     """ApplicantStack boards (SCREEN SPE USA) list every opening on one page, each with
     its location."""
     base = f"https://{cfg}.applicantstack.com"
-    return _titled(parse_applicantstack(await _board_page(client, f"{base}/x/openings"), base), query)
+    url = f"{base}/x/openings"
+    page = await _board_page(client, url)
+    return _titled(_whole_board(parse_applicantstack(page, base), url, page, "#ascontent"), query)
 
 
 def parse_applicantstack(html: str, base: str) -> list[Listing]:
@@ -1018,6 +1045,7 @@ def _taleo_place(place: str) -> str:
 # ----------------------------------------------------------------- Talemetry job sites (Valleywise Health)
 TALEMETRY_PAGES = 4  # pages per wording; 25 openings a page
 TALEMETRY_PAGE = 25
+_TALEMETRY_FOUND = re.compile(r"\b\d[\d,]* .{0,200}?\bjobs? found\b", re.I)  # its heading: "0 zzqxjv jobs found"
 
 
 async def _talemetry(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, terms: list[str]) -> list[Listing]:
@@ -1030,6 +1058,9 @@ async def _talemetry(client: httpx.AsyncClient, cfg: Any, query: str, limit: int
         r = await _send(client, "GET", url)
         _raise_for(r, url)
         rows = parse_talemetry(r.text, base)
+        if page == 1 and not rows and not _TALEMETRY_FOUND.search(
+                " ".join(BeautifulSoup(r.text, "html.parser").get_text(" ").split())):
+            raise SearchError(f"No job list from {url.split('?')[0]} (neither openings nor how many it found)")
         out.extend(rows)
         if len(rows) < TALEMETRY_PAGE or len(out) >= limit:
             break
@@ -1059,7 +1090,9 @@ async def _phoenixchildrens(client: httpx.AsyncClient, cfg: Any, query: str, lim
     """Phoenix Children's own job site lists every opening on one page (about 300), each
     with its department, schedule and place ("Recruitment | Full-Time | Phoenix")."""
     base = str(cfg).rstrip("/")
-    return _titled(parse_phoenixchildrens(await _board_page(client, f"{base}/Positions/"), base), query)
+    url = f"{base}/Positions/"
+    page = await _board_page(client, url)
+    return _titled(_whole_board(parse_phoenixchildrens(page, base), url, page, "div.positions, div.blog-items"), query)
 
 
 def parse_phoenixchildrens(html: str, base: str) -> list[Listing]:
@@ -1262,19 +1295,20 @@ async def _jobvite(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, 
     first 20 of each with its place; a longer category's "Show More" lists the rest on a
     search page of its own (Knight-Swift's Operations and Shop, Oct 2026)."""
     base = f"https://jobs.jobvite.com/{str(cfg).strip('/')}"
-    html = await _board_page(client, f"{base}/jobs")
-    found = parse_jobvite(html, base)
-    more = dict.fromkeys(urljoin(base + "/", str(a["href"])) for a in BeautifulSoup(html, "html.parser").select(
-        'a[href*="search?c="]'))
+    board = BeautifulSoup(await _board_page(client, f"{base}/jobs"), "html.parser")  # (parsed once: a big page)
+    found = parse_jobvite(board, base)
+    more = dict.fromkeys(urljoin(base + "/", str(a["href"])) for a in board.select('a[href*="search?c="]'))
     for url in list(more)[:JOBVITE_CATEGORIES]:
         found += parse_jobvite(await _board_page(client, url), base)
+    if not found and board.select_one(".jv-page-body") is None:  # (see _whole_board)
+        raise SearchError(f"No job list from {base}/jobs (neither openings nor the board's own page)")
     return _titled(list({x.url: x for x in found}.values()), query)
 
 
-def parse_jobvite(html: str, base: str) -> list[Listing]:
+def parse_jobvite(html: str | BeautifulSoup, base: str) -> list[Listing]:
     """A board's openings, as its category lists (div.jv-job-item) or a search page's table
     rows show them: each name's link and, beside it, its place."""
-    soup = BeautifulSoup(html, "html.parser")
+    soup = html if isinstance(html, BeautifulSoup) else BeautifulSoup(html, "html.parser")
     out: list[Listing] = []
     seen: set[str] = set()
     for name in soup.select(".jv-job-list-name"):
@@ -1306,8 +1340,13 @@ async def _randstad(client: httpx.AsyncClient, cfg: Any, query: str, limit: int,
     urls = ([f"{base}/{US_STATES[state].lower().replace(' ', '-')}/"] if state else
             [f"{base}/"] + [f"{base}/page-{n}/" for n in range(2, RANDSTAD_PAGES + 1)])
     found: list[Listing] = []
-    for url in urls:
-        batch = parse_randstad(await _board_page(client, url))
+    for n, url in enumerate(urls):
+        try:
+            batch = parse_randstad(await _board_page(client, url))
+        except SearchError:
+            if not n:
+                raise
+            break  # a later page that won't read ends the reading; what's found stands
         found += batch
         if not batch:
             break
@@ -1315,16 +1354,21 @@ async def _randstad(client: httpx.AsyncClient, cfg: Any, query: str, limit: int,
 
 
 def parse_randstad(html: str) -> list[Listing]:
+    """A page's openings, from its data's search results (none there is a page with none; no
+    search results at all, a page the parser no longer reads)."""
     at = html.find("window.__ROUTE_DATA__")
     start = html.find("{", at) if at >= 0 else -1
-    if start < 0:
-        return []
-    try:
-        data, _ = json.JSONDecoder().raw_decode(html, start)
-    except ValueError:
-        return []
+    data: Any = None
+    if start >= 0:
+        try:
+            data, _ = json.JSONDecoder().raw_decode(html, start)
+        except ValueError:
+            pass
+    results = data.get("searchResults") if isinstance(data, dict) else None
+    if not isinstance(results, dict):
+        raise SearchError("No job list in Randstad's page (its window.__ROUTE_DATA__ has no searchResults)")
     out: list[Listing] = []
-    for hit in ((data.get("searchResults") or {}).get("hits") or []) if isinstance(data, dict) else []:
+    for hit in results.get("hits") or []:
         title, url = str(hit.get("title") or "").strip(), str(hit.get("detailsUrl") or hit.get("applyUrl") or "")
         if not title or not url:
             continue
@@ -1412,6 +1456,8 @@ async def _kpmg(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, ter
         except (ValueError, KeyError, TypeError) as e:
             raise SearchError(f"No job list from {KPMG_API}") from e
         listings = parse_kpmg(jobs)
+        if not listings and not found and total:
+            raise SearchError(f"No job list from {KPMG_API} (it counts {total} openings, none of them readable)")
         for listing in listings:
             first = found.setdefault(listing.external_id, listing)
             if first is not listing:
@@ -1894,25 +1940,63 @@ async def rmk_search(capture: Callable[..., Awaitable[Any]], cfg: Any, query: st
     found.extend(mine)
 
 
+async def _within(coro: Awaitable[None], seconds: float) -> bool:
+    """Run `coro` for `seconds` at most: True when it finished, False when it was stopped.
+    (asyncio.wait, not wait_for, whose Python 3.10 drops a cancellation of its caller.)"""
+    task = asyncio.ensure_future(coro)
+    try:
+        done, _ = await asyncio.wait({task}, timeout=seconds)
+    except BaseException:  # (the search itself stopped: its requests end before the client closes too)
+        task.cancel()
+        await asyncio.wait({task}, timeout=5)
+        raise
+    if done:
+        task.result()
+        return True
+    while not task.done():  # its requests end before the client they use closes
+        task.cancel()
+        await asyncio.wait({task}, timeout=1)
+    return False
+
+
 RMK_PLACE_PAGES = 30  # postings read for their place, per search
 
 
-async def read_page(url: str) -> str:
-    """A page over plain HTTP, as the searches read them."""
-    async with httpx.AsyncClient(headers={"User-Agent": USER_AGENT, "Accept-Language": "en-US,en;q=0.9"},
-                                 follow_redirects=True, timeout=20) as client:
-        r = await _send(client, "GET", url)
-        _raise_for(r, url)
-        return r.text
+def _plain_client() -> httpx.AsyncClient:
+    """The HTTP client the searches read with."""
+    return httpx.AsyncClient(headers={"User-Agent": USER_AGENT, "Accept-Language": "en-US,en;q=0.9"},
+                             follow_redirects=True, timeout=20)
+
+
+async def read_page(url: str, client: httpx.AsyncClient | None = None) -> str:
+    """A page over plain HTTP, as the searches read them (on `client`, else on a client of its own)."""
+    if client is None:
+        async with _plain_client() as own:
+            return await read_page(url, own)
+    r = await _send(client, "GET", url)
+    _raise_for(r, url)
+    return r.text
+
+
+@contextlib.asynccontextmanager
+async def _reader(read: Callable[[str], Awaitable[str]] | None) -> AsyncIterator[Callable[[str], Awaitable[str]]]:
+    """`read`, or read_page on one client for all the postings a search reads (not one each)."""
+    if read is not None:
+        yield read
+        return
+    async with _plain_client() as client:
+        yield lambda url: read_page(url, client)
 
 
 async def rmk_places(listings: list[Listing], read: Callable[[str], Awaitable[str]] | None = None) -> None:
     """Fill in the place of each listing that has none from its posting, whose header names
     the city and state ("Field Service Engineer · Service · Phoenix AZ · United States")."""
-    read = read or read_page
     sem = asyncio.Semaphore(4)
+    todo = [x for x in listings if not x.location][:RMK_PLACE_PAGES]
+    if not todo:
+        return
 
-    async def one(listing: Listing) -> None:
+    async def one(listing: Listing, read: Callable[[str], Awaitable[str]]) -> None:
         async with sem:
             try:
                 page = await read(listing.url)
@@ -1920,7 +2004,8 @@ async def rmk_places(listings: list[Listing], read: Callable[[str], Awaitable[st
                 return
         listing.location = successfactors_place(BeautifulSoup(page, "html.parser")) or listing.location
 
-    await asyncio.gather(*(one(x) for x in [x for x in listings if not x.location][:RMK_PLACE_PAGES]))
+    async with _reader(read) as reading:
+        await asyncio.gather(*(one(x, reading) for x in todo))
 
 
 def _rmk_date(value: Any) -> str:
@@ -1982,6 +2067,8 @@ async def _successfactors(client: httpx.AsyncClient, cfg: Any, query: str, limit
         r = await _send(client, "GET", url, params=params)
         _raise_for(r, url)
         batch, total, drawn = _parse_sf(r.text, site)
+        if not start and not drawn and total is None:  # neither openings, nor how many, nor "no open positions"
+            raise SearchError(f"No job list from {url}")
         start += drawn
         for listing in batch:
             if state and _SF_MORE_SHOWN.search(listing.location) and location_matches(listing.location, terms) is not True:
@@ -2007,6 +2094,10 @@ def _parse_sf(page: str, site: str) -> tuple[list[Listing], int | None, int]:
     (Salt River Project's), each with its place and date; how many the search found; and how
     many rows the page drew (where the next page starts)."""
     soup = BeautifulSoup(page, "html.parser")
+    if soup.select_one("#noresults") is not None:
+        # "There are currently no open positions matching …": the jobs under it are the site's most
+        # recent, of any kind (APS's, Rogers', Pfeiffer's and Freeport's, live, Oct 2026), not matches
+        return [], 0, 0
     out: list[Listing] = []
     seen: set[str] = set()
     rows = soup.select("tr.data-row") or soup.select("li.job-tile")  # (a table's page with a few tiles: its rows)
@@ -2089,17 +2180,18 @@ async def sfclassic_search(pages_of: Callable[..., Awaitable[list[str]]], cfg: A
             if listing.url not in known and title_matches(listing.title, query):
                 known.add(listing.url)
                 mine.append(listing)
-    read = read or read_page
     sem = asyncio.Semaphore(4)
 
-    async def place(listing: Listing) -> None:
+    async def place(listing: Listing, read: Callable[[str], Awaitable[str]]) -> None:
         async with sem:
             try:
                 listing.location = place_in_text(html_to_text(await read(listing.url)))
             except Exception:  # an unreadable posting stays "check the posting"
                 return
 
-    await asyncio.gather(*(place(x) for x in mine[:SFCLASSIC_PLACE_PAGES]))
+    if mine:
+        async with _reader(read) as reading:
+            await asyncio.gather(*(place(x, reading) for x in mine[:SFCLASSIC_PLACE_PAGES]))
     found.extend(mine)
 
 
@@ -2356,10 +2448,32 @@ def _epoch_date(value: Any) -> str:
         return ""
 
 
+def _retry_after(r: httpx.Response) -> float | None:
+    """The wait a 429 or 503 asks for in its Retry-After (seconds, or an HTTP date), if it names one."""
+    value = r.headers.get("Retry-After", "").strip()
+    if not value:
+        return None
+    try:
+        seconds = float(value)
+    except ValueError:
+        pass
+    else:
+        return max(0.0, seconds) if math.isfinite(seconds) else None
+    try:
+        when = email.utils.parsedate_to_datetime(value)
+    except (TypeError, ValueError, IndexError):
+        return None
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=timezone.utc)
+    return max(0.0, (when - datetime.now(timezone.utc)).total_seconds())
+
+
 async def _send(client: httpx.AsyncClient, method: str, url: str, **kw: Any) -> httpx.Response:
     """The request, tried up to three times while the site reports a passing problem
-    (Workday answers the odd search with a 502)."""
+    (Workday answers the odd search with a 502), after the wait the site asks for when it
+    names one (a 429's Retry-After); one that asks for longer than a search waits is its answer."""
     for attempt in range(3):
+        wait = RETRY_DELAY * 2 ** attempt
         try:
             r = await client.request(method, url, **kw)
         except httpx.TransportError:
@@ -2368,7 +2482,11 @@ async def _send(client: httpx.AsyncClient, method: str, url: str, **kw: Any) -> 
         else:
             if r.status_code not in RETRY_STATUS or attempt == 2:
                 return r
-        await asyncio.sleep(RETRY_DELAY * 2 ** attempt)
+            asked = _retry_after(r)
+            if asked is not None and asked > RETRY_AFTER_MOST:
+                return r
+            wait = wait if asked is None else asked
+        await asyncio.sleep(wait)
     raise AssertionError("unreachable")
 
 
@@ -2385,7 +2503,9 @@ def _raise_for(r: httpx.Response, url: str) -> None:
         raise SearchError(f"{asked} is down for maintenance (it sends searches to "
                           f"{r.url.host}{r.url.path}); try again in a few hours")
     if r.status_code >= 400:
-        raise SearchError(f"HTTP {r.status_code} from {url.split('?')[0]}")
+        wait = _retry_after(r) if r.status_code in RETRY_STATUS else None
+        raise SearchError(f"HTTP {r.status_code} from {url.split('?')[0]}"
+                          + (f" (it asks to be left {round(wait)} s before the next try)" if wait else ""))
 
 
 # --------------------------------------------------------------------- entry point
@@ -2457,9 +2577,7 @@ async def search_companies(
     companies = _pick(companies if companies is not None else load_companies(), names)
     terms = location_terms(location)
     own = client is None
-    client = client or httpx.AsyncClient(
-        headers={"User-Agent": USER_AGENT, "Accept-Language": "en-US,en;q=0.9"}, follow_redirects=True, timeout=20
-    )
+    client = client or _plain_client()
     results: list[dict[str, Any]] = []
     errors: dict[str, str] = {}
     browser_only: list[dict[str, str]] = []
@@ -2480,21 +2598,41 @@ async def search_companies(
         found: list[Listing] = []
         wordings = wordings_for(kind, query)
         failed: list[str] = []
-        async with sem:
+        tried = 0
+
+        async def in_turn() -> None:
+            nonlocal tried
             for wording in wordings:
+                tried += 1
                 try:
                     found.extend(await SEARCHERS[kind](client, search[kind], wording, fetch, terms))
+                except (httpx.ConnectError, httpx.ConnectTimeout) as e:  # no site there to answer: nor for its next wordings
+                    failed.append(f"{type(e).__name__}: {str(e)[:200]}")
+                    return
                 except Exception as e:  # an odd response must not sink the other searches
                     failed.append(f"{type(e).__name__}: {str(e)[:200]}")
-        if failed:
+
+        async with sem:
+            in_time = await _within(in_turn(), EMPLOYER_SECONDS)
+        if not in_time:
+            errors[company["name"]] = (f"its searches took over {EMPLOYER_SECONDS} s, so they were stopped"
+                                       + ("; the results found by then are listed" if found else ""))
+        elif tried < len(wordings):  # (a site that stopped answering)
+            untried = len(wordings) - tried
+            errors[company["name"]] = (f"{failed[-1]} (the site didn't answer, so its other {untried} "
+                                       + ("searches weren't" if untried > 1 else "search wasn't") + " tried"
+                                       + ("; the earlier ones' results are listed)" if found else ")"))
+        elif failed:
             partial = len(failed) < len(wordings)
             errors[company["name"]] = failed[0] + (
                 f" ({len(failed)} of {len(wordings)} searches failed; the others' results are listed)" if partial else "")
         results.extend(keep_listings(company["name"], found, terms, limit, query))
 
+    places_read = _PLACES_READ.set({})  # (the employers' tasks share it: each posting is read once a run)
     try:
         await asyncio.gather(*(one(c) for c in companies))
     finally:
+        _PLACES_READ.reset(places_read)
         if own:
             await client.aclose()
     results.sort(key=lambda r: (r["company"], not r.get("title_match", True), r["title"]))

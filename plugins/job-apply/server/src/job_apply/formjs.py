@@ -1545,3 +1545,9 @@ OPEN_MENU_JS = r"""
     ? !!(m.id && document.querySelector(`[aria-controls~="${CSS.escape(m.id)}"]`)) && !!m.querySelector('[role="gridcell"]')
     : !!m.querySelector('[role="option"], [role="menuitem"]')))
 """
+
+
+# A tab looked in on (BrowserSession.peek, every few seconds while a job waits on the person): a frame's form (not a
+# CAPTCHA's own frame's), its words and any CAPTCHA in it, in one call, not three (the review of Oct 15)
+PEEK_JS = ("([form, prefix]) => ({found: form ? (" + EXTRACT_JS.strip() + ")(prefix) : {}, text: ("
+           + VISIBLE_TEXT_JS.strip() + ")(), challenge: !!(" + CHALLENGE_JS.strip() + ")()})")

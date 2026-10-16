@@ -78,6 +78,10 @@ HANDS_ON_TIMEOUT = 45 * 60  # the longest it holds the queue, even for someone a
 NOTED = {"stuck", "sign_in", "submit_failed", "check_submit"}
 STOP = "stop"  # the page a job stopped on, saved for a problem report: its folder's debug/<time>-stop
 POLL_SECONDS = 3.0
+# A tab waiting on the person that hasn't changed (nor paused) for STILL_SECONDS is looked at this often instead: each
+# look reads every frame of it, every few seconds for up to 45 minutes (the review of Oct 15)
+SLOW_POLL_SECONDS = 10.0
+STILL_SECONDS = 60
 # With an email app password saved, a job waiting on an emailed code or link has the inbox
 # looked at this often, for this long after it began waiting
 MAIL_POLL_SECONDS = 20
@@ -914,7 +918,8 @@ class Applier:
         for other in [r for r in self.runs.values() if r.blocking and r.job_id != run.job_id]:
             reading = (other.need == "email_code" and not other.mail_done and self.mail_login() is not None
                        and time.time() - other.paused_at < MAIL_WINDOW)
-            if reading or time.time() - other.active_at < RELEASE_IDLE:
+            # (a tab still a minute is looked at every SLOW_POLL_SECONDS: work begun in it since may not be seen yet)
+            if reading or time.time() - other.active_at < RELEASE_IDLE + SLOW_POLL_SECONDS:
                 what = "its emailed code, which the desk is reading from your inbox" if reading else \
                     "you, at work in its tab"
                 run.reason = (f"Waiting: {other.company or 'another job'} holds the queue for {what}. This one goes "
@@ -1102,6 +1107,7 @@ class Applier:
         address it paused on: a tab the person has taken to another posting, even one on the
         same job system, is no application of this job's."""
         data, text = await self.srv.browser.peek(run.page)
+        self._note_activity(run, data)
         return self._twice(run, self._looks_past(run, data, text))
 
     # ------------------------------------------------------------- worker
@@ -1172,13 +1178,14 @@ class Applier:
                                     "so the other jobs went ahead")
             else:
                 self._wake.clear()  # sleep the poll out, unless something new comes in
-                await self._sleep(POLL_SECONDS)
+                await self._sleep(self._poll_for([blocker]))
                 return
         await self._pick_up_left()
         if not self.tasks:
             self._wake.clear()
             # with a job left waiting on the person, look at its tab again soon
-            await self._sleep(POLL_SECONDS if any(r.left and r.status == "needs_you" for r in self.runs.values()) else 30)
+            left = [r for r in self.runs.values() if r.left and r.status == "needs_you"]
+            await self._sleep(self._poll_for(left) if left else 30)
             return
         # paused: only what the person pressed for a job goes (its Submit, its Resume, its answers on its card)
         pressed = next((t for t in self.tasks if t[1] in self.pressed), None) if self.paused and submit is None else None
@@ -1311,13 +1318,17 @@ class Applier:
             return True  # they closed it (or it crashed, or the browser with it): start the job again
         # read without taking over the tools' tab: Claude may be using them meanwhile
         data, text = await self.srv.browser.peek(run.page)
-        # the address and what's in the boxes: a change is the person at work in the tab (a bot
-        # check that reloads itself with a new token in its address isn't)
+        self._note_activity(run, data)
+        return self._twice(run, self._looks_past(run, data, text))
+
+    @staticmethod
+    def _note_activity(run: Run, data: dict[str, Any]) -> None:
+        """The address and what's in the boxes of a paused tab, as looked at: a change is the person at work in it (a
+        bot check that reloads itself with a new token in its address isn't)."""
         mark = hash((_bare(data.get("url") or ""), tuple((f.get("id"), str(f.get("value"))) for f in data.get("fields") or [])))
         if run.tab_mark and mark != run.tab_mark:
             run.active_at = time.time()
         run.tab_mark = mark
-        return self._twice(run, self._looks_past(run, data, text))
 
     def _looks_past(self, run: Run, data: dict[str, Any], text: str) -> bool:
         """Does this look at a job's paused tab show it past the pause? Settled, not the page it
@@ -1385,6 +1396,14 @@ class Applier:
     def _own_hosts(self, run: Run) -> set[str]:
         job = self.srv.tracker().get(run.job_id, with_description=False) or {}
         return {(urlparse(u).hostname or "").lower() for u in (run.url, job.get("url"), job.get("apply_url")) if u}
+
+    @staticmethod
+    def _poll_for(runs: list[Run]) -> float:
+        """How soon to look at tabs waiting on the person again: every POLL_SECONDS while one of them changed or
+        paused within STILL_SECONDS, else every SLOW_POLL_SECONDS."""
+        now = time.time()
+        return (POLL_SECONDS if any(now - max(r.active_at, r.paused_at) < STILL_SECONDS for r in runs)
+                else SLOW_POLL_SECONDS)
 
     @staticmethod
     def _twice(run: Run, moved: bool) -> bool:
@@ -1690,11 +1709,13 @@ class Applier:
         except Exception:
             logging.getLogger(__name__).warning("couldn't save the page job %s stopped on", run.job_id, exc_info=True)
 
-    async def _look(self) -> tuple[dict[str, Any], str]:
+    async def _look(self, text: bool = True) -> tuple[dict[str, Any], str]:
+        """The page as the desk reads it: its form, and with `text` its words (a read of their own, left out where
+        they aren't wanted: the waits look every half second, the review of Oct 15)."""
         data = await self.srv.inspect_form(include_dropdown_options=False)
-        text = await self.srv.page_text(4000)
+        said = await self.srv.page_text(4000) if text else ""
         data["challenge"] = await self.srv.browser.challenge_showing()
-        return data, text
+        return data, said
 
     async def _open(self, run: Run) -> bool:
         srv = self.srv
@@ -2071,7 +2092,7 @@ class Applier:
                     continue
                 await self._bring_forward(run)
                 if done in ("prefilled", "filled"):
-                    data, _ = await self._look()
+                    data, _ = await self._look(text=False)
                     run.page_info = _page_info(data)  # the page as filled
                 if done == "prefilled" and _account_and_application(data):
                     return await self._apply_with_account(run, data)  # its application was drawn after all
@@ -2084,7 +2105,7 @@ class Applier:
                                            "security questions into it. Fill them in in the browser window, tick their "
                                            "terms box if there is one and create the account; the desk carries on after "
                                            "that.", seen=data)
-                    data, _ = await self._look()
+                    data, _ = await self._look(text=False)
                 if done == "prefilled" and manage and not run.accounts_tried and await self._make_account(run, data):
                     # a new account: its sign-in (where the site asks for one) is tried afresh, once more
                     # however many the refused password had
@@ -2140,7 +2161,7 @@ class Applier:
                         first += (" (The desk accepts an employer's privacy notice for you with accept_notices: true "
                                   "under settings: in profile.yaml, outside practice mode.)" if not _may_accept_notices()
                                   else " I tried to open it and accept it for you, and couldn't." if manage else "")
-                        data, _ = await self._look()  # (the statement it opened for them is open still: paused on)
+                        data, _ = await self._look(text=False)  # (the statement it opened for them is open still: paused on)
                     return self._pause(run, "sign_in", f"I filled in {_site(run, data)}'s Create Account form with your "
                                        f"details and saved password{user}. {asks}; the desk carries on after that."
                                        + first, card or None, seen=data)
@@ -2730,7 +2751,7 @@ class Applier:
                     # say what's wrong: Workday lists it as links ("Error-Email") and marks fields
                     problems = _flagged(clicked)
                     if not problems:
-                        now = (await self._look())[0]
+                        now = (await self._look(text=False))[0]
                         problems = _flagged(now) or [  # a Next greyed out until a resume is attached, say
                             f"\u201c{a['text'].strip()}\u201d is greyed out, so the site still wants something (a file, "
                             "say, or a box to tick)" for a in _greyed_step(now)[:1]]
@@ -2753,7 +2774,7 @@ class Applier:
                         # an email-first sign-in with no account for the email (an Eightfold site: "We don't
                         # recognize this email. Create a new account"): the desk makes it with
                         # settings.manage_accounts (once a job), and otherwise it's the person's to make
-                        now = (await self._look())[0]
+                        now = (await self._look(text=False))[0]
                         create = next((a for a in now.get("actions") or [] if not a.get("disabled")
                                        and _CREATE_ACCOUNT.match(final_text(a["text"]))), None)
                         if create is not None:
@@ -2771,7 +2792,7 @@ class Applier:
                     # boxes the errors name that show a value all the same: the page lost its own record of them
                     # (Nikon's UKG Pro, live run 10: its resume parse wiped Address 1 and Zip a moment after they
                     # were typed). Typed again, once a page, and the step pressed again
-                    seen_now = (await self._look())[0] if (looked not in retyped or looked not in refilled_pages
+                    seen_now = (await self._look(text=False))[0] if (looked not in retyped or looked not in refilled_pages
                                                            or looked not in redone_pages) else {}
                     # (and Workday's error links, "Error-Date", where its words read as no error: Entegris' and Analog
                     # Devices' Self Identify, runs 53 and 54, whose signature Date showed 10/13/2026)
@@ -2877,7 +2898,7 @@ class Applier:
                         # quickly one after another, and says nothing). The required boxes typed again, key by key,
                         # once a page, and the step pressed again
                         retyped.add(looked)
-                        shown = (await self._look())[0]  # (as it is after the wait above)
+                        shown = (await self._look(text=False))[0]  # (as it is after the wait above)
                         boxes = [f["id"] for f in shown.get("fields") or [] if f.get("kind") == "text"
                                  and f.get("required") and not f.get("disabled") and not is_empty_value(f.get("value"))
                                  and len(str(f.get("value"))) <= 80]  # (not a long answer: typed key by key)
@@ -2903,7 +2924,7 @@ class Applier:
                     stuck = "The page didn't move on" + (f": {errors}." if errors else ".") \
                         + " Fix it in the browser, then press Resume."
                     if kind == "form" and (page := _step_page(data)) not in asked_back \
-                            and _named_by_errors((await self._look())[0]):
+                            and _named_by_errors((await self._look(text=False))[0]):
                         # boxes taken as optional, left empty, that the errors name or the page marks wrong (BrassRing's
                         # consents, Edward Jones' run 83: each a lone "I agree" marked required only by a class and a
                         # star beside it, "Required" once pressed): the form's questions after all. Gone back to, once
@@ -2976,7 +2997,7 @@ class Applier:
         deadline = time.monotonic() + ACCOUNT_DRAW_WAIT
         while time.monotonic() < deadline:
             await asyncio.sleep(1)
-            if _account_and_application((await self._look())[0]):
+            if _account_and_application((await self._look(text=False))[0]):
                 return
 
     async def _said_terms(self, boxes: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -3029,7 +3050,7 @@ class Applier:
         deadline = time.monotonic() + seconds
         while time.monotonic() < deadline:
             await asyncio.sleep(1)
-            data, _ = await self._look()
+            data, _ = await self._look(text=False)
             if (_steady_url(data.get("url")), tuple(data.get("headings") or [])) != key[:2]:
                 return True
             # (or a question drawn in place of the one pressed on: a questionnaire asking one at a time, the review of
@@ -3043,7 +3064,7 @@ class Applier:
         deadline = time.monotonic() + seconds
         while time.monotonic() < deadline:
             await asyncio.sleep(0.5)
-            now, _ = await self._look()
+            now, _ = await self._look(text=False)
             if _page_sig(now) != _page_sig(before):
                 return True
         return False
@@ -3110,7 +3131,7 @@ class Applier:
                 run.once_page.setdefault(key, here)
             if attempt == 0:
                 await asyncio.sleep(ONCE_SETTLE)  # long enough for an answer that won't stick to be gone
-                data, _ = await self._look()
+                data, _ = await self._look(text=False)
         filled -= set(failed)
         if filled:
             self._log(run, f"filled {len(filled)} answer(s) you gave for this application")
@@ -3166,7 +3187,7 @@ class Applier:
         except Exception:  # gone, or it won't take a click: the person's, as before
             return False
         await asyncio.sleep(0.5)  # (the block goes from the page)
-        now, _ = await self._look()
+        now, _ = await self._look(text=False)
         if any(f.get("section") == last for f in now.get("fields") or []):
             return False  # still there (a "Are you sure?" over it, say): the person's
         run.schools_dropped.append(last)  # gone: one block fewer of the profile's schools from here on
@@ -3241,7 +3262,7 @@ class Applier:
             except Exception:  # gone, or it won't take a click: the person's, as before
                 return False
             await asyncio.sleep(0.5)  # (the block goes from the page)
-            now, _ = await self._look()
+            now, _ = await self._look(text=False)
             if any(f.get("section") == block for f in now.get("fields") or []):
                 return False  # still there (a "Are you sure?" over it, say): the person's
             added[kind] -= 1
@@ -3407,7 +3428,7 @@ class Applier:
         if statement is not None:
             if not await self._accept_statement(run, data, statement):
                 return False
-            data, _ = await self._look()  # (as it is once accepted)
+            data, _ = await self._look(text=False)  # (as it is once accepted)
         terms = await self._said_terms(_terms_boxes(data))
         boxes = terms + _new_candidate_boxes(data, run.company) + _other_positions_boxes(data)
         own = [a for a in data.get("actions") or [] if a.get("account_form") or a.get("in_account_form")
@@ -3466,7 +3487,7 @@ class Applier:
             return ""
         results = await self.srv.browser.fill([{"id": f["id"], "value": answers[placed_key(f)], "secret": True}
                                                for f in boxes])
-        now, _ = await self._look()
+        now, _ = await self._look(text=False)
         if not results or not all(r.get("ok") for r in results) or not _security_answered(now):
             self._log(run, f"couldn't put your answers to the security questions into the form on {_site(run, data)}")
             return "failed"
@@ -3492,7 +3513,7 @@ class Applier:
                 return False
             deadline = time.monotonic() + ACCOUNT_STEP_WAIT
             while True:
-                now, _ = await self._look()
+                now, _ = await self._look(text=False)
                 notice = _notice(now)
                 if notice is not None or time.monotonic() > deadline:
                     break
@@ -3533,10 +3554,10 @@ class Applier:
                 and not _security_answered(data)):
             if await self._fill_account_answers(run, data) == "failed":
                 why = "your answers to its security questions wouldn't go into it"
-            data, _ = await self._look()
+            data, _ = await self._look(text=False)
         captcha, security = _captcha_on(data), _security_asked(data) and not _security_answered(data)
         if _may_manage_accounts() and not run.account_finished and not captcha and not security and not why:
-            now, _ = await self._look()
+            now, _ = await self._look(text=False)
             terms = await self._said_terms(_terms_boxes(now))
             boxes = terms + _other_positions_boxes(now)
             pressable = None
@@ -3544,7 +3565,7 @@ class Applier:
                 why = "its terms box wouldn't tick"
             else:  # greyed out until its terms are ticked: a moment for the page to take that in
                 for _ in range(10):
-                    now, _ = await self._look()
+                    now, _ = await self._look(text=False)
                     named = [a for a in now.get("actions") or [] if a.get("text", "").strip() == said]
                     pressable = next((a for a in named if not a.get("disabled")), None)
                     if pressable is not None or not named:
@@ -3572,7 +3593,7 @@ class Applier:
                     await self._wait_to_leave(now, said)
                     return True
         await self._bring_forward(run)
-        now, _ = await self._look()
+        now, _ = await self._look(text=False)
         run.page_info = _page_info(now)
         if run.account_finished or why:
             wants = _account_wants(data, now) or "see the page in the browser window."
@@ -3676,7 +3697,7 @@ class Applier:
         while button is None and time.monotonic() < deadline:
             # its boxes drawn before its button (Northrop's agreement, live, Oct 2026): a moment more
             await asyncio.sleep(0.5)
-            now, _ = await self._look()
+            now, _ = await self._look(text=False)
             if _email_account_view(now) != view:
                 return True  # it went on by itself: the main loop's next look
             data, button = now, self._account_button(now.get("actions") or [], pattern)
@@ -3850,12 +3871,12 @@ class Applier:
                 return None
             if not await press(back):
                 return None
-            data, _ = await self._look()
+            data, _ = await self._look(text=False)
             forgot = _forgot_action(data.get("actions") or [])
             if forgot is None:
                 return await stop("couldn't find its way to a password reset", data)
         run.reset_from = data.get("url") or ""
-        before, _ = await self._look()  # (the page as it is now, the refused sign-in drawn: what the press changes)
+        before, _ = await self._look(text=False)  # (the page as it is now, the refused sign-in drawn: what the press changes)
         forgot = _forgot_action(before.get("actions") or []) or forgot  # (its own, drawn again since, if it was)
         if not await press(forgot):
             return await instead("couldn't open its password reset", data)
@@ -3945,7 +3966,7 @@ class Applier:
     async def _still_no_sign_in(self, run: Run) -> bool:
         """Still no sign-in a moment later (not one still being drawn)?"""
         await asyncio.sleep(LEFT_SIGN_IN_SETTLE)
-        data, _ = await self._look()
+        data, _ = await self._look(text=False)
         return _no_sign_in_here(run, data)
 
     async def _register_from_posting(self, run: Run, looked: tuple) -> bool:
@@ -3956,7 +3977,7 @@ class Applier:
         been: pressed, and its form read and filled in like any Create Account. Only where the page is
         still as it was before Apply was pressed (a slow Apply isn't one that went nowhere). True once
         it's pressed."""
-        data, _ = await self._look()
+        data, _ = await self._look(text=False)
         way = _account_way(data.get("actions") or []) if _fingerprint(data) == looked else None
         if way is None:
             return False
@@ -4325,7 +4346,7 @@ class Applier:
         deadline = time.monotonic() + SIGN_IN_SETTLE
         while time.monotonic() < deadline:
             await asyncio.sleep(1)
-            data, _ = await self._look()
+            data, _ = await self._look(text=False)
             if data.get("errors"):
                 return False
             if not any(f.get("kind") == "password" and not _code_box(f) for f in data.get("fields") or []):
@@ -4509,7 +4530,7 @@ class Applier:
         pending, missing_files = _pending(result, once_failed)
         self._note_skipped(run, result)
         pending = await self._attest(run, pending)
-        data, _ = await self._look()
+        data, _ = await self._look(text=False)
         run.page_info = _page_info(data)  # the page as filled
         gaps, pending = self._entry_gaps(run, data, pending)
         pending = await self._said_above(pending)
@@ -4517,7 +4538,7 @@ class Applier:
             return
         saved = await self._sign_in(run, data, {}, details=False) == "prefilled"  # filled in above
         if saved:  # the record of the page shows its password boxes filled, too
-            run.page_info = _page_info((await self._look())[0])
+            run.page_info = _page_info((await self._look(text=False))[0])
         srv._mark_ready(srv.tracker().get(run.job_id), "filled by the Job Desk; the site creates the account as it applies")
         await self._bring_forward(run)
         password = "Your saved password is in its password boxes" if saved else "Choose a password in its password boxes"

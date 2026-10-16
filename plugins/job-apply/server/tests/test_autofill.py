@@ -44,6 +44,47 @@ def f(label, kind="text", **kw):
     return {"id": "1", "label": label, "kind": kind, "value": "", **kw}
 
 
+@pytest.mark.parametrize("want", ["Zebra Unknown Thing", "Bachelor's Degree", "10", "Yes", "Decline to self-identify",
+                                  "Arizona", "Phoenix, AZ"])
+def test_a_long_list_is_read_a_few_times_a_choice_not_once_a_state(monkeypatch, want):
+    """A 241-choice list (a school or a country list) took 100 ms an answer: each choice was put through norm() again
+    for each of the 52 states' names (the review of Oct 15). Now a few times a choice, whatever the answer."""
+    import random
+    from job_apply import autofill
+    words = "north south east west river valley mountain state city county technical institute college lake".split()
+    rng = random.Random(1)
+    options = [" ".join(rng.choice(words).title() for _ in range(3)) + f" {i}" for i in range(241)]
+    calls = []
+    real = autofill.norm
+
+    def counted(s):
+        calls.append(1)
+        return real(s)
+    monkeypatch.setattr(autofill, "norm", counted)
+    choose_option(want, options)
+    assert len(calls) < 12 * len(options)
+
+
+def test_a_place_and_its_aliases_read_the_same_as_before():
+    """_place_parts and _aliases with the states' names worked out once: the same parts and aliases as working them
+    out for each choice, as they were."""
+    import re
+    from job_apply.autofill import US_STATES, _aliases, _place_parts, norm
+    for s in ["Phoenix, Arizona", "Phoenix, AZ", "US-AZ", "Arizona, United States", "az", "New Mexico", "NM",
+              "District of Columbia", "Puerto Rico", "Tempe - Arizona - USA", "Ontario, Canada", "Washington", "wa",
+              "Indiana", "in", "Oregon", "or", "Maine", "me", "", "United States of America"]:
+        n = norm(s)
+        aliases = {n} | ({norm(US_STATES[n.upper()])} if n.upper() in US_STATES else set()) | {
+            c.lower() for c, name in US_STATES.items() if n == norm(name)}
+        assert aliases <= _aliases(n) and not {a for a in _aliases(n) - aliases if len(a) == 2 and a.upper() in US_STATES}
+        parts = [p for p in (norm(x) for x in re.split(r"\s*,\s*|\s+-\s+", re.sub(r"^\s*usa?\s*-\s*", "", s, flags=re.I)))
+                 if p]
+        was = [next((c.lower() for c, name in US_STATES.items() if p in (c.lower(), norm(name))), p) for p in parts]
+        while was and was[-1] in {"united states", "united states of america", "usa", "us", "u s", "u s a"}:
+            was.pop()
+        assert _place_parts(s) == tuple(was), s
+
+
 def test_a_choice_saying_the_person_is_not_on_staff_is_answered_from_the_profile():
     """Desert Financial's UKG Pro (run 56): "Have you notified your leader of your application? (internal candidates
     only)" with Yes, No and "I am not a current Desert Financial employee": the last, where the profile says where the
