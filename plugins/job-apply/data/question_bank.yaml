@@ -44,7 +44,8 @@ questions:
   - id: background_check
     example: "Are you willing to submit to a background check?"
     ask: Would you agree to a background check if offered a job?
-    match: "(?:willing|agree|consent)\\b.{0,20}\\b(?:submit to|undergo|complete|to)?\\s*(?:a )?background (?:check|screening|investigation)"
+    # (not "have you ever refused to consent to / failed a background check?": another question, the review of Oct 15)
+    match: "^(?!.*\\b(?:ever|refus\\w*|declin\\w*|fail\\w*|denied)\\b).*(?:willing|agree|consent)\\b.{0,20}\\b(?:submit to|undergo|complete|to)?\\s*(?:a )?background (?:check|screening|investigation)"
     kind: choice
     choices: ["Yes", "No"]
     seen: 1
@@ -52,7 +53,8 @@ questions:
   - id: adult
     example: "Are you 18 years of age or older?"
     ask: Are you 18 or older?
-    match: "^(?!.*\\b(?:under|hours?|months?|days?|weeks?)\\b).*(?:\\b(?:at least|aged?)\\s+18\\b|\\b18 (?:years|or older|or over|\\+))"
+    # (nor a count of 18 credits or units, or 18 years of experience or work: the review of 0.3.175)
+    match: "^(?!.*\\b(?:under|hours?|months?|days?|weeks?|credits?|units?|experience|work(?:ed|ing)?)\\b).*(?:\\b(?:at least|aged?)\\s+18\\b|\\b18 (?:years|or older|or over|\\+))"
     kind: choice
     choices: ["Yes", "No"]
     seen: 3

@@ -56,6 +56,11 @@ def test_each_common_question_covers_the_wordings_employers_asked(bank_id, label
 @pytest.mark.parametrize("label", [
     "Start Date",  # a past job's
     "Have you received notice from any government agency in the last 18 months?",
+    # the review of Oct 15: another question about a background check, not consent to one; a count of 18, not an age
+    "Have you ever refused to consent to a background check?",
+    "Have you ever declined to agree to a background check?",
+    "Do you have 18 years of experience?",
+    "Have you completed at least 18 credits?",
     "Over the past 18 months, have you worked for a competitor?",
     "If under age 18, can you furnish a work permit?",
     "Employment Type",  # a past job's
@@ -161,3 +166,25 @@ def test_an_account_forms_security_questions_are_never_listed_for_the_bank():
         {"need": "questions", "questions": [{"label": "Do you have a forklift license?", "kind": "select"}]}]
     found = qb.uncovered([{"company": "Example Corp", "rounds": rounds}], [])
     assert [label for label, _, _ in found] == ["Do you have a forklift license"], found
+
+
+def test_an_answer_saved_with_an_older_bank_pattern_takes_the_banks_current_one(job_apply_home):
+    """An answer saved on the desk keeps the bank's pattern of that day in answers.yaml, so a pattern corrected since
+    (background_check's, 0.3.175: "have you ever refused to consent to a background check?" matched it) never
+    reached anyone who had answered before (the review's). The bank's pattern of today is used; the file is the
+    person's and stays as it is."""
+    old = ("(?:willing|agree|consent)\\b.{0,20}\\b(?:submit to|undergo|complete|to)?\\s*(?:a )?"
+           "background (?:check|screening|investigation)")
+    (job_apply_home / "answers.yaml").write_text(
+        yaml.safe_dump({"answers": [{"match": old, "answer": "Yes", "bank": "background_check"}]}), encoding="utf-8")
+    prof = config.Profile.load()
+
+    def answer(label):
+        a = autofill.resolve_field({"id": "q", "label": label, "kind": "radio_group", "options": ["Yes", "No"], "value": ""},
+                                   prof, {})
+        return a and a.value
+
+    assert answer("Are you willing to submit to a background check?") == "Yes"
+    assert answer("Have you ever refused to consent to a background check?") is None
+    kept = yaml.safe_load((job_apply_home / "answers.yaml").read_text(encoding="utf-8"))
+    assert kept["answers"][0]["match"] == old  # (the file is the person's: as they saved it)

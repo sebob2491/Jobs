@@ -446,6 +446,22 @@ _CLAIMS = re.compile(r"\b(?:authori[sz]ed|sponsor\w*|eligib\w*|citizen\w*|years?
 # and a question about something else beside the agreement ("Have you ever been convicted ...? I certify ...")
 _OTHER_QUESTION = re.compile(r"\b(?:have|do|are|will|can|did|were|would|has|is) you\b(?! (?:agree|accept|acknowledge|"
                              r"consent|certify|understand|have read|read|confirm)\b)", re.I)
+# An attestation's consequence clauses, which say nothing about the person: "I understand that if I am employed,
+# false statements are cause for dismissal", "this is a drug-free workplace", "eligibility for employment is
+# contingent on a background check", "I may be required to present a valid driver's license" (the review of 0.3.175).
+# Blanked before _CLAIMS and _OTHER_QUESTION read an attestation's label
+_CONSEQUENCE = re.compile(r"\b(?:if|when|should|once) i am\b|\bi (?:understand|acknowledge)(?: that)? i am (?:subject|not guaranteed|"
+                          r"applying|required|being considered)\b|\bdrug[- ]free\b|\beligibility for (?:employment|hire)\b|"
+                          r"\b(?:may|will|would) be required to (?:present|provide|show|obtain|pass|submit)\b[^.;]*", re.I)
+
+
+def _about_person(label: str) -> bool:
+    """An attestation's words that also say something about the person, or ask them another question (_CLAIMS,
+    _OTHER_QUESTION), its consequence clauses aside: such a box is theirs."""
+    said = _CONSEQUENCE.sub(" ", label)
+    return bool(_CLAIMS.search(said) or _OTHER_QUESTION.search(said))
+
+
 # A bot check's badge on a page ("Protected by hCaptcha", reCAPTCHA's): a press it holds is the person's
 _BOT_BADGE = re.compile(r"\bh ?captcha\b|\brecaptcha\b", re.I)
 # A dialog that mentions personal data but isn't a notice to take in ("could not be saved", "overwrite?")
@@ -4500,7 +4516,7 @@ def _attestation(q: dict[str, Any]) -> Any:
         return None
     choices = [str(o) for o in q.get("options") or [] if not is_empty_value(o)]
     if q["kind"] == "radio_group" and (len(choices) != 1 or not (polarity(choices[0]) is True or _AGREES.match(
-            choices[0].strip())) or _CLAIMS.search(label) or _OTHER_QUESTION.search(label)):
+            choices[0].strip())) or _about_person(label)):
         # (a lone "I agree" is a tick box: BrassRing's consents, Edward Jones' run 83; a Yes / No isn't picked, nor a
         # lone "I disagree", nor one whose words say something about the person: the review's)
         return None
@@ -4516,7 +4532,9 @@ def _attestation(q: dict[str, Any]) -> Any:
     if _signs_up(label) or _NOT_TERMS.search(re.sub(r"\baffiliat\w*|\boffers? of employment", "", label, flags=re.I)):
         return None
     if q["kind"] == "checkbox":
-        return True
+        # (a box whose words also say something about the person, "... and that I am legally authorized to work in
+        # the US", or ask another question, is theirs, as a lone choice's are: the review of Oct 15)
+        return None if _about_person(label) else True
     if len(choices) == 1:
         # (and only a choice that says no more than that: not "I agree, and send me text messages and job alerts", "I
         # agree to binding arbitration" or "I am authorized to work in the US", the second review of 0.3.165)
@@ -4524,7 +4542,7 @@ def _attestation(q: dict[str, Any]) -> Any:
         more = _NEVER_AGREED.search(one) or _WAIVES.search(one) or _NOT_ATTESTED.search(one) or _signs_up(one) \
             or _CLAIMS.search(one)
         return one if polarity(one) is not False and not more else None
-    if _CLAIMS.search(label) or _OTHER_QUESTION.search(label):
+    if _about_person(label):
         return None  # a Yes there would answer something else too ("Have you ever been convicted ...?")
     yes = [o for o in choices if polarity(o) is True]
     return yes[0] if len(yes) == 1 else None

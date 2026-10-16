@@ -100,7 +100,7 @@ preferences:
   flexible_schedule: ~        # true/false — shifts, nights, weekends, on-call
   desired_salary: ~           # e.g. "$85,000" — leave empty to be asked each time
   earliest_start: ~           # e.g. "2 weeks after offer"
-  how_did_you_hear: LinkedIn
+  how_did_you_hear: ~         # e.g. LinkedIn, Indeed or Company website; empty, the desk asks you once
   locations: []               # e.g. ["Phoenix, AZ", "Chandler, AZ", "Tempe, AZ"]
   titles: []                  # e.g. ["Field Service Engineer", "Equipment Engineer"], ["HR Generalist",
                               # "Recruiter"] or ["Staff Accountant", "Financial Analyst"]

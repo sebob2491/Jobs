@@ -144,6 +144,9 @@ through its `missing` and `profile_gaps` together.
      `semiconductor-az` the semiconductor ones, which hire HR, finance and IT people too),
      and `companies:` adds employers of their own. Set `preferences.titles` to their
      target titles ("HR Generalist", "Recruiter"), since ranking follows them.
+   - `preferences.how_did_you_hear`: ask, or leave it empty and the desk asks once on its
+     common-questions card. Profiles made from the template before 0.3.175 hold its old preset
+     `LinkedIn`, which went into every application: ask whether that's true, and clear it if not.
 
 4. Write `~/.job-apply/profile.yaml` and keep its comments. Run `setup_status` again
    until `profile_complete` is true. If its `profile_gaps` lists `work_history dates: <jobs>`,

@@ -711,6 +711,18 @@ def test_age_asked_either_way_and_never_for_another_question():
     not_allowed = _person(work_authorization={"authorized_to_work": False, "requires_sponsorship": True, "over_18": True})
     assert _answer("Are you at least 18 years of age and legally authorized to work in the United States?", not_allowed) is None
     assert _answer("Are you 18 years of age or older and able to work in the U.S. without sponsorship?", not_allowed) is None
+    # a count of 18 isn't an age (the review of Oct 15: "at least 18 months of experience" was answered Yes from
+    # being over 18, "less than 18 months" No)
+    for q in ("Do you have at least 18 months of experience in equipment maintenance?",
+              "Have you worked less than 18 months in your current role?", "Do you have 18 years of experience?",
+              "Can you work at least 18 hours a week?", "Have you completed at least 18 credits?",
+              "Do you have under 18 months of experience with Workday?", "Have you been working at least 18 years?",
+              "Have you completed at least 18 units?"):
+        assert _answer(q, kind="radio_group", options=["Yes", "No"]) is None, q
+    # (and the age asked in other words, or with "if under 18" after it, which asks the other way: the review's)
+    for q in ("Are you at least eighteen years old?", "Are you 18 or older?", "Are you over 18?", "Age 18 or older?",
+              "Are you at least 18 years of age? If under 18, please provide your date of birth"):
+        assert _answer(q, kind="radio_group", options=["Yes", "No"]) == "Yes", q
 
 
 def test_schooling_is_never_understated_nor_overstated():
@@ -1298,6 +1310,42 @@ def test_a_degree_of_one_kind_is_picked_however_the_list_writes_it_and_a_bare_on
     asm = ["Associates", "Associate's Degree", "Bachelors", "Bachelor's Degree", "Masters", "Master's Degree", "Other"]
     for said in ("Bachelor of Science", "Bachelor's Degree", "BSEE"):
         assert choose_option(said, asm) == "Bachelor's Degree", said
+
+
+def test_a_degree_level_the_list_lacks_is_never_another_level_nor_a_ged_a_diploma():
+    """The review of Oct 15: "Bachelor's Degree" among Master's Degree, Doctorate and Other was "Master's Degree"
+    (the words they share), "Master's Degree" among Associate's, Bachelor's and Other "Associate's Degree", a GED
+    "High School Diploma" and a diploma "GED". A level the list lacks is the person's to say (an honest "Other",
+    or nothing); a GED matches a choice that names an equivalent, a diploma one that says high school or diploma."""
+    assert choose_option("Bachelor's Degree", ["Master's Degree", "Doctorate", "Other"]) is None
+    assert choose_option("Master's Degree", ["Associate's Degree", "Bachelor's Degree", "Other"]) is None
+    assert choose_option("Associate's Degree", ["Some College", "No degree", "Other"]) is None
+    assert choose_option("GED", ["High School Diploma", "Bachelor's Degree"]) is None
+    assert choose_option("GED", ["High School", "College"]) == "High School"  # (the bare level: a GED is its equivalent)
+    assert choose_option("High School Diploma", ["GED", "Bachelor's Degree"]) is None
+    assert choose_option("High School Diploma", ["High School Equivalent (GED)", "Bachelor's"]) is None
+    assert choose_option("GED", ["High School Diploma or GED", "Bachelor's Degree"]) == "High School Diploma or GED"
+    assert choose_option("GED", ["High School Equivalent (GED)", "Bachelor's"]) == "High School Equivalent (GED)"
+    assert choose_option("GED", ["High School or Equivalent", "Bachelor's"]) == "High School or Equivalent"
+    assert choose_option("High School Diploma", ["High School Diploma or Equivalent", "Bachelor's"]) == \
+        "High School Diploma or Equivalent"
+    assert choose_option("High School Diploma", ["High School or Equivalent", "Bachelor's"]) == "High School or Equivalent"
+    assert choose_option("High School Diploma", ["High School", "College"]) == "High School"
+    # the level that is there, as before, in the bare singular too (the review of 0.3.175: "Bachelor" alone was no
+    # level, so the list of issue #112, note 16, would have been said to lack a bachelor's); a list with no degree in it,
+    # as before
+    assert choose_option("Bachelor's Degree", ["Associates", "Bachelors", "Masters"]) == "Bachelors"
+    workday = ["Certificate", "Foundation", "Associate", "Bachelor", "Master", "Doctor", "Ph.D.", "Others", "Some College",
+               "No degree (Dropped out)"]
+    for said, pick in (("Bachelor's Degree", "Bachelor"), ("Bachelor of Science", "Bachelor"), ("BSEE", "Bachelor"),
+                       ("Master's Degree", "Master"), ("MBA", "Master"), ("Associate of Applied Science", "Associate"),
+                       ("GED", None), ("High School Diploma", None)):
+        assert choose_option(said, workday) == pick, (said, pick)
+    taleo = ["HS Diploma", "GED", "Associate", "Bachelor", "Master"]
+    assert choose_option("Bachelor of Science", taleo) == "Bachelor" and choose_option("GED", taleo) == "GED"
+    assert choose_option("High School Diploma", taleo) == "HS Diploma"
+    assert choose_option("Doctorate", ["PhD", "Master's"]) == "PhD"
+    assert choose_option("Bachelor's Degree", ["Yes", "No"]) is None
 
 
 def test_a_bare_job_title_beside_a_profile_employers_company_gets_that_jobs_title():
