@@ -50,6 +50,7 @@ REFUSAL_SETTLE = 2  # seconds a refused sign-in's alert may still take to show o
 RESET_SETTLE = 15  # the same for a new password sent: its reset form still on show, no error yet (Workday's)
 STEP_SAVE_WAIT = 20  # for a step pressed three times that's still saving (KLA's Workday), before it counts as stuck
 STEP_LOAD_WAIT = 30  # for a step still loading its questions, its loading dots on show (KLA's Workday)
+INDICATOR_GONE_SETTLE = 3  # seconds more, the indicator gone and nothing to press yet, for the step's button to follow
 BLANK_PAGE_WAIT = 30  # for a page with nothing on it yet to draw (Infineon's application, now and then)
 SIGN_IN_STEP_WAIT = 25  # Workday's sign-in step can take longer to draw its buttons (Applied's)
 LEFT_SIGN_IN_SETTLE = 3  # seconds before a sign-in page that led elsewhere is taken for one with no sign-in
@@ -2861,16 +2862,22 @@ class Applier:
 
     async def _wait_for_step(self, seconds: float, before: dict[str, Any]) -> bool:
         """Wait for a form still being drawn: its step button enabled, or more boxes to fill, or
-        (a page showing a loading indicator) the indicator gone."""
+        (a page showing a loading indicator) the indicator gone, and then, with nothing to press yet, a
+        moment more for the button that may follow a render later (Cornerstone's Apply Now gets its words
+        after its loading overlay goes)."""
         had = _boxes(before)
         deadline = time.monotonic() + seconds
+        gone_at: float | None = None
         while time.monotonic() < deadline:
             await asyncio.sleep(1)
             data = await self.srv.inspect_form(include_dropdown_options=False)
-            if (pick_next(data.get("actions") or [], in_form=True) or _boxes(data) > had
-                    or before.get("busy") and not data.get("busy") or _came_on(before, data)):
+            if pick_next(data.get("actions") or [], in_form=True) or _boxes(data) > had or _came_on(before, data):
                 return True
-        return False
+            if before.get("busy") and not data.get("busy"):
+                gone_at = gone_at or time.monotonic()
+                if time.monotonic() - gone_at >= INDICATOR_GONE_SETTLE:
+                    return True
+        return gone_at is not None
 
     async def _wait_for_step_change(self, key: tuple[Any, ...], seconds: float) -> bool:
         """Wait for the page to go on from a step (its address or headings no longer `key`'s)."""

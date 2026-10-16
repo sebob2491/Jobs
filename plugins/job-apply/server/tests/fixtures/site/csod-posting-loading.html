@@ -1,0 +1,35 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Careers</title>
+<style>.p-loading{position:fixed;inset:0;background:rgba(0,0,0,.4)}.p-loading .box{width:74px;height:74px;margin:200px auto;background:#fff;border-radius:6px}.spinner{width:30px;height:30px;margin:22px;border:4px solid #ccc;border-top-color:#2a5db0;border-radius:50%}</style>
+</head>
+<body>
+<!-- like Linde's Cornerstone requisition page (the live check, run 105): the job's title and its bar drawn, its Apply Now
+     button there but disabled and still without its words, the description empty, and the site's loading overlay over
+     the whole page (its spinner in a box, the page greyed), for a while (?slow=<ms>: then the overlay goes, the button
+     reads "Apply Now" and is enabled, and leads to the application, step1.html; &late=<ms>: the button gets its words
+     that long after the overlay goes, a render later; ?never: it loads forever, reloaded or not) -->
+<div class="header"><a href="#">Sign In</a> <a href="#">Create Profile</a>
+  <select data-tag="LanguageSelector" aria-label="Change Language"><option>English (US)</option></select></div>
+<h1>Analytical Systems Superintendent</h1>
+<p>Phoenix, AZ, United States | req33794</p>
+<div class="p-gridcol"><button id="apply" class="p-button basic primary is-disabled" type="button" disabled aria-disabled="true" data-tag="applyNowButton"></button>
+  <button type="button" title="Share">Share</button> <button type="button" title="Save Job" data-tag="save-job-button">Save Job</button></div>
+<a href="#" class="back">Back to Search</a>
+<div id="body"></div>
+<div class="p-loading" data-tag="Loading_spinner_tag"><div class="box"><div class="spinner"></div></div></div>
+<script>
+  const q = new URLSearchParams(location.search);
+  const ms = Number(q.get('slow') || 0), late = Number(q.get('late') || 0);
+  if (!q.has('never')) setTimeout(() => {
+    document.querySelector('.p-loading').remove();
+    document.getElementById('body').innerHTML = '<p>Lead the analytical systems team at our Phoenix plant.</p>';
+    setTimeout(() => {
+      const b = document.getElementById('apply');
+      b.textContent = 'Apply Now'; b.disabled = false; b.removeAttribute('aria-disabled'); b.classList.remove('is-disabled');
+      b.addEventListener('click', () => { location.href = 'step1.html'; });
+    }, late);
+  }, ms);
+</script>
+</body>
+</html>

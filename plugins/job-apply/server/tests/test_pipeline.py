@@ -10072,3 +10072,35 @@ def test_a_posting_page_that_is_the_sites_own_error_page_is_said_in_its_words(sr
     assert "An error occurred while processing your request" in r.reason and "reloaded" in r.reason, r.reason
     assert "couldn't find the button" not in r.reason, r.reason
     assert any("so I reloaded it" in line for line in r.log), r.log
+
+
+@pytest.mark.parametrize("query", ["?slow=3000", "?slow=1500&late=1500", "?never"])
+def test_a_cornerstone_posting_still_loading_is_waited_on_then_its_apply_pressed(srv, monkeypatch, query):
+    """Linde's Cornerstone requisition page (the live check, run 105): the job's title and bar drawn, its Apply Now
+    button there but disabled and still without its words, the description empty, and the site's loading overlay over
+    the page (its spinner in a box); the desk read no button and stopped ("I couldn't find the button that moves this
+    application on"), twice. The overlay is a loading indicator: the page is waited on, and its Apply Now pressed once
+    it's enabled, also when the button gets its words a moment after the overlay goes (&late: the review of 0.3.183);
+    a page that never finishes is reloaded once, then said to be still loading."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    job = srv.add_job(url=fixture_url("site/csod-posting-loading.html") + query, title="Analytical Systems Superintendent",
+                      company="Example Gas")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), timeout=120, about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert "couldn't find the button" not in r.reason, (r.reason, r.log)
+    if query == "?never":
+        assert sum("still loading after" in line and "reloaded it" in line for line in r.log) == 1, r.log
+        assert (r.status, r.need) == ("needs_you", "stuck") and "didn't finish loading" in r.reason, (r.reason, r.log)
+    else:
+        assert any("clicked \u201cApply Now\u201d" in line for line in r.log), r.log
+        assert r.seen_form and "/step" in r.url, (r.url, r.reason, r.log)  # (on into the application's steps)
