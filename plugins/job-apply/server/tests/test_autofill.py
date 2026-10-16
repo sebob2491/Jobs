@@ -2548,3 +2548,136 @@ def test_a_degree_still_to_come_is_never_filled_as_one():
         assert resolve_field({"label": "Highest level of education", "kind": "select", "options": options,
                               "required": True}, p) is None, degree
     assert choose_option("Bachelor of Science", options) == "Bachelor's Degree"
+
+
+@pytest.mark.parametrize("label, kind", [
+    # a past job's pay, either way round, is no answer for the desired salary
+    ("What was the salary at your previous job?", "text"), ("Salary at your previous job", "text"),
+    ("Salary history", "text"), ("What was your prior salary?", "text"),
+    # a city that isn't where the person lives
+    ("City of Birth", "text"), ("Hometown", "text"), ("City where your passport was issued", "text"),
+    # a move already under way, or at the person's expense, isn't the willingness the profile says
+    ("Are you in the process of relocating to the Phoenix area?", "text"), ("Are you currently relocating to Arizona?", "text"),
+    ("Are you willing to relocate at your own expense?", "text"),
+    # shift work done before is experience, not a willingness
+    ("Have you worked shift work before?", "text"), ("Have you ever worked a rotating shift?", "text"),
+    # getting to work isn't travelling for it
+    ("Do you have reliable transportation to travel to work?", "text"),
+    ("Do you have reliable transportation to travel to the job site?", "text"),
+    # learning a trade isn't hearing of the job; disability benefits aren't a self-identification
+    ("Where did you learn to weld?", "text"), ("Have you received disability benefits?", "text"),
+    # another person's or a company's details, and a phone other than the profile's one number
+    ("Email of recruiter", "text"), ("Recruiter's phone number", "text"), ("Agency contact email", "text"),
+    ("Alternate phone", "text"), ("Secondary phone number", "text"), ("Company website", "text"),
+    ("Company LinkedIn page", "text"),
+    # a date box for someone not at school: "Not currently attending school" is a list's choice
+    ("Expected graduation date", "text"),
+])
+def test_questions_that_look_like_the_profiles_but_are_not(label, kind):
+    """The review of Oct 15's wording slips: each was answered from the profile with something it doesn't say (the
+    desired salary for a past job's, the home city for a city of birth, the willingness to relocate for a move under way,
+    the travel answer for a commute, the person's own email for a recruiter's...). Each is left for the person."""
+    p = _person(preferences={"desired_salary": 65000, "willing_to_relocate": True, "willing_to_travel": True,
+                             "flexible_schedule": True, "how_did_you_hear": "LinkedIn"},
+                eeo={"disability": "No, I do not have a disability"})
+    p.data["personal"].update({"email": "sam@example.com", "website": "https://sam.example.com",
+                               "linkedin_url": "https://www.linkedin.com/in/example"})
+    assert _answer(label, p, kind=kind) is None, label
+
+
+def test_the_same_profile_still_answers_its_own_questions():
+    """The guards above leave the questions the profile does answer."""
+    p = _person(preferences={"desired_salary": 65000, "willing_to_relocate": True, "willing_to_travel": True,
+                             "flexible_schedule": True, "how_did_you_hear": "LinkedIn"})
+    p.data["personal"].update({"email": "sam@example.com", "website": "https://sam.example.com"})
+    assert str(_answer("Desired salary", p)) == "65000"
+    assert _answer("City", p) == "Mesa"
+    assert _answer("Are you willing to relocate?", p) == "Yes"
+    assert _answer("Are you willing to do shift work?", p) == "Yes"
+    assert _answer("Are you willing to travel?", p) == "Yes"
+    assert _answer("Where did you learn about this position?", p) == "LinkedIn"
+    assert _answer("Email", p) == "sam@example.com"
+    assert _answer("Phone number", p) == "480-555-0100"
+    assert _answer("Website", p) == "https://sam.example.com"
+    assert _answer("Work Authorization Status", p) == "U.S. Citizen"  # (a citizen's status, not "Yes, for any employer")
+    assert _answer("Work Authorization Status", _person(work_authorization={"authorized_to_work": True,
+                                                                             "requires_sponsorship": False})) is None
+    # (the review of 0.3.187: what the guards above must leave answered)
+    for label in ("What is your current city?", "Your city of residence", "Residential Town", "Current Town"):
+        assert _answer(label, p) == "Mesa", label
+    assert _answer("Postal Town", p) == "Mesa"  # (never the ZIP)
+    assert _answer("What is your work authorization status?", p) == "U.S. Citizen"
+    assert _answer("Work authorization status", p, kind="textarea") == "U.S. Citizen"
+    assert _answer("Are you willing to travel to and from customer sites?", p) == "Yes"
+    assert _answer("Are you willing to travel to work at customer sites?", p) == "Yes"
+    assert _answer("Are you able to work weekends, including shifts that start before 6:00 AM?", p) == "Yes"
+    assert _answer("Best phone number (home, cell or other)", p) == "480-555-0100"
+    assert _answer("Email (our recruiter will contact you)", p) == "sam@example.com"
+    assert _answer("Email", p, section="Agency Information") is None  # (that party's box)
+    assert _answer("How did you learn that we were hiring?", p) == "LinkedIn"
+    assert str(_answer("What salary would you need to leave your current job?", p)) == "65000"
+    p.data["personal"]["linkedin_url"] = "https://www.linkedin.com/in/example"
+    assert _answer("Website (other than LinkedIn)", p) == "https://sam.example.com"
+
+
+def _with_bank(**answers):
+    """A profile whose answers came from the desk's Common questions card: the bank's own patterns, by its ids."""
+    from job_apply import config
+
+    items = [{"bank": bank_id, "match": "", "answer": answer} for bank_id, answer in answers.items()]
+    config._current_bank_patterns(items)
+    assert all(item["match"] for item in items), items
+    return _person(answers=items)
+
+
+def test_a_common_questions_answer_goes_where_its_question_is_and_nowhere_else():
+    """The review of 0.3.187: a list's "If yes, please explain" is only its hint (its choice is answered); a free answer
+    from the card goes into a text area too, a bare yes or no never; and a question a rule leaves to the person on
+    purpose (learning a trade, a move at the person's own cost) isn't the common question either."""
+    p = _with_bank(terminated="No", heard_about="LinkedIn", desired_pay="$28 per hour", relocate="Yes")
+    yes_no = ["Yes", "No"]
+    assert _answer("Have you ever been terminated from a job? If yes, please explain.", p, kind="radio_group",
+                   options=yes_no) == "No"
+    assert _answer("How did you hear about us? (If other, please explain)", p, kind="select",
+                   options=["LinkedIn", "Indeed", "Other"]) == "LinkedIn"
+    assert _answer("What are your salary expectations?", p, kind="textarea") == "$28 per hour"
+    assert _answer("Have you ever been terminated from a job?", p, kind="textarea") is None
+    assert _answer("How did you learn to weld?", p) is None
+    assert _answer("Are you able to relocate at your own cost?", p) is None
+    assert _answer("Are you willing to relocate?", p) == "Yes"
+
+
+def test_a_common_questions_answer_never_goes_into_an_explanation():
+    """The question bank's short answers ("No") go into a list or a short box, never a text area or a box asking for an
+    explanation: "If you were ever terminated from a job, please explain" (the review of Oct 15)."""
+    p = _person(answers=[{"match": "(?:terminated|fired)\\b.{0,40}\\b(?:job|employer)", "answer": "No", "bank": True}])
+    assert _answer("Have you ever been terminated from a job?", p) == "No"
+    assert _answer("If you were ever terminated from a job, please explain", p, kind="textarea") is None
+    assert _answer("If you were ever terminated from a job, please explain", p) is None
+    assert _answer("Have you ever been terminated from a job? If so, provide details", p) is None
+
+
+@pytest.mark.parametrize("dates", [{"end": 2099}, {"end": "present"}, {"end": "Present"}, {"end": "Current"},
+                                   {"to": 2099}, {"dates": "2023 - Present"}, {"end": "May 2099 (expected)"},
+                                   {"end_date": "present"}, {"end": "spring of next year"}])
+def test_a_degree_still_under_way_is_not_the_highest_education(dates):
+    """A Bachelor's whose school ends later, or is under way, isn't the person's highest education yet: "Highest level of
+    education completed" got "Bachelor's" (the review of Oct 15; never overstate education). Its expected graduation is
+    still the school's year."""
+    p = _person(education={}, education_history=[{"school": "Example State University", "degree": "BS Electrical Engineering",
+                                                  "major": "EE", "start": 2023, **dates}])
+    options = ["High School", "Associate's", "Bachelor's", "Master's"]
+    assert _answer("Highest level of education completed", p, kind="select", options=options) is None
+    assert _answer("Highest Degree", p) is None
+    done = _person(education={}, education_history=[{"school": "Example State University", "degree": "BS Electrical Engineering",
+                                                     "major": "EE", "start": 2016, "end": 2020}])
+    assert _answer("Highest level of education completed", done, kind="select", options=options) == "Bachelor's"
+
+
+def test_a_degree_had_is_still_the_highest_when_a_later_one_is_under_way():
+    """The review of 0.3.187: an MS under way listed first hid the BS already had."""
+    p = _person(education={}, education_history=[
+        {"school": "Example State University", "degree": "MS Electrical Engineering", "start": 2024, "end": 2099},
+        {"school": "Example State University", "degree": "BS Electrical Engineering", "start": 2012, "end": 2016}])
+    assert _answer("Highest level of education completed", p, kind="select",
+                   options=["High School", "Associate's", "Bachelor's", "Master's"]) == "Bachelor's"

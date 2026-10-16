@@ -14,7 +14,7 @@ questions:
   - id: heard_about
     example: "How did you hear about us?"
     ask: How did you hear about jobs there? (Most applications ask; one answer for all.)
-    match: "^(?!.*\\b(?:name|who|whom|e-?mail|employee)\\b).*(?:how did you (?:hear|learn|find out|happen to apply)|where did you (?:hear|see|find)|^source type\\b|^referral source$|^source$)"
+    match: "^(?!.*\\b(?:name|who|whom|e-?mail|employee)\\b).*(?:how did you (?:hear|learn (?:about|of|that)|find out|happen to apply)|where did you (?:hear|see|find)|^source type\\b|^referral source$|^source$)"
     kind: choice
     choices: [Company website, Indeed, LinkedIn, Job board, Friend or family, Other]
     seen: 21
@@ -36,7 +36,7 @@ questions:
   - id: relocate
     example: "Are you willing to relocate?"
     ask: Would you relocate for a job?
-    match: "^(?!.*\\b(?:assist\\w*|help|package|expenses?|reimburse\\w*|require)\\b).*(?:willing|open|consider|able)\\b.{0,30}\\breloca"
+    match: "^(?!.*\\b(?:assist\\w*|help|package|expenses?|costs?|own|reimburse\\w*|require|process|currently)\\b).*(?:willing|open|consider|able)\\b.{0,30}\\breloca"
     kind: choice
     choices: ["Yes", "No"]
     seen: 2

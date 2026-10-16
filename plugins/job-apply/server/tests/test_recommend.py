@@ -3,6 +3,8 @@
 import asyncio
 from datetime import date
 
+import pytest
+
 from job_apply.config import Profile
 from job_apply.postings import Posting
 from job_apply.recommend import (applicant_degree, applicant_years, days_since, recommend, requirements, score_listing,
@@ -510,3 +512,45 @@ def test_a_reading_with_no_posting_text_falls_through_and_hard_reads_are_few():
     a = next(r for r in out["results"] if r["company"] == "A")
     assert a["posting"]["description"] == LAM_FSE2  # its own page's menu fell through to the hard read
     assert len([u for u in hard_asked if "b.icims" in u]) == 1  # turned away once: not asked again
+
+
+def test_the_review_of_oct_15s_reading_slips():
+    """A posting that says a degree is NOT required asked for it; "EAR protection" (the safety gear, in capitals) read as
+    export control; "eligible for a Secret clearance" read as one needed now; and Phoenixville, PA was "in Phoenix"."""
+    for text in ("A bachelor's degree is not required for this role.", "This role does not require a bachelor's degree."):
+        assert requirements(text)["degree"] is None, text
+    assert requirements("A bachelor's degree is required.")["degree"] == "bachelor"
+    # (the review of 0.3.187: only the degree said not required is dropped)
+    for text in ("Bachelor's degree required; an advanced degree is not required.",
+                 "Master's degree not required; Bachelor's degree required.",
+                 "Bachelor's degree in engineering required (a Master's degree is not required)."):
+        assert requirements(text)["degree"] == "bachelor", text
+    assert requirements("A degree is not required, but a high school diploma or GED is required.")["degree"] == "high_school"
+    assert not requirements("EAR/hearing protection required.")["us_person"]
+    for text in ("Must be eligible for a Top Secret clearance.", "Eligible to hold a DoD Secret clearance."):
+        got = requirements(text)
+        assert (got["clearance"], got["clearance_later"]) == (False, True), text
+    assert not requirements("Must wear EAR protection and safety glasses at all times.")["us_person"]
+    assert not requirements("EAR plugs provided.")["us_person"]
+    assert requirements("Access to technology controlled under the EAR.")["us_person"]
+    later = requirements("Must be eligible for a Secret clearance.")
+    assert (later["clearance"], later["clearance_later"]) == (False, True)
+    assert requirements("Requires an active Secret clearance.")["clearance"]
+    prof = Profile({"preferences": {"locations": ["Phoenix, AZ"], "titles": ["Technician"]}})
+    away = score_listing({"title": "Technician", "company": "Example", "location": "Phoenixville, PA"}, prof)
+    assert "in Phoenix" not in away.reasons, away.reasons
+    assert "in Phoenix" in score_listing({"title": "Technician", "company": "Example", "location": "Phoenix, AZ"}, prof).reasons
+
+
+@pytest.mark.parametrize("entry, highest", [
+    ({"school": "Example State University", "degree": "BS Electrical Engineering", "start": 2023, "end": 2099}, None),
+    ({"school": "Example State University", "degree": "BS Electrical Engineering", "start": 2023, "end": "present"}, None),
+    ({"school": "Example State University", "degree": "BS Electrical Engineering", "start": 2016, "end": 2020}, None),
+    ({"school": "Example State University", "degree": "", "start": 2016, "end": 2020}, "Bachelor's (in progress)"),
+])
+def test_a_degree_still_under_way_is_not_counted_as_had(entry, highest):
+    """The ranking counted a Bachelor's still under way (a school ending later or "present", or "Bachelor's (in
+    progress)") as had, and called the person qualified for postings that require one (the review of Oct 15)."""
+    prof = Profile({"education": {"highest_degree": highest} if highest else {}, "education_history": [entry]})
+    finished = entry["end"] == 2020 and entry["degree"]
+    assert applicant_degree(prof) == ("bachelor" if finished else "high_school")

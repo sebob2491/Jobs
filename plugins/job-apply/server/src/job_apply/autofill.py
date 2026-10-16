@@ -771,6 +771,41 @@ def _graduated(prof: Profile, job: dict) -> Any:
     return finished[0].get("end") if finished else None
 
 
+NOT_ATTENDING = "Not currently attending school"
+
+
+def school_under_way(entry: dict[str, Any], today: date | None = None) -> bool:
+    """A school whose entry says it ends later than now, or is under way ("present", "expected"), or ends in a way
+    this can't read: its degree isn't the person's yet. One with no end said is not counted under way here (as before:
+    most entries say when they ended). An end this year with no month counts as under way until the year is out: the
+    conservative side for an answer (a May graduate may have to say so)."""
+    end = entry_dates(entry)[1]  # (end, end_date, to, or a "dates" span's: the review of 0.3.187)
+    if end in (None, ""):
+        return False
+    if is_present(end) or _PARTIAL_STUDY.search(norm(str(end))):
+        return True  # ("present", "May 2027 (expected)")
+    month, year = parse_month_year(end)
+    if not year:
+        return True  # (an end it can't read isn't taken for one that has passed)
+    today = today or date.today()
+    return int(year) > today.year or int(year) == today.year and (not month or int(month) >= today.month)
+
+
+def _highest_degree(prof: Profile, job: dict) -> Any:
+    """education.highest_degree, else the most recent school's degree, when that school is done: a Bachelor's whose
+    school ends in 2027, or is under way, isn't the person's highest education yet ("Highest level of education
+    completed" got "Bachelor's": the review of Oct 15). Then theirs to say."""
+    value = prof.get("education.highest_degree")
+    if value is None:
+        entries = [e for e in _listed(prof.get("education_history")) if isinstance(e, dict)]
+        if entries and school_under_way(entries[0]):
+            # the first one done instead (an MS under way, a BS had: the BS), never the one under way
+            done = next((e for e in entries[1:] if not school_under_way(e) and e.get("degree")), None)
+            return done.get("degree") if done else None
+        value = entries[0].get("degree") if entries else None
+    return value
+
+
 def _expected_graduation(prof: Profile, job: dict) -> Any:
     """When the person expects to graduate: the year of a school still under way, or, when
     every school the profile lists has ended, that they aren't attending (a list's "I am
@@ -791,7 +826,7 @@ def _expected_graduation(prof: Profile, job: dict) -> Any:
             ongoing.append(None)  # this year, month not given: maybe still to come
     if ongoing:
         return next((y for y in ongoing if y), None)  # a school under way: its year, if the profile has one
-    return "Not currently attending school"
+    return NOT_ATTENDING
 
 
 _AUTHORIZED = r"authori[sz]ed to ((legally|lawfully) )?work|^(do|does) you (currently )?(have|hold) (the )?(legal )?authori[sz]ation to work|eligible to ((legally|lawfully) )?work|eligibility to work|eligible for employment|legally (able|permitted|allowed) to work|right to work|" \
@@ -1116,7 +1151,12 @@ def _travel(prof: Profile, job: dict, label: str = "") -> Any:
     """Willing to travel: not whether anything stops the person travelling, nor a passport, nor
     travel abroad, which a willingness to travel (some of the time) doesn't say."""
     if re.search(r"restrict|passport|prevent|limitation|visa|unable to|not able to|anything that|international|overseas|"
-                 r"abroad|outside (of )?(the )?(u s|us|united states|country)", norm(label)):
+                 r"abroad|outside (of )?(the )?(u s|us|united states|country)|"
+                 # (getting to work: "reliable transportation to travel to work?", the review of Oct 15; never a customer's
+                 # site, which is the travel asked about: the review of 0.3.187)
+                 r"(reliable|own|dependable|personal) transportation|commut|to and from (work|home|the (job|work) ?site)|"
+                 r"travel to work\b(?! at| on| in| with)|travel to the (job|work) ?site",
+                 norm(label)):
         return None
     v = prof.get("preferences.willing_to_travel")
     percent = r"(\d+) ?(?:%|percent|per cent)"
@@ -1212,6 +1252,9 @@ def _other_kind_of_phone(label: str, prof: Profile) -> bool:
     """A box for a kind of phone other than the profile's ("Work Phone Number" for a mobile): the
     profile's one number isn't of that kind, so it's the person's. The profile's phone_type is
     "Mobile" unless it says otherwise; one that is none of the three fits no box named by kind."""
+    if re.search(r"^(alternat\w*|secondary|second|other|additional|backup|another)\b|\b(alternat\w*|secondary|other|"
+                 r"additional|backup|another) ((tele)?phone|number|contact)", norm(label)):
+        return True  # (the profile's one number isn't its alternate: the review of Oct 15)
     box = _phone_box_kind(label)
     return box is not None and box != _phone_kind_of(re.sub(r" (?:tele)?phone$", "", norm(prof.get("personal.phone_type", "Mobile"))))
 
@@ -1220,6 +1263,10 @@ def _other_kind_of_phone(label: str, prof: Profile) -> bool:
 # ("Family Name" is the person's own last name)
 _SOMEONE_ELSE = re.compile(r"\b(referen\w*|referee\w*|emergency|next of kin|supervisor\w*|manager\w*|referr\w*|"
                            r"contact (?:person|name)|relationship|relatives?|family(?! (?:or )?(?:last name|surname|name)s?\b)|spouse)\b")
+# A recruiter's, an agency's or an interviewer's details: by the label's own words, never its note ("Email (our recruiter
+# will contact you)" is the person's), or a section naming that party's ("Agency Information": the review of 0.3.187)
+_ROLE_PARTY = re.compile(r"\b(recruiter|agency|agent|interviewer)s?\b")
+_ROLE_SECTION = re.compile(r"\b(recruiter|agency|agent|interviewer)s? (information|details|contact)")
 # A box for another party's details, by its own words ("Employer Phone", "School Zip Code") or
 # its section's ("Most Recent Employer", "High School")
 _OTHER_PARTY_LABEL = re.compile(r"\b(employer\w*|company|business|school)\b")
@@ -1234,7 +1281,7 @@ _CONTACT_RULES = {"email", "first_name", "middle_name", "last_name", "preferred_
                   "preferred_full_name", "full_name",
                   "phone_type",
                   "phone_code", "phone_ext", "phone", "address1", "address2", "city", "postal_ext", "postal",
-                  "county", "state", "home_state", "country"}
+                  "county", "state", "home_state", "country", "website", "linkedin"}
 
 # Getters that read the question itself, not only the profile
 # A background question's answer is a choice: a text box with its words is a follow-up ("If yes,
@@ -1250,7 +1297,8 @@ _READS_QUESTION = {_relatives, _government, _travel, _previously_employed, _no_s
                    _masked_phone,
                    _local_or_relocate, _lives_in, _veteran, _has_degree}
 
-HOW_HEARD = r"(how|where) did you (first )?(hear|find|learn)|source of (application|referral)|^source$"
+HOW_HEARD = (r"(how|where) did you (first )?(hear|find|learn (about|of|that))|source of (application|referral)|^source$")
+# ("Where did you learn to weld?" is no source: the review of Oct 15)
 # (rule name, label regex, getter, max label length or None, allowed kinds or None)
 _TEXTY = {"text", "textarea", "select", "listbox", "combobox", "radio_group"}
 RULES: list[tuple[str, str, Getter, int | None, set[str] | None]] = [
@@ -1293,8 +1341,10 @@ RULES: list[tuple[str, str, Getter, int | None, set[str] | None]] = [
      _masked_phone, None, {"text"}),
     ("address2", r"address line 2|^address 2|apartment|suite|^apt|^unit", _p("personal.address.line2"), 45, None),
     ("address1", r"address line 1|^address 1|^street|^(home |mailing |street )?address$", _p("personal.address.line1"), 45, None),
-    ("city", r"^city|town|location city|current city|city of residence|"
-             r"^(in )?(what|which) city do you (currently |presently )?(live|reside)( in)?$", _p("personal.address.city"), 45, None),
+    # (not a city of birth, a hometown, or where a passport or license was issued: the review of Oct 15)
+    ("city", r"^(?!.*\b(birth|born|hometown|home town|issu\w*|passport|licen[cs]e)\b).*?(?:^city|\btown|location city|"
+             r"current city|city of residence|^(in )?(what|which) city do you (currently |presently )?(live|reside)( in)?$)",
+     _p("personal.address.city"), 45, None),
     ("current_location", r"^where are you (currently |presently )?(located|based|living)$|^(your )?current location$|"
                          r"^where do you (currently |presently )?(live|reside)$", _city_state, 45, None),
     # Oracle's "Zip Code+4" wants the 4-digit extension, not the ZIP: left for the site to fill
@@ -1314,7 +1364,8 @@ RULES: list[tuple[str, str, Getter, int | None, set[str] | None]] = [
     # "LinkedIn profile (if you do not have one or if you prefer not to provide one, enter N/A)" (GoDaddy)
     ("linkedin", r"^(your )?linked ?in (profile|url|profile url|address)\b", _p("personal.linkedin_url"), 200,
      {"text", "textarea"}),
-    ("linkedin", r"linked ?in", _p("personal.linkedin_url"), 60, {"text", "textarea"}),
+    ("linkedin", r"^(?!.*\b(other than|besides|except|excluding|not|beyond) linked ?in).*linked ?in", _p("personal.linkedin_url"),
+     60, {"text", "textarea"}),
     ("github", r"github", _p("personal.github_url"), 45, {"text"}),
     ("website", r"website|portfolio|personal (site|url)|^url$|blog", _p("personal.website"), 45, {"text"}),
     # "Are you currently employed?" (only that: "...by Intel?" asks about one employer): from the work history
@@ -1326,7 +1377,7 @@ RULES: list[tuple[str, str, Getter, int | None, set[str] | None]] = [
      lambda p, j: "Yes" if p.get("work_history") else None, 60, None),
     # "Do you have a Bachelor's degree?": see _has_degree
     ("has_degree", _DEGREE_ONLY, _has_degree, 200, {"select", "listbox", "combobox", "radio_group"}),
-    ("degree", r"highest (level of )?(education|degree)|^degree$|education level", _edu("highest_degree", "degree"), 80, None),
+    ("degree", r"highest (level of )?(education|degree)|^degree$|education level", _highest_degree, 80, None),
     ("school", r"^(school|university|college|institution)\b(?!.*\b(licen[cs]\w*|certif\w*|major|degree|gpa|city|state|location|"
      r"country|year|date|address|"
      r"zip|postal|phone|e ?mail|fax|code)\b)",
@@ -1380,6 +1431,11 @@ RULES: list[tuple[str, str, Getter, int | None, set[str] | None]] = [
                    r"^can you (provide|furnish|submit|present) (proof|verification|documentation|documents?) "
                    r"(of|for|showing) (your )?eligibility (upon|if|once|when) (you are )?hired$",
      _yn("work_authorization.authorized_to_work"), 200, {"select", "listbox", "combobox", "radio_group"}),
+    # (a status, in a text box: "Work Authorization Status" is a citizen's "U.S. Citizen", not "Yes, for any employer"; any
+    # other status the person's to word: the review of Oct 15)
+    ("auth_status", r"^(what is )?(your )?(current )?(u s |us )?(work|employment) (authori[sz]ation|eligibility) status"
+                    r"( in the (u s|us|united states))?$",
+     lambda p, j: "U.S. Citizen" if p.get("work_authorization.us_citizen") is True else None, 80, {"text", "textarea"}),
     ("authorized", _AUTHORIZED, _authorized, None, None),
     # Only questions that ask whether you are a U.S. person: export-control wording
     # also comes with other questions, e.g. Micron's "are you a citizen of Cuba, Iran ...?"
@@ -1415,11 +1471,20 @@ RULES: list[tuple[str, str, Getter, int | None, set[str] | None]] = [
     # relocation money, or a role with none: not whether the person would move
     ("relocation_help", r"relocat\w* (assistance|package|benefit|reimburse|support|expense|allowance)|no relocat|"
      r"(assistance|help) .{0,20}relocat", lambda p, j: None, None, None),
+    # a move already under way, or one at the person's own expense: facts or terms the willingness doesn't say ("Are you
+    # in the process of relocating to the Phoenix area?", the review of Oct 15)
+    ("relocating_now", r"\b(process of|currently|presently|already|now|planning to|plan to|intend(ing)? to) relocat|"
+     r"\bare you relocating\b|relocat\w* .{0,25}\b(own|your) (expense|cost)", lambda p, j: None, None, None),
     ("relocate", r"relocat", _relocate, None, None),
     # "Do you currently live in Arizona?" / "...in the Phoenix area?": the profile's address
     ("lives_in", r"^(do|are) you (currently |presently )?(live|living|reside|residing|located|based) in ", _lives_in, 100, None),
     ("travel", r"travel", _travel, None, None),
     # (whole words: "for more information, call ..." in a veteran notice isn't "on call")
+    # (work done before is experience, not the willingness flexible_schedule says: "Have you worked shift work before?")
+    ("shift_before", r"\b(have|had) you (ever )?(previously )?work\w* (an? |any )?(rotating |night |overnight |weekend |evening "
+     r"|graveyard |swing )?(shifts?|shift work|nights|weekends|on ?call)\b|\b(shifts?|nights|weekends|on ?call)\b.{0,40}\bbefore$|"
+     r"experience .{0,25}\b(shift work|rotating shifts?|night shifts?)\b",
+     lambda p, j: None, None, None),
     ("shift", r"shift work|rotating shift|nights and weekends|work (nights|weekends)|\bon ?call\b", _yn("preferences.flexible_schedule"), None, None),
     # "Do you have a valid driver's license?" alone: not its record ("...been revoked or suspended"),
     # a commercial one, or one asked with something else ("...and reliable transportation")
@@ -1428,8 +1493,12 @@ RULES: list[tuple[str, str, Getter, int | None, set[str] | None]] = [
                         r"(driver( s|s)?|driving) licen[cs]e( (issued )?in (the u s|the united states|arizona|your state))?$",
      _yn("personal.drivers_license"), 120, None),
     # desired_salary is one yearly figure: not an answer to "current salary" or a monthly/hourly rate
-    ("other_salary", r"(current|last|previous|present|most recent|drawn) .{0,25}(salary|compensation|pay\b)"
-     r"|(monthly|per month|hourly|per hour|weekly|per week) .{0,25}(salary|compensation|pay\b|rate)", lambda p, j: None, None, None),
+    ("other_salary", r"(current|last|previous|prior|former|present|most recent|drawn) .{0,25}(salary|compensation|pay\b)"
+     r"|(monthly|per month|hourly|per hour|weekly|per week) .{0,25}(salary|compensation|pay\b|rate)"
+     # (what a past job paid, the other way round: "What was the salary at your previous job?", the review of Oct 15)
+     r"|(salary|compensation|pay\b|wages?)\b.{0,20}\b(at|in|from|of|with|for) (your |the |that )?(current|last|previous|"
+     r"prior|former|present|most recent) (job|employer|position|role|company|employment)|(salary|pay|compensation) history",
+     lambda p, j: None, None, None),
     # American Express: "Indicate your highest level of preference by work location:" among its offices
     ("preferred_location", r"^(preferred|desired) (work )?(location|site|city)s?\b|location preference|"
      r"preference (by|for) (work )?location|(which|what) (work )?location (would|do) you prefer",
@@ -1473,7 +1542,11 @@ RULES: list[tuple[str, str, Getter, int | None, set[str] | None]] = [
     ("veteran", r"veteran", _veteran, None, None),
     # self-identification only: "Can you perform the essential functions … with or without
     # accommodation?" and "Do you need an accommodation?" are other questions
-    ("disability", r"^(?!.*\b(essential function|accommodat|perform|able to)).*disabilit", _eeo_disability, None, None),
+    # (nor a disability's benefits, insurance, claims or leave: "Have you received disability benefits?")
+    ("disability", r"^(?!.*\b(essential function|accommodat|perform|able to))"
+                   r"(?!.*\bdisabilit\w* (benefits?|insurance|claims?|leave|pay(ments)?|compensation|pension)\b)"
+                   r"(?!.*\b(benefits?|insurance|claims?|payments?|compensation|pension) (for|from|due to|because of) "
+                   r"(a |an |your |any )?disabilit).*disabilit", _eeo_disability, None, None),
     ("pronouns", r"pronoun", _p("personal.pronouns"), None, None),
 ]
 
@@ -1914,12 +1987,33 @@ def resolve_field(field: dict, prof: Profile, job: dict | None = None, file_inpu
     The common questions' answers (the question bank's, in answers.yaml) come last: only where nothing
     else answers, and never in a block about a past job or a school."""
     ans = _resolve_field(field, prof, job, file_inputs_on_page, unmatched)
-    if ans is None and field.get("kind", "text") not in ("checkbox", "file", "password") \
-            and not _PAST_BLOCK.search(norm(field.get("section"))):
-        ans = _answer_bank(prof, _without_notes(field.get("label") or field.get("name") or ""), job, common=True)
+    kind = field.get("kind", "text")
+    label = field.get("label") or field.get("name") or ""
+    # (never a box asking for an explanation: "If you were ever terminated from a job, please explain" is no place for
+    # the common question's "No"; a list's "If yes, please explain" is only its hint, and its choice is answered. Nor a
+    # question a rule leaves to the person on purpose: a past job's pay, a move under way: the review of 0.3.187)
+    if ans is None and kind not in ("checkbox", "file", "password") \
+            and not _PAST_BLOCK.search(norm(field.get("section"))) \
+            and not (kind in ("text", "textarea") and _EXPLAIN.search(norm(label))) and not _left_on_purpose(label):
+        ans = _answer_bank(prof, _without_notes(label), job, common=True)
+        if ans is not None and kind == "textarea" and polarity(str(ans.value)) is not None:
+            ans = None  # (a bare yes or no in a text area: a free answer, "Two weeks after an offer", goes in)
     return ans
 
 
+# Rules that leave a question to the person on purpose (their getter answers None whatever the profile says): the
+# common questions' answers never take it either
+_LEAVE_IT = {"other_salary", "relocation_help", "relocating_now", "shift_before"}
+
+
+def _left_on_purpose(raw_label: str) -> bool:
+    label = norm(clean_label(_without_notes(raw_label)))
+    return any(name in _LEAVE_IT and re.search(pattern, label) for name, pattern, *_ in RULES)
+
+
+# A box asking for an explanation or details, not a yes or no
+_EXPLAIN = re.compile(r"\b(explain\w*|explanation|describe|description|details?|elaborate|tell us|list (them|all|each)|"
+                      r"provide (more )?(information|details|context))\b")
 # A form's block about one past job or school, whose questions are that job's or school's, never the person's
 # answers in general ("Were you terminated?", "Which shift did you work?" in Work Experience 2)
 _PAST_BLOCK = re.compile(r"experience|employment|employer|work history|job \d|position \d|education|school|"
@@ -2008,7 +2102,8 @@ def _resolve_field(field: dict, prof: Profile, job: dict | None = None, file_inp
             and not (label == "date" and _OTHER_EVENT.search(section)):
         return Answer(_today_for(field), "signed_date")
     someone_else = _SOMEONE_ELSE.search(f"{label} {section}") or _OTHER_PARTY_LABEL.search(label) \
-        or _OTHER_PARTY_SECTION.search(section)
+        or _OTHER_PARTY_SECTION.search(section) or _ROLE_PARTY.search(norm(re.sub(r"\([^)]*\)", " ", raw_label))) \
+        or _ROLE_SECTION.search(section)
     if ans is None and _METRO_SECTION.search(section) and _METRO_PART.fullmatch(label) and not someone_else \
             and not re.search(r"\b(prefer|desired|willing|like to work|relocat)", f"{section} {label}"):
         # Taleo's "Closest Metropolitan City": its Region list is cities (Kforce's, live run 12, Oct 2026: Anthem,
@@ -2054,6 +2149,9 @@ def _resolve_field(field: dict, prof: Profile, job: dict | None = None, file_inp
     if ans is None or ans.value is None or ans.value == "":
         return None
 
+    if ans.rule == "expected_grad" and ans.value == NOT_ATTENDING and not field.get("options"):
+        return None  # (a list's choice, not a date: a box for the date is left empty or the person's: the review of Oct 15)
+
     # (a yes/no question drawn as a text area, as Nikon's UKG Pro draws its work-authorization questions, live run
     # 14, Oct 2026: the profile's plain Yes or No)
     yes_no_box = ans.rule in {"authorized", "sponsorship", "no_sponsorship"} and polarity(ans.value) is not None \
@@ -2062,7 +2160,8 @@ def _resolve_field(field: dict, prof: Profile, job: dict | None = None, file_inp
     # of Oct 12)
     home_box = ans.rule in {"city", "home_state"} and bool(re.match(
         r"(in )?(what|which) (city|state) do you(?!.*\b(and|why|explain|describe|tell)\b)", label))
-    if kind == "textarea" and not ans.rule.startswith("answers[") and ans.rule not in {"linkedin", "salary", "start_date"} \
+    if kind == "textarea" and not ans.rule.startswith("answers[") and ans.rule not in {"linkedin", "salary", "start_date",
+                                                                                     "auth_status"} \
             and not yes_no_box and not home_box:
         return None
     if isinstance(ans.value, bool):

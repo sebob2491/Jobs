@@ -184,6 +184,19 @@ def test_a_profile_with_a_typo_says_where(job_apply_home):
         config.Profile.load()
 
 
+@pytest.mark.parametrize("written", [True, "yes", "Yes", "on", "true", "1", 1])
+def test_the_yes_no_settings_read_a_yes_the_same_way(written):
+    """`1` turned headless on but left manage_accounts off (the review of Oct 15): headless and the settings on unless
+    turned off read a yes the same way. The opt-ins that read the person's mail or accept for them stay a real true
+    only (test_accepting_cookies_is_the_persons_choice)."""
+    s = config.Settings.from_dict({k: written for k in ("headless", "manage_accounts", "accept_notices", "email_codes",
+                                                        "email_tracking", "accept_cookies")})
+    assert (s.headless, s.manage_accounts, s.accept_notices) == (True, True, True), written
+    assert (s.email_codes, s.email_tracking, s.accept_cookies) == ((True,) * 3 if written is True else (False,) * 3)
+    off = config.Settings.from_dict({k: "maybe" for k in ("manage_accounts", "accept_notices")})
+    assert (off.manage_accounts, off.accept_notices) == (False, False)  # (unclear is no)
+
+
 def test_passwords_are_read_as_written(job_apply_home):
     path = config.secrets_path()
     for written, meant in (("0123456", "0123456"), ("yes", "yes"), ("12:30:45", "12:30:45"),

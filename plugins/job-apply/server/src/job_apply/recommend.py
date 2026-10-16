@@ -17,7 +17,7 @@ from datetime import date
 from typing import Any, Awaitable, Callable
 from urllib.parse import urlparse
 
-from .autofill import degree_key, entry_dates, norm
+from .autofill import _PARTIAL_STUDY, degree_key, entry_dates, norm, school_under_way
 from .config import Profile
 from .postings import QUESTIONS_HEADING, Posting, fetch_posting
 from .search import MAX_ALTERNATIVES, US_STATES, location_matches, location_terms, title_matches, title_words
@@ -135,13 +135,22 @@ _PREF_HEADING = re.compile(rf"^{_PREF_WORDS}\b|\b{_PREF_WORDS}\b.*:$")
 # preferred list's own sub-headings, and reading them as the required list back again put a
 # preferred Bachelor's among the requirements
 _REQ_HEADING = re.compile(rf"^{_REQ_WORDS}\b|\b{_REQ_WORDS}\b.*:$")
+# a degree the posting says it doesn't ask for: "A bachelor's degree is not required", "no degree required"
+_NO_DEGREE = re.compile(r"\b(degree|diploma)s?\b(?: is| are)? not (?:\w+ )?(?:required|needed|necessary|mandatory)\b|"
+                        r"\bno (?:\w+ )?(?:degree|diploma)s? (?:is |are )?(?:required|needed|necessary)\b|"
+                        r"\b(?:does|do) not require (?:an? |any )?(?:[\w']+ ){0,2}(?:degree|diploma)")
+_CLAUSES = re.compile(r"\s*[;,()]\s*|\s+(?:but|while|whereas)\s+")
 _CLEARANCE = re.compile(r"(?:active|current|secret|top secret|ts/sci|security|dod)\s+clearance|clearance (?:is )?required")
 _NO_CLEARANCE = re.compile(r"\bno (?:\w+ )?clearance|clearance (?:is )?not required|"
                            r"(?:not require|without) (?:a |an |any )?(?:\w+ )?clearance")
-_CLEARANCE_LATER = re.compile(r"(?:ability|able|eligib\w*) to obtain|obtain and maintain|be able to get")
+# (and "eligible for a Secret clearance": one to be granted, not held now: the review of Oct 15)
+_CLEARANCE_LATER = re.compile(r"(?:ability|able|eligib\w*) to obtain|obtain and maintain|be able to get|"
+                              r"eligib\w* (?:for|to (?:hold|receive)) (?:an? )?(?:[\w/]+ ){0,3}clearance")
 _US_PERSON = re.compile(r"\bu\.?s\.? persons?\b|\bitar\b|export[- ]control|export administration regulations|"
                         r"\bu\.?s\.? citizenship (?:is )?required")
-_EAR = re.compile(r"\bEAR\b")  # in capitals only: "ear plugs" is safety gear
+# in capitals only, and not the safety gear written so ("EAR protection", "EAR plugs": the review of Oct 15)
+_EAR = re.compile(r"\bEAR\b(?!\s*(?:-\s*)?(?i:protection|protectors?|plugs?|muffs?|defenders?|wear|buds?|safety))"
+                  r"(?!\s*(?:/|&|and)\s*(?i:hearing|eye))")
 _YEARS = re.compile(r"(\d{1,2})(?:\s*(?:-|\u2013|to)\s*\d{1,2})?\s*\+?\s*(?:\+|or more|plus)?\s*(?:years?|yrs?)\b"
                     r"[^.\n]{0,60}?\bexperience")
 _TRAVEL = re.compile(r"(\d{2,3})\s*%\s*(?:of\s+(?:the\s+)?time\s+)?(?:domestic\s+|international\s+)?travel|"
@@ -245,9 +254,13 @@ def applicant_degree(prof: Profile) -> str | None:
     requires one above it says so. None only when the profile says nothing about schooling."""
     values = [prof.get("education.highest_degree")] + [
         e.get("degree") for e in prof.get("education_history") or [] if isinstance(e, dict)]
-    for value in values:
+    # (a degree still under way isn't had yet: "Bachelor's (in progress)", or a school that ends in 2027 or "present":
+    # the review of Oct 15)
+    done = [prof.get("education.highest_degree")] + [
+        e.get("degree") for e in prof.get("education_history") or [] if isinstance(e, dict) and not school_under_way(e)]
+    for value in done:
         key = degree_key(str(value or ""))
-        if key:
+        if key and not _PARTIAL_STUDY.search(norm(str(value))):
             return key
     education = prof.get("education")
     schooling = values + (list(education.values()) if isinstance(education, dict) else [])
@@ -367,8 +380,11 @@ def requirements(text: str) -> dict[str, Any]:
             sentence = _without_preferred(sentence)
             if not sentence:
                 continue
-        levels = [_LEVEL[key] for key, pattern in _DEGREES if re.search(pattern, sentence)]
-        if levels and re.search(r"degree|diploma|\bged\b|\bbs\b|\bb\.s|\ba\.a?\.?s\.|bachelor|master|associate|ph\.?d", sentence):
+        # (a clause saying a degree is NOT required drops that degree only: "Bachelor's degree required; an advanced
+        # degree is not required" still asks the Bachelor's, the review of 0.3.187)
+        asked = " ".join(c for c in _CLAUSES.split(sentence) if not _NO_DEGREE.search(c))
+        levels = [_LEVEL[key] for key, pattern in _DEGREES if re.search(pattern, asked)]
+        if levels and re.search(r"degree|diploma|\bged\b|\bbs\b|\bb\.s|\ba\.a?\.?s\.|bachelor|master|associate|ph\.?d", asked):
             degree_levels.append(min(levels))
             following = sentences[i + 1] if i + 1 < len(sentences) else ""
             # the way around it may be the next sentence: "Equivalent combination of education and
@@ -443,7 +459,8 @@ def score_listing(listing: dict[str, Any], prof: Profile, description: str = "",
 
     cities = [norm(str(c).split(",")[0]) for c in prof.get("preferences.locations") or []]
     where = norm(listing.get("location") or "")
-    city = next((c for c in cities if c and c in where), None)
+    # (whole words: "Phoenixville, PA" isn't in Phoenix: the review of Oct 15)
+    city = next((c for c in cities if c and re.search(rf"\b{re.escape(c)}\b", where)), None)
     if city:
         fit.score += 5
         fit.reasons.append(f"in {city.title()}")
