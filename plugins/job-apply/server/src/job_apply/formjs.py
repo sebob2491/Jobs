@@ -895,6 +895,10 @@ EXTRACT_JS = r"""
   const LOADING = '[data-automation-id="loading"], [data-automation-id*="loadingSpinner" i], '
     + '[data-automation-id*="loading-dots" i], [data-automation-id*="loadingDots" i], [data-part="loading-animation-dot"], '
     + '[aria-busy="true"], [role="progressbar"]:not([aria-valuenow]), '
+    // (and Cornerstone's loading overlay over the whole page, its spinner in a box and the page greyed, while a
+    // requisition's Apply Now stays disabled and without its words: Linde's, the live check's run 105; the site
+    // removes it once loaded)
+    + '[data-tag="Loading_spinner_tag"], .p-loading[data-tag], '
     // (and Workday's whole step still loading: its grey bars where a step goes, Baker Tilly's Create Account/Sign In, run 62)
     + '[data-automation-id="applyFlowLoadingPage"]';
   // and Workday's placeholder for a section still loading: a hidden "Loading" beside its grey bars (Wells Fargo's and
