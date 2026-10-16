@@ -10,7 +10,7 @@
   <button type="submit">Next</button>
 </form>
 <script>
-  document.getElementById('step').addEventListener('submit', (e) => { e.preventDefault(); location.href = 'cycle-limit.html'; });
+  document.getElementById('step').addEventListener('submit', (e) => { e.preventDefault(); location.href = 'cycle-limit.html' + (location.search.includes('tokens') ? '?tokens&csrf=' + Math.random().toString(36).slice(2) : ''); });
 </script>
 </body>
 </html>

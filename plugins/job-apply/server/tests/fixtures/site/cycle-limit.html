@@ -7,5 +7,13 @@
 <!-- Oracle: Continue goes back to the job posting. (Its "too many codes, try again later" page
      is try-later.html: the desk stops on that one at once.) -->
 <a href="cycle-posting.html">Continue</a>
+<script>
+  // ?tokens: each visit's links carry a fresh token, as a site with per-request tokens does (the review of Oct 15)
+  if (location.search.includes('tokens')) {
+    const fresh = () => '?tokens&csrf=' + Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
+    for (const a of document.querySelectorAll('a[href]')) a.href = a.getAttribute('href').split('?')[0] + fresh();
+    window.freshToken = fresh;
+  }
+</script>
 </body>
 </html>

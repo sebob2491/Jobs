@@ -198,3 +198,81 @@ def test_a_link_loses_its_session_path_parameter_too():
     assert _without_query("https://x.taleo.net/careersection/jobapply.ftl;jsessionid=AB12?job=1#top") == \
         "https://x.taleo.net/careersection/jobapply.ftl"
     assert _without_query("https://example.com/jobs/12/apply") == "https://example.com/jobs/12/apply"
+
+
+def test_anyone_elses_details_and_a_sessions_are_taken_out_of_a_captured_page():
+    """The review of Oct 15 planted a third party's details in a page and ran the scrubber: everything of the profile's
+    went, and everything else stayed (a recruiter's email and phone, a birth date, an SSN's shape, a candidate id, a
+    32-hex session, a short token, query strings in a frame's address, a formaction, a data-href and a CSS url(), a
+    frame's srcdoc, an HTML comment, a button's value, an SVG's words). None survives now; the page's own ties (ids,
+    labels' for) stay."""
+    planted = {
+        "recruiter": "jane.recruiter@acme-staffing.example", "phone": "(602) 555-0147", "dob": "04/12/1988",
+        "ssn": "123-45-6789", "candidate": "C0098812", "session": "9f86d081884c7d659a2feaa0c55ad015",
+        "jwt": "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjMifQ.c2lnbmF0dXJl", "frame_token": "tok=abc123secret",
+        "formaction_token": "sid=77aa88bb", "href_token": "auth=zz99", "css_token": "sig=qq11",
+        "srcdoc": "srcdoc-secret-words", "comment": "debug user=jane.recruiter", "button": "buttonsecret@acme-staffing.example",
+        "svg": "svg-person@acme-staffing.example",
+    }
+    raw = f"""<html><body>
+      <!-- {planted["comment"]} -->
+      <p>Questions? Email {planted["recruiter"]} or call {planted["phone"]}.</p>
+      <p>Date of birth: {planted["dob"]}. SSN {planted["ssn"]}. Candidate ID: {planted["candidate"]}</p>
+      <div data-session="{planted["session"]}" data-token="{planted["jwt"]}"></div>
+      <iframe src="/apply/frame.html?{planted["frame_token"]}" title="Application"></iframe>
+      <iframe srcdoc="{planted["srcdoc"]}"></iframe>
+      <form><label for="f0123456789abcdef0123456789abcdef">Name</label>
+        <input id="f0123456789abcdef0123456789abcdef">
+        <button formaction="/save?{planted["formaction_token"]}" value="{planted["button"]}">Save</button></form>
+      <span data-href="/next?{planted["href_token"]}">Next</span>
+      <div style="background: url('/img/bg.png?{planted["css_token"]}')"></div>
+      <svg><text>{planted["svg"]}</text></svg>
+      <p>Requisition 10557 posted 10/16/2026. Call 1-800 for help.</p>
+    </body></html>"""
+    out = clean_html(raw, [])
+    for what, value in planted.items():
+        assert value not in out, (what, value)
+    assert 'for="f0123456789abcdef0123456789abcdef"' in out and 'id="f0123456789abcdef0123456789abcdef"' in out
+    assert "Requisition 10557 posted 10/16/2026" in out  # (a job's number and a date are no one's)
+    assert "frame.html" in out and "/img/bg.png" in out
+
+
+def test_the_scrubber_keeps_the_pages_ties_and_its_questions_and_takes_a_click_to_call_number():
+    """The review of 0.3.189: a class list's long hex went from the page but not its style sheet, "userId_1234" and
+    "userId_5678" became one id, an aria-label "Relocate?" lost its question mark (read as an address), and a
+    click-to-call link's number written without separators ("tel:+16025550147") stayed. An attribute that ties the
+    page together keeps its value but for an email or a token; only an address loses its query; a tel: number goes."""
+    hexes = "a" * 32
+    raw = f"""<html><head><style>.x-{hexes} {{ color: red }}</style></head><body>
+      <div class="x-{hexes} box">Box</div>
+      <label for="userId_1234">One</label><input id="userId_1234">
+      <label for="userId_5678">Two</label><input id="userId_5678">
+      <input aria-label="Relocate?" title="Why?"><img src="/logo.png?v=3"><button formaction="?token=zz88">Go</button>
+      <a href="tel:+16025550147">Call us</a><a href="tel:6025550147">Or here</a></body></html>"""
+    out = clean_html(raw, [])
+    assert f'class="x-{hexes} box"' in out and f".x-{hexes}" in out
+    assert 'id="userId_1234"' in out and 'id="userId_5678"' in out and 'for="userId_5678"' in out
+    assert 'aria-label="Relocate?"' in out and 'title="Why?"' in out
+    assert "v=3" not in out and "zz88" not in out
+    assert "6025550147" not in out and 'href="tel:5555550100"' in out
+
+
+def test_the_expectations_are_scrubbed_like_their_page(tmp_path):
+    """The review of 0.3.189: convert scrubbed a label's third party on the page but not in its .expect.json, so the
+    fixture failed its own test and the JSON kept the details."""
+    snap = tmp_path / "snap"
+    snap.mkdir()
+    labels = ["Mobile phone (e.g. 602-555-4567)", "Questions? Email jane.doe@acme-staffing.example", "User ID 6x30abc"]
+    (snap / "page.html").write_text("".join(f'<label for="f{i}">{label}</label><input id="f{i}">'
+                                            for i, label in enumerate(labels)), encoding="utf-8")
+    (snap / "snapshot.json").write_text(json.dumps({
+        "url": "https://x.example/apply/9f86d081884c7d659a2feaa0c55ad015",
+        "frames": [{"file": "page.html", "url": "https://x.example/apply"}],
+        "fields": [{"label": label, "kind": "text"} for label in labels]}), encoding="utf-8")
+    convert(snap, "third", tmp_path / "out", secrets=[])
+    page = (tmp_path / "out" / "third.html").read_text(encoding="utf-8")
+    written = (tmp_path / "out" / "third.expect.json").read_text(encoding="utf-8")
+    for leaked in ("602-555-4567", "jane.doe", "6x30abc", "9f86d081884c7d659a2feaa0c55ad015"):
+        assert leaked not in written, leaked
+    for field in json.loads(written)["fields"]:
+        assert f">{field['label']}<" in page, field["label"]

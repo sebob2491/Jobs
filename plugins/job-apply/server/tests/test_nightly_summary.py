@@ -183,3 +183,27 @@ def test_an_employer_new_to_a_check_that_goes_as_far_as_it_can_is_listed_as_adde
     out = ns.triage(comment)
     assert out["added"] == ["search: Matheson: new -> works: works", "search: TSMC Arizona: new -> no search: no search"]
     assert out["look"] == ["search: Odd Co: new -> error: error"] and out["better"] == [] and out["expected"] == []
+
+
+def test_an_employer_gone_from_a_check_and_a_change_with_no_detail_are_read_too():
+    """The review of Oct 15: --changes read only lines with a detail, so an employer a check no longer has ("*no longer
+    checked*") and a change written without one vanished from the list a session reads."""
+    comment = ("**The test identity's accounts (semiconductor and Phoenix lists)**\n\n"
+               "- Intel: `ready` \u2192 *no longer checked*\n"
+               "- KLA: `needs_you stuck` \u2192 `ready`\n")
+    out = ns.triage(comment)
+    assert out["gone"] == ["accounts: Intel: ready -> no longer checked"]
+    assert out["better"] == ["accounts: KLA: needs_you stuck -> ready: Review page"]
+
+
+def test_a_runs_time_is_summed_up_per_job_system():
+    """The review of Oct 15: each employer's seconds were recorded and never summarised. --timing gives each job
+    system's middle and 90th-percentile time and rounds, and the slowest employers."""
+    recs = [{"company": f"W{i}", "seconds": s, "rounds": [{"url": "https://x.wd1.myworkdayjobs.com/en-US/E/job/1"}] * 3}
+            for i, s in enumerate((60, 80, 100, 400))]
+    recs += [{"company": "G", "seconds": 20, "rounds": [{"url": "https://job-boards.greenhouse.io/x/jobs/1"}]},
+             {"company": "untimed"}]
+    out = ns.timing(recs, slowest=2)
+    assert out[0] == "workday: 4 employer(s), 100 s middle, 400 s at 90%, 3 round(s) middle", out
+    assert out[1].startswith("greenhouse: 1 employer(s), 20 s middle")
+    assert out[-1] == "slowest: W3 (400 s), W2 (100 s)"

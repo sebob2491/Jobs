@@ -5,5 +5,13 @@
 <h1>Field Service Engineer</h1>
 <p>Install and service wafer fab equipment.</p>
 <a href="cycle-email.html">Apply Now</a>
+<script>
+  // ?tokens: each visit's links carry a fresh token, as a site with per-request tokens does (the review of Oct 15)
+  if (location.search.includes('tokens')) {
+    const fresh = () => '?tokens&csrf=' + Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
+    for (const a of document.querySelectorAll('a[href]')) a.href = a.getAttribute('href').split('?')[0] + fresh();
+    window.freshToken = fresh;
+  }
+</script>
 </body>
 </html>

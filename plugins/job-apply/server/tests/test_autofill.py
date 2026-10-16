@@ -1038,10 +1038,16 @@ def test_boxes_for_someone_elses_details_or_another_date_or_document():
 
 
 def test_a_profile_list_written_another_way_doesnt_stop_the_fill():
+    """A list in the profile written as something else (a number) neither raises nor answers from it: the rest of the
+    page is still planned (it asserted nothing before: the review of Oct 15)."""
     for key in ("answers", "education_history", "work_history"):
         p = _person(**{key: 1})
-        plan_autofill([{"id": "1", "label": "Have you previously worked for Acme?", "kind": "text", "value": ""},
-                       {"id": "2", "label": "Graduation Year", "kind": "text", "value": ""}], p, {"company": "Acme"})
+        plan = plan_autofill([{"id": "1", "label": "Have you previously worked for Acme?", "kind": "text", "value": ""},
+                              {"id": "2", "label": "Graduation Year", "kind": "text", "value": ""},
+                              {"id": "3", "label": "First Name", "kind": "text", "value": ""}], p, {"company": "Acme"})
+        planned = {f["id"]: f.get("value") for f in plan["to_fill"]}
+        assert planned.get("3") == "Sam", (key, plan)
+        assert planned.get("1") != 1 and planned.get("2") != 1, (key, plan)
 
 
 def test_a_county_comes_from_an_arizona_citys():

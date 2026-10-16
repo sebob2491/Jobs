@@ -32,12 +32,17 @@ _DOMAINS: list[tuple[str, tuple[str, ...]]] = [
 ]
 # Oracle's recruiting sites: a pod's own host, or a company's own address for its Oracle
 # site (careers.ti.com), known by its path
-_ORACLE_HOST = re.compile(r"(^|\.)fa\.[a-z0-9-]+\.oraclecloud\.com$")
+# (a pod's region is optional: "jpmc.fa.oraclecloud.com" as well as "eeho.fa.us2.oraclecloud.com", the review of Oct 15)
+_ORACLE_HOST = re.compile(r"(^|\.)fa(\.[a-z0-9-]+)?\.oraclecloud\.com$")
 _ORACLE_PATH = re.compile(r"^(?:/hcmui/candidateexperience)?/[a-z]{2}(?:-[a-z]{2})?/sites/[\w-]+/(?:job|requisitions/preview)/\d+")
 # Employers whose career site runs a job system on their own address (companies.yaml)
 COMPANY_HOSTS = {
     "careers.lamresearch.com": "eightfold", "jobs.infineon.com": "eightfold", "careers.micron.com": "eightfold",
     "careers.qorvo.com": "successfactors", "jobs.atlascopcogroup.com": "successfactors",
+    # (and the rest whose search runs on their own address: the review of Oct 15 found these read as a plain company
+    # site, so a code from SuccessFactors' mail wasn't taken for theirs; test_every_listed_own_address_system_is_known)
+    "careers.rogerscorp.com": "successfactors", "careers.pfeiffer-vacuum.com": "successfactors",
+    "careers.tsmc.com": "successfactors", "careers.ey.com": "successfactors", "jobs.fcx.com": "successfactors",
     # data/lists/phoenix-metro.yaml
     "careers.aps.com": "successfactors", "careers.srpnet.com": "successfactors",
     "jobs.northropgrumman.com": "eightfold", "careers.insight.com": "eightfold",

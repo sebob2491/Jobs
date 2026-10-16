@@ -58,6 +58,9 @@ NEWEST = 30  # messages looked at per check, newest first
 _CODE_WORDS = re.compile(r"verification|one[- ]time|passcode|security code|\bcode\b|\bpin\b|\botp\b", re.I)
 _DIGITS = re.compile(r"(?<![\d\-/.:+$])\b(\d{4,8})\b(?![\-/.:]?\d)")
 _MIXED = re.compile(r"\b(?=[A-Z0-9]*\d)(?=[A-Z0-9]*[A-Z])[A-Z0-9]{6,10}\b")
+# The word before "code" that makes it another kind: "promo code SAVE20", "ZIP code 85201", "area code 480"
+_OTHER_CODE = re.compile(r"\b(?:promo\w*|discount|coupon|zip|postal|area|country|dial(?:ing)?|referral|offer|gift|voucher|"
+                         r"tracking|dress|tax|bar|qr|source|course|reference|booking|confirmation number)\s*$", re.I)
 # Between the words and a year-like code ("Your code is 2047"): nothing but joining words
 _JOINING = re.compile(r"^[\s:\-\u2013\u2026.]*(?:is|was|below)?[\s:\-\u2013\u2026.]*$", re.I)
 _LINK_WORDS = re.compile(r"verif|confirm|activat|validat", re.I)
@@ -157,6 +160,8 @@ def _find_code(text: str) -> tuple[str | None, bool]:
     text = re.sub(r"\s+", " ", text)  # an HTML mail's indentation is no distance
     nearest = None
     for m in _CODE_WORDS.finditer(text):
+        if _OTHER_CODE.search(text[max(0, m.start() - 30): m.start()]):
+            continue  # a promo code's, a ZIP code's: another kind of code (the review of Oct 15)
         window = text[m.end(): m.end() + 160]
         found = []
         for pattern in (_DIGITS, _MIXED):

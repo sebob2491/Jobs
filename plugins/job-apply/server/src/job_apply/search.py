@@ -226,23 +226,53 @@ def alternatives(query: str) -> list[str]:
     return alts[:MAX_ALTERNATIVES] or [""]
 
 
+# A title's short ways of writing a word ("Equipment Tech II", "Field Service Engr", "Sr. Maint Tech"): a title's short
+# word counts as the whole one, and a searched short word finds the whole one (the review of Oct 15: only a title word
+# starting with the searched one counted). Only one way: a whole word never brings in its short one, so a target title
+# never takes in every "Tech …" (the review of 0.3.189). ("Acct" isn't here: in a title it's an Account's, a sales job.)
+_TITLE_SHORT = {"tech": ("technician",), "engr": ("engineer",), "mgr": ("manager",), "spec": ("specialist",),
+                "rep": ("representative",), "admin": ("administrator",), "asst": ("assistant",),
+                "coord": ("coordinator",), "assoc": ("associate",), "sr": ("senior",), "jr": ("junior",),
+                "maint": ("maintenance",), "mfg": ("manufacturing",), "ops": ("operations",), "lab": ("laboratory",),
+                "dept": ("department",), "med": ("medical",), "vet": ("veterinary",)}
+# "Tech" is a technician's only right after the trade it's of, at the end of the title or before a level, a shift or a
+# dash: "Equipment Tech II", "Sr. Maint Tech - Nights", "Pharmacy Tech"; never the technology trade's "Tech Lead",
+# "Tech Sales", "Tech/Data Recruiter", "Recruiter - Tech" or "Ed Tech Coordinator" (the reviews of 0.3.189). ("Eng"
+# isn't here either: a college's ENG course is English, and a search's "eng" finds "Engineer" as the word's start.)
+_TECHNICIAN_TECH = re.compile(r"\b([a-z]+)\.?\s+tech\b\.?(?:\s+(?:i{1,3}|iv|v|[1-5]))?\s*(?:$|[-\u2013\u2014,(/|:]|"
+                              r"\b(?:trainee|apprentice|1st|2nd|3rd|nights?|days?|swing|weekends?|shift)\b)", re.I)
+# (the technology trade's words before it: "Hi Tech", "Ed Tech", "FinTech", "Ad Tech", "Bio Tech", "Health Tech")
+_TECH_TRADE_BEFORE = {"hi", "high", "ed", "edu", "fin", "ad", "bio", "health", "clean", "info", "and", "or", "of",
+                      "in", "for", "the", "a"}
+
+
 def title_words(title: str) -> str:
     """A title's words as matched, each way of saying it among them: "HR Business Partner" is
-    a human resources job, and "Human Resources Generalist" an HR generalist one."""
+    a human resources job, and "Human Resources Generalist" an HR generalist one; "Equipment Tech" a technician's."""
     text = re.sub(r"\b(\d+)\s*hrs?\b", r"\1 hours", norm(title))  # a nurse's "12 Hr Nights" isn't HR
     if re.search(r"\bhuman resources?\b", text):
         text += " hr"
     if re.search(r"\bhr\b", text):
         text += " human resources"
+    words = set(text.split())
+    for short, fulls in _TITLE_SHORT.items():
+        if short in words and (short != "tech" or any(m.group(1).lower() not in _TECH_TRADE_BEFORE
+                                                       for m in _TECHNICIAN_TECH.finditer(str(title or "")))):
+            text += "".join(f" {full}" for full in fulls)
     return text
 
 
 def title_matches(title: str, query: str) -> bool:
     """Every word of at least one alternative appears in the title: as the start of a word
-    ("engineer" ~ "engineering"), or the whole word for one of two letters ("HR" isn't "36 Hrs")."""
+    ("engineer" ~ "engineering"), or the whole word for one of two letters ("HR" isn't "36 Hrs"). A short way of
+    writing a word counts as the word, in the title (title_words) or the search ("engr" finds "Engineer")."""
     text = f" {title_words(title)} "
+
+    def has(t: str) -> bool:
+        return (f" {t} " if len(t) <= 2 else f" {t}") in text
+
     for alt in alternatives(query):
-        if all((f" {t} " if len(t) <= 2 else f" {t}") in text for t in norm(alt).split()):
+        if all(has(t) or any(has(full) for full in _TITLE_SHORT.get(t, ())) for t in norm(alt).split()):
             return True
     return False
 
@@ -1970,12 +2000,6 @@ def _sf_date(text: str) -> str:
         except ValueError:
             continue
     return ""
-
-
-def parse_successfactors(page: str, site: str) -> tuple[list[Listing], int | None]:
-    """The openings on one page of a SuccessFactors search, and how many the search found."""
-    listings, total, _ = _parse_sf(page, site)
-    return listings, total
 
 
 def _parse_sf(page: str, site: str) -> tuple[list[Listing], int | None, int]:

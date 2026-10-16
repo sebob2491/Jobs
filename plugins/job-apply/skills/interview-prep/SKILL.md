@@ -11,8 +11,10 @@ interview, grounded in their real experience and in this specific posting.
 ## Gather
 
 1. Find the job with `list_jobs` / `get_job(job_id)`. That gives you the description,
-   company and status. Run `update_job(job_id, status="interviewing")` if it isn't
-   already set.
+   company and status. Run `update_job(job_id, status="interviewing")` only when its
+   status is earlier than that (saved, in progress, ready to submit, applied): never
+   for a job at `offer`, `rejected` or `withdrawn`, which a prep for one more conversation
+   doesn't take back. A `skipped` one: ask the user first (they may have applied another way).
 2. Read the user's resume (`documents.resume` in `get_profile`) and the profile.
 3. If a Gmail connector is available and the profile's `settings.email_tracking` is on
    (`get_profile`), search the user's email for the recruiter's or company's thread and

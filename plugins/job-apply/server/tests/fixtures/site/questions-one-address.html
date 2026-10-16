@@ -1,0 +1,36 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Apply</title></head>
+<body>
+<!-- a questionnaire that asks one question at a time at one address, under one heading, its Next drawing the next
+     question in place (the review of Oct 15: each press looked like the step not moving on), then the review page -->
+<h1>Application Questions</h1>
+<form id="app" novalidate></form>
+<div id="said" role="alert"></div>
+<script>
+  // ?save=<ms>: each answer takes that long to save before the next question is drawn (a press meanwhile does nothing)
+  const questions = [['First Name*', 'fn'], ['Last Name*', 'ln'], ['Email*', 'em'], ['Phone*', 'ph']];
+  const save = Number(new URLSearchParams(location.search).get('save') || 0);
+  let at = 0, saving = false;
+  const form = document.getElementById('app');
+  function next() {
+    saving = false;
+    if (++at >= questions.length) { location.href = 'review.html'; return; }
+    draw();
+  }
+  function draw() {
+    const [label, id] = questions[at];
+    form.innerHTML = `<label for="${id}">${label}</label><input id="${id}" required>`
+      + '<button type="button" id="next">Next</button>';
+    document.getElementById('next').addEventListener('click', () => {
+      if (saving) return;
+      if (!document.getElementById(id).value.trim()) { document.getElementById('said').textContent = 'This field is required'; return; }
+      document.getElementById('said').textContent = '';
+      saving = true;
+      if (save) setTimeout(next, save); else next();
+    });
+  }
+  draw();
+</script>
+</body>
+</html>

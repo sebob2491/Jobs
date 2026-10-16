@@ -554,3 +554,26 @@ def test_a_degree_still_under_way_is_not_counted_as_had(entry, highest):
     prof = Profile({"education": {"highest_degree": highest} if highest else {}, "education_history": [entry]})
     finished = entry["end"] == 2020 and entry["degree"]
     assert applicant_degree(prof) == ("bachelor" if finished else "high_school")
+
+
+def test_a_title_written_short_is_near_its_whole_word_and_only_that():
+    """The review of 0.3.189: reading a title's short words ("Tech", "Acct") as whole ones also gave every target its
+    short words, so any title with "Tech" in it was near an Equipment Technician target ("Tech Sales Representative"
+    preselected at 70) and "Key Acct Exec" near an Accountant one (90). A title's short word counts as its whole word
+    only, a target never takes in short ones, "Tech" is a technician's only where a technician's title puts it, and
+    "Acct" is an Account's."""
+    fresh = {"location": "Phoenix, AZ", "posted": "2026-10-05"}
+    p = tech()
+    for title in ("Tech Sales Representative", "Tech Lead, Platform", "Tech Program Manager", "Ed Tech Coordinator",
+                  "Recruiter - Tech", "Tech/Data Recruiter", "Account Executive - Ed Tech", "Adjunct Faculty - ENG"):
+        listing = score_listing({**fresh, "title": title}, p, today=TODAY)
+        assert not listing.recommended and "not one of your target titles" in listing.concerns, title
+    for title in ("Equipment Tech II", "Field Service Engr"):
+        assert "not one of your target titles" not in score_listing({**fresh, "title": title}, p).concerns, title
+    fin = tech(preferences={"titles": ["Accountant", "Financial Analyst"], "locations": ["Phoenix, AZ"]})
+    for title in ("Key Acct Exec", "Sr Acct Mgr"):
+        listing = score_listing({**fresh, "title": title}, fin, today=TODAY)
+        assert not listing.recommended and "not one of your target titles" in listing.concerns, title
+    # (a manager's title written short is a senior one too: "Engr Mgr" as "Engineering Manager", the review's)
+    assert score_listing({**fresh, "title": "Engr Mgr"}, p).score == \
+        score_listing({**fresh, "title": "Engineering Manager"}, p).score

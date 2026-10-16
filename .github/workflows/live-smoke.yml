@@ -2,10 +2,12 @@ name: live-smoke
 
 # Read-only check of the plugin against real employer career sites, with a fake
 # profile and submitting disabled (see plugins/job-apply/server/scripts/live_smoke.py).
-# Runs on demand, or on a push whose commit message contains [live-smoke].
-# [live-fixtures] in the message (or the commit_fixtures input) also commits the
-# captured pages as regression fixtures. [live-pipeline] (or the pipeline input) runs
-# the Job Desk's one-button pipeline on one posting per company instead.
+# Runs on demand only (no longer on every push, where it showed a skipped check on each
+# commit: the review of Oct 15). The fixtures input captures the pages it stops on,
+# scrubbed, into the run's artifact: they're imported with
+# `scripts/nightly_summary.py --import-fixtures` and looked over before a commit, never
+# committed by the run itself (the repo is public). The pipeline input runs the Job Desk's
+# one-button pipeline on one posting per company instead.
 
 on:
   workflow_dispatch:
@@ -14,8 +16,8 @@ on:
         description: Comma-separated company names (blank for all)
         required: false
         default: ""
-      commit_fixtures:
-        description: Commit captured pages to tests/fixtures/live
+      fixtures:
+        description: Capture the scrubbed pages it stops on into the artifact (import them by hand, after a look)
         type: boolean
         default: false
       pipeline:
@@ -26,26 +28,20 @@ on:
         description: With pipeline, a throwaway saved password per job system (one sign-in try, then Create Account filled in; never created)
         type: boolean
         default: false
-  push:
 
 jobs:
   smoke:
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      contains(github.event.head_commit.message, '[live-smoke]') ||
-      contains(github.event.head_commit.message, '[live-fixtures]') ||
-      contains(github.event.head_commit.message, '[live-pipeline]')
     runs-on: ubuntu-latest
     timeout-minutes: 60
     permissions:
-      contents: write
+      contents: read
     defaults:
       run:
         working-directory: plugins/job-apply/server
     env:
       JOB_APPLY_NEVER_SUBMIT: "1"
-      FIXTURES: ${{ inputs.commit_fixtures || contains(github.event.head_commit.message, '[live-fixtures]') }}
-      PIPELINE: ${{ inputs.pipeline || contains(github.event.head_commit.message, '[live-pipeline]') }}
+      FIXTURES: ${{ inputs.fixtures }}
+      PIPELINE: ${{ inputs.pipeline }}
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
@@ -75,12 +71,3 @@ jobs:
           name: live-report
           path: plugins/job-apply/server/live-report
           retention-days: 14
-      - name: Commit fixtures
-        if: env.FIXTURES == 'true'
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add tests/fixtures/live
-          if git diff --cached --quiet; then echo "no fixture changes"; exit 0; fi
-          git commit -m "Add live-site fixtures from run ${GITHUB_RUN_ID}"
-          git push origin "HEAD:${GITHUB_REF_NAME}"

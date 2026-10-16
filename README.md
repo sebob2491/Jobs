@@ -340,7 +340,8 @@ plugins/job-apply/
 | `add_entries` | Click "Add" until there's one Work Experience / Education block per profile entry |
 | `fill_form`, `fill_secret` | Fill specific fields; type a stored password without exposing it |
 | `screenshot`, `page_text` | See the page |
-| `debug_snapshot` | Save the page (HTML of every frame, a screenshot, the extracted fields). This also happens automatically when a field fails. |
+| `debug_snapshot` | Save the page (HTML of every frame, a screenshot, the extracted fields). This also happens automatically when a field fails; a job's folder keeps the newest 20. |
+| `forget_saved_pages` | Delete the saved pages, screenshots and problem reports' pages (a job's, or every job's): they show the page as it was, your details on it among them. The pictures taken before and after a Submit stay, as the record of what was sent. |
 | `render_document` | Markdown resume or cover letter → PDF in the job folder |
 | `tailoring_queue` | The Job Desk's jobs waiting for a tailored resume, with each posting, the resume and the rules |
 | `report_problem` | A problem report for a job, scrubbed, to file as an issue (`anonymous=True` leaves out which job it was) |

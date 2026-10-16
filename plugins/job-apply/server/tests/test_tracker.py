@@ -185,3 +185,27 @@ def test_undoing_a_skip_brings_back_the_status_before_it(job_apply_home):
     with pytest.raises(KeyError):
         t.unskip(999)
     t.close()
+
+
+def test_two_processes_share_the_tracker_without_locking_each_other_out(tmp_path):
+    """The review of Oct 15: the tracker opened SQLite with Python's default wait (5 s), so a second process's write
+    (another session's tools) behind a longer one failed with "database is locked". One waits out the other's write,
+    for DB_TIMEOUT. The journal stays SQLite's own (the review of 0.3.189: WAL can't live on a network drive or a synced
+    folder)."""
+    import threading
+
+    from job_apply.tracker import Tracker
+
+    first, second = Tracker(tmp_path / "jobs.db"), Tracker(tmp_path / "jobs.db")
+    try:
+        assert first.conn.execute("PRAGMA journal_mode").fetchone()[0].lower() != "wal"
+        assert first.conn.execute("PRAGMA busy_timeout").fetchone()[0] >= 10000
+        first.conn.execute("BEGIN IMMEDIATE")  # (a write under way in the first)
+        timer = threading.Timer(0.5, lambda: first.conn.execute("ROLLBACK"))
+        timer.start()
+        second.conn.execute("BEGIN IMMEDIATE")  # (waits for it, then writes: no "database is locked")
+        second.conn.execute("ROLLBACK")
+        timer.join()
+    finally:
+        first.close()
+        second.close()

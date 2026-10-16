@@ -29,7 +29,7 @@ from datetime import datetime
 from pathlib import Path
 from collections.abc import Callable
 from typing import Any
-from urllib.parse import parse_qsl, urlparse
+from urllib.parse import parse_qsl, urlencode, urlparse, urlsplit, urlunsplit
 
 from . import config, mailbox, report
 from .search import every_employer
@@ -39,11 +39,14 @@ from .autofill import (classes_only, clean_label, degree_kinds_listed, degree_no
                        plan_autofill, profile_entries, site_default, unset_choice,
                        polarity, tailored_document, works_there_now)
 from .browser import (_SENDS_TOO, CONFIRMATION_RE, SubmitBlocked, TabClosed, _accepts_cookies, _cookie_setting,
-                      confirmations, declines_cookies, final_text, may_accept_cookies)
+                      confirmations, declines_cookies, final_text, may_accept_cookies, questions_shown)
 
 NEW_TAB_WAIT = 4  # seconds to wait for a tab opened late by a click before calling it a stall
 ONCE_SETTLE = 1.0  # seconds after filling the person's answers before checking they stayed in
 MAX_STEPS = 30  # passes over a job's pages (Avnet's Workday, run 53: an account and seven steps took 15)
+# seconds a pass over a job's pages may take before it stops where it is: its waits (a page's buttons, a step saving, a
+# list's choices) add up, and one job held the queue for as long as they took (the review of Oct 15)
+PASS_SECONDS = 25 * 60
 LATE_BUTTONS_WAIT = 10  # seconds for a page's buttons to be drawn
 SIGN_IN_SETTLE = 10  # seconds a sign-in sent, its form still on show, may take before it counts as refused
 REFUSAL_SETTLE = 2  # seconds a refused sign-in's alert may still take to show once it counts as refused (Workday's)
@@ -79,6 +82,8 @@ POLL_SECONDS = 3.0
 # looked at this often, for this long after it began waiting
 MAIL_POLL_SECONDS = 20
 MAIL_WINDOW = 15 * 60
+# seconds with nothing done in a tab holding the queue before the person's press on another job lets that one go
+RELEASE_IDLE = 60
 # A password reset asked for with the inbox watched: when no email has come by then, the email most
 # likely has no account there (most sites won't say), so the desk makes one instead
 RESET_MAIL_WAIT = 3 * 60
@@ -101,6 +106,16 @@ SHARED_LOOK_BACK = 30  # seconds looked back for a job's code while an earlier j
 # Oracle site, run 49, was given onsemi's code, mailed from the same Oracle address a minute before and put in
 # there). For the whole process: the live check gives each employer a desk of its own.
 _MAIL_TAKEN: dict[tuple[str, str, float], int] = {}
+
+
+def _take_code(mail: tuple[str, str, float], job_id: int) -> None:
+    """A code the inbox gave, noted as the job's it went to. A day's are kept: one is looked for within minutes of its
+    mail, and the map grew for as long as the desk ran (the review of Oct 15)."""
+    for old in [k for k in _MAIL_TAKEN if k[2] < time.time() - 86400]:
+        del _MAIL_TAKEN[old]
+    _MAIL_TAKEN[mail] = job_id
+
+
 FINISHED = {"applied", "interviewing", "offer", "rejected", "withdrawn"}  # tracker statuses never applied to again
 UNSKIP_WAIT = 10  # seconds an Undo waits for the worker to finish the step a job was skipped in
 
@@ -556,7 +571,6 @@ class Run:
     url: str = ""
     blocking: bool = False  # the queue waits on this one
     paused_at: float = 0.0
-    paused_site: str = ""  # the site it paused on, so a tab taken to webmail isn't "moved on"
     paused_host: str = ""  # and the exact address host (one employer's Workday, not any)
     hold_host: str = ""  # an account site paused on: nothing there is past the pause (amazon.jobs' passport)
     submit: bool = False  # submit once the review page is reached
@@ -679,11 +693,48 @@ def pick_next(actions: list[dict[str, Any]], in_form: bool) -> dict[str, Any] | 
     return order[0] if order else None
 
 
+# A query parameter that's a session's or a request's, not the page's: by its name (a number under "token" is a job's
+# id: Greenhouse's), or a time in milliseconds near now. (Not any long value: a step's own id can be one, Eightfold's
+# pid is 13 to 15 digits, and two steps alike but for it are two steps: the review of 0.3.189)
+_TOKEN_PARAM = re.compile(r"^(?:_|t|ts|time(?:stamp)?|nonce|csrf\w*|xsrf\w*|_?token|access_token|auth\w*|sid|"
+                          r"session\w*|jsessionid|state|rnd|rand\w*|cache\w*|cb)$", re.I)
+
+
+def _request_token(name: str, value: str) -> bool:
+    """A query parameter a request carries, not its page: _TOKEN_PARAM's names, or a time in milliseconds."""
+    if _TOKEN_PARAM.match(name):
+        return not (name.lower().lstrip("_") == "token" and value.isdigit())
+    return value.isdigit() and len(value) == 13 and abs(int(value) - time.time() * 1000) < 86_400_000
+
+
+def _steady_url(url: Any) -> str:
+    """A page's address as the same step keeps it: without a session's or a request's tokens (a fresh one on each
+    visit made every press look new, so going round in a circle or pressing one step again and again was never seen:
+    the review of Oct 15), nor ";jsessionid=" path parameters. The step's own parameters stay ("?step=2")."""
+    text = str(url or "")
+    try:
+        parts = urlsplit(text)
+        query = [(k, v) for k, v in parse_qsl(parts.query, keep_blank_values=True) if not _request_token(k, v)]
+    except ValueError:
+        return text
+    return urlunsplit((parts.scheme, parts.netloc, re.sub(r";[^/]*", "", parts.path), urlencode(query), parts.fragment))
+
+
+def _step_key(data: dict[str, Any], button: str, run: "Run") -> tuple:
+    """A press of a step's button, as the circle and stall checks compare them: the step's address (without a
+    request's tokens), its headings, the button, which visit to the job, and which questions it shows (a
+    questionnaire drawing its next one in place is a step further on: the review of Oct 15)."""
+    return (_steady_url(data.get("url")), tuple(data.get("headings") or []), button.strip().lower(), run.reopened,
+            questions_shown(data.get("fields") or []))
+
+
 def _fingerprint(page: dict[str, Any]) -> tuple:
     fields = page.get("fields")
     count = fields if isinstance(fields, int) else len(fields or [])
+    # (which questions it shows: a click's summary says it in short, a page read lists them)
+    questions = page.get("questions") if isinstance(fields, int) else questions_shown(fields or [])
     actions = tuple(a if isinstance(a, str) else a.get("text", "") for a in page.get("actions") or [])
-    return page.get("url"), tuple(page.get("headings") or []), count, actions
+    return _steady_url(page.get("url")), tuple(page.get("headings") or []), count, actions, questions
 
 
 _TAILOR_SAYS = ("Waiting for a resume written for this job. In Claude Code, say \u201ctailor my resumes\u201d; the "
@@ -847,10 +898,31 @@ class Applier:
         if run is not None:
             run.hands_on = True  # (on any card: a questions card's Resume is for answers typed into the page itself)
         run = self.enqueue(job_id, submit=bool(run and run.submit), front=True)
+        self.go_on_for(run)
         self.pressed.add(job_id)  # (the person's own press: it goes even while the queue is paused)
         if signing_in:
             run.sign_in_tries = min(run.sign_in_tries, SIGN_IN_TRIES - 1)
         return run
+
+    def go_on_for(self, run: Run) -> None:
+        """The person pressed Resume on this job, or answered its card, while another holds the queue for them (a
+        sign-in, an emailed code): this one goes now, and the other is left to be watched between jobs (as its Later
+        leaves it), unless someone is at work in its tab (anything there in the last RELEASE_IDLE seconds: the keys
+        they type mustn't land in a tab this job brings forward) or the desk is reading its code from the inbox
+        itself (a code only looked for between jobs could run out meanwhile). Then this one waits, and says why (the
+        reviews of Oct 15 and 0.3.189)."""
+        for other in [r for r in self.runs.values() if r.blocking and r.job_id != run.job_id]:
+            reading = (other.need == "email_code" and not other.mail_done and self.mail_login() is not None
+                       and time.time() - other.paused_at < MAIL_WINDOW)
+            if reading or time.time() - other.active_at < RELEASE_IDLE:
+                what = "its emailed code, which the desk is reading from your inbox" if reading else \
+                    "you, at work in its tab"
+                run.reason = (f"Waiting: {other.company or 'another job'} holds the queue for {what}. This one goes "
+                              "as soon as that's done.")
+                continue
+            self.later(other.job_id)
+            self._log(other, "the queue went on: you pressed Resume on (or answered) another job. This one's tab is "
+                      "watched between jobs, and the desk carries on with it once it's past this step.")
 
     def submit_now(self, job_id: int) -> Run:
         """The person pressed Submit for a job that's waiting on its review page."""
@@ -1474,7 +1546,7 @@ class Applier:
             self._log(run, f"couldn't use the {found.kind} from your email ({type(e).__name__}); "
                       "it's in your inbox for you")
         if mail and run.mail_done:
-            _MAIL_TAKEN[mail] = run.job_id
+            _take_code(mail, run.job_id)
 
     async def _enter_code(self, run: Run, found: mailbox.Found) -> bool:
         """Type the emailed code into its box (a digit per box where there's one for each) and
@@ -1584,7 +1656,6 @@ class Applier:
         run.paused_at = run.active_at = time.time()
         run.tab_mark, run.left, run.moved_since = 0, need == "bot_check", 0.0  # (a bot check: watched, the queue on)
         run.mail_checked, run.mail_done, run.verifying = 0.0, False, False
-        run.paused_site = _site_key(run.url)
         run.paused_host = urlparse(run.url).hostname or ""
         run.hold_host = ""
         self._log(run, reason)
@@ -1738,6 +1809,7 @@ class Applier:
         refreshed_at: int | None = None  # the presses made on this pass when the page was reloaded for its "went wrong"
         fixed_at = 0  # and those that count as a step pressed again and again (after the desk set right what it said)
         steps, more = 0, 0  # (more: the steps that refresh made it take again)
+        began = time.monotonic()
         while steps < MAX_STEPS + more:
             steps += 1
             if run.status in ("skipped", "submitted"):  # Skip, or "I submitted it", pressed while it ran
@@ -2162,7 +2234,7 @@ class Applier:
                 left = len(pending)
                 pending = await self._attest(run, pending)
                 attested = len(pending) < left
-                before, page_key = data, (data.get("url"), tuple(data.get("headings") or []))
+                before, page_key = data, (_steady_url(data.get("url")), tuple(data.get("headings") or []))
                 data, text = await self._look()  # filling can add or enable things (State after Country, Submit)
                 run.page_info = _page_info(data)  # what the person sees on the desk: the page as filled
                 if back_from is not None and (result["filled"] or attested or _values(before) != _values(data)):
@@ -2332,8 +2404,7 @@ class Applier:
                 # practice check, Oct 13) took longer than the wait for a page's buttons, then went on to its next
                 # step at the same address but its query. Waited on as a step still saving, once a step, and the page
                 # then read again, whatever it shows (gone on, its Next back on, a bot check drawn meanwhile: the review)
-                just = greyed and (data.get("url"), tuple(data.get("headings") or []), greyed[0]["text"].strip().lower(),
-                                   run.reopened)
+                just = greyed and _step_key(data, greyed[0]["text"], run)
                 if just and pressed and pressed[-1] == just and just not in saved_waited \
                         and not any(_errorish(e) for e in data.get("errors") or []):
                     saved_waited.add(just)
@@ -2545,7 +2616,7 @@ class Applier:
                 return await self._theirs_to_send(run, data, action)
             # (and which visit to the job: its Apply pressed again once it's opened again isn't a third press, EY's,
             # Freeport's and SRP's SuccessFactors, nightly Oct 11: "Apply now", then its menu's "Apply Now", before)
-            key = (data.get("url"), tuple(data.get("headings") or []), action["text"].strip().lower(), run.reopened)
+            key = _step_key(data, action["text"], run)
             lately = pressed[since:]  # (the presses since a refresh the site asked for: the steps it takes again are new)
             # (and for a step pressed three times, or a circle, those since the desk set right what the page said was
             # wrong: Entegris' Self Identify, run 54, its Date typed again after the second press, then never pressed a
@@ -2562,7 +2633,7 @@ class Applier:
             # "next" on a list of jobs pressed again and again: its pages differ, but no application opens. Only
             # presses on pages with no form count (Wells Fargo's Workday, run 55: its Application Questions drew its boxes
             # a moment late, and the two steps' Save and Continue before it, at the same address, read as two such)
-            circling = kind == "page" and [p[:1] + p[2:] for p in lately[-2:]] == [key[:1] + key[2:]] * 2 \
+            circling = kind == "page" and [p[:1] + p[2:4] for p in lately[-2:]] == [key[:1] + key[2:4]] * 2 \
                 and all(p in on_pages for p in lately[-2:])
             if test and (circling or kind == "form" and tries[-3:] == [key] * 3):
                 # a step that won't go on until the applicant takes the employer's assessment (Circle K's Workday,
@@ -2597,6 +2668,13 @@ class Applier:
                 errors = "; ".join(problems)[:300].rstrip(" .")
                 return self._pause(run, "stuck", "The page didn't move on" + (f": {errors}." if errors else ".")
                                    + " Fix it in the browser, then press Resume.")
+            if time.monotonic() - began > PASS_SECONDS:
+                # (before a press, never after one: a last press that reached the review page goes to it, the review
+                # of 0.3.189)
+                await self._bring_forward(run)
+                return self._pause(run, "stuck", f"This application has taken longer than {PASS_SECONDS // 60} minutes "
+                                   "without reaching its review page, so I stopped here. Check where it is in the "
+                                   "browser window, press its Next if there's more, then press Resume.")
             pressed.append(key)
             if kind == "page":
                 on_pages.add(key)
@@ -2631,7 +2709,7 @@ class Applier:
                 # (counted on this step only: a press on the step before that the site took a moment over, then went
                 # on from by itself, isn't this one's stall. Baker Tilly's Workday, run 53: the first press of its
                 # Voluntary Disclosures, whose error came a moment after, stopped the desk before it read the error)
-                step = (data.get("url"), tuple(data.get("headings") or []))
+                step = (_steady_url(data.get("url")), tuple(data.get("headings") or []))
                 stalls = stalls + 1 if step == stalled_on else 1
                 stalled_on = step
                 # (and eight in a row stop it wherever they were, a page's retries among them: a step whose headings
@@ -2952,7 +3030,11 @@ class Applier:
         while time.monotonic() < deadline:
             await asyncio.sleep(1)
             data, _ = await self._look()
-            if (data.get("url"), tuple(data.get("headings") or [])) != key[:2]:
+            if (_steady_url(data.get("url")), tuple(data.get("headings") or [])) != key[:2]:
+                return True
+            # (or a question drawn in place of the one pressed on: a questionnaire asking one at a time, the review of
+            # 0.3.189)
+            if len(key) > 4 and questions_shown(data.get("fields") or []) != key[4]:
                 return True
         return False
 
@@ -5488,12 +5570,6 @@ def _page_sig(data: dict[str, Any]) -> tuple:
     """What a page is, near enough: its address, headings and the questions on it."""
     return (_bare(data.get("url") or ""), tuple(data.get("headings") or []),
             tuple(sorted(f.get("label") or "" for f in data.get("fields") or [] if isinstance(f, dict))))
-
-
-def _site_key(url: str) -> str:
-    """The part of a page's address that names its site ("myworkdayjobs.com", "asml.com"), near enough."""
-    host = (urlparse(url).hostname or "").lower()
-    return ".".join(host.split(".")[-2:])
 
 
 def _maintenance_page(data: dict[str, Any]) -> bool:

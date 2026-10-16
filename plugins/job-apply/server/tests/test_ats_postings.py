@@ -18,6 +18,8 @@ def test_detect_ats():
         "https://career8.successfactors.com/career?company=amkor": "successfactors",
         "https://hctz.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1001/jobs": "oracle_hcm",
         "https://jpmc.fa.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1001/job/210000001": "oracle_hcm",
+        # (a pod with no region, at a page off the candidate path: its sign-in, the review of Oct 15)
+        "https://jpmc.fa.oraclecloud.com/fscmUI/faces/AtkHomePageWelcome": "oracle_hcm",
         "https://careers.ti.com/en/sites/CX/job/25018065": "oracle_hcm",  # the company's own address for it
         "https://micron.eightfold.ai/careers": "eightfold",
         "https://www.paycomonline.net/v4/ats/web.php/portal/95CACB007211B4A999FBE2ED52E7762E/jobs/389228": "paycom",
@@ -274,3 +276,30 @@ def test_a_postings_microdata_date_is_read():
     assert parse_html(page.replace("Fri Oct 02 00:00:00 UTC 2026", "soon"), "https://e.example/").posted_at == ""
     # a site in another time zone names that one
     assert parse_html(page.replace(" UTC ", " EDT "), "https://e.example/").posted_at == "2026-10-02"
+
+
+def test_every_listed_own_address_system_is_known():
+    """The review of Oct 15: COMPANY_HOSTS held some of the employers whose job system runs on their own address, not
+    all, so Rogers', Pfeiffer's, EY's and Freeport's SuccessFactors read as a plain company site (a code from
+    SuccessFactors' mail wasn't taken for theirs, and the desk named the site by the employer). Each listed employer
+    whose search runs a job system on the employer's own address reads as that system there."""
+    from pathlib import Path
+    from urllib.parse import urlparse
+
+    import yaml
+
+    data = Path(__file__).resolve().parents[2] / "data"
+    missing = []
+    for path in [data / "companies.yaml", *sorted((data / "lists").glob("*.yaml"))]:
+        for company in yaml.safe_load(path.read_text(encoding="utf-8")).get("companies") or []:
+            search = company.get("search") or {}
+            own = {"successfactors": search.get("successfactors"),
+                   "eightfold": "https://" + search["eightfold"]["host"] if isinstance(search.get("eightfold"), dict)
+                   else None}
+            for system, url in own.items():
+                if isinstance(url, str) and url and detect_ats(url) != system:
+                    missing.append(f"{company['name']}: {urlparse(url).hostname} isn't read as {system}")
+            if company.get("ats") == "successfactors" and not search \
+                    and detect_ats(company.get("careers_url")) != "successfactors":
+                missing.append(f"{company['name']}: {company.get('careers_url')} isn't read as successfactors")
+    assert not missing, missing

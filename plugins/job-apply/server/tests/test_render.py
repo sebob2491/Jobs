@@ -168,3 +168,47 @@ def test_a_too_long_resume_for_the_current_job_holds_it_too(srv, monkeypatch):
     srv.browser.current_job_id = job["id"]
     out = run(srv.render_document("resume", RESUME))
     assert "warning" in out and not tailored_ready(srv.tracker().get(job["id"]))
+
+
+@pytest.mark.skipif(not browser_available(), reason="no Playwright Chromium installed")
+def test_a_name_a_file_system_would_refuse_is_written_as_a_file_name(srv, job_apply_home):
+    """The review of Oct 15: the document's file name was the profile's names as written, so "Ana/Luisa" made a folder
+    of it and "O'Brien: Jr" a name Windows refuses. Words joined by "_", accented letters kept."""
+    import yaml
+
+    path = job_apply_home / "profile.yaml"
+    profile = yaml.safe_load(path.read_text(encoding="utf-8"))
+    profile["personal"].update({"first_name": "José/Luis", "last_name": "O'Brien: Jr"})
+    path.write_text(yaml.safe_dump(profile, allow_unicode=True), encoding="utf-8")
+    job = srv.add_job(url="https://example.com/jobs/2", title="FSE", company="Example Litho")["job"]
+    out = run(srv.render_document("resume", RESUME, job_id=job["id"]))
+    pdf = Path(out["path"])
+    assert pdf.name == "José_Luis_O_Brien_Jr_Resume.pdf" and pdf.parent == Path(srv.get_job(job["id"])["job"]["folder"])
+
+
+@pytest.mark.skipif(not browser_available(), reason="no Playwright Chromium installed")
+def test_a_resume_written_under_the_old_file_name_goes_when_it_is_written_again(srv, job_apply_home):
+    """The review of 0.3.189: a job's resume rendered before the new file names ("Mary Ann_Rivera_Resume.pdf") sorted
+    ahead of the one rendered after ("Mary_Ann_Rivera_Resume.pdf") and was uploaded, and its too-long marker held the
+    job for ever. Rendering again in the job's folder takes the old name's files away; nothing else there."""
+    import yaml
+
+    from job_apply.autofill import tailored_document
+    from job_apply.pipeline import tailored_ready
+
+    path = job_apply_home / "profile.yaml"
+    profile = yaml.safe_load(path.read_text(encoding="utf-8"))
+    profile["personal"].update({"first_name": "Mary Ann", "last_name": "Rivera"})
+    path.write_text(yaml.safe_dump(profile, allow_unicode=True), encoding="utf-8")
+    job = srv.add_job(url="https://example.com/jobs/3", title="FSE", company="Example Litho")["job"]
+    folder = Path(srv.get_job(job["id"])["job"]["folder"])
+    folder.mkdir(parents=True, exist_ok=True)
+    for ext in (".pdf", ".md", ".too-long"):
+        (folder / f"Mary Ann_Rivera_Resume{ext}").write_text("old", encoding="utf-8")
+    (folder / "notes.md").write_text("mine", encoding="utf-8")
+    out = run(srv.render_document("resume", RESUME, job_id=job["id"]))
+    assert Path(out["path"]).name == "Mary_Ann_Rivera_Resume.pdf"
+    assert not any(p.name.startswith("Mary Ann_") for p in folder.iterdir()), sorted(p.name for p in folder.iterdir())
+    assert (folder / "notes.md").exists()
+    job = srv.tracker().get(job["id"])
+    assert Path(tailored_document(job, "resume") or "").name == "Mary_Ann_Rivera_Resume.pdf" and tailored_ready(job)

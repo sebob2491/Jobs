@@ -376,6 +376,42 @@ def test_someone_at_work_in_the_paused_tab_holds_the_queue(srv, monkeypatch):
     assert blocking and second_status == "queued"
 
 
+def test_a_resume_on_another_job_goes_while_a_sign_in_holds_the_queue(srv, monkeypatch):
+    """The review of Oct 15: a Resume the person pressed on another job waited behind a job holding the queue for its
+    sign-in, though a Submit they press goes at once. A Resume on another job goes too: the one holding the queue is
+    left to be watched between jobs (as its Later does), and carries on by itself once its tab is past the sign-in."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "HANDS_ON_IDLE", 600)
+    turned_away = srv.add_job(url=fixture_url("site/forbidden.html"), title="Analyst", company="Example Health")["job"]
+    signing_in = srv.add_job(url=fixture_url("site/posting.html"), title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            other = applier.enqueue(turned_away["id"])
+            await until(lambda: other.status == "needs_you", about=state(other))
+            holder = applier.enqueue(signing_in["id"])
+            await until(lambda: holder.status == "needs_you", about=state(holder))
+            assert holder.need == "sign_in" and holder.blocking, holder.reason
+            # (someone at work in its tab a moment ago: the queue stays held, and the other job says why: the
+            # review of 0.3.189, keys typed there mustn't land in a tab another job brings forward)
+            applier.resume(other.job_id)
+            await asyncio.sleep(1.5)
+            waiting = (other.status, other.reason, holder.blocking)
+            holder.active_at -= pipeline.RELEASE_IDLE + 5  # (nothing done in its tab for a while)
+            said = len(other.log)
+            applier.resume(other.job_id)
+            await until(lambda: len(other.log) > said and other.status == "needs_you", timeout=20, about=state(other))
+            return holder, waiting
+        finally:
+            await applier.stop()
+
+    holder, waiting = run(go())
+    assert waiting[0] == "queued" and waiting[1].startswith("Waiting: Example Fab holds the queue") and waiting[2], waiting
+    assert holder.status == "needs_you" and holder.left and not holder.blocking, (holder.status, holder.left)
+
+
 def test_a_captcha_challenge_after_a_click_waits_for_the_person(srv, monkeypatch):
     """Daifuku's iCIMS answers Next on its email step with hCaptcha's pictures and "Please try
     again.": the person solves it, then the desk carries on. A challenge frame kept hidden
@@ -4453,6 +4489,102 @@ def test_an_application_of_many_steps_reaches_its_review_page(srv, monkeypatch, 
     assert r.status == "ready" and r.url.endswith("review.html"), (r.status, r.reason, r.log[-3:])
 
 
+@pytest.mark.parametrize("save", ["", "?save=3000"], ids=["at-once", "slow-save"])
+def test_a_questionnaire_asking_one_question_at_a_time_at_one_address_goes_on(srv, monkeypatch, job_apply_home, save):
+    """The review of Oct 15: a questionnaire drawing its next question in place (one address, one heading, one box, a
+    Next) looked like one step pressed again and again, and the desk stopped ("The page didn't move on") with
+    questions still to go. Which questions a step shows is part of it: each question is a step of its own. One that
+    takes a few seconds to save each answer (?save) is waited on until its next question is drawn (the review of
+    0.3.189: the wait looked only at the address and headings)."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    job = srv.add_job(url=fixture_url("site/questions-one-address.html") + save, title="FSE",
+                      company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), timeout=120, about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert r.status == "ready" and r.url.endswith("review.html"), (r.status, r.reason, r.log[-4:])
+    assert sum(line == "clicked “Next”" for line in r.log) >= 4, r.log
+
+
+def test_a_stuck_step_under_a_ticking_label_is_still_seen_stuck(srv, monkeypatch, job_apply_home):
+    """The review of 0.3.189: a box label with a counter ticking in it ("Reference (expires in 600s)") changed on every
+    look, so a step whose Next did nothing never looked stuck, and Next was pressed thirty times. A label's numbers
+    don't make it another question."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    job = srv.add_job(url=fixture_url("site/ticking-label.html"), title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), timeout=120, about=state(r))
+            return r, await r.page.evaluate("() => window.presses || 0")
+        finally:
+            await applier.stop()
+
+    r, presses = run(go())
+    assert (r.status, r.need) == ("needs_you", "stuck") and "didn't move on" in r.reason, (r.reason, r.log[-3:])
+    assert presses <= 4, presses
+
+
+def test_a_pass_over_a_job_that_runs_too_long_is_said_and_the_queue_goes_on(srv, monkeypatch, job_apply_home):
+    """The review of Oct 15: a pass over a job's pages had a count of steps (MAX_STEPS) and no time limit, and its waits
+    (a page's buttons, a step saving, a list's choices) can add up to minutes a step: one job could hold the queue for
+    an hour. A pass that runs past PASS_SECONDS stops where it is and says so."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "PASS_SECONDS", 2)
+    job = srv.add_job(url=fixture_url("site/many-steps.html") + "?n=18", title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), timeout=120, about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert (r.status, r.need) == ("needs_you", "stuck") and "taken longer than" in r.reason, (r.status, r.reason)
+    assert "press Resume" in r.reason and not r.url.endswith("review.html"), r.reason
+
+
+def test_a_last_press_that_reaches_the_review_page_after_the_time_limit_goes_to_it(srv, monkeypatch, job_apply_home):
+    """The review of 0.3.189: the pass's time limit was looked at before reading the page, so a last press that
+    reached the review page as the time ran out was said to be stuck, and Submit for me didn't go. It's looked at
+    only before a press."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 2)
+    monkeypatch.setattr(pipeline, "STEP_SAVE_WAIT", 12)
+    monkeypatch.setattr(pipeline, "PASS_SECONDS", 4)
+    job = srv.add_job(url=fixture_url("site/greyed-next-then-step.html") + "?save=6000", title="Technician",
+                      company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), timeout=120, about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert r.status == "ready" and "step=2" in r.url, (r.status, r.reason, r.log[-3:])
+
+
 def test_a_workday_date_the_page_lost_is_typed_in_again_as_a_date(srv, monkeypatch, job_apply_home):
     """Entegris' and Analog Devices' Workday Self Identify (runs 53 and 54, Oct 13): the signature Date showed
     10/13/2026, typed in, but Save and Continue said "The field Date is required and must have a value"; its parts
@@ -6380,11 +6512,14 @@ def test_a_job_put_back_by_undo_opens_again_and_says_why_it_starts_over(srv, mon
     assert srv.get_job(job["id"])["job"]["status"] == "in_progress"
 
 
-def test_a_flow_that_goes_round_in_a_circle_stops_after_one_lap(srv, monkeypatch):
+@pytest.mark.parametrize("query", ["", "?tokens"], ids=["plain", "fresh-tokens"])
+def test_a_flow_that_goes_round_in_a_circle_stops_after_one_lap(srv, monkeypatch, query):
     """Oracle's sites, refusing a code for an address: Next leads to a Continue that goes back
-    to the posting. Going round again would only repeat it (and might email another code)."""
+    to the posting. Going round again would only repeat it (and might email another code). A site whose addresses
+    carry a fresh token on each visit (?tokens: "&csrf=…") goes round the same circle (the review of Oct 15: each
+    press looked new, and the circle was never seen)."""
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
-    job = srv.add_job(url=fixture_url("site/cycle-posting.html"), title="FSE", company="Example Fab")["job"]
+    job = srv.add_job(url=fixture_url("site/cycle-posting.html") + query, title="FSE", company="Example Fab")["job"]
     applier = Applier(srv)
 
     async def go():
@@ -6913,7 +7048,7 @@ def _example_corp(srv, monkeypatch, loads: list[str]) -> str:
         await srv.browser._ctx.route("https://**.example/**", handler)
 
     monkeypatch.setattr(srv.browser, "_launch", launch)
-    if srv.browser.is_open:  # (open already: served from now on)
+    if srv.browser._ctx is not None:  # (open already: served from now on)
         run(srv.browser._ctx.route("https://**.example/**", handler))
     return f"{EXAMPLE_CORP}/careers/job/1"
 
@@ -10391,6 +10526,27 @@ def test_a_cornerstone_posting_still_loading_is_waited_on_then_its_apply_pressed
         assert r.seen_form and "/step" in r.url, (r.url, r.reason, r.log)  # (on into the application's steps)
 
 
+def test_a_steady_address_drops_a_requests_tokens_and_keeps_the_steps_own():
+    """The review of Oct 15: a step's address with a fresh token on each visit made every press look new."""
+    from job_apply.pipeline import _steady_url
+
+    assert _steady_url("https://x.example/apply?step=2&csrf=abc123def456&_=1760640000000") == \
+        "https://x.example/apply?step=2"
+    assert _steady_url("https://x.example/apply;jsessionid=AB12?jobId=9&t=17#/q2") == "https://x.example/apply?jobId=9#/q2"
+    assert _steady_url("https://x.example/apply?id=3f2504e04f8911d39a0c0305e82c3301") == \
+        "https://x.example/apply?id=3f2504e04f8911d39a0c0305e82c3301"  # (a step's own id, however long, stays)
+    assert _steady_url(None) == ""
+    # (the review of 0.3.189: a job's own long number stays, Eightfold's pid and Greenhouse's numeric token; a time in
+    # milliseconds near now goes)
+    import time
+
+    assert _steady_url("https://careers.example.com/careers?pid=563808971834447") == \
+        "https://careers.example.com/careers?pid=563808971834447"
+    assert _steady_url("https://boards.example.io/embed/job_app?for=acme&token=4932681101") == \
+        "https://boards.example.io/embed/job_app?for=acme&token=4932681101"
+    assert _steady_url(f"https://x.example/apply?step=2&v={int(time.time() * 1000)}") == "https://x.example/apply?step=2"
+
+
 def test_stopping_the_desk_ends_a_worker_that_dropped_a_cancellation(srv):
     """CI's Python 3.10 run of 0.3.188 hung for good: asyncio.wait_for there drops a cancellation that comes as what it
     waits on ends, and stop() cancelled the worker once, then waited on it for ever. A worker that drops one is
@@ -10436,3 +10592,13 @@ def test_a_bounded_read_never_drops_its_callers_cancellation():
         return "returned"
 
     assert asyncio.run(go()) == "cancelled"
+
+
+def test_the_codes_given_out_are_kept_a_day(monkeypatch):
+    """The review of Oct 15: each emailed code the desk put in was kept for as long as the desk ran. A day's are kept."""
+    import time
+
+    monkeypatch.setattr(pipeline, "_MAIL_TAKEN", {("a@x.example", "111111", time.time() - 2 * 86400): 1,
+                                                  ("a@x.example", "222222", time.time() - 600): 2})
+    pipeline._take_code(("a@x.example", "333333", time.time()), 3)
+    assert sorted(pipeline._MAIL_TAKEN.values()) == [2, 3]

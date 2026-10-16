@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import json
 import os
 import re
@@ -453,6 +454,29 @@ def _choose(text: str, options: list[str], field: dict, exact_only: bool = False
     return choose_option(text, options, exact_only=exact_only, names=bool(field.get("names")))
 
 
+def questions_shown(fields: list[dict]) -> str:
+    """Which questions a step shows (its boxes' labels, in order), in short: a questionnaire drawing its next question
+    in place, at one address under one heading, is a step further on, not the same step pressed again (the review of
+    Oct 15)."""
+    # (its numbers left out: a label with a counter ticking in it, "Reference (expires in 600s)", is the same question
+    # on every look, and a step stuck under it was pressed thirty times: the review of 0.3.189)
+    labels = "\n".join(re.sub(r"\d+", "#", norm(str(f.get("label") or ""))) for f in fields)
+    return hashlib.sha1(labels.encode("utf-8")).hexdigest()[:12]
+
+
+def _groups_key(url: str, field: dict) -> tuple[str, str] | None:
+    """Where a list's groups are remembered: the site (its host and first two path parts, so one Workday tenant's
+    lists aren't another's on a shared host) and the list's label. None for a list with no label."""
+    label = norm(field.get("label") or "")
+    if not label:
+        return None
+    parsed = urlparse(url)
+    # (not a language's part, nor Workday's shared "recruiting": /en-US/recruiting/<tenant>/<site> is the tenant's)
+    parts = [p for p in parsed.path.split("/") if p and not re.fullmatch(r"[a-z]{2}(?:[-_][A-Za-z]{2})?", p)
+             and p.lower() != "recruiting"]
+    return f"{parsed.hostname or ''}/{'/'.join(parts[:2])}", label
+
+
 class PickedAGroup(ValueError):
     """The option picked was a group (Workday's "How Did You Hear About Us?" has "Job Board"
     holding Indeed, LinkedIn, ...): it opened its own list instead of being chosen."""
@@ -551,6 +575,9 @@ class BrowserSession:
         # what the desk typed on a page (by address), and how often each box was typed again
         self._typed: dict[str, set[str]] = {}
         self._retyped: dict[tuple[str, str, str], int] = {}
+        # the entries a list's group opened (by the site and the list's label: entry -> group), so an entry the
+        # person picked from them is picked inside its group (_type_and_pick)
+        self._groups: dict[tuple[str, str], dict[str, str]] = {}  # (_groups_key's: the site, its list's label)
         self._actions: dict[str, dict] = {}
         self.current_job_id: int | None = None
         self.tab_jobs: dict[Page, int] = {}  # the job each tab was opened for
@@ -569,10 +596,6 @@ class BrowserSession:
         return lock
 
     # ---------------------------------------------------------------- lifecycle
-    @property
-    def is_open(self) -> bool:
-        return self._ctx is not None
-
     async def _launch(self) -> None:
         settings = config.Profile.load().settings
         user_dir = config.browser_profile_dir()
@@ -847,6 +870,7 @@ class BrowserSession:
             "title": await _page_title(page),
             "headings": data["headings"],
             "fields": len(fields),
+            "questions": questions_shown(fields),
             "empty_required": sum(1 for f in fields if f.get("required") and is_empty_value(f.get("value"))),
             "actions": [a["text"] for a in data["actions"]][:25],
             "errors": data["errors"],
@@ -2149,6 +2173,26 @@ class BrowserSession:
                 options = await self._field_options(page, field["id"], loc, 0)
         choice = (_choose(text, options, field, exact_only=len(options) > SHORT_MENU and not pick_only)
                   if options else None)
+        groups_key = _groups_key(page.url, field)
+        group = self._groups.get(groups_key, {}).get(norm(text)) if choice is None and options and groups_key else None
+        top = choose_option(group, options, exact_only=True) if group is not None else None
+        if top is not None:
+            # An entry inside a group, the person's pick from the entries the group opened before (Hitachi's
+            # "Career Website" > "Hitachi Digital Career Site (…)", run 112: a search for the entry found nothing on
+            # the site, and the person's answer never went in): the group picked, then the entry
+            await self._click_option(page, field["id"], top)
+            inner = await self._new_options(page, field["id"], loc, options, 1500)
+            if inner and inner != options:
+                entry = choose_option(text, inner, exact_only=True)
+                if entry is not None:
+                    await self._click_option(page, field["id"], entry)
+                    await self._confirm_choice(page, loc, entry)
+                    return f"selected {top} > {entry}"
+                await self._close_menus(page)
+                raise PickedAGroup(top, inner)  # (its entries now, to ask about)
+            # (the group no longer opens a list of its own: whatever it did is said, never taken for the answer)
+            await self._close_menus(page)
+            raise ValueError(f"{top!r} no longer opens its entries, so {text!r} wasn't picked; check this list")
         query = _search_words(text)
         if choice is None and pick_only:
             # Its answer in the site's words or not at all: the profile's own words typed in
@@ -2213,6 +2257,10 @@ class BrowserSession:
                 return f"selected {choice} > {entry}"
             await self._close_menus(page)
             if inner and inner != options:
+                if groups_key:
+                    known = self._groups.setdefault(groups_key, {})
+                    if len(known) + len(inner) <= 500:
+                        known.update({norm(e): choice for e in inner})
                 raise PickedAGroup(choice, inner) from None
             raise
         return f"selected {choice}"

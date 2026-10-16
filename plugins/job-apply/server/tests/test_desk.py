@@ -79,6 +79,8 @@ def test_desk_finds_applies_and_submits(srv, monkeypatch):
             assert (await c.get("/api/state", headers={**h, "host": "evil.example"})).status_code == 403
             page = await c.get("/")
             assert page.status_code == 200 and "<title>Job Desk</title>" in page.text
+            # (its address carries the page's key: never sent on to a site a link opens, the review of Oct 15)
+            assert '<meta name="referrer" content="no-referrer">' in page.text
 
             await c.post("/api/search", headers=h, json={})
             s = await until(lambda s: s["search"]["status"] == "done")
@@ -1826,10 +1828,18 @@ def test_the_applications_ready_for_the_persons_submit_are_reviewed_in_one_round
                 assert not sent and not said  # (nothing sent before the person's press)
                 await page.click("#notices [data-act=review-round]")
                 await page.wait_for_selector("#notices [data-act=review-submit]")
+                for _ in range(40):
+                    if shown:
+                        break
+                    await page.wait_for_timeout(100)
                 assert shown == [jobs[0]["id"]], shown
                 await page.click("#notices [data-act=review-submit]")
                 # (its own "I submitted it", the site's last button pressed: the round is on the second)
                 await page.wait_for_selector("#notices :text('Reviewing Technician (Example Litho)')")
+                for _ in range(40):  # (the desk's focus is awaited after the words show: the review of Oct 15, under load)
+                    if len(shown) >= 2:
+                        break
+                    await page.wait_for_timeout(100)
                 assert sent == [jobs[0]["id"]] and shown == [jobs[0]["id"], jobs[1]["id"]], (sent, shown)
                 await page.click("#notices [data-act=review-applied]")
                 for _ in range(40):

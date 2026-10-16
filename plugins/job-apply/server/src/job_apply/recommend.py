@@ -29,14 +29,17 @@ RECOMMEND_AT = 60  # scores from here up are preselected in the Job Desk
 _LEVEL = {"high_school": 1, "associate": 2, "bachelor": 3, "master": 4, "doctorate": 5}
 _DEGREE_NAME = {"high_school": "a high school diploma", "associate": "an Associate's", "bachelor": "a Bachelor's",
                 "master": "a Master's", "doctorate": "a doctorate"}
-_SENIOR = re.compile(r"\b(senior|sr|staff|principal|lead|manager|director|head|vp|vice president|chief|supervisor)\b")
+_SENIOR = re.compile(r"\b(senior|sr|staff|principal|lead|manager|mgr|director|dir|head|vp|vice president|chief|"
+                     r"supervisor)\b")
 _JUNIOR = re.compile(r"\b(early career|entry level|entry|junior|jr|graduate|new grad|apprentice|trainee)\b")
 _INTERN = re.compile(r"\b(intern|internship|co op|coop)\b")
 # Words in many titles that say nothing of the work: "HR Coordinator" is no reason to suggest an
 # "Enrollment Coordinator" or a "Clinical Research Coordinator"
 _GENERIC_TITLE_WORDS = {"coordinator", "specialist", "manager", "analyst", "associate", "assistant", "representative",
                         "consultant", "director", "senior", "lead", "officer", "administrator", "clerk", "supervisor",
-                        "partner", "principal", "junior", "intern", "staff", "team", "level"}
+                        "partner", "principal", "junior", "intern", "staff", "team", "level",
+                        # (and their short forms, as titles write them: "Coord" says no more than "Coordinator")
+                        "coord", "spec", "mgr", "assoc", "asst", "rep", "admin", "sr", "jr", "dept"}
 # Metro areas the employer lists cover: a place in the same one as a person's named places is
 # near them (Mesa for Tempe), one outside it isn't (Bagdad's or Morenci's mines for Phoenix).
 _METROS = [

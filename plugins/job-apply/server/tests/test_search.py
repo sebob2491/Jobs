@@ -1924,9 +1924,9 @@ def test_a_successfactors_site_that_draws_its_results_as_tiles():
     """Salt River Project's SuccessFactors site draws its search results as tiles, not the table
     rows Qorvo's has: the search found none (Oct 2026). Each tile has its title (twice: desktop
     and tablet), place and date."""
-    from job_apply.search import parse_successfactors
+    from job_apply.search import _parse_sf
 
-    rows, total = parse_successfactors(SF_TILES, "https://careers.srpnet.com")
+    rows, total = _parse_sf(SF_TILES, "https://careers.srpnet.com")[:2]
     assert [(r.title, r.location, r.posted, r.url, r.external_id) for r in rows] == [
         ("Compensation Analyst", "Tempe, AZ, US", "2026-10-02",
          "https://careers.srpnet.com/job/Tempe-Compensation-Analyst-AZ-85280/1424491000/", "1424491000"),
@@ -1935,7 +1935,7 @@ def test_a_successfactors_site_that_draws_its_results_as_tiles():
     town = SF_TILES.replace('<div class="section-field location"><div id="job-1-desktop-section-location-value">Austin, TX, US</div></div>',
                             '<div class="section-field city"><div id="job-1-desktop-section-city-value">Austin</div></div>'
                             '<div class="section-field state"><div id="job-1-desktop-section-state-value">TX</div></div>')
-    assert parse_successfactors(town, "https://careers.srpnet.com")[0][1].location == "Austin, TX"  # town and state fields
+    assert _parse_sf(town, "https://careers.srpnet.com")[0][1].location == "Austin, TX"  # town and state fields
 
     asked = []
 
@@ -2779,3 +2779,33 @@ def test_a_workday_posting_with_no_place_in_the_search_takes_it_from_its_address
                                            "Various Locations - Phoenix, AZ", "Tempe, AZ", "TX - Burnet"]
     assert looked == ["/wday/cxs/hhco/Careers/job/Engineering-Technician_JR3",  # only the ones their addresses don't place
                       "/wday/cxs/hhco/Careers/job/Process-Technician_JR4"]
+
+
+def test_a_title_written_short_still_matches():
+    """The review of Oct 15: a title word counted only when it began with the searched word, so "Equipment Tech II",
+    "Field Service Engr" and "Sr. Maint Tech" never matched a technician's or an engineer's search. A title's short way
+    of writing a word counts as the word, and a searched short word finds the whole one. The review of 0.3.189: "Tech"
+    is a technician's only where a technician's title puts it (at the end, before a level, a shift or a dash), never
+    the technology trade's "Tech Lead" or "Tech Program Manager"; "Acct" is an Account's (a sales job), never an
+    Accountant's; and a three-letter word still finds the words it begins ("med tech" a Medical Technologist)."""
+    from job_apply.search import title_matches
+
+    assert title_matches("Equipment Tech II", "equipment technician")
+    assert title_matches("Field Service Engr", "field service engineer")
+    assert title_matches("Sr. Maint Tech", "maintenance technician")
+    assert title_matches("Pharmacy Tech - Nights", "technician")
+    assert title_matches("Laboratory Technician", "lab tech")
+    assert title_matches("Engineering Technician", "engineer")
+    assert title_matches("Field Service Engineer", "field service engr")
+    assert title_matches("Medical Technologist", "med tech")
+    assert title_matches("Veterinary Technician", "vet")
+    assert title_matches("Biomedical Equipment Technician", "bio")
+    for title in ("Tech Lead, Platform", "Tech Program Manager", "Sr. Tech Program Manager", "Tech Analyst",
+                  "Ed Tech Coordinator", "Tech Ops Specialist", "Tech Sales Representative", "Recruiter - Tech",
+                  "Talent Acquisition Partner - Tech", "Account Executive - Ed Tech", "Tech/Data Recruiter",
+                  "Tech, Media & Telecom Analyst", "Hi Tech Sales Manager"):
+        assert not title_matches(title, "technician"), title
+    for title in ("Adjunct Faculty - ENG", "Faculty, ENG 101"):  # (a college's English course)
+        assert not title_matches(title, "engineer | technician"), title
+    for title in ("Key Acct Exec", "Acct Exec", "Sr Acct Mgr"):
+        assert not title_matches(title, "accountant"), title

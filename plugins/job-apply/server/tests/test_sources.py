@@ -81,6 +81,15 @@ JOB_SYSTEMS = {"myworkday.com", "myworkdayjobs.com", "workday.com", "icims.com",
 # the fake profile's and the test identity's details (scripts/live_smoke.py FAKE_PROFILE, live_identity.py), which
 # the scrubber replaces on capture and a page could echo back
 PLANTED = ("McTestface", "480-555-0199", "175 S Arizona Ave", "example-test-profile", "Jobdesk Test")
+# Anyone's phone, SSN or token the scrubber takes out (fixtures.scrub_others), should a page come in without it: a phone
+# with separators or a click-to-call link's digits (the reviews of Oct 15 and 0.3.189)
+_PHONE = re.compile(r"(?<![\w-])(?:\+?1[-. ]?)?\(?(\d{3})\)?[-. ](\d{3})[-. ]\d{4}(?![\w-])"
+                    r"|\btel:\s*\+?1?[-. (]*(\d{3})\)?[-. ]*(\d{3})[-. ]*\d{4}\b", re.I)
+_SSN = re.compile(r"(?<![\w-])\d{3}-\d{2}-\d{4}(?![\w-])")
+_JWT = re.compile(r"\beyJ[\w-]{4,}\.[\w-]{4,}")
+# toll-free lines, the 555 numbers made up for tests and a form's 000 placeholder; an employer's published HR line
+_NOBODYS_AREA = {"800", "888", "877", "866", "855", "844", "833", "000"}
+_PUBLIC_LINES = {"510-572-4477"}  # Lam Research's HR support, on its captured pages
 
 
 def _employer_domains() -> set[str]:
@@ -101,7 +110,8 @@ def test_captured_pages_hold_no_personal_data():
     (python -m job_apply.fixtures), which replaces the profile's details. This is the gate for what the scrubber
     can't know: no address at a public mail provider or at a domain that isn't a listed employer's or a job
     system's (an employer's own accommodation inbox is fine), and none of the fake profile's or the test
-    identity's details (the whole-program review of Oct 15 asked for it)."""
+    identity's details (the whole-program review of Oct 15 asked for it); and nobody's phone (one with separators or a
+    click-to-call link's digits), SSN-shaped number or token (the reviews of Oct 15 and 0.3.189)."""
     allowed = _employer_domains() | JOB_SYSTEMS | {"example.com", "example.org", "example.net"}
     problems = []
     for path in sorted(FIXTURES.rglob("*")):
@@ -117,6 +127,13 @@ def test_captured_pages_hold_no_personal_data():
             elif domain not in allowed and root not in allowed:
                 problems.append(f"{shown}: an address at {domain}, neither a listed employer's nor a job system's")
         problems += [f"{shown}: {value!r}" for value in PLANTED if value.lower() in text.lower()]
+        for m in _PHONE.finditer(text):
+            area, exchange = (m.group(1), m.group(2)) if m.group(1) else (m.group(3), m.group(4))
+            if exchange != "555" and area not in _NOBODYS_AREA \
+                    and re.sub(r"^(?:tel:\s*)?\+?1[-. ]?", "", m.group(0), flags=re.I) not in _PUBLIC_LINES:
+                problems.append(f"{shown}: a phone number {m.group(0)!r}")
+        problems += [f"{shown}: an SSN's shape {v!r}" for v in _SSN.findall(text)]
+        problems += [f"{shown}: a token {v[:12]!r}…" for v in _JWT.findall(text)]
     assert not problems, "personal data in the fixtures:\n" + "\n".join(sorted(set(problems)))
 
 

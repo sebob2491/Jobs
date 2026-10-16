@@ -48,8 +48,10 @@
   // ?groups=employer: no "Company Website", but the employer's own "Acme website", a group holding the entry
   // of its name (issue #112, note 27)
   // ?slow[=ms]: the list is drawn that long after the prompt is opened (it comes from the server)
+  // &topsearch: a search finds the top level's names only, never an entry inside a group (Hitachi's, run 112)
   const staffing = location.search.includes('groups=staffing');
   const employer = location.search.includes('groups=employer');
+  const topsearch = location.search.includes('topsearch');
   const slow = new URLSearchParams(location.search).has('slow')
     ? Number(new URLSearchParams(location.search).get('slow')) || 1500 : 150;
   const board = ['CareerBuilder', 'Company Career Site', 'DICE', 'Glassdoor', 'Indeed', 'LinkedIn'];
@@ -90,7 +92,7 @@
   input.addEventListener('keydown', (e) => {
     if (e.key !== 'Enter') return;
     const q = input.value.toLowerCase();
-    const found = sources.filter((s) => s.toLowerCase().includes(q));
+    const found = (topsearch ? topLevel : sources).filter((s) => s.toLowerCase().includes(q));
     // (a search that finds nothing leaves the top level showing, in the employer's list)
     setTimeout(() => (found.length || !employer ? show(found, true) : show(topLevel)), 150);  // results are entries
   });

@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote, urljoin, urlsplit, urlunsplit
 
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, Comment
 
 from .config import Profile
 
@@ -152,21 +152,82 @@ def redact(text: str, secrets: list[str]) -> str:
     return text
 
 
+# What a captured page may hold of other people or of a session, whoever's profile captured it (the review of Oct 15: a
+# third party's email and phone, an SSN's or a birth date's shape, a candidate id, a token all survived the scrubber,
+# which knew only the profile's own strings): each taken out wherever it's written, words or attributes
+_EMAIL = re.compile(r"\b[\w.%+-]+@(?!example\.(?:com|org|net)\b)[\w-]+(?:\.[\w-]+)*\.[a-z]{2,}\b", re.I)
+_PHONE = re.compile(r"(?<![\w-])(?:\+?1[-. ]?)?\(?\d{3}\)?[-. ]\d{3}[-. ]\d{4}(?![\w-])")
+_SSN = re.compile(r"(?<![\w-])\d{3}-\d{2}-\d{4}(?![\w-])")
+_BIRTH_DATE = re.compile(r"\b((?:date of birth|birth ?date|d\.?o\.?b\.?)\W{0,3})[\d/.-]{6,10}", re.I)
+_CANDIDATE_ID = re.compile(r"\b((?:candidate|applicant|application|user|profile|person) ?(?:id|number|no\.?|#)\W{0,3})"
+                           r"(?=[\w-]*\d)[\w-]{4,}", re.I)  # (one with a digit in it: never the next label's words)
+_JWT = re.compile(r"\beyJ[\w-]{4,}\.[\w-]{4,}(?:\.[\w-]*)?")
+# a click-to-call link's number, written with no separators ("tel:+16025550147": the review of 0.3.189)
+_TEL = re.compile(r"\b(tel:)\s*\+?\d[\d().\s-]{6,}\d", re.I)
+_LONG_HEX = re.compile(r"\b[0-9a-f]{32,}\b", re.I)
+
+
+def scrub_others(text: str) -> str:
+    """`text` without the details of anyone or any session a page can carry, whoever captured it (an attribute that
+    ties the page's parts together keeps more: _scrub_value)."""
+    text = _EMAIL.sub("someone@example.com", text)
+    text = _JWT.sub(REDACTED, text)
+    text = _SSN.sub("000-00-0000", text)
+    text = _TEL.sub(r"\g<1>5555550100", text)
+    text = _PHONE.sub("555-555-0100", text)
+    text = _BIRTH_DATE.sub(lambda m: m.group(1) + "01/01/2000", text)
+    text = _CANDIDATE_ID.sub(lambda m: m.group(1) + REDACTED, text)
+    return _LONG_HEX.sub(REDACTED, text)
+
+
+# Attributes that tie a page's parts together by their values: kept as they are, long hex, ids and all (only an email
+# or a token taken out: the review of 0.3.189 found "userId_1234" and "userId_5678" made one id, and a class list's
+# long hex taken out of the page but not its style sheet)
+_TIES = {"id", "for", "name", "class", "form", "list", "headers", "aria-labelledby", "aria-describedby", "aria-controls",
+         "aria-owns", "aria-activedescendant", "rel", "accept-charset"}
+# An address whose query may carry a session or a person (a link's own are handled where it's made offline): taken
+# without it. A whole address, or one with a query of name=value, in any attribute; a path from the site's root only in
+# one that holds an address (never "Relocate?" in an aria-label: the review of 0.3.189)
+_URL_VALUE = re.compile(r"^(?:https?:)?//|^[\w./-]+\?[^=\s]*=")
+_PATH_VALUE = re.compile(r"^/[^/]")
+_URL_ATTRS = {"src", "href", "action", "formaction", "poster", "data", "cite", "background", "xlink:href", "srcset"}
+
+
+def _scrub_value(attr: str, value: str, secrets: list[str]) -> str:
+    """An attribute's value without the profile's strings or anyone else's details: in one that ties the page's parts
+    together, only an email or a token, so the ties hold."""
+    value = redact(value, secrets)
+    if attr in _TIES:
+        return _EMAIL.sub("someone@example.com", _JWT.sub(REDACTED, value))
+    return scrub_others(value)
+_CSS_URL_QUERY = re.compile(r"""(url\(\s*["']?[^"'()?\s]*)\?[^"')]*(["']?\s*\))""", re.I)
+
+
 def _redact_page(soup: BeautifulSoup, secrets: list[str]) -> None:
     """Redact the page's words and attribute values, never its tag names or style sheets: a
-    last name "Li" mustn't turn <li> into <REDACTED>."""
+    last name "Li" mustn't turn <li> into <REDACTED>. And anyone else's details (scrub_others)."""
     for node in soup.find_all(string=True):
+        if isinstance(node, Comment):
+            node.extract()  # (a comment can hold anything: a session, a debug dump, an address)
+            continue
         if node.parent is not None and node.parent.name == "style":
             continue
-        new = redact(str(node), secrets)
+        new = scrub_others(redact(str(node), secrets))
         if new != str(node):
             node.replace_with(new)
     for tag in soup.find_all(True):
+        tag.attrs.pop("srcdoc", None)  # (a frame's whole page in an attribute)
         for attr, value in list(tag.attrs.items()):
             if isinstance(value, list):
-                tag[attr] = [redact(v, secrets) for v in value]  # type: ignore[assignment]  # bs4 writes a list out as words
+                tag[attr] = [_scrub_value(attr, v, secrets) for v in value]  # type: ignore[assignment]  # bs4 writes a list out as words
             elif isinstance(value, str):
-                tag[attr] = redact(value, secrets)
+                v = value.strip()
+                if attr == "style":
+                    value = _CSS_URL_QUERY.sub(r"\1\2", value)
+                elif "?" in v and " " not in v and (_URL_VALUE.match(v) or (attr in _URL_ATTRS or attr.startswith("data-"))
+                                                    and _PATH_VALUE.match(v) or attr in _URL_ATTRS and v.startswith("?")):
+                    value = _without_query(v)
+                tag[attr] = _scrub_value(attr, value, secrets)
 
 
 _KEEP_META = re.compile(r"^(charset|viewport|content-type)$", re.I)
@@ -402,7 +463,7 @@ def clean_html(raw: str, secrets: list[str], frame_map: dict[str, str] | None = 
     keep = _used_custom_properties(
         "\n".join(css for _, css in sheets) + "\n" + "\n".join(str(t["style"]) for t in soup.find_all(style=True)))
     for tag, css in sheets:
-        css = _drop_custom_properties(css, keep)
+        css = _CSS_URL_QUERY.sub(r"\1\2", _drop_custom_properties(css, keep))  # (a local address's query too)
         if css:
             tag.string = css
         else:
@@ -453,7 +514,10 @@ def convert(snapshot: Path, name: str, out_dir: Path = DEFAULT_DIR, prof: Profil
     }
     expect_path = out_dir / f"{name}.expect.json"
     # written with its letters as they are ("José", not "Jos\\u00e9"), so the redaction finds them
-    expect_path.write_text(redact(json.dumps(expect, indent=2, ensure_ascii=False), secrets), encoding="utf-8")
+    # (and anyone else's details, as on the page: else a label the page has scrubbed reads differently here, and the
+    # labels' third parties stay in it: the review of 0.3.189)
+    expect_path.write_text(scrub_others(redact(json.dumps(expect, indent=2, ensure_ascii=False), secrets)),
+                           encoding="utf-8")
     written.append(expect_path)
     return written
 
