@@ -7,7 +7,9 @@
      (#mainContent, data-mfe-id="applyFlow") with nothing in it: no step, no heading, no loading dots. The desk said "I
      couldn't find the button that moves this application on". Opened plainly, the posting, whose Apply leads to that
      page (?apply). ?heal: that page reloaded draws its step (a review with a box, as workday-signin-loading.html's),
-     counted by the reload itself (CI's headless shell can lose a sessionStorage write, workday-saved-twice.html). -->
+     counted by the reload itself (CI's headless shell can lose a sessionStorage write, workday-saved-twice.html).
+     &wrappers: the frame holds empty boxes, no words and nothing to press in them (Baker Tilly's after Apply
+     Manually, the live check's run 117: a display-contents wrapper around three empty divs). -->
 <div data-automation-id="header">
   <a data-automation-id="logoLink" href="?home">Example University</a>
   <nav data-automation-id="navigationContainer">
@@ -32,12 +34,15 @@
       + 'onboarding and employee relations.</p><button type="button" id="apply">Apply</button>';
     frame.replaceWith(posting);
     document.getElementById('apply').addEventListener('click', () => {
-      location.href = '?apply' + (q.has('heal') ? '&heal' : '');
+      location.href = '?apply' + ['heal', 'wrappers'].filter((k) => q.has(k)).map((k) => '&' + k).join('');
     });
   } else if (q.has('heal') && reloaded) {
     frame.innerHTML = '<div data-automation-id="applyFlowPage"><div>current step 5 of 5</div><h2>Review</h2><form '
       + 'onsubmit="return false"><label for="fn">First Name</label><input id="fn"><button type="submit">Submit</button>'
       + '</form></div>';
+  } else if (q.has('wrappers')) {
+    frame.innerHTML = '<div dir="ltr" style="display: contents;"><div class="steps"><div class="a"></div>'
+      + '<div class="b"></div><div class="c"></div></div></div>';
   }
 </script>
 </body>

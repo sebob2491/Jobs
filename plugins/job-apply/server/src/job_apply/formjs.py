@@ -972,10 +972,13 @@ EXTRACT_JS = r"""
         return r.width > 0 && r.height > 0 && !el.childElementCount && visible(el);
       }).length >= 3;
   };
-  // and Workday's application frame mounted with nothing in it yet: no step, no heading, not even its loading dots
-  // (Grand Canyon University's right after the account's sign-in, run 91: only the site's header and footer)
+  // and Workday's application frame mounted with nothing in it yet: no words and nothing to press, nor Workday's own
+  // loading dots (those are its loading page, said as such): empty (Grand Canyon University's right after the
+  // account's sign-in, run 91: only the site's header and footer), or holding only empty boxes (Baker Tilly's after
+  // Apply Manually, the live check's run 117)
   const unmounted = () => [...document.querySelectorAll('[data-mfe-id="applyFlow"]')]
-    .some((m) => !m.childElementCount && !(m.textContent || '').trim());
+    .some((m) => !(m.textContent || '').trim() && !m.querySelector(LOADING)
+      && !m.querySelector('[data-ja-id], input, select, textarea, button, a, [role="button"], [role="link"], iframe, img'));
   const empty = unmounted();
   // (one drawn fully transparent, itself or a wrapper, is no sign of loading: a page kept "busy" by an invisible
   // progress bar waited for nothing, the review of Oct 15)

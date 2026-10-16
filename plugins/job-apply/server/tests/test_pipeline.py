@@ -2847,13 +2847,14 @@ def test_a_step_whose_sections_never_finish_loading_is_reloaded_once_then_said(s
         assert "didn't finish loading" in r.reason and "couldn't find the button" not in r.reason, r.reason
 
 
-@pytest.mark.parametrize("query", ["", "?heal"])
+@pytest.mark.parametrize("query", ["", "?heal", "?wrappers", "?wrappers&heal"])
 def test_a_workday_application_frame_left_empty_is_reloaded_once_then_said(srv, monkeypatch, query):
     """Grand Canyon University's Workday (run 91): right after the account's sign-in, its application frame (#mainContent,
     data-mfe-id="applyFlow") stayed empty between the site's header and footer, no step, no loading dots, and the desk
     said "I couldn't find the button that moves this application on". An application frame with nothing in it is a
     step not drawn yet: waited on, reloaded once (heal: then it draws and goes on), and otherwise said as the page
-    that didn't finish loading."""
+    that didn't finish loading. Baker Tilly's after Apply Manually (run 117) held three empty boxes, no words and
+    nothing to press (wrappers): the same, and the desk said the same "couldn't find the button"."""
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
     monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 1)
     monkeypatch.setattr(pipeline, "STEP_LOAD_WAIT", 2)
@@ -2872,7 +2873,7 @@ def test_a_workday_application_frame_left_empty_is_reloaded_once_then_said(srv, 
 
     r = run(go())
     assert any("still loading" in line and "reloaded" in line for line in r.log), (r.reason, r.log)
-    if query:
+    if "heal" in query:
         assert r.status == "ready", (r.status, r.need, r.reason, r.log)
     else:
         assert (r.status, r.need) == ("needs_you", "stuck"), (r.status, r.need, r.reason, r.log)
