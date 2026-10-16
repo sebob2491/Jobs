@@ -70,7 +70,8 @@ the scrubber (`python -m job_apply.fixtures`) before they become test fixtures.
     identity's secrets, an emailed code or a security answer in a file fail that job with an `::error::` line each.
     Its values check reads each review page reached against the profile the check applied with (a job or school
     from or to a date the profile doesn't give, a degree of a level it doesn't have, another role's employer): a
-    `::warning::` line each, never a failure; `nightly_summary.py --artifacts <folder>` prints them too.
+    `::warning::` line each, never a failure; `nightly_summary.py --artifacts <folder>` prints them too. The pages the
+    live check saves carry each box's value (a React form's boxes hold theirs as properties), never a password's.
   - Compare a run with the previous one per employer. A changed outcome is the signal. The nightly's changes comment opens with
     **Went backwards** when an employer the last run took to its review page no longer gets there (the regression alarm).
   - Run live checks from a worktree of their own (`git worktree add ../Jobs-live origin/main`): a branch
