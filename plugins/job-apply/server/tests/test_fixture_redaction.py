@@ -52,14 +52,14 @@ def test_fixture_css_is_trimmed_and_offline():
 def test_convert_writes_expectations(tmp_path):
     snap = tmp_path / "snap"
     snap.mkdir()
-    (snap / "page.html").write_text("<html><body><label for=a>Email</label><input id=a></body></html>")
+    (snap / "page.html").write_text("<html><body><label for=a>Email</label><input id=a></body></html>", encoding="utf-8")
     (snap / "snapshot.json").write_text(json.dumps({
         "url": "https://acme.wd1.myworkdayjobs.com/External/apply?email=sam.rivera@example.com",
         "frames": [{"file": "page.html", "url": "https://acme.wd1.myworkdayjobs.com/External/apply"}],
         "fields": [{"id": "1", "kind": "text", "label": "Email", "required": False, "value": "sam.rivera@example.com"}],
-    }))
+    }), encoding="utf-8")
     convert(snap, "acme-email", tmp_path / "out", Profile.load())
-    expect = json.loads((tmp_path / "out" / "acme-email.expect.json").read_text())
+    expect = json.loads((tmp_path / "out" / "acme-email.expect.json").read_text(encoding="utf-8"))
     assert expect["fields"] == [{"label": "Email", "kind": "text", "required": False}]  # no values
     assert "sam.rivera" not in expect["source_url"]
 
@@ -165,12 +165,12 @@ def test_expectations_keep_accented_names_findable_and_drop_query_strings(tmp_pa
     prof = Profile({"personal": {"first_name": "José", "last_name": "Núñez", "email": "sunflower77@example.org"}})
     snap = tmp_path / "snap"
     snap.mkdir()
-    (snap / "page.html").write_text("<html><body><label for=a>x</label><input id=a></body></html>")
+    (snap / "page.html").write_text("<html><body><label for=a>x</label><input id=a></body></html>", encoding="utf-8")
     (snap / "snapshot.json").write_text(json.dumps({
         "url": "https://careers-x.icims.com/jobs/1/submit?jtsid=SESSIONID-abc&e=sunflower77%40example.org",
         "frames": [{"file": "page.html", "url": "https://careers-x.icims.com/jobs/1/submit"}],
         "fields": [{"id": "1", "kind": "checkbox", "label": "I, José Núñez, certify that this is true", "required": True}],
-    }))
+    }), encoding="utf-8")
     convert(snap, "probe", tmp_path / "out", prof)
     text = (tmp_path / "out" / "probe.expect.json").read_text(encoding="utf-8")
     assert "Jos" not in text and "SESSIONID" not in text and "sunflower77" not in text

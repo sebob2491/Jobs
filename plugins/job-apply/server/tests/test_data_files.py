@@ -8,7 +8,7 @@ from job_apply.ats import ATS_NAMES
 
 
 def test_profile_template_loads_with_safe_defaults(tmp_path):
-    data = yaml.safe_load(config.TEMPLATE_PROFILE.read_text())
+    data = yaml.safe_load(config.TEMPLATE_PROFILE.read_text(encoding="utf-8"))
     prof = config.Profile(data)
     s = prof.settings
     assert (s.submit_mode, s.auto_submit_ats, s.email_codes, s.email_tracking) == ("review", [], False, False)
@@ -64,7 +64,7 @@ def test_accepting_notices_is_on_unless_turned_off_and_never_in_practice_mode(mo
     monkeypatch.setenv("JOB_APPLY_NEVER_SUBMIT", "1")
     assert accept({"accept_notices": True}) is False
     monkeypatch.delenv("JOB_APPLY_NEVER_SUBMIT")
-    template = yaml.safe_load(config.TEMPLATE_PROFILE.read_text())
+    template = yaml.safe_load(config.TEMPLATE_PROFILE.read_text(encoding="utf-8"))
     assert template["settings"]["accept_notices"] is True  # the template says so, and how to turn it off
 
 
@@ -211,9 +211,9 @@ def test_every_employer_list_loads_with_known_values():
     from job_apply.autofill import norm
 
     lists = employer_lists()
-    assert len(yaml.safe_load(lists["semiconductor-az"].read_text())["companies"]) >= 20
+    assert len(yaml.safe_load(lists["semiconductor-az"].read_text(encoding="utf-8"))["companies"]) >= 20
     for name, path in lists.items():
-        data = yaml.safe_load(path.read_text())
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
         names = [norm(c["name"]) for c in data["companies"]]  # as load_companies tells them apart
         assert names and len(names) == len(set(names)), name
         for c in data["companies"]:
@@ -222,7 +222,7 @@ def test_every_employer_list_loads_with_known_values():
             assert c["confidence"] in {"high", "medium", "low"}, (name, c)
             for kind in c.get("search") or {}:
                 assert kind in set(SEARCHERS) | BROWSER_SEARCHES, (name, c["name"], kind)
-    template = yaml.safe_load((config.PLUGIN_ROOT / "templates" / "companies.example.yaml").read_text())
+    template = yaml.safe_load((config.PLUGIN_ROOT / "templates" / "companies.example.yaml").read_text(encoding="utf-8"))
     assert set(template["lists"]) <= set(lists) and template["companies"] == []
 
 
@@ -232,7 +232,7 @@ def test_the_templates_hospital_question_is_only_the_exclusion_question():
     no Medicare billing experience."""
     import re
 
-    data = yaml.safe_load(config.TEMPLATE_PROFILE.read_text())
+    data = yaml.safe_load(config.TEMPLATE_PROFILE.read_text(encoding="utf-8"))
     pattern = next(a["match"] for a in data["answers"] if "medicare" in a["match"])
     for asked in ("Have you received notice from any government agency that you are or were unable to participate in "
                   "Medicare, Medicaid, or any other government program?",
@@ -251,7 +251,7 @@ def test_the_templates_answers_answer_only_the_question_they_are_for():
 
     from job_apply.autofill import _answer_bank
 
-    data = yaml.safe_load(config.TEMPLATE_PROFILE.read_text())
+    data = yaml.safe_load(config.TEMPLATE_PROFILE.read_text(encoding="utf-8"))
     patterns = [a["match"] for a in data["answers"]]
     prof = config.Profile({"answers": [{"match": p, "answer": f"answer {i}"} for i, p in enumerate(patterns)]})
 
@@ -308,17 +308,17 @@ def test_a_profile_from_an_older_template_answers_with_todays_patterns(job_apply
     template's pattern; one the person wrote themselves is theirs, and the file isn't touched."""
     from job_apply.autofill import _answer_bank
 
-    template = [a["match"] for a in yaml.safe_load(config.TEMPLATE_PROFILE.read_text())["answers"]]
+    template = [a["match"] for a in yaml.safe_load(config.TEMPLATE_PROFILE.read_text(encoding="utf-8"))["answers"]]
     assert set(config.RETIRED_ANSWER_PATTERNS.values()) <= set(template)
     old = ("answers:\n"
            "  - match: \"background check|drug (test|screen)\"\n    answer: \"Yes\"\n"
            "  - match: \"drug-free\"\n    answer: \"Yes\"\n")
-    (job_apply_home / "profile.yaml").write_text(old)
+    (job_apply_home / "profile.yaml").write_text(old, encoding="utf-8")
     prof = config.Profile.load()
     assert _answer_bank(prof, "Have you ever failed a drug test?") is None
     assert _answer_bank(prof, "Are you willing to take a drug test?").value == "Yes"
     assert [a["match"] for a in prof.get("answers")][-1] == "drug-free"
-    assert (job_apply_home / "profile.yaml").read_text() == old
+    assert (job_apply_home / "profile.yaml").read_text(encoding="utf-8") == old
 
 
 def test_a_settings_key_the_desk_doesnt_read_is_said():

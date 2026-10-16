@@ -572,9 +572,9 @@ def test_a_question_whose_choices_say_what_it_asks(job_apply_home):
     are about a disability."""
     import yaml
 
-    data = yaml.safe_load((job_apply_home / "profile.yaml").read_text())
+    data = yaml.safe_load((job_apply_home / "profile.yaml").read_text(encoding="utf-8"))
     data["eeo"]["disability"] = "I don't wish to answer"
-    (job_apply_home / "profile.yaml").write_text(yaml.safe_dump(data))
+    (job_apply_home / "profile.yaml").write_text(yaml.safe_dump(data), encoding="utf-8")
     boxes = ["Yes, I have a disability, or have had one in the past",
              "No, I do not have a disability and have not had one in the past", "I do not want to answer"]
     ans = resolve_field(f("Please check one of the boxes below:*", "checkbox_group", options=boxes), prof())
@@ -584,7 +584,7 @@ def test_a_question_whose_choices_say_what_it_asks(job_apply_home):
     # a question that says what it asks is never answered from its choices: an accommodation
     # isn't the EEO disability answer, nor is "military member" the protected-veteran one
     data["eeo"]["veteran"] = "I am not a protected veteran"
-    (job_apply_home / "profile.yaml").write_text(yaml.safe_dump(data))
+    (job_apply_home / "profile.yaml").write_text(yaml.safe_dump(data), encoding="utf-8")
     accommodation = ["Yes, I need an accommodation due to a disability", "No, I do not need an accommodation for a disability"]
     assert resolve_field(f("Do you require an accommodation to interview?", "radio_group", options=accommodation),
                          prof()) is None
@@ -596,7 +596,7 @@ def test_a_question_whose_choices_say_what_it_asks(job_apply_home):
         assert resolve_field(f(label, "radio_group", options=accommodation), prof()) is None, label
     # and with no answer in the profile, the person is asked
     del data["eeo"]["disability"]
-    (job_apply_home / "profile.yaml").write_text(yaml.safe_dump(data))
+    (job_apply_home / "profile.yaml").write_text(yaml.safe_dump(data), encoding="utf-8")
     assert resolve_field(f("Please check one of the boxes below:*", "checkbox_group", options=boxes), prof()) is None
 
 
@@ -977,13 +977,13 @@ def test_a_phone_written_with_its_code_or_a_code_read_as_a_number():
     from job_apply import config
 
     path = config.profile_path()
-    data = yaml.safe_load(path.read_text())
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
 
     def with_phone(phone, code=None):
         personal = {**data["personal"], "phone": phone}
         if code is not None:
             personal["phone_country_code"] = code
-        path.write_text(yaml.safe_dump({**data, "personal": personal}))
+        path.write_text(yaml.safe_dump({**data, "personal": personal}), encoding="utf-8")
         return Profile.load()
 
     emd = 'Phone Number [must include your location code using the "+", (e.g. +1##########), with no spaces or dashes]*'
@@ -1061,11 +1061,11 @@ def test_a_county_comes_from_an_arizona_citys():
     assert resolve_field(f("County / State", "combobox", options=states), p).value == "Arizona"
 
     path = config.profile_path()
-    data = yaml.safe_load(path.read_text())
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
 
     def with_address(**address):
         path.write_text(yaml.safe_dump({**data, "personal": {**data["personal"],
-                                                            "address": {**data["personal"]["address"], **address}}}))
+                                                            "address": {**data["personal"]["address"], **address}}}), encoding="utf-8")
         return Profile.load()
 
     assert resolve_field(f("County"), with_address(county="Yavapai")).value == "Yavapai"
@@ -1115,12 +1115,12 @@ def test_located_near_the_job_or_willing_to_relocate():
     assert answer(mayo, "Rochester, MN / Phoenix, AZ") == "Yes"
 
     path = config.profile_path()
-    data = yaml.safe_load(path.read_text())
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
 
     def with_(personal=None, preferences=None):
         new = {**data, "preferences": {**data.get("preferences", {}), **(preferences or {})}}
         new["personal"] = {**data["personal"], "address": {**data["personal"]["address"], **(personal or {})}}
-        path.write_text(yaml.safe_dump(new))
+        path.write_text(yaml.safe_dump(new), encoding="utf-8")
         return Profile.load()
 
     assert answer(mayo, "Tucson, AZ", with_(preferences={"willing_to_relocate": True})) == "Yes"
@@ -1136,8 +1136,8 @@ def test_how_did_you_first_hear():
     from job_apply import config
 
     path = config.profile_path()
-    data = yaml.safe_load(path.read_text())
-    path.write_text(yaml.safe_dump({**data, "preferences": {**data["preferences"], "how_did_you_hear": "Company Website"}}))
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    path.write_text(yaml.safe_dump({**data, "preferences": {**data["preferences"], "how_did_you_hear": "Company Website"}}), encoding="utf-8")
     options = ["I am a current Mayo Clinic Employee (not a trainee)", "Handshake", "Indeed", "LinkedIn",
                "Mayo Clinic Career Site", "Referral - Other", "Other"]
     ans = resolve_field(f("How did you first hear about this opportunity?", "combobox", options=options), prof(),
@@ -1181,8 +1181,8 @@ def test_a_preferred_work_location_from_the_profiles_places():
     asked = f("Indicate your highest level of preference by work location:", "radio_group", options=offices)
     assert resolve_field(asked, prof()) is None  # the profile names no places
     path = config.profile_path()
-    data = yaml.safe_load(path.read_text())
-    path.write_text(yaml.safe_dump({**data, "preferences": {**data["preferences"], "locations": ["Phoenix, AZ", "Tempe, AZ"]}}))
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    path.write_text(yaml.safe_dump({**data, "preferences": {**data["preferences"], "locations": ["Phoenix, AZ", "Tempe, AZ"]}}), encoding="utf-8")
     assert resolve_field(asked, prof()).value == "Phoenix, AZ"
     assert resolve_field(f("Preferred Location"), prof()).value == "Phoenix, AZ"
 
@@ -1577,10 +1577,10 @@ def test_a_self_identification_question_with_the_law_in_its_label_is_that_questi
     the disability rule. A self-identification question is told by its words and its choices."""
     import yaml
 
-    data = yaml.safe_load((job_apply_home / "profile.yaml").read_text())
+    data = yaml.safe_load((job_apply_home / "profile.yaml").read_text(encoding="utf-8"))
     data["preferences"]["flexible_schedule"] = True
     data["eeo"]["disability"] = "No"
-    (job_apply_home / "profile.yaml").write_text(yaml.safe_dump(data))
+    (job_apply_home / "profile.yaml").write_text(yaml.safe_dump(data), encoding="utf-8")
     vevraa = ("U.S. – Protected Veteran Self-Identification This employer is a Government contractor subject to the "
               "Vietnam Era Veterans' Readjustment Assistance Act of 1974, as amended (VEVRAA). For more information, call "
               "the U.S. Department of Labor's Veterans' Employment and Training Service (VETS). If you believe you belong "
@@ -1960,18 +1960,18 @@ def test_an_expected_graduation_date_is_never_a_past_year():
     assert resolve_field(f("Graduation Date"), prof()).value == 2020  # (a finished school's own date)
 
     path = config.profile_path()
-    data = yaml.safe_load(path.read_text())
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
     school = {**data["education_history"][0], "end": "present"}
-    path.write_text(yaml.safe_dump({**data, "education_history": [school]}))
+    path.write_text(yaml.safe_dump({**data, "education_history": [school]}), encoding="utf-8")
     assert resolve_field(asked, prof()) is None  # still at school, no year: the person says
 
     from datetime import date
 
     today = date.today()
     ended = f"{today.year}-01" if today.month > 1 else f"{today.year - 1}-12"  # earlier this year: done
-    path.write_text(yaml.safe_dump({**data, "education_history": [{**school, "end": ended}]}))
+    path.write_text(yaml.safe_dump({**data, "education_history": [{**school, "end": ended}]}), encoding="utf-8")
     assert resolve_field(asked, prof()).value == "I am currently not attending school"
-    path.write_text(yaml.safe_dump({**data, "education_history": [{**school, "end": f"{today.year + 1}-05"}]}))
+    path.write_text(yaml.safe_dump({**data, "education_history": [{**school, "end": f"{today.year + 1}-05"}]}), encoding="utf-8")
     assert resolve_field(f("Expected graduation date"), prof()).value == str(today.year + 1)
 
 
@@ -2030,9 +2030,9 @@ def test_currently_employed_from_the_work_history():
                             {"company": "Acme"})
     assert by_acme is None or by_acme.rule != "employed_now"
     path = config.profile_path()
-    data = yaml.safe_load(path.read_text())
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
     ended = [{**job, "end": "2024-06"} for job in data["work_history"]]
-    path.write_text(yaml.safe_dump({**data, "work_history": ended}))
+    path.write_text(yaml.safe_dump({**data, "work_history": ended}), encoding="utf-8")
     assert resolve_field(f("Are you currently employed?", "radio_group", options=yes_no), prof()).value == "No"
 
 
@@ -2044,9 +2044,9 @@ def test_a_veteran_question_and_a_family_members_are_answered_as_asked():
     from job_apply import config
 
     path = config.profile_path()
-    data = yaml.safe_load(path.read_text())
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
     path.write_text(yaml.safe_dump({**data, "eeo": {**data["eeo"], "veteran": "I am not a protected veteran",
-                                                    "gender": "Male"}}))
+                                                    "gender": "Male"}}), encoding="utf-8")
     yes_no = ["Yes", "No"]
     assert resolve_field(f("Are you a veteran?", "radio_group", options=yes_no), prof()) is None
     assert resolve_field(f("Are you the spouse of a veteran?", "radio_group", options=yes_no), prof()) is None
@@ -2071,10 +2071,10 @@ def test_a_citizen_is_a_us_person_and_eligibility_is_authorization():
     from job_apply import config
 
     path = config.profile_path()
-    data = yaml.safe_load(path.read_text())
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
     auth = {k: v for k, v in data["work_authorization"].items() if k != "us_person"}
     path.write_text(yaml.safe_dump({**data, "work_authorization": {**auth, "us_citizen": True},
-                                    "eeo": {**data["eeo"], "race": "White"}}))
+                                    "eeo": {**data["eeo"], "race": "White"}}), encoding="utf-8")
     yes_no = ["Yes", "No"]
 
     def answer(label, options=yes_no):
@@ -2098,10 +2098,10 @@ def test_a_degree_the_person_lacks_is_answered_no():
     from job_apply import config
 
     path = config.profile_path()
-    data = yaml.safe_load(path.read_text())
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
 
     def with_education(highest, history):
-        path.write_text(yaml.safe_dump({**data, "education": {"highest_degree": highest}, "education_history": history}))
+        path.write_text(yaml.safe_dump({**data, "education": {"highest_degree": highest}, "education_history": history}), encoding="utf-8")
         return Profile.load()
 
     def answer(label, profile, kind="radio_group"):
@@ -2156,11 +2156,11 @@ def test_a_confirmed_degree_answers_yes():
     from job_apply import config
 
     path = config.profile_path()
-    data = yaml.safe_load(path.read_text())
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
 
     def with_degrees(degrees, highest="Bachelor's Degree", history=None):
         path.write_text(yaml.safe_dump({**data, "education": {"highest_degree": highest, "degrees_earned": degrees},
-                                        "education_history": history or []}))
+                                        "education_history": history or []}), encoding="utf-8")
         return Profile.load()
 
     def answer(label, profile, options=("Yes", "No")):
@@ -2264,8 +2264,8 @@ def test_a_citizens_visa_questions():
     from job_apply import config
 
     path = config.profile_path()
-    data = yaml.safe_load(path.read_text())
-    path.write_text(yaml.safe_dump({**data, "work_authorization": {**data["work_authorization"], "us_citizen": True}}))
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    path.write_text(yaml.safe_dump({**data, "work_authorization": {**data["work_authorization"], "us_citizen": True}}), encoding="utf-8")
     yes_no = ["Yes", "No"]
 
     def answer(label, kind="radio_group", options=yes_no):
@@ -2294,9 +2294,9 @@ def test_a_citizens_visa_questions():
                   ["U.S. Citizen", "Not subject"]) is None
     # "Citizenship status" is still the citizenship rule's, from the profile's country
     path.write_text(yaml.safe_dump({**data, "work_authorization": {**data["work_authorization"], "us_citizen": True,
-                                                                   "citizenship": "United States"}}))
+                                                                   "citizenship": "United States"}}), encoding="utf-8")
     assert answer("Citizenship status", "select", ["United States", "Other"]) == "United States"
-    path.write_text(yaml.safe_dump({**data, "work_authorization": {**data["work_authorization"], "us_citizen": False}}))
+    path.write_text(yaml.safe_dump({**data, "work_authorization": {**data["work_authorization"], "us_citizen": False}}), encoding="utf-8")
     assert answer("What is your current visa status?", "select", statuses) is None
     assert answer("Do you currently hold an H-1B visa?") is None
     assert answer(ear, "combobox", ear_options) is None
@@ -2310,8 +2310,8 @@ def test_a_drivers_license_question():
     from job_apply import config
 
     path = config.profile_path()
-    data = yaml.safe_load(path.read_text())
-    path.write_text(yaml.safe_dump({**data, "personal": {**data["personal"], "drivers_license": True}}))
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    path.write_text(yaml.safe_dump({**data, "personal": {**data["personal"], "drivers_license": True}}), encoding="utf-8")
 
     def answer(label, kind="radio_group"):
         a = resolve_field(f(label, kind, options=["Yes", "No"]), prof())
@@ -2324,7 +2324,7 @@ def test_a_drivers_license_question():
     assert answer("Do you have a valid commercial driver's license (CDL)?") is None
     assert answer("Do you have a valid driver's license and reliable transportation?") is None
     assert answer("Driver's License Number", "text") is None
-    path.write_text(yaml.safe_dump({**data, "personal": {**data["personal"], "drivers_license": False}}))
+    path.write_text(yaml.safe_dump({**data, "personal": {**data["personal"], "drivers_license": False}}), encoding="utf-8")
     assert answer("Do you have a valid driver’s license?") == "No"
 
 
@@ -2337,10 +2337,10 @@ def test_more_questions_the_profile_answers():
     from job_apply import config
 
     path = config.profile_path()
-    data = yaml.safe_load(path.read_text())
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
     path.write_text(yaml.safe_dump({**data, "work_authorization": {**data["work_authorization"], "us_citizen": True},
                                     "personal": {**data["personal"], "drivers_license": True},
-                                    "preferences": {**data["preferences"], "earliest_start": "2 weeks after offer"}}))
+                                    "preferences": {**data["preferences"], "earliest_start": "2 weeks after offer"}}), encoding="utf-8")
 
     def answer(label, kind="radio_group"):
         a = resolve_field(f(label, kind, **({"options": ["Yes", "No"]} if kind != "text" else {})), prof())
@@ -2382,7 +2382,7 @@ def test_more_questions_the_profile_answers():
     assert answer("Do you have previous work experience?") == "Yes"
     assert answer("Do you have a valid driver's license? (Yes/No)") == "Yes"
     assert answer("Do you have a valid driver's license? (Y/N)*") == "Yes"
-    path.write_text(yaml.safe_dump({**data, "work_history": []}))
+    path.write_text(yaml.safe_dump({**data, "work_history": []}), encoding="utf-8")
     assert answer("Do you have previous work experience?") is None
     assert answer("Are you an alien illegally or unlawfully in the United States?*") is None
 
@@ -2394,9 +2394,9 @@ def test_questions_from_the_finance_run():
     from job_apply import config
 
     path = config.profile_path()
-    data = yaml.safe_load(path.read_text())
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
     path.write_text(yaml.safe_dump({**data, "eeo": {**data["eeo"], "sexual_orientation": "Decline to self-identify"},
-                                    "preferences": {**data["preferences"], "desired_salary": "$85,000"}}))
+                                    "preferences": {**data["preferences"], "desired_salary": "$85,000"}}), encoding="utf-8")
 
     def answer(label, kind="combobox", options=("Yes", "No")):
         a = resolve_field(f(label, kind, **({"options": list(options)} if kind != "text" else {})), prof())
@@ -2443,8 +2443,8 @@ def test_where_you_are_and_when_you_can_start_among_choices():
     from job_apply import config
 
     path = config.profile_path()
-    data = yaml.safe_load(path.read_text())
-    path.write_text(yaml.safe_dump({**data, "preferences": {**data["preferences"], "earliest_start": "2 weeks after offer"}}))
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    path.write_text(yaml.safe_dump({**data, "preferences": {**data["preferences"], "earliest_start": "2 weeks after offer"}}), encoding="utf-8")
 
     def answer(label, options, kind="combobox"):
         a = resolve_field(f(label, kind, options=options), prof())
@@ -2455,14 +2455,14 @@ def test_where_you_are_and_when_you_can_start_among_choices():
     assert answer("Where are you currently located?", ["Phoenix hub", "Seattle hub", "Remote"]) is None
     waits = ["Immediate", "2 Week Notice", "30 Days", "60 Days", "90 Days"]
     assert answer("When are you available to start?", waits) == "2 Week Notice"
-    path.write_text(yaml.safe_dump({**data, "preferences": {**data["preferences"], "earliest_start": "1 month"}}))
+    path.write_text(yaml.safe_dump({**data, "preferences": {**data["preferences"], "earliest_start": "1 month"}}), encoding="utf-8")
     assert answer("When are you available to start?", waits) == "30 Days"
-    path.write_text(yaml.safe_dump({**data, "preferences": {**data["preferences"], "earliest_start": "Immediately"}}))
+    path.write_text(yaml.safe_dump({**data, "preferences": {**data["preferences"], "earliest_start": "Immediately"}}), encoding="utf-8")
     assert answer("When are you available to start?", waits) == "Immediate"
-    path.write_text(yaml.safe_dump({**data, "preferences": {**data["preferences"], "earliest_start": "3 weeks"}}))
+    path.write_text(yaml.safe_dump({**data, "preferences": {**data["preferences"], "earliest_start": "3 weeks"}}), encoding="utf-8")
     assert answer("When are you available to start?", waits) is None  # never a sooner or later start
     # a range isn't one wait: "2-4 Weeks" is no answer for a month
-    path.write_text(yaml.safe_dump({**data, "preferences": {**data["preferences"], "earliest_start": "1 month"}}))
+    path.write_text(yaml.safe_dump({**data, "preferences": {**data["preferences"], "earliest_start": "1 month"}}), encoding="utf-8")
     assert answer("When are you available to start?", ["Immediate", "2-4 Weeks", "60 Days"]) is None
     assert answer("When are you available to start?", ["Immediate", "1 to 2 months", "30 Days"]) == "30 Days"
 

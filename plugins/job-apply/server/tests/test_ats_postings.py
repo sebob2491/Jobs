@@ -61,7 +61,7 @@ def test_greenhouse_postings_open_at_greenhouses_own_form():
 
 def test_parse_jsonld_posting():
     url = "https://careers.example.com/jobs/fse-euv"
-    p = finalize(parse_html((FIXTURES / "jsonld_posting.html").read_text(), url))
+    p = finalize(parse_html((FIXTURES / "jsonld_posting.html").read_text(encoding="utf-8"), url))
     assert p.parse_method == "json-ld"
     assert p.title == "Field Service Engineer – EUV"
     assert p.company == "Example Litho"

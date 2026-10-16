@@ -71,8 +71,8 @@ def machine(tmp_path):
     state.mkdir()
     plugin = tmp_path / "Claude plugins" / "job-apply" / "0.3.92"
     (plugin / "server").mkdir(parents=True)
-    (plugin / "server" / "pyproject.toml").write_text('[project.scripts]\njob-apply-doctor = "job_apply.doctor:main"\n')
-    (tmp_path / "stand_in.py").write_text(STAND_IN)
+    (plugin / "server" / "pyproject.toml").write_text('[project.scripts]\njob-apply-doctor = "job_apply.doctor:main"\n', encoding="utf-8")
+    (tmp_path / "stand_in.py").write_text(STAND_IN, encoding="utf-8")
     env = {k: v for k, v in os.environ.items() if not k.upper().startswith(("JOB_APPLY_", "CLAUDE", "UV_", "PLAYWRIGHT", "XDG_"))
            and k.upper() not in ("USERPROFILE", "VIRTUAL_ENV", "APPDATA", "LOCALAPPDATA")}
     env.update(HOME=str(home), STUB_LOG=str(tmp_path / "calls.log"), STUB_STATE=str(state), STUB_PLUGIN=str(plugin))
@@ -93,15 +93,15 @@ def machine(tmp_path):
             for name in names:
                 if sys.platform == "win32":  # Windows runs a .cmd, not a script without an extension
                     (bin_dir / f"{name}.cmd").write_text(f'@"{sys.executable}" "{stand_in}" {name} %*\r\n'
-                                                         "@exit /b %ERRORLEVEL%\r\n")
+                                                         "@exit /b %ERRORLEVEL%\r\n", encoding="utf-8")
                 else:
                     path = bin_dir / name
-                    path.write_text(f'#!/bin/sh\nexec "{sys.executable}" "{stand_in}" {name} "$@"\n')
+                    path.write_text(f'#!/bin/sh\nexec "{sys.executable}" "{stand_in}" {name} "$@"\n', encoding="utf-8")
                     path.chmod(path.stat().st_mode | stat.S_IEXEC)
 
         def calls(self):
-            text = self.log.read_text() if self.log.exists() else ""
-            self.log.write_text("")
+            text = self.log.read_text(encoding="utf-8") if self.log.exists() else ""
+            self.log.write_text("", encoding="utf-8")
             return text.splitlines()
 
         def run(self, command):
@@ -132,7 +132,7 @@ def test_installers_are_plain_ascii_and_agree_with_the_desk():
         assert text.isascii(), script
         for command in updates.UPDATE_COMMANDS:
             assert command.split()[-1] in text  # sebob-jobs, job-apply@sebob-jobs
-        assert "sebob2491/Jobs" in text and "job-apply-doctor --launch" in text and "UV_PYTHON_INSTALL_DIR" in INSTALL_PS1.read_text()
+        assert "sebob2491/Jobs" in text and "job-apply-doctor --launch" in text and "UV_PYTHON_INSTALL_DIR" in INSTALL_PS1.read_text(encoding="utf-8")
 
 
 @needs_bash
@@ -204,7 +204,7 @@ def test_install_then_run_again(machine, tmp_path):
     assert names[1:] == ["resume.docx"] and names[0].startswith("resume-before-") and names[0].endswith(".pdf")
 
     # a plugin someone turned off is turned back on
-    (machine.state / "enabled").write_text("false\n")
+    (machine.state / "enabled").write_text("false\n", encoding="utf-8")
     code, out = sh(machine, "--yes")
     assert "claude plugin enable job-apply@sebob-jobs" in machine.calls()
 
@@ -253,7 +253,7 @@ def test_install_ps1_remakes_an_appdata_python_environment_only_when_its_free(ma
     venv = machine.plugin / "server" / ".venv"
     (venv / "Scripts").mkdir(parents=True)
     python_home = machine.home / "AppData" / "Roaming" / "uv" / "python" / "cpython-3.12-windows-x86_64-none"
-    (venv / "pyvenv.cfg").write_text(f"home = {python_home}\n")
+    (venv / "pyvenv.cfg").write_text(f"home = {python_home}\n", encoding="utf-8")
     (venv / "Scripts" / "python.exe").write_bytes(b"MZ")
     # uv keeps Python outside AppData now (a folder that needn't exist: nothing is installed)
     machine.env["UV_PYTHON_INSTALL_DIR"] = os.path.join(os.path.splitdrive(str(tmp_path))[0] + os.sep, "uv-python-elsewhere")

@@ -22,18 +22,18 @@ def test_failed_fill_saves_snapshot_and_converts_to_fixture(srv, tmp_path):
     snap = out["debug_snapshot"]
     assert snap.startswith(job["folder"])
 
-    meta = json.loads((Path(snap) / "snapshot.json").read_text())
+    meta = json.loads((Path(snap) / "snapshot.json").read_text(encoding="utf-8"))
     assert meta["note"] == "fill_form failures"
     assert meta["details"][0]["value"] == "Atlantis"
     assert any(f["label"] == "State" for f in meta["fields"])
 
     written = convert(Path(snap), "generic-test", tmp_path, Profile.load())
-    html = (tmp_path / "generic-test.html").read_text()
+    html = (tmp_path / "generic-test.html").read_text(encoding="utf-8")
     assert "<script" not in html and "data-ja-" not in html
     for secret in ("Rivera", "sam.rivera@example.com", "480-555-0123"):
         assert secret.lower() not in html.lower()
-        assert secret.lower() not in (tmp_path / "generic-test.expect.json").read_text().lower()
-    expect = json.loads((tmp_path / "generic-test.expect.json").read_text())
+        assert secret.lower() not in (tmp_path / "generic-test.expect.json").read_text(encoding="utf-8").lower()
+    expect = json.loads((tmp_path / "generic-test.expect.json").read_text(encoding="utf-8"))
     assert {"label": "First Name *", "kind": "text", "required": True} in expect["fields"]
     assert len(written) == 2
     assert expect["actions"]  # the buttons that move it on are kept, and a lost one is reported
@@ -52,7 +52,7 @@ def test_a_saved_page_never_keeps_whats_in_a_password_box(srv):
         pw.insertAdjacentHTML('afterend', '<input type=hidden title="a > b" value=kept>');
     }"""))
     snap = run(srv.debug_snapshot(note="sign-in"))
-    html = (Path(snap["saved_to"]) / "page.html").read_text()
+    html = (Path(snap["saved_to"]) / "page.html").read_text(encoding="utf-8")
     assert "not-a-real-password" not in html and 'id="pw"' in html and 'value="kept"' in html
 
 
@@ -61,7 +61,7 @@ def test_iframe_snapshot_keeps_frame(srv, tmp_path):
     snap = run(srv.debug_snapshot(note="iframe"))
     assert "frame-1.html" in snap["files"]
     convert(Path(snap["saved_to"]), "iframe-test", tmp_path, Profile.load())
-    host = (tmp_path / "iframe-test.html").read_text()
+    host = (tmp_path / "iframe-test.html").read_text(encoding="utf-8")
     assert 'src="iframe-test.frame-1.html"' in host
-    expect = json.loads((tmp_path / "iframe-test.expect.json").read_text())
+    expect = json.loads((tmp_path / "iframe-test.expect.json").read_text(encoding="utf-8"))
     assert run(check_fixture_extraction(srv, tmp_path / "iframe-test.html", expect)) == []

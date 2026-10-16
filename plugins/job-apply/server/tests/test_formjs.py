@@ -10,7 +10,7 @@ pytestmark = pytest.mark.skipif(not browser_available(), reason="no Playwright C
 
 def fields_of(srv, tmp_path, body: str) -> list[dict]:
     page = tmp_path / "form.html"
-    page.write_text(f"<!doctype html><html><body>{body}</body></html>")
+    page.write_text(f"<!doctype html><html><body>{body}</body></html>", encoding="utf-8")
     run(srv.browser.goto(page.resolve().as_uri()))
     return run(srv.browser.inspect(include_dropdown_options=False))["fields"]
 
@@ -296,11 +296,11 @@ def test_what_isnt_a_dialog_over_the_form(srv, tmp_path):
                  'height: 100%"><p>Job cart</p><button>Close</button></div>',
                  chat):
         page = tmp_path / "dialog.html"
-        page.write_text(f"<!doctype html><html><body>{form}{body}</body></html>")
+        page.write_text(f"<!doctype html><html><body>{form}{body}</body></html>", encoding="utf-8")
         run(srv.browser.goto(page.resolve().as_uri()))
         assert run(srv.browser.inspect(include_dropdown_options=False))["dialogs"] == [], body
     page.write_text(f'<!doctype html><html><body>{form}<div {over} aria-label="Before you apply"><p>Read this first.</p>'
-                    '<button>OK</button></div></body></html>')
+                    '<button>OK</button></div></body></html>', encoding="utf-8")
     run(srv.browser.goto(page.resolve().as_uri()))
     assert [d["heading"] for d in run(srv.browser.inspect(include_dropdown_options=False))["dialogs"]] == ["Before you apply"]
 

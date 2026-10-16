@@ -33,7 +33,7 @@ def test_upsert_update_export(job_apply_home):
     assert t.counts() == {"applied": 1}
     out = job_apply_home / "out.csv"
     assert t.export_csv(out) == 1
-    assert "Lam Research" in out.read_text()
+    assert "Lam Research" in out.read_text(encoding="utf-8")
 
 
 def test_log_email_moves_status_forward_once(job_apply_home):
@@ -135,7 +135,7 @@ def test_a_jobs_folder_stays_put_when_its_company_is_filled_in_later(job_apply_h
     job, _ = t.upsert({"url": "https://example.com/jobs/7", "title": "Field Service Technician"})
     folder = Path(job["folder"])
     folder.mkdir(parents=True, exist_ok=True)
-    (folder / "submission.json").write_text('{"confirmed": false}')
+    (folder / "submission.json").write_text('{"confirmed": false}', encoding="utf-8")
     again, created = t.upsert({"url": "https://example.com/jobs/7", "title": "Field Service Technician",
                                "company": "Northwind Semi"})
     assert not created and again["company"] == "Northwind Semi"

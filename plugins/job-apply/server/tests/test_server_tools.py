@@ -113,7 +113,7 @@ def test_a_greenhouse_posting_opened_by_its_address_opens_greenhouses_own_form(s
 @needs_browser
 def test_a_saved_password_goes_only_into_a_password_box_on_its_own_site(srv, job_apply_home):
     routed(srv)
-    config.secrets_path().write_text("workday_password: S3cret-Workday!\n")
+    config.secrets_path().write_text("workday_password: S3cret-Workday!\n", encoding="utf-8")
     run(srv.browser.goto("https://careers.example.com/a"))
     fields = {f["label"]: f["id"] for f in run(srv.inspect_form(False))["fields"]}
     out = run(srv.fill_secret(fields["Email"], "workday_password"))
@@ -156,7 +156,7 @@ def test_the_desks_own_files_arent_opened_or_read_as_postings_by_claudes_tools(s
 @needs_browser
 def test_the_desks_own_files_arent_uploaded(srv, job_apply_home):
     routed(srv)
-    config.secrets_path().write_text("workday_password: S3cret-Workday!\n")
+    config.secrets_path().write_text("workday_password: S3cret-Workday!\n", encoding="utf-8")
     run(srv.browser.goto("https://careers.example.com/a"))
     fields = {f["label"]: f["id"] for f in run(srv.inspect_form(False))["fields"]}
     out = run(srv.fill_form([{"id": fields["Resume"], "value": str(config.secrets_path())}]))
@@ -176,10 +176,10 @@ def test_tool_errors_reach_claude_in_their_own_words(srv):
 
 
 def test_a_profile_with_a_typo_says_where(job_apply_home):
-    config.profile_path().write_text('documents:\n  resume: "C:\\Users\\Sam\\resume.pdf"\n')
+    config.profile_path().write_text('documents:\n  resume: "C:\\Users\\Sam\\resume.pdf"\n', encoding="utf-8")
     with pytest.raises(ValueError, match=r"typo near line 2.*backslashes"):
         config.Profile.load()
-    config.profile_path().write_text("- just\n- a list\n")
+    config.profile_path().write_text("- just\n- a list\n", encoding="utf-8")
     with pytest.raises(ValueError, match="sections like"):
         config.Profile.load()
 
@@ -189,7 +189,7 @@ def test_passwords_are_read_as_written(job_apply_home):
     for written, meant in (("0123456", "0123456"), ("yes", "yes"), ("12:30:45", "12:30:45"),
                            ("!Summer2024x", "!Summer2024x"), ("*pw", "*pw"), ("'it''s'", "it's"), ('"q\\"x"', 'q"x'),
                            ("plain # my work one", "plain"), ('"abc"  # my note', "abc")):
-        path.write_text(f"workday_password: {written}\n")
+        path.write_text(f"workday_password: {written}\n", encoding="utf-8")
         assert config.get_secret("workday_password") == meant, written
     path.write_bytes("\ufeffworkday_password: from-notepad\n".encode())  # Notepad's byte-order mark
     assert config.get_secret("workday_password") == "from-notepad"
@@ -362,7 +362,7 @@ def test_a_browser_that_is_there_but_wont_start_isnt_swapped_for_another(monkeyp
 
     monkeypatch.delenv("JOB_APPLY_CHROMIUM_PATH", raising=False)
     monkeypatch.setattr(browser_module, "async_playwright", lambda: Start())
-    config.profile_path().write_text("settings:\n  browser_channel: chrome\n")
+    config.profile_path().write_text("settings:\n  browser_channel: chrome\n", encoding="utf-8")
     session = browser_module.BrowserSession()
     with pytest.raises(browser_module.BrowserUnavailable, match="in use"):
         asyncio.new_event_loop().run_until_complete(session._launch())
@@ -494,7 +494,7 @@ def test_the_click_tool_accepts_a_cookie_banner_only_where_the_person_allows_it(
     from conftest import fixture_url
 
     profile = job_apply_home / "profile.yaml"
-    profile.write_text(profile.read_text().replace("settings:\n", "settings:\n  accept_cookies: true\n"))
+    profile.write_text(profile.read_text(encoding="utf-8").replace("settings:\n", "settings:\n  accept_cookies: true\n"), encoding="utf-8")
 
     async def go():
         clicks = []
@@ -519,9 +519,9 @@ def test_a_school_the_sites_list_doesnt_have_is_its_other(srv, job_apply_home):
     from conftest import fixture_url
 
     path = job_apply_home / "profile.yaml"
-    profile = yaml.safe_load(path.read_text())
+    profile = yaml.safe_load(path.read_text(encoding="utf-8"))
     profile["education_history"][0]["school"] = "Example Valley Community College"
-    path.write_text(yaml.safe_dump(profile))
+    path.write_text(yaml.safe_dump(profile), encoding="utf-8")
 
     async def go():
         await srv.browser.goto(fixture_url("site/workday-school-not-listed.html"))

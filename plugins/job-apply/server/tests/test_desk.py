@@ -410,10 +410,10 @@ def test_a_site_password_goes_to_secrets_only(srv):
 
 def test_saving_a_password_leaves_the_rest_of_the_file_alone(job_apply_home):
     path = config.secrets_path()
-    path.write_text("# career sites\nsuccessfactors_password: keep-me\nworkday_password: old-one\n\nother: 1\n")
+    path.write_text("# career sites\nsuccessfactors_password: keep-me\nworkday_password: old-one\n\nother: 1\n", encoding="utf-8")
     config.save_site_password("workday_password", "new one")
     config.save_site_password("workday_password", "newer one")  # replaced, not added twice
-    text = path.read_text()
+    text = path.read_text(encoding="utf-8")
     assert text.startswith("# career sites\nsuccessfactors_password: keep-me\n")
     assert "old-one" not in text and text.count("workday_password") == 1 and "other: 1" in text
     assert config.get_secret("workday_password") == "newer one"
@@ -427,7 +427,7 @@ def test_saving_a_password_leaves_the_rest_of_the_file_alone(job_apply_home):
 
 def test_a_hand_typed_secrets_file_doesnt_break_the_page(srv, job_apply_home):
     """A password typed by hand is read as typed, even where YAML would choke on it."""
-    config.secrets_path().write_text("workday_password: [unclosed\nnot a line of names\n")
+    config.secrets_path().write_text("workday_password: [unclosed\nnot a line of names\n", encoding="utf-8")
     assert Desk(srv).state()["passwords"] == {"workday": True, "successfactors": False, "icims": False,
                                               "applicantstack": False, "ukg": False, "infor": False,
                                               "taleo": False, "email": False}
@@ -501,19 +501,19 @@ def test_a_typo_in_answers_yaml_doesnt_take_the_desk_down(srv, job_apply_home):
     says so on the page); it isn't overwritten, and the profile still loads."""
     path = job_apply_home / "answers.yaml"
     broken = "answers:\n  - match: relocate\n    answer: [Yes\n"
-    path.write_text(broken)
+    path.write_text(broken, encoding="utf-8")
     assert config.saved_answers() == [] and "typo" in config.answers_problem()
     assert config.Profile.load().get("personal.first_name") == "Sam"
     assert "typo" in Desk(srv).state()["answers_problem"]
     with pytest.raises(ValueError, match="typo"):
         config.save_answer("Are you willing to relocate?", "Yes")
-    assert path.read_text() == broken  # left as the person wrote it
+    assert path.read_text(encoding="utf-8") == broken  # left as the person wrote it
 
 
 def test_answers_that_cant_be_remembered_still_go_into_the_application(srv, job_apply_home):
     from job_apply.pipeline import Run, question_key
 
-    (job_apply_home / "answers.yaml").write_text("answers: [\n")
+    (job_apply_home / "answers.yaml").write_text("answers: [\n", encoding="utf-8")
     job = srv.add_job(url="https://example.com/a", title="FSE", company="Example Fab")["job"]
     desk = Desk(srv)
     desk.applier.runs[job["id"]] = Run(job["id"], "FSE", "Example Fab", status="needs_you", need="questions")
@@ -531,10 +531,10 @@ def test_the_desk_page_says_account_handling_is_on_until_the_profile_says(srv, j
     import yaml
 
     path = job_apply_home / "profile.yaml"
-    profile = yaml.safe_load(path.read_text())
+    profile = yaml.safe_load(path.read_text(encoding="utf-8"))
     assert Desk(srv).state()["settings"]["manage_accounts_chosen"] is True  # the tests' profile turns it off
     profile["settings"].pop("manage_accounts")
-    path.write_text(yaml.safe_dump(profile))
+    path.write_text(yaml.safe_dump(profile), encoding="utf-8")
     settings = Desk(srv).state()["settings"]
     assert (settings["manage_accounts"], settings["manage_accounts_chosen"]) == (True, False)
     page = (Path(srv.__file__).parent / "static" / "desk.html").read_text(encoding="utf-8")
@@ -603,9 +603,9 @@ def test_saving_an_answer_keeps_the_rest_of_answers_yaml(job_apply_home):
     import yaml
 
     path = job_apply_home / "answers.yaml"
-    path.write_text("answers:\n  - question: a note to myself\n  - match: lift\n    answer: 'Yes'\nmine: keep\n")
+    path.write_text("answers:\n  - question: a note to myself\n  - match: lift\n    answer: 'Yes'\nmine: keep\n", encoding="utf-8")
     config.save_answer("Are you willing to relocate?", "No", "Example Fab")
-    data = yaml.safe_load(path.read_text())
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
     assert data["mine"] == "keep" and {"question": "a note to myself"} in data["answers"]
     assert any(a.get("match") == "lift" for a in data["answers"]) and data["answers"][0]["answer"] == "No"
     assert not path.with_name("answers.yaml.tmp").exists()
@@ -637,7 +637,7 @@ def test_the_tailoring_switch_is_kept_and_its_waiting_jobs_listed(srv, job_apply
             await desk.stop()
 
     run(go())
-    assert json.loads((job_apply_home / "desk.json").read_text())["tailor_resumes"] is True
+    assert json.loads((job_apply_home / "desk.json").read_text(encoding="utf-8"))["tailor_resumes"] is True
     assert Desk(srv).applier.tailor is True  # still on next time the desk opens
 
 
@@ -755,7 +755,7 @@ def test_only_where_the_desk_goes_all_the_way_shows_those_employers_alone_and_is
             await desk.stop()
 
     run(go())
-    assert json.loads((job_apply_home / "desk.json").read_text())["handled_only"] is True
+    assert json.loads((job_apply_home / "desk.json").read_text(encoding="utf-8"))["handled_only"] is True
     assert Desk(srv).handled_only is True  # still on next time the desk opens
 
 
@@ -857,7 +857,7 @@ def test_tailoring_queue_hands_claude_the_jobs_and_the_real_resume(srv, job_appl
 
     job = srv.add_job(url="https://example.com/jobs/fse", title="Field Service Engineer", company="Example Fab",
                       description="Install and service EUV tools at customer fabs.")["job"]
-    (job_apply_home / "Sam_Rivera_Resume.md").write_text("# Sam Rivera\n\n## Experience\n")
+    (job_apply_home / "Sam_Rivera_Resume.md").write_text("# Sam Rivera\n\n## Experience\n", encoding="utf-8")
     d = desk_module.get_desk(srv)
     d.applier.runs[job["id"]] = Run(job["id"], status="needs_you", need="tailor")
     try:
@@ -878,7 +878,7 @@ def test_the_page_shows_the_plugin_version(srv):
     """So the person can tell an update arrived (the desk's footer)."""
     import json
 
-    manifest = json.loads((config.PLUGIN_ROOT / ".claude-plugin" / "plugin.json").read_text())
+    manifest = json.loads((config.PLUGIN_ROOT / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))
     assert Desk(srv).state()["version"] == manifest["version"] != ""
 
 
@@ -899,7 +899,7 @@ def test_a_pasted_posting_that_builds_itself_with_script_is_read_in_the_browser(
 
 def test_a_secrets_file_that_isnt_a_list_of_names_doesnt_break_the_page(srv, job_apply_home):
     """A hand edit that leaves secrets.yaml a bare line (no "name: value") made every refresh fail."""
-    config.secrets_path().write_text("just a line I typed\n")
+    config.secrets_path().write_text("just a line I typed\n", encoding="utf-8")
     assert Desk(srv).state()["passwords"]["workday"] is False
     assert config.get_secret("workday_password") is None
 
@@ -924,7 +924,7 @@ def test_links_past_the_first_twenty_are_handed_back(srv):
 def test_the_desks_own_files_arent_read_as_postings(srv, job_apply_home):
     """A file:// link into ~/.job-apply (secrets, answers) would be saved as a posting's text,
     where Claude could read it."""
-    config.secrets_path().write_text("workday_password: hunter2\n")
+    config.secrets_path().write_text("workday_password: hunter2\n", encoding="utf-8")
     desk = Desk(srv)
     out = run(desk.add_links([config.secrets_path().resolve().as_uri()]))
     assert out[0]["error"] == "that's one of the desk's own files, not a job posting"
@@ -1107,14 +1107,14 @@ def test_a_password_saved_on_the_desk_is_the_one_used(srv, monkeypatch):
 
 
 def test_a_broken_profile_or_saved_search_doesnt_take_the_page_down(srv, job_apply_home):
-    (job_apply_home / "profile.yaml").write_text("personal:\n  first_name: Sam\n   last_name: [oops\n")
-    (job_apply_home / "recommendations.json").write_text(json.dumps({"results": [{"title": "no address"}, "x"]}))
+    (job_apply_home / "profile.yaml").write_text("personal:\n  first_name: Sam\n   last_name: [oops\n", encoding="utf-8")
+    (job_apply_home / "recommendations.json").write_text(json.dumps({"results": [{"title": "no address"}, "x"]}), encoding="utf-8")
     state = Desk(srv).state()
     assert "typo" in state["profile_problem"] and state["listings"] == []
 
 
 def test_the_desks_own_files_arent_queued_either(srv, job_apply_home):
-    config.secrets_path().write_text("workday_password: hunter2\n")
+    config.secrets_path().write_text("workday_password: hunter2\n", encoding="utf-8")
     queued, _ = Desk(srv).apply(urls=[config.secrets_path().resolve().as_uri()], job_ids=[], submit=False)
     assert queued == [] and srv.list_jobs()["jobs"] == []
 
@@ -1390,17 +1390,17 @@ def test_the_password_list_names_the_persons_own_employers(job_apply_home):
     desk_module._systems = None
     own = job_apply_home / "companies.yaml"
     own.write_text("lists: [phoenix-metro]\ncompanies:\n"
-                   "  - {name: Example Credit Union, careers_url: 'https://e.example', ats: ukg}\n")
+                   "  - {name: Example Credit Union, careers_url: 'https://e.example', ats: ukg}\n", encoding="utf-8")
     systems = {s["value"]: s["label"] for s in desk_module.password_systems()}
     assert systems["workday"].startswith("Workday: Banner Health, HonorHealth, Arizona State University and "), systems
     assert systems["ukg"] == "UKG Pro: Example Credit Union, Desert Financial Credit Union"
     assert systems["applicantstack"] == "ApplicantStack"  # no employer on these lists uses it
     assert systems["taleo"] == "Taleo: Kforce"  # (its own address, where the saved Taleo password goes too)
-    own.write_text("lists: [phoenix-metro]\ncompanies: []\n")
+    own.write_text("lists: [phoenix-metro]\ncompanies: []\n", encoding="utf-8")
     os.utime(own, (time.time() + 5, time.time() + 5))  # a later change than the first write
     assert {s["value"]: s["label"] for s in desk_module.password_systems()}["ukg"] == \
         "UKG Pro: Desert Financial Credit Union"
-    own.write_text("lists: [phoenix-metro\n")  # a typo: the systems without names, the page still up
+    own.write_text("lists: [phoenix-metro\n", encoding="utf-8")  # a typo: the systems without names, the page still up
     os.utime(own, (time.time() + 10, time.time() + 10))
     assert {s["value"]: s["label"] for s in desk_module.password_systems()}["workday"] == "Workday"
 

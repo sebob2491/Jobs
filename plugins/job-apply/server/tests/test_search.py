@@ -1432,14 +1432,14 @@ def test_a_persons_own_employer_list_is_searched_instead(job_apply_home):
     own = job_apply_home / "companies.yaml"
     own.write_text("companies:\n  - name: Example Health\n    careers_url: https://example.wd1.myworkdayjobs.com/Careers\n"
                    "    search: {workday: https://example.wd1.myworkdayjobs.com/Careers}\n"
-                   "  - name: Intel\n    careers_url: https://jobs.example.com/intel\n")
+                   "  - name: Intel\n    careers_url: https://jobs.example.com/intel\n", encoding="utf-8")
     assert [c["name"] for c in search_module.load_companies()] == ["Example Health", "Intel"]
     assert search_module.companies_path() == own
-    own.write_text(own.read_text() + "include_builtin: true\n")
+    own.write_text(own.read_text(encoding="utf-8") + "include_builtin: true\n", encoding="utf-8")
     both = search_module.load_companies()
     assert len(both) == len(builtin) + 1 and [c["careers_url"] for c in both if c["name"] == "Intel"] == \
         ["https://jobs.example.com/intel"]
-    own.write_text("companies:\n  - name: [oops\n")
+    own.write_text("companies:\n  - name: [oops\n", encoding="utf-8")
     with pytest.raises(ValueError, match="companies.yaml can't be read"):
         search_module.load_companies()
 
@@ -1452,21 +1452,21 @@ def test_a_persons_own_file_can_name_the_plugins_lists(job_apply_home, monkeypat
     root = tmp_path / "plugin"
     (root / "data" / "lists").mkdir(parents=True)
     (root / "data" / "companies.yaml").write_text("companies:\n  - {name: Intel, careers_url: https://a.example}\n"
-                                                  "  - {name: Microchip, careers_url: https://b.example}\n")
+                                                  "  - {name: Microchip, careers_url: https://b.example}\n", encoding="utf-8")
     (root / "data" / "lists" / "phoenix-metro.yaml").write_text(
-        "companies:\n  - {name: Example Health, careers_url: https://c.example}\n  - {name: Intel, careers_url: https://d.example}\n")
+        "companies:\n  - {name: Example Health, careers_url: https://c.example}\n  - {name: Intel, careers_url: https://d.example}\n", encoding="utf-8")
     monkeypatch.setattr(config, "PLUGIN_ROOT", root)
     assert list(search_module.employer_lists()) == ["semiconductor-az", "phoenix-metro"]
     own = job_apply_home / "companies.yaml"
-    own.write_text("lists: [phoenix-metro, semiconductor-az]\ncompanies:\n  - {name: Example Bank, careers_url: https://e.example}\n")
+    own.write_text("lists: [phoenix-metro, semiconductor-az]\ncompanies:\n  - {name: Example Bank, careers_url: https://e.example}\n", encoding="utf-8")
     got = search_module.load_companies()
     assert [(c["name"], c["careers_url"]) for c in got] == [
         ("Example Bank", "https://e.example"), ("Example Health", "https://c.example"), ("Intel", "https://d.example"),
         ("Microchip", "https://b.example")]
-    own.write_text("lists: [phoenix]\n")
+    own.write_text("lists: [phoenix]\n", encoding="utf-8")
     with pytest.raises(ValueError, match="no employer list named 'phoenix'.*phoenix-metro"):
         search_module.load_companies()
-    own.write_text("lists: ../../etc/passwd\n")
+    own.write_text("lists: ../../etc/passwd\n", encoding="utf-8")
     with pytest.raises(ValueError, match="no employer list named"):
         search_module.load_companies()
 
@@ -1479,24 +1479,24 @@ def test_a_persons_own_entries_stay_as_written_and_cover_the_lists_same_sites(jo
 
     root = tmp_path / "plugin"
     (root / "data" / "lists").mkdir(parents=True)
-    (root / "data" / "companies.yaml").write_text("companies: []\n")
+    (root / "data" / "companies.yaml").write_text("companies: []\n", encoding="utf-8")
     (root / "data" / "lists" / "phoenix-metro.yaml").write_text(
         "companies:\n  - name: Mayo Clinic (Arizona)\n    careers_url: https://a.example\n"
         "    search: {oracle: {site: CX_1, host: fa.example.oraclecloud.com}}\n"
-        "  - {name: Example Bank, careers_url: https://b.example}\n")
+        "  - {name: Example Bank, careers_url: https://b.example}\n", encoding="utf-8")
     monkeypatch.setattr(config, "PLUGIN_ROOT", root)
     own = job_apply_home / "companies.yaml"
     own.write_text("lists: [phoenix-metro]\ncompanies:\n"
                    "  - {name: Robert Half, careers_url: https://c.example, search: {workday: 'https://rh.wd1.myworkdayjobs.com/A'}}\n"
                    "  - {name: Robert Half, careers_url: https://d.example, search: {workday: 'https://rh.wd1.myworkdayjobs.com/B'}}\n"
                    "  - name: Mayo Clinic\n    careers_url: https://e.example\n"
-                   "    search: {oracle: {host: fa.example.oraclecloud.com, site: CX_1}}\n")
+                   "    search: {oracle: {host: fa.example.oraclecloud.com, site: CX_1}}\n", encoding="utf-8")
     assert [c["careers_url"] for c in search_module.load_companies()] == \
         ["https://c.example", "https://d.example", "https://e.example", "https://b.example"]
-    own.write_text("lists:\n  phoenix-metro: true\n")
+    own.write_text("lists:\n  phoenix-metro: true\n", encoding="utf-8")
     with pytest.raises(ValueError, match="should be a list of the plugin's list names"):
         search_module.load_companies()
-    own.write_text("- phoenix-metro\n")
+    own.write_text("- phoenix-metro\n", encoding="utf-8")
     with pytest.raises(ValueError, match="`lists:`"):
         search_module.load_companies()
 
