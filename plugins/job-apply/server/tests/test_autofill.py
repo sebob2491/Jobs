@@ -65,6 +65,56 @@ def test_a_long_list_is_read_a_few_times_a_choice_not_once_a_state(monkeypatch, 
     assert len(calls) < 12 * len(options)
 
 
+def test_planning_a_long_form_stays_quick(monkeypatch):
+    """A timing guard for plan_autofill (the review of Oct 15): a form of 61 questions, six of them 241-entry lists,
+    planned from a full profile. It took 135 ms on 0.3.189, nearly all of it norm() over the lists' choices (29 a
+    choice); now about one a choice. The count is the guard (a clock is no guard on a slow runner); the clock only
+    catches a planning gone quadratic."""
+    import random
+    import time
+    from job_apply import autofill
+    from job_apply.autofill import US_STATES, plan_autofill
+    rng = random.Random(7)
+    words = "north south east west river valley mountain state city county technical institute college lake".split()
+    schools = [" ".join(rng.choice(words).title() for _ in range(3)) + f" {i}" for i in range(241)]
+    fields: list[dict] = []
+
+    def add(label, kind="text", options=None):
+        fields.append({"id": f"f{len(fields)}", "label": label, "kind": kind, "value": "", "required": True,
+                       "options": options or []})
+    for label in ("First Name", "Last Name", "Email", "Phone", "Address Line 1", "City", "Postal Code", "LinkedIn"):
+        add(label)
+    add("State", "select", list(US_STATES.values()))
+    add("Country", "select", ["United States of America", "Canada", "Mexico"] + [f"Country {i}" for i in range(200)])
+    for label in ("School", "Previous school 1", "Previous school 2", "Previous school 3", "Previous school 4",
+                  "College or university"):
+        add(label, "select", schools)
+    for q in ("Are you legally authorized to work in the United States?", "Gender", "Race/Ethnicity", "Veteran Status",
+              "Disability Status", "How did you hear about us?", "Are you willing to relocate?",
+              "Are you at least 18 years of age?", "Will you now or in the future require sponsorship?",
+              "Are you willing to travel?", "Do you have a valid driver's license?", "Can you work shifts?",
+              "Have you worked for us before?", "Highest level of education", "Earliest start date"):
+        add(q, "select", ["Select One", "Yes", "No", "Decline to self-identify", "I don't wish to answer"]
+            + [f"Option {k}" for k in range(20)])
+    for i in range(30):
+        add(f"Tell us about project {i}", "textarea")
+    choices = sum(len(f["options"]) for f in fields)
+    calls = []
+    real = autofill.norm
+
+    def counted(s):
+        calls.append(1)
+        return real(s)
+    monkeypatch.setattr(autofill, "norm", counted)
+    profile = prof()
+    started = time.perf_counter()
+    plan = plan_autofill(fields, profile)
+    took = time.perf_counter() - started
+    assert len(fields) == 61 and plan["to_fill"]  # (a real plan: the profile answers many of them)
+    assert len(calls) < 4 * choices, (len(calls), choices)
+    assert took < 2.0, took
+
+
 def test_a_place_and_its_aliases_read_the_same_as_before():
     """_place_parts and _aliases with the states' names worked out once: the same parts and aliases as working them
     out for each choice, as they were."""
