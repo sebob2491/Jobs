@@ -57,3 +57,83 @@ def test_every_text_file_is_read_and_written_as_utf_8():
             missing += [f"{path.relative_to(SERVER).as_posix()}:{line} ({kind})"
                         for kind, line in _text_calls_without_encoding(tree)]
     assert not missing, "text read or written with no encoding (add encoding=\"utf-8\"):\n" + "\n".join(missing)
+
+
+# --- the captured pages: nothing personal, nothing dead ------------------------------------------------------
+
+import re  # noqa: E402
+from urllib.parse import urlparse  # noqa: E402
+
+import yaml  # noqa: E402
+
+FIXTURES = SERVER / "tests" / "fixtures"
+DATA = SERVER.parent / "data"
+_EMAIL = re.compile(r"[a-z0-9._%+-]+@([a-z0-9.-]+\.[a-z]{2,})", re.I)
+PUBLIC_MAIL = {"gmail.com", "googlemail.com", "yahoo.com", "ymail.com", "outlook.com", "hotmail.com", "live.com",
+               "msn.com", "icloud.com", "me.com", "mac.com", "aol.com", "proton.me", "protonmail.com", "mail.com",
+               "gmx.com", "yandex.com", "zoho.com", "cox.net", "comcast.net", "att.net", "verizon.net"}
+# the job systems' own addresses (a site's noreply@) are no one's
+JOB_SYSTEMS = {"myworkday.com", "myworkdayjobs.com", "workday.com", "icims.com", "successfactors.com", "sap.com",
+               "eightfold.ai", "oraclecloud.com", "oracle.com", "brassring.com", "greenhouse.io", "lever.co",
+               "smartrecruiters.com", "paycom.com", "ultipro.com", "ukg.com", "infor.com", "csod.com",
+               "cornerstoneondemand.com", "phenom.com", "phenompeople.com", "taleo.net", "applicantstack.com",
+               "jobvite.com", "avature.net", "adp.com", "paylocity.com", "linkedin.com", "indeed.com"}
+# the fake profile's and the test identity's details (scripts/live_smoke.py FAKE_PROFILE, live_identity.py), which
+# the scrubber replaces on capture and a page could echo back
+PLANTED = ("McTestface", "480-555-0199", "175 S Arizona Ave", "example-test-profile", "Jobdesk Test")
+
+
+def _employer_domains() -> set[str]:
+    """The listed employers' own domains: their careers sites' (the registrable part) and their mail_domains. An
+    address at one in a captured page is the employer's own (an accommodation inbox), not a person's."""
+    domains = set()
+    for path in [DATA / "companies.yaml", *sorted((DATA / "lists").glob("*.yaml"))]:
+        for company in yaml.safe_load(path.read_text(encoding="utf-8")).get("companies") or []:
+            host = (urlparse(company.get("careers_url") or "").hostname or "").lower()
+            if host.count(".") >= 1:
+                domains.add(".".join(host.split(".")[-2:]))
+            domains.update(str(d).lower() for d in company.get("mail_domains") or [])
+    return domains
+
+
+def test_captured_pages_hold_no_personal_data():
+    """The repo is public: a page captured from a real site goes through the scrubber before it becomes a fixture
+    (python -m job_apply.fixtures), which replaces the profile's details. This is the gate for what the scrubber
+    can't know: no address at a public mail provider or at a domain that isn't a listed employer's or a job
+    system's (an employer's own accommodation inbox is fine), and none of the fake profile's or the test
+    identity's details (the whole-program review of Oct 15 asked for it)."""
+    allowed = _employer_domains() | JOB_SYSTEMS | {"example.com", "example.org", "example.net"}
+    problems = []
+    for path in sorted(FIXTURES.rglob("*")):
+        if not path.is_file() or path.suffix not in (".html", ".json", ".txt", ".md", ".yaml"):
+            continue
+        text = path.read_text(encoding="utf-8", errors="replace")
+        shown = path.relative_to(SERVER).as_posix()
+        for m in _EMAIL.finditer(text):
+            domain = m.group(1).lower()
+            root = ".".join(domain.split(".")[-2:])
+            if domain in PUBLIC_MAIL or root in PUBLIC_MAIL:
+                problems.append(f"{shown}: an address at {domain}")
+            elif domain not in allowed and root not in allowed:
+                problems.append(f"{shown}: an address at {domain}, neither a listed employer's nor a job system's")
+        problems += [f"{shown}: {value!r}" for value in PLANTED if value.lower() in text.lower()]
+    assert not problems, "personal data in the fixtures:\n" + "\n".join(sorted(set(problems)))
+
+
+def test_every_fixture_is_used():
+    """A captured page or a mock form nobody tests is weight the public repo carries for nothing: each file under
+    tests/fixtures is named in a test, is a page test_live_fixtures.py loads by its .expect.json, or is linked
+    from another fixture (a frame of a captured page, a page a mock site leads to)."""
+    tests_text = "\n".join(p.read_text(encoding="utf-8") for p in sorted((SERVER / "tests").glob("*.py")))
+    files = [p for p in sorted(FIXTURES.rglob("*")) if p.is_file()]
+    pages = {p.name: p.read_text(encoding="utf-8", errors="replace") for p in files if p.suffix == ".html"}
+
+    def used(path: Path) -> bool:
+        if path.name in tests_text or path.stem in tests_text:
+            return True
+        if path.name.endswith(".expect.json") or path.with_name(path.stem + ".expect.json").exists():
+            return True
+        return any(path.name in text for name, text in pages.items() if name != path.name)
+
+    dead = [p.relative_to(SERVER).as_posix() for p in files if not used(p)]
+    assert not dead, "fixtures no test uses (delete them, or test them):\n" + "\n".join(dead)

@@ -44,6 +44,9 @@ jobs:
       - name: Type check (mypy)
         if: matrix.part == 1
         run: uv run --frozen mypy src/job_apply
+      - name: Type check the live check's scripts (mypy)
+        if: matrix.part == 1
+        run: uv run --frozen mypy scripts  # (a step of its own: checked with the sources, job_apply resolves twice)
       - run: uv run --frozen playwright install --with-deps chromium
       - run: uv run --frozen pytest -q -n auto
         env:

@@ -75,7 +75,7 @@ import yaml  # noqa: E402
 # A fresh address each run, on example.com (which takes no mail): Oracle's sites stop sending
 # codes to an address after a day of runs ("Too Many Attempts. Try Again Later.").
 FAKE_EMAIL = f"testy.mctestface.{secrets.token_hex(3)}@example.com"
-FAKE_PROFILE = {
+FAKE_PROFILE: dict[str, Any] = {
     "personal": {
         "first_name": "Testy", "last_name": "McTestface", "email": FAKE_EMAIL,
         "phone": "480-555-0199", "phone_country_code": "+1",
@@ -178,7 +178,8 @@ def use_role(name: str, email: str | None = None) -> None:
     INBOX_IN_PROFILE = bool(email) and not TEST_IDENTITY
     role = ROLES[name]
     QUERY_AZ, QUERY_ANY = role["query_az"], role["query_any"]
-    profile = {**FAKE_PROFILE, **{k: role[k] for k in ("work_history", "education_history", "education") if k in role}}
+    profile: dict[str, Any] = {**FAKE_PROFILE,
+                               **{k: role[k] for k in ("work_history", "education_history", "education") if k in role}}
     if TEST_IDENTITY:  # its name and inbox (with --plus, `email` is the employer: the inbox's "+employer" address)
         inbox = live_identity.credentials(os.environ)[0]
         profile = live_identity.identity_profile(profile, live_identity.plus_address(inbox, email) if email else inbox,
@@ -277,7 +278,7 @@ def pick_action(actions: list[dict[str, Any]]) -> dict[str, Any] | None:
     usable = [a for a in actions if not a.get("disabled") and not a.get("is_submit") and APPLY.match(a["text"].strip())]
     usable = [a for a in usable if not NEVER.search(a["text"]) or re.search(r"apply manually", a["text"], re.I)]
     manual = [a for a in usable if re.search(r"manually", a["text"], re.I)]
-    return (manual or usable or [None])[0]
+    return next(iter(manual or usable), None)
 
 
 def field_brief(f: dict[str, Any]) -> dict[str, Any]:
@@ -432,6 +433,7 @@ REQ_LINKS_JS = r"""() => {
 async def probe_form(name: str, url: str, press: str) -> dict[str, Any]:
     await server.browser.page()
     ctx = server.browser._ctx  # noqa: SLF001 - test script reaching into the session on purpose
+    assert ctx is not None  # (page() opened it)
     tab = await ctx.new_page()
     sent: list[dict[str, Any]] = []
 
@@ -551,7 +553,7 @@ async def probe_json(name: str, url: str, warm: str | None = None) -> dict[str, 
                                  follow_redirects=True, timeout=45) as client:
         for label in ("warm", "cold") if warm else ("cold",):
             try:
-                if label == "warm":
+                if label == "warm" and warm:
                     w = await client.get(warm)
                     rec["warm_page"] = {"status": w.status_code, "cookies": sorted(client.cookies.keys())}
                 r = await client.get(url)
@@ -604,6 +606,7 @@ MENU_JS = r"""(needle) => {
 async def probe_menu(name: str, url: str, press: str, needle: str) -> dict[str, Any]:
     await server.browser.page()
     ctx = server.browser._ctx  # noqa: SLF001 - test script reaching into the session on purpose
+    assert ctx is not None  # (page() opened it)
     tab = await ctx.new_page()
     rec: dict[str, Any] = {"menu_probe": name, "url": url}
     try:
@@ -648,9 +651,11 @@ async def probe_http(name: str, url: str, selector: str) -> dict[str, Any]:
         r = await client.get(url)
     soup = BeautifulSoup(r.text, "html.parser")
     if selector.startswith("text:"):  # the markup around each place the page says this
-        found = []
+        found: list[Any] = []
         for hit in soup.find_all(string=re.compile(re.escape(selector[5:])))[:4]:
             box = hit.parent
+            if box is None:
+                continue
             for _ in range(4):
                 box = box.parent if box.parent is not None and box.parent.name != "body" else box
             found.append(box)
@@ -1350,7 +1355,8 @@ async def _desk_steps(page: Any, loc: Any, fid: str, typed: str) -> dict[str, An
     The run is over; nothing is sent."""
     from job_apply.formjs import FIELD_OPTIONS_JS, WORKDAY_CHOSEN_JS
 
-    b, out = server.browser, {}
+    b = server.browser
+    out: dict[str, Any] = {}
     try:
         await b._open(page, fid, loc)
         out["options"] = opened = await b._field_options(page, fid, loc, 2500)
