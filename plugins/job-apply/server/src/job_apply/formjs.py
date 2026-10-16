@@ -958,7 +958,10 @@ VISIBLE_TEXT_JS = r"""
 # Numbered entry headings ("Work Experience 2"), how many of those have no boxes drawn yet, and
 # the Add buttons that create more.
 ENTRIES_JS = r"""
-(kindPattern) => {
+(arg) => {
+  // [kind pattern, the frame's id prefix ("f2-" in a frame, "" on the page): an Add button's id says its frame, as every
+  // other id the form reader gives does (the review of 0.3.186)]
+  const [kindPattern, prefix] = Array.isArray(arg) ? arg : [arg, ''];
   const kind = new RegExp(kindPattern, 'i');
   const clean = (s) => (s || '').replace(/\s+/g, ' ').trim();
   const txt = (el) => clean(el ? (el.innerText || el.textContent || '') : '');
@@ -1012,12 +1015,12 @@ ENTRIES_JS = r"""
     if (kind.test(context)) {
       if (!b.getAttribute('data-ja-id')) {
         window.__jaCounter = (window.__jaCounter || 0) + 1;
-        b.setAttribute('data-ja-id', 'add' + window.__jaCounter);
+        b.setAttribute('data-ja-id', prefix + 'add' + window.__jaCounter);
       }
       buttons.push({ id: b.getAttribute('data-ja-id'), text: txt(b) });
     }
   }
-  return { entries, empty, buttons };
+  return { entries, empty, buttons, boxes: boxes.length };
 }
 """
 

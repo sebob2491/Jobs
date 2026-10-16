@@ -1,0 +1,35 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Careers - Example Robotics</title>
+<style>
+  header, footer { padding: 8px 16px; background: #eef; }
+  #icims_content_iframe { width: 100%; height: 900px; border: 0; }
+</style>
+</head>
+<body>
+<!-- The application drawn inside a frame on the careers page, as iCIMS's portal draws its (#icims_content_iframe;
+     eleven employers on the lists): the page around it has the employer's header and nothing to fill, and the form,
+     its numbered blocks and their Add buttons are the frame's own. The frame shows the Workday-style blocks page (one
+     job's block drawn, an Add for more, an Education section with none yet), given this page's query (?savedschool
+     &reused...). ?outeradd: the careers page has an "Add" of its own under a heading of the kind (never pressed for
+     the form's: the review of 0.3.186). ?detach: the careers page takes the frame away when its education Add is
+     pressed (the frame told it so). -->
+<header><h1>Example Robotics Careers</h1><nav><a href="#">Search Jobs</a> <a href="#">Sign In</a></nav></header>
+<section id="outer" hidden>
+  <h2>Continuing Education</h2>
+  <button type="button" id="outer-add" onclick="window.outerPressed = (window.outerPressed || 0) + 1">Add to calendar</button>
+</section>
+<div id="icims_content_container">
+  <iframe id="icims_content_iframe" title="Application"></iframe>
+</div>
+<footer><p>Example Robotics is an equal opportunity employer.</p></footer>
+<script>
+  const params = new URLSearchParams(location.search);
+  if (params.has('outeradd')) document.getElementById('outer').hidden = false;
+  addEventListener('message', (e) => {
+    if (params.has('detach') && e.data === 'detach') document.getElementById('icims_content_iframe').remove();
+  });
+  document.getElementById('icims_content_iframe').src = 'workday-experience-blocks.html' + location.search;
+</script>
+</body>
+</html>

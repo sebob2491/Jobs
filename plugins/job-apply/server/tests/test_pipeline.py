@@ -8847,6 +8847,65 @@ def test_an_empty_block_the_desk_added_is_deleted_when_the_saved_one_took_its_pl
     assert blocks == [["Education 1", "1"]], (blocks, r.log)  # (the saved one, in the desk's own block, stays)
 
 
+def test_a_framed_application_gets_its_blocks_and_both_jobs(srv, monkeypatch):
+    """The same in the desk's own laps: an application inside a frame on the careers page (iCIMS's) gets its second
+    work block and its school block added in the frame and filled from the profile, and the careers page's own "Add"
+    under a heading of the kind is left alone."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 1)
+    job = srv.add_job(url=fixture_url("site/framed-experience-blocks.html") + "?outeradd", title="Equipment Technician",
+                      company="Example Robotics")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            # (on to the frame's Save and Continue, which goes nowhere here: the stall's waits)
+            await until(lambda: r.status not in ("queued", "running"), timeout=180, about=state(r))
+            frame = next(f for f in r.page.frames if f is not r.page.main_frame)
+            return r, await frame.evaluate(
+                "() => [...document.querySelectorAll('[name=jobTitle], [name=companyName], [name=school]')].map((e) => e.value)"
+            ), await r.page.evaluate("() => window.outerPressed || 0")
+        finally:
+            await applier.stop()
+
+    r, values, outer = run(go())
+    assert "added 1 work block(s)" in r.log and "added 1 education block(s)" in r.log, r.log
+    assert values == ["Equipment Technician", "Intel", "Maintenance Technician", "Example Fab Services",
+                      "Arizona State University"], (values, r.log)
+    assert outer == 0, r.log
+    assert "more blocks than your profile has entries" not in r.reason, (r.status, r.reason, r.log)
+
+
+def test_an_empty_block_the_desk_added_in_a_frame_is_deleted_when_the_saved_one_took_its_place(srv, monkeypatch):
+    """The review of 0.3.186: browser.added_blocks read the page around a frame only, so the desk's own block in a
+    framed application was never known for its, and never deleted again. As on a page of its own (Arizona State
+    University's Workday, run 108), in a frame too."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 1)
+    job = srv.add_job(url=fixture_url("site/framed-experience-blocks.html") + "?savedschool&reused",
+                      title="Equipment Technician", company="Example Robotics")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), timeout=180, about=state(r))
+            frame = next(f for f in r.page.frames if f is not r.page.main_frame)
+            return r, await frame.evaluate(
+                "() => [...document.querySelectorAll('#ed-panels > div')].map((p) => [p.querySelector('h3').textContent, "
+                "p.dataset.saved || ''])")
+        finally:
+            await applier.stop()
+
+    r, blocks = run(go())
+    assert "more blocks than your profile has entries" not in r.reason, (r.status, r.reason, r.log)
+    assert any(line.startswith("deleted Education 2") for line in r.log), r.log
+    assert blocks == [["Education 1", "1"]], (blocks, r.log)
+
+
 @pytest.mark.parametrize("query, picked", [("?slow=6000", True), ("?slow=6000&placeholderfirst", True), ("?slow=20000", False)])
 def test_a_self_identification_list_that_fetches_its_choices_on_first_open_is_waited_on(srv, monkeypatch, query, picked):
     """SuccessFactors' paginated selects (Freeport-McMoRan's Ethnicity, Edwards Vacuum's Protected Veteran, Rogers'

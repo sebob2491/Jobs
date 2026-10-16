@@ -170,6 +170,8 @@
     });
   };
   document.getElementById('ed-add').addEventListener('click', (e) => {
+    // ?detach: drawn in a frame (framed-experience-blocks.html), the careers page takes the frame away now
+    if (new URLSearchParams(location.search).has('detach') && parent !== window) parent.postMessage('detach', '*');
     ed += 1;
     block += 1;
     const id = 'education-' + block;
