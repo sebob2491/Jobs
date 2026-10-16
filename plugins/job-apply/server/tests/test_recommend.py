@@ -261,6 +261,28 @@ def test_the_area_by_state_names_and_codes():
     assert target_location(Profile({"preferences": {"locations": ["Charleston, West Virginia"]}})) == "WV"
 
 
+def test_a_posting_the_sites_own_area_filter_found_isnt_held_for_the_place_it_names():
+    """Banner's Workday names a posting's place by its facility ("Banner Heart Hosp (6750 E Baywood Ave)"), on the
+    posting's page too: found by the site's own Arizona filter (in_area, 0.3.177), it's never held as elsewhere; a
+    posting whose page says another state still is."""
+    p = tech()
+    where = "Banner Heart Hosp (6750 E Baywood Ave)"
+
+    async def search(query, location, limit):
+        return {"results": [
+            {"company": "Banner Health", "title": "Field Service Engineer 2", "url": "https://x/banner", "location": where,
+             "in_area": True},
+            {"company": "Moved Co", "title": "Field Service Engineer 2", "url": "https://x/elsewhere", "location": "Peoria, IL"}]}
+
+    async def fetch(url):
+        return Posting(url=url, description=LAM_FSE2, location=where if url == "https://x/banner" else "Peoria, IL")
+
+    out = asyncio.run(recommend(p, search, read_postings=5, fetch=fetch, today=TODAY))
+    fits = {r["url"]: r["fit"] for r in out["results"]}
+    assert not fits["https://x/banner"]["held"] and not any("says it's in" in c for c in fits["https://x/banner"]["concerns"]), fits
+    assert fits["https://x/elsewhere"]["held"] and "the posting says it's in Peoria, IL" in fits["https://x/elsewhere"]["concerns"]
+
+
 def test_recommend_holds_postings_it_could_not_check():
     """Only postings whose requirements were read are preselected; one whose posting says
     it's in another state isn't either."""

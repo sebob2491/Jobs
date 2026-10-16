@@ -608,7 +608,9 @@ async def recommend(prof: Profile, search: Search, limit_per_company: int = 10, 
                                     else "the posting's text couldn't be read: its requirements are unchecked")
             continue
         where = item["posting"].get("location") or ""
-        if where and location_matches(where, terms) is False and location_matches(item.get("location") or "", terms) is not True:
+        # (never for a posting the site's own area filter found, whose place it names by the facility: Banner's)
+        if where and not item.get("in_area") and location_matches(where, terms) is False \
+                and location_matches(item.get("location") or "", terms) is not True:
             fit.held = True
             fit.concerns.append(f"the posting says it's in {where}")
     items.sort(key=lambda x: (-x["fit"].score, x.get("company", ""), x.get("title", "")))
