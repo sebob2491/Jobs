@@ -10,7 +10,7 @@ import pytest
 from conftest import browser_available, fixture_url, launch_options, run
 
 import job_apply.pipeline as pipeline
-from job_apply import config
+from job_apply import autofill, config
 from job_apply.desk import Desk
 from job_apply.postings import Posting
 
@@ -164,6 +164,8 @@ def test_desk_page_buttons_reach_the_api(srv, tmp_path):
                 meta = await page.locator(".meta").first.inner_text()
                 assert "2026-08-25" in meta and "T13:11" not in meta  # the date, not the time of day
                 await page.click("text=Select recommended")
+                said: list[str] = []  # what will stop them, said first (the common questions unanswered here)
+                page.once("dialog", lambda d: (said.append(d.message), asyncio.ensure_future(d.accept())))
                 await page.click("#apply")
                 for _ in range(50):
                     if desk.applier.tasks:
@@ -171,6 +173,7 @@ def test_desk_page_buttons_reach_the_api(srv, tmp_path):
                     await asyncio.sleep(0.1)
                 queued = [jid for _, jid in desk.applier.tasks]
                 assert [srv.tracker().get(j)["title"] for j in queued] == ["Field Service Engineer"]
+                assert said and said[0].startswith("Before these go:") and "common question" in said[0], said
 
                 await page.select_option("select[data-q]", "Yes")
                 # a searchable list: typed in, the entry needn't be among those shown
@@ -913,6 +916,33 @@ def test_a_pasted_link_on_a_listed_employers_site_takes_the_lists_name(srv):
     intel = "https://intel.wd1.myworkdayjobs.com/External/job/US-Arizona-Phoenix/Module-Equipment-Technician_JR0286553"
     other = "https://acme.wd1.myworkdayjobs.com/External/job/Phoenix-AZ/Technician_R1"
     assert [o["company"] for o in run(desk.add_links([intel, other]))] == ["Intel", "100 Intel Corporation"]
+
+
+def test_apply_says_first_what_will_stop_the_ticked_jobs(srv, job_apply_home):
+    """The review of Oct 15 (worth building, 1): a batch of 30 ticked jobs went off, and each one on a system with no
+    saved password stopped at its sign-in, each whose site mailed a code waited without the inbox, and each common
+    question unanswered stopped the first job asking it. Before Apply, the desk says what will stop them (the job
+    systems with no password, with how many of the ticked jobs; the inbox; the common questions), and nothing
+    when nothing will."""
+    desk = Desk(srv)
+    desk.listings = [{"url": "https://acme.wd1.myworkdayjobs.com/External/job/1", "ats": "workday", "title": "Tech"},
+                     {"url": "https://beta.wd5.myworkdayjobs.com/External/job/2", "ats": "workday", "title": "Tech"},
+                     {"url": "https://careers.example.com/job/3/", "ats": "successfactors", "title": "Tech"},
+                     {"url": "https://boards.greenhouse.io/x/jobs/4", "ats": "greenhouse", "title": "Tech"}]
+    urls = [r["url"] for r in desk.listings]
+    lines = desk.preflight(urls)
+    assert lines[0].startswith("Workday: no password saved, so 2 of these jobs stop at the sign-in"), lines
+    assert lines[1].startswith("SuccessFactors: no password saved, so 1 of these jobs stops"), lines
+    assert any("email app password" in x for x in lines) and any("common question" in x for x in lines), lines
+    assert not any("Greenhouse" in x for x in lines)
+    config.secrets_path().write_text("workday_password: a\nsuccessfactors_password: b\nemail_password: c\n",
+                                     encoding="utf-8")
+    lines = desk.preflight(urls)
+    assert len(lines) == 1 and "common question" in lines[0], lines
+    for q in autofill.common_questions(config.Profile.load()):
+        config.save_bank_answer(q["id"], (q.get("choices") or ["Yes"])[0] if q.get("kind") == "choice" else "Ask me")
+    assert desk.preflight(urls) == []
+    assert desk.preflight([urls[3]]) == []  # (a Greenhouse job: no account, no code)
 
 
 def test_a_secrets_file_that_isnt_a_list_of_names_doesnt_break_the_page(srv, job_apply_home):

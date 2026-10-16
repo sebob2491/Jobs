@@ -14,7 +14,9 @@ The desk is a local web page served by this plugin. It does what the `find-jobs`
   education doesn't meet, senior titles, clearances, export control, travel.
 - **Apply to selected** works through the picked jobs one at a time in the automation
   browser. It clicks through Apply, autofills every page, adds Workday's work and
-  education blocks, and stops at each review page.
+  education blocks, and stops at each review page. Before they go, it says what will stop
+  them: a job system with no saved password, no email app password for sites that email a
+  code, common questions not answered yet. The person can go ahead or see to those first.
 - **Needs you** collects whatever it can't do alone:
   - questions the profile doesn't answer, answered right on the page. Answers are
     remembered in `~/.job-apply/answers.yaml` unless the user unticks "remember".

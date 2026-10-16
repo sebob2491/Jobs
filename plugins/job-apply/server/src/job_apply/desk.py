@@ -140,6 +140,7 @@ class Desk:
             r("/api/state", self.state_view),
             r("/api/search", self.search_view, methods=["POST"]),
             r("/api/apply", self.apply_view, methods=["POST"]),
+            r("/api/preflight", self.preflight_view, methods=["POST"]),
             r("/api/answer", self.answer_view, methods=["POST"]),
             r("/api/job/{job_id:int}/{action}", self.job_view, methods=["POST"]),
             r("/api/notes/{action}", self.notes_view, methods=["POST"]),
@@ -255,6 +256,18 @@ class Desk:
         # (never Submit for me while troubleshooting: a job queued now could go once it's off)
         queued, refused = self.apply(urls=urls, job_ids=job_ids, submit=body.get("submit") is True and not self.troubleshoot)
         return JSONResponse({"queued": queued, "already_applied": refused})
+
+    async def preflight_view(self, request: Request) -> Response:
+        if not self._allowed(request, api=True):
+            return self._forbidden()
+        try:
+            body = await self._body(request)
+            urls = body.get("urls") or []
+            if not isinstance(urls, list) or not all(isinstance(u, str) for u in urls):
+                raise ValueError("urls should be a list of web addresses")
+        except ValueError as e:
+            return self._bad(e)
+        return JSONResponse({"lines": self.preflight(urls)})
 
     async def answer_view(self, request: Request) -> Response:
         if not self._allowed(request, api=True):
@@ -457,6 +470,38 @@ class Desk:
         except Exception as e:
             self.search.update(status="failed", error=f"{type(e).__name__}: {str(e)[:300]}")
 
+    def preflight(self, urls: list[str]) -> list[str]:
+        """What will stop these jobs, said before Apply sends them off (the review of Oct 15: a batch of 30 found it
+        out one stop at a time): a job system with no password saved (its jobs stop at the sign-in), no email app
+        password while one of them is on a system that mails a sign-up code or link, and the common questions not
+        answered yet. None when nothing will."""
+        t = self.srv.tracker()
+        by_system: dict[str, int] = {}
+        mailing = False
+        for url in urls:
+            item = self._listing(url) or t.find_by_url(url) or {}
+            ats = str(item.get("ats") or detect_ats(str(item.get("apply_url") or url)) or "")
+            if f"{ats}_password" in DESK_PASSWORDS:
+                by_system[f"{ats}_password"] = by_system.get(f"{ats}_password", 0) + 1
+            mailing = mailing or f"{ats}_password" in DESK_PASSWORDS or ats in MAILS_CODES
+        saved = _saved([*by_system, "email_password"])
+        lines = []
+        for name, n in sorted(by_system.items(), key=lambda kv: (-kv[1], kv[0])):
+            if not saved[name]:
+                lines.append(f"{DESK_PASSWORDS[name]}: no password saved, so {n} of these jobs {'stop' if n != 1 else 'stops'}"
+                             " at the sign-in for you. Save one under Site passwords and the desk signs in itself.")
+        if mailing and not saved["email_password"]:
+            lines.append("No email app password saved: a site that emails a sign-up code or link waits for you to "
+                         "enter it. Save one under Site passwords and the desk reads it from your inbox.")
+        try:
+            left = sum(1 for q in autofill.common_questions(config.Profile.load()) if q.get("answer") in (None, ""))
+        except ValueError:  # a profile that doesn't read: the queue says so itself
+            left = 0
+        if left:
+            lines.append(f"{left} common question{'s' if left != 1 else ''} not answered yet (the Common questions card): "
+                         "each stops the first job that asks it.")
+        return lines
+
     def _listing(self, url: str) -> dict[str, Any] | None:
         return next((item for item in self.listings if item.get("url") == url), None)
 
@@ -654,6 +699,11 @@ class Desk:
             "counts": t.counts(),
             "notes": report.notes_count(),  # notes on the desk's stops, waiting to be filed
         }
+
+
+# job systems with no saved password of their own that email a sign-up code or link (Oracle Recruiting's codes), beside
+# the ones the desk keeps a password for, whose accounts are made with an emailed link or code
+MAILS_CODES = {"oracle_hcm"}
 
 
 # a job the person sent in (or is about to): listed under My applications with where it stands
