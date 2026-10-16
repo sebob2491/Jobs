@@ -1,0 +1,8 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Apply</title></head>
+<body>
+<!-- A page whose own script hangs a moment after it loads (an endless loop): every read of it waits for ever. The
+     desk's reads are bounded so it never holds the browser for good (the review of 0.3.188). -->
+<h1>Apply</h1><label for="a">Name</label><input id="a">
+<script>setTimeout(() => { for (;;) {} }, 400);</script>
+</body></html>

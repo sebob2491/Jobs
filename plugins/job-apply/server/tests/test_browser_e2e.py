@@ -1,6 +1,7 @@
 """Drive the MCP tools against local mock application forms in headless Chromium."""
 
 
+import asyncio
 import re
 from pathlib import Path
 
@@ -883,6 +884,28 @@ def test_a_frame_that_goes_away_while_blocks_are_added_ends_the_adding(srv):
     assert added["clicks"] == 1 and not added.get("add_button_covered"), added
 
 
+def test_a_page_whose_script_hangs_never_holds_the_browser(srv, monkeypatch):
+    """The review of 0.3.188: with the form read bounded, inspect still re-read a hung page FORM_DRAW_TRIES times, then
+    waited for ever on its title; the page's words and its bot-check look waited for ever too. Each read gives up after
+    READ_TIMEOUT, and a page that hung isn't read again at once."""
+    import time
+
+    monkeypatch.setattr(browser_module, "READ_TIMEOUT", 1)
+    run(srv.browser.goto(fixture_url("site/hangs-after-load.html")))
+
+    async def reads():
+        await asyncio.sleep(1)  # (its script hangs now)
+        start = time.monotonic()
+        data = await srv.browser.inspect(include_dropdown_options=False)
+        text = await srv.browser.visible_text()
+        challenge = await srv.browser.challenge_showing()
+        return time.monotonic() - start, data, text, challenge
+
+    took, data, text, challenge = run(reads())
+    assert took < 10, took
+    assert data.get("hung") and not data["fields"] and text == "" and challenge is False, (data, text)
+
+
 def test_final_apply_button_honeypot_and_enter(srv, monkeypatch):
     job = srv.add_job(url=fixture_url("apply_button_form.html"), title="Tech", company="Example Fab")["job"]
     run(srv.open_application(job_id=job["id"]))
@@ -1205,6 +1228,22 @@ def test_a_workday_cover_is_the_submit_found_not_its_hidden_button(srv):
     assert [(a["text"], bool(a.get("covered"))) for a in found] == [("Submit", False)], found
     info = run(srv.browser.element_info(found[0]["id"]))
     assert info is not None and info["label"] == "Submit", info
+
+
+def test_a_button_found_by_its_words_is_the_one_named_so_exactly_first(srv):
+    """The review of Oct 15: a button found again by its words (Claude's click by text, or one the page drew again) was
+    the first whose name held them: click("Next") pressed "Next of kin details". The one named exactly so comes first;
+    a name that only holds the words is the fallback."""
+    run(srv.open_application(url=fixture_url("jsonld_posting.html")))
+    page = run(srv.browser.page())
+    run(page.set_content("""
+      <a href="#kin" onclick="window.pressed = 'kin'">Next of kin details</a>
+      <button type="button" onclick="window.pressed = 'next'">Next</button>
+      <button type="button" onclick="window.pressed = 'save'">Save draft for later</button>"""))
+    found = run(srv.browser._find_by_text(page, "Next"))
+    assert run(found.inner_text()).strip() == "Next"
+    found = run(srv.browser._find_by_text(page, "Save draft"))  # (no button named so exactly: the one holding the words)
+    assert run(found.inner_text()).strip() == "Save draft for later"
 
 
 def test_a_resume_goes_into_a_page_once_though_its_box_empties(srv, job_apply_home):

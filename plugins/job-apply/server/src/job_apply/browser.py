@@ -85,20 +85,62 @@ _VALUE_ATTR = re.compile(r'\svalue="[^"]*"', re.I)
 # a box holding an account's security answer, marked when the desk put it in (Browser._keep_secret)
 _SECRET_BOX = re.compile(r'\sdata-ja-secret\b', re.I)
 
-# ms a pick-only list that is open and still empty is waited on (a site fetching its entries). A list that is
-# genuinely empty, or a box that stays "expanded", costs the wait once per such field per fill (under the lock)
-PICK_LIST_WAIT = 8000
+# ms a pick-only list that is open and still empty, or owned and not drawn yet, is waited on (a site fetching its
+# entries: SuccessFactors' took longer than 8 s in run 111). A list that is genuinely empty, or a box that stays
+# "expanded", costs the wait once per such field per fill (under the lock)
+PICK_LIST_WAIT = 10000
+# s a frame's form read (EXTRACT_JS) is waited on: a page whose script has hung answers never
+READ_TIMEOUT = 20
 # Is this box's list open with nothing in it yet: the box (or a wrapper up to 4 above it, as FIELD_OPTIONS_JS looks)
 # saying it's expanded, or its named menu shown without a choice?
 _LIST_LOADING_JS = """el => {
   for (let n = el, d = 0; n && n.getAttribute && d < 4; n = n.parentElement, d++) {
     if (n.getAttribute('aria-expanded') === 'true') return true;
-    const ref = n.getAttribute('aria-owns') || n.getAttribute('aria-controls');
-    const box = ref ? document.getElementById(ref.split(/\\s+/)[0]) : null;
-    if (box) return box.getClientRects().length > 0 && !box.querySelector('[role="option"]');
+    const owns = n.getAttribute('aria-owns'), ref = owns || n.getAttribute('aria-controls');
+    if (!ref) continue;
+    const box = document.getElementById(ref.split(/\\s+/)[0]);
+    // (the list it owns not drawn at all yet: SuccessFactors' paginated select makes its list only once the entries
+    // came from the server, and says nothing meanwhile: Edwards Vacuum's and Freeport-McMoRan's, run 111. Only an owned
+    // one: Eightfold's and Oracle's lists named by aria-controls are drawn when opened, and say they're expanded then:
+    // one absent there is a list that didn't open, the review of 0.3.188)
+    if (!box) { if (owns) return true; continue; }
+    return box.getClientRects().length > 0 && !box.querySelector('[role="option"]');
   }
   return false;
 }"""
+
+
+# The ids the form reader gives (formjs: "f2-abc17", "abc17.0", "f1-add3"): a selector is only ever made from one so
+# shaped, never from a page's own attribute with quotes in it (the review of Oct 15)
+_JA_ID = re.compile(r"[\w.:-]{1,80}")
+
+
+def _by_ja_id(element_id: str) -> str:
+    if not _JA_ID.fullmatch(element_id):
+        raise KeyError(f"{element_id!r} isn't one of the form's ids; call inspect_form for them")
+    return f'[data-ja-id="{element_id}"]'
+
+
+class _Hung(Exception):
+    """A page's script answered no read within READ_TIMEOUT (it hangs): what it holds is read as nothing."""
+
+
+async def _bounded(coro: Any, seconds: float | None = None) -> Any:
+    """A read of a page that a hung script never answers, given up after READ_TIMEOUT seconds (raises _Hung), so it
+    never holds the browser's lock for good (the review of 0.3.188: the title and the page's words were still
+    unbounded after the form read was bounded)."""
+    try:
+        return await asyncio.wait_for(coro, READ_TIMEOUT if seconds is None else seconds)
+    except asyncio.TimeoutError:
+        raise _Hung() from None
+
+
+async def _page_title(page: Page) -> str:
+    """A page's title, or "" from a page that hangs."""
+    try:
+        return await _bounded(page.title())
+    except _Hung:
+        return ""
 
 
 def _without_passwords(html: str) -> str:
@@ -684,8 +726,11 @@ class BrowserSession:
         except PlaywrightTimeout:
             pass
         try:
-            # Oracle and Workday keep drawing the next step after the network goes quiet
-            await page.evaluate(QUIET_JS, [350, 2000])
+            # Oracle and Workday keep drawing the next step after the network goes quiet (its watch ends by 2 s: one
+            # that answers nothing is a page that hangs)
+            await _bounded(page.evaluate(QUIET_JS, [350, 2000]), 5)
+        except _Hung:
+            pass
         except PlaywrightError:
             await page.wait_for_timeout(300)  # it navigated meanwhile
 
@@ -702,8 +747,8 @@ class BrowserSession:
             out = []
             for i, p in enumerate(pages):
                 try:
-                    title = await p.title()
-                except PlaywrightError:
+                    title = await _bounded(p.title(), 5)  # (a hung tab's title isn't waited on for ever)
+                except (PlaywrightError, _Hung):
                     title = ""
                 out.append({"index": i, "url": p.url, "title": title, "active": p is self._page})
             return {"tabs": out}
@@ -743,7 +788,12 @@ class BrowserSession:
                 continue
             prefix = self._frame_prefix(frame, page)
             try:
-                data = await frame.evaluate(EXTRACT_JS, prefix)
+                # (a frame whose page has hung gives no answer: bounded, so it never holds the lock, the review of Oct 15)
+                data = await _bounded(frame.evaluate(EXTRACT_JS, prefix))
+            except _Hung:
+                if frame is page.main_frame:
+                    result["hung"] = True  # (read again at once would only wait as long again: inspect stops)
+                continue
             except PlaywrightError:
                 continue  # cross-origin frame that refused, or navigated mid-read
             if frame is not page.main_frame and not data.get("fields"):
@@ -779,7 +829,7 @@ class BrowserSession:
         fields = data["fields"]
         return {
             "url": page.url,
-            "title": await page.title(),
+            "title": await _page_title(page),
             "headings": data["headings"],
             "fields": len(fields),
             "empty_required": sum(1 for f in fields if f.get("required") and is_empty_value(f.get("value"))),
@@ -893,7 +943,7 @@ class BrowserSession:
             page = await self.page()
             data = await self._extract(page)
             for _ in range(FORM_DRAW_TRIES):  # Oracle can draw the form a moment after the rest of the page
-                if data["fields"]:
+                if data["fields"] or data.get("hung"):
                     break
                 await page.wait_for_timeout(FORM_DRAW_WAIT)
                 data = await self._extract(page)
@@ -906,7 +956,7 @@ class BrowserSession:
                             and is_empty_value(f.get("value"))):
                         f["options"] = await self._read_listbox_options(page, f)
                         self._fields[f["id"]] = f
-            return {"url": page.url, "title": await page.title(), **data}
+            return {"url": page.url, "title": await _page_title(page), **data}
 
     async def visible_text(self, max_chars: int = 8000) -> str:
         async with self._lock:
@@ -916,8 +966,8 @@ class BrowserSession:
                 if frame is not page.main_frame and _MEDIA_FRAME.match(frame.url):
                     continue
                 try:
-                    t = await frame.evaluate(VISIBLE_TEXT_JS)
-                except PlaywrightError:
+                    t = await _bounded(frame.evaluate(VISIBLE_TEXT_JS))
+                except (PlaywrightError, _Hung):
                     continue
                 if t:
                     parts.append(t)
@@ -993,9 +1043,9 @@ class BrowserSession:
             page = await self.page()
             for frame in page.frames:
                 try:
-                    if await frame.evaluate(CHALLENGE_JS):
+                    if await _bounded(frame.evaluate(CHALLENGE_JS)):
                         return True
-                except PlaywrightError:  # a frame that went away meanwhile
+                except (PlaywrightError, _Hung):  # a frame that went away meanwhile, or hung
                     continue
             return False
 
@@ -1008,9 +1058,9 @@ class BrowserSession:
             page = await self.page()
             for frame in page.frames:
                 try:
-                    if name := await frame.evaluate(UPLOAD_NOT_KEPT_JS):
+                    if name := await _bounded(frame.evaluate(UPLOAD_NOT_KEPT_JS)):
                         return str(name)
-                except PlaywrightError:  # a frame that went away meanwhile
+                except (PlaywrightError, _Hung):  # a frame that went away meanwhile, or hung
                     continue
             return None
 
@@ -1076,10 +1126,10 @@ class BrowserSession:
                     continue
                 try:
                     found = ({} if _CAPTCHA_FRAME.match(frame.url) else
-                             await frame.evaluate(EXTRACT_JS, self._frame_prefix(frame, tab)))
-                    text = await frame.evaluate(VISIBLE_TEXT_JS)
-                    challenge = challenge or bool(await frame.evaluate(CHALLENGE_JS))
-                except PlaywrightError:
+                             await _bounded(frame.evaluate(EXTRACT_JS, self._frame_prefix(frame, tab))))
+                    text = await _bounded(frame.evaluate(VISIBLE_TEXT_JS))
+                    challenge = challenge or bool(await _bounded(frame.evaluate(CHALLENGE_JS)))
+                except (PlaywrightError, _Hung):
                     continue
                 if frame is not tab.main_frame and not found.get("fields"):
                     found = {**found, "errors": []}  # (as in _extract: an embed's errors aren't the form's)
@@ -1243,7 +1293,7 @@ class BrowserSession:
                     )
             except PlaywrightError:
                 pass
-            meta = {"url": page.url, "title": await page.title(), "note": note, "frames": frames,
+            meta = {"url": page.url, "title": await _page_title(page), "note": note, "frames": frames,
                     "details": details, **data}
             (dest / "snapshot.json").write_text(json.dumps(meta, indent=2, default=str), encoding="utf-8")
             return dest
@@ -1272,7 +1322,7 @@ class BrowserSession:
 
     def _locator(self, page: Page, element_id: str) -> Locator:
         frame = self._frame_for(page, element_id)
-        return frame.locator(f'[data-ja-id="{element_id}"]').first
+        return frame.locator(_by_ja_id(element_id)).first
 
     async def _field(self, page: Page, field_id: str) -> dict:
         if field_id not in self._fields:
@@ -1287,6 +1337,7 @@ class BrowserSession:
         again by its label, when only one box has it."""
         # a group's id is on its choices ("<id>.0", "<id>.1", …), not on an element of its own
         if field.get("kind") in ("radio_group", "checkbox_group"):
+            _by_ja_id(field["id"])  # (a group's id of the reader's own shape only: raises on any other)
             here = self._frame_for(page, field["id"]).locator(f'[data-ja-gid-member="{field["id"]}"]').first
         else:
             here = self._locator(page, field["id"])
@@ -1362,7 +1413,7 @@ class BrowserSession:
         never typed again, and what's typed in it shows as dots, as a password's does (in a screenshot too; a chosen
         question shows as chosen; a list's choice is kept as confirmed, and another one since reads "(unconfirmed)").
         Raises when it can't be marked, and then nothing goes in (or it isn't confirmed)."""
-        await self._frame_for(page, element_id).locator(f'[data-ja-id="{element_id}"]').first.evaluate(
+        await self._frame_for(page, element_id).locator(_by_ja_id(element_id)).first.evaluate(
             """(el, state) => {
               el.setAttribute('data-ja-secret', state);
               const list = el.tagName === 'SELECT' ? el
@@ -1406,7 +1457,9 @@ class BrowserSession:
                     if key[2] not in typed or self._retyped.get(key, 0) >= LOST_FILL_TRIES:
                         continue
                     self._retyped[key] = self._retyped.get(key, 0) + 1
-                    loc = frame.locator(f'[data-ja-id="{box["id"]}"]').first
+                    if not _JA_ID.fullmatch(str(box["id"])):
+                        continue
+                    loc = frame.locator(_by_ja_id(box["id"])).first
                     try:
                         await loc.fill("", timeout=3000)
                         await loc.fill(box["value"], timeout=3000)
@@ -1481,7 +1534,7 @@ class BrowserSession:
             page = await self.page()
             await self._field(page, field_id)
             frame = self._frame_for(page, field_id)
-            loc = frame.locator(f'[data-ja-id="{field_id}"]').first
+            loc = frame.locator(_by_ja_id(field_id)).first
             if not await loc.evaluate("el => el.tagName === 'INPUT' && el.type === 'password'"):
                 raise PermissionError("A saved password only goes into a password box")
             if site_ok is not None and not site_ok(frame.url):
@@ -2155,7 +2208,6 @@ class BrowserSession:
         `agreement`: the Job Desk found the button agrees to an employer's notice or terms for the
         person (settings.accept_notices), which lets the live check's test identity press it in
         practice mode (_check_clickable). Only the desk's own presses say so, never the click tool."""
-        self._follow_until = time.monotonic() + POPUP_FOLLOW
         async with self._lock:
             page = await self.page()
             by_id = target in self._actions or target in self._fields or re.fullmatch(r"(f\d+-)?[a-z]*\d+(\.\d+)?", target)
@@ -2163,6 +2215,9 @@ class BrowserSession:
             text = self._actions[target]["text"] if target in self._actions else "" if by_id else target
             loc, info = await self._clickable(page, loc, text, allow_submit, target, agreement)
             before, note = page.url, None
+            # (a new tab from now on is this press's: set under the lock, so a click waiting for it never claims another's
+            # tab, the review of Oct 15)
+            self._follow_until = time.monotonic() + POPUP_FOLLOW
             try:
                 await loc.click(timeout=CLICK_TIMEOUT)
             except PlaywrightTimeout:
@@ -2254,15 +2309,19 @@ class BrowserSession:
                 raise SubmitBlocked(f"Dry run: {label!r} may send the application, and it isn't a recognised step button.")
 
     async def _find_by_text(self, page: Page, text: str) -> Locator | None:
-        """First visible button/link named `text`, then any visible text match, across frames."""
+        """First visible button/link named `text` exactly, then one whose name holds it, then any visible text match,
+        across frames: "Next" is the button named Next before "Next of kin details" (the review of Oct 15: a role's
+        name matched as a part, and the first such on the page was pressed)."""
         frames = [f for f in page.frames if not f.is_detached() and not _CAPTCHA_FRAME.match(f.url)
                   and not _MEDIA_FRAME.match(f.url)]
-        for exact_role in (True, False):
+        for how in ("exact", "named", "text"):
             for frame in frames:
-                if exact_role:
-                    loc = frame.get_by_role("button", name=text).or_(frame.get_by_role("link", name=text))
-                else:
+                if how == "text":
                     loc = frame.get_by_text(text, exact=False)
+                else:
+                    exact = how == "exact"
+                    loc = frame.get_by_role("button", name=text, exact=exact).or_(
+                        frame.get_by_role("link", name=text, exact=exact))
                 loc = loc.filter(visible=True).first
                 try:
                     if await loc.count():
@@ -2330,7 +2389,7 @@ class BrowserSession:
                         break
                     pressed = False
                     for attempt in range(1, ADD_TRIES + 1):
-                        button = frame.locator(f'[data-ja-id="{state["buttons"][-1]["id"]}"]')
+                        button = frame.locator(_by_ja_id(state["buttons"][-1]["id"]))
                         try:
                             await watch(True)
                             await button.click(timeout=ADD_PRESS_TIMEOUT)
@@ -2377,8 +2436,8 @@ class BrowserSession:
                 if waited:
                     await self._settle(page, timeout=2000)  # the rest of their boxes
                     if framed:  # (the frame's own drawing: _settle watches the page around it)
-                        with contextlib.suppress(PlaywrightError):
-                            await frame.evaluate(QUIET_JS, [350, 2000])
+                        with contextlib.suppress(PlaywrightError, _Hung):
+                            await _bounded(frame.evaluate(QUIET_JS, [350, 2000]), 5)
             except PlaywrightError:
                 if not framed or not frame.is_detached():
                     raise
@@ -2406,8 +2465,8 @@ class BrowserSession:
             if frame is not page.main_frame and _MEDIA_FRAME.match(frame.url):
                 continue
             try:
-                text += "\n" + await frame.evaluate(VISIBLE_TEXT_JS)
-            except PlaywrightError:
+                text += "\n" + await _bounded(frame.evaluate(VISIBLE_TEXT_JS))
+            except (PlaywrightError, _Hung):
                 continue
         return text
 

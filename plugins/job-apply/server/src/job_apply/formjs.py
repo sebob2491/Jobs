@@ -128,10 +128,38 @@ EXTRACT_JS = r"""
     return ticked;
   };
   const byId = (id) => (id ? document.getElementById(id) : null);
+  // a wrapper folded shut (height or width 0, its overflow hidden: an accordion closed) hides what's in it, though
+  // each box keeps its own size (the review of Oct 15); read once a wrapper per look
+  const folded = new Map();
+  const foldedShut = (n) => {
+    if (!folded.has(n)) {
+      const s = getComputedStyle(n);
+      const r = n.getBoundingClientRect();
+      folded.set(n, /hidden|clip/.test(`${s.overflowX} ${s.overflowY}`) && (r.height < 1 || r.width < 1));
+    }
+    return folded.get(n);
+  };
+  // (on top of the page, drawn wherever its wrappers are: a fixed box, a modal dialog, an open popover)
+  const onTop = (n, st) => {
+    if (st.position === 'fixed') return true;
+    try { return n.matches(':modal, :popover-open'); } catch (e) { return false; }
+  };
   const visible = (el) => {
     if (!el || !el.getClientRects().length) return false;
     const s = getComputedStyle(el);
-    return s.visibility !== 'hidden' && s.display !== 'none';
+    if (s.visibility === 'hidden' || s.display === 'none') return false;
+    // a wrapper folded shut hides what's in its flow; not a box fixed or on the top layer (a Quick Apply dialog in an
+    // overflow-hidden host of no height), nor one placed absolutely against a wrapper outside the folded one (the
+    // review of 0.3.188)
+    if (onTop(el, s)) return true;
+    let abs = s.position === 'absolute';
+    for (let n = el.parentElement, d = 0; n && d < 8 && n !== document.body; n = n.parentElement, d++) {
+      const ns = getComputedStyle(n), positioned = ns.position !== 'static';
+      if ((!abs || positioned) && foldedShut(n)) return false;
+      if (onTop(n, ns)) return true;
+      if (positioned) abs = ns.position === 'absolute';
+    }
+    return true;
   };
   const labelEl = (el) => {
     if (el.labels && el.labels.length) return el.labels[0];
@@ -197,7 +225,25 @@ EXTRACT_JS = r"""
       if (lb) return lb;
       const al = container.getAttribute('aria-label');
       if (al) return clean(al);
-      return preceding(container);
+      // a question written inside the group as a paragraph of its own, just before its choices, not a legend (the
+      // review of Oct 15: it read as ""): walked back from the child holding the first choice, stopping at another
+      // question's boxes (one fieldset holding several questions: each its own, the review of 0.3.188), past a choice's
+      // own label and anything not drawn (a hidden "This field is required")
+      let holder = first;
+      while (holder.parentElement && holder.parentElement !== container) holder = holder.parentElement;
+      let inner = '';
+      for (let sib = holder.parentElement === container ? holder.previousElementSibling : null; sib;
+           sib = sib.previousElementSibling) {
+        if (sib.matches(CONTROL) || sib.querySelector(CONTROL)) break;
+        if ((sib.matches('label') && sib.htmlFor) || !visible(sib)) continue;
+        const t = txt(sib);
+        if (t && t.length < 300) { inner = t; break; }
+      }
+      // (words before the group outside it are its question unless none: a hint inside it, "Select one", isn't, the
+      // review of 0.3.188; a question inside it, ending "?" or ":", is)
+      const before = preceding(container);
+      if (inner && (!before || /[?:]\s*\*?$/.test(inner))) return inner;
+      return before;
     }
     return preceding(first);
   };
@@ -345,7 +391,9 @@ EXTRACT_JS = r"""
   const idOf = (el) => {
     if (assigned.has(el)) return assigned.get(el);
     let id = el.getAttribute('data-ja-id');
-    if (!id || usedIds.has(id)) id = tag(el, newId());
+    // (only an id of our own shape is kept: one a page set itself, quotes and all, would steer the desk's selectors:
+    // the review of Oct 15)
+    if (!id || usedIds.has(id) || !/^[\w.:-]{1,80}$/.test(id)) id = tag(el, newId());
     usedIds.add(id);
     assigned.set(el, id);
     return id;
@@ -353,7 +401,11 @@ EXTRACT_JS = r"""
   const gidOwners = new Map();
   const ownGid = (el, attr) => {
     let gid = el.getAttribute(attr);
-    if (!gid || (gidOwners.has(gid) && gidOwners.get(gid) !== el)) { gid = newId(); el.setAttribute(attr, gid); }
+    // (our own shape only, as idOf keeps: one a page set itself never becomes a selector, the review of 0.3.188)
+    if (!gid || !/^[\w.:-]{1,80}$/.test(gid) || (gidOwners.has(gid) && gidOwners.get(gid) !== el)) {
+      gid = newId();
+      el.setAttribute(attr, gid);
+    }
     gidOwners.set(gid, el);
     return gid;
   };
@@ -925,7 +977,16 @@ EXTRACT_JS = r"""
   const unmounted = () => [...document.querySelectorAll('[data-mfe-id="applyFlow"]')]
     .some((m) => !m.childElementCount && !(m.textContent || '').trim());
   const empty = unmounted();
-  const busy = [...document.querySelectorAll(LOADING)].some(visible) || bones() || drawing() || empty;
+  // (one drawn fully transparent, itself or a wrapper, is no sign of loading: a page kept "busy" by an invisible
+  // progress bar waited for nothing, the review of Oct 15)
+  const faded = (el) => {
+    for (let n = el, d = 0; n && d < 6 && n !== document.body; n = n.parentElement, d++) {
+      if (getComputedStyle(n).opacity === '0') return true;
+    }
+    return false;
+  };
+  const busy = [...document.querySelectorAll(LOADING)].some((el) => visible(el) && !faded(el)) || bones() || drawing()
+    || empty;
   return { fields, actions, errors, headings, dialogs, ...(busy ? { busy: true } : {}),
            ...(empty ? { empty_frame: true } : {}) };
 }
@@ -1013,7 +1074,7 @@ ENTRIES_JS = r"""
       }
     }
     if (kind.test(context)) {
-      if (!b.getAttribute('data-ja-id')) {
+      if (!/^[\w.:-]{1,80}$/.test(b.getAttribute('data-ja-id') || '')) {
         window.__jaCounter = (window.__jaCounter || 0) + 1;
         b.setAttribute('data-ja-id', prefix + 'add' + window.__jaCounter);
       }
