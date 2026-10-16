@@ -3727,6 +3727,7 @@ def test_a_postings_register_is_not_pressed_where_the_desk_is_not_making_an_acco
     "Register" is never pressed, with settings.manage_accounts off or in practice mode (which makes no
     account) or on."""
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "STEP_SAVE_WAIT", 1)  # (the stop on the posting is the point, not its save wait)
     monkeypatch.setenv("JOB_APPLY_SECRET_INFOR_PASSWORD", "not-a-real-password")
     if settings != "off":
         manage_accounts(job_apply_home, submit_mode="dry_run" if settings == "practice" else "review")
@@ -8049,12 +8050,14 @@ def test_a_jobs_missing_dates_are_named_not_asked_box_by_box(srv, monkeypatch, j
     assert not [q for q in r.questions if q.get("section", "").startswith("Work Experience")], r.questions
 
 
+@pytest.mark.parametrize("case", ["once", "never", "resumed"])
 def test_a_degree_list_with_no_choices_at_all_is_reloaded_once_then_said_to_have_not_loaded(srv, monkeypatch,
-                                                                                            job_apply_home):
+                                                                                            job_apply_home, case):
     """Grand Canyon University's Workday (run 61; runs 57 to 60 went to its review page): its Degree list opened on
     "Select One" alone, and the card said the list had no choice for the person's Bachelor of Science, to pick "the
     closest honest one". A list with no choice at all didn't finish loading: the page is reloaded once (and filled
-    again), and a list still empty is said to be one the page didn't load."""
+    again), and a list still empty is said to be one the page didn't load. (One case a run, so the three go side by
+    side under -n auto, the review of Oct 15.)"""
     import yaml
 
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
@@ -8078,17 +8081,20 @@ def test_a_degree_list_with_no_choices_at_all_is_reloaded_once_then_said_to_have
         finally:
             await applier.stop()
 
-    r, degree = run(go("?nodegrees=once"))  # (loaded once the page is reloaded)
-    assert any("showed no choices at all, so I reloaded the page" in line for line in r.log), r.log
-    assert degree != "Select One" and "Degree" not in r.reason, (degree, r.reason)
-    assert (r.status, r.need) == ("needs_you", "stuck") and "(From, To)" in r.reason, r.reason  # (the work dates)
-    r, degree = run(go("?nodegrees"))  # (never loaded)
-    assert "list for " in r.reason and "(Degree) showed no choices at all, only its placeholder" in r.reason, r.reason
-    assert "even after I reloaded it" in r.reason and "has no choice for your" not in r.reason, r.reason
-    assert degree == "Select One" and sum("so I reloaded the page" in line for line in r.log) == 1, r.log  # (once)
-    r, _ = run(go("?nodegrees=once&resumed", hands_on=True))  # (after the person's Resume: never reloaded, what they did stays)
-    assert not any("reloaded" in line for line in r.log) and "(Degree) showed no choices at all" in r.reason, r.log
-    assert "even after I reloaded it" not in r.reason, r.reason
+    if case == "once":
+        r, degree = run(go("?nodegrees=once"))  # (loaded once the page is reloaded)
+        assert any("showed no choices at all, so I reloaded the page" in line for line in r.log), r.log
+        assert degree != "Select One" and "Degree" not in r.reason, (degree, r.reason)
+        assert (r.status, r.need) == ("needs_you", "stuck") and "(From, To)" in r.reason, r.reason  # (the work dates)
+    elif case == "never":
+        r, degree = run(go("?nodegrees"))  # (never loaded)
+        assert "list for " in r.reason and "(Degree) showed no choices at all, only its placeholder" in r.reason, r.reason
+        assert "even after I reloaded it" in r.reason and "has no choice for your" not in r.reason, r.reason
+        assert degree == "Select One" and sum("so I reloaded the page" in line for line in r.log) == 1, r.log  # (once)
+    else:
+        r, _ = run(go("?nodegrees=once&resumed", hands_on=True))  # (after the person's Resume: never reloaded, what they did stays)
+        assert not any("reloaded" in line for line in r.log) and "(Degree) showed no choices at all" in r.reason, r.log
+        assert "even after I reloaded it" not in r.reason, r.reason
 
 
 def test_a_degree_list_with_no_choices_at_all_isnt_one_without_a_choice_for_classes(srv):
