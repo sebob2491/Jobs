@@ -125,14 +125,29 @@ class _Hung(Exception):
     """A page's script answered no read within READ_TIMEOUT (it hangs): what it holds is read as nothing."""
 
 
+def _quiet(task: asyncio.Future) -> None:
+    """A read given up on: whatever it ends with is taken, so nothing is logged as never retrieved."""
+    if not task.cancelled():
+        task.exception()
+
+
 async def _bounded(coro: Any, seconds: float | None = None) -> Any:
     """A read of a page that a hung script never answers, given up after READ_TIMEOUT seconds (raises _Hung), so it
     never holds the browser's lock for good (the review of 0.3.188: the title and the page's words were still
-    unbounded after the form read was bounded)."""
+    unbounded after the form read was bounded). Not asyncio.wait_for: on Python 3.10 it drops a cancellation that
+    comes as the read ends, and the desk's worker, told to stop, went on for ever (CI's 3.10 run of 0.3.188)."""
+    task = asyncio.ensure_future(coro)
     try:
-        return await asyncio.wait_for(coro, READ_TIMEOUT if seconds is None else seconds)
-    except asyncio.TimeoutError:
-        raise _Hung() from None
+        done, _ = await asyncio.wait({task}, timeout=READ_TIMEOUT if seconds is None else seconds)
+    except BaseException:  # (this read's own caller cancelled: the read goes too)
+        task.cancel()
+        task.add_done_callback(_quiet)
+        raise
+    if not done:
+        task.cancel()
+        task.add_done_callback(_quiet)
+        raise _Hung()
+    return task.result()
 
 
 async def _page_title(page: Page) -> str:

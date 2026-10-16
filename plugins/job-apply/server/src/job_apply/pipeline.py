@@ -793,12 +793,17 @@ class Applier:
             self._worker_task = asyncio.get_running_loop().create_task(self._worker())
 
     async def stop(self) -> None:
-        if self._worker_task is not None:
-            self._worker_task.cancel()
-            try:
-                await self._worker_task
-            except (asyncio.CancelledError, Exception):
-                pass
+        task = self._worker_task
+        if task is not None:
+            # (cancelled until it has ended: a cancellation dropped on the way (Python 3.10's wait_for drops one that
+            # comes as what it waits on ends) left the worker going on for ever, and this waiting on it, CI's 3.10
+            # run of 0.3.188)
+            while not task.done():
+                task.cancel()
+                await asyncio.wait({task}, timeout=1)
+            if not task.cancelled():
+                with contextlib.suppress(Exception):
+                    task.result()
             self._worker_task = None
 
     def enqueue(self, job_id: int, submit: bool = False, front: bool = False) -> Run:
@@ -1218,10 +1223,13 @@ class Applier:
             browser.strict_tabs = False
 
     async def _sleep(self, seconds: float) -> None:
+        """Wait `seconds`, or until something wakes the queue. (Not asyncio.wait_for, which on Python 3.10 drops a
+        stop that comes as the wake does: stop.)"""
+        waiter = asyncio.ensure_future(self._wake.wait())
         try:
-            await asyncio.wait_for(self._wake.wait(), timeout=seconds)
-        except asyncio.TimeoutError:
-            pass
+            await asyncio.wait({waiter}, timeout=seconds)
+        finally:
+            waiter.cancel()
 
     async def _moved_on(self, run: Run) -> bool:
         """Has the person got the paused tab past its sign-in, check or code? Only on the

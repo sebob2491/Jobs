@@ -10389,3 +10389,50 @@ def test_a_cornerstone_posting_still_loading_is_waited_on_then_its_apply_pressed
     else:
         assert any("clicked \u201cApply Now\u201d" in line for line in r.log), r.log
         assert r.seen_form and "/step" in r.url, (r.url, r.reason, r.log)  # (on into the application's steps)
+
+
+def test_stopping_the_desk_ends_a_worker_that_dropped_a_cancellation(srv):
+    """CI's Python 3.10 run of 0.3.188 hung for good: asyncio.wait_for there drops a cancellation that comes as what it
+    waits on ends, and stop() cancelled the worker once, then waited on it for ever. A worker that drops one is
+    cancelled again until it has ended."""
+    applier = Applier(srv)
+
+    async def stubborn():
+        try:
+            await asyncio.sleep(100)
+        except asyncio.CancelledError:
+            pass  # (dropped, as 3.10's wait_for drops one)
+        await asyncio.sleep(100)
+
+    async def go():
+        worker = applier._worker_task = asyncio.ensure_future(stubborn())
+        await asyncio.sleep(0)
+        stopping = asyncio.ensure_future(applier.stop())
+        done, _ = await asyncio.wait({stopping}, timeout=5)
+        ended = bool(done) and worker.done()
+        for task in (stopping, worker):  # (the old stop, still waiting: let the test end)
+            task.cancel()
+        await asyncio.wait({stopping, worker}, timeout=5)
+        return ended, applier._worker_task
+
+    assert run(go()) == (True, None)
+
+
+def test_a_bounded_read_never_drops_its_callers_cancellation():
+    """The same on a read of the page: a caller cancelled as the read ends is cancelled (Python 3.10's wait_for returned
+    the read instead, and the cancellation was gone)."""
+    from job_apply.browser import _bounded
+
+    async def go():
+        read = asyncio.get_running_loop().create_future()
+        caller = asyncio.ensure_future(_bounded(read, 10))
+        await asyncio.sleep(0)  # (the caller waits on the read)
+        read.set_result("read")
+        caller.cancel()
+        try:
+            await caller
+        except asyncio.CancelledError:
+            return "cancelled"
+        return "returned"
+
+    assert asyncio.run(go()) == "cancelled"
