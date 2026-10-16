@@ -835,7 +835,9 @@ EXTRACT_JS = r"""
   }
 
   const errors = [];
-  for (const el of document.querySelectorAll('[role="alert"], [aria-live="assertive"], [data-automation-id="errorMessage"], [class*="error" i]:not(input):not(select):not(textarea)')) {
+  // (Workday's own alert under a box, data-automation-id="inputAlert": Banner Health's text area, run 99, "Error: The field
+  // … is required and must have a value." in no alert role or "error" class)
+  for (const el of document.querySelectorAll('[role="alert"], [aria-live="assertive"], [data-automation-id="errorMessage"], [data-automation-id="inputAlert"], [class*="error" i]:not(input):not(select):not(textarea)')) {
     // without icon-font glyphs (Amkor's "\ue0b1 Invalid email address or password"; an alert
     // that's only an icon says nothing)
     // (never a button or a link marked aria-live, as BrassRing's "Let's get started" is: probe 81; one that marks itself
@@ -849,6 +851,26 @@ EXTRACT_JS = r"""
     if (/\bpage is loaded\b|^loading\b/i.test(t)) continue;
     if (t && t.length < 300 && visible(el) && !errors.includes(t)) errors.push(t);
     if (errors.length >= 10) break;
+  }
+  // A box marked invalid says what's wrong in what its aria-describedby points at (Workday's field alert, Banner
+  // Health's text area, run 99: the page's own record of the answer shown in it was empty, and its "Error - <the
+  // question>" button in Errors Found was longer than a button's words here, so nothing named the box): read as
+  // the page's error where its words say something's wrong, never a plain hint
+  // (never a box outside the application, a footer's job-alerts email box marked invalid at load, say: the review)
+  alerts: for (const box of document.querySelectorAll('[aria-invalid="true"][aria-describedby]')) {
+    if (sideBox(box) || box.closest(COOKIE_BOX)) continue;
+    for (const id of box.getAttribute('aria-describedby').split(/\s+/)) {
+      const el = id && document.getElementById(id);
+      if (!el || el.matches('input, select, textarea, button, a[href]')) continue;
+      const t = txt(el).replace(/[\uE000-\uF8FF]/g, '').trim();
+      // (a box's own alert quotes its whole question, Workday's over 200 characters: room for one, where a page-wide
+      // alert gets 300; the readers shorten what they show)
+      if (!t || t.length >= 1000 || !/\b(error|required|invalid|must|missing|blank|problem|fix)\b/i.test(t)) continue;
+      const r = el.getBoundingClientRect();
+      if (r.width <= 1 || r.height <= 1) continue;  // (a screen reader's alone, as above)
+      if (errors.length >= 10) break alerts;
+      if (visible(el) && !errors.includes(t)) errors.push(t);
+    }
   }
   const headings = [];
   for (const el of document.querySelectorAll('h1, h2, h3, [data-automation-id="progressBarActiveStep"], [role="heading"]')) {

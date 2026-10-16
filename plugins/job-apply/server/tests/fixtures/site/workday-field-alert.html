@@ -1,0 +1,56 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Apply</title></head>
+<body>
+<!-- like Banner Health's Workday Application Questions (the live check, run 99, Oct 16): a required text area
+     whose answer the page showed but hadn't kept (its own record takes only keys typed into it), so Save and
+     Continue came back to the same step with "Errors Found", whose list holds an "Error - <the question>" button
+     (the whole question, over 200 characters) and the hint "The field <the question> is required and must have a
+     value.", and the box marked aria-invalid, its aria-describedby pointing at Workday's own field alert
+     (<p data-automation-id="inputAlert">): no role="alert", no "error" class and no short "Error-" link anywhere.
+     What's typed into the box key by key is kept; Save and Continue then goes on to the review page. -->
+<ol aria-label="Application Progress">
+  <li data-automation-id="progressBarActiveStep">current step 3 of 6 Application Questions 1 of 2</li>
+  <li>Application Questions 2 of 2</li><li>Voluntary Disclosures</li><li>Review</li>
+</ol>
+<h3>Application Questions 1 of 2</h3>
+<div><abbr>*</abbr> Indicates a required field</div>
+<div id="errors"></div>
+<div data-automation-id="applyFlowPrimaryQuestionsPage">
+  <div role="group" aria-labelledby="primaryQuestionnaire-section">
+    <div data-automation-id="formField-q2">
+      <fieldset>
+        <legend><div id="label-q2"><div data-automation-id="richText"><p><span>Can you provide an example of a situation
+          when you had to value differences, or alternatively, when you should have valued differences? How did you (or
+          would you) acknowledge and appreciate those differences?<abbr title="required" class="requiredAsterisk">*</abbr></span></p></div></div></legend>
+        <div><textarea id="q2" aria-labelledby="label-q2" aria-required="true"></textarea></div>
+      </fieldset>
+    </div>
+  </div>
+</div>
+<button type="button" id="next">Save and Continue</button>
+<script>
+  const q2 = document.getElementById('q2');
+  const QUESTION = 'Can you provide an example of a situation when you had to value differences, or alternatively, when '
+    + 'you should have valued differences? How did you (or would you) acknowledge and appreciate those differences?';
+  let kept = '';  // the page's own record of the box: only what was typed into it, key by key
+  q2.addEventListener('keyup', () => { kept = q2.value; });
+  document.getElementById('next').addEventListener('click', () => {
+    if (!kept.trim()) {
+      document.getElementById('errors').innerHTML = '<h3><button aria-controls="iti1" aria-expanded="true">Errors Found'
+        + '</button></h3><div id="iti1"><div data-automation-id="errorHeading"><ol><li value="1"><div>'
+        + '<button aria-describedby="hint1"><span>Error</span><div aria-hidden="true">-</div>' + QUESTION + '</button>'
+        + '<div id="hint1">The field  ' + QUESTION + '  is required and must have a value.</div></div></li></ol></div></div>';
+      q2.setAttribute('aria-invalid', 'true');
+      q2.setAttribute('aria-describedby', 'error1-q2');
+      if (!document.getElementById('error1-q2')) {
+        q2.insertAdjacentHTML('afterend', '<p id="error1-q2" data-automation-id="inputAlert">Error: The field ' + QUESTION
+          + ' is required and must have a value.</p>');
+      }
+      return;
+    }
+    location.href = 'review.html';
+  });
+</script>
+</body>
+</html>
