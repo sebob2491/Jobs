@@ -2,7 +2,7 @@
 # account there and the common questions answered) to the application's review page, or to its last button.
 # The desk's "Only where the desk goes all the way" switch shows these employers' openings alone.
 # Refresh it from each full nightly before a release: `uv run python scripts/nightly_summary.py --handled`.
-as_of: "2026-10-16: full run 103 (0.3.181)"
+as_of: "2026-10-16: full run 106 (0.3.183); Desert Financial Credit Union and Maricopa County kept from run 105 (in run 106 UKG's sign-in answered 502 Bad Gateway, and Maricopa met a bot check)"
 employers:
   - "Air Liquide"
   - "Air Products"
