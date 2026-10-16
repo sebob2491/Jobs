@@ -711,6 +711,22 @@ EXTRACT_JS = r"""
   // a "consent" box only when it speaks of cookies: not an account's own consent step (Northrop's Eightfold
   // "consentContainer" and its "auth-v2-consent-submit-button", live, Oct 2026)
   const CONSENT_BOX = '[id*="consent" i], [class*="consent" i]';
+  // or a banner known by its words alone (the review of Oct 15): a dialog, or a box fixed to the page, named nothing,
+  // whose opening words speak of cookies ("We use cookies…", "Cookie Notice"), short, with no box to fill in: not a
+  // sticky header with a cookie link, an app's fixed shell or a privacy notice that mentions cookies in passing (its
+  // review)
+  const spoken = (n) => {
+    const t = (n.innerText || n.textContent || '').replace(/\s+/g, ' ').trim();
+    return t.length < 800 && /cookie/i.test(t.slice(0, 40))
+      && !n.querySelector('input:not([type="hidden"]):not([type="checkbox"]):not([type="radio"]):not([type="button"]):not([type="submit"]), select, textarea');
+  };
+  const spokenBox = (n) => {
+    for (; n && n !== document.body && n !== document.documentElement; n = n.parentElement) {
+      const p = getComputedStyle(n).position;
+      if ((p === 'fixed' || p === 'sticky' || n.matches('[role="dialog"], [role="alertdialog"], dialog[open]')) && spoken(n)) return n;
+    }
+    return null;
+  };
   // Buttons drawn as web components (UKG's <ukg-button>, whose real button is in its shadow root) count too,
   // and links whose address is in data-href, followed by the site's script on a click (KPMG's Apply Now).
   const BUTTONS = 'button, [role="button"], input[type="submit"], input[type="button"], a[href], a[data-href], '
@@ -757,7 +773,7 @@ EXTRACT_JS = r"""
     // A cookie banner's own buttons (OneTrust's sits at the very end of a long page, past
     // the page text the desk reads)
     const consent = el.closest(CONSENT_BOX);
-    const box = el.closest(COOKIE_BOX) || (consent && /cookie/i.test(consent.innerText || '') ? consent : null);
+    const box = el.closest(COOKIE_BOX) || (consent && /cookie/i.test(consent.innerText || '') ? consent : null) || spokenBox(el);
     if (box && box !== document.body && box !== document.documentElement) a.cookie = true;
     if (formSubmit) a.form_submit = true;
     if (isSubmit) a.is_submit = true;
@@ -1034,7 +1050,21 @@ ELEMENT_INFO_JS = r"""
   const page = (n) => n === document.body || n === document.documentElement;
   // the whole banner: the outermost cookie/consent box around it (OneTrust's accept button is
   // a box of its own by its id, inside the banner holding its "Reject All")
-  const near = el.closest(BOX);
+  // (or a banner known by its words alone: a dialog, or a box fixed to the page, named nothing, whose opening words
+  // speak of cookies, short, with no box to fill in: the review of Oct 15, narrowed by its review)
+  const spoken = (n) => {
+    const t = (n.innerText || n.textContent || '').replace(/\s+/g, ' ').trim();
+    return t.length < 800 && /cookie/i.test(t.slice(0, 40))
+      && !n.querySelector('input:not([type="hidden"]):not([type="checkbox"]):not([type="radio"]):not([type="button"]):not([type="submit"]), select, textarea');
+  };
+  const spokenBox = (n) => {
+    for (; n && !page(n); n = n.parentElement) {
+      const p = getComputedStyle(n).position;
+      if ((p === 'fixed' || p === 'sticky' || n.matches('[role="dialog"], [role="alertdialog"], dialog[open]')) && spoken(n)) return n;
+    }
+    return null;
+  };
+  const near = el.closest(BOX) || spokenBox(el);
   let banner = null;
   for (let n = near; n && !page(n); n = n.parentElement && n.parentElement.closest(BOX)) banner = n;
   // a "consent" box only when it speaks of cookies, not an application's own consent step

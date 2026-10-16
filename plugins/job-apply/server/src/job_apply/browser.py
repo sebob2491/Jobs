@@ -51,7 +51,8 @@ def final_text(text: str) -> str:
     arrow_forward" (an icon font's ligature), "Apply!" -> "Apply Now", "Apply", "Apply"."""
     text = re.sub(r"\s+(arrow_forward|arrow_right_alt|chevron_right|navigate_next|east)$", "", text.strip(), flags=re.I)
     return re.sub(r"[\s\u203a\u00bb\u2192>!.]+$", "", text).strip()
-# Words that send an application from any button, a form's or not: refused in a dry run
+# Words that send an application from any button, a form's or not: refused in every mode (the review of Oct 15: in
+# review mode a click on "Finish" could send the application without the person's Submit)
 _SENDS = re.compile(r"^(send( now| (my )?application)?|finish( (my )?application)?|complete (my )?application|"
                     r"confirm and send)$", re.I)
 # An agreement's button that also sends the application ("I Accept and Apply"): the person's
@@ -2198,8 +2199,14 @@ class BrowserSession:
                 f"{label!r} looks like the final submit button. Use submit_application "
                 "(after the user confirms), or let the user click it in the browser."
             )
-        # (a page's script can send the application from a plain button: "Finish", "Send")
-        if info.get("formSubmit") and not NAVIGATION_RE.match(text) and not opens or _SENDS.match(final_text(text)):
+        # (a page's script can send the application from a plain button: "Finish", "Send": never pressed here, in
+        # any mode; the person's Submit goes through submit_application, which reads the page for itself)
+        if _SENDS.match(final_text(text)):
+            # (and submit_application finds only a page's submit button, not a plain one with these words: the person
+            # presses it, the review of 0.3.176)
+            raise SubmitBlocked(f"{label!r} may send the application, so the click tool never presses it. Ask the user to "
+                                "press it in the browser window, then record the application with update_job.")
+        if info.get("formSubmit") and not NAVIGATION_RE.match(text) and not opens:
             settings = config.Profile.load().settings
             # The live check's test identity agrees to notices in practice mode (Settings.may_accept_notices):
             # a form's button the desk found agrees to one (iCIMS's "I Acknowledge the Privacy Notice"), and

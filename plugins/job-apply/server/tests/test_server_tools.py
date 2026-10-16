@@ -711,8 +711,71 @@ def test_practice_mode_doesnt_press_a_plain_button_that_sends(srv, monkeypatch):
         return [await srv.click(name) for name in ("Finish", "Send")]
 
     for out in run(go()):
-        assert out["clicked"] is False and "Dry run" in out["blocked"], out
+        assert out["clicked"] is False and "may send the application" in out["blocked"], out
     assert sent == []
+
+
+@needs_browser
+def test_a_plain_button_that_sends_is_never_pressed_by_the_click_tool(srv, monkeypatch):
+    """The review of Oct 15: "Finish" and "Send" (a page's script sends the application from them) were refused in
+    practice mode only; in review mode Claude's click would have sent the application without the person's Submit.
+    They go through submit_application in every mode."""
+    monkeypatch.delenv("JOB_APPLY_NEVER_SUBMIT", raising=False)
+    sent: list[str] = []
+
+    async def route(r):
+        if r.request.method == "POST":
+            sent.append(r.request.url)
+        return await r.fulfill(status=200, content_type="text/html", body=SCRIPTED_SEND)
+
+    async def go():
+        await srv.browser._launch()
+        await srv.browser._ctx.route("**/*", route)
+        await srv.browser.goto("https://jobs.contoso.example/apply")
+        return [await srv.click(name) for name in ("Finish", "Send")]
+
+    for out in run(go()):
+        assert out["clicked"] is False and "may send the application" in out["blocked"], out
+        assert "Dry run" not in out["blocked"] and "press it in the browser" in out["blocked"], out
+    assert sent == []
+
+
+@needs_browser
+def test_a_cookie_banner_known_by_its_words_alone_is_never_accepted(srv):
+    """The review of Oct 15: the click tool knew a cookie banner by its box's names (cookie, consent, onetrust, gdpr)
+    alone; a banner that says it's about cookies in its words, in a box named nothing and with no dialog role, took
+    an Accept. Its words are read too; its Decline is still pressed."""
+    from conftest import fixture_url
+
+    async def go():
+        await srv.browser.goto(fixture_url("site/cookie-words.html"))
+        accept = await srv.click("Accept")
+        accepted = await srv.browser._page.evaluate("() => window.accepted || 0")
+        decline = await srv.click("Decline")
+        return accept, accepted, decline
+
+    accept, accepted, decline = run(go())
+    assert accept["clicked"] is False and "aren't accepted" in accept["blocked"] and accepted == 0, accept
+    assert decline["clicked"] is True, decline
+
+
+@needs_browser
+def test_a_sticky_header_with_a_cookie_link_or_a_fixed_shell_isnt_a_cookie_banner(srv):
+    """The review of 0.3.176: a box fixed or sticky to the page that merely mentions cookies (a site header's Cookie
+    Policy link, an app's fixed shell, a notice with cookies in passing) must not make the buttons in it a banner's:
+    the sign-in's own "Sign In" and a terms "I agree" are pressed as before."""
+    from conftest import fixture_url
+
+    async def go():
+        await srv.browser.goto(fixture_url("site/cookie-header.html"))
+        actions = (await srv.inspect_form(False))["actions"]
+        agree = await srv.click("I agree")
+        sign_in = await srv.click("Sign In")
+        return actions, agree, sign_in, await srv.browser._page.evaluate("() => [window.agreed || 0, window.signedIn || 0]")
+
+    actions, agree, sign_in, pressed = run(go())
+    assert not any(a.get("cookie") for a in actions), actions
+    assert agree["clicked"] is True and sign_in["clicked"] is True and pressed == [1, 1], (agree, sign_in, pressed)
 
 
 @needs_browser
