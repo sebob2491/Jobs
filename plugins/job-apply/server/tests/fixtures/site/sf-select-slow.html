@@ -12,7 +12,9 @@
      Gender and Ethnicity, Oct 2026): a "paginated select" whose entries are fetched from the server the first time the
      list opens, a few seconds on their servers (?slow=<ms>: the list opens empty, its entries drawn that long after;
      every later opening shows them at once; &placeholderfirst: the first opening shows "No Selection" alone until
-     then, as Amkor's list opens). "No Selection" is the empty choice. -->
+     then, as Amkor's list opens); &nolist: the list isn't in the page at all until its entries came, nor the box said
+     expanded (as Edwards Vacuum's and Freeport-McMoRan's draw theirs, run 111), and goes from the page again when
+     closed. "No Selection" is the empty choice. -->
 <h1>Career Opportunities: Equipment Technician (10557)</h1>
 <form id="apply" novalidate>
   <label for="fn">Legal First Name *</label><input id="fn" required>
@@ -31,9 +33,12 @@
   const PLACEHOLDER_FIRST = new URLSearchParams(location.search).has('placeholderfirst');
   const all = ['No Selection', 'I am a protected veteran', 'I am a veteran but not a protected veteran',
                'I am not a protected veteran', 'I choose not to self-identify'];
+  const NOLIST = new URLSearchParams(location.search).has('nolist');
   const box = document.getElementById('51:_input');
   const list = document.getElementById(box.getAttribute('aria-owns'));
-  let fetched = false;
+  const holder = list.parentElement;
+  if (NOLIST) list.remove();
+  let fetched = false, wanted = false;
   const draw = () => {
     const q = box.value.trim().toLowerCase();
     list.innerHTML = '';
@@ -47,6 +52,12 @@
     }
   };
   const show = () => {
+    wanted = true;
+    if (NOLIST && !fetched) {  // (nothing drawn, nothing said, till the entries came)
+      setTimeout(() => { fetched = true; if (wanted) show(); }, SLOW);
+      return;
+    }
+    if (NOLIST && !list.isConnected) holder.append(list);
     list.classList.add('open');
     box.setAttribute('aria-expanded', 'true');
     if (fetched || !SLOW) { fetched = true; draw(); return; }
@@ -59,7 +70,12 @@
     }
     setTimeout(() => { fetched = true; if (list.classList.contains('open')) draw(); }, SLOW);
   };
-  const close = () => { list.classList.remove('open'); box.setAttribute('aria-expanded', 'false'); };
+  const close = () => {
+    wanted = false;
+    list.classList.remove('open');
+    box.setAttribute('aria-expanded', 'false');
+    if (NOLIST) list.remove();
+  };
   box.addEventListener('click', show);
   document.getElementById('51:_selectButton').addEventListener('click', () => { box.focus(); show(); });
   box.addEventListener('keyup', (e) => { if (e.key === 'Escape') close(); else show(); });

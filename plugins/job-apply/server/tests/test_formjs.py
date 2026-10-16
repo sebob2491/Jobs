@@ -527,3 +527,101 @@ def test_a_form_whose_kind_is_a_job_alert_is_beside_the_application(srv, tmp_pat
                        'type="email"><label for="c">Category</label><select id="c"><option>A</option></select><label '
                        'for="l">Location</label><input id="l"><button type="submit">Submit</button></form>')
     assert fields and all(f.get("aside") for f in fields), fields
+
+
+def test_a_groups_question_written_inside_it_as_a_paragraph_is_its_label(srv, tmp_path):
+    """The review of Oct 15: a radio group whose question is written inside its fieldset as a plain paragraph (no
+    legend) read as label "", so nothing could answer it. Its first words before the first choice are its question; a
+    choice's own label never is, and a legend still comes first."""
+    got = fields_of(srv, tmp_path, '<fieldset><input type="radio" name="x0" value="a" id="x0a"><label for="x0a">A</label>'
+                                   '<input type="radio" name="x0" value="b" id="x0b"><label for="x0b">B</label></fieldset>'
+                                   '<fieldset><p>Are you at least 18 years of age?</p>'
+                                   '<div><input type="radio" name="q1" value="yes" id="q1y"><label for="q1y">Yes</label>'
+                                   '<input type="radio" name="q1" value="no" id="q1n"><label for="q1n">No</label></div>'
+                                   '</fieldset>'
+                                   '<fieldset><label for="q2y">Yes</label><input type="radio" name="q2" id="q2y">'
+                                   '<label for="q2n">No</label><input type="radio" name="q2" id="q2n"></fieldset>'
+                                   '<fieldset><legend>Do you need sponsorship?</legend><p>Choose one.</p>'
+                                   '<input type="radio" name="q3" id="q3y"><label for="q3y">Yes</label>'
+                                   '<input type="radio" name="q3" id="q3n"><label for="q3n">No</label></fieldset>')
+    labels = [f["label"] for f in got if f["kind"] == "radio_group"]
+    assert labels[1:] == ["Are you at least 18 years of age?", "", "Do you need sponsorship?"], labels
+
+
+def test_a_box_in_a_wrapper_folded_shut_isnt_read_as_shown(srv, tmp_path):
+    """The review of Oct 15: a box inside a wrapper folded shut (an accordion closed: height 0, its overflow hidden)
+    keeps its own size, and was read as shown: the desk filled, or asked about, a box the person can't see. An open
+    wrapper's box is read as before."""
+    got = fields_of(srv, tmp_path, '<div style="height: 0; overflow: hidden"><label for="a">Folded Box</label>'
+                                   '<input id="a"></div>'
+                                   '<div style="overflow: hidden"><label for="b">Open Box</label><input id="b"></div>'
+                                   '<label for="c">Plain Box</label><input id="c">')
+    assert [f["label"] for f in got] == ["Open Box", "Plain Box"]
+    # (the review of 0.3.188: a fixed dialog, a modal dialog and a box placed against a wrapper outside the folded one
+    # are drawn wherever the folded wrapper is: read)
+    got = fields_of(srv, tmp_path, '<div style="overflow: hidden"><div role="dialog" aria-modal="true" style="position: '
+                                   'fixed; inset: 10%; background: #fff"><label for="fn">Fixed Box</label><input id="fn">'
+                                   '</div></div>'
+                                   '<div style="overflow: hidden"><dialog id="d"><label for="u">Modal Box</label>'
+                                   '<input id="u"></dialog></div><script>document.getElementById("d").showModal()</script>')
+    assert [f["label"] for f in got] == ["Fixed Box", "Modal Box"], got
+    got = fields_of(srv, tmp_path, '<div style="position: relative"><div style="overflow: hidden"><div style="position: '
+                                   'absolute; top: 40px"><label for="a">Placed Box</label><input id="a"></div></div></div>')
+    assert [f["label"] for f in got] == ["Placed Box"], got
+
+
+def test_a_progress_bar_drawn_fully_transparent_is_no_sign_of_loading(srv, tmp_path):
+    """The review of Oct 15: a progress bar left on the page at opacity 0 (itself or a wrapper) kept the page "busy",
+    and the desk waited for nothing. One that can be seen still is."""
+    page = tmp_path / "form.html"
+    bar = '<div role="progressbar" style="width: 200px; height: 8px; background: #08c"></div>'
+    for wrap, busy in (("{}", True), ('<div style="opacity: 0">{}</div>', False),
+                       (bar.replace('background', 'opacity: 0; background'), False)):
+        page.write_text('<!doctype html><html><body><label for="n">Name</label><input id="n">'
+                        + (wrap.format(bar) if "{}" in wrap else wrap) + '</body></html>', encoding="utf-8")
+        run(srv.browser.goto(page.resolve().as_uri()))
+        assert bool(run(srv.browser.inspect(include_dropdown_options=False)).get("busy")) is busy, wrap
+
+
+def test_an_id_a_page_set_itself_is_never_made_into_a_selector(srv, tmp_path):
+    """The review of Oct 15: the form reader kept a data-ja-id a page had set itself, and the desk's selectors were
+    made from it: one with quotes in it could steer a fill to another box. Only an id of the reader's own shape is kept;
+    a selector is never made from any other."""
+    from job_apply.browser import _by_ja_id
+
+    got = fields_of(srv, tmp_path, '<label for="a">Name</label><input id="a" data-ja-id=\'x"], [id="b\'>'
+                                   '<label for="b">Other</label><input id="b">')
+    assert all('"' not in f["id"] and "]" not in f["id"] for f in got), got
+    # (a group's id too: the review of 0.3.188)
+    got = fields_of(srv, tmp_path, '<fieldset data-ja-gid=\'x"], [id="b\'><legend>Pick one</legend>'
+                                   '<input type="radio" name="r" id="r1" data-ja-gid-member=\'x"], [id="b\'>'
+                                   '<label for="r1">A</label><input type="radio" name="r" id="r2"><label for="r2">B</label>'
+                                   '</fieldset><input id="b">')
+    assert all('"' not in f["id"] and "]" not in f["id"] for f in got), got
+    assert _by_ja_id("f2-abc17.0") == '[data-ja-id="f2-abc17.0"]'
+    for bad in ('x"], [id="b', "a b", ""):
+        with pytest.raises(KeyError):
+            _by_ja_id(bad)
+
+
+def test_each_question_in_one_fieldset_is_its_own_and_a_hint_inside_a_group_isnt_one(srv, tmp_path):
+    """The review of 0.3.188: a fieldset holding several questions gave each group the first question's words (the
+    desk then ticked "Yes" to needing sponsorship from the age answer); a hint inside a group ("Select one") beat the
+    question written before it; a hidden "This field is required" became a label."""
+    got = fields_of(srv, tmp_path, '<h1>Application Questions</h1><fieldset><p>Are you at least 18 years of age?</p>'
+                                   '<div><input type="radio" name="age" id="a1"><label for="a1">Yes</label>'
+                                   '<input type="radio" name="age" id="a2"><label for="a2">No</label></div>'
+                                   '<p>Will you now or in the future require visa sponsorship?</p>'
+                                   '<div><input type="radio" name="spon" id="s1"><label for="s1">Yes</label>'
+                                   '<input type="radio" name="spon" id="s2"><label for="s2">No</label></div></fieldset>'
+                                   '<div><span>Do you have a valid driver\'s license?</span><fieldset>'
+                                   '<span class="hint">Select one</span><input type="radio" name="dl" id="d1">'
+                                   '<label for="d1">Yes</label><input type="radio" name="dl" id="d2"><label for="d2">No'
+                                   '</label></fieldset></div>'
+                                   '<p>Are you legally authorized to work in the United States?</p><div role="radiogroup">'
+                                   '<div style="display:none">This field is required</div><input type="radio" name="w" '
+                                   'id="w1"><label for="w1">Yes</label><input type="radio" name="w" id="w2"><label '
+                                   'for="w2">No</label></div>')
+    assert [f["label"] for f in got if f["kind"] == "radio_group"] == [
+        "Are you at least 18 years of age?", "Will you now or in the future require visa sponsorship?",
+        "Do you have a valid driver's license?", "Are you legally authorized to work in the United States?"]

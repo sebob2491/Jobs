@@ -774,11 +774,17 @@ def test_an_apply_menu_is_followed_through_to_the_application(srv, monkeypatch):
     assert r.url.endswith("/signin.html")
 
 
-@pytest.mark.parametrize("page, button", [("cookie-form.html", "Reject"), ("cookie-words.html", "Decline")],
-                         ids=["dialog", "words-only"])
+@pytest.mark.parametrize("page, button", [("cookie-form.html", "Reject"), ("cookie-words.html", "Decline"),
+                                          ("cookie-unnamed-c1-privacy-dialog.html", "Reject All"),
+                                          ("cookie-unnamed-c2-long-fixed.html", "Decline"),
+                                          ("cookie-unnamed-c3-heading-first.html", "Reject"),
+                                          ("cookie-unnamed-c5-ketch-like.html", "Reject All")],
+                         ids=["dialog", "words-only", "unnamed-dialog", "long-bar", "heading-first", "ketch-like"])
 def test_cookie_dialog_is_declined_never_accepted(srv, monkeypatch, page, button):
     """Infineon's cookie dialog covers the whole form; the desk presses Reject, never Accept. A banner known by its
-    words alone (0.3.176: a fixed bar named nothing) is declined the same way."""
+    words alone (0.3.176: a fixed bar named nothing) is declined the same way, and so are the ones the form reader
+    doesn't know by their names (a privacy dialog about cookies, a long bar, cookies said after a heading: the review
+    of 0.3.188 found 0.3.188's first guard left them over the form)."""
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
     job = srv.add_job(url=fixture_url(f"site/{page}"), title="FSE", company="Example Fab")["job"]
     applier = Applier(srv)
@@ -795,6 +801,28 @@ def test_cookie_dialog_is_declined_never_accepted(srv, monkeypatch, page, button
     r, accepted = run(go())
     assert r.status == "ready", (r.reason, r.log)
     assert f"declined cookies (“{button}”)" in r.log and accepted == 0, r.log
+
+
+def test_a_bare_decline_on_a_dialog_that_isnt_a_cookie_banner_is_never_pressed(srv, monkeypatch):
+    """The review of Oct 15: on a page whose text speaks of cookies anywhere (a footer's "This site uses cookies"), any
+    bare "Decline" or "Reject" was pressed as a cookie banner's, though here it declines the application's data-privacy
+    statement (SuccessFactors draws one over its form), and the application went nowhere. A bare decline is pressed
+    only inside a cookie banner; one that names cookies ("Decline cookies", "Necessary only") as before."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    job = srv.add_job(url=fixture_url("site/privacy-dialog-decline.html"), title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r, await r.page.evaluate("() => window.declined || 0")
+        finally:
+            await applier.stop()
+
+    r, declined = run(go())
+    assert declined == 0 and not any(line.startswith("declined cookies") for line in r.log), (r.reason, r.log)
 
 
 def test_a_cookie_banner_with_no_way_to_decline_is_the_persons_unless_they_allow_it(srv, monkeypatch, job_apply_home):
@@ -1627,7 +1655,9 @@ def test_a_data_privacy_statement_that_also_signs_up_for_marketing_is_the_person
     assert (r.status, r.need) == ("needs_you", "sign_in"), (r.status, r.reason, r.log)
     assert "asks you to read and accept its data privacy statement" in r.reason, r.reason
     assert "I tried to open it and accept it for you, and couldn't." in r.reason, r.reason
-    assert kept == {"opened": 1}, kept  # opened, and nothing else: not accepted, declined or closed
+    # opened (once, or again after its wait on a slow machine: Windows' runner), and nothing else: not accepted, declined
+    # or closed (the review of Oct 15)
+    assert set(kept) == {"opened"} and kept["opened"] >= 1, kept
     assert not any("agreed to" in line or "created your account" in line for line in r.log), r.log
 
 
@@ -2623,7 +2653,8 @@ def test_a_sign_in_step_still_loading_is_reloaded_once_then_said_not_taken_for_o
 
 def test_a_resume_from_a_stop_is_never_followed_by_a_reload_of_the_persons_page(srv):
     """The review of 0.3.147: a page still loading after the person's own Resume from a stop (what they typed there by
-    hand) is said, never reloaded away; a Resume after questions answered on the desk may still be reloaded once."""
+    hand) is said, never reloaded away. A Resume from a questions card is the person's hands on the page too (the review
+    of Oct 15): its run is marked so, and test_a_loading_step_after_a_questions_resume_is_said_not_reloaded drives it."""
     applier = Applier(srv)
     job = srv.add_job(url=fixture_url("site/workday-sections-loading.html"), title="Clerk", company="Example Bank")["job"]
     r = applier.enqueue(job["id"])
@@ -2633,7 +2664,35 @@ def test_a_resume_from_a_stop_is_never_followed_by_a_reload_of_the_persons_page(
                         company="Example Bank")["job"]
     q = applier.enqueue(other["id"])
     q.status, q.need = "needs_you", "questions"
-    assert not applier.resume(other["id"]).load_reloaded
+    assert applier.resume(other["id"]).hands_on
+
+
+def test_a_loading_step_after_a_questions_resume_is_said_not_reloaded(srv, monkeypatch):
+    """The review of Oct 15: the person answered a questions card by typing into the page itself (the card's Resume is
+    for that too), and the desk, landing on a step still loading, reloaded it, and what they typed was gone. After any
+    Resume of the person's, a page still loading is said, as after a stop's."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 1)
+    monkeypatch.setattr(pipeline, "STEP_LOAD_WAIT", 2)
+    job = srv.add_job(url=fixture_url("site/workday-sections-loading.html"), title="Branch Coordinator",
+                      company="Example Bank")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        r = applier.enqueue(job["id"])
+        r.status, r.need = "needs_you", "questions"
+        applier.resume(job["id"])
+        applier.start()
+        try:
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert not any("reloaded it" in line for line in r.log), r.log
+    assert (r.status, r.need) == ("needs_you", "stuck") and "didn't finish loading" in r.reason, (r.reason, r.log)
+    assert "after a wait," in r.reason and "a reload" not in r.reason.split("so there's")[0], r.reason  # (none happened)
 
 
 @pytest.mark.parametrize("query", ["", "?heal"])
@@ -8906,13 +8965,15 @@ def test_an_empty_block_the_desk_added_in_a_frame_is_deleted_when_the_saved_one_
     assert blocks == [["Education 1", "1"]], (blocks, r.log)
 
 
-@pytest.mark.parametrize("query, picked", [("?slow=6000", True), ("?slow=6000&placeholderfirst", True), ("?slow=20000", False)])
+@pytest.mark.parametrize("query, picked", [("?slow=6000", True), ("?slow=6000&placeholderfirst", True),
+                                           ("?slow=6000&nolist", True), ("?slow=20000", False)])
 def test_a_self_identification_list_that_fetches_its_choices_on_first_open_is_waited_on(srv, monkeypatch, query, picked):
     """SuccessFactors' paginated selects (Freeport-McMoRan's Ethnicity, Edwards Vacuum's Protected Veteran, Rogers'
     Gender and Ethnicity: 20 of the live check's runs) fetch their entries when first opened, a few seconds on their
     servers: the desk read no choices in its two and a half seconds and asked the person, though the list's "I choose
     not to self-identify" is the profile's own answer. A list open and still empty, or on its "No Selection" alone,
-    is waited on (PICK_LIST_WAIT, 8 s); one still empty after that is asked about as before."""
+    or not drawn at all yet (&nolist: Edwards' and Freeport's in run 111, where 0.3.185's wait never began), is waited
+    on (PICK_LIST_WAIT, 10 s); one still empty after that is asked about as before."""
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
     job = srv.add_job(url=fixture_url("site/sf-select-slow.html") + query, title="ET", company="Example Semi")["job"]
     applier = Applier(srv)
@@ -9202,8 +9263,11 @@ def test_the_tabs_of_jobs_that_went_in_are_closed_but_the_newest_few(srv, monkey
         applier.start()
         try:
             runs = [applier.enqueue(j["id"], submit=True) for j in jobs]
+            states = [state(r) for r in runs]
+            # (a callable, as until() calls it: a list raised TypeError and lost the diagnostic; and the time a six-job
+            # queue takes on Windows' runner: the review of Oct 15)
             await until(lambda: all(r.status not in ("queued", "running") for r in runs) and applier.current is None,
-                        about=[state(r) for r in runs])
+                        timeout=180, about=lambda: [s() for s in states])
             await asyncio.sleep(0.5)
             return runs, [r.page is not None and not r.page.is_closed() for r in runs]
         finally:
@@ -10325,3 +10389,50 @@ def test_a_cornerstone_posting_still_loading_is_waited_on_then_its_apply_pressed
     else:
         assert any("clicked \u201cApply Now\u201d" in line for line in r.log), r.log
         assert r.seen_form and "/step" in r.url, (r.url, r.reason, r.log)  # (on into the application's steps)
+
+
+def test_stopping_the_desk_ends_a_worker_that_dropped_a_cancellation(srv):
+    """CI's Python 3.10 run of 0.3.188 hung for good: asyncio.wait_for there drops a cancellation that comes as what it
+    waits on ends, and stop() cancelled the worker once, then waited on it for ever. A worker that drops one is
+    cancelled again until it has ended."""
+    applier = Applier(srv)
+
+    async def stubborn():
+        try:
+            await asyncio.sleep(100)
+        except asyncio.CancelledError:
+            pass  # (dropped, as 3.10's wait_for drops one)
+        await asyncio.sleep(100)
+
+    async def go():
+        worker = applier._worker_task = asyncio.ensure_future(stubborn())
+        await asyncio.sleep(0)
+        stopping = asyncio.ensure_future(applier.stop())
+        done, _ = await asyncio.wait({stopping}, timeout=5)
+        ended = bool(done) and worker.done()
+        for task in (stopping, worker):  # (the old stop, still waiting: let the test end)
+            task.cancel()
+        await asyncio.wait({stopping, worker}, timeout=5)
+        return ended, applier._worker_task
+
+    assert run(go()) == (True, None)
+
+
+def test_a_bounded_read_never_drops_its_callers_cancellation():
+    """The same on a read of the page: a caller cancelled as the read ends is cancelled (Python 3.10's wait_for returned
+    the read instead, and the cancellation was gone)."""
+    from job_apply.browser import _bounded
+
+    async def go():
+        read = asyncio.get_running_loop().create_future()
+        caller = asyncio.ensure_future(_bounded(read, 10))
+        await asyncio.sleep(0)  # (the caller waits on the read)
+        read.set_result("read")
+        caller.cancel()
+        try:
+            await caller
+        except asyncio.CancelledError:
+            return "cancelled"
+        return "returned"
+
+    assert asyncio.run(go()) == "cancelled"

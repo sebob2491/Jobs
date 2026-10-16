@@ -402,6 +402,8 @@ _AVOID = re.compile(r"autofill|with resume|resume parse|sign ?in|log ?in|create 
 # never pressed for the person
 _AGREEMENT = re.compile(r"^(?:i )?(?:acknowledge|agree|accept|consent)\b.*\b(?:notice|terms|policy|privacy|statement|"
                         r"agreement|conditions)\b|^i (?:acknowledge|agree|accept|consent)\b", re.I)
+# A decline button's own words that say it's a cookie banner's ("Decline cookies", "Necessary only", "Reject optional")
+_NAMES_COOKIES = re.compile(r"cookie|necessary|essential|optional", re.I)
 _EXPERIENCE_PAGE = re.compile(r"my experience|work experience|employment history", re.I)
 # A note laid over the page (Nikon's UKG board: "Accessibility Note") with nothing else to press.
 _DISMISS_NOTE = re.compile(r"^(dismiss(?: (?:note|notice|message))?|close (?:note|notice|message))$", re.I)
@@ -791,12 +793,17 @@ class Applier:
             self._worker_task = asyncio.get_running_loop().create_task(self._worker())
 
     async def stop(self) -> None:
-        if self._worker_task is not None:
-            self._worker_task.cancel()
-            try:
-                await self._worker_task
-            except (asyncio.CancelledError, Exception):
-                pass
+        task = self._worker_task
+        if task is not None:
+            # (cancelled until it has ended: a cancellation dropped on the way (Python 3.10's wait_for drops one that
+            # comes as what it waits on ends) left the worker going on for ever, and this waiting on it, CI's 3.10
+            # run of 0.3.188)
+            while not task.done():
+                task.cancel()
+                await asyncio.wait({task}, timeout=1)
+            if not task.cancelled():
+                with contextlib.suppress(Exception):
+                    task.result()
             self._worker_task = None
 
     def enqueue(self, job_id: int, submit: bool = False, front: bool = False) -> Run:
@@ -1216,10 +1223,13 @@ class Applier:
             browser.strict_tabs = False
 
     async def _sleep(self, seconds: float) -> None:
+        """Wait `seconds`, or until something wakes the queue. (Not asyncio.wait_for, which on Python 3.10 drops a
+        stop that comes as the wake does: stop.)"""
+        waiter = asyncio.ensure_future(self._wake.wait())
         try:
-            await asyncio.wait_for(self._wake.wait(), timeout=seconds)
-        except asyncio.TimeoutError:
-            pass
+            await asyncio.wait({waiter}, timeout=seconds)
+        finally:
+            waiter.cancel()
 
     async def _moved_on(self, run: Run) -> bool:
         """Has the person got the paused tab past its sign-in, check or code? Only on the
@@ -2289,8 +2299,8 @@ class Applier:
                     continue
             # a page still loading that nothing else explains the stop of (an agreement to press, a bot check, a closed
             # posting or a site down are said for what they are, the review of 0.3.147), and one the desk may reload
-            # (once a job; never after a Submit was pressed, as a reload may send a form again, nor after the person's
-            # own Resume from a stop, as what they typed there would go: Applier.resume)
+            # (once a job; never after a Submit was pressed, as a reload may send a form again, nor after any Resume of the
+            # person's, a questions card's too, as what they typed there would go: Applier.resume, run.hands_on)
             reloadable = loading and _agreement_button(data) is None and not data.get("captcha") and not _BOT_BADGE.search(
                 " ".join([text[:3000], *(a.get("text") or "" for a in data.get("actions") or [])])) \
                 and not _closed_notice(data, text) and not _maintenance_page(data) and not _account_step(data) \
@@ -2300,7 +2310,10 @@ class Applier:
             # (Workday's application frame left empty is a step still loading, GCU's after its sign-in, run 91; not the
             # one its "Something went wrong" refresh brought back, nor that page after Resume: the site's, said below,
             # 0.3.158 and 0.3.171, the review of 0.3.172)
-            may_reload = reloadable and not run.load_reloaded and not run.pressed_before and run.page is not None
+            # (nor after any Resume of the person's, a questions card's too: what they typed into the page would go, the
+            # review of Oct 15, as for every other reload here)
+            may_reload = reloadable and not run.load_reloaded and not run.pressed_before and not run.hands_on \
+                and run.page is not None
             if action is None and sign_in_step and not may_reload:
                 # Workday's sign-in step whose sign-in buttons never drew (Applied's, now and then):
                 # read as an ordinary page, so only a change from this one is the person past it. One still loading
@@ -2344,13 +2357,15 @@ class Applier:
                             await run.page.reload(wait_until="load")
                         continue
                     await self._bring_forward(run)
+                    # (a reload only if there was one: never after the person's Resume, the review of 0.3.188)
+                    waited_for = "a wait and a reload" if run.load_reloaded and not run.hands_on else "a wait"
                     if data.get("empty_frame"):
                         return self._pause(run, "stuck", f"{_site(run, data)}'s page didn't finish loading: the "
-                                           "application never came up between the site's header and footer, after a wait "
-                                           "and a reload, so there's no way on yet. Reload it in the browser window (or "
+                                           f"application never came up between the site's header and footer, after "
+                                           f"{waited_for}, so there's no way on yet. Reload it in the browser window (or "
                                            "try again later), then press Resume.")
                     return self._pause(run, "stuck", f"{_site(run, data)}'s page didn't finish loading: parts of it still "
-                                       "showed their loading placeholders after a wait and a reload, so there's no way on "
+                                       f"showed their loading placeholders after {waited_for}, so there's no way on "
                                        "yet. Reload it in the browser window (or try again later), then press Resume.")
                 if greyed:
                     said = "; ".join(e for e in data.get("errors") or [] if _errorish(e))[:300] \
@@ -4044,8 +4059,14 @@ class Applier:
         a long page the banner comes after the part of the text that's read."""
         mentioned = "cookie" in text.lower()
         actions = [a for a in data.get("actions") or [] if not a.get("disabled")]
+        # (in a cookie banner, or on a page that speaks of cookies; but with a dialog open that isn't a cookie banner (an
+        # application's data-privacy statement: the review of Oct 15), only a button whose own words name cookies or the
+        # necessary ones: its bare "Decline" is that dialog's. A banner the reader doesn't know by its names, a dialog
+        # about cookies or a bar along the edge, is declined as before: the review of 0.3.188)
+        other_dialog = any(not d.get("cookie") for d in data.get("dialogs") or [])
         button = next((a for a in actions if declines_cookies(a.get("text", ""), bool(a.get("cookie")))
-                       and (mentioned or a.get("cookie"))), None)
+                       and (a.get("cookie") or mentioned and (not other_dialog
+                                                              or _NAMES_COOKIES.search(a.get("text", ""))))), None)
         if button is not None:
             result = await self.srv.click(button["id"])
             if result.get("clicked"):
