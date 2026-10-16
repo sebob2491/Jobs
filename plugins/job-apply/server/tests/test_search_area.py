@@ -129,6 +129,25 @@ def test_job_titles_are_saved_for_find_jobs_one_each(job_apply_home):
     assert search.search_area()["titles"] == [] and target_query(config.Profile.load()).startswith("field service")
 
 
+def test_a_title_ending_in_a_backslash_or_written_as_one_value_is_read_as_written(job_apply_home):
+    """The review of 0.3.195: a title saved ending in a backslash ("Tech \\") was read back as a quote left open, and
+    every save after it was refused; and a profile's titles or places written as one value ("titles: Help Desk
+    Technician") were read letter by letter, which the window would have saved back as the person's titles."""
+    from job_apply.recommend import target_location, target_titles
+
+    config.profile_path().write_text(PROFILE, encoding="utf-8")
+    search.set_search_area(titles=["Tech \\", 'Say "hi"'])
+    assert search.search_area()["titles"] == ["Tech \\", 'Say "hi"']
+    search.set_search_area(titles=["Recruiter"], places=["Las Vegas, NV"])
+    assert search.search_area()["titles"] == ["Recruiter"]
+    config.profile_path().write_text(PROFILE.replace("titles: [Field Service Engineer]", "titles: Help Desk Technician")
+                                     .replace("locations: []", "locations: Phoenix, AZ"), encoding="utf-8")
+    area = search.search_area()
+    assert area["titles"] == ["Help Desk Technician"] and area["places"] == ["Phoenix, AZ"]
+    prof = config.Profile.load()
+    assert target_titles(prof) == ["Help Desk Technician"] and target_location(prof) == "AZ"
+
+
 def test_claude_changes_the_job_titles_too(srv):
     from conftest import run
 
@@ -174,6 +193,10 @@ def test_the_desks_what_and_where_window_saves_and_finds_jobs_again(srv):
                 await page.click("#area-btn")
                 assert await page.is_visible("#area")
                 assert await page.is_checked(f"[data-area-list='{search.BUILTIN_LIST}']")
+                # the page's refresh leaves the window's buttons as they are: the focus stays (the review's)
+                await page.focus("[data-area-add='titles'][data-value='Recruiter']")
+                await asyncio.sleep(2)
+                assert await page.evaluate("document.activeElement.dataset.value") == "Recruiter"
                 # a title from the ideas, one typed (Enter adds it), the old one taken out
                 await page.click("[data-area-add='titles'][data-value='Help Desk Technician']")
                 await page.fill("#area-title-new", "Network Administrator")

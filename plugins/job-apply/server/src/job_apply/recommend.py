@@ -18,7 +18,7 @@ from typing import Any, Awaitable, Callable
 from urllib.parse import urlparse
 
 from .autofill import _PARTIAL_STUDY, degree_key, entry_dates, norm, school_under_way
-from .config import Profile
+from .config import Profile, listed
 from .postings import QUESTIONS_HEADING, Posting, fetch_posting
 from .search import (DEFAULT_TITLES, MAX_ALTERNATIVES, US_STATES, location_matches, location_terms, title_matches,
                      title_words)
@@ -187,7 +187,7 @@ class Fit:
 
 
 def target_titles(prof: Profile) -> list[str]:
-    titles = [str(t).strip() for t in prof.get("preferences.titles") or [] if str(t).strip()]
+    titles = [str(t).strip() for t in listed(prof.get("preferences.titles")) if str(t).strip()]
     return titles or list(DEFAULT_TITLES)
 
 
@@ -199,7 +199,7 @@ def target_location(prof: Profile) -> str | None:
     """States named in preferences.locations ("Phoenix, AZ"), else the home state."""
     states = []
     names = sorted(US_STATES.items(), key=lambda x: -len(x[1]))  # "West Virginia" before "Virginia"
-    for loc in prof.get("preferences.locations") or []:
+    for loc in listed(prof.get("preferences.locations")):
         m = re.search(r",\s*([A-Za-z]{2})\b", str(loc))
         if m:
             states.append(m.group(1).upper())

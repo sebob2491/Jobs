@@ -526,9 +526,10 @@ function renderStops(rows) {
   const bar = $("stops"), hint = $("stop-hint");
   const tried = rows.some((r) => stopOf(r) !== "new");
   bar.hidden = !tried && stopFilter === "any";
-  bar.innerHTML = bar.hidden ? "" : STOPS.filter(([key]) => key === "any" || key === stopFilter || count[key])
+  const buttons = bar.hidden ? "" : STOPS.filter(([key]) => key === "any" || key === stopFilter || count[key])
     .map(([key, label, tip]) => `<button data-stop="${key}" aria-pressed="${key === stopFilter}" title="${esc(tip)}">${esc(label)}
       ${count[key] || 0}</button>`).join("");
+  if (bar.dataset.html !== buttons) { bar.innerHTML = buttons; bar.dataset.html = buttons; }  // (focus kept)
   const checks = botChecks().length;
   const html = stopFilter === "bot" && checks
     ? `<span>${checks} to solve: the round brings each one up in the browser window, and each job carries on by itself after.</span>
@@ -978,7 +979,8 @@ function renderArea() {
   btn.textContent = `Search: ${short(titles, "jobs")} · ${short(places, (area.states || []).join(", ") || "your state")}`;
   btn.title = `Find jobs looks for ${titles.join(", ") || "the plugin's equipment roles"}`
     + ` in ${places.join("; ") || "your home state"}. Press to change what and where it searches.`;
-  if (areaDraft && $("area").open) renderAreaDraft();
+  // (the window's draft is drawn when it opens and on the person's own changes, never by the page's refresh, which
+  // would take the focus off what they're on)
 }
 function openArea() {
   const area = state.area || {};
@@ -1200,11 +1202,15 @@ document.addEventListener("click", (e) => {
   }
   if (a === "select-recommended") {
     const s = state.settings || {};
-    // troubleshooting: one opening per employer (the best fit), since its others most likely stop where it does
-    const picked = new Set();
+    // troubleshooting: one opening per employer (the best fit), since its others most likely stop where it does;
+    // an employer with one ticked already, or one tried, has its one
+    const employerOf = (r) => String(r.company || "").trim().toLowerCase();
+    const picked = new Set((state.listings || []).filter((r) => r.run || (selected.has(r.url) && selectable(r.url)))
+      .map(employerOf));
     [...(state.listings || [])].sort((x, y) => ((y.fit || {}).score || 0) - ((x.fit || {}).score || 0)).forEach((r) => {
-      if (!((s.troubleshoot || r.fit && r.fit.recommended) && !DONE.has(r.status) && !r.run && selectable(r.url))) return;
-      const employer = String(r.company || "").trim().toLowerCase();
+      if (!((s.troubleshoot || r.fit && r.fit.recommended) && !DONE.has(r.status) && !r.run && selectable(r.url)
+            && (s.handled_only ? r.handled : s.troubleshoot ? !r.handled : true))) return;
+      const employer = employerOf(r);
       if (s.troubleshoot && employer && picked.has(employer)) return;
       picked.add(employer);
       selected.add(r.url);
@@ -1301,7 +1307,8 @@ $("area-form").addEventListener("submit", (e) => {
   act(async () => {
     try {
       await api("/api/area", {titles, places, lists});  // (the openings found for others are cleared)
-    } catch (err) {  // said in the window, which stays open with what the person picked
+    } catch (err) {  // said in the window, which stays open with what the person picked (closed meanwhile: said)
+      if (!$("area").open) { alert(err.message); return; }
       said.textContent = err.message;
       said.hidden = false;
       return;

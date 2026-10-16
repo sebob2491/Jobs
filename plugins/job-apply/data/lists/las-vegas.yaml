@@ -1,6 +1,6 @@
 # Las Vegas-area (Clark County, Nevada) employers that hire IT people: help desk and desktop support,
 # systems and network administration, cloud, security and software. Casino resorts' corporate IT,
-# gaming technology makers, data centers, the airline and bank headquartered here, public agencies and
+# gaming technology makers, data centers, the airline headquartered here, public agencies and
 # schools, hospitals, IT staffing firms, and the federal contractors around Nellis AFB and the Nevada
 # National Security Site. A person's own ~/.job-apply/companies.yaml names this list
 # (`lists: [las-vegas]`) to search it; see templates/companies.example.yaml.
@@ -121,7 +121,7 @@ companies:
     nv_sites: Las Vegas (HQ; mobile casino games)
     confidence: medium        # page seen, Oct 2026
     # No search block: Dayforce isn't a system the plugin searches.
-  # Data centers, tech, and the airline and bank headquartered here (checked Oct 2026).
+  # Data centers, tech, and the airline headquartered here (checked Oct 2026).
   - name: Switch
     careers_url: https://www.switch.com/careers/current-openings/
     ats: greenhouse           # switch.com's openings page reads Greenhouse board switch-data-centers
@@ -143,12 +143,6 @@ companies:
     confidence: high          # live check, Oct 2026: IAM Engineer III, Information Security Analyst III, Principal
                               # Engineer DevSecOps and Lead Engineer, Enterprise Systems Software in Las Vegas
     search: {lever: allegiantair}
-  - name: Credit One Bank
-    careers_url: https://jobs.dayforcehcm.com/creditonebank/CANDIDATEPORTAL
-    ats: custom               # dayforce; creditonebank.com links to this Dayforce board
-    nv_sites: Las Vegas (HQ)
-    confidence: medium        # page seen, Oct 2026
-    # No search block: Dayforce isn't a system the plugin searches.
   - name: Zappos
     careers_url: https://jobs.zappos.com/
     ats: custom               # jobs.zappos.com opens amazon.jobs' search for Zappos (an Amazon company)
@@ -242,7 +236,7 @@ companies:
                               # whole Jibe site: Jibe's own state filter narrows it to Nevada (UHS's Reno hospitals too)
     search: {jibe: jobs.uhsinc.com}
   # IT staffing firms with Las Vegas offices: their consultant job boards, not their own staff's
-  # (phoenix-metro's TEKsystems, Insight Global and Robert Half entries search those). Checked Oct 2026.
+  # (phoenix-metro's TEKsystems and Insight Global entries search those). Checked Oct 2026.
   - name: TEKsystems (consultant jobs)
     careers_url: https://careers.teksystems.com/us/en
     ats: custom               # careers.teksystems.com is a Phenom site; Apply goes to TEKsystems' own apply.teksystems.com
@@ -256,14 +250,6 @@ companies:
     confidence: medium        # page seen, Oct 2026
     # No search block: its own job search isn't one the plugin reads (its iCIMS Jibe site lists only
     # its own staff's jobs: recruiters and account managers).
-  - name: Robert Half (contract jobs)
-    careers_url: https://www.roberthalf.com/us/en/jobs
-    ats: custom               # roberthalf.com/us/en/jobs is its own job search; roberthalf.com/nv-las-vegas is its
-                              # Las Vegas office
-    nv_sites: Las Vegas
-    confidence: medium        # page seen, Oct 2026
-    # No search block: its own job search isn't one the plugin reads (its Workday sites list only its
-    # own staff's jobs).
   # Federal and defense IT around Nellis AFB and the Nevada National Security Site (checked Oct 2026).
   - name: Mission Support and Test Services (NNSS)
     careers_url: https://nnss.gov/careers/

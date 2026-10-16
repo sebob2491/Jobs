@@ -246,8 +246,8 @@ def search_area() -> dict[str, Any]:
     size, and how many employers of their own they added."""
     try:
         prof = config.Profile.load()
-        places = [str(p) for p in prof.get("preferences.locations") or [] if str(p).strip()]
-        titles = [str(t).strip() for t in prof.get("preferences.titles") or [] if str(t).strip()]
+        places = [str(p) for p in config.listed(prof.get("preferences.locations")) if str(p).strip()]
+        titles = [str(t).strip() for t in config.listed(prof.get("preferences.titles")) if str(t).strip()]
     except ValueError:  # (a profile that doesn't read: said elsewhere)
         places, titles = [], []
     own_path = own_companies_path()

@@ -604,10 +604,14 @@ _KEY_LINE = r"^(?P<indent>{indent}){key}:(?P<rest>.*)$"
 def _value_and_comment(rest: str) -> tuple[str, str]:
     """A key line's value and its trailing comment ("  # e.g. ..."), the comment kept as written: the first " #"
     outside quotes and brackets. A flow list left open (written over several lines) is a ValueError."""
-    quote, depth = "", 0
+    quote, depth, escaped = "", 0, False
     for i, ch in enumerate(rest):
-        if quote:
-            if ch == quote and not (quote == '"' and rest[i - 1] == "\\"):
+        if quote:  # (in double quotes a backslash escapes what follows, itself too: "Tech \\" ends at its quote)
+            if escaped:
+                escaped = False
+            elif quote == '"' and ch == "\\":
+                escaped = True
+            elif ch == quote:
                 quote = ""
         elif ch in "\"'":
             quote = ch
@@ -693,6 +697,12 @@ def _checked(text: str, out: str, keys: tuple[str, ...], value: Any, before: dic
     if after != want:
         raise ValueError("it couldn't be changed safely")
     return out
+
+
+def listed(value: Any) -> list[Any]:
+    """A profile's list as a list, one written as a single value too ("titles: Help Desk Technician"), never its
+    letters."""
+    return [value] if isinstance(value, (str, int, float)) else list(value or [])
 
 
 def search_profile_text(places: list[str] | None = None, titles: list[str] | None = None) -> tuple[Path, str]:
