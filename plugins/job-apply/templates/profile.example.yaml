@@ -101,7 +101,7 @@ preferences:
   desired_salary: ~           # e.g. "$85,000" — leave empty to be asked each time
   earliest_start: ~           # e.g. "2 weeks after offer"
   how_did_you_hear: ~         # e.g. LinkedIn, Indeed or Company website; empty, the desk asks you once
-  locations: []               # e.g. ["Phoenix, AZ", "Chandler, AZ", "Tempe, AZ"]
+  locations: []               # e.g. ["Phoenix, AZ", "Las Vegas, NV"]: Find jobs searches their states
   titles: []                  # e.g. ["Field Service Engineer", "Equipment Engineer"], ["HR Generalist",
                               # "Recruiter"] or ["Staff Accountant", "Financial Analyst"]
 

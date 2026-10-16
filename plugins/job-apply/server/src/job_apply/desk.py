@@ -34,7 +34,8 @@ from .pipeline import DESK_PASSWORDS, Applier, placed_key, question_key
 from .ats import detect_ats
 from .postings import FetchError, Posting, fetch_posting, finalize, parse_html
 from .recommend import recommend, score_listing
-from .search import MAX_ALTERNATIVES, alternatives, load_companies, own_companies_path
+from .search import (MAX_ALTERNATIVES, alternatives, load_companies, own_companies_path, search_area,
+                     set_search_area)
 from .updates import UpdateCheck
 
 PAGE = Path(__file__).resolve().parent / "static" / "desk.html"
@@ -93,6 +94,8 @@ class Desk:
         self.search: dict[str, Any] = {"status": "idle", "at": None, "error": None, "query": "", "location": None,
                                        "errors": {}, "browser_only": []}
         self._search_task: asyncio.Task | None = None
+        self._searches = 0  # (counts the openings cleared: a search started before keeps none of what it finds)
+        self._left_searches: set[asyncio.Task] = set()  # (still running after a clear: held until they end)
         self._serve_task: asyncio.Task | None = None
         self.updates = UpdateCheck()  # a newer published version, said on the page
         self._update_task: asyncio.Task | None = None
@@ -149,6 +152,7 @@ class Desk:
             r("/api/password", self.password_view, methods=["POST"]),
             r("/api/add", self.add_view, methods=["POST"]),
             r("/api/bank", self.bank_view, methods=["POST"]),
+            r("/api/area", self.area_view, methods=["POST"]),
         ])
 
     async def start(self, port: int = DEFAULT_PORT, open_browser: bool = True) -> str:
@@ -379,15 +383,42 @@ class Desk:
             if was != self.troubleshoot:
                 # the openings found one way aren't the other's (troubleshooting's: every list's employers, HR jobs):
                 # cleared, for Find jobs to search again, so none is applied to by mistake
-                self.listings = []
-                self.search.update(status="idle", at=None)
-                with contextlib.suppress(OSError):
-                    _recommendations_path().unlink()
+                self._forget_openings()
         self.applier.hold_submits = self.troubleshoot
         if any(k in body for k in ("auto_submit", "tailor_resumes", "handled_only", "troubleshoot")):
             self._save_settings()
         return JSONResponse({"auto_submit": self.applier.auto_submit, "tailor_resumes": self.applier.tailor,
                              "handled_only": self.handled_only, "troubleshoot": self.troubleshoot})
+
+    def _forget_openings(self) -> None:
+        """The openings found so far cleared, for Find jobs to search again (where or how it searches changed). A
+        search under way keeps none of what it finds, and the next Find jobs starts a new one."""
+        self._searches += 1
+        if self._search_task is not None and not self._search_task.done():
+            self._left_searches.add(self._search_task)
+            self._search_task.add_done_callback(self._left_searches.discard)
+        self._search_task = None
+        self.listings = []
+        self.search.update(status="idle", at=None)
+        with contextlib.suppress(OSError):
+            _recommendations_path().unlink()
+
+    async def area_view(self, request: Request) -> Response:
+        """What and where Find jobs searches (the What and where to search window): the job titles, the places, and
+        the plugin's employer lists. The openings found for others are cleared, for Find jobs to search again."""
+        if not self._allowed(request, api=True):
+            return self._forbidden()
+        try:
+            body = await self._body(request)
+            places, lists, titles = body.get("places"), body.get("lists"), body.get("titles")
+            for value, what in ((places, "places"), (lists, "lists"), (titles, "titles")):
+                if value is not None and (not isinstance(value, list) or not all(isinstance(v, str) for v in value)):
+                    raise ValueError(f"{what} should be a list of words")
+            area = set_search_area(places=places, lists=lists, titles=titles)
+        except ValueError as e:
+            return self._bad(e)
+        self._forget_openings()
+        return JSONResponse(area)
 
     async def bank_view(self, request: Request) -> Response:
         """An answer to one of the common questions (data/question_bank.yaml), kept in answers.yaml for
@@ -450,6 +481,7 @@ class Desk:
 
     async def find_jobs(self) -> None:
         self.search.update(status="running", error=None, started=time.time())
+        searching = self._searches  # (a search started before the openings were cleared keeps none it finds)
         try:
             every = self.troubleshoot  # (as it was when Find jobs was pressed)
 
@@ -461,6 +493,8 @@ class Desk:
 
             out = await recommend(config.Profile.load(), run_search, limit_per_company=10, read_postings=40,
                                   fetch=self.fetch, fetch_hard=self.read_in_browser)
+            if searching != self._searches:
+                return
             self.listings = out["results"]
             at = time.time()
             self.search.update(status="done", at=at, query=out["query"], location=out["location"],
@@ -468,7 +502,8 @@ class Desk:
             config.ensure_home()
             _recommendations_path().write_text(json.dumps({**out, "at": at}, default=str), encoding="utf-8")
         except Exception as e:
-            self.search.update(status="failed", error=f"{type(e).__name__}: {str(e)[:300]}")
+            if searching == self._searches:
+                self.search.update(status="failed", error=f"{type(e).__name__}: {str(e)[:300]}")
 
     def preflight(self, urls: list[str]) -> list[str]:
         """What will stop these jobs, said before Apply sends them off (the review of Oct 15: a batch of 30 found it
@@ -693,6 +728,7 @@ class Desk:
             "others": others,
             "applications": applications,
             "bank": autofill.common_questions(prof),  # the common questions, with the person's answers
+            "area": search_area(),  # where Find jobs searches
             "current": self.applier.current,
             "queued": [jid for kind, jid in self.applier.tasks if kind == "apply"],
             "paused": self.applier.paused,  # (Pause queue: nothing new starts until Resume queue)

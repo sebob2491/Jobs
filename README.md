@@ -35,17 +35,21 @@ CloudSuite (Benchmark), Cornerstone (Linde, Matheson), Phenom (EMD Electronics) 
 Arizona sites, including equipment makers whose field service engineers work at
 Arizona fabs, and the suppliers whose technicians run the fabs' gases and chemicals.
 
-Looking for other work, or somewhere else? Copy
-[`templates/companies.example.yaml`](plugins/job-apply/templates/companies.example.yaml)
-to `~/.job-apply/companies.yaml`. Under `lists:`, name the plugin's lists to search:
+Looking for other work, or somewhere else? The Job Desk's **What and where** button (or
+asking Claude) sets the job titles to look for, the places to look (a city and state
+each, such as "Las Vegas, NV") and which of the plugin's employer lists to search:
 - `semiconductor-az`, the list above;
 - `phoenix-metro`, large Phoenix-area employers in health care, education, finance,
-  utilities, aerospace, retail and staffing.
+  utilities, aerospace, retail and staffing;
+- `las-vegas`, Las Vegas-area employers that hire IT people: casinos' corporate IT, gaming
+  technology, data centers, public agencies and IT staffing firms.
 
-Add employers of your own under `companies:`, in the same shape. Find jobs and the Job
-Desk then search those instead of the default list. Set your target titles
-(`preferences.titles`, such as "HR Generalist" or "Recruiter") and places
-(`preferences.locations`) in `profile.yaml` to match.
+The places go in `profile.yaml` (`preferences.locations`) and the lists in
+`~/.job-apply/companies.yaml`, where you can add employers of your own under
+`companies:`, in the shape of
+[`templates/companies.example.yaml`](plugins/job-apply/templates/companies.example.yaml).
+Set your target titles (`preferences.titles`, such as "HR Generalist" or "Recruiter") to
+match.
 
 ## Install in one step
 
@@ -330,6 +334,7 @@ plugins/job-apply/
 | Tool | Purpose |
 |---|---|
 | `setup_status`, `get_profile` | Check what's missing and read the profile |
+| `search_area` | Read or change what and where Find jobs looks: the job titles, the places (a city and state each) and the plugin's employer lists, as the desk's What and where window does |
 | `common_questions` | List the questions most applications ask that the profile doesn't answer (desired pay, start date, shifts...) and save the person's answers, as the desk's Common questions card does |
 | `doctor` | Check this computer's setup (Python, uv, the plugin's version, the browser, the profile and resume) and say what to fix; the same as the `job-apply-doctor` command |
 | `search_company_jobs` | Search employers' own job boards (Workday, Greenhouse, Lever, Eightfold, SmartRecruiters, Oracle, and ASML's site) by keyword and location; sites that refuse direct requests are read through a background browser tab |

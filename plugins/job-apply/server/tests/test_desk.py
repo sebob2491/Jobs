@@ -2235,3 +2235,65 @@ def test_a_review_rounds_submit_sends_only_the_application_its_banner_names(srv)
             await desk.stop()
 
     run(go())
+
+
+def test_the_openings_bar_shows_where_each_job_stands_and_troubleshooting_ticks_one_per_employer(srv, job_apply_home):
+    """The owner (Oct 16), troubleshooting a queue of 76: a bar over the openings shows them by where they stand
+    (bot checks to solve, the ones the desk is stuck on for Claude, ready...), each with its count, and Bot checks
+    offers the round that solves them; a group picked hides the others, which are never applied to; and in
+    troubleshooting, Select recommended ticks one opening per employer (its others most likely stop the same way)."""
+    from playwright.async_api import async_playwright
+
+    from job_apply.pipeline import Run
+
+    low = {"score": 20, "reasons": [], "concerns": [], "blocked": False, "recommended": False}
+    rows = [("bot", "Example Fab A", 30), ("stuck", "Example Fab B", 30), ("ask", "Example Fab C", 30),
+            ("ready", "Example Fab D", 30), ("new1", "Example Fab E", 50), ("new2", "Example Fab E", 70),
+            ("new3", "Example Fab F", 40)]
+    desk = Desk(srv)
+    desk.troubleshoot = True
+    desk.listings = [{"company": company, "title": f"Technician {key}", "url": f"https://example.com/{key}",
+                      "location": "Phoenix, AZ", "fit": {**low, "score": score}} for key, company, score in rows]
+    desk.applier.start = lambda: None
+    desk.search.update(status="done", at=time.time())
+    for key, company, _ in rows[:4]:
+        job = srv.add_job(url=f"https://example.com/{key}", title=f"Technician {key}", company=company)["job"]
+        status, need = {"bot": ("needs_you", "bot_check"), "stuck": ("needs_you", "stuck"),
+                        "ask": ("needs_you", "questions"), "ready": ("ready", "")}[key]
+        desk.applier.runs[job["id"]] = Run(job["id"], f"Technician {key}", company, status=status, need=need)
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with async_playwright() as pw:
+                browser = await pw.chromium.launch(**launch_options())
+                page = await browser.new_page()
+                await page.goto(desk.url)
+                await page.wait_for_selector("#stops:not([hidden]) [data-stop='bot']")
+                bar = {await b.get_attribute("data-stop"): " ".join((await b.inner_text()).split())
+                       for b in await page.locator("#stops button").all()}
+                assert bar == {"any": "Any 7", "new": "Not started 3", "bot": "Bot checks 1", "you": "Needs you 1",
+                               "stuck": "Stuck 1", "ready": "Ready 1"}, bar
+                await page.click("[data-stop='bot']")
+                await page.wait_for_selector("text=Technician new1", state="detached")
+                assert await page.locator("#rows .row").count() == 1 and await page.is_visible("text=Technician bot")
+                assert await page.is_visible("#stop-hint [data-act='bot-round']")
+                await page.click("[data-stop='stuck']")
+                await page.wait_for_selector("text=Technician stuck")
+                assert await page.locator("#rows .row").count() == 1
+                assert "Report a problem" in await page.inner_text("#stop-hint")
+                # a group picked: Select recommended ticks nothing it hides (none of the stuck one's is new)
+                await page.click("[data-act='select-recommended']")
+                assert await page.is_disabled("#apply")
+                await page.click("[data-stop='new']")
+                await page.wait_for_selector("text=Technician new1")
+                await page.click("[data-act='select-recommended']")
+                ticked = await page.eval_on_selector_all("[data-pick]:checked", "bs => bs.map((b) => b.dataset.pick)")
+                # one per employer, the best fit of Example Fab E's two
+                assert sorted(ticked) == ["https://example.com/new2", "https://example.com/new3"], ticked
+                await page.click("[data-stop='any']")
+                await browser.close()
+        finally:
+            await desk.stop()
+
+    run(go())

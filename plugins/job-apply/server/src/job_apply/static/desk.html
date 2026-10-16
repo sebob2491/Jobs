@@ -65,6 +65,10 @@ section.card { background: var(--surface); border: 1px solid var(--line); border
 .tabs { display: flex; gap: 4px; }
 .tabs button { padding: 4px 10px; font-size: 13px; }
 .tabs button[aria-pressed="true"] { background: var(--chip); border-color: var(--muted); }
+.stops { display: flex; flex-wrap: wrap; gap: 4px; padding: 0 14px 10px; }
+.stops button { padding: 3px 10px; font-size: 13px; border-radius: 999px; }
+.stops button[aria-pressed="true"] { background: var(--chip); border-color: var(--muted); font-weight: 600; }
+.stop-hint { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 0 14px 10px; font-size: 13px; color: var(--muted); }
 .notice { margin: 0 0 16px; padding: 10px 14px; border-radius: 10px; background: var(--warn-bg); color: var(--text); grid-column: 1 / -1; }
 .notice code { font-size: 13px; }
 .notice.tip { display: flex; align-items: flex-start; gap: 12px; }
@@ -128,6 +132,16 @@ ul.rows { list-style: none; margin: 0; padding: 0; }
 /* (width 0: a choice as long as "SuccessFactors: TSMC Arizona, ..." doesn't widen the page) */
 .pw-row select { flex: 1; min-width: 0; width: 0; font: inherit; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--text); }
 .pw details { padding: 8px 0 0; border-top: 0; }
+#area-lists label { display: flex; gap: 8px; align-items: baseline; margin-top: 8px; }
+#area h3 { font-size: 14px; margin: 16px 0 4px; }
+#area .pw-row input { flex: 1; min-width: 0; font: inherit; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--text); }
+.chip.pick { display: inline-flex; align-items: center; gap: 4px; background: var(--info-bg); color: var(--text); font-size: 13px; }
+.chip.pick.extra { background: var(--chip); color: var(--muted); }
+.chip.pick button { border: 0; background: none; padding: 0 2px; font-size: 14px; line-height: 1; color: inherit; cursor: pointer; }
+button.idea { font-size: 12px; padding: 2px 8px; border-radius: 999px; }
+.ideas { display: flex; flex-wrap: wrap; gap: 4px 6px; align-items: baseline; margin-top: 8px; font-size: 13px; color: var(--muted); }
+#area-btn { max-width: 340px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#area-error { color: var(--bad); }
 .pw details p { margin: 6px 0 0; }
 .pills { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 0; }
 .pw-row input { flex: 1; min-width: 0; font: inherit; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--text); }
@@ -150,6 +164,7 @@ footer { max-width: 1240px; margin: 0 auto; padding: 0 16px 24px; color: var(--m
     <button class="link" id="notes-btn" data-act="notes" title="Notes the desk took where it stopped on something it most likely got wrong, for you to file" hidden>Notes</button>
     <button class="link" id="alerts" data-act="alerts" hidden>Alert me</button>
     <button id="pause-btn" data-act="pause" title="The job under way finishes what it is doing; no other job starts until you press Resume queue" hidden>Pause queue</button>
+    <button id="area-btn" data-act="area" title="What and where Find jobs searches: the job titles, places and employer lists">What and where</button>
     <button id="find" data-act="find">Find jobs</button>
   </div>
 </header>
@@ -169,6 +184,8 @@ footer { max-width: 1240px; margin: 0 auto; padding: 0 16px 24px; color: var(--m
       <span class="openings-only links"><button class="link" data-act="select-recommended">Select recommended</button>
       <button class="link" data-act="select-none">Clear</button></span>
     </div>
+    <div class="stops openings-only" id="stops" role="group" aria-label="Show the jobs by where they stand" hidden></div>
+    <div class="stop-hint openings-only" id="stop-hint" hidden></div>
     <form class="addbar openings-only" id="add-form">
       <input type="text" id="add-links" placeholder="Paste job links: LinkedIn, Indeed or a company site" aria-label="Job links to add" autocomplete="off">
       <button type="submit" id="add-btn">Add</button>
@@ -248,6 +265,33 @@ footer { max-width: 1240px; margin: 0 auto; padding: 0 16px 24px; color: var(--m
     </section>
   </div>
 </main>
+<!-- what and where Find jobs searches: the job titles and places in the profile, the plugin's employer lists in
+     companies.yaml -->
+<dialog id="area" aria-labelledby="area-h">
+  <form id="area-form" autocomplete="off">
+    <h2 id="area-h">What and where to search</h2>
+    <h3>Jobs to look for</h3>
+    <div class="pills" id="area-titles"></div>
+    <p class="small" id="area-titles-note"></p>
+    <div class="pw-row"><input type="text" id="area-title-new" placeholder="Add a job title, such as Help Desk Technician"
+      aria-label="A job title to add"><button type="button" data-act="area-title-add">Add</button></div>
+    <div id="area-title-ideas"></div>
+    <h3>Places</h3>
+    <div class="pills" id="area-places"></div>
+    <p class="small" id="area-states"></p>
+    <div class="pw-row"><input type="text" id="area-place-new" placeholder="Add a place: a city and state, such as Reno, NV"
+      aria-label="A place to add, a city and state"><button type="button" data-act="area-place-add">Add</button></div>
+    <div class="ideas" id="area-place-ideas"></div>
+    <h3>Employers</h3>
+    <div id="area-lists"></div>
+    <p class="small" id="area-own" hidden></p>
+    <p class="small" id="area-error" role="alert" hidden></p>
+    <div class="actions" style="margin-top: 16px">
+      <button class="primary" type="submit">Save and find jobs</button>
+      <button type="button" data-act="area-close">Cancel</button>
+    </div>
+  </form>
+</dialog>
 <dialog id="report" aria-labelledby="report-h">
   <h2 id="report-h">Report a problem</h2>
   <p>This is everything the issue will hold, with your details taken out. GitHub issues are public:
@@ -291,6 +335,10 @@ try { if (token) sessionStorage.setItem("desk-token", token); else token = sessi
 
 const selected = new Set();
 let filter = "recommended";
+// Where each opening stands, for the bar over the list (kept in this browser only): every one, or one group
+const STOP_KEY = "desk-stop-filter";
+let stopFilter = "any";
+try { stopFilter = localStorage.getItem(STOP_KEY) || "any"; } catch (e) {}
 let state = null;
 let busy = false;
 let reporting = false;  // a problem report being written
@@ -432,6 +480,33 @@ const DONE = new Set(["applied", "interviewing", "offer", "rejected", "withdrawn
 // A job stopped on a bot check or CAPTCHA (the person's to solve: the desk never does) says so, in its row and its card
 const stopMark = (r) => r.status !== "needs_you" ? "" : r.need === "bot_check" ? "Bot check" : r.captcha || r.need === "captcha" ? "CAPTCHA" : "";
 
+// The bar's groups, in its order: where each opening stands
+const STOPS = [
+  ["any", "Any", "Every opening in the list"],
+  ["new", "Not started", "Not being filled: not tried yet, or started before the desk restarted"],
+  ["working", "Working", "Being filled now, or waiting in the queue"],
+  ["bot", "Bot checks", "Stopped at a bot check: yours to solve (the desk never does)"],
+  ["you", "Needs you", "Stopped for you: a question, a sign-in, an emailed code"],
+  ["stuck", "Stuck", "The desk couldn't get past something: these are the ones to tell Claude about"],
+  ["ready", "Ready", "Filled to the review page"],
+  ["done", "Done", "Submitted, applied, skipped or closed"],
+];
+const STUCK_NEEDS = new Set(["stuck", "submit_failed"]);
+function stopOf(row) {
+  const r = row.run;
+  if (!r) return DONE.has(row.status) ? "done" : row.status === "ready_to_submit" ? "ready" : "new";
+  if (r.status === "running" || r.status === "queued") return "working";
+  if (r.status === "ready") return "ready";
+  if (r.status === "failed") return "stuck";
+  if (r.status === "needs_you") {
+    if (r.need === "bot_check") return "bot";  // (a CAPTCHA on the review page is part of the Submit: Ready)
+    if (STUCK_NEEDS.has(r.need)) return "stuck";
+    return SEND_NEEDS.has(r.need) ? "ready" : "you";
+  }
+  return "done";  // submitted, skipped
+}
+const inStop = (r) => stopFilter === "any" || stopOf(r) === stopFilter;
+
 function statusPill(row) {
   const r = row.run;
   const [text, cls] = r ? (stopMark(r) ? [stopMark(r), "warn"] : RUN[r.status] || [r.status, ""]) : STATUS[row.status] || ["", ""];
@@ -442,6 +517,29 @@ const RECOMMEND_AT = 60;  // recommend.RECOMMEND_AT
 function scoreClass(s) { return s >= 75 ? "s4" : s >= 60 ? "s3" : s >= 40 ? "s2" : "s1"; }
 
 const shownDay = (t) => String(t || "").slice(0, 10);
+
+// The bar over the list: each group with how many it holds (shown once any job has been tried), and under it what
+// to do with the group picked: bot checks are solved in one round, the stuck ones go to Claude in the Notes
+function renderStops(rows) {
+  const count = {any: rows.length};
+  for (const r of rows) count[stopOf(r)] = (count[stopOf(r)] || 0) + 1;
+  const bar = $("stops"), hint = $("stop-hint");
+  const tried = rows.some((r) => stopOf(r) !== "new");
+  bar.hidden = !tried && stopFilter === "any";
+  bar.innerHTML = bar.hidden ? "" : STOPS.filter(([key]) => key === "any" || key === stopFilter || count[key])
+    .map(([key, label, tip]) => `<button data-stop="${key}" aria-pressed="${key === stopFilter}" title="${esc(tip)}">${esc(label)}
+      ${count[key] || 0}</button>`).join("");
+  const checks = botChecks().length;
+  const html = stopFilter === "bot" && checks
+    ? `<span>${checks} to solve: the round brings each one up in the browser window, and each job carries on by itself after.</span>
+       ${botRound ? "" : `<button class="primary" data-act="bot-round">Solve them</button>`}`
+    : stopFilter === "stuck" && count.stuck
+    ? `<span>The desk couldn't get past these. ${state.notes ? "It took a note on each: Notes files them together for Claude to fix." : "Each one's card has Report a problem, for Claude to fix."}</span>
+       ${state.notes ? `<button data-act="notes">Notes</button>` : ""}`
+    : "";
+  hint.hidden = !html;
+  if (hint.dataset.html !== html) { hint.innerHTML = html; hint.dataset.html = html; }
+}
 
 // My applications: each job sent in (or filled and waiting on its review page), newest first, with where it stands
 function renderApps() {
@@ -467,7 +565,8 @@ function renderRows() {
   const troubleshooting = !!(state.settings && state.settings.troubleshoot);
   // (troubleshooting: every opening tried, whatever its fit)
   const listed = (state.listings || []).filter((r) => filter === "all" || troubleshooting || r.added || (r.fit && r.fit.recommended) || r.run);
-  const rows = listed.filter(shown);
+  renderStops(listed.filter(shown));
+  const rows = listed.filter(shown).filter(inStop);
   const entries = rows.map((r) => {
     const fit = r.fit || {score: 0, reasons: [], concerns: []};
     const done = DONE.has(r.status) || (r.run && UNDER_WAY.has(r.run.status));
@@ -491,7 +590,8 @@ function renderRows() {
       <div class="state">${statusPill(r)}${undo}</div></li>`};
   });
   if (!entries.length) {
-    const msg = state.search.status === "running" ? "Searching employers' career sites…"
+    const msg = stopFilter !== "any" && listed.some(shown) ? "None here right now. Press Any to see them all."
+      : state.search.status === "running" ? "Searching employers' career sites…"
       : onlyHandled && listed.length ? "Nothing here from the employers where the desk goes all the way. Turn off that switch to see the rest."
       : troubleshooting ? "Nothing here yet from the employers where the desk doesn't go all the way. Press Find jobs: troubleshooting searches every list's employers."
       : (state.listings || []).length ? "Nothing recommended. Switch to All to see every opening."
@@ -865,6 +965,64 @@ async function copyNotes() {
   setTimeout(() => { $("notes-copy").textContent = "Copy all"; }, 2000);
 }
 
+// What and where to search: the button in the header says it (the job titles searched, the places), and its window
+// changes it. The window works on a copy (areaDraft), saved only by Save and find jobs
+let areaDraft = null;
+const areaTitles = (area) => (area.titles || []).length ? area.titles : (area.default_titles || []);
+function renderArea() {
+  const area = state.area;
+  if (!area) return;
+  const titles = areaTitles(area), places = area.places || [];
+  const short = (xs, none) => !xs.length ? none : xs.length === 1 ? xs[0] : `${xs[0]} +${xs.length - 1}`;
+  const btn = $("area-btn");
+  btn.textContent = `Search: ${short(titles, "jobs")} · ${short(places, (area.states || []).join(", ") || "your state")}`;
+  btn.title = `Find jobs looks for ${titles.join(", ") || "the plugin's equipment roles"}`
+    + ` in ${places.join("; ") || "your home state"}. Press to change what and where it searches.`;
+  if (areaDraft && $("area").open) renderAreaDraft();
+}
+function openArea() {
+  const area = state.area || {};
+  areaDraft = {titles: [...(area.titles || [])], places: [...(area.places || [])], lists: [...(area.lists || [])]};
+  $("area-error").hidden = true;
+  $("area-title-new").value = $("area-place-new").value = "";
+  renderAreaDraft();
+  $("area").showModal();
+}
+function renderAreaDraft() {
+  const area = state.area || {}, d = areaDraft, n = area.searched_titles || 4;
+  const pick = (kind, xs, extraFrom) => xs.map((x, i) => `<span class="chip pick${i >= extraFrom ? " extra" : ""}">${esc(x)}
+    <button type="button" data-area-drop="${kind}" data-i="${i}" aria-label="Take out ${esc(x)}" title="Take out">×</button></span>`).join("");
+  $("area-titles").innerHTML = pick("titles", d.titles, n);
+  $("area-titles-note").textContent = !d.titles.length
+    ? `None: Find jobs looks for the plugin's equipment roles (${(area.default_titles || []).join(", ")}).`
+    : d.titles.length > n ? `Find jobs searches for the first ${n}; the others (grey) still count toward each opening's fit.`
+    : "Find jobs searches each employer for these, and scores each opening against them.";
+  const has = (xs, x) => xs.some((y) => y.toLowerCase() === x.toLowerCase());
+  $("area-title-ideas").innerHTML = Object.entries(area.title_ideas || {}).map(([kind, ideas]) => {
+    const left = ideas.filter((x) => !has(d.titles, x));
+    return left.length ? `<div class="ideas"><span>${esc(kind)}:</span>${left.map((x) =>
+      `<button type="button" class="idea" data-area-add="titles" data-value="${esc(x)}">+ ${esc(x)}</button>`).join("")}</div>` : "";
+  }).join("");
+  $("area-places").innerHTML = pick("places", d.places, Infinity);
+  $("area-states").textContent = d.places.length ? "Find jobs searches these places' states."
+    : "None: Find jobs searches your home state.";
+  const placeIdeas = (area.place_ideas || []).filter((x) => !has(d.places, x));
+  $("area-place-ideas").innerHTML = placeIdeas.length ? `<span>Add:</span>${placeIdeas.map((x) =>
+    `<button type="button" class="idea" data-area-add="places" data-value="${esc(x)}">+ ${esc(x)}</button>`).join("")}` : "";
+  $("area-lists").innerHTML = (area.choices || []).map((c) => `<label><input type="checkbox" data-area-list="${esc(c.name)}"
+    ${d.lists.includes(c.name) ? "checked" : ""}> <span>${esc(c.label)} <span class="small">(${c.count}
+    employers)</span></span></label>`).join("");
+  const own = $("area-own");
+  own.hidden = !area.own;
+  own.textContent = area.own ? `And ${area.own} employer${area.own === 1 ? "" : "s"} of your own (companies.yaml).` : "";
+}
+function areaAdd(kind, value) {
+  const v = String(value || "").replace(/\s+/g, " ").trim();
+  if (!v || areaDraft[kind].some((x) => x.toLowerCase() === v.toLowerCase())) return;
+  areaDraft[kind].push(v);
+  renderAreaDraft();
+}
+
 function render() {
   if (!state) return;
   botStep();  // (the rounds first: the banner names the job they're on)
@@ -873,6 +1031,7 @@ function render() {
   renderRows();
   renderSide();
   renderBank();
+  renderArea();
   renderAlerts();
   renderNotes();
   announce();
@@ -915,7 +1074,7 @@ async function act(fn, hold = true) {
 const UNDER_WAY = new Set(["submitted", "running", "queued", "ready", "needs_you"]);
 function selectable(url) {
   const r = (state.listings || []).find((x) => x.url === url);
-  return !!r && shown(r) && !DONE.has(r.status) && !(r.run && UNDER_WAY.has(r.run.status));
+  return !!r && shown(r) && inStop(r) && !DONE.has(r.status) && !(r.run && UNDER_WAY.has(r.run.status));
 }
 
 // What "Only where the desk goes all the way" leaves showing: those employers' openings, and what the person has
@@ -967,6 +1126,21 @@ function makeReport(job, again = false) {
 document.addEventListener("click", (e) => {
   const t = e.target.closest("button");
   if (!t) return;
+  if (t.dataset.areaDrop && areaDraft) {  // × on a title or place in the What and where window
+    areaDraft[t.dataset.areaDrop].splice(Number(t.dataset.i), 1);
+    renderAreaDraft();
+    return;
+  }
+  if (t.dataset.areaAdd && areaDraft) {  // one of the window's ideas
+    areaAdd(t.dataset.areaAdd, t.dataset.value);
+    return;
+  }
+  if (t.dataset.stop) {
+    stopFilter = t.dataset.stop;
+    try { localStorage.setItem(STOP_KEY, stopFilter); } catch (err) {}
+    renderRows();
+    return;
+  }
   if (t.dataset.filter) {
     filter = t.dataset.filter;
     document.querySelectorAll("[data-filter]").forEach((b) => b.setAttribute("aria-pressed", String(b === t)));
@@ -976,6 +1150,10 @@ document.addEventListener("click", (e) => {
   const a = t.dataset.act, job = t.dataset.job, jobAct = t.dataset.jobAct;
   if (!state && (a || jobAct)) return;  // the page hasn't loaded yet
   if (a === "find") act(() => api("/api/search", {}));
+  if (a === "area") openArea();
+  if (a === "area-close") { areaDraft = null; $("area").close(); }
+  if (a === "area-title-add") { areaAdd("titles", $("area-title-new").value); $("area-title-new").value = ""; }
+  if (a === "area-place-add") { areaAdd("places", $("area-place-new").value); $("area-place-new").value = ""; }
   if (a === "pause" || a === "resume") act(() => api(`/api/queue/${a}`, {}));
   // (a review round given way to: its hold is replaced by the bot round's, never ended after it)
   if (a === "bot-round") { reviewRound = false; reviewShown = null; reviewPassed.clear(); botRound = true; botShown = null; botPassed.clear(); botStep(); renderHeader(); }
@@ -1022,8 +1200,15 @@ document.addEventListener("click", (e) => {
   }
   if (a === "select-recommended") {
     const s = state.settings || {};
-    (state.listings || []).forEach((r) => { if ((s.troubleshoot || r.fit && r.fit.recommended) && !DONE.has(r.status) && !r.run
-                                             && (s.handled_only ? r.handled : s.troubleshoot ? !r.handled : true)) selected.add(r.url); });
+    // troubleshooting: one opening per employer (the best fit), since its others most likely stop where it does
+    const picked = new Set();
+    [...(state.listings || [])].sort((x, y) => ((y.fit || {}).score || 0) - ((x.fit || {}).score || 0)).forEach((r) => {
+      if (!((s.troubleshoot || r.fit && r.fit.recommended) && !DONE.has(r.status) && !r.run && selectable(r.url))) return;
+      const employer = String(r.company || "").trim().toLowerCase();
+      if (s.troubleshoot && employer && picked.has(employer)) return;
+      picked.add(employer);
+      selected.add(r.url);
+    });
     renderRows();
   }
   if (a === "select-none") { selected.clear(); renderRows(); }
@@ -1088,6 +1273,43 @@ $("add-form").addEventListener("submit", (e) => {
       btn.textContent = "Add";
     }
   }, false);
+});
+
+$("area-form").addEventListener("change", (e) => {
+  const box = e.target.closest("[data-area-list]");
+  if (!box || !areaDraft) return;
+  areaDraft.lists = [...document.querySelectorAll("[data-area-list]")].filter((b) => b.checked).map((b) => b.dataset.areaList);
+});
+// Enter in a box adds what's in it (it doesn't save the window)
+for (const [box, kind] of [["area-title-new", "titles"], ["area-place-new", "places"]]) {
+  $(box).addEventListener("keydown", (e) => {
+    if (e.key !== "Enter") return;
+    e.preventDefault();
+    areaAdd(kind, $(box).value);
+    $(box).value = "";
+  });
+}
+$("area-form").addEventListener("submit", (e) => {
+  e.preventDefault();
+  if (!areaDraft) return;
+  // what's typed and not added yet goes too
+  areaAdd("titles", $("area-title-new").value);
+  areaAdd("places", $("area-place-new").value);
+  $("area-title-new").value = $("area-place-new").value = "";
+  const {titles, places, lists} = areaDraft;
+  const said = $("area-error");
+  act(async () => {
+    try {
+      await api("/api/area", {titles, places, lists});  // (the openings found for others are cleared)
+    } catch (err) {  // said in the window, which stays open with what the person picked
+      said.textContent = err.message;
+      said.hidden = false;
+      return;
+    }
+    areaDraft = null;
+    $("area").close();
+    await api("/api/search", {});
+  });
 });
 
 $("pw-form").addEventListener("submit", (e) => {

@@ -138,14 +138,18 @@ through its `missing` and `profile_gaps` together.
      Both default to off. Explain that Claude only searches for those specific
      messages and never sends or deletes mail.
 
-   - The kind of work and where: the plugin's employer list is semiconductor employers in
-     Arizona. For other work (HR, finance, health care…) or somewhere else, write
-     `~/.job-apply/companies.yaml` from the plugin's `templates/companies.example.yaml`:
-     `lists:` names the plugin's lists to search (`setup_status` shows them under
-     `employer_lists`; `phoenix-metro` is large Phoenix-area employers in many fields, and
-     `semiconductor-az` the semiconductor ones, which hire HR, finance and IT people too),
-     and `companies:` adds employers of their own. Set `preferences.titles` to their
-     target titles ("HR Generalist", "Recruiter"), since ranking follows them.
+   - The kind of work and where: ask the job titles they want ("Help Desk Technician",
+     "HR Generalist"; the first four are searched, all count toward each opening's fit),
+     where they want to work (a city and state each: "Phoenix, AZ", "Las Vegas, NV") and
+     which of the plugin's employer lists fit, then save them with
+     `search_area(titles=[...], places=[...], lists=[...])`: its `choices` name the lists and
+     what each covers (`semiconductor-az`, Arizona's semiconductor employers, the default,
+     who hire HR, finance and IT people too; `phoenix-metro`, large Phoenix-area employers
+     in many fields; `las-vegas`, Las Vegas-area employers that hire IT people). It keeps the places in
+     `preferences.locations`, the titles in `preferences.titles` (ranking follows them) and the
+     lists in `~/.job-apply/companies.yaml`, whose `companies:` takes employers of their own
+     (the shape of the plugin's `templates/companies.example.yaml`). They can change all three
+     later with the desk's What and where button.
    - `preferences.how_did_you_hear`: ask, or leave it empty and the desk asks once on its
      common-questions card. Profiles made from the template before 0.3.175 hold its old preset
      `LinkedIn`, which went into every application: ask whether that's true, and clear it if not.
