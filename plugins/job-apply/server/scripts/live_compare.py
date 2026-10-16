@@ -9,8 +9,11 @@ Reads what scripts/live_smoke.py printed (one LIVE_PIPELINE or LIVE_RESULT line 
 employer), turns each employer's record into one outcome that stays put from night to night,
 and compares the outcomes with the ones the last run saved in the "Nightly live check" issue's
 body (a JSON block; --issues is the output of `gh issue list --json number,title,state,body`).
-It writes the issue's new body, and a comment listing the changes when there are any. The
-nightly workflow (.github/workflows/live-nightly.yml) reads and writes the issue.
+It writes the issue's new body, and a comment listing the changes when there are any. The body
+also names the employers an apply check took to the review page in an earlier run but not in the
+last ("still back", with the date each last got there: a quiet night writes no comment), and
+stays within GitHub's size for an issue body (the details shortened, then left out, as the lists
+grow). The nightly workflow (.github/workflows/live-nightly.yml) reads and writes the issue.
 
 The outcomes:
   pipeline  (live_smoke.py --pipeline): where the Job Desk's pipeline ended, the report's
@@ -49,8 +52,13 @@ from typing import Any, Callable, NamedTuple
 
 ISSUE_TITLE = "Nightly live check"
 STATE_MARK = "<!-- live-check state -->"  # the saved outcomes' JSON block comes right after this
-STATE_VERSION = 1
+STATE_VERSION = 2  # 1: {check: {employer: outcome}}; 2: {check: {outcome: [employers]}}, and when each was last reached
 DETAIL_CHARS = 140
+BODY_LIMIT = 65536  # GitHub's issue body, in characters: an edit past it fails (the body held 55k on Oct 16, 2026)
+
+
+class BodyTooLong(ValueError):
+    """The issue's body wouldn't fit GitHub's limit even with its details left out."""
 
 
 class Result(NamedTuple):
@@ -95,6 +103,8 @@ def pipeline_outcome(rec: dict[str, Any]) -> Result:
     if last.get("need") == "stuck" and _DOWN.search(last.get("reason") or ""):
         return Result(SITE_DOWN, _join(title, last.get("reason")))
     outcome = " ".join(p for p in (last.get("status") or "unknown", last.get("need") or "") if p)
+    if outcome == "ready":  # the review page: its one sentence says what the outcome says, on two hundred rows
+        return Result(outcome, title)
     return Result(outcome, _join(title, last.get("reason")))
 
 
@@ -201,8 +211,7 @@ def compare(previous: dict[str, dict[str, str]] | None, current: dict[str, dict[
 _STATE = re.compile(re.escape(STATE_MARK) + r"\s*```json[ \t]*\r?\n(.*?)\r?\n[ \t]*```", re.S)  # \r\n once edited on GitHub
 
 
-def read_state(body: str | None) -> dict[str, dict[str, str]] | None:
-    """The outcomes a body written by render_body saved; None when it has none readable."""
+def _saved(body: str | None) -> dict[str, Any] | None:
     m = _STATE.search(body or "")
     if not m:
         return None
@@ -210,11 +219,36 @@ def read_state(body: str | None) -> dict[str, dict[str, str]] | None:
         data = json.loads(m.group(1))
     except ValueError:
         return None
-    outcomes = data.get("outcomes") if isinstance(data, dict) else None
+    return data if isinstance(data, dict) else None
+
+
+def read_state(body: str | None) -> dict[str, dict[str, str]] | None:
+    """The outcomes a body written by render_body saved, {check: {employer: outcome}}; None when it has none
+    readable. Version 1 saved them so; version 2 groups each check's employers by outcome."""
+    data = _saved(body)
+    outcomes = data.get("outcomes") if data else None
     if not isinstance(outcomes, dict):
         return None
-    return {str(check): {str(name): str(o) for name, o in found.items()}
-            for check, found in outcomes.items() if isinstance(found, dict)}
+    state: dict[str, dict[str, str]] = {}
+    for check, found in outcomes.items():
+        if not isinstance(found, dict):
+            continue
+        if (data or {}).get("version", 1) == 1:
+            read = {str(name): str(o) for name, o in found.items()}
+        else:
+            read = {str(name): str(o) for o, names in found.items() if isinstance(names, list) for name in names}
+        state[str(check)] = dict(sorted(read.items(), key=lambda kv: kv[0].lower()))
+    return state
+
+
+def read_reached(body: str | None) -> dict[str, dict[str, str]]:
+    """When an apply check last took each employer as far as it goes ({check: {employer: date}}), as saved."""
+    data = _saved(body) or {}
+    reached = data.get("reached")
+    if not isinstance(reached, dict):
+        return {}
+    return {str(check): {str(name): str(date) for name, date in dates.items()}
+            for check, dates in reached.items() if isinstance(dates, dict)}
 
 
 def _cell(text: Any) -> str:
@@ -231,8 +265,50 @@ def _title(check: str) -> str:
     return CHECKS[check].title if check in CHECKS else check
 
 
-def render_body(state: dict[str, dict[str, str]], current: dict[str, dict[str, Result]], *, checked_at: str,
-                run_url: str = "", partial: set[str] | frozenset[str] = frozenset()) -> str:
+# as far as an apply check's run goes (the person's own Submit, or Apply, is next)
+REACHED = frozenset({"ready", "needs_you your_submit"})
+_APPLY_CHECKS = frozenset({"pipeline", "hr", "finance", "accounts"})
+
+
+def reached_dates(previous: dict[str, dict[str, str]] | None, state: dict[str, dict[str, str]],
+                  current: dict[str, dict[str, Result]], today: str) -> dict[str, dict[str, str]]:
+    """When each apply check last took each employer as far as it goes: today for the employers this run did,
+    the saved date for the others still listed (one not reached this run, or not run: its last date stands)."""
+    out: dict[str, dict[str, str]] = {}
+    for check, outcomes in state.items():
+        if check not in _APPLY_CHECKS:
+            continue
+        before = (previous or {}).get(check) or {}
+        now = current.get(check) or {}
+        dates = {}
+        for name in outcomes:
+            r = now.get(name)
+            if r is not None and r.outcome in REACHED:
+                dates[name] = today
+            elif name in before:
+                dates[name] = before[name]
+        if dates:
+            out[check] = dates
+    return out
+
+
+def still_back(state: dict[str, dict[str, str]], reached: dict[str, dict[str, str]]) -> list[tuple[str, str, str]]:
+    """Employers an apply check took as far as it goes in an earlier run but not in the last, with the date it
+    last got there: the regression alarm's quiet nights (a run with no change writes no comment)."""
+    return [(check, name, reached[check][name]) for check, outcomes in state.items() if check in reached
+            for name, outcome in outcomes.items() if outcome not in REACHED and name in reached[check]]
+
+
+def _grouped(outcomes: dict[str, str]) -> dict[str, list[str]]:
+    grouped: dict[str, list[str]] = {}
+    for name, outcome in sorted(outcomes.items(), key=lambda kv: kv[0].lower()):
+        grouped.setdefault(outcome, []).append(name)
+    return dict(sorted(grouped.items()))
+
+
+def _body(state: dict[str, dict[str, str]], current: dict[str, dict[str, Result]], *, checked_at: str,
+          run_url: str, partial: set[str] | frozenset[str], reached: dict[str, dict[str, str]],
+          detail_chars: int) -> str:
     lines = [
         "<!-- Rewritten by .github/workflows/live-nightly.yml after every run: edits here are lost. -->",
         "A check of employers' career sites every night (scripts/live_smoke.py: a fake profile, submitting "
@@ -241,6 +317,15 @@ def render_body(state: dict[str, dict[str, str]], current: dict[str, dict[str, R
         "",
         f"Last checked: {checked_at}" + (f" · [run]({run_url})" if run_url else ""),
     ]
+    back = still_back(state, reached)
+    if back:
+        n = len(back)
+        lines += ["", f"**Still back:** {n} employer{'' if n == 1 else 's'} reached the review page in an earlier run "
+                  "but not in the last: " + ", ".join(f"{name} ({check}; last there {date})" for check, name, date in back)
+                  + "."]
+    if detail_chars < DETAIL_CHARS:
+        lines += ["", "(The details are " + ("shortened" if detail_chars else "left out")
+                  + " to keep this page within GitHub's size for an issue.)"]
     for check, outcomes in state.items():
         now = current.get(check) or {}
         lines += ["", f"### {_title(check)}", ""]
@@ -251,17 +336,29 @@ def render_body(state: dict[str, dict[str, str]], current: dict[str, dict[str, R
         lines += ["| Employer | Result | Detail |", "|---|---|---|"]
         for name, outcome in outcomes.items():
             r = now.get(name)
-            detail = _code(r.detail) if r else "not checked in this run"
+            detail = (_code(_short(r.detail, detail_chars)) if detail_chars else "") if r else "not checked in this run"
             lines.append(f"| {_cell(name)} | {_code(outcome)} | {detail} |")
-    saved = json.dumps({"version": STATE_VERSION, "outcomes": state}, indent=1, sort_keys=True, ensure_ascii=False)
+    saved = json.dumps({"version": STATE_VERSION, "outcomes": {check: _grouped(found) for check, found in state.items()},
+                        "reached": {check: dict(sorted(dates.items(), key=lambda kv: kv[0].lower()))
+                                    for check, dates in reached.items() if dates}},
+                       separators=(",", ":"), sort_keys=True, ensure_ascii=False)
     lines += ["", "<details><summary>Saved outcomes (the next run compares with these)</summary>", "",
               STATE_MARK, "```json", saved, "```", "", "</details>", ""]
     return "\n".join(lines)
 
 
-# as far as an apply check's run goes (the person's own Submit, or Apply, is next)
-REACHED = frozenset({"ready", "needs_you your_submit"})
-_APPLY_CHECKS = frozenset({"pipeline", "hr", "finance", "accounts"})
+def render_body(state: dict[str, dict[str, str]], current: dict[str, dict[str, Result]], *, checked_at: str,
+                run_url: str = "", partial: set[str] | frozenset[str] = frozenset(),
+                reached: dict[str, dict[str, str]] | None = None, limit: int = BODY_LIMIT) -> str:
+    """The issue's body: the tables, the still-back line and the saved state, within GitHub's size (the details
+    shortened, then left out, when the tables outgrow it; BodyTooLong when even that doesn't fit)."""
+    for detail_chars in (DETAIL_CHARS, DETAIL_CHARS // 2, 0):
+        body = _body(state, current, checked_at=checked_at, run_url=run_url, partial=partial, reached=reached or {},
+                     detail_chars=detail_chars)
+        if len(body) <= limit:
+            return body
+    raise BodyTooLong(f"the issue's body would be {len(body):,} characters even with its details left out, over "
+                      f"GitHub's {limit:,}: fewer employers, or the saved outcomes in a comment of their own")
 
 
 def went_back(changes: list[Change]) -> list[Change]:
@@ -287,6 +384,10 @@ def render_comment(changes: list[Change], run_url: str = "") -> str:
             after = _code(c.after) if c.after is not None else "*no longer checked*"
             lines.append(f"- {c.employer}: {before} → {after}" + (f" ({_code(c.detail)})" if c.detail else ""))
     return "\n".join(lines) + "\n"
+
+
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
 
 
 def find_issue(issues: Any, title: str = ISSUE_TITLE) -> dict[str, Any] | None:
@@ -332,9 +433,18 @@ def main(argv: list[str] | None = None) -> int:
         print(f"::warning::issue #{issue.get('number')} has no saved outcomes to compare with; starting over")
     state, changes = compare(previous, current, partial)
 
-    checked_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-    args.body_out.write_text(render_body(state, current, checked_at=checked_at, run_url=args.run_url,
-                                         partial=partial), encoding="utf-8")
+    now = _now()
+    reached = reached_dates(read_reached(issue.get("body")) if issue else None, state, current, now.strftime("%Y-%m-%d"))
+    try:
+        body = render_body(state, current, checked_at=now.strftime("%Y-%m-%d %H:%M UTC"), run_url=args.run_url,
+                           partial=partial, reached=reached)
+    except BodyTooLong as e:  # before the comment: the next run compares with the same saved outcomes, and reports again
+        print(f"::error::{e}")
+        return 1
+    args.body_out.write_text(body, encoding="utf-8")
+    print(f"issue body: {len(body):,} of {BODY_LIMIT:,} characters")
+    for check, name, date in still_back(state, reached):
+        print(f"still back: {name} ({check}; last there {date})")
     if changes:
         args.comment_out.write_text(render_comment(changes, args.run_url), encoding="utf-8")
     elif args.comment_out.exists():
