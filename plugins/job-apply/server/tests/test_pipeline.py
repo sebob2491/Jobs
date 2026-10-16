@@ -3517,6 +3517,9 @@ def test_an_employers_mail_domains_are_only_its_own(job_apply_home):
         encoding="utf-8")
     assert pipeline._employer_mail_domains("Example Mailer", set(), own="acme-person.example") == {"examplemailer.com"}
     assert pipeline._employer_mail_domains("BDO", set()) == {"bdo.com"}
+    # (an employer's own mail domain its entry names: Vanguard's Workday verifies its accounts from vanguardhr.com,
+    # the live check's run 102, where the link the desk had asked for again went unread as another's)
+    assert pipeline._employer_mail_domains("Vanguard", set()) >= {"vanguardjobs.com", "vanguardhr.com"}
     assert pipeline._employer_mail_domains("Odd One", {"test"}) == set()
 
 
