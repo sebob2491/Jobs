@@ -297,6 +297,8 @@ def steps(rec: dict[str, Any], log_lines: int = 6) -> str:
                        + (f" error: {q['error']}" if q.get("error") else ""))
             if i < len(above) and above[i]:
                 out.append(f"         above it: {above[i][-300:]}")
+        for probe in r.get("pick_lists") or []:  # (live_smoke.pick_list_probe)
+            out.append(f"      pick list: {json.dumps(probe)[:2500]}")
     final = rec.get("final_form") or {}
     if final:
         out.append(f"  page: {final.get('url', '')[:150]}")
