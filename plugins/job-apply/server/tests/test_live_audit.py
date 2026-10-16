@@ -173,3 +173,34 @@ def test_the_values_check_reads_each_review_page_its_machine_saved(tmp_path, cap
     assert "::warning::accounts/Early Warning Services: the review page shows a job from 02/2021" in out
     assert "::error::" not in out
     assert "audit: nothing found (3 records, 4 files); values: 1 not the profile's (2 review pages read)" in out
+
+
+def search_rec(company, posting, system="workday"):
+    return {"company": company, "search_config": {system: "https://example.com"}, "posting": posting}
+
+
+def test_a_posting_read_without_its_title_place_or_text_is_said_per_job_system(tmp_path, capsys, monkeypatch):
+    """The review's posting-parse audit (run 116): SuccessFactors career sites' postings came back with no place, and
+    every iCIMS posting's read failed, with nothing to say so. The search check's postings are read per job system:
+    one without its title, its place or its text (a read that failed too) is a warning, never a failure."""
+    whole = {"title": "Technician", "location": "Chandler, AZ", "description_chars": 4000, "ats": "workday"}
+    records = [search_rec("Whole Co", whole),
+               search_rec("Placeless Co", {**whole, "location": "", "ats": "successfactors"}, "successfactors"),
+               search_rec("Thin Co", {**whole, "description_chars": 120, "ats": "successfactors"}, "successfactors"),
+               search_rec("Refused Co", {"error": "FetchError: HTTP 405 from https://careers-x.icims.com/jobs/1/job"},
+                          "icims"),
+               {"company": "Unsearched Co", "search_config": {"workday": "https://example.com"}}]
+    lines = la.posting_findings("".join("LIVE_RESULT " + json.dumps(r) + "\n" for r in records))
+    assert lines == ["postings: icims: 1 of 1 not read whole: Refused Co (FetchError: HTTP 405 from "
+                     "https://careers-x.icims.com/jobs/1/job)",
+                     "postings: successfactors: 2 of 2 not read whole: Placeless Co (no place), Thin Co (120 chars of "
+                     "text)"], lines
+    for name in la.SECRETS:
+        monkeypatch.delenv(name, raising=False)
+    folder = tmp_path / "live-search"
+    folder.mkdir()
+    (folder / "run.log").write_text("".join("LIVE_RESULT " + json.dumps(r) + "\n" for r in records), encoding="utf-8")
+    assert la.main(["--log", f"search={folder / 'run.log'}", "--folder", str(folder)]) == 0
+    out = capsys.readouterr().out
+    assert "::warning::postings: successfactors: 2 of 2 not read whole" in out
+    assert "postings: 3 of 4 not read whole" in out, out

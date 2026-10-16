@@ -19,6 +19,9 @@ applied with (the record's "profile", live_smoke.py's profile_values), one ::war
 the profile's (never a failure: the test identity's entries saved at a tenant by an earlier run show here until
 they're corrected): a job or school from or to a date the profile doesn't give, a degree beside the profile's
 school of a level the profile doesn't have (the "never overstate" rule), or another role's employer.
+
+And it reads the search check's postings (its LIVE_RESULT records), one ::warning:: line a job system whose
+postings were read without their title, their place or their text, or not read at all.
 """
 
 from __future__ import annotations
@@ -38,6 +41,7 @@ import live_compare  # noqa: E402  (scripts/live_compare.py, beside this one)
 
 SECRETS = ("LIVE_TEST_EMAIL", "LIVE_TEST_EMAIL_PASSWORD", "LIVE_TEST_SITE_PASSWORD")
 MAX_FILE = 50 * 1024 * 1024
+POSTING_TEXT = 200  # a posting's text this short or shorter isn't its whole (Posting.is_useful's)
 
 # the desk's own log lines open with what it did; a consent it gave reads "agreed to …", "ticked …", "pressed …"
 _GAVE = re.compile(r"^(?:agreed to|ticked|pressed|chose|accepted|picked)\b", re.I)
@@ -197,6 +201,34 @@ def log_findings(check: str, text: str) -> list[str]:
     return [f for rec in live_compare.read_log(text, "LIVE_PIPELINE ").values() for f in record_findings(check, rec)]
 
 
+def posting_reads(text: str) -> tuple[dict[str, int], dict[str, list[str]]]:
+    """The search check's postings (its LIVE_RESULT records) read, and those read without their title, their place
+    or their text (a read that failed too), by job system: a parser that no longer reads a system's postings, or
+    never did (run 116: SuccessFactors career sites' had no place, and every iCIMS posting's read failed)."""
+    read: dict[str, int] = {}
+    short: dict[str, list[str]] = {}
+    for rec in live_compare.read_log(text, "LIVE_RESULT ").values():
+        p = rec.get("posting")
+        if not isinstance(p, dict):
+            continue  # (its search found nothing to read)
+        system = str(p.get("ats") or next(iter(rec.get("search_config") or {}), "") or "?")
+        read[system] = read.get(system, 0) + 1
+        missing = ([str(p["error"])[:120]] if p.get("error") else
+                   [what for what, key in (("no title", "title"), ("no place", "location")) if not p.get(key)]
+                   + ([f"{p.get('description_chars') or 0} chars of text"]
+                      if (p.get("description_chars") or 0) <= POSTING_TEXT else []))
+        if missing:
+            short.setdefault(system, []).append(f"{rec.get('company') or '?'} ({', '.join(missing)})")
+    return read, short
+
+
+def posting_findings(text: str) -> list[str]:
+    """posting_reads' short ones, one line a job system."""
+    read, short = posting_reads(text)
+    return [f"postings: {system}: {len(names)} of {read[system]} not read whole: {', '.join(names)}"
+            for system, names in sorted(short.items())]
+
+
 def _texts(folder: Path) -> Iterator[tuple[Path, str]]:
     for path in sorted(p for p in folder.rglob("*") if p.is_file()):
         if path.stat().st_size > MAX_FILE:
@@ -233,6 +265,8 @@ def main(argv: list[str] | None = None) -> int:
     findings: list[str] = []
     read: dict[str, dict[str, Any]] = {}
     checks: list[str] = []
+    postings: list[str] = []
+    searched = short_reads = 0
     for spec in args.log:
         check, sep, path = spec.partition("=")
         if not sep:
@@ -245,6 +279,10 @@ def main(argv: list[str] | None = None) -> int:
         read.update(live_compare.read_log(text, "LIVE_PIPELINE "))
         checks.append(check)
         findings += log_findings(check, text)
+        postings += posting_findings(text)
+        got, short = posting_reads(text)
+        searched += sum(got.values())
+        short_reads += sum(len(names) for names in short.values())
     secrets = {name: os.environ.get(name, "") for name in SECRETS}
     files = pages = 0
     values: list[str] = []
@@ -258,10 +296,13 @@ def main(argv: list[str] | None = None) -> int:
         values += values_findings(checks[0] if len(checks) == 1 else "values", read, folder)
     for finding in findings:
         print(f"::error::{finding}")
-    for finding in values:
+    for finding in values + postings:
         print(f"::warning::{finding}")
     said = (f"values: {len(values)} not the profile's" if values else "values: as the profile's") + \
         f" ({pages} review page{'' if pages == 1 else 's'} read)"
+    if searched:
+        said += (f"; postings: {short_reads} of {searched} not read whole" if short_reads
+                 else f"; postings: all {searched} read whole")
     if findings:
         print(f"audit: {len(findings)} finding{'' if len(findings) == 1 else 's'} ({len(read)} records, {files} files); {said}")
         return 1

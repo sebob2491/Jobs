@@ -899,6 +899,22 @@ def test_a_pasted_posting_that_builds_itself_with_script_is_read_in_the_browser(
     assert "Maintain and repair semiconductor equipment" in srv.tracker().get(out[0]["job_id"])["description"]
 
 
+def test_a_pasted_link_on_a_listed_employers_site_takes_the_lists_name(srv):
+    """A link pasted on the desk kept the posting's own name for its employer, where Claude's ingest_job takes the
+    list's (Workday's legal entity, "100 Intel Corporation", named the job's folder and missed the lists by name)."""
+    desk = Desk(srv)
+    desk.applier.start = lambda: None
+
+    async def fetched(url):
+        return Posting(url=url, title="Module Equipment Technician", company="100 Intel Corporation",
+                       description="Maintain tools. " * 20, parse_method="workday-api")
+
+    desk.fetch = fetched
+    intel = "https://intel.wd1.myworkdayjobs.com/External/job/US-Arizona-Phoenix/Module-Equipment-Technician_JR0286553"
+    other = "https://acme.wd1.myworkdayjobs.com/External/job/Phoenix-AZ/Technician_R1"
+    assert [o["company"] for o in run(desk.add_links([intel, other]))] == ["Intel", "100 Intel Corporation"]
+
+
 def test_a_secrets_file_that_isnt_a_list_of_names_doesnt_break_the_page(srv, job_apply_home):
     """A hand edit that leaves secrets.yaml a bare line (no "name: value") made every refresh fail."""
     config.secrets_path().write_text("just a line I typed\n", encoding="utf-8")

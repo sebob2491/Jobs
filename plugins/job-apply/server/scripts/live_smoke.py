@@ -112,7 +112,7 @@ FAKE_PROFILE: dict[str, Any] = {
 
 from job_apply import server  # noqa: E402
 from job_apply.fixtures import convert  # noqa: E402
-from job_apply.postings import fetch_posting  # noqa: E402
+from job_apply.postings import FetchError, Posting, fetch_posting, finalize, parse_html  # noqa: E402
 from job_apply.search import title_matches  # noqa: E402
 from job_apply.autofill import is_empty_value, polarity  # noqa: E402
 from job_apply.ats import detect_ats  # noqa: E402
@@ -363,6 +363,37 @@ def search_brief(found: dict[str, Any], name: str) -> dict[str, Any]:
     }
 
 
+TAB_READ_SECONDS = 40  # a posting read in a tab, within the employer's COMPANY_TIMEOUT
+
+
+async def read_posting(url: str) -> Posting:
+    """A posting read as the desk reads a pasted link (desk.add_links): over HTTP, else (refused, an error, or a page
+    that builds itself with script) in a background tab, an iCIMS one from the frame it's drawn in. iCIMS turns plain
+    requests away with HTTP 405: run 116's reads of its postings all failed here, though the desk reads them."""
+    posting: Posting | None = None
+    refused: Exception | None = None
+    try:
+        posting = await fetch_posting(url)
+    except Exception as e:  # noqa: BLE001 - as the desk: the browser gets a go
+        refused = e
+    if posting is None or not posting.is_useful:
+        try:
+            seen = await asyncio.wait_for(
+                server.read_icims_posting(url) if detect_ats(url) == "icims" else _tab_posting(url), TAB_READ_SECONDS)
+        except Exception as e:  # noqa: BLE001 - said with the HTTP read's
+            if posting is None:
+                raise FetchError(f"{refused}; in a tab: {type(e).__name__}: {str(e)[:150]}") from e
+        else:
+            if posting is None or len(seen.description) > len(posting.description):
+                posting = seen
+    assert posting is not None
+    return posting
+
+
+async def _tab_posting(url: str) -> Posting:
+    return finalize(parse_html(await server.browser.background_html(url), url))
+
+
 async def check_company(company: dict[str, Any], out: Path, fixtures: bool, rec: dict[str, Any]) -> None:
     """Fills in rec as it goes, so whatever was found survives a crash."""
     rec["search_config"] = company.get("search")
@@ -380,8 +411,9 @@ async def check_company(company: dict[str, Any], out: Path, fixtures: bool, rec:
     first = best_posting(found["results"])
 
     posting = None
+    rec["posting"] = {"error": "its read didn't finish in the employer's time"}  # (replaced once it does)
     try:
-        posting = await fetch_posting(first["url"])
+        posting = await read_posting(first["url"])
         rec["posting"] = {
             "parse_method": posting.parse_method, "title": posting.title, "company": posting.company,
             "location": posting.location, "description_chars": len(posting.description), "ats": posting.ats,
