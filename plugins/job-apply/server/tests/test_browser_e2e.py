@@ -1,6 +1,7 @@
 """Drive the MCP tools against local mock application forms in headless Chromium."""
 
 
+import re
 from pathlib import Path
 
 import pytest
@@ -843,6 +844,43 @@ def test_blocks_drawn_after_their_heading_are_read_and_filled(srv, job_apply_hom
     assert got[("Education 2", "Degree", None)] == "Select One"
     degree = next(f for f in result["needs_input"] if f["label"] == "Degree*")
     assert degree["section"] == "Education 2" and "Associates" in degree["options"], degree
+
+
+def test_blocks_are_added_inside_the_frame_that_holds_the_form(srv):
+    """An application drawn inside a frame on the careers page (iCIMS's #icims_content_iframe; eleven employers on
+    the lists): the desk looked for the section's Add button on the page around the frame, found none, and went on
+    with one job and one school (the review of Oct 15). The frame holding the Add button is the one pressed in, the
+    block it drew is marked there, and the button's id says its frame, as every other id the form reader gives does
+    (the review of 0.3.186: an unprefixed id sent Claude's click to the page around it)."""
+    run(srv.browser.goto(fixture_url("site/framed-experience-blocks.html")))
+    added = run(srv.add_entries("work"))
+    assert (added["before"], added["after"], added["clicks"], added["add_button_found"]) == (1, 2, 1, True), added
+    assert run(srv.browser.added_blocks()) == ["Work Experience 2"]
+    form = run(srv.inspect_form(include_dropdown_options=False))
+    assert all(re.match(r"f\d+-", f["id"]) for f in form["fields"]), form["fields"]  # (the frame's: the page has none)
+    assert {f.get("section") for f in form["fields"]} >= {"Work Experience 1", "Work Experience 2"}, form["fields"]
+    adds = [a for a in form["actions"] if a["text"].startswith("Add")]
+    assert adds and all(re.match(r"f\d+-add\d+$", a["id"]) for a in adds if "add" in a["id"]), adds
+
+
+def test_a_careers_pages_own_add_is_never_pressed_for_the_forms(srv):
+    """The review of 0.3.186: with no block of the kind yet in the form's frame, a careers page's own "Add" under a
+    heading of the kind ("Continuing Education": "Add to calendar") tied with the frame's and was pressed. The frame
+    holding the form's boxes wins the tie."""
+    run(srv.browser.goto(fixture_url("site/framed-experience-blocks.html") + "?outeradd"))
+    added = run(srv.add_entries("education"))
+    assert (added["before"], added["after"], added["clicks"]) == (0, 1, 1), added
+    page = run(srv.browser.page())
+    assert run(page.evaluate("() => window.outerPressed || 0")) == 0
+
+
+def test_a_frame_that_goes_away_while_blocks_are_added_ends_the_adding(srv):
+    """The review of 0.3.186: the chosen frame taken away by the careers page (drawn again) raised from add_entries and
+    failed the job ("Something went wrong"); before frames were read, the desk went on with one block. What was done
+    stands, and the job goes on."""
+    run(srv.browser.goto(fixture_url("site/framed-experience-blocks.html") + "?detach"))
+    added = run(srv.add_entries("education"))
+    assert added["clicks"] == 1 and not added.get("add_button_covered"), added
 
 
 def test_final_apply_button_honeypot_and_enter(srv, monkeypatch):
