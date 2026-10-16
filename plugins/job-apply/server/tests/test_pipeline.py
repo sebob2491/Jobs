@@ -7720,6 +7720,109 @@ def test_a_site_that_turns_the_browser_away_holds_nothing_up(srv, monkeypatch, p
     assert f"turned the desk's browser away ({said})" in r.reason
 
 
+@pytest.mark.parametrize("page, said, reloaded", [("bad-gateway.html", "502 Bad Gateway", True),
+                                                  ("ukg-posting-502.html", "502 Bad Gateway", False),
+                                                  ("service-unavailable-retry.html", "503 Service Unavailable", True)])
+def test_a_web_servers_own_error_page_is_said_as_the_sites_trouble(srv, monkeypatch, page, said, reloaded):
+    """UKG Pro's new sign-in (Nikon Precision, UCT and Desert Financial, run 106) answered the desk's Apply now with
+    nginx's bare "502 Bad Gateway", and the desk said it couldn't find the button that moves the application on. A
+    page that is a web server's error page and nothing else (its title or first heading a 5xx's words, no box, nothing
+    to press; a "Try again" button is no way on) is the site's own trouble, said in its words. A posting's own address
+    that answers so is reloaded once first, and said with "even after I reloaded it"; a page a press led to is said at
+    once, never reloaded (a reload may send its form again): the person reloads it later and presses Resume."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    job = srv.add_job(url=fixture_url("site/" + page), title="Field Service Engineer", company="Example Precision")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert r.need == "stuck" and not r.blocking, (r.need, r.reason)
+    assert f"web server's error page ({said})" in r.reason and "site's own trouble" in r.reason, r.reason
+    assert "couldn't find the button" not in r.reason, r.reason
+    reloads = [line for line in r.log if "so I reloaded it" in line]
+    if reloaded:
+        assert len(reloads) == 1 and f"error page ({said})" in reloads[0], r.log
+        assert "even after I reloaded it" in r.reason, r.reason
+    else:
+        assert not reloads and "even after" not in r.reason, (r.reason, r.log)
+        assert any("clicked \u201cApply now\u201d" in line for line in r.log), r.log
+
+
+def test_a_frames_5xx_heading_beside_a_postings_apply_is_never_the_sites_error_page(srv, monkeypatch):
+    """The review of 0.3.184: a posting with no heading of its own, a frame from another site answering with a 502
+    page (its heading the page's first) and its "Apply Now": applied to as before."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    job = srv.add_job(url=fixture_url("site/posting-502-frame.html"), title="Field Service Engineer",
+                      company="Example Precision")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert r.seen_form and "web server's error page" not in r.reason, (r.status, r.reason, r.log)
+    assert not any("reloaded" in line for line in r.log), r.log
+
+
+def test_a_web_servers_error_page_that_answered_submit_is_never_to_be_reloaded(srv, monkeypatch):
+    """The review of 0.3.184: a Submit whose answer is the gateway's "502 Bad Gateway" leaves no confirmation (the desk
+    asks the person to check), and on their Resume the page is still that error page. Reloading a Submit's answer
+    sends the application again: the person is told to check their email or the site instead."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    job = srv.add_job(url=fixture_url("site/submit-gateway.html"), title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        tab = await srv.browser.new_tab()
+        await tab.goto(fixture_url("site/submit-gateway.html"))
+        r = pipeline.Run(job["id"], "FSE", "Example Fab", status="queued", seen_form=True, page=tab)
+        applier.runs[job["id"]] = r
+        await applier._strict(applier._submit(r))
+        assert (r.status, r.need) == ("needs_you", "check_submit") and r.pressed_before, (r.status, r.reason)
+        applier.start()
+        try:
+            r = applier.resume(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert r.need == "stuck" and "web server's error page (502 Bad Gateway) after Submit was pressed" in r.reason, r.reason
+    assert "Don't reload it" in r.reason and "reload the page in the browser window" not in r.reason, r.reason
+    assert not any("reloaded" in line for line in r.log), r.log
+
+
+def test_a_web_servers_error_words_are_read_as_a_whole_title_or_heading():
+    """nginx's, IIS's, Tomcat's, Apache's and Varnish's 5xx pages; never a posting's or a form's own words, nor a
+    number inside other words. A bare number ("Error 503") only as a page's title."""
+    for words in ("502 Bad Gateway", "Bad Gateway", "503 Service Temporarily Unavailable", "504 Gateway Time-out",
+                  "500 - Internal server error.", "HTTP Status 500 \u2013 Internal Server Error", "Proxy Error",
+                  "503 Backend fetch failed", " 500 Internal Server Error "):
+        assert pipeline._SERVER_ERROR.search(words), words
+    for words in ("A server error occurred while saving your application", "Error 50", "Job 503", "Not Acceptable",
+                  "example.com | 502: Bad gateway", "Gateway Services Technician", "Bad Gateway Road"):
+        assert not pipeline._SERVER_ERROR.search(words), words
+    for words in ("503", "Error 503", "HTTP Error 502", "HTTP Status 500"):
+        assert pipeline._SERVER_ERROR_CODE.search(words), words
+    for words in ("Job 503", "503 jobs", "Requisition 50301", "Error 50"):
+        assert not pipeline._SERVER_ERROR_CODE.search(words), words
+
+
 def test_a_postings_own_words_or_a_frames_403_never_read_as_the_site_turning_the_browser_away(srv, monkeypatch):
     """The review of 0.3.160: only iCIMS's error page has its "Request Not Acceptable" in a later heading. A posting with
     its "Apply Now", whose own words have a "Not Acceptable" heading (a dress code) and whose frame from another site

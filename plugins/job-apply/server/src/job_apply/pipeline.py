@@ -122,6 +122,14 @@ _TURNED_AWAY = re.compile(r"^\s*(?:403\s*)?forbidden\s*$|^\s*(?:406\s*)?(?:reque
                           r"^\s*your request has been blocked\.?\s*$", re.I)  # (Workday's, its title empty)
 # A job system's own error page (iCIMS's, run 74: "Oops, something went wrong", then "Technical Details:")
 _ERROR_PAGE = re.compile(r"\bsomething went wrong\b|\btechnical details\b", re.I)
+# A web server's own error page, bare: its title or first heading a 5xx's words as a whole and nothing else (nginx's
+# "502 Bad Gateway" where UKG Pro's new sign-in should be, run 106, at three employers at once, after the desk's Apply
+# now; IIS's "500 - Internal server error.", Tomcat's "HTTP Status 500 – Internal Server Error", Apache's "Proxy
+# Error", Varnish's "503 Backend fetch failed"); a bare number ("Error 503", "HTTP Error 502") only as the page's title
+_5XX = r"(?:(?:http\s+(?:status|error)\s+|error\s+)?50[0-4]\s*[-\u2013\u2014:.]?\s*)"
+_SERVER_ERROR = re.compile(r"^\s*" + _5XX + r"?(?:internal server error|bad gateway|proxy error|service (?:temporarily )?"
+                           r"unavailable|gateway time-?out|server error|backend fetch failed)\.?\s*$", re.I)
+_SERVER_ERROR_CODE = re.compile(r"^\s*(?:http\s+(?:status|error)\s+|error\s+)?50[0-4]\s*\.?\s*$", re.I)
 # A page's own language picker: nothing to apply with (iCIMS's error page, run 74: "Language", English (US))
 _LANGUAGE_PICKER = re.compile(r"^\W*(?:language|select (?:a |your )?language)\W*$", re.I)
 
@@ -1824,6 +1832,39 @@ class Applier:
                 return self._pause(run, "stuck", f"{_site(run, data)} turned the desk's browser away ({refusal}). "
                                    "Open the posting in your own browser to apply there, or press Resume to try again "
                                    "later.")
+            # (a web server's own error page and nothing else: the site's trouble, said in its words. Never a page with
+            # a box or a way on, nor a posting whose own words say so beside its Apply. A posting's own address that
+            # answers so is reloaded once first (nothing pressed on it: a 5xx is the most passing trouble there is);
+            # a page a press led to is said at once (UKG Pro's sign-in, run 106: a reload may send its form again);
+            # one that answered Submit is never to be reloaded, as the review page says of a Submit pressed before)
+            page_title = str(data.get("title") or "")
+            failed = page_title if _SERVER_ERROR.search(page_title) or _SERVER_ERROR_CODE.search(page_title) else \
+                next((h for h in heads[:1] if _SERVER_ERROR.search(h)), "")
+            if (kind == "page" and failed and not data.get("fields")
+                    and pick_next(data.get("actions") or [], False) is None):
+                words = re.sub(r"\s+", " ", failed).strip()
+                site = _site(run, data)
+                if run.pressed_before:
+                    await self._bring_forward(run)
+                    return self._pause(run, "stuck", f"{site}'s page came back as its web server's error page ({words}) "
+                                       "after Submit was pressed for this job, with no confirmation showing. Don't "
+                                       "reload it (that may send the application again): check your email or the site "
+                                       "for a confirmation, then press \u201cI submitted it\u201d if it went through, "
+                                       "or open the posting again later and press Resume.")
+                if (run.opened_fresh and not pressed and not sign_ins and not agreed and not run.seen_form
+                        and not run.start_reloaded and not run.hands_on and not run.refreshed and not run.load_reloaded
+                        and not run.accounts_tried and not run.account_made and not run.resetting
+                        and not run.reset_from and run.page is not None):
+                    run.start_reloaded = True
+                    self._log(run, f"{site}'s page came back as its web server's error page ({words}), so I reloaded it")
+                    with contextlib.suppress(Exception):
+                        await run.page.reload(wait_until="load")
+                    continue
+                again = ", even after I reloaded it" if run.start_reloaded and run.opened_fresh and not pressed else ""
+                await self._bring_forward(run)
+                return self._pause(run, "stuck", f"{site}'s page came back as its web server's error page ({words}), "
+                                   f"without the application{again}. That's the site's own trouble: reload the page in "
+                                   "the browser window (now, or later if it still says so), then press Resume.")
             if kind == "bot_check":
                 await self._bring_forward(run)
                 return self._pause(run, "bot_check", _BOT_CHECK_SAYS, seen=data)
