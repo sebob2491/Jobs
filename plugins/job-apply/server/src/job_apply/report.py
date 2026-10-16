@@ -110,9 +110,11 @@ def _fields(meta: dict[str, Any]) -> list[str]:
 
 def _scrubber(secrets: list[str]) -> Callable[[Any], str]:
     """Text with the person's details taken out: addresses lose their queries (session ids,
-    tokens) before the redaction."""
+    tokens) before the redaction, and the profile's answers the desk names in its own words
+    ("(yours: “Protected veteran”)" in a log line) go too: a report is filed in public."""
     def scrub(text: Any) -> str:
-        return redact(_URL.sub(lambda m: _without_query(m.group(0)), str(text or "")), secrets)
+        said = _ANSWER_SAID.sub("\\1\u2026", str(text or ""))
+        return redact(_URL.sub(lambda m: _without_query(m.group(0)), said), secrets)
     return scrub
 
 
@@ -357,10 +359,9 @@ def _job_system(job: dict[str, Any], run: Any) -> tuple[str, str]:
 
 
 def _note_scrubber(job: dict[str, Any], run: Any, prof: config.Profile) -> Callable[[Any], str]:
-    """`_scrubber`, and also: the profile's answers the desk names in its own words taken out,
-    every address said by its job system alone ("(a Workday address)": its path names the job
-    and a password reset's holds its token), and the employer applied to, by its name or a short
-    form of it, called "the employer"."""
+    """`_scrubber`, and also: every address said by its job system alone ("(a Workday address)":
+    its path names the job and a password reset's holds its token), and the employer applied to,
+    by its name or a short form of it, called "the employer"."""
     scrub = _scrubber(report_strings(prof))
     urls = [job.get("url"), job.get("apply_url"), getattr(run, "url", ""), (getattr(run, "page_info", None) or {}).get("url")]
     forms = {(f, _as_written(f, str(n or ""))) for n in (job.get("company"), getattr(run, "company", ""))
@@ -378,7 +379,7 @@ def _note_scrubber(job: dict[str, Any], run: Any, prof: config.Profile) -> Calla
             text = p.sub("the employer", text)
         return _EMPLOYER_TAIL.sub(r"\1", text)
 
-    return lambda text: scrub(unnamed(_ANSWER_SAID.sub("\\1\u2026", str(text or ""))))
+    return lambda text: scrub(unnamed(str(text or "")))
 
 
 def note(job: dict[str, Any], run: Any, profile: config.Profile | None = None) -> str:

@@ -20,10 +20,11 @@ from mcp.server.mcpserver import Image, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 
 from . import config
-from .ats import ATS_NAMES, detect_ats, greenhouse_form_url, workday_parts
+from .ats import ATS_NAMES, detect_ats, greenhouse_form_url, shared_system, workday_parts
 from .autofill import (is_eeo_rule, is_empty_value, is_how_heard, is_name_rule, is_school_rule, place_words,
                        plan_autofill, profile_entries, resolve_field)
 from .browser import BrowserSession, BrowserUnavailable, SiteDown, SubmitBlocked
+from .mailbox import site_domain
 from .postings import FetchError, Posting, fetch_posting, finalize, parse_html
 from .render import KINDS, render_pdf, to_html
 from .search import (ICIMS_FRAME, companies_path, eightfold_page_url, employer_lists, every_employer,
@@ -284,6 +285,8 @@ async def ingest_job(url: str, use_browser: bool = False) -> dict[str, Any]:
     Plain HTTP is tried first. LinkedIn and Indeed usually refuse that; pass
     use_browser=true to read the page through the user's signed-in browser instead.
     Returns the job record including its full description."""
+    if config.own_file(url):  # ~/.job-apply's own files (secrets, answers): its text would be saved where Claude reads it
+        return {"saved": False, "error": "That's one of the desk's own files, not a job posting; it wasn't read."}
     posting: Posting | None = None
     note = ""
     if not use_browser:
@@ -633,19 +636,20 @@ async def open_application(job_id: int | None = None, url: str | None = None) ->
     Next steps are usually click("Apply") / click("Easy Apply"), then autofill()."""
     if job_id is None and not url:
         raise ValueError("Pass job_id or url")
-    target = url or ""
+    target, job = url or "", None
     if job_id is None:
         # the job saved at this address, if any: never the one opened before, whose documents
         # would go into this form and whose status a submit here would change
         known = tracker().find_by_url(url)
         job_id = known["id"] if known else None
-        browser.current_job_id = job_id
     else:
         job = _job(job_id)
         target = url or job.get("apply_url") or job["url"]
-        browser.current_job_id = job_id
-        if job["status"] == "saved":
-            tracker().update(job_id, status="in_progress", note="opened application")
+    if config.own_file(target):  # ~/.job-apply's own files (its settings, saved pages): never opened as a page
+        return {"error": "That's one of the desk's own files, not a job posting; it wasn't opened."}
+    browser.current_job_id = job_id
+    if job is not None and job["status"] == "saved":
+        tracker().update(job["id"], status="in_progress", note="opened application")
     # a Greenhouse board that sends visitors to the employer's site (Carvana's is behind a
     # Cloudflare check): Greenhouse's own form, however the posting was named
     target = greenhouse_form_url(target) or target
@@ -823,7 +827,10 @@ async def debug_snapshot(note: str = "") -> dict[str, Any]:
 async def fill_secret(field_id: str, secret_name: str) -> dict[str, Any]:
     """Type a stored secret (e.g. a career-site password) into a field without the value
     passing through the conversation. Secrets come from env JOB_APPLY_SECRET_<NAME> or
-    ~/.job-apply/secrets.yaml."""
+    ~/.job-apply/secrets.yaml. A system's password (workday_password) goes only onto that
+    system's sites; one named for a site (linkedin_password, or the safer linkedin_com_password)
+    only onto that site's own domain, or its tenant on a shared job system (honeywell_password
+    on honeywell.wd5.myworkdayjobs.com)."""
     if re.sub(r"[^A-Z0-9]", "_", secret_name.strip().upper()) == "EMAIL_PASSWORD":  # (read as get_secret reads it)
         # the key to the person's inbox: the desk reads sign-up codes with it, nothing types it anywhere
         return {"ok": False, "error": "The email app password is only for reading sign-up codes from the inbox; "
@@ -838,15 +845,21 @@ async def fill_secret(field_id: str, secret_name: str) -> dict[str, Any]:
     site = name.removesuffix("_password")
 
     def site_ok(url: str) -> bool:
-        # a password saved for one system (workday_password) goes only onto that system's sites;
-        # any other only onto the site it's named for (linkedin_password: linkedin.com)
+        # a password saved for one system (workday_password) goes only onto that system's sites; any other only
+        # onto the site it's named for, by the site's own domain (linkedin_password: linkedin.com, or linkedin.<any
+        # top-level domain>; linkedin_com_password and www_linkedin_com_password name it exactly) or its tenant on
+        # a shared job system (honeywell_password: honeywell.wd5.myworkdayjobs.com). A host that merely has the
+        # name in it (linkedin.evil.example, notlinkedin-careers.example) is somebody else's
         if password_for(url) == name:
             return True
         if site in PASSWORD_SITES:
             return False
         parsed = urlparse(url or "")
         host = re.sub(r"[^a-z0-9.]", "", (parsed.hostname or "").lower())
-        return parsed.scheme == "https" and len(site) >= 3 and site.replace("_", "") in host
+        domain, named = site_domain(host), site.replace("_", "")
+        return bool(parsed.scheme == "https" and site and (
+            named in (domain.split(".")[0], domain.replace(".", ""), host.replace(".", ""))
+            or named == host.split(".")[0] and shared_system(url) is not None))
 
     try:
         await browser.fill_secret(field_id, secret, site_ok)

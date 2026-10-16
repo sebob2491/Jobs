@@ -79,6 +79,21 @@ def test_a_report_holds_what_the_desk_did_and_the_pages_with_the_persons_details
     assert not any(p in out["issue_url"] for p in PRIVATE)
 
 
+def test_a_report_names_none_of_the_profiles_answers_the_desk_said_in_its_own_words(job_apply_home):
+    """"(yours: “Protected veteran”)" in a log line is the profile's answer, in a report filed in public: a note took
+    it out (notes are filed many together), a report didn't (the review of Oct 15). Both do."""
+    job = {"id": 8, "title": "Field Service Engineer", "company": "Acme Semi", "ats": "workday",
+           "url": "https://acme.wd1.myworkdayjobs.com/External/job/x"}
+    r = Run(8, "Field Service Engineer", "Acme Semi", status="needs_you", need="questions",
+            reason="1 question your profile doesn't answer",
+            log=["left 1 optional question(s) empty, as none of their choices is your profile's answer: "
+                 "“Veteran status” (yours: “Protected veteran”)",
+                 "Highest degree: your profile's answer “Doctorate of Wizardry” isn't one of its choices"])
+    for text in (report.build(job, r, PERSON)["preview"], report.build(job, r, PERSON, anonymous=True)["preview"]):
+        assert "(yours: …)" in text and "your profile's answer …" in text, text
+        assert "Protected veteran" not in text and "Wizardry" not in text, text
+
+
 def test_a_long_report_is_cut_short_in_the_issue_but_whole_in_the_zip(job_apply_home, tmp_path):
     job = {"id": 8, "title": "FSE", "company": "Acme Semi", "url": "https://example.com/j", "folder": str(tmp_path / "j")}
     r = Run(8, "FSE", "Acme Semi", status="failed", log=[f"step {i}: " + "x" * 300 for i in range(40)])

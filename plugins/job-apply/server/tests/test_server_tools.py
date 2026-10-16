@@ -1,6 +1,7 @@
 """The tools Claude calls: what they refuse, which job they act for, what Claude reads back."""
 
 import asyncio
+import json
 from pathlib import Path
 
 import pytest
@@ -123,6 +124,33 @@ def test_a_saved_password_goes_only_into_a_password_box_on_its_own_site(srv, job
     run(srv.browser.goto("https://acme.wd1.myworkdayjobs.com/en-US/External/login"))
     fields = {f["label"]: f["id"] for f in run(srv.inspect_form(False))["fields"]}
     assert run(srv.fill_secret(fields["Password"], "workday_password")) == {"ok": True}
+
+
+@needs_browser
+def test_the_desks_own_files_arent_opened_or_read_as_postings_by_claudes_tools(srv, job_apply_home):
+    """A file: address into ~/.job-apply given to ingest_job(use_browser=True) opened the file in the browser and
+    saved its text as a posting, where Claude reads it (a file the browser draws: the desk's settings, a saved page,
+    a note; secrets.yaml it downloads instead), and open_application showed it in the browser window (the review of
+    Oct 15); the desk page's own routes already refused them. In every spelling the browser opens: file:///home/..,
+    file:/home/.. and file:home/.. (its review), and file://C:/.. on Windows."""
+    import sys
+
+    note = config.home() / "note.txt"
+    note.write_text("workday_password: hunter2\n", encoding="utf-8")
+    link = note.resolve().as_uri()  # file:///home/x/.job-apply/note.txt (file:///C:/Users/x/... on Windows)
+    links = [link, "file:" + link[len("file://"):], "file:" + link[len("file:///"):]]
+    if sys.platform == "win32":
+        links.append("file://" + link[len("file:///"):])
+    for spelled in links:
+        for use_browser in (True, False):
+            out = run(srv.ingest_job(spelled, use_browser=use_browser))
+            assert out["saved"] is False and "desk's own files" in out["error"], (spelled, out)
+        assert "desk's own files" in run(srv.open_application(url=spelled))["error"], spelled
+    assert "hunter2" not in json.dumps(srv.list_jobs())
+    job = srv.add_job(url=link, title="Not a job", company="Example")["job"]  # (saved by hand with that address)
+    assert "desk's own files" in run(srv.open_application(job_id=job["id"]))["error"]
+    assert srv.get_job(job["id"])["job"]["status"] == "saved" and srv.browser.current_tab is None  # never opened
+    assert srv.browser.current_job_id is None  # (nor made the current job: the open tab isn't its form)
 
 
 @needs_browser
@@ -627,6 +655,38 @@ def test_a_saved_password_goes_only_onto_the_site_its_named_for(srv):
         assert out["ok"] is False and "inbox" in out["error"]
     finally:
         del os.environ["JOB_APPLY_SECRET_LINKEDIN_PASSWORD"], os.environ["JOB_APPLY_SECRET_OTHER_PASSWORD"]
+
+
+def test_a_password_named_for_a_site_goes_only_onto_that_sites_own_domain(srv, monkeypatch):
+    """"linkedin_password" went onto any https host with "linkedin" in its name (linkedin.evil.example,
+    notlinkedin-careers.example: the review of Oct 15). It goes onto the site's own domain only, however the
+    secret names it (linkedin, linkedin_com, www_linkedin_com)."""
+    for name in ("LINKEDIN", "LINKEDIN_COM", "WWW_LINKEDIN_COM", "OTHER", "HONEYWELL"):
+        monkeypatch.setenv(f"JOB_APPLY_SECRET_{name}_PASSWORD", "not-a-real-password")
+    checks = []
+
+    async def fill_secret(field_id, secret, site_ok):
+        checks.append(site_ok)
+
+    monkeypatch.setattr(srv.browser, "fill_secret", fill_secret)
+    for name in ("linkedin_password", "linkedin_com_password", "www_linkedin_com_password", "other_password",
+                 "honeywell_password"):
+        assert run(srv.fill_secret("f1", name)) == {"ok": True}
+    linkedin, linkedin_com, www, other, honeywell = checks
+    for url in ("https://linkedin.evil.example/login", "https://notlinkedin-careers.example/login",
+                "https://linkedin.com.evil.example/login", "http://www.linkedin.com/login",
+                "https://acme.wd1.myworkdayjobs.com/login"):
+        assert not linkedin(url) and not linkedin_com(url) and not www(url), url
+    for url in ("https://www.linkedin.com/checkpoint/lg/login", "https://linkedin.com/login"):
+        assert linkedin(url) and linkedin_com(url), url
+    assert www("https://www.linkedin.com/login") and not www("https://linkedin.com/login")
+    assert other("https://jobs.other.com/b") and not other("https://jobs.another.com/other")
+    # an employer's own password on its tenant of a shared job system (its name is the host's first label there)
+    assert honeywell("https://honeywell.wd5.myworkdayjobs.com/login") and honeywell("https://honeywell.csod.com/x")
+    assert not honeywell("https://honeywell.evil.example/login") and not honeywell("https://careers.honeywell.com.evil.example/x")
+    # (a tenant is the employer's own: linkedin.wd5.myworkdayjobs.com is LinkedIn's; not a host that only looks like one)
+    assert linkedin("https://linkedin.wd5.myworkdayjobs.com/login")
+    assert not linkedin("https://linkedin.wd5.myworkdayjobs.com.evil.example/login")
 
 
 SCRIPTED_SEND = """<!doctype html><html><body><h1>Review your application</h1>

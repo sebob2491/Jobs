@@ -2057,7 +2057,22 @@ def test_an_account_forms_security_questions_on_the_card_go_into_that_form_alone
     r = desk.applier.runs[job["id"]]
     assert r.account_answers == {placed_key(chooser): "In what city were you born?", placed_key(answer): secret}
     assert r.once == {question_key("Are you willing to relocate?"): "No"} and config.saved_answers() == []
-    assert secret not in json.dumps(r.public()) and secret not in json.dumps(desk.state(), default=str)
+    assert secret not in json.dumps(r.public()) and secret not in json.dumps(desk.state())
+
+
+def test_the_desk_page_still_loads_after_a_look_in_the_inbox(srv):
+    """A job's Run keeps the employer's mail domains (a frozenset) and the other employers' mail check (a function)
+    once the desk has looked in the inbox for its code; both went into the page's state, which JSON can't write, so
+    every /state call failed from then on and the page froze (the review of Oct 15)."""
+    from job_apply.pipeline import Run
+
+    desk = Desk(srv)
+    job = srv.add_job(url="https://careers.example.com/a", title="Tech", company="Example")["job"]
+    r = Run(job["id"], "Tech", "Example", status="needs_you", need="email_code", reason="Waiting for the code.")
+    r.employer_mail, r.others_mail = frozenset({"example.com"}), (lambda domain, subject: False)
+    desk.applier.runs[job["id"]] = r
+    assert json.dumps(desk.state())  # as the page's /state route writes it: no default=str
+    assert not {"employer_mail", "others_mail"} & r.public().keys()
 
 
 def test_every_card_says_i_submitted_it_already(srv):
