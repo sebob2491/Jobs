@@ -85,6 +85,21 @@ _VALUE_ATTR = re.compile(r'\svalue="[^"]*"', re.I)
 # a box holding an account's security answer, marked when the desk put it in (Browser._keep_secret)
 _SECRET_BOX = re.compile(r'\sdata-ja-secret\b', re.I)
 
+# ms a pick-only list that is open and still empty is waited on (a site fetching its entries). A list that is
+# genuinely empty, or a box that stays "expanded", costs the wait once per such field per fill (under the lock)
+PICK_LIST_WAIT = 8000
+# Is this box's list open with nothing in it yet: the box (or a wrapper up to 4 above it, as FIELD_OPTIONS_JS looks)
+# saying it's expanded, or its named menu shown without a choice?
+_LIST_LOADING_JS = """el => {
+  for (let n = el, d = 0; n && n.getAttribute && d < 4; n = n.parentElement, d++) {
+    if (n.getAttribute('aria-expanded') === 'true') return true;
+    const ref = n.getAttribute('aria-owns') || n.getAttribute('aria-controls');
+    const box = ref ? document.getElementById(ref.split(/\\s+/)[0]) : null;
+    if (box) return box.getClientRects().length > 0 && !box.querySelector('[role="option"]');
+  }
+  return false;
+}"""
+
 
 def _without_passwords(html: str) -> str:
     """A page's HTML with nothing in its password boxes, nor in an account's security answer's: a site that writes
@@ -2020,6 +2035,14 @@ class BrowserSession:
                 and choose_option(choice, [shown]) is None):
             raise ValueError(f"Picked {choice!r} but the field shows {shown[:80]!r}; set it by hand or with click")
 
+    async def _list_loading(self, loc: Locator) -> bool:
+        """Is this box's list open with nothing in it yet (its menu named by aria-owns or aria-controls, shown and
+        without a choice; or the box saying it's expanded)?"""
+        try:
+            return bool(await loc.evaluate(_LIST_LOADING_JS, timeout=FOCUS_TIMEOUT))
+        except (PlaywrightError, PlaywrightTimeout):
+            return False
+
     async def _clear_search(self, page: Page, loc: Locator) -> None:
         """Empty a picker's box after a search that found nothing to pick. SuccessFactors keeps
         the typed words, and a box with words in it reads as answered: the desk went on to the
@@ -2042,6 +2065,20 @@ class BrowserSession:
         pick_only = bool(field.get("pick_only"))
         # (a self-identification list shows every choice on opening, a moment later on some sites)
         options = await self._field_options(page, field["id"], loc, 2500 if pick_only else 900)
+
+        def no_choice(listed: list[str]) -> bool:  # (nothing, or its placeholder alone: "No Selection")
+            return not any(not is_empty_value(o) for o in listed)
+
+        if pick_only and no_choice(options):
+            # SuccessFactors' paginated selects fetch their entries when first opened, a few seconds on some servers
+            # (Freeport-McMoRan's Ethnicity, Edwards Vacuum's Protected Veteran, Rogers' Gender and Ethnicity: the
+            # desk read no choices and asked the person, 20 runs): a list open and still empty, or on its placeholder
+            # alone, is waited on
+            waited = 2500
+            while no_choice(options) and waited < PICK_LIST_WAIT and (options or await self._list_loading(loc)):
+                await page.wait_for_timeout(500)
+                waited += 500
+                options = await self._field_options(page, field["id"], loc, 0)
         choice = (_choose(text, options, field, exact_only=len(options) > SHORT_MENU and not pick_only)
                   if options else None)
         query = _search_words(text)
@@ -2050,7 +2087,7 @@ class BrowserSession:
             # ("Decline to self-identify") find nothing in "Female" / "Male", nor in a list whose
             # decline is worded another way, and the box is left with them or empty
             await self._close_menus(page)
-            raise ValueError(f"{text!r} doesn't match any option: {options[:30]}" if options
+            raise ValueError(f"{text!r} doesn't match any option: {options[:30]}" if not no_choice(options)
                              else "its list showed no choices")
         if choice is None:
             opened = options

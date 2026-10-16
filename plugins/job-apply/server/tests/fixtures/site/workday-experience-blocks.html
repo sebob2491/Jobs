@@ -15,7 +15,9 @@
 <!-- ?savedschool: as Hitachi High-Tech America's Workday (run 92, Oct 15), the account's saved school is drawn a moment
      after the desk's first Add: first in the section, filled in, and the blocks numbered again, so the empty one the
      desk added is "Education 2" (the saved block's data-saved says which it is). The review's: &savedlast draws it
-     after the desk's block instead, and &valueslate=<ms> fills its boxes that long after it shows, empty till then -->
+     after the desk's block instead, and &valueslate=<ms> fills its boxes that long after it shows, empty till then.
+     &reused: as Arizona State University's (run 108), the saved school is drawn INTO the block the desk's Add had
+     just drawn (the same node, its heading kept), and a new empty block is appended after it, its boxes a moment later -->
 <div data-automation-id="progressBarActiveStep">My Experience</div>
 <h2>My Experience</h2>
 
@@ -123,27 +125,45 @@
     dg.addEventListener('click', () => setTimeout(() => show(degrees, (v) => { dg.textContent = v; }, dg), 120));
   };
   // the account's saved school, drawn first and filled in, and every block numbered again (?savedschool)
+  const fillSaved = (p, id) => {
+    p.querySelector('[name="school"]').value = 'Arizona State University';
+    p.querySelector('[name="degree"]').textContent = 'Bachelors';
+    p.querySelector('[name="fieldOfStudy"]').value = 'Electrical Engineering';
+    [['firstYearAttended', '2016'], ['lastYearAttended', '2020']].forEach(([name, year]) => {
+      const box = p.querySelector(`[id="${id}--${name}-dateSectionYear-input"]`);
+      box.value = year;
+      box.previousElementSibling.textContent = year;
+    });
+  };
   const drawSaved = () => {
+    const params = new URLSearchParams(location.search);
+    const panels = document.getElementById('ed-panels');
+    if (params.has('reused')) {
+      // Workday numbers its blocks by place (Arizona State University's, run 108): the saved school is drawn INTO the
+      // block the desk's Add had just drawn (the same node, so the desk's mark stays on it, now filled by the site),
+      // and a new empty block, unmarked, is appended after it, its boxes a moment later
+      const mine = panels.lastElementChild;
+      mine.setAttribute('data-saved', '1');
+      schoolBoxes(mine, mine.dataset.id);
+      fillSaved(mine, mine.dataset.id);
+      ed += 1;
+      block += 1;
+      const id = 'education-' + block;
+      const p = panel('Education', ed);
+      p.dataset.id = id;
+      panels.appendChild(p);
+      setTimeout(() => schoolBoxes(p, id), 2000);
+      return;
+    }
     ed += 1;
     block += 1;
     const id = 'education-' + block;
     const p = panel('Education', 0);
     p.setAttribute('data-saved', '1');
     schoolBoxes(p, id);
-    const fill = () => {
-      p.querySelector('[name="school"]').value = 'Arizona State University';
-      p.querySelector('[name="degree"]').textContent = 'Bachelors';
-      p.querySelector('[name="fieldOfStudy"]').value = 'Electrical Engineering';
-      [['firstYearAttended', '2016'], ['lastYearAttended', '2020']].forEach(([name, year]) => {
-        const box = p.querySelector(`[id="${id}--${name}-dateSectionYear-input"]`);
-        box.value = year;
-        box.previousElementSibling.textContent = year;
-      });
-    };
-    const late = Number(new URLSearchParams(location.search).get('valueslate') || 0);
-    if (late) setTimeout(fill, late); else fill();
-    const panels = document.getElementById('ed-panels');
-    if (new URLSearchParams(location.search).has('savedlast')) panels.append(p); else panels.prepend(p);
+    const late = Number(params.get('valueslate') || 0);
+    if (late) setTimeout(() => fillSaved(p, id), late); else fillSaved(p, id);
+    if (params.has('savedlast')) panels.append(p); else panels.prepend(p);
     [...panels.children].forEach((q, i) => {
       q.querySelector('h3').textContent = `Education ${i + 1}`;
       q.querySelector('button').setAttribute('aria-label', `Delete Education ${i + 1}`);
@@ -154,6 +174,7 @@
     block += 1;
     const id = 'education-' + block;
     const p = panel('Education', ed);
+    p.dataset.id = id;
     document.getElementById('ed-panels').appendChild(p);
     e.target.textContent = 'Add Another';
     if (new URLSearchParams(location.search).has('savedschool') && !savedShown) {
@@ -161,7 +182,8 @@
       setTimeout(drawSaved, 300);
     }
     // like Workday's (live, Oct 2026): a new block's heading shows at once, its boxes a moment later
-    setTimeout(() => schoolBoxes(p, id), 2000);
+    // (unless the saved school was drawn into this very block meanwhile: &reused)
+    setTimeout(() => { if (!p.hasAttribute('data-saved')) schoolBoxes(p, id); }, 2000);
   });
 
   // spinbuttons take digits only, and show them in place of their "MM" / "YYYY", like Workday's

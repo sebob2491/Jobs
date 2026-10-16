@@ -8818,6 +8818,65 @@ def test_a_saved_block_drawn_after_the_desks_own_is_never_taken_for_it(srv, monk
     assert blocks == [["Education 1", ""], ["Education 2", "1"]], (blocks, r.log)
 
 
+def test_an_empty_block_the_desk_added_is_deleted_when_the_saved_one_took_its_place(srv, monkeypatch, job_apply_home):
+    """Arizona State University's Workday (run 108): My Experience drew the account's saved job INTO the block the desk's
+    Add had just drawn (Workday numbers its blocks by place: the desk's mark stayed on it, now filled by the site), and
+    appended a new empty block after it, unmarked; the desk, finding that one past the profile's entries without its
+    mark, left it and stopped ("Remove the extra block"). A marked block of that kind holding values the desk never
+    typed is the saved entry drawn into it: the empty last block is the desk's own, deleted again."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 1)
+    job = srv.add_job(url=fixture_url("site/workday-experience-blocks.html") + "?savedschool&reused",
+                      title="Equipment Technician", company="Example Litho")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), timeout=180, about=state(r))
+            return r, await r.page.evaluate(
+                "() => [...document.querySelectorAll('#ed-panels > div')].map((p) => [p.querySelector('h3').textContent, "
+                "p.dataset.saved || ''])")
+        finally:
+            await applier.stop()
+
+    r, blocks = run(go())
+    assert "more blocks than your profile has entries" not in r.reason, (r.status, r.reason, r.log)
+    assert any(line.startswith("deleted Education 2") for line in r.log), r.log
+    assert blocks == [["Education 1", "1"]], (blocks, r.log)  # (the saved one, in the desk's own block, stays)
+
+
+@pytest.mark.parametrize("query, picked", [("?slow=6000", True), ("?slow=6000&placeholderfirst", True), ("?slow=20000", False)])
+def test_a_self_identification_list_that_fetches_its_choices_on_first_open_is_waited_on(srv, monkeypatch, query, picked):
+    """SuccessFactors' paginated selects (Freeport-McMoRan's Ethnicity, Edwards Vacuum's Protected Veteran, Rogers'
+    Gender and Ethnicity: 20 of the live check's runs) fetch their entries when first opened, a few seconds on their
+    servers: the desk read no choices in its two and a half seconds and asked the person, though the list's "I choose
+    not to self-identify" is the profile's own answer. A list open and still empty, or on its "No Selection" alone,
+    is waited on (PICK_LIST_WAIT, 8 s); one still empty after that is asked about as before."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    job = srv.add_job(url=fixture_url("site/sf-select-slow.html") + query, title="ET", company="Example Semi")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r, await r.page.evaluate("() => [...document.querySelectorAll('input')].map((i) => i.value)")
+        finally:
+            await applier.stop()
+
+    r, values = run(go())
+    if picked:
+        assert r.status == "ready" and not r.questions, (r.status, r.need, r.reason, r.log)  # (never asked)
+        assert values == ["Sam", "I choose not to self-identify"], (values, r.log)
+    else:
+        assert r.need == "questions" and [q["label"] for q in r.questions] == ["Pre-Offer : Are you a Protected Veteran?"], \
+            (r.status, r.need, r.reason, r.log)
+        assert "showed no choices" in r.questions[0]["error"] and values == ["Sam", ""], (r.questions, values)
+
+
 def test_a_posting_that_has_closed_says_so(srv, monkeypatch):
     """Edward Jones' BrassRing page for an expired posting (live, Oct 2026) says "The job posting
     you are looking for has expired or the position has already been filled", and the desk said
