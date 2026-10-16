@@ -372,10 +372,15 @@ def import_fixtures(where: Path, wanted: list[str], into: Path = LIVE_FIXTURES, 
     return copied
 
 
-def timing(recs: list[dict[str, Any]], slowest: int = 5) -> list[str]:
+SLOWER = 2.0  # a job system's middle time this many times an earlier run's is said (the review of Oct 15)
+SLOWER_FLOOR = 30  # seconds: a system that took less than this in the middle isn't said, however much slower
+
+
+def timing(recs: list[dict[str, Any]], slowest: int = 5, earlier: list[dict[str, Any]] | None = None) -> list[str]:
     """How long each job system's employers took in a run (the seconds each record keeps): the middle and the 90th
     percentile, and the rounds, per system; then the slowest employers. The review of Oct 15: the time was recorded and
-    never summarised, so a site growing slower showed nowhere."""
+    never summarised, so a site growing slower showed nowhere. With `earlier` (a run of the week before, say), a system
+    whose middle is SLOWER times that run's, and SLOWER_FLOOR seconds or more, says so."""
     from job_apply.ats import detect_ats
 
     def system(r: dict[str, Any]) -> str:
@@ -387,16 +392,27 @@ def timing(recs: list[dict[str, Any]], slowest: int = 5) -> list[str]:
         ordered = sorted(values)
         return ordered[min(len(ordered) - 1, int(round(q * (len(ordered) - 1))))]
 
+    def middles(of: list[dict[str, Any]]) -> dict[str, float]:
+        grouped: dict[str, list[float]] = {}
+        for r in of:
+            if isinstance(r.get("seconds"), (int, float)):
+                grouped.setdefault(system(r), []).append(float(r["seconds"]))
+        return {name: pct(secs, 0.5) for name, secs in grouped.items()}
+
     timed = [r for r in recs if isinstance(r.get("seconds"), (int, float))]
     by: dict[str, list[dict[str, Any]]] = {}
     for r in timed:
         by.setdefault(system(r), []).append(r)
+    before = middles(earlier) if earlier is not None else {}
     out = []
     for name, group in sorted(by.items(), key=lambda kv: -pct([r["seconds"] for r in kv[1]], 0.5)):
         secs = [float(r["seconds"]) for r in group]
         rounds = [len(r.get("rounds") or []) for r in group]
-        out.append(f"{name}: {len(group)} employer(s), {pct(secs, 0.5):.0f} s middle, {pct(secs, 0.9):.0f} s at 90%, "
-                   f"{pct([float(x) for x in rounds], 0.5):.0f} round(s) middle")
+        middle, was = pct(secs, 0.5), before.get(name)
+        slower = (f" (was {was:.0f} s: {middle / was:.1f}x slower)"
+                  if was and middle >= SLOWER_FLOOR and middle >= SLOWER * was else "")
+        out.append(f"{name}: {len(group)} employer(s), {middle:.0f} s middle, {pct(secs, 0.9):.0f} s at 90%, "
+                   f"{pct([float(x) for x in rounds], 0.5):.0f} round(s) middle{slower}")
     if timed:
         out.append("slowest: " + ", ".join(f"{r.get('company')} ({float(r['seconds']):.0f} s)"
                                             for r in sorted(timed, key=lambda r: -float(r["seconds"]))[:slowest]))
@@ -417,9 +433,11 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--import-fixtures", type=Path, help="a run's artifact: copy its scrubbed stop pages into the tests")
     ap.add_argument("--replace", action="store_true", help="with --import-fixtures: replace fixtures already there")
     ap.add_argument("--timing", type=Path, help="a run's artifact: the time each job system's employers took")
+    ap.add_argument("--against", type=Path, help="with --timing: an earlier run's artifact (a week before: artifacts "
+                    "are kept 7 days); a job system twice as slow as there says so")
     args = ap.parse_args(argv)
     if args.timing:
-        for line in timing(list(records(args.timing))):
+        for line in timing(list(records(args.timing)), earlier=list(records(args.against)) if args.against else None):
             print(line)
         return 0
     if args.import_fixtures:

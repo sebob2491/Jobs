@@ -234,6 +234,21 @@ def test_a_runs_time_is_summed_up_per_job_system():
     assert out[-1] == "slowest: W3 (400 s), W2 (100 s)"
 
 
+def test_a_job_system_twice_as_slow_as_an_earlier_run_says_so():
+    """"2x slower than last week" (the review of Oct 15): --timing with --against an earlier run's artifact names a job
+    system whose middle time doubled, not one that was quick either way."""
+    def rec(company, seconds, url):
+        return {"company": company, "seconds": seconds, "rounds": [{"url": url}]}
+    wd, gh = "https://x.wd1.myworkdayjobs.com/en-US/E/job/1", "https://job-boards.greenhouse.io/x/jobs/1"
+    earlier = [rec("W1", 50, wd), rec("W2", 60, wd), rec("W3", 70, wd), rec("G", 5, gh)]
+    now = [rec("W1", 120, wd), rec("W2", 130, wd), rec("W3", 140, wd), rec("G", 20, gh), rec("O", 300, "https://o.example/x")]
+    out = ns.timing(now, earlier=earlier)
+    assert out[1] == "workday: 3 employer(s), 130 s middle, 140 s at 90%, 1 round(s) middle (was 60 s: 2.2x slower)", out
+    assert out[2].startswith("greenhouse: 1 employer(s), 20 s middle") and "slower" not in out[2]  # (under 30 s)
+    assert "slower" not in out[0]  # (a system the earlier run didn't have)
+    assert all("slower" not in line for line in ns.timing(now))
+
+
 def test_a_rounds_pick_list_probe_is_printed_with_it():
     """The live check's look at a pick-only list that showed no choices (live_smoke.pick_list_probe, Edwards Vacuum's
     Protected Veteran in run 113) shows under its round."""
