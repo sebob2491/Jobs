@@ -158,6 +158,25 @@ _BOT_TEXT = re.compile(r"verify (?:that )?you are (?:a )?human|are you a robot|c
                        r"enable javascript and cookies to continue|request unsuccessful|you have been blocked", re.I)
 _CAPTCHA = re.compile(r"i'?m not a robot|i am human|hcaptcha|recaptcha challenge", re.I)
 _VERIFY_EMAIL = re.compile(r"verif(?:y|ication)\b.{0,40}\b(?:e-?mail|account|link)|check your (?:e-?mail|inbox)", re.I)
+# A sign-in refused because the account's email was never verified (Workday's "Verify your account before you sign in
+# or request a verification email.", beside its "Resend Account Verification": the test identity's Vanguard, run 98,
+# an account from an earlier run whose link went unopened). Said only after a refusal: the sign-in page as it opens
+# has neither (live, Oct 2026: Vanguard's, Banner Health's, HonorHealth's)
+_VERIFY_FIRST = re.compile(r"\bverify your (?:account|e-?mail(?: address)?)\b[^.?!]{0,40}\bbefore (?:you )?(?:can )?"
+                           r"(?:sign(?:ing)?|log(?:ging)?) ?in\b|\byou need to verify your (?:account|e-?mail)\b|"
+                           r"\b(?:account|e-?mail(?: address)?) (?:has not|hasn'?t|is not|isn'?t|was not|wasn'?t) (?:been )?"
+                           r"(?:verified|confirmed|activated)\b", re.I)
+# The site's word that it couldn't send that email (Workday's "Failed to resend verification email")
+_SEND_FAILED = re.compile(r"\b(?:failed|unable|couldn'?t|could not|can'?t|cannot) to (?:re-?)?send\b|"
+                          r"\b(?:failed|unable|couldn'?t|could not|can'?t|cannot) (?:to )?(?:re-?)?send(?:ing)?\b", re.I)
+# The page's word that the verification email was just sent (Banner Health's "An email has been sent to you. Please
+# verify your account"): that one is waited for, not asked for again
+_VERIFY_SENT = re.compile(r"\b(?:e-?mail|link|message)\b[^.?!]{0,40}\b(?:has been|have been|was|were|is|been) "
+                          r"(?:sent|e-?mailed)\b|\bwe(?:'ve| have)? (?:just )?(?:sent|e-?mailed)\b|"
+                          r"\bsent (?:you )?(?:an? )?(?:new )?(?:verification |confirmation |activation )?(?:e-?mail|link)\b", re.I)
+# A sign-in page's button that sends the verification email again (Workday's "Resend Account Verification")
+_RESEND_VERIFY = re.compile(r"^(?:re-?send|request|send)(?: (?:the|a|an|me|my|another|new))*(?: account)?"
+                            r"(?: (?:e-?mail|verification|confirmation|activation))+(?: (?:e-?mail|link|again))?$", re.I)
 _CODE_FIELD = re.compile(r"verification code|one[- ]time (?:pass)?code|passcode|security code|\bcode\b.{0,40}"
                          r"(?:sent|email)|enter (?:the )?(?:\d-digit )?code|\botp\b", re.I)
 
@@ -585,6 +604,8 @@ class Run:
     # This pause waits for the verification email of the account the desk just made (_await_verify_email):
     # a Resume after it, or its link opened from the inbox, means the account is verified: signed in to once
     verifying: bool = False
+    # its "Resend Account Verification" pressed for this job (an account there from before, never verified): once
+    verify_resent: bool = False
     # Submit was pressed for this job before and no confirmation showed (its folder keeps the
     # record): it may have gone, so it's never pressed again without the person
     pressed_before: bool = False
@@ -606,7 +627,7 @@ class Run:
                                                                      "reset_asked", "reset_from", "reset_waited",
                                                                      "reset_no_mail", "reopened_elsewhere", "reopened", "sign_in_tries", "sign_in_key",
                                                                      "accounts_tried", "account_made", "account_in", "account_page",
-                                                                     "account_finished", "verifying", "mail_looks", "mail_last",
+                                                                     "account_finished", "verifying", "verify_resent", "mail_looks", "mail_last",
                                                                      "entries_short", "entries_told", "entries_ok",
                                                                      "account_answers", "employer_mail", "others_mail")}
 
@@ -1860,17 +1881,32 @@ class Applier:
                 if asked == "no_account":
                     sign_ins["submitted"] = sign_ins["wants_account"] = 1
                     continue
-            if (kind == "sign_in" and manage and sign_ins.get("made") and _VERIFY_EMAIL.search(said_exists)
+            alerts = " ".join(data.get("errors") or [])
+            if (kind == "sign_in" and manage and not run.verifying
+                    and (sign_ins.get("made") or _VERIFY_FIRST.search(alerts)
+                         or run.accounts_tried and _VERIFY_SENT.search(alerts))
+                    and _VERIFY_EMAIL.search(said_exists)
                     and sum(f.get("kind") == "password" and not _code_box(f) for f in data.get("fields") or []) == 1):
                 # the account just made says it emailed a link to verify it (Banner Health's Workday, live,
-                # Oct 2026): its Sign In takes no password before the link is opened
-                return await self._await_verify_email(run, data)
+                # Oct 2026): its Sign In takes no password before the link is opened. Or an account there from
+                # before, never verified, refuses the sign-in for that (Vanguard's, the test identity, run 98:
+                # "Verify your account before you sign in or request a verification email", in the page's own
+                # alert: a sign-in's help or a one-box Create Account form saying so elsewhere isn't a refusal, the
+                # review of 0.3.178): the same wait, and not a password reset, which such an account gets no email
+                # for (runs 96 and 97: none in 3 minutes). Or the account made in this job on an earlier pass (a
+                # Resume before its link was opened), the page still saying it emailed the link (the review's).
+                # Not on the pass after that wait (the link opened from the inbox, or the person's Resume: the
+                # account is verified, though the page still shows the words it refused with): the saved password
+                # is tried once, which spends run.verifying
+                return await self._await_verify_email(run, data, text)
             if kind == "sign_in":
                 # With the inbox watched, a refused password is reset before a new account is made (the
                 # owner's choice: an account there already is the likelier, on a second application)
                 reset_first = manage and not run.reset_asked and self.mail_login() is not None
                 shown = data  # (what the page said before it's filled in again)
                 done = await self._sign_in(run, data, sign_ins, reset_first=reset_first)
+                if done == "submitted":
+                    run.verifying = False  # (the one sign-in after a verification wait, spent: refused again, it waits again)
                 if done in ("email_step", "submitted", "create_account"):
                     sign_ins[done] = sign_ins.get(done, 0) + 1
                     if done == "create_account":
@@ -3736,26 +3772,66 @@ class Applier:
             run.blocking, run.left = False, True
             self._wake.set()
 
-    async def _await_verify_email(self, run: Run, data: dict[str, Any]) -> None:
+    async def _await_verify_email(self, run: Run, data: dict[str, Any], text: str = "") -> None:
         """The Sign In a Workday site goes back to after the desk made the account says it emailed a link
         to verify it (Banner Health's, live, Oct 2026: "An email has been sent to you. Please verify your
         account"). The saved password isn't taken until that link is opened (the desk pressed Sign In, was
         refused and stopped on "your saved password didn't sign in"), so it isn't pressed yet, and a
         refusal before this, for the same reason, doesn't count against the job's sign-ins. With the inbox
         watched, the link is opened in this browser when its email comes (_check_mail), and the job goes
-        on to sign in, once; without it the person opens the link, then presses Resume, which signs in once."""
+        on to sign in, once; without it the person opens the link, then presses Resume, which signs in once.
+
+        An account there from before that was never verified (its link unopened, or gone: Vanguard's, the test
+        identity, run 98) is refused the same way, with no word of an email just sent, and the page offers to
+        send it again (Workday's "Resend Account Verification"). With the inbox watched that button is pressed,
+        once a job, and the new email waited for; without it the card names the button. One the page says it
+        just sent is waited for, not asked for again (a second email for an account the desk just made, at a
+        site that says nothing of the first, is the cost of a wait that would never end at Vanguard's: the
+        newest email's link is the one opened, the review of 0.3.178)."""
         run.sign_in_tries = min(run.sign_in_tries, SIGN_IN_TRIES - 1)
         site = _site(run, data)
-        said = f"{site} emailed you a link to verify your new account, and won't sign in until it's opened."
+        resend = next((a for a in data.get("actions") or [] if not a.get("disabled") and not a.get("cookie")
+                       and not a.get("form_submit") and _RESEND_VERIFY.match(final_text(a.get("text") or "").strip())), None)
+        label = final_text(resend["text"]).strip() if resend is not None else ""
+        # an account from before, by the page's words: the refusal in its alerts, and no word of an email just sent
+        stale = (_VERIFY_FIRST.search(" ".join(data.get("errors") or [])) is not None
+                 and _VERIFY_SENT.search(" ".join([*(data.get("errors") or []), text[:3000]])) is None)
+        said = (f"{site} won't sign in until your account there is verified from the link it emailed." if stale
+                else f"{site} emailed you a link to verify your new account, and won't sign in until it's opened.")
         if self.mail_login() is not None:
-            self._pause(run, "email_code", f"{said} The desk is watching your inbox for it: it opens the link, then signs "
-                        "in with your saved password. The other jobs carry on meanwhile.", seen=data)
+            watching = "The desk is watching your inbox for it: it opens the link, then signs in with your saved password."
+            if stale and resend is not None and not run.verify_resent:
+                try:
+                    await self.srv.browser.click(resend["id"])
+                    pressed = True
+                except Exception:  # gone (the page drawn again) or won't take a click
+                    pressed = False
+                if pressed:
+                    run.verify_resent = True  # (once a job)
+                    data, text = await self._look()  # (the page as it is now, paused on: the site's answer to the press)
+                    if _SEND_FAILED.search(" ".join([*(data.get("errors") or []), text[:3000]])):
+                        self._log(run, f"pressed \u201c{label}\u201d, and {site} says it couldn't send the email")
+                        watching = (f"The desk pressed \u201c{label}\u201d, and {site} says it couldn't send the email: "
+                                    "press it yourself in the browser window a little later. The desk is watching your "
+                                    "inbox for the new email: it opens the link, then signs in with your saved password.")
+                    else:
+                        self._log(run, f"pressed \u201c{label}\u201d, so {site} emails the link again")
+                        watching = (f"The desk pressed \u201c{label}\u201d and is watching your inbox for the new email: "
+                                    "it opens the link, then signs in with your saved password.")
+                else:
+                    watching = (f"The desk couldn't press its \u201c{label}\u201d: press it in the browser window, and the "
+                                "desk opens the new email's link from your inbox, then signs in with your saved password.")
+            elif stale and resend is not None:  # (pressed before for this job: the email it sent is the one to find)
+                watching = (f"The desk is watching your inbox for it (its \u201c{label}\u201d in the browser window sends "
+                            "it again): it opens the link, then signs in with your saved password.")
+            self._pause(run, "email_code", f"{said} {watching} The other jobs carry on meanwhile.", seen=data)
             run.blocking, run.left = False, True  # nothing for the person to do: the queue goes on
             self._wake.set()
         else:
             await self._bring_forward(run)
-            self._pause(run, "sign_in", f"{said} Open the link in that email, then press Resume: the desk signs in with "
-                        "your saved password (an email app password saved on the desk lets it open the link itself).",
+            again = f" (its \u201c{label}\u201d sends a new one)" if stale and resend is not None else ""
+            self._pause(run, "sign_in", f"{said} Open the link in that email{again}, then press Resume: the desk signs in "
+                        "with your saved password (an email app password saved on the desk lets it open the link itself).",
                         seen=data)
         run.verifying = True
 
