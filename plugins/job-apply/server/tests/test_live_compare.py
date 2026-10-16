@@ -116,10 +116,23 @@ def test_pipeline_outcome_is_where_it_ended():
 def test_search_outcome_ignores_how_many_openings_there_are():
     assert lc.search_outcome(search_rec("USAA", az=5)) == Result("works", "5 in AZ")
     assert lc.search_outcome(search_rec("USAA", az=0, any_=3)) == Result("works", "none in AZ, 3 anywhere")
-    assert lc.search_outcome(search_rec("USAA", az=0, any_=0)).outcome == "works"
+    assert lc.search_outcome(search_rec("USAA", az=0)) == Result("works", "none in AZ")  # (none looked for anywhere)
     # a crash after the search answered (opening the form) isn't the search's
     assert lc.search_outcome(search_rec("USAA", az=2, crash="TimeoutError: ")) == \
         Result("works", "2 in AZ · then TimeoutError: ")
+
+
+def test_a_search_that_answered_and_found_nothing_anywhere_is_empty():
+    """A parser that no longer reads its site's answer, or a site whose openings went, found nothing in Arizona nor
+    with the broader words anywhere: it read as "works" (the review of Oct 15). One that failed somewhere isn't
+    empty: what failed might have found some."""
+    assert lc.search_outcome(search_rec("USAA", az=0, any_=0)) == Result("empty", "none in AZ, none anywhere")
+    assert lc.search_outcome(search_rec("USAA", az=0, any_=0, crash="TimeoutError: ")) == \
+        Result("empty", "none in AZ, none anywhere · then TimeoutError: ")
+    partly = "browser search: TimeoutError: page didn't load (1 of 4 searches failed)"
+    assert lc.search_outcome(search_rec("Aerotek", az=0, any_=0, error=partly)).outcome == "works"
+    state, changes = lc.compare({"search": {"USAA": "works"}}, {"search": {"USAA": Result("empty", "none")}})
+    assert [(c.employer, c.before, c.after) for c in changes] == [("USAA", "works", "empty")]
 
 
 def test_search_outcome_errors():
