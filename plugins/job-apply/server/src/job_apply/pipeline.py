@@ -552,8 +552,10 @@ class Run:
     once_page: dict[str, tuple] = field(default_factory=dict)  # where each this-application answer went in
     mail_checked: float = 0.0  # when the inbox was last looked at for its emailed code or link
     mail_done: bool = False  # the code or link from the inbox went in: no more looking
-    employer_mail: frozenset[str] | None = None  # the employer's own mail domains, from its list (looked up once)
-    others_mail: Any = False  # _another_employers_mail's answer for this job (False: not looked up yet)
+    # the employer's own mail domains, from its list (looked up once), and _another_employers_mail's answer for this
+    # job (False: not looked up yet): the desk's own, never in public() (a frozenset and a function aren't JSON's)
+    employer_mail: frozenset[str] | None = None
+    others_mail: Any = False
     # what the desk's looks in the inbox came to, for the live check's LIVE_INBOX line (not the person's)
     mail_looks: int = 0
     mail_last: str = ""
@@ -583,7 +585,7 @@ class Run:
                                                                      "accounts_tried", "account_made", "account_in", "account_page",
                                                                      "account_finished", "verifying", "mail_looks", "mail_last",
                                                                      "entries_short", "entries_told", "entries_ok",
-                                                                     "account_answers")}
+                                                                     "account_answers", "employer_mail", "others_mail")}
 
 
 def classify(data: dict[str, Any], text: str) -> str:
@@ -1426,7 +1428,8 @@ class Applier:
             # first digit)
             if read != re.sub(r"[^0-9A-Za-z]", "", found.value) and not (len(ids) == 1 and read and len(read) == 1
                                                                         and found.value.startswith(read)):
-                why = f"its boxes read {read or 'nothing'}"
+                # (how much they read, never what: that may be most of the code, and the log is shown and reported)
+                why = f"its boxes read {f'{len(read)} character(s), not the code' if read else 'nothing'}"
         except Exception as e:
             why = f"{type(e).__name__}: {str(e).splitlines()[0] if str(e) else ''}"
         if why:  # (looked for again at the next look; said once, so the log says why none went in)

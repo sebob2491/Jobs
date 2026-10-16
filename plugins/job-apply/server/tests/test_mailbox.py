@@ -2,6 +2,7 @@
 
 import email.utils
 import imaplib
+import ssl
 import time
 
 import pytest
@@ -94,8 +95,8 @@ class FakeImap:
     accept = True
     login_error: Exception | None = None  # what the server does to a sign-in, when not a refusal
 
-    def __init__(self, host, timeout=None):
-        self.host, self.calls, self.folder = host, [], "INBOX"
+    def __init__(self, host, timeout=None, ssl_context=None):
+        self.host, self.calls, self.folder, self.ssl_context = host, [], "INBOX", ssl_context
         FakeImap.instances.append(self)
 
     def login(self, user, password):
@@ -238,6 +239,27 @@ def test_a_malformed_message_is_passed_over(imap, monkeypatch):
 
     monkeypatch.setattr(mailbox, "_parts", parts)
     assert mailbox.search("sam@gmail.com", "app-password", since, {"ti.com"}, "code").value == "555555"
+
+
+def test_the_mail_service_is_reached_over_a_checked_connection(imap, monkeypatch):
+    """imaplib's IMAP4_SSL alone checks neither the server's certificate nor its name (the review of Oct 15):
+    anything on the way could stand in for Gmail and take the app password. The connection checks both, and a
+    certificate that doesn't check out is said, with the app password unsent."""
+    assert mailbox.search("sam@gmail.com", "app-password", time.time(), {"ti.com"}, "code") is None
+    ctx = imap.instances[0].ssl_context
+    assert isinstance(ctx, ssl.SSLContext) and ctx.verify_mode == ssl.CERT_REQUIRED and ctx.check_hostname
+    assert ctx.cert_store_stats()["x509_ca"] > 0  # (the system's root certificates, or certifi's)
+
+    class Refuses(FakeImap):
+        def __init__(self, host, timeout=None, ssl_context=None):
+            raise ssl.SSLCertVerificationError(1, "[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: "
+                                                  "self-signed certificate in certificate chain (_ssl.c:1000)")
+
+    monkeypatch.setattr(mailbox.imaplib, "IMAP4_SSL", Refuses)
+    with pytest.raises(MailboxError, match="certificate didn't check out.*nothing was sent to it") as e:
+        mailbox.search("sam@gmail.com", "app-password", time.time(), {"ti.com"}, "code")
+    # (not in a refused app password's words: the desk would retire the saved one until a new one is saved)
+    assert "app password" not in str(e.value) and "self-signed certificate" in str(e.value)
 
 
 def test_a_refused_app_password_says_so(imap):

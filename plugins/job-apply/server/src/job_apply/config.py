@@ -13,6 +13,8 @@ import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
+from urllib.request import url2pathname
 
 import yaml
 
@@ -81,6 +83,24 @@ def plugin_version() -> str:
 
 def home() -> Path:
     return Path(os.environ.get("JOB_APPLY_HOME", "~/.job-apply")).expanduser()
+
+
+def own_file(url: str) -> bool:
+    """A file: link into the desk's own folder (~/.job-apply: its settings, saved pages, the tracker, secrets).
+    Never opened as a page or read as a posting, which would save its text where Claude reads it. In every
+    spelling the browser opens: file:///home/x/..., file:/home/x/..., file:home/x/... and file://C:/Users/x/...
+    (the review of 0.3.174: the last three got past a check for "file://" alone)."""
+    if not url.strip().lower().startswith("file:"):
+        return False
+    try:
+        parsed = urlparse(url.strip())
+        path = parsed.path if parsed.path.startswith("/") else "/" + parsed.path
+        if re.fullmatch(r"[A-Za-z]:", parsed.netloc):  # file://C:/Users/... (the drive read as the host)
+            path = f"/{parsed.netloc}{path}"
+        where = Path(url2pathname(path)).resolve()
+        return where == home().resolve() or home().resolve() in where.parents
+    except (OSError, ValueError):
+        return True
 
 
 def profile_path() -> Path:

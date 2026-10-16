@@ -22,8 +22,6 @@ import time
 import webbrowser
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
-from urllib.request import url2pathname
 
 import uvicorn
 from starlette.applications import Starlette
@@ -469,7 +467,7 @@ class Desk:
         t = self.srv.tracker()
         ids = [int(j) for j in job_ids]
         for url in urls:
-            if not re.match(r"(?i)^(https?|file)://", str(url)) or _own_file(str(url)):
+            if not re.match(r"(?i)^(https?|file)://", str(url)) or config.own_file(str(url)):
                 continue  # a listing whose link isn't a web address ("javascript:…"), or is one of the desk's own files
             tracked = t.find_by_url(url)
             if tracked is not None and self._listing(url) is None:
@@ -508,7 +506,7 @@ class Desk:
             if not re.match(r"(?i)^(https?|file)://", url):
                 out.append({"url": url, "error": "not a web address"})
                 continue
-            if _own_file(url):  # its text would be saved as a posting, where Claude could read it
+            if config.own_file(url):  # its text would be saved as a posting, where Claude could read it
                 out.append({"url": url, "error": "that's one of the desk's own files, not a job posting"})
                 continue
             posting = None
@@ -686,17 +684,6 @@ def _saved(names: list[str]) -> dict[str, bool]:
     env = {k for k, v in os.environ.items() if k.startswith("JOB_APPLY_SECRET_") and v}
     return {n: f"JOB_APPLY_SECRET_{re.sub(r'[^A-Z0-9]', '_', n.upper())}" in env or data.get(n) is not None
             for n in names}
-
-
-def _own_file(url: str) -> bool:
-    """A file:// link into the desk's own folder (~/.job-apply: secrets, answers, the tracker)."""
-    if not url.lower().startswith("file://"):
-        return False
-    try:
-        path = Path(url2pathname(urlparse(url).path)).resolve()
-        return path == config.home().resolve() or config.home().resolve() in path.parents
-    except (OSError, ValueError):
-        return True
 
 
 TROUBLESHOOT_TITLES = ["human resources", "recruiter"]  # troubleshooting's HR jobs, beside the profile's titles

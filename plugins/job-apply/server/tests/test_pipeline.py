@@ -3094,7 +3094,7 @@ def test_brassrings_security_question_is_answered_on_the_card_for_that_form_alon
                 return r, asked, reason, {}, ""
             desk.answer(job["id"], [{"label": chooser, "value": "In what city were you born?", "remember": True},
                                     *({"label": k, "value": secret} for k in keys if k != chooser)])
-            shown = json.dumps(r.public(), default=str)
+            shown = json.dumps(r.public())
             await until(lambda: any(line.startswith("filled in your answers") for line in r.log), about=state(r))
             await until(lambda: r.status not in ("queued", "running"), about=state(r))
             # (the form as read now, and as a saved page keeps it: Claude's tools, a stop's page, a problem report)
@@ -3118,7 +3118,7 @@ def test_brassrings_security_question_is_answered_on_the_card_for_that_form_alon
         "filled in your answers to the security questions on Example Corp's site"], r.log
     # that form's alone: never remembered, never the application's, said nowhere
     assert config.saved_answers() == [] and r.once == {}, (config.saved_answers(), r.once)
-    assert secret not in shown and secret not in json.dumps(r.public(), default=str) and secret not in "\n".join(r.log)
+    assert secret not in shown and secret not in json.dumps(r.public()) and secret not in "\n".join(r.log)
     assert '"(set)"' in shown and "screenshot" not in shown and r.account_answers == {}, shown[-3000:]
 
 
@@ -3331,6 +3331,42 @@ def test_a_code_the_page_wouldnt_take_is_said_in_the_log_and_tried_again(srv, mo
     assert said == ["found the code in your email but couldn't type it into the page (DialogOpen: “Notice” "
                     "is open over the page); I'll try again"], r.log
     assert len(refused) == 2 and (did.get("passcode"), did.get("verifies")) == ("123456", 1), (did, r.log)
+
+
+def test_what_the_codes_boxes_read_instead_is_never_logged(srv, monkeypatch, job_apply_home):
+    """A code typed into its boxes and read back wrong was logged as read ("its boxes read 12345"): most of the
+    code, in a log the desk shows and a report files (the review of Oct 15). The log says how much they read."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    saved_password(monkeypatch)
+    as_test_identity(monkeypatch, job_apply_home)
+    inbox_with_code(monkeypatch)
+    real, misread = srv.browser.type_code, []
+
+    async def type_code(ids, code):
+        if len(ids) == 6 and not misread:  # (the code's six boxes: read back one short, once)
+            misread.append(ids)
+            return list(code[:-1]) + [""]
+        return await real(ids, code)
+
+    monkeypatch.setattr(srv.browser, "type_code", type_code)
+    job = srv.add_job(url=fixture_url("site/brassring-signin.html"), title="Senior Analyst",
+                      company="Example Corp")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: "pressed “Verify Passcode”" in r.log, about=state(r))
+            return r, await brassring_did(r.page)
+        finally:
+            await applier.stop()
+
+    r, did = run(go())
+    said = [line for line in r.log if line.startswith("found the code in your email but couldn't type it")]
+    assert said == ["found the code in your email but couldn't type it into the page (its boxes read 5 character(s), "
+                    "not the code); I'll try again"], r.log
+    assert "12345" not in "\n".join(r.log) and (did.get("passcode"), did.get("verifies")) == ("123456", 1), (did, r.log)
 
 
 def test_whose_mail_a_brassring_job_reads_a_code_from(srv):
@@ -5298,6 +5334,43 @@ def test_a_refused_email_app_password_is_said_once_and_not_tried_again(srv, monk
     monkeypatch.setattr(pipeline.mailbox, "imap_host", lambda address: "imap.example.com")
     assert applier.mail_login() == ("sam.rivera@example.com", "a-new-one")
     assert r.need == "email_code"  # still waiting for the person
+
+
+def test_a_certificate_that_doesnt_check_out_isnt_a_refused_app_password(srv, monkeypatch):
+    """The checked connection's own error (0.3.174: something answering for the mail service, or a computer with
+    no root certificates) is said and tried again shortly, never read as a refused app password, which would retire
+    the saved one until a new one is saved (the review of 0.3.174)."""
+    import ssl
+
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "MAIL_POLL_SECONDS", 0)
+    monkeypatch.setenv("JOB_APPLY_SECRET_EMAIL_PASSWORD", "an-app-password")
+    monkeypatch.setattr(pipeline.mailbox, "imap_host", lambda address: "imap.example.com")
+    made = []
+
+    class Unchecked:
+        def __init__(self, host, timeout=None, ssl_context=None):
+            made.append(host)
+            raise ssl.SSLCertVerificationError(1, "[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: "
+                                                  "self-signed certificate in certificate chain (_ssl.c:1000)")
+
+    monkeypatch.setattr(pipeline.mailbox.imaplib, "IMAP4_SSL", Unchecked)
+    job = srv.add_job(url=fixture_url("site/verify-email.html") + "?code", title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.need == "email_code" and len(made) >= 2)  # looked again: nothing retired
+            return r
+        finally:
+            await applier.stop()
+
+    run(go())
+    assert "imap.example.com's certificate didn't check out" in applier.mail_problem, applier.mail_problem
+    assert "tries again shortly" in applier.mail_problem and "app password" not in applier.mail_problem
+    assert applier.mail_login() == ("sam.rivera@example.com", "an-app-password")  # the saved one still stands
 
 
 def test_an_inbox_the_desk_cant_read_is_said_and_not_watched(srv, monkeypatch):

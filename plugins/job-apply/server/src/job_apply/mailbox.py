@@ -14,9 +14,11 @@ from __future__ import annotations
 import email
 import email.policy
 import email.utils
+import functools
 import html
 import imaplib
 import re
+import ssl
 import time
 from dataclasses import dataclass
 from typing import Callable
@@ -204,7 +206,13 @@ def connect(address: str, password: str) -> tuple[imaplib.IMAP4, str]:
     if host is None:
         raise MailboxError(f"the desk can't read mail for {address.rsplit('@', 1)[-1]} addresses")
     try:
-        box = imaplib.IMAP4_SSL(host, timeout=20)
+        box = imaplib.IMAP4_SSL(host, timeout=20, ssl_context=_tls())
+    except ssl.SSLCertVerificationError as e:
+        # (something between here and the mail service, or no root certificates: said without the words of a
+        # refused app password, which would retire the saved one until a new one is saved)
+        raise MailboxError(f"{host}'s certificate didn't check out ({getattr(e, 'verify_message', None) or e}): "
+                           f"something between this computer and {host} is answering for it, or this computer has "
+                           "no root certificates to check it against; nothing was sent to it") from e
     except OSError as e:
         raise MailboxError(f"couldn't reach {host}: {e}") from e
     try:
@@ -223,6 +231,21 @@ def connect(address: str, password: str) -> tuple[imaplib.IMAP4, str]:
         logout(box)
         raise
     return box, host
+
+
+@functools.lru_cache(maxsize=1)
+def _tls() -> ssl.SSLContext:
+    """A connection that checks the mail service's certificate and name: imaplib's own checks neither, so anything
+    on the way could stand in for the service and take the app password. The system's root certificates, and
+    certifi's beside them for a Python installed without any (python.org's on macOS). Made once: every look in
+    the inbox connects."""
+    ctx = ssl.create_default_context()
+    try:
+        import certifi
+        ctx.load_verify_locations(cafile=certifi.where())
+    except (ImportError, OSError, ssl.SSLError):
+        pass
+    return ctx
 
 
 def logout(box: imaplib.IMAP4) -> None:
