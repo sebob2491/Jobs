@@ -38,6 +38,7 @@ import live_audit  # noqa: E402  (scripts/live_audit.py, beside this one: the re
 import live_compare  # noqa: E402  (scripts/live_compare.py, beside this one)
 
 REPO = "sebob2491/Jobs"
+HANDLED_FILE = Path(__file__).resolve().parents[2] / "data" / "desk_handled.yaml"
 ISSUE = 54
 CHECKS = ("pipeline", "hr", "accounts", "search", "finance")
 
@@ -108,6 +109,8 @@ def why(outcome: str, said: str) -> tuple[str, str]:
         return "Review page", "Check it, press Submit"
     if outcome == "no postings":
         return "No opening found", "Nothing to apply to"
+    if outcome == "empty":  # (the search check's: answered, and found nothing anywhere)
+        return "Search found nothing anywhere", "Being looked into"
     if "bot_check" in outcome:
         return "Bot check", "Solve it; the desk carries on"
     if "your_submit" in outcome:
@@ -177,6 +180,31 @@ def handled(state: dict[str, dict[str, str]], detail: dict[str, dict[str, str]])
                    or why(outcome, said.get(name, ""))[0].startswith("Filled;")), key=str.casefold)
 
 
+def listed_handled(path: Path = HANDLED_FILE) -> list[str]:
+    """data/desk_handled.yaml's employers, as written (none when it can't be read)."""
+    import yaml  # (the server's own dependency: this script runs in its environment)
+    try:
+        names = (yaml.safe_load(path.read_text(encoding="utf-8")) or {}).get("employers") or []
+    except (OSError, yaml.YAMLError, AttributeError):
+        return []
+    return [str(n) for n in names if n]
+
+
+def handled_drift(now: list[str], listed: list[str]) -> list[str]:
+    """data/desk_handled.yaml against the last run (the review of Oct 15): employers the accounts check now takes all
+    the way that it doesn't list, and ones it lists that the last run didn't take there (a bot check or a site's
+    error that night, or a real step back). Refreshed with --handled before a release."""
+    went, have = {n.casefold() for n in now}, {n.casefold() for n in listed}
+    new = [n for n in now if n.casefold() not in have]
+    not_now = [n for n in listed if n.casefold() not in went]
+    out = []
+    if new:
+        out.append(f"desk_handled.yaml: {len(new)} all the way in the last run, not listed: {', '.join(new)}")
+    if not_now:
+        out.append(f"desk_handled.yaml: {len(not_now)} listed, not all the way in the last run: {', '.join(not_now)}")
+    return out
+
+
 def tables(state: dict[str, dict[str, str]], detail: dict[str, dict[str, str]]) -> str:
     """Markdown tables of where each employer stops: the chip list's (with the test account's column) and the
     Phoenix HR list's, as Where It Stands shows them."""
@@ -217,7 +245,7 @@ _EXPECTED = re.compile(r"^(Bot check|No opening found|Site blocks automated brow
                        r"Account form \(.+\) with a CAPTCHA|Account made as you apply|Cookie banner with no decline|"
                        r"AI or privacy notice|Privacy notice to accept)")
 _FURTHER = {"ready", "needs_you your_submit"}  # as far as a run goes: the person's own Submit (or Apply) is next
-_BROKEN = {"failed", "crash"}
+_BROKEN = {"failed", "crash", "error", "empty"}  # (a pipeline's that broke; a search's that found nothing or failed)
 
 
 def _check_of(heading: str) -> str:
@@ -434,6 +462,9 @@ def main(argv: list[str] | None = None) -> int:
         print(counted(state))
         for check, name, date in live_compare.still_back(state, live_compare.read_reached(body)):
             print(f"still back: {name} ({check}; last there {date})")
+        if state.get("accounts"):
+            for line in handled_drift(handled(state, details(body)), listed_handled()):
+                print(line)
     return 0
 
 

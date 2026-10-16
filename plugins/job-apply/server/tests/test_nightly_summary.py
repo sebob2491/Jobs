@@ -185,6 +185,31 @@ def test_an_employer_new_to_a_check_that_goes_as_far_as_it_can_is_listed_as_adde
     assert out["look"] == ["search: Odd Co: new -> error: error"] and out["better"] == [] and out["expected"] == []
 
 
+def test_a_search_that_went_empty_is_looked_at_and_one_that_came_back_is_better():
+    comment = ("**Search: does each employer's search work**\n\n"
+               "- USAA: `works` \u2192 `empty` (`none in AZ, none anywhere`)\n"
+               "- KPMG: `empty` \u2192 `works` (`none in AZ, 3 anywhere`)\n"
+               "- Wells Fargo: `error` \u2192 `works` (`5 in AZ`)\n")
+    out = ns.triage(comment)
+    assert out["look"] == ["search: USAA: works -> empty: Search found nothing anywhere"]
+    assert sorted(out["better"]) == ["search: KPMG: empty -> works: works", "search: Wells Fargo: error -> works: works"]
+
+
+def test_the_handled_list_is_compared_with_the_last_run(tmp_path):
+    """The review of Oct 15: data/desk_handled.yaml drifts from the nightly between releases unnoticed. The summary
+    names the employers the last run took all the way that it doesn't list, and the ones it lists that the run
+    didn't take there, whatever their case."""
+    assert ns.handled_drift(["Air Liquide", "Intel", "KLA"], ["air liquide", "KLA", "Micron"]) == [
+        "desk_handled.yaml: 1 all the way in the last run, not listed: Intel",
+        "desk_handled.yaml: 1 listed, not all the way in the last run: Micron"]
+    assert ns.handled_drift(["KLA"], ["KLA"]) == []
+    listed = tmp_path / "desk_handled.yaml"
+    listed.write_text('as_of: "run 106"\nemployers:\n  - "No"\n  - "Air Liquide"\n', encoding="utf-8")
+    assert ns.listed_handled(listed) == ["No", "Air Liquide"]  # (quoted: "No" a name, not false)
+    assert ns.listed_handled(tmp_path / "missing.yaml") == []
+    assert ns.listed_handled() and "Air Liquide" in ns.listed_handled()  # (the repository's own)
+
+
 def test_an_employer_gone_from_a_check_and_a_change_with_no_detail_are_read_too():
     """The review of Oct 15: --changes read only lines with a detail, so an employer a check no longer has ("*no longer
     checked*") and a change written without one vanished from the list a session reads."""

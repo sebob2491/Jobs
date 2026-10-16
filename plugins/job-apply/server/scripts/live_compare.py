@@ -87,6 +87,10 @@ def _join(*parts: Any) -> str:
 # What the search or the Job Desk says of a site down for its maintenance (job_apply.search,
 # pipeline: "... is down for maintenance"): no outcome of the employer's own
 SITE_DOWN = "site down"
+# A search that answered without an error and found nothing, in Arizona or anywhere (its broader words too): what a
+# parser that no longer reads the site's answer finds, or a site that took its openings away (the review of Oct 15).
+# No search here has found none anywhere since the broader words came (run 114), so it doesn't flip from night to night
+EMPTY = "empty"
 _DOWN = re.compile(r"\bdown for maintenance\b", re.I)
 
 
@@ -126,6 +130,8 @@ def search_outcome(rec: dict[str, Any]) -> Result:
     if not searches:  # crashed or timed out before the search answered
         return Result("error", rec.get("crash") or "no search result")
     in_az = rec["search_az"].get("count", 0) if rec.get("search_az") else 0
+    if not in_az and not errors and isinstance(rec.get("search_any"), dict) and not rec["search_any"].get("count"):
+        return Result(EMPTY, _join("none in AZ, none anywhere", rec.get("crash") and f"then {rec['crash']}"))
     found = f"{in_az} in AZ" if in_az else (
         f"none in AZ, {rec['search_any'].get('count', 0)} anywhere" if rec.get("search_any") else "none in AZ")
     # a crash after the search (opening or filling the form) doesn't make the search fail

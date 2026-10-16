@@ -77,7 +77,8 @@ the scrubber (`python -m job_apply.fixtures`) before they become test fixtures.
   - Run live checks from a worktree of their own (`git worktree add ../Jobs-live origin/main`): a branch
     switch or cherry-pick in the main checkout changes the scripts under a running check.
 - The nightly's results: `uv run python scripts/nightly_summary.py` (counts per check, and the employers still back:
-  at the review page in an earlier run, not in the last, with the date each last got there), `--check accounts`
+  at the review page in an earlier run, not in the last, with the date each last got there; and `desk_handled.yaml`'s
+  drift from the last run's accounts check), `--check accounts`
   (one line per employer), `--changes` (the last run's changes, sorted: "look at" first, likely the desk's; then a site's or the
   rules'; then the better), `--tables` (Where It Stands' employer
   tables), `--artifacts <zip or folder> --companies "A,B"` (each employer's rounds, questions with their
