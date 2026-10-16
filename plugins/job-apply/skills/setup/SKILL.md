@@ -114,7 +114,8 @@ through its `missing` and `profile_gaps` together.
      (`settings.accept_cookies: true`); leave it off unless they say yes.
    - Accounts on job sites: tell them the desk creates their accounts itself (agreeing to each
      site's terms in their name, and to being considered for other open positions where a site
-     won't make the account without that, never job alerts or a newsletter) and, when a site
+     won't make the account without that, never job alerts or a newsletter; a form's security
+     questions come up on the desk's card for them, never remembered; a picture code stays theirs) and, when a site
      refuses their saved password, asks that
      site for a password reset and sets the saved password as the new one (reading the reset
      email needs the email app password on the desk; without it, they finish the reset from
@@ -126,7 +127,8 @@ through its `missing` and `profile_gaps` together.
      Schwab's "I Acknowledge the Privacy Notice", a terms box), and picks an application's
      attestation that its information is true and complete (or their consent to the background
      check that comes with applying), noting each in the job's log. Never a newsletter, job
-     alerts or a talent community. It's true because every answer comes from their profile or from them.
+     alerts or a talent community, texts or automated calls, a legal waiver, or the terms of
+     their employment (an at-will acknowledgement is asked of them). It's true because every answer comes from their profile or from them.
      Any other dialog over a form waits for them, and practice mode never agrees. Ask whether
      that's all right, and write `settings.accept_notices: true` or `false` as they say
      (`false`: the desk stops at the notice, and asks the attestation as a question).

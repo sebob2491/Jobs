@@ -66,12 +66,14 @@ The desk is a local web page served by this plugin. It does what the `find-jobs`
   ApplicantStack, UKG Pro, Infor or Taleo (Kforce's; where Taleo asks for a user name, the desk
   uses the profile email as it). The page names, by each system, the employers on the
   user's own lists that use it (on the semiconductor list, Workday has 15 of them; on the
-  Phoenix list, 24). Each employer has its own account. With a password saved, the desk signs in by itself
+  Phoenix list, 27). Each employer has its own account. With a password saved, the desk signs in by itself
   (pressing the sign-in form's own button, whatever it reads: SuccessFactors' says "Submit")
   and creates the account from Create Account forms (email, password, name and country from
   the profile; it ticks the site's terms, never a newsletter, and a consent to be considered for
   other open positions only when the site won't make the account without it; it presses the button; a
-  picture code stays the user's). If the password doesn't sign in, then with the email app
+  picture code stays the user's; the form's security questions come up on the job's card, go into that
+  form alone and are never remembered, logged or sent to Claude, and the desk presses the button once
+  they're in). If the password doesn't sign in, then with the email app
   password saved the desk first resets that employer's password to the saved one through
   the site's "Forgot password" email; when the site says it has no account for the email,
   or no reset email comes in 3 minutes (the other jobs carry on meanwhile), or the reset isn't
@@ -109,6 +111,17 @@ The desk is a local web page served by this plugin. It does what the `find-jobs`
 - **Only where the desk goes all the way** shows only openings at employers where the
   plugin's live check took a test applicant to the review page (a chip marks them in
   the list either way). Bot checks, CAPTCHAs and steps it can't do yet are elsewhere.
+- **Troubleshooting** (beside it) is for getting the desk going at more employers: Find jobs
+  searches every list's employers (the user's own lists, and the HR list too), only the
+  openings where the desk doesn't go all the way yet show, whatever their fit, every one is
+  tried, and nothing is submitted while it's on (the header says so; the desk still makes
+  accounts and fills each step, which the sites keep). Turned off, the desk applies for real.
+- **Common questions** (a card, while any are unanswered) asks the questions most
+  applications ask that the profile doesn't answer (`data/question_bank.yaml`). Answered
+  once, each goes to `answers.yaml` and fills that question at every employer from then on;
+  **Your answers** under it shows the ones given.
+- **My applications** (a tab beside Recommended and All) lists each job sent in, or filled
+  and waiting on its review page, newest first, with where it stands in the tracker.
 - **Tailor my resume for each job** holds each picked job, before its browser tab
   opens, until Claude has written a resume for it (see Tailoring resumes). The page
   says how many are waiting. **Use my usual resume** sends one on without.

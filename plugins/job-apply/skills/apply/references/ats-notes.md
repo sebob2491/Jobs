@@ -20,7 +20,8 @@ the page URL. Use this file for the parts of each flow that `autofill` can't do.
 - **Cookie banners** can cover the form, and then clicks fail or no fields show up.
   Which cookies to allow is the user's choice. Ask once per session. If they've said
   it's fine, take the privacy-preserving option: "Reject all", "Decline" or
-  "Necessary only". Never accept marketing cookies on their behalf.
+  "Necessary only". Never accept marketing cookies on their behalf. A banner with no way to
+  decline is accepted by `click` only where the profile says `settings.accept_cookies: true`.
 
 ## Workday (`*.myworkdayjobs.com`, `*.myworkdaysite.com`): Applied Materials, KLA, Intel, Microchip, NXP, TEL, Analog Devices, Hitachi High-Tech, Entegris, Axcelis, Onto Innovation, Thermo Fisher, ASML (some postings)
 
@@ -155,8 +156,9 @@ the page URL. Use this file for the parts of each flow that `autofill` can't do.
   probably a limit on codes per address. The Job Desk stops after one lap.
 - Texas Instruments shows a privacy banner whose only button is **AGREE AND PROCEED**.
   It covers **Apply Now** and the email step, so no fields appear until it's gone.
-  Never press it: cookie and privacy banners are never accepted for the user (`click`
-  refuses). Ask the user to choose in the browser window, then carry on.
+  Never press it unless the profile says `settings.accept_cookies: true` (then `click`
+  accepts a banner with no way to decline, as the Job Desk does); otherwise `click` refuses
+  it: ask the user to choose in the browser window, then carry on.
 
 ## Greenhouse (`greenhouse.io`) and Lever (`lever.co`): ASM
 
@@ -197,8 +199,9 @@ the page URL. Use this file for the parts of each flow that `autofill` can't do.
   number, as in "Field Service Technician II (33195)"; the search drops it from the title.
 - The career page has **Sign In** and **Create Account** links: Paycom keeps an applicant
   account per employer. A posting's button is **Quick Apply**.
-- Its cookie banner offers only **Accept Cookies**. Never press it (`click` refuses): leave
-  it, and if it gets in the way, ask the user to choose in the browser window.
+- Its cookie banner offers only **Accept Cookies**. `click` refuses it unless the profile
+  says `settings.accept_cookies: true`: leave it, and if it gets in the way, ask the user
+  to choose in the browser window.
 
 ## UKG Pro / UltiPro (`recruiting*.ultipro.com`): Nikon Precision
 
