@@ -20,10 +20,16 @@ _FAILED = re.compile(r"\bFAILED (tests/\S+?\.py::\S+?)(?: - |\s*$)", re.M)
 Api = Callable[[str], Any]
 
 
+class ApiError(Exception):
+    """GitHub's API turned a call down (gh api exited with an error), in its own words."""
+
+
 def gh_api(path: str) -> Any:
     """One GitHub API call through the gh CLI: JSON where the answer is JSON, else its text (a job's log)."""
-    out = subprocess.run(["gh", "api", path], capture_output=True, text=True, encoding="utf-8", errors="replace",
-                         check=True).stdout
+    done = subprocess.run(["gh", "api", path], capture_output=True, text=True, encoding="utf-8", errors="replace")
+    if done.returncode:
+        raise ApiError(f"gh api {path}: {(done.stderr or done.stdout).strip()[:300]}")
+    out = done.stdout
     try:
         return json.loads(out)
     except ValueError:
@@ -49,6 +55,8 @@ def tally(repo: str, since: datetime.date, api: Api = gh_api, workflow: str = "t
         page += 1
     passed = {r["head_sha"] for r in runs if r.get("conclusion") == "success"}
     failures: dict[str, list[dict[str, Any]]] = {}
+    unread: list[str] = []  # failed jobs whose logs GitHub wouldn't give (expired, or never kept)
+    why = ""  # (GitHub's words for the first)
     jobs_failed = 0
     for run in runs:
         for attempt in range(1, int(run.get("run_attempt") or 1) + 1):
@@ -57,12 +65,17 @@ def tally(repo: str, since: datetime.date, api: Api = gh_api, workflow: str = "t
                 if job.get("conclusion") != "failure":
                     continue
                 jobs_failed += 1
-                log = api(f"repos/{repo}/actions/jobs/{job['id']}/logs")
+                try:
+                    log = api(f"repos/{repo}/actions/jobs/{job['id']}/logs")
+                except ApiError as e:
+                    unread.append(str(job.get("name") or job["id"]))
+                    why = why or str(e)
+                    continue
                 for test in failed_tests(log if isinstance(log, str) else ""):
                     failures.setdefault(test, []).append(
                         {"sha": run["head_sha"], "job": job.get("name") or "", "run": run["id"], "attempt": attempt,
                          "commit_passed": run["head_sha"] in passed})
-    return {"runs": len(runs), "jobs_failed": jobs_failed, "failures": failures}
+    return {"runs": len(runs), "jobs_failed": jobs_failed, "failures": failures, "unread": unread, "unread_why": why}
 
 
 def report(found: dict[str, Any], since: datetime.date) -> str:
@@ -70,6 +83,11 @@ def report(found: dict[str, Any], since: datetime.date) -> str:
     failures = found["failures"]
     lines = [f"### Tests that failed in CI since {since.isoformat()}",
              f"{found['runs']} runs, {found['jobs_failed']} failed jobs."]
+    unread = found.get("unread") or []
+    if unread:
+        whose = "job's log" if len(unread) == 1 else "jobs' logs"
+        lines.append(f"{len(unread)} failed {whose} couldn't be read: " + ", ".join(sorted(set(unread)))
+                     + (f" (GitHub said: {found['unread_why']})" if found.get("unread_why") else ""))
     if not failures:
         return "\n".join(lines + ["", "No test failed."])
 

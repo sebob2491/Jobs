@@ -56,3 +56,26 @@ def test_a_week_with_no_failure_says_so():
     since = datetime.date(2026, 10, 9)
     out = fr.report({"runs": 12, "jobs_failed": 0, "failures": {}}, since)
     assert out.endswith("No test failed.") and "12 runs, 0 failed jobs." in out
+
+
+def test_a_log_github_wont_give_is_counted_not_the_end_of_the_report():
+    """The workflow's first run (Oct 16): one failed job's log came back as an error from GitHub's API (gh api exited
+    1), and the whole report fell over with it. That job is said among the logs that couldn't be read; the others'
+    tests are still counted."""
+    runs = {"workflow_runs": [{"id": 1, "head_sha": "a", "run_attempt": 1, "conclusion": "failure"}]}
+
+    def api(path):
+        if path.endswith("/jobs/12/logs"):
+            raise fr.ApiError("gh api repos/o/r/actions/jobs/12/logs: HTTP 410: Gone")
+        return {"repos/o/r/actions/workflows/tests.yml/runs?created=%3E%3D2026-10-09&per_page=100&page=1": runs,
+                "repos/o/r/actions/runs/1/attempts/1/jobs?per_page=100": {"jobs": [
+                    {"id": 11, "name": "tests (Python 3.13, part 1/2)", "conclusion": "failure"},
+                    {"id": 12, "name": "windows (Python 3.13, part 2/2)", "conclusion": "failure"}]},
+                "repos/o/r/actions/jobs/11/logs": "FAILED tests/test_search.py::test_a_board_page - KeyError: 'x'\n"}[path]
+
+    since = datetime.date(2026, 10, 9)
+    found = fr.tally("o/r", since, api=api)
+    assert list(found["failures"]) == ["tests/test_search.py::test_a_board_page"]
+    out = fr.report(found, since)
+    assert "1 failed job's log couldn't be read: windows (Python 3.13, part 2/2) (GitHub said: gh api " in out, out
+    assert "HTTP 410: Gone" in out, out
