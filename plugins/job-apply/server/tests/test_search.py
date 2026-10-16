@@ -616,6 +616,41 @@ def test_a_site_that_doesnt_answer_isnt_asked_its_other_wordings(monkeypatch):
     assert len(out["results"]) == 20  # the first wording's
 
 
+def test_a_wording_that_timed_out_reading_doesnt_stop_the_others(monkeypatch):
+    """A read that timed out (a heavy wording, one bad answer) is no site gone: the next wordings are still asked, and
+    the error said is the one that stopped the site when it does stop answering (the review of 0.3.190)."""
+    monkeypatch.setattr(search_module, "RETRY_DELAY", 0)
+    asked = []
+
+    def flaky(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        asked.append(body["searchText"])
+        if body["searchText"] == "customer engineer":
+            raise httpx.ReadTimeout("timed out")
+        if body["searchText"] == "service technician":
+            return httpx.Response(502)
+        if body["searchText"] == "equipment engineer":
+            raise httpx.ConnectError("refused")
+        return workday(body)
+
+    async def go(query):
+        async with httpx.AsyncClient(transport=httpx.MockTransport(flaky)) as client:
+            return await search_companies(query, location=None, client=client, companies=[COMPANIES[0]])
+    out = asyncio.run(go("customer engineer | field service"))
+    assert "field service" in asked and len(out["results"]) == 20
+    assert out["errors"]["Workday Co"].startswith("ReadTimeout: timed out (1 of 2 searches failed")
+    out = asyncio.run(go("service technician | equipment engineer | field service"))
+    assert out["errors"]["Workday Co"] == ("ConnectError: refused (the site didn't answer, so its other 1 search "
+                                           "wasn't tried)")
+
+
+def test_a_retry_after_of_no_number_is_no_wait_asked():
+    from job_apply.search import _retry_after
+    for value in ("inf", "-inf", "nan", "1e400", "soon"):
+        assert _retry_after(httpx.Response(429, headers={"Retry-After": value})) is None, value
+    assert _retry_after(httpx.Response(429, headers={"Retry-After": "-5"})) == 0.0
+
+
 def test_an_employers_searches_stop_at_their_time_limit_and_keep_what_they_found(monkeypatch):
     """One employer's site answering slowly holds up nothing past its time limit (the find-jobs
     search and the nightly wait on every employer): its searches stop, what they found by then is
@@ -2998,12 +3033,22 @@ CHANGED = "<html><body><div class='new-design'><p>Careers</p></div></body></html
     ("phoenixchildrens", "https://careers.pchco.org", "https://careers.pchco.org/Positions/"),
     ("jobvite", "kco", "https://jobs.jobvite.com/kco/jobs")])
 def test_a_whole_board_with_no_openings_at_all_is_said(kind, cfg, board):
-    """An employer's whole board (not a search's answer) with none on it: said, so a changed page
-    isn't taken for no openings."""
+    """An employer's whole board (not a search's answer) with none on it, on a page without the board's own
+    frame: said, so a changed page isn't taken for no openings."""
     out = one_search(kind, cfg, lambda request: httpx.Response(200, text=CHANGED))
     assert out["results"] == []
-    assert out["errors"] == {"X Co": f"SearchError: No openings at all on {board}: if the board has some, "
-                                     "its page has changed"}
+    assert out["errors"] == {"X Co": f"SearchError: No job list from {board} (neither openings nor the board's own "
+                                     "page)"}
+
+
+@pytest.mark.parametrize("kind, cfg, page", [
+    ("applicantstack", "asco", '<div id="ascontent"><div id="contenttitle">Job Openings</div><p>No openings.</p></div>'),
+    ("phoenixchildrens", "https://careers.pchco.org", '<div class="positions"><div class="blog-items"></div></div>'),
+    ("jobvite", "kco", '<article class="jv-page-body"><p>There are no open positions.</p></article>')])
+def test_a_whole_board_on_its_own_page_with_none_on_it_has_none(kind, cfg, page):
+    """On the board's own page, none is none: SCREEN's lists one opening some weeks (the review of 0.3.190)."""
+    out = one_search(kind, cfg, lambda request: httpx.Response(200, text=f"<html><body>{page}</body></html>"))
+    assert out == {**out, "results": [], "errors": {}}
 
 
 VALLEYWISE_NONE = """<div class="jobs-section"><h1>

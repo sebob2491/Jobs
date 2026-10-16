@@ -6,6 +6,7 @@ the plugin directory, so updating or reinstalling the plugin can't lose it.
 
 from __future__ import annotations
 
+import copy
 import difflib
 import json
 import os
@@ -332,6 +333,19 @@ def _zip_as_written(data: dict[str, Any], path: Path) -> None:
     address["postal_code"] = m.group(1) if m else str(address["postal_code"])
 
 
+# Profile.load()'s last reading of the person's own profile: the bytes of the files it was read from, and what they
+# made. The desk asks for the profile many times a step (each setting it checks, each plan); a YAML reading is 10 ms
+# and more, a file's bytes a few microseconds (the review of Oct 15). By content, not by time: an edit is never missed
+_LOADED: tuple[Any, dict[str, Any]] | None = None  # (read and replaced whole: report.build loads from a thread)
+
+
+def _bytes(path: Path) -> bytes | None:
+    try:
+        return path.read_bytes()
+    except OSError:
+        return None
+
+
 class Profile:
     """Thin wrapper over the profile YAML with dotted-path lookup."""
 
@@ -341,8 +355,13 @@ class Profile:
 
     @classmethod
     def load(cls, path: Path | None = None) -> "Profile":
+        global _LOADED
         own = path is None
         path = path or profile_path()
+        key = (str(path), _bytes(path), str(answers_path()), _bytes(answers_path()), _bytes(QUESTION_BANK)) if own else None
+        loaded = _LOADED
+        if key is not None and loaded is not None and loaded[0] == key:
+            return cls(copy.deepcopy(loaded[1]), path)
         data: dict[str, Any] = {}
         if path.exists():
             try:
@@ -363,6 +382,7 @@ class Profile:
             if saved:  # exact questions answered in the Job Desk come before the general patterns
                 _current_bank_patterns(saved)
                 data["answers"] = saved + list(data.get("answers") or [])
+            _LOADED = (key, copy.deepcopy(data))  # (a copy each way: no caller's change reaches the next)
         return cls(data, path)
 
     def get(self, dotted: str, default: Any = None) -> Any:

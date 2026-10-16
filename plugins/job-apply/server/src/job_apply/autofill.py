@@ -87,6 +87,11 @@ def norm(s: Any) -> str:
     return re.sub(r"\s+", " ", s).strip()
 
 
+# Each state's name as norm() writes it, to its code: _aliases and _place_parts ask it of every choice in a list, and
+# norm() of each name each time was most of the 100 ms a 241-choice list took (the review of Oct 15)
+_STATE_BY_NAME = {norm(name): code.lower() for code, name in US_STATES.items()}
+
+
 def _without_aside(text: Any) -> str:
     """A choice's own words, without the country after them: Workday names each self-identification choice with the
     form's country, "Undeclared (United States of America)" (probe 48, Oct 13). Only a country: "Unspecified (X)" is
@@ -182,7 +187,7 @@ def _place_parts(s: Any) -> tuple[str, ...]:
     for part in re.split(r"\s*,\s*|\s+-\s+", raw):
         n = norm(part)
         if n:
-            out.append(next((code.lower() for code, name in US_STATES.items() if n in (code.lower(), norm(name))), n))
+            out.append(_STATE_BY_NAME.get(n, n))  # (a code stays itself)
     while out and out[-1] in _US_NAMES:
         out.pop()
     return tuple(out)
@@ -196,9 +201,8 @@ def _aliases(n: str) -> set[str]:
     up = n.upper()
     if up in US_STATES:
         out.add(norm(US_STATES[up]))
-    for code, name in US_STATES.items():
-        if n == norm(name):
-            out.add(code.lower())
+    if n in _STATE_BY_NAME:
+        out.add(_STATE_BY_NAME[n])
     return out
 
 
@@ -214,11 +218,16 @@ _DEGREES = [
 
 def _containing(want: str, normed: list[tuple[str, str]]) -> str | None:
     """The one option that contains `want` as whole words, or that it contains."""
-    contains = [o for o, n in normed if want and re.search(rf"(^| ){re.escape(want)}( |$)", n)]
+    contains = [o for o, n in normed if want and _within_words(want, n)]
     if len(contains) == 1:
         return contains[0]
-    contained = [o for o, n in normed if n and re.search(rf"(^| ){re.escape(n)}( |$)", want)]
+    contained = [o for o, n in normed if n and _within_words(n, want)]
     return contained[0] if len(contained) == 1 and not contains else None
+
+
+def _within_words(part: str, whole: str) -> bool:
+    """`part` in `whole` as whole words, both norm()'s text (a regex per choice of a long list took a compile each)."""
+    return f" {part} " in f" {whole} "
 
 
 # A degree's kind within its level, each as written in full or abbreviated (on norm()'s text: "B.S." is "b s")
@@ -322,9 +331,12 @@ def _in_range(want: str, options: list[str]) -> str | None:
     return holding[0] if len(holding) == 1 else None
 
 
+_CODE_WORD = re.compile(r"\+?\d+")
+
+
 def _strip_codes(n: str) -> str:
     """Drop dial codes and bare numbers: '+1 united states of america' -> 'united states of america'."""
-    return " ".join(t for t in n.split() if not re.fullmatch(r"\+?\d+", t))
+    return " ".join(t for t in n.split() if not _CODE_WORD.fullmatch(t))
 
 
 def choose_option(desired: Any, options: list[str], exact_only: bool = False, names: bool = False) -> str | None:
@@ -349,7 +361,7 @@ def choose_option(desired: Any, options: list[str], exact_only: bool = False, na
             return o
     bare = _strip_codes(want)  # (a number alone strips to nothing: no "loose" match then)
     wanted = exact | (_aliases(bare) if bare else set())
-    loose = [o for o, n in normed if n in wanted or _aliases(n) & wanted or _strip_codes(n) and _strip_codes(n) in wanted]
+    loose = [o for o, n in normed if n in wanted or _aliases(n) & wanted or (bare_n := _strip_codes(n)) and bare_n in wanted]
     if len(loose) == 1:  # not when only a number told them apart ("Yes - 25%" / "Yes - 75%")
         return loose[0]
     # the same place, its state spelled the other way or its country added: "AZ" is "Arizona,
@@ -446,7 +458,7 @@ def choose_option(desired: Any, options: list[str], exact_only: bool = False, na
             normed = same
 
     # 5. one contains the other
-    contains = [o for o, n in normed if want and re.search(rf"(^| ){re.escape(want)}( |$)", n)]
+    contains = [o for o, n in normed if want and _within_words(want, n)]
     if len(contains) == 1:
         return contains[0]
     if len(contains) > 1:
@@ -457,7 +469,7 @@ def choose_option(desired: Any, options: list[str], exact_only: bool = False, na
             return len(set(_strip_codes(norm(o)).split()) - set(want.split()) - known)
         contains.sort(key=extra)
     # whole words only: "male" is in "female", "no" in "not"
-    contained = [o for o, n in normed if n and re.search(rf"(^| ){re.escape(n)}( |$)", want)]
+    contained = [o for o, n in normed if n and _within_words(n, want)]
     if len(contained) == 1:
         return contained[0]
 

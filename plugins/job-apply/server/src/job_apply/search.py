@@ -49,6 +49,7 @@ import contextvars
 import email.utils
 import html
 import json
+import math
 import re
 import time
 from collections.abc import AsyncIterator
@@ -798,11 +799,12 @@ def _titled(listings: list[Listing], query: str) -> list[Listing]:
     return [listing for listing in listings if title_matches(listing.title, query)]
 
 
-def _whole_board(listings: list[Listing], url: str) -> list[Listing]:
-    """A board read whole: none at all on it (an employer's whole board, not a search's) is
-    what a parser that no longer reads its page finds, so it's said, not taken for no openings."""
-    if not listings:
-        raise SearchError(f"No openings at all on {url}: if the board has some, its page has changed")
+def _whole_board(listings: list[Listing], url: str, page: str, shell: str) -> list[Listing]:
+    """A board read whole: none on it, on a page without the board's own frame (`shell`, a selector), is what a
+    parser that no longer reads its page finds, so it's said, not taken for no openings. On the board's own page,
+    none is none (SCREEN's lists one opening some weeks)."""
+    if not listings and BeautifulSoup(page, "html.parser").select_one(shell) is None:
+        raise SearchError(f"No job list from {url} (neither openings nor the board's own page)")
     return listings
 
 
@@ -811,7 +813,8 @@ async def _applicantstack(client: httpx.AsyncClient, cfg: Any, query: str, limit
     its location."""
     base = f"https://{cfg}.applicantstack.com"
     url = f"{base}/x/openings"
-    return _titled(_whole_board(parse_applicantstack(await _board_page(client, url), base), url), query)
+    page = await _board_page(client, url)
+    return _titled(_whole_board(parse_applicantstack(page, base), url, page, "#ascontent"), query)
 
 
 def parse_applicantstack(html: str, base: str) -> list[Listing]:
@@ -1088,7 +1091,8 @@ async def _phoenixchildrens(client: httpx.AsyncClient, cfg: Any, query: str, lim
     with its department, schedule and place ("Recruitment | Full-Time | Phoenix")."""
     base = str(cfg).rstrip("/")
     url = f"{base}/Positions/"
-    return _titled(_whole_board(parse_phoenixchildrens(await _board_page(client, url), base), url), query)
+    page = await _board_page(client, url)
+    return _titled(_whole_board(parse_phoenixchildrens(page, base), url, page, "div.positions, div.blog-items"), query)
 
 
 def parse_phoenixchildrens(html: str, base: str) -> list[Listing]:
@@ -1292,10 +1296,12 @@ async def _jobvite(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, 
     search page of its own (Knight-Swift's Operations and Shop, Oct 2026)."""
     base = f"https://jobs.jobvite.com/{str(cfg).strip('/')}"
     board = BeautifulSoup(await _board_page(client, f"{base}/jobs"), "html.parser")  # (parsed once: a big page)
-    found = _whole_board(parse_jobvite(board, base), f"{base}/jobs")
+    found = parse_jobvite(board, base)
     more = dict.fromkeys(urljoin(base + "/", str(a["href"])) for a in board.select('a[href*="search?c="]'))
     for url in list(more)[:JOBVITE_CATEGORIES]:
         found += parse_jobvite(await _board_page(client, url), base)
+    if not found and board.select_one(".jv-page-body") is None:  # (see _whole_board)
+        raise SearchError(f"No job list from {base}/jobs (neither openings nor the board's own page)")
     return _titled(list({x.url: x for x in found}.values()), query)
 
 
@@ -1940,8 +1946,9 @@ async def _within(coro: Awaitable[None], seconds: float) -> bool:
     task = asyncio.ensure_future(coro)
     try:
         done, _ = await asyncio.wait({task}, timeout=seconds)
-    except BaseException:
+    except BaseException:  # (the search itself stopped: its requests end before the client closes too)
         task.cancel()
+        await asyncio.wait({task}, timeout=5)
         raise
     if done:
         task.result()
@@ -2447,9 +2454,11 @@ def _retry_after(r: httpx.Response) -> float | None:
     if not value:
         return None
     try:
-        return max(0.0, float(value))
+        seconds = float(value)
     except ValueError:
         pass
+    else:
+        return max(0.0, seconds) if math.isfinite(seconds) else None
     try:
         when = email.utils.parsedate_to_datetime(value)
     except (TypeError, ValueError, IndexError):
@@ -2597,7 +2606,7 @@ async def search_companies(
                 tried += 1
                 try:
                     found.extend(await SEARCHERS[kind](client, search[kind], wording, fetch, terms))
-                except httpx.TransportError as e:  # the site isn't answering: its next wordings would only wait on it
+                except (httpx.ConnectError, httpx.ConnectTimeout) as e:  # no site there to answer: nor for its next wordings
                     failed.append(f"{type(e).__name__}: {str(e)[:200]}")
                     return
                 except Exception as e:  # an odd response must not sink the other searches
@@ -2610,8 +2619,8 @@ async def search_companies(
                                        + ("; the results found by then are listed" if found else ""))
         elif tried < len(wordings):  # (a site that stopped answering)
             untried = len(wordings) - tried
-            errors[company["name"]] = (f"{failed[0]} (the site didn't answer, so its other {untried} "
-                                       f"search{'es' if untried > 1 else ''} weren't tried"
+            errors[company["name"]] = (f"{failed[-1]} (the site didn't answer, so its other {untried} "
+                                       + ("searches weren't" if untried > 1 else "search wasn't") + " tried"
                                        + ("; the earlier ones' results are listed)" if found else ")"))
         elif failed:
             partial = len(failed) < len(wordings)

@@ -359,6 +359,26 @@ def test_iframe_form_and_linkedin_policy(srv, monkeypatch):
     assert srv.get_job(job["id"])["job"]["status"] == "ready_to_submit"
 
 
+def test_a_tab_looked_in_on_is_read_in_one_call_a_frame(srv, monkeypatch):
+    """The desk looks in on a tab waiting for the person every few seconds (peek): each frame's form, words and any
+    CAPTCHA in one call, not three (the review of Oct 15), read as before (the frame's boxes with its prefix)."""
+    from playwright.async_api import Frame
+    job = srv.add_job(url=fixture_url("iframe_host.html"), title="Process Technician", company="Example Fab")["job"]
+    run(srv.open_application(job_id=job["id"]))
+    tab = srv.browser.current_tab
+    calls = []
+    real = Frame.evaluate
+
+    async def counted(self, expression, *a, **kw):
+        calls.append(self.url)
+        return await real(self, expression, *a, **kw)
+    monkeypatch.setattr(Frame, "evaluate", counted)
+    data, text = run(srv.browser.peek(tab))
+    assert len(calls) == len(tab.frames) == 2
+    assert any(f["label"] == "Email *" and f["id"].startswith("f") for f in data["fields"])
+    assert "Apply below." in text and data["challenge"] is False and data["loading"] is False
+
+
 def test_icims_privacy_gate_is_read_with_its_frames_headings_and_its_phone(srv):
     """Charles Schwab's iCIMS (live, Oct 10): its sign-in gate sits in a frame inside the careers page,
     which has a talent network sign-up of its own. Each frame's headings are said apart (by the

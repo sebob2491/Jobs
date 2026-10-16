@@ -399,7 +399,7 @@ def test_a_resume_on_another_job_goes_while_a_sign_in_holds_the_queue(srv, monke
             applier.resume(other.job_id)
             await asyncio.sleep(1.5)
             waiting = (other.status, other.reason, holder.blocking)
-            holder.active_at -= pipeline.RELEASE_IDLE + 5  # (nothing done in its tab for a while)
+            holder.active_at -= pipeline.RELEASE_IDLE + pipeline.SLOW_POLL_SECONDS + 5  # (nothing done in its tab for a while)
             said = len(other.log)
             applier.resume(other.job_id)
             await until(lambda: len(other.log) > said and other.status == "needs_you", timeout=20, about=state(other))
@@ -606,6 +606,91 @@ def test_a_pause_on_a_bot_check_or_captcha_is_marked_as_one(srv):
     assert (r.status, r.need, r.captcha) == ("needs_you", "stuck", False), (r.status, r.need, r.reason)
 
 
+def test_a_tab_still_for_a_minute_is_looked_at_less_often(srv):
+    """A tab waiting on the person is read whole (every frame) each look: every few seconds while it changes or has just
+    paused, every SLOW_POLL_SECONDS once it's been still a minute (the review of Oct 15). A change brings it back."""
+    applier = Applier(srv)
+    slept = []
+
+    async def sleep(seconds):
+        slept.append(seconds)
+
+    async def not_moved(run):
+        return False
+    applier._sleep = sleep
+    applier._moved_on = not_moved
+    job = srv.add_job(url="https://example.com/job/1", title="FSE", company="Example Fab")["job"]
+    r = applier.runs[job["id"]] = Run(job["id"], "FSE", "Example Fab", status="needs_you")
+    r.need, r.blocking = "sign_in", True  # holding the queue
+    for still in (10, 120, 30):
+        r.paused_at = time.time() - 120
+        r.active_at = time.time() - still
+        run(applier._tick())
+    assert slept == [pipeline.POLL_SECONDS, pipeline.SLOW_POLL_SECONDS, pipeline.POLL_SECONDS]
+    slept.clear()
+    r.blocking, r.left = False, True  # the queue went on without it: watched still
+    for still in (10, 120):
+        r.paused_at = r.active_at = time.time() - still
+        run(applier._tick())
+    assert slept == [pipeline.POLL_SECONDS, pipeline.SLOW_POLL_SECONDS]
+
+
+def test_work_in_a_tab_the_queue_went_on_without_is_noticed_too(srv):
+    """A tab left waiting while the other jobs went ahead is watched for the person at work in it as the one holding
+    the queue is: a change in its boxes brings it back to the quick look (the review of 0.3.190)."""
+    fields = [{"id": "1", "label": "Email", "kind": "email", "value": ""}]
+
+    class Browser:
+        async def peek(self, tab):
+            return {"url": "https://x.example/signin", "fields": [dict(f) for f in fields]}, ""
+
+    class Stub:  # (the server, its browser looked through)
+        browser = Browser()
+
+        def __getattr__(self, name):
+            return getattr(srv, name)
+
+    applier = Applier(srv)
+    applier.srv = Stub()
+    r = Run(1, "FSE", "Example Fab", status="needs_you")
+    r.page, r.left = object(), True
+    r.paused_at = r.active_at = time.time() - 120
+    run(applier._past_pause(r))
+    assert time.time() - r.active_at > 100  # (its first look: nothing to compare with)
+    fields[0]["value"] = "s"  # the person types
+    run(applier._past_pause(r))
+    assert time.time() - r.active_at < 5 and applier._poll_for([r]) == pipeline.POLL_SECONDS
+
+
+def test_a_wait_for_the_page_to_change_doesnt_read_its_words(srv):
+    """The desk's waits look every half second, at the form: the page's words, a read of their own, aren't wanted
+    there and aren't read (the review of Oct 15)."""
+    reads = {"form": 0, "text": 0}
+    one = {"url": "https://x.example/apply", "headings": ["One"], "fields": []}
+    two = {"url": "https://x.example/apply", "headings": ["Two"], "fields": []}
+
+    class Browser:
+        async def challenge_showing(self):
+            return False
+
+    class Stub:
+        browser = Browser()
+
+        async def inspect_form(self, include_dropdown_options=True):
+            reads["form"] += 1
+            return dict(one if reads["form"] < 3 else two)
+
+        async def page_text(self, max_chars=8000):
+            reads["text"] += 1
+            return "One"
+
+    applier = Applier(srv)
+    applier.srv = Stub()
+    assert run(applier._wait_for_change(one, 5))
+    assert reads == {"form": 3, "text": 0}
+    assert run(applier._look()) == ({**two, "challenge": False}, "One")  # (a look that wants the words reads them)
+
+
 def test_a_this_application_answer_stays_on_its_page(srv):
     """"If yes, please explain" answered about relatives on one page went into a later page's
     "If yes, please explain" about something else."""
@@ -621,7 +706,7 @@ def test_a_this_application_answer_stays_on_its_page(srv):
     applier = Applier(srv)
     applier.srv = Stub()
 
-    async def look():
+    async def look(**kw):
         return page_two, ""
 
     applier._look = look
@@ -8819,7 +8904,7 @@ def test_a_school_block_is_deleted_only_where_it_is_the_last_of_several(srv):
                 "actions": [{"id": f"d{i}", "text": "Delete", "section": s, "names_block": True}
                             for i, s in enumerate(sections)]}
 
-    async def look():
+    async def look(**kw):
         shown = page(*[s for s in ("Education 1", "Education 2") if s not in gone])
         return shown, ""
     applier._look = look
@@ -8911,7 +8996,7 @@ def test_an_extra_block_is_deleted_only_when_empty_last_and_one_the_desk_added(s
                 "actions": [{"id": f"d:{b}", "text": "Delete", "section": b, "names_block": True}
                             for b in blocks if b not in gone]}
 
-    async def look():
+    async def look(**kw):
         return page(["Education 1", "Education 2", "Education 3"]), ""
     applier._look = look
 

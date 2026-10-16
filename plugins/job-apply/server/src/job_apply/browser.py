@@ -34,7 +34,7 @@ from . import config
 from .ats import detect_ats
 from .autofill import choose_option, choose_place, is_empty_value, norm, polarity
 from .formjs import (ADD_UNWATCH_JS, ADD_WATCH_JS, ADDED_BLOCKS_JS, CHALLENGE_JS, CLICK_CHOICE_JS, COVERED_JS,
-                     ELEMENT_INFO_JS, ENTRIES_JS, EXTRACT_JS, FIELD_OPTIONS_JS,
+                     ELEMENT_INFO_JS, ENTRIES_JS, EXTRACT_JS, FIELD_OPTIONS_JS, PEEK_JS,
                      LOST_BOXES_JS, MARK_OPTIONS_JS, NOTICE_OVER_JS, OPEN_MENU_JS, OUTSIDE_CLICK_JS, QUIET_JS, SHOWN_VALUE_JS,
                      UNKEPT_DELETE_JS, UNKEPT_FORGET_JS, UNKEPT_PRESSED_SHOWN_JS, UNKEPT_SHOWN_JS, UPLOAD_NOT_KEPT_JS,
                      UPLOAD_STATE_JS,
@@ -1163,13 +1163,13 @@ class BrowserSession:
                 if frame.is_detached() or frame is not tab.main_frame and (not frame.url or frame.url == "about:blank"
                                                                            or _MEDIA_FRAME.match(frame.url)):
                     continue
+                form = not _CAPTCHA_FRAME.match(frame.url)  # (a CAPTCHA's own frame: no form, nor a frame number)
                 try:
-                    found = ({} if _CAPTCHA_FRAME.match(frame.url) else
-                             await _bounded(frame.evaluate(EXTRACT_JS, self._frame_prefix(frame, tab))))
-                    text = await _bounded(frame.evaluate(VISIBLE_TEXT_JS))
-                    challenge = challenge or bool(await _bounded(frame.evaluate(CHALLENGE_JS)))
+                    seen = await _bounded(frame.evaluate(PEEK_JS, [form, self._frame_prefix(frame, tab) if form else ""]))
                 except (PlaywrightError, _Hung):
                     continue
+                found, text = seen.get("found") or {}, seen.get("text") or ""
+                challenge = challenge or bool(seen.get("challenge"))
                 if frame is not tab.main_frame and not found.get("fields"):
                     found = {**found, "errors": []}  # (as in _extract: an embed's errors aren't the form's)
                 for key in data:
