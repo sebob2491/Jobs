@@ -38,10 +38,10 @@ the scrubber (`python -m job_apply.fixtures`) before they become test fixtures.
 ## Running things (from `plugins/job-apply/server`)
 
 - Tests: `JOB_APPLY_CHROMIUM_PATH=/opt/pw-browsers/chromium uv run pytest -q -p no:cacheprovider -n auto tests`.
-  - The full suite takes about 4 minutes on CI (6 in two parts), and 13 to 16 on a 4-core session. Locally,
-    run the affected test files, ruff and mypy; the PR's required checks run the full suite.
-  - CI runs it in two parts on separate machines: `JOB_APPLY_TEST_SHARD=1/2` (or `2/2`) runs one part.
-  - CI also runs it on Windows (`windows (Python 3.13, part n/2)`), the owner's platform. Those checks
+  - The full suite took 10 to 15 minutes a part on CI in two parts (Oct 2026; it runs in four now), and 13 to 16
+    on a 4-core session. Locally, run the affected test files, ruff and mypy; the PR's required checks run the full suite.
+  - CI runs it in four parts on separate machines: `JOB_APPLY_TEST_SHARD=1/4` (to `4/4`) runs one part.
+  - CI also runs it on Windows (`windows (Python 3.13, part n/4)`), the owner's platform. Those checks
     aren't required (a failure doesn't block the merge), so look at them yourself. Windows reads and
     writes text as cp1252 unless told otherwise: give every text file `encoding="utf-8"`, tests too.
     Build paths with pathlib (`as_posix()` for a relative path shown, `Path.as_uri()` for `file://`).
