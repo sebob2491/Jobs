@@ -9907,3 +9907,41 @@ def test_a_notice_the_way_back_opened_is_agreed_and_the_step_pressed_again(srv, 
     r, (chosen, oks) = run(go())
     assert chosen == '["privacy"]' and oks == "1", (chosen, oks, r.log)
     assert "consents" not in (r.url or "") and r.need != "stuck", (r.url, r.reason, r.log)
+
+
+def test_a_box_workdays_own_field_alert_says_is_empty_though_it_shows_the_answer_is_typed_again(srv, monkeypatch):
+    """Banner Health's Workday (the live check, run 99): the answer to its required "Can you provide an example…"
+    text area showed in the box, but the page's own record of it was empty, and Save and Continue came back with
+    "Errors Found": its list's "Error - <the question>" button (the whole question, over 200 characters: never among
+    the page's buttons) and its hint, and the box marked invalid with Workday's own field alert beside it ("Error:
+    The field … is required and must have a value."), which has no role="alert", "errorMessage" or "error" class. The
+    desk read no error, pressed Save and Continue three times and stopped on "marked invalid". A box's own alert
+    (what its aria-describedby points at, saying something's wrong; Workday's inputAlert) is an error the page
+    shows, so the box is typed again, once, and the step goes on."""
+    from job_apply.desk import Desk
+
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "STEP_SAVE_WAIT", 1)
+    job = srv.add_job(url=fixture_url("site/workday-field-alert.html"), title="Cardiovascular Special Procedures Tech",
+                      company="Example Fab")["job"]
+    desk = Desk(srv)
+    applier = desk.applier
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            if r.need == "questions":  # (the person's answer, as the live check's)
+                desk.answer(job["id"], [{"label": q["label"], "value": "Test answer", "remember": False}
+                                        for q in r.questions])
+                await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert "review.html" in r.url, (r.url, r.reason, r.log)
+    typed = next(i for i, line in enumerate(r.log) if line.startswith("typed again what the page said was empty though it showed it"))
+    clicks = [i for i, line in enumerate(r.log) if line.startswith("clicked “Save and Continue”")]
+    assert clicks and sum(c > typed for c in clicks) == 1, r.log  # (typed again once, then the step pressed once more)
