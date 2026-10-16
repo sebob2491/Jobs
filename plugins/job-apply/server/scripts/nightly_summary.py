@@ -225,11 +225,12 @@ def _check_of(heading: str) -> str:
 
 
 def triage(comment: str) -> dict[str, list[str]]:
-    """The last run's changes (live_compare.py's comment) in three lists: "better" (an employer got further),
+    """The last run's changes (live_compare.py's comment) in four lists: "better" (an employer got further),
     "expected" (it stops where a site or the product's rules stop it: a bot check, an account step a practice
-    run never takes, a site's error, no openings), and "look" (likely the desk's: the ones to read first).
-    Each line: "<check>: <employer>: <old> -> <new>: <where it stops>"."""
-    out: dict[str, list[str]] = {"look": [], "expected": [], "better": []}
+    run never takes, a site's error, no openings), "added" (an employer new to a check, as far as the check goes:
+    a list grown, a check widened, run 104's thirty-nine chip employers new to the search check) and "look"
+    (likely the desk's: the ones to read first). Each line: "<check>: <employer>: <old> -> <new>: <where it stops>"."""
+    out: dict[str, list[str]] = {"look": [], "expected": [], "better": [], "added": []}
     check = ""
     for line in comment.splitlines():
         if line.startswith("**"):
@@ -241,7 +242,9 @@ def triage(comment: str) -> dict[str, list[str]]:
         name, old, new, detail = m.group(1), m.group(2) or "new", m.group(3), m.group(4)
         where, _ = why(new, detail)
         said = f"{check}: {name}: {old} -> {new}: {where}"
-        if new in _FURTHER or (old in _BROKEN and new not in _BROKEN):
+        if old == "new" and new in (*_FURTHER, "works", "no search"):
+            out["added"].append(said)
+        elif new in _FURTHER or (old in _BROKEN and new not in _BROKEN):
             out["better"].append(said)
         elif _EXPECTED.match(where):
             out["expected"].append(said)
@@ -360,7 +363,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.changes:
         sorted_ = triage(last_comment())
         for key, title in (("look", "Look at (likely the desk's)"), ("expected", "Expected (a site's or the rules')"),
-                           ("better", "Better")):
+                           ("better", "Better"), ("added", "Added (new to a check, as far as it goes)")):
             print(f"{title}: {len(sorted_[key])}")
             for said in sorted_[key]:
                 print(f"  {said}")
