@@ -167,7 +167,7 @@ async def check_fixture_extraction(server, html: Path, expect: dict) -> list[str
 
 
 def pytest_collection_modifyitems(config, items):
-    """JOB_APPLY_TEST_SHARD=1/2 runs only that part of the suite (CI runs the parts on separate
+    """JOB_APPLY_TEST_SHARD=1/4 runs only that part of the suite (CI runs the parts on separate
     machines). A test's part comes from its id, so every machine and xdist worker agrees."""
     shard = os.environ.get("JOB_APPLY_TEST_SHARD")
     if not shard:
