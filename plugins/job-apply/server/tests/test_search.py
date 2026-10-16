@@ -4,6 +4,7 @@ The shapes follow what the live smoke test (scripts/live_smoke.py) saw on real s
 import asyncio
 import json
 import re
+import time
 from urllib.parse import parse_qs, urlsplit
 
 import httpx
@@ -537,6 +538,136 @@ def test_passing_server_errors_are_retried_and_one_failure_keeps_the_rest(monkey
     assert "1 of 2 searches failed" in out["errors"]["Workday Co"]
 
 
+def waits_recorded(monkeypatch) -> list[float]:
+    """The seconds the searches sleep, recorded (and not slept)."""
+    waits: list[float] = []
+    real = asyncio.sleep
+
+    async def sleep(seconds, *a, **kw):
+        waits.append(seconds)
+        await real(0)
+    monkeypatch.setattr(search_module.asyncio, "sleep", sleep)
+    return waits
+
+
+@pytest.mark.parametrize("asked", ["3", "date"])
+def test_a_site_that_asks_to_be_left_a_while_is_tried_again_after_that_while(monkeypatch, asked):
+    """A 429 with a Retry-After is tried again when the site says (seconds or an HTTP date),
+    not after the usual second, which only asks it again too soon."""
+    from email.utils import format_datetime
+    from datetime import datetime, timedelta, timezone
+    waits = waits_recorded(monkeypatch)
+    tries = []
+
+    def busy(request: httpx.Request) -> httpx.Response:
+        tries.append(1)
+        if len(tries) == 1:
+            after = "3" if asked == "3" else format_datetime(datetime.now(timezone.utc) + timedelta(seconds=4), usegmt=True)
+            return httpx.Response(429, headers={"Retry-After": after})
+        return workday(json.loads(request.content))
+
+    async def go():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(busy)) as client:
+            return await search_companies("field service", location=None, client=client, companies=[COMPANIES[0]])
+    out = asyncio.run(go())
+    assert out["errors"] == {} and out["results"]
+    assert len(waits) == 1 and 2 <= waits[0] <= 4  # (an HTTP date names whole seconds)
+
+
+def test_a_site_that_asks_to_be_left_longer_than_a_search_waits_isnt_asked_again(monkeypatch):
+    waits = waits_recorded(monkeypatch)
+    tries = []
+
+    def busy(request: httpx.Request) -> httpx.Response:
+        tries.append(1)
+        return httpx.Response(429, headers={"Retry-After": "3600"})
+
+    async def go():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(busy)) as client:
+            return await search_companies("field service", location=None, client=client, companies=[COMPANIES[0]])
+    out = asyncio.run(go())
+    assert len(tries) == 1 and waits == []
+    assert out["errors"]["Workday Co"] == ("SearchError: HTTP 429 from https://wdco.wd1.myworkdayjobs.com/wday/cxs/wdco"
+                                           "/External/jobs (it asks to be left 3600 s before the next try)")
+
+
+def test_a_site_that_doesnt_answer_isnt_asked_its_other_wordings(monkeypatch):
+    """A site that doesn't answer at all (refused, or timed out three times) won't answer the next
+    wording either: its other wordings would each wait as long again."""
+    monkeypatch.setattr(search_module, "RETRY_DELAY", 0)
+    asked = []
+
+    def down(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        asked.append(body["searchText"])
+        if body["searchText"] == "field service":
+            return workday(body)
+        raise httpx.ConnectTimeout("timed out")
+
+    async def go():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(down)) as client:
+            return await search_companies("field service | customer engineer | service technician | equipment engineer",
+                                          location=None, client=client, companies=[COMPANIES[0]])
+    out = asyncio.run(go())
+    assert asked.count("customer engineer") == 3  # its three tries
+    assert "service technician" not in asked and "equipment engineer" not in asked
+    assert out["errors"]["Workday Co"] == ("ConnectTimeout: timed out (the site didn't answer, so its other 2 searches "
+                                           "weren't tried; the earlier ones' results are listed)")
+    assert len(out["results"]) == 20  # the first wording's
+
+
+def test_an_employers_searches_stop_at_their_time_limit_and_keep_what_they_found(monkeypatch):
+    """One employer's site answering slowly holds up nothing past its time limit (the find-jobs
+    search and the nightly wait on every employer): its searches stop, what they found by then is
+    listed, and the time it took is said."""
+    monkeypatch.setattr(search_module, "EMPLOYER_SECONDS", 0.5)
+
+    async def slow(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        if body["searchText"] == "customer engineer":
+            await asyncio.sleep(5)  # (a site that answers in the end, past any wait worth making)
+        return workday(body)
+
+    async def go():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(slow)) as client:
+            return await search_companies("field service | customer engineer", location=None, client=client,
+                                          companies=[COMPANIES[0]])
+    started = time.monotonic()
+    out = asyncio.run(go())
+    assert time.monotonic() - started < 3
+    assert out["errors"]["Workday Co"] == ("its searches took over 0.5 s, so they were stopped; "
+                                           "the results found by then are listed")
+    assert len(out["results"]) == 20  # the first wording's
+
+
+def test_postings_read_for_their_place_are_read_on_one_client(monkeypatch):
+    """Edwards' postings without a state (up to 30 a search) and Amkor's matches are read on one
+    HTTP client, not a client (and its connection setup) each."""
+    from job_apply.search import Listing, rmk_places, sfclassic_search
+    made = []
+
+    class Counted(httpx.AsyncClient):
+        def __init__(self, *a, **kw):
+            made.append(1)
+            kw["transport"] = httpx.MockTransport(lambda r: httpx.Response(
+                200, text=edwards_posting("Field Service Engineer", "Service", "", "Phoenix AZ", "United States")))
+            super().__init__(*a, **kw)
+    monkeypatch.setattr(search_module.httpx, "AsyncClient", Counted)
+    listings = [Listing(company="", title="FSE", url=f"https://jobs.example.com/job/{n}") for n in range(5)]
+    asyncio.run(rmk_places(listings))
+    assert len(made) == 1 and {x.location for x in listings} == {"Phoenix, AZ"}
+
+    made.clear()
+
+    async def pages_of(url, row_selector, per_page=None, next_button=None, max_pages=5):
+        return [sfc_page([SFC_ROW.format(req=str(29110 + n), title="Field Service Engineer", posted="10/01/2026")
+                          for n in range(4)])]
+    found: list[Listing] = []
+    asyncio.run(sfclassic_search(pages_of, {"site": "https://career8.successfactors.com", "company": "amkor"},
+                                 "field service", found))
+    assert len(found) == 4 and len(made) == 1
+
+
 # The shape of asml.com's Sitecore Discover answer (live probe, Oct 2026; descriptions trimmed).
 ASML_ANSWER = {"widgets": [{"rfk_id": "asml_job_search", "type": "content_grid", "content": [
     {"description": "<p>Install and repair EUV systems.</p>", "id": "J-00327683", "job_city": "Hefei",
@@ -789,7 +920,7 @@ def test_workday_entries_that_arent_postings_are_left_out():
         ("Field Service Engineer", "https://adco.wd1.myworkdayjobs.com/External/job/Chandler-AZ/FSE_R1")]
 
 
-def workday_multi_site(filters: bool):
+def workday_multi_site(filters: bool, query: str = "field service"):
     """A Workday site whose postings include multi-site ones, listed as "7 Locations"; each
     posting's own call names its places. With filters, the site's location filter has an
     Arizona value (and the search uses it); without, the site has no location filter."""
@@ -827,7 +958,7 @@ def workday_multi_site(filters: bool):
 
     async def go():
         async with httpx.AsyncClient(transport=httpx.MockTransport(answer)) as client:
-            return await search_companies("field service", location="AZ", client=client, companies=[
+            return await search_companies(query, location="AZ", client=client, companies=[
                 {"name": "Multi Co", "search": {"workday": "https://mco.wd1.myworkdayjobs.com/External"}}])
     found = asyncio.run(go())
     assert found["errors"] == {}
@@ -850,6 +981,17 @@ def test_a_workday_posting_in_several_places_is_listed_with_them(monkeypatch):
     # only the postings without a single place are read, each once (a failing one up to 3 times)
     read = [c.rsplit("/", 1)[-1] for c in calls if "/External/job/" in c]
     assert sorted(set(read)) == ["FSE_R1", "FSE_R2", "FSE_R4", "FSS_R5"] and read.count("FSE_R1") == 1
+
+
+def test_a_workday_posting_two_wordings_find_is_read_for_its_places_once(monkeypatch):
+    """A "7 Locations" posting turns up under most wordings of a search: its places are read the
+    first time and known after (one that couldn't be read is tried again)."""
+    monkeypatch.setattr(search_module, "RETRY_DELAY", 0)
+    listed, calls = workday_multi_site(filters=True, query="field service | service engineer")
+    assert listed["Field Service Engineer"] == ("Phoenix, AZ; Austin, TX; Hillsboro, OR", [])
+    read = [c.rsplit("/", 1)[-1] for c in calls if "/External/job/" in c]
+    assert read.count("FSE_R1") == 1 and read.count("FSS_R5") == 1
+    assert read.count("FSE_R4") == 6  # (three tries a wording: it can't be read)
 
 
 def test_a_workday_site_without_a_place_filter_drops_multi_site_jobs_elsewhere(monkeypatch):
@@ -951,7 +1093,7 @@ def test_successfactors_search_is_read_in_the_browser(srv, monkeypatch):
     Edwards puts at the end of some titles is their location; the others' postings say it."""
     calls, reads = [], []
 
-    async def fake_read(url):
+    async def fake_read(url, client=None):
         reads.append(url)
         return edwards_posting("Assembly &amp; Test Technician (Edwards Vacuum)", "Manufacturing", "", "Chandler AZ",
                                "United States", "On-Site")
@@ -1173,7 +1315,7 @@ def test_amkor_list_is_read_in_the_browser_and_its_postings_say_where(srv, monke
         asked.append((url, row_selector, per_page, next_button))
         return [sfc_page(rows[:3]), sfc_page(rows[3:])]
 
-    async def fake_read(url):
+    async def fake_read(url, client=None):
         reads.append(url)
         req = re.search(r"career_job_req_id=(\d+)", url).group(1)
         if req not in places:
@@ -1881,6 +2023,30 @@ def test_a_jobvite_boards_longer_categories_are_read_past_their_first_twenty():
         ("Shop Recruiter", "Laredo, Texas"), ("Transportation Recruiter", "Phoenix, Arizona")]
 
 
+def test_a_jobvite_board_page_is_parsed_once(monkeypatch):
+    """The board's page (every category's first 20, Knight-Swift's ~250 kB) is parsed once for
+    its openings and its "Show More" links together."""
+    parsed = []
+
+    class Counted(search_module.BeautifulSoup):
+        def __init__(self, markup="", *a, **kw):
+            parsed.append(markup)
+            super().__init__(markup, *a, **kw)
+    monkeypatch.setattr(search_module, "BeautifulSoup", Counted)
+    board = JOBVITE_PAGE.replace("</tbody></table>", '<a href="/kco/search?c=Shop&amp;p=0">Show More</a></tbody></table>')
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text="<table></table>" if "search" in str(request.url) else board)
+
+    async def go():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(answer)) as client:
+            return await search_companies("recruiter", location=None, client=client, companies=[
+                {"name": "K Co", "search": {"jobvite": "kco"}}])
+    out = asyncio.run(go())
+    assert [r["title"] for r in out["results"]] == ["Transportation Recruiter"]
+    assert parsed.count(board) == 1
+
+
 def test_a_jibe_search_not_in_one_state_reads_further_and_takes_an_address():
     """Not one state ("Phoenix | Remote"): PetSmart's national list has its few Arizona openings
     anywhere in its 1900, so more of it is read. A full address in the employer list works too."""
@@ -2012,8 +2178,9 @@ def test_randstads_own_jobs_are_read_from_the_pages_data():
     assert [(r["title"], r["location"], r["posted"], r["url"]) for r in out["results"]] == [
         ("Internal Recruiter", "Tucson, AZ", "2026-10-08", "https://randco.workgr8.com/jobs/53302/internal-recruiter")]
     asked.clear()
-    asyncio.run(go(None))
+    out = asyncio.run(go(None))
     assert asked == ["https://www.randco.com/jobs/internal/", "https://www.randco.com/jobs/internal/page-2/"]
+    assert [r["title"] for r in out["results"]] == ["Internal Recruiter"] and not out["errors"]  # (page 2 unread)
 
 
 def test_an_m_cloud_search_is_read_for_its_places():
@@ -2809,3 +2976,96 @@ def test_a_title_written_short_still_matches():
         assert not title_matches(title, "engineer | technician"), title
     for title in ("Key Acct Exec", "Acct Exec", "Sr Acct Mgr"):
         assert not title_matches(title, "accountant"), title
+
+
+# --------------------------------------------------------------------- a page a parser no longer reads
+# A parser that no longer reads its site's page finds nothing, which looked like a search that
+# found nothing: the nightly's search check couldn't tell a dead parser from one that works.
+
+def one_search(kind, cfg, answer, query="technician", location=None):
+    async def go():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(answer)) as client:
+            return await search_companies(query, location=location, client=client,
+                                          companies=[{"name": "X Co", "search": {kind: cfg}}])
+    return asyncio.run(go())
+
+
+CHANGED = "<html><body><div class='new-design'><p>Careers</p></div></body></html>"
+
+
+@pytest.mark.parametrize("kind, cfg, board", [
+    ("applicantstack", "asco", "https://asco.applicantstack.com/x/openings"),
+    ("phoenixchildrens", "https://careers.pchco.org", "https://careers.pchco.org/Positions/"),
+    ("jobvite", "kco", "https://jobs.jobvite.com/kco/jobs")])
+def test_a_whole_board_with_no_openings_at_all_is_said(kind, cfg, board):
+    """An employer's whole board (not a search's answer) with none on it: said, so a changed page
+    isn't taken for no openings."""
+    out = one_search(kind, cfg, lambda request: httpx.Response(200, text=CHANGED))
+    assert out["results"] == []
+    assert out["errors"] == {"X Co": f"SearchError: No openings at all on {board}: if the board has some, "
+                                     "its page has changed"}
+
+
+VALLEYWISE_NONE = """<div class="jobs-section"><h1>
+              0
+
+                zzqxjv jobs
+
+              found
+            </h1></div>"""
+
+
+def test_a_talemetry_search_that_finds_nothing_says_so_and_a_changed_page_is_said():
+    out = one_search("talemetry", "https://jobs.vwco.org", lambda request: httpx.Response(200, text=VALLEYWISE_NONE))
+    assert out["results"] == [] and out["errors"] == {}
+    out = one_search("talemetry", "https://jobs.vwco.org", lambda request: httpx.Response(200, text=CHANGED))
+    assert out["errors"] == {"X Co": "SearchError: No job list from https://jobs.vwco.org/jobs/search "
+                                     "(neither openings nor how many it found)"}
+
+
+def test_randstads_page_without_its_search_results_is_said():
+    empty = RANDSTAD_PAGE.split('"searchResults"')[0] + '"searchResults":{"totalSize":0,"hits":[]}};</script></body></html>'
+    cfg = "https://www.randco.com/jobs/internal"
+    out = one_search("randstad", cfg, lambda request: httpx.Response(200, text=empty), location="AZ")
+    assert out["results"] == [] and out["errors"] == {}
+    out = one_search("randstad", cfg, lambda request: httpx.Response(200, text=CHANGED), location="AZ")
+    assert out["errors"] == {"X Co": "SearchError: No job list in Randstad's page (its window.__ROUTE_DATA__ has no "
+                                     "searchResults)"}
+
+
+def test_kpmgs_list_counting_openings_it_doesnt_show_readably_is_said():
+    out = kpmg_search(lambda request: kpmg_answer(['<div class="tile">Senior Analyst</div>'], size=135), "analyst")
+    assert out["errors"] == {"KPMG": "SearchError: No job list from " + search_module.KPMG_API
+                                     + " (it counts 135 openings, none of them readable)"}
+    out = kpmg_search(lambda request: kpmg_answer([], size=0), "analyst")
+    assert out["results"] == [] and out["errors"] == {}
+
+
+def sf_none(recent_rows, site_name="APS"):
+    """A SuccessFactors search that matched nothing, as APS's draws it (live, Oct 2026): a notice
+    and, under it, the site's most recent jobs, of any kind."""
+    return (f'<html><body><div class="alert alert-block" id="noresults"><div id="attention"><label>There are currently '
+            f'no open positions matching "<span class="attention securitySearchString">zzqxjv AND AZ</span>".</label>'
+            f'</div><div id="noresults-message"><label>The {len(recent_rows)} most recent jobs posted by {site_name} are '
+            f'listed below for your convenience.</label></div></div>'
+            + sf_page(recent_rows, 1, len(recent_rows))[len("<html><body>"):])
+
+
+def test_a_successfactors_search_that_matched_nothing_lists_none_of_the_recent_jobs_it_shows():
+    """Its "most recent jobs" aren't matches: listed, they were a search's results ("matched on its
+    description") for a search that found nothing."""
+    recent = [sf_row("1100", "Customer Service Representative", "Phoenix, AZ, US, 85004"),
+              sf_row("1101", "Lineworker Apprentice", "Tempe, AZ, US, 85281"),
+              sf_row("1102", "Accountant II", "Phoenix, AZ, US, 85004")]
+    asked = []
+
+    def answer(request):
+        asked.append(request)
+        return httpx.Response(200, text=sf_none(recent))
+    out = run_sf(answer, query="relay technician", location="AZ")
+    assert out["results"] == [] and out["errors"] == {} and len(asked) == 1
+
+
+def test_a_successfactors_page_with_neither_openings_nor_none_is_said():
+    out = run_sf(lambda request: httpx.Response(200, text=CHANGED), query="technician", location="AZ")
+    assert out["errors"] == {"Qorvo": "SearchError: No job list from https://careers.qorvo.com/search/"}
