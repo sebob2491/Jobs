@@ -108,7 +108,7 @@ FAKE_PROFILE = {
     # accepted, so the check sees past it; one that can be declined still is: the owner asked, Oct 13)
     "settings": {"submit_mode": "dry_run", "browser_channel": "chromium", "headless": True, "accept_cookies": True},
 }
-(_HOME / "profile.yaml").write_text(yaml.safe_dump(FAKE_PROFILE))
+(_HOME / "profile.yaml").write_text(yaml.safe_dump(FAKE_PROFILE), encoding="utf-8")
 
 from job_apply import server  # noqa: E402
 from job_apply.fixtures import convert  # noqa: E402
@@ -186,7 +186,7 @@ def use_role(name: str, email: str | None = None) -> None:
     elif email:
         profile["personal"] = {**profile["personal"], "email": email}
     profile = live_identity.with_test_resume(profile, _HOME)  # a test resume with this role's background
-    (_HOME / "profile.yaml").write_text(yaml.safe_dump(profile))
+    (_HOME / "profile.yaml").write_text(yaml.safe_dump(profile), encoding="utf-8")
 
 
 def start_test_identity(announce: bool = True, everywhere: bool = False) -> list[dict[str, str]]:
@@ -208,7 +208,7 @@ def start_test_identity(announce: bool = True, everywhere: bool = False) -> list
     TEST_IDENTITY = True
     ROLE_AT.clear()
     ROLE_AT.update({e["name"]: e["role"] for e in employers})
-    (_HOME / "companies.yaml").write_text(yaml.safe_dump({"lists": sorted({e["list"] for e in employers})}))
+    (_HOME / "companies.yaml").write_text(yaml.safe_dump({"lists": sorted({e["list"] for e in employers})}), encoding="utf-8")
     if announce:
         print(f"Test identity: {live_identity.FIRST_NAME} {live_identity.LAST_NAME} ({live_identity.EMAIL_MASK}), at "
               + ", ".join(f"{e['name']} ({e['system']})" for e in employers)
@@ -247,7 +247,7 @@ def make_fixture(snapshot: Path, name: str, out: Path) -> str:
 def _save(path: Path, text: str) -> None:
     """A file the run writes, with the test identity's email and passwords masked, as they are
     in everything it prints."""
-    path.write_text(_mask(text))
+    path.write_text(_mask(text), encoding="utf-8")
 
 
 APPLY = re.compile(r"^(apply( now| for (this|the) (job|position|role)( online)?)?|quick apply|apply to (this )?job|i'?m interested|"
@@ -921,7 +921,7 @@ async def main() -> int:
     use_role(args.role)
     if args.lists and not TEST_IDENTITY:  # as a person's own companies.yaml names them, in this run's own home
         (_HOME / "companies.yaml").write_text(yaml.safe_dump({"lists": [n.strip() for n in args.lists.split(",")
-                                                                        if n.strip()]}))
+                                                                        if n.strip()]}), encoding="utf-8")
     if args.parallel > 1 and not args.shard:
         return await parallel_main(args)
     wanted = [n.strip().lower() for n in args.companies.split(",") if n.strip()]
@@ -2132,7 +2132,7 @@ async def parallel_main(args: argparse.Namespace) -> int:
         records = []
         for i in range(n):
             with contextlib.suppress(OSError, ValueError):
-                records += json.loads((args.out / f"shard-{i}" / "pipeline.json").read_text())
+                records += json.loads((args.out / f"shard-{i}" / "pipeline.json").read_text(encoding="utf-8"))
         _save(args.out / "pipeline.json", json.dumps(records, indent=2, default=str))
         _pipeline_report(records, args.out)
     return max((c.returncode or 0) for c in children)

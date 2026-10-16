@@ -32,7 +32,7 @@ def _saved_page(folder: Path) -> None:
         "<p>Saguaro Valley College · Blue Mesa Fab · Copperline Tools</p>"
         "<iframe src='https://acme.wd1.myworkdayjobs.com/frame/questions?sid=XYZ'></iframe></body></html>",
         encoding="utf-8")  # as the browser's snapshot writes it
-    (snap / "frame-1.html").write_text("<html><body><h2>Questions</h2><p>Gilbertville</p></body></html>")
+    (snap / "frame-1.html").write_text("<html><body><h2>Questions</h2><p>Gilbertville</p></body></html>", encoding="utf-8")
     (snap / "screenshot.jpg").write_bytes(b"\xff\xd8 a picture of the page with Jordan Quill on it")
     (snap / "snapshot.json").write_text(json.dumps({
         "url": "https://acme.wd1.myworkdayjobs.com/External/job/x/apply?email=jquill77%40example.org",
@@ -42,7 +42,7 @@ def _saved_page(folder: Path) -> None:
         "fields": [{"label": "First Name", "kind": "text", "required": True, "value": "Jordan"},
                    {"label": "Phone", "kind": "text", "required": True, "value": ""},
                    {"label": "State", "kind": "select", "required": True, "value": "Select One"},
-                   {"label": "Years of experience", "kind": "text", "required": False, "value": 0}]}))
+                   {"label": "Years of experience", "kind": "text", "required": False, "value": 0}]}), encoding="utf-8")
 
 
 def test_a_report_holds_what_the_desk_did_and_the_pages_with_the_persons_details_out(job_apply_home, tmp_path):
@@ -217,11 +217,11 @@ def _stop_and_fill_pages(folder: Path, names: list[str]) -> None:
         snap = folder / "debug" / name
         snap.mkdir(parents=True)
         note = "stopped: questions" if name.endswith("-stop") else "autofill failures"
-        (snap / "page.html").write_text(f"<html><body><h1>{note}</h1><label for=a>City</label><input id=a></body></html>")
+        (snap / "page.html").write_text(f"<html><body><h1>{note}</h1><label for=a>City</label><input id=a></body></html>", encoding="utf-8")
         (snap / "snapshot.json").write_text(json.dumps({
             "url": "https://example.com/apply", "title": note, "note": note,
             "frames": [{"file": "page.html", "url": "https://example.com/apply"}],
-            "fields": [{"label": "City", "kind": "text", "required": True, "value": ""}]}))
+            "fields": [{"label": "City", "kind": "text", "required": True, "value": ""}]}), encoding="utf-8")
 
 
 def test_the_page_a_fill_broke_on_stays_in_the_report_after_the_jobs_stops(job_apply_home, tmp_path):
@@ -251,11 +251,11 @@ def _saved_job_page(folder: Path) -> None:
         f"<html><head><title>Field Service Engineer - Acme Semi Careers</title></head><body><h1>My Experience</h1>"
         f"<p>Field Service Engineer (R12345) at Acme Semi</p><a href='{posting}'>Back to the posting</a>"
         "<a href='https://careers.acme-semi.example/benefits'>Benefits at careers.acme-semi.example</a>"
-        "<img alt='Acme Semi logo'><label for=a>Company</label><input id=a></body></html>")
+        "<img alt='Acme Semi logo'><label for=a>Company</label><input id=a></body></html>", encoding="utf-8")
     (snap / "snapshot.json").write_text(json.dumps({
         "url": posting + "/apply?sid=SESS123", "title": "Field Service Engineer - Acme Semi Careers",
         "note": "stopped: stuck", "frames": [{"file": "page.html", "url": posting + "/apply"}],
-        "fields": [{"label": "Company", "kind": "text", "required": True, "value": ""}]}))
+        "fields": [{"label": "Company", "kind": "text", "required": True, "value": ""}]}), encoding="utf-8")
 
 
 def test_an_anonymous_report_says_only_the_job_system_and_the_step(job_apply_home, tmp_path):

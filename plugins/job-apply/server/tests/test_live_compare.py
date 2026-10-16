@@ -223,22 +223,22 @@ def test_find_issue_takes_the_oldest_with_the_title():
 
 def _run(tmp_path, issues, pipeline_records, search_records=(), partial=(), hr_records=None, finance_records=None,
          accounts_records=None):
-    (tmp_path / "pipeline.log").write_text(log("LIVE_PIPELINE ", pipeline_records))
-    (tmp_path / "search.log").write_text(log("LIVE_RESULT ", search_records))
-    (tmp_path / "issues.json").write_text(json.dumps(issues))
+    (tmp_path / "pipeline.log").write_text(log("LIVE_PIPELINE ", pipeline_records), encoding="utf-8")
+    (tmp_path / "search.log").write_text(log("LIVE_RESULT ", search_records), encoding="utf-8")
+    (tmp_path / "issues.json").write_text(json.dumps(issues), encoding="utf-8")
     out = tmp_path / "github_output"
-    out.write_text("")
+    out.write_text("", encoding="utf-8")
     hr = []
     for name, records in (("hr", hr_records), ("finance", finance_records), ("accounts", accounts_records)):
         if records is not None:
-            (tmp_path / f"{name}.log").write_text(log("LIVE_PIPELINE ", records))
+            (tmp_path / f"{name}.log").write_text(log("LIVE_PIPELINE ", records), encoding="utf-8")
             hr += ["--log", f"{name}={tmp_path / f'{name}.log'}"]
     argv = ["--issues", str(tmp_path / "issues.json"), "--run-url", "https://example.com/run/3",
             "--log", f"pipeline={tmp_path / 'pipeline.log'}", "--log", f"search={tmp_path / 'search.log'}", *hr,
             "--body-out", str(tmp_path / "body.md"), "--comment-out", str(tmp_path / "comment.md"),
             "--github-output", str(out), *[a for p in partial for a in ("--partial", p)]]
     assert lc.main(argv) == 0
-    outputs = dict(line.split("=", 1) for line in out.read_text().splitlines())
+    outputs = dict(line.split("=", 1) for line in out.read_text(encoding="utf-8").splitlines())
     comment = tmp_path / "comment.md"
     return ((tmp_path / "body.md").read_text(encoding="utf-8"),
             comment.read_text(encoding="utf-8") if comment.exists() else None, outputs)

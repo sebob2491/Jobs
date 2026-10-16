@@ -51,7 +51,7 @@ def job_apply_home(tmp_path, monkeypatch):
     resume = home / "resume.pdf"
     resume.write_bytes(b"%PDF-1.4\n% test resume\n")
     profile = {**PROFILE, "documents": {"resume": str(resume)}}
-    (home / "profile.yaml").write_text(yaml.safe_dump(profile))
+    (home / "profile.yaml").write_text(yaml.safe_dump(profile), encoding="utf-8")
     monkeypatch.setenv("JOB_APPLY_HOME", str(home))
     monkeypatch.setenv("JOB_APPLY_HEADLESS", "1")
     # a page read with no form is read again a moment later (Oracle's draw theirs late): in tests, 50 ms apart,

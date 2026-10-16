@@ -184,9 +184,9 @@ def test_self_identification_dropdowns_are_picked_from_their_lists_never_typed_i
     profile's answer, and nothing is typed."""
     import yaml
 
-    data = yaml.safe_load((job_apply_home / "profile.yaml").read_text())
+    data = yaml.safe_load((job_apply_home / "profile.yaml").read_text(encoding="utf-8"))
     data["eeo"]["disability"] = "No"  # (gender "Decline to self-identify", veteran "I don't wish to answer")
-    (job_apply_home / "profile.yaml").write_text(yaml.safe_dump(data))
+    (job_apply_home / "profile.yaml").write_text(yaml.safe_dump(data), encoding="utf-8")
     run(srv.browser.goto(fixture_url("site/eeo-dropdowns.html")))
     result = run(srv.autofill())
     filled = {f["label"]: f["value"] for f in result["filled"]}
@@ -233,7 +233,7 @@ def test_a_successfactors_list_is_searched_and_a_search_that_picks_nothing_is_em
 
     # a country the list doesn't have: the field comes back with what to ask instead
     profile = job_apply_home / "profile.yaml"
-    profile.write_text(profile.read_text().replace("country: United States", "country: Atlantis"))
+    profile.write_text(profile.read_text(encoding="utf-8").replace("country: United States", "country: Atlantis"), encoding="utf-8")
     run(srv.browser.goto(fixture_url("site/sf-select-form.html")))
     failed = run(srv.autofill())["failed"]
     assert [(f["label"], f["kind"], f["required"], len(f["options"])) for f in failed] == [("Country", "combobox", True, 100)]
@@ -245,7 +245,7 @@ def test_an_answer_that_picks_a_group_is_chosen_again_among_its_entries(srv, job
     "Website / Job Board Posting", a group whose entries hold "Company Career Site". The desk
     asked the person; the answer is chosen again among the group's entries and filled."""
     profile = job_apply_home / "profile.yaml"
-    profile.write_text(profile.read_text().replace("how_did_you_hear: LinkedIn", "how_did_you_hear: Company Website"))
+    profile.write_text(profile.read_text(encoding="utf-8").replace("how_did_you_hear: LinkedIn", "how_did_you_hear: Company Website"), encoding="utf-8")
     run(srv.browser.goto(fixture_url("workday_prompt_2026.html") + "?groups=staffing"))
     result = run(srv.autofill())
     assert not [f for f in result["failed"] if "hear" in (f["label"] or "").lower()], result["failed"]
@@ -367,9 +367,9 @@ def test_auto_mode_refuses_incomplete_form(srv, job_apply_home):
     import yaml
 
     prof_path = job_apply_home / "profile.yaml"
-    prof = yaml.safe_load(prof_path.read_text())
+    prof = yaml.safe_load(prof_path.read_text(encoding="utf-8"))
     prof["settings"].update({"submit_mode": "auto", "auto_submit_ats": ["company_site"]})
-    prof_path.write_text(yaml.safe_dump(prof))
+    prof_path.write_text(yaml.safe_dump(prof), encoding="utf-8")
 
     job = srv.add_job(url=fixture_url("generic_form.html"), title="Field Service Engineer", company="Example Litho")["job"]
     assert run(srv.open_application(job_id=job["id"]))["submit_policy"] == "auto"
@@ -824,11 +824,11 @@ def test_blocks_drawn_after_their_heading_are_read_and_filled(srv, job_apply_hom
     import yaml
 
     path = job_apply_home / "profile.yaml"
-    profile = yaml.safe_load(path.read_text())
+    profile = yaml.safe_load(path.read_text(encoding="utf-8"))
     school = profile["education_history"][0]["school"]
     profile["education_history"].append({"school": school, "degree": "", "major": "Physics", "start": 2021,
                                          "end": 2022})
-    path.write_text(yaml.safe_dump(profile))
+    path.write_text(yaml.safe_dump(profile), encoding="utf-8")
     run(srv.browser.goto(fixture_url("site/workday-experience-blocks.html")))
     assert run(srv.add_entries("education"))["after"] == 2
 
@@ -1543,9 +1543,9 @@ def test_workdays_disability_form_is_signed_and_answered(srv, job_apply_home):
 
     import yaml
 
-    data = yaml.safe_load((job_apply_home / "profile.yaml").read_text())
+    data = yaml.safe_load((job_apply_home / "profile.yaml").read_text(encoding="utf-8"))
     data["eeo"]["disability"] = "Decline to self-identify"
-    (job_apply_home / "profile.yaml").write_text(yaml.safe_dump(data))
+    (job_apply_home / "profile.yaml").write_text(yaml.safe_dump(data), encoding="utf-8")
     run(srv.open_application(url=fixture_url("workday_self_identify.html")))
     result = run(srv.autofill())
     assert not result["failed"], result["failed"]

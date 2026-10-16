@@ -823,7 +823,7 @@ def test_a_cookie_banner_with_no_way_to_decline_is_the_persons_unless_they_allow
     assert (r.status, r.need) == ("needs_you", "stuck") and "can't decline" in r.reason, (r.reason, r.log)
     assert "accept_cookies: true" in r.reason and (accepted, prefs) == (0, 0)
     profile = job_apply_home / "profile.yaml"
-    profile.write_text(profile.read_text().replace("settings:\n", "settings:\n  accept_cookies: true\n"))
+    profile.write_text(profile.read_text(encoding="utf-8").replace("settings:\n", "settings:\n  accept_cookies: true\n"), encoding="utf-8")
     r, (accepted, prefs) = apply_once()
     assert accepted == 1 and prefs == 0, (r.reason, r.log)
     assert any(line.startswith("accepted cookies (\u201cAGREE AND PROCEED\u201d)") for line in r.log), r.log
@@ -835,7 +835,7 @@ def test_a_banner_that_can_be_declined_is_declined_even_where_accepting_is_allow
     whose way is "Deny" is denied."""
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
     profile = job_apply_home / "profile.yaml"
-    profile.write_text(profile.read_text().replace("settings:\n", "settings:\n  accept_cookies: true\n"))
+    profile.write_text(profile.read_text(encoding="utf-8").replace("settings:\n", "settings:\n  accept_cookies: true\n"), encoding="utf-8")
     job = srv.add_job(url=fixture_url("site/cookie-deny.html"), title="FSE", company="Example Fab")["job"]
     applier = Applier(srv)
 
@@ -901,9 +901,9 @@ def notice_settings(job_apply_home, **settings):
     import yaml
 
     path = job_apply_home / "profile.yaml"
-    profile = yaml.safe_load(path.read_text())
+    profile = yaml.safe_load(path.read_text(encoding="utf-8"))
     profile["settings"].update(settings)
-    path.write_text(yaml.safe_dump(profile))
+    path.write_text(yaml.safe_dump(profile), encoding="utf-8")
 
 
 async def notice_page(r):
@@ -1382,9 +1382,9 @@ def manage_accounts(job_apply_home, submit_mode="review"):
     import yaml
 
     path = job_apply_home / "profile.yaml"
-    profile = yaml.safe_load(path.read_text())
+    profile = yaml.safe_load(path.read_text(encoding="utf-8"))
     profile["settings"].update(manage_accounts=True, submit_mode=submit_mode)
-    path.write_text(yaml.safe_dump(profile))
+    path.write_text(yaml.safe_dump(profile), encoding="utf-8")
 
 
 def test_with_manage_accounts_the_desk_creates_the_account(srv, monkeypatch, job_apply_home):
@@ -1422,9 +1422,9 @@ def test_the_log_says_where_to_turn_manage_accounts_off_only_until_the_profile_h
     manage_accounts(job_apply_home)
     if not chosen:  # the profile doesn't say: the setting is on, as it is by default
         path = job_apply_home / "profile.yaml"
-        profile = yaml.safe_load(path.read_text())
+        profile = yaml.safe_load(path.read_text(encoding="utf-8"))
         del profile["settings"]["manage_accounts"]
-        path.write_text(yaml.safe_dump(profile))
+        path.write_text(yaml.safe_dump(profile), encoding="utf-8")
     assert config.Profile.load().settings.may_manage_accounts
     job = srv.add_job(url=fixture_url("site/create-account.html"), title="FSE", company="Example Fab")["job"]
     applier = Applier(srv)
@@ -3465,7 +3465,7 @@ def test_a_code_from_a_shared_sender_naming_another_employer_is_never_this_jobs(
     code isn't valid"). Such mail is another job's; the employer's own domain's, or a subject naming this employer
     (or none on the lists), stays this job's. Employers whose names begin with the same two words aren't told apart
     by it."""
-    (job_apply_home / "companies.yaml").write_text(yaml.safe_dump({"lists": ["phoenix-metro", "semiconductor-az"]}))
+    (job_apply_home / "companies.yaml").write_text(yaml.safe_dump({"lists": ["phoenix-metro", "semiconductor-az"]}), encoding="utf-8")
     oracle = "workflow.email.us-phoenix-1.ocs.oraclecloud.com"
     others = pipeline._another_employers_mail("American Express", frozenset({"americanexpress.com"}))
     assert others(oracle, "onsemi Confirm Your Identity")
@@ -5817,9 +5817,9 @@ def test_a_missing_file_brings_the_questions_along(srv, job_apply_home, monkeypa
     import yaml
 
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
-    prof = yaml.safe_load((job_apply_home / "profile.yaml").read_text())
+    prof = yaml.safe_load((job_apply_home / "profile.yaml").read_text(encoding="utf-8"))
     prof["documents"] = {"resume": None}
-    (job_apply_home / "profile.yaml").write_text(yaml.safe_dump(prof))
+    (job_apply_home / "profile.yaml").write_text(yaml.safe_dump(prof), encoding="utf-8")
     job = srv.add_job(url=fixture_url("site/upload-form.html"), title="Engineer", company="Example Fab")["job"]
     applier = Applier(srv)
 
@@ -6832,7 +6832,7 @@ def _example_corp(srv, monkeypatch, loads: list[str]) -> str:
     through the browser (and through the browser opened again, after it closed). Each address
     loaded goes into `loads`. Returns the job's posting."""
     site = Path(__file__).parent / "fixtures" / "site"
-    pages = {f"{EXAMPLE_CORP}{path}": (site / name).read_text() for path, name in (
+    pages = {f"{EXAMPLE_CORP}{path}": (site / name).read_text(encoding="utf-8") for path, name in (
         ("/careers/job/1", "one-page-posting.html"), ("/careers/apply", "one-page-apply.html"),
         ("/careers", "one-page-home.html"))}
 
@@ -7346,7 +7346,7 @@ def test_a_profile_typo_doesnt_stop_the_inbox_watch_from_saying_so(srv, monkeypa
     """profile.yaml broken while a job waits on an emailed code: the inbox isn't read, the
     desk says why, and the queue's loop carries on (it used to fail every tick)."""
     monkeypatch.setenv("JOB_APPLY_SECRET_EMAIL_PASSWORD", "an-app-password")
-    (job_apply_home / "profile.yaml").write_text("personal:\n  email: sam@example.com\n   phone: [oops\n")
+    (job_apply_home / "profile.yaml").write_text("personal:\n  email: sam@example.com\n   phone: [oops\n", encoding="utf-8")
     applier = Applier(srv)
     assert applier.mail_login() is None
     assert "profile.yaml" in (applier.mail_problem or "")
@@ -7789,10 +7789,10 @@ def test_the_page_a_job_stops_on_is_saved_for_its_report_scrubbed(srv, monkeypat
     out = report.build(srv.tracker().get(job["id"]), r)
     assert out["pages"], "the report holds no page"
     [stop] = (Path(job["folder"]) / "debug").glob("*-stop")
-    assert 'value="sam.rivera@example.com"' in (stop / "page.html").read_text()  # what the site wrote in
-    assert json.loads((stop / "snapshot.json").read_text())["note"] == "stopped: stuck"
+    assert 'value="sam.rivera@example.com"' in (stop / "page.html").read_text(encoding="utf-8")  # what the site wrote in
+    assert json.loads((stop / "snapshot.json").read_text(encoding="utf-8"))["note"] == "stopped: stuck"
     assert out["pages"] == [f"pages/{stop.name}.expect.json", f"pages/{stop.name}.html"]
-    page = (Path(out["folder"]) / out["pages"][1]).read_text()
+    page = (Path(out["folder"]) / out["pages"][1]).read_text(encoding="utf-8")
     assert "My Information" in page and f"### Page saved {stop.name}" in out["preview"]
     for private in ("Sam", "Rivera", "sam.rivera", "value="):
         assert private not in page, private
@@ -8024,10 +8024,10 @@ def test_a_jobs_missing_dates_are_named_not_asked_box_by_box(srv, monkeypatch, j
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
     monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 1)
     path = job_apply_home / "profile.yaml"
-    profile = yaml.safe_load(path.read_text())
+    profile = yaml.safe_load(path.read_text(encoding="utf-8"))
     for entry in profile["work_history"]:
         entry.pop("start"), entry.pop("end")
-    path.write_text(yaml.safe_dump(profile))
+    path.write_text(yaml.safe_dump(profile), encoding="utf-8")
     job = srv.add_job(url=fixture_url("site/workday-my-experience.html"), title="Equipment Technician",
                       company="Example Litho")["job"]
     applier = Applier(srv)
@@ -8133,10 +8133,10 @@ def test_a_resume_workday_already_lists_isnt_uploaded_again(srv, monkeypatch, jo
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
     monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 1)
     path = job_apply_home / "profile.yaml"
-    profile = yaml.safe_load(path.read_text())
+    profile = yaml.safe_load(path.read_text(encoding="utf-8"))
     for entry in profile["work_history"]:
         entry.pop("start"), entry.pop("end")  # so the page stops, and Resume fills it again
-    path.write_text(yaml.safe_dump(profile))
+    path.write_text(yaml.safe_dump(profile), encoding="utf-8")
     job = srv.add_job(url=fixture_url("site/workday-my-experience.html"), title="Equipment Technician",
                       company="Example Litho")["job"]
     applier = Applier(srv)
@@ -8249,9 +8249,9 @@ def test_what_a_jobs_or_schools_block_lacks_is_said_for_its_own_list(srv):
     import yaml
 
     path = config.profile_path()
-    profile = yaml.safe_load(path.read_text())
+    profile = yaml.safe_load(path.read_text(encoding="utf-8"))
     profile["education_history"][0].pop("start")
-    path.write_text(yaml.safe_dump(profile))
+    path.write_text(yaml.safe_dump(profile), encoding="utf-8")
     applier = Applier(srv)
     r = Run(1, "Technician", "Example Litho")
     pending = [{"id": "a", "label": "From", "sublabel": "Year", "section": "Education 1", "required": True},
@@ -8271,9 +8271,9 @@ def test_a_schools_missing_degree_is_asked_for_as_a_degree_never_as_dates(srv):
     import yaml
 
     path = config.profile_path()
-    profile = yaml.safe_load(path.read_text())
+    profile = yaml.safe_load(path.read_text(encoding="utf-8"))
     profile["education_history"][0].pop("degree", None)
-    path.write_text(yaml.safe_dump(profile))
+    path.write_text(yaml.safe_dump(profile), encoding="utf-8")
     applier = Applier(srv)
     r = Run(1, "Technician", "Example Litho")
     pending = [{"id": "a", "label": "Degree*", "section": "Education 1", "required": True, "kind": "listbox"}]
@@ -8322,10 +8322,10 @@ def test_a_degree_list_without_the_profiles_degree_says_so_not_that_the_profile_
     import yaml
 
     path = config.profile_path()
-    profile = yaml.safe_load(path.read_text())
+    profile = yaml.safe_load(path.read_text(encoding="utf-8"))
     school = profile["education_history"][0]["school"]
     profile["education_history"][0]["degree"] = "GED"
-    path.write_text(yaml.safe_dump(profile))
+    path.write_text(yaml.safe_dump(profile), encoding="utf-8")
     applier = Applier(srv)
     degree = {"id": "a", "label": "Degree*", "section": "Education 1", "required": True, "kind": "listbox",
               "options": ["Certificate", "Foundation", "Associate", "Bachelor", "Master", "Doctor", "Ph.D.", "Others",
@@ -8358,10 +8358,10 @@ def test_a_degree_list_with_several_kinds_of_the_profiles_degree_says_so(srv):
     import yaml
 
     path = config.profile_path()
-    profile = yaml.safe_load(path.read_text())
+    profile = yaml.safe_load(path.read_text(encoding="utf-8"))
     school = profile["education_history"][0]["school"]
     profile["education_history"][0]["degree"] = "Bachelor's Degree"
-    path.write_text(yaml.safe_dump(profile))
+    path.write_text(yaml.safe_dump(profile), encoding="utf-8")
     applier = Applier(srv)
     degree = {"id": "a", "label": "Degree*", "section": "Education 1", "required": True, "kind": "listbox",
               "options": ["High School", "Associate of Science", "Bachelor of Arts", "Bachelor of Science",
@@ -8382,10 +8382,10 @@ def test_a_degree_list_with_nothing_for_classes_leaves_the_pick_to_the_person(sr
     import yaml
 
     path = config.profile_path()
-    profile = yaml.safe_load(path.read_text())
+    profile = yaml.safe_load(path.read_text(encoding="utf-8"))
     school = profile["education_history"][0]["school"]
     profile["education_history"].append({"school": school, "degree": "", "start": 2021, "end": 2022})
-    path.write_text(yaml.safe_dump(profile))
+    path.write_text(yaml.safe_dump(profile), encoding="utf-8")
     applier = Applier(srv)
     r = Run(1, "Technician", "Example Litho")
     site = {"url": "https://example.wd1.myworkdayjobs.com/x"}
@@ -8402,7 +8402,7 @@ def test_a_degree_list_with_nothing_for_classes_leaves_the_pick_to_the_person(sr
 
     # written as setup writes it, and turned down by the list: still the person's pick, never "the closest"
     profile["education_history"][1]["degree"] = "Some college (no degree)"
-    path.write_text(yaml.safe_dump(profile))
+    path.write_text(yaml.safe_dump(profile), encoding="utf-8")
     said, _ = applier._entry_gaps(r, site, [{**degree, "error": "ValueError: doesn't match any option"}])
     assert "no choice for classes without a degree" in said and "closest choice" not in said, said
 
@@ -8494,10 +8494,10 @@ def test_a_school_block_is_deleted_only_where_it_is_the_last_of_several(srv):
     import yaml
 
     path = config.profile_path()
-    profile = yaml.safe_load(path.read_text())
+    profile = yaml.safe_load(path.read_text(encoding="utf-8"))
     profile["education_history"].append({"school": profile["education_history"][0]["school"], "degree": "",
                                          "start": 2021, "end": 2022})
-    path.write_text(yaml.safe_dump(profile))
+    path.write_text(yaml.safe_dump(profile), encoding="utf-8")
     applier, clicked, gone = Applier(srv), [], []
 
     class Stub:
@@ -8521,10 +8521,10 @@ def test_a_school_block_is_deleted_only_where_it_is_the_last_of_several(srv):
     # a degree the profile lacks there, or one under way, is never taken for classes: the person's
     for said in ("", "BS in progress", "Bachelor of Science (expected 2027)"):
         profile["education_history"][1]["degree"] = said
-        path.write_text(yaml.safe_dump(profile))
+        path.write_text(yaml.safe_dump(profile), encoding="utf-8")
         assert not run(applier._drop_unfit_school(r, page("Education 1", "Education 2"), [degree_box("Education 2")]))
     profile["education_history"][1]["degree"] = "Some college (no degree)"
-    path.write_text(yaml.safe_dump(profile))
+    path.write_text(yaml.safe_dump(profile), encoding="utf-8")
 
     assert not run(applier._drop_unfit_school(r, page("Education 2"), [degree_box("Education 2")]))  # its only one
     assert not run(applier._drop_unfit_school(r, page("Education 1", "Education 2"), [degree_box("Education 1")]))
@@ -8550,11 +8550,11 @@ def test_a_workday_experience_page_is_filled_block_by_block(srv, monkeypatch, jo
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
     monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 1)
     path = job_apply_home / "profile.yaml"
-    profile = yaml.safe_load(path.read_text())
+    profile = yaml.safe_load(path.read_text(encoding="utf-8"))
     school = profile["education_history"][0]["school"]
     profile["education_history"].append({"school": school, "degree": "Some college (no degree)", "major": "Physics",
                                          "start": 2021, "end": 2022})
-    path.write_text(yaml.safe_dump(profile))
+    path.write_text(yaml.safe_dump(profile), encoding="utf-8")
     job = srv.add_job(url=fixture_url("site/workday-experience-blocks.html"), title="Equipment Technician",
                       company="Example Litho")["job"]
     applier = Applier(srv)

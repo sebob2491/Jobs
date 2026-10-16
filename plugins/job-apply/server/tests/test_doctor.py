@@ -47,7 +47,7 @@ def check(rep, name):
 
 def write_profile(home, **changes):
     profile = {**PROFILE, "documents": {"resume": str(home / "resume.pdf")}, **changes}
-    (home / "profile.yaml").write_text(yaml.safe_dump(profile))
+    (home / "profile.yaml").write_text(yaml.safe_dump(profile), encoding="utf-8")
 
 
 def test_everything_in_place_exits_0(fine, loop, capsys):
@@ -216,7 +216,7 @@ def test_a_new_profile_isnt_filled_in(fine, loop, job_apply_home):
 
 
 def test_a_profile_with_a_typo(fine, loop, job_apply_home):
-    (job_apply_home / "profile.yaml").write_text("personal:\n  first_name: [Sam\n")
+    (job_apply_home / "profile.yaml").write_text("personal:\n  first_name: [Sam\n", encoding="utf-8")
     c = check(report(), "profile")
     assert c.status == doctor.PROBLEM and "typo" in c.say and "Sam" not in c.say
 
@@ -297,7 +297,7 @@ def test_a_profile_it_cant_read_is_a_problem_not_a_crash(fine, loop, job_apply_h
     which took the doctor command and tool down with it. It's a problem with the profile, said
     without its values."""
     write_profile(job_apply_home, answers=5)
-    (job_apply_home / "answers.yaml").write_text("answers:\n- match: Sam Rivera's question\n  answer: 'yes'\n")
+    (job_apply_home / "answers.yaml").write_text("answers:\n- match: Sam Rivera's question\n  answer: 'yes'\n", encoding="utf-8")
     c = check(report(), "profile")
     assert c.status == doctor.PROBLEM and "can't read (TypeError)" in c.say and "set up job-apply" in c.fix
     out = run(srv.doctor())
@@ -375,5 +375,5 @@ def test_claude_can_run_it_as_a_tool(fine, srv, monkeypatch):
 
 
 def test_the_console_script_is_declared():
-    text = (config.PACKAGE_DIR.parents[1] / "pyproject.toml").read_text()
+    text = (config.PACKAGE_DIR.parents[1] / "pyproject.toml").read_text(encoding="utf-8")
     assert 'job-apply-doctor = "job_apply.doctor:main"' in text

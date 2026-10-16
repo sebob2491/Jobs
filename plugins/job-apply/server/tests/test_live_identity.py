@@ -189,12 +189,12 @@ def test_what_the_run_prints_and_saves_is_masked(tmp_path):
     assert out.getvalue() == f"signed in as {li.EMAIL_MASK} with {li.PASSWORD_MASK}\n"
     snap = tmp_path / "pipeline" / "kla"
     snap.mkdir(parents=True)
-    (snap / "page.html").write_text(f'<input value="{EMAIL}"><p>{INBOX_PASSWORD}</p>')
-    (snap / "snapshot.json").write_text(json.dumps({"value": SITE_PASSWORD}))
+    (snap / "page.html").write_text(f'<input value="{EMAIL}"><p>{INBOX_PASSWORD}</p>', encoding="utf-8")
+    (snap / "snapshot.json").write_text(json.dumps({"value": SITE_PASSWORD}), encoding="utf-8")
     (snap / "screenshot.jpg").write_bytes(b"\xff\xd8" + EMAIL.encode())  # (an image is left as it is)
     li.mask_files(tmp_path, mask)
-    assert (snap / "page.html").read_text() == f'<input value="{li.EMAIL_MASK}"><p>{li.PASSWORD_MASK}</p>'
-    assert json.loads((snap / "snapshot.json").read_text()) == {"value": li.PASSWORD_MASK}
+    assert (snap / "page.html").read_text(encoding="utf-8") == f'<input value="{li.EMAIL_MASK}"><p>{li.PASSWORD_MASK}</p>'
+    assert json.loads((snap / "snapshot.json").read_text(encoding="utf-8")) == {"value": li.PASSWORD_MASK}
     assert (snap / "screenshot.jpg").read_bytes().endswith(EMAIL.encode())
 
 
@@ -213,10 +213,10 @@ def test_its_employers_are_a_few_per_job_system_from_the_plugins_lists(job_apply
     assert {e["role"] for e in employers} <= {"technician", "hr", "finance"}  # (live_smoke.py's ROLES)
     lists = search.employer_lists()
     for e in employers:
-        listed = yaml.safe_load(lists[e["list"]].read_text())["companies"]
+        listed = yaml.safe_load(lists[e["list"]].read_text(encoding="utf-8"))["companies"]
         assert any(c["name"] == e["name"] and c.get("search") for c in listed), e  # (the pipeline runs on a search)
     # as live_smoke.py reads them: its employers' lists, as a person's companies.yaml names them
-    (job_apply_home / "companies.yaml").write_text(yaml.safe_dump({"lists": sorted({e["list"] for e in employers})}))
+    (job_apply_home / "companies.yaml").write_text(yaml.safe_dump({"lists": sorted({e["list"] for e in employers})}), encoding="utf-8")
     assert set(names) <= {c["name"] for c in search.load_companies()}
     # with --parallel 2, two on the same system are in the same group (one inbox, one sender at a time)
     for system in [s for s, n in per_system.items() if n > 1]:
@@ -275,7 +275,7 @@ def by_name(employers):
 
 def test_an_employer_without_its_reasons_is_refused(tmp_path):
     path = tmp_path / "employers.yaml"
-    path.write_text(yaml.safe_dump({"employers": [{"name": "KLA", "list": "semiconductor-az", "role": "technician"}]}))
+    path.write_text(yaml.safe_dump({"employers": [{"name": "KLA", "list": "semiconductor-az", "role": "technician"}]}), encoding="utf-8")
     with pytest.raises(ValueError, match="system and why"):
         li.load_employers(path)
 
@@ -313,12 +313,12 @@ def test_live_smoke_sets_up_the_test_identity_and_never_says_its_secrets(tmp_pat
     homes = [h for h in tmp_path.glob("job-apply-live-*") if (h / "companies.yaml").exists()]
     assert len(homes) == 1
     home = homes[0]
-    profile = yaml.safe_load((home / "profile.yaml").read_text())
+    profile = yaml.safe_load((home / "profile.yaml").read_text(encoding="utf-8"))
     assert (profile["personal"]["first_name"], profile["personal"]["last_name"]) == ("Jobdesk", "Test")
     assert profile["personal"]["email"] == EMAIL
     resume = Path(profile["documents"]["resume"])
     assert resume.parent == home and resume.read_bytes().startswith(b"%PDF")
-    assert yaml.safe_load((home / "companies.yaml").read_text()) == {"lists": ["phoenix-metro", "semiconductor-az"]}
+    assert yaml.safe_load((home / "companies.yaml").read_text(encoding="utf-8")) == {"lists": ["phoenix-metro", "semiconductor-az"]}
     assert not (home / "secrets.yaml").exists()  # (its passwords are in the run's environment only)
     for path in [*home.rglob("*"), *(tmp_path / "out").rglob("*")]:
         if path.is_file():
