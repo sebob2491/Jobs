@@ -31,6 +31,33 @@ asyncio.run(main(sys.argv[1]))
 """
 
 
+RUN_PROFILE = """
+import json, sys
+sys.path.insert(0, "scripts")
+import live_smoke
+live_smoke.use_role("hr")
+print("RESULT " + json.dumps(live_smoke.profile_values()))
+"""
+
+
+def test_the_values_the_review_page_should_show_are_noted_for_the_audit():
+    """Each employer's record notes what its review page should show of the applicant (live_audit.py's values
+    check): the name, the role's jobs and schools, the degree levels, the other roles' employers; never the email,
+    the phone or the address."""
+    out = subprocess.run([sys.executable, "-c", RUN_PROFILE], cwd=SERVER, capture_output=True, text=True,
+                         encoding="utf-8", timeout=120)
+    line = next((x for x in out.stdout.splitlines() if x.startswith("RESULT ")), None)
+    assert line, out.stdout[-2000:] + out.stderr[-3000:]
+    values = json.loads(line[len("RESULT "):])
+    assert values == {"name": "Testy McTestface", "levels": ["bachelor", "high_school"],
+                      "work": [{"title": "HR Coordinator", "company": "Example Staffing", "start": "2021-03",
+                                "end": "present"}],
+                      "education": [{"school": "Arizona State University", "degree": "Bachelor of Science",
+                                     "start": "2016", "end": "2020"}],
+                      "others": ["Example Bank", "Example Fab"]}, values
+    assert "example.com" not in line and "480" not in line and "Arizona Ave" not in line
+
+
 @pytest.mark.skipif(not browser_available(), reason="needs Chromium")
 def test_the_words_above_each_asked_about_box_are_recorded():
     """Taylor Morrison's Workday (run 71) asked about a box labelled only "Acknowledgment*": what it acknowledges

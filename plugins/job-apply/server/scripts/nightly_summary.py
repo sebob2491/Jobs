@@ -34,6 +34,7 @@ from pathlib import Path
 from typing import Any, Iterator
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import live_audit  # noqa: E402  (scripts/live_audit.py, beside this one: the review pages' values)
 import live_compare  # noqa: E402  (scripts/live_compare.py, beside this one)
 
 REPO = "sebob2491/Jobs"
@@ -356,9 +357,13 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.artifacts:
         wanted = [w.strip().lower() for w in args.companies.split(",") if w.strip()]
-        for rec in records(args.artifacts):
-            if not wanted or any(w in str(rec.get("company", "")).lower() for w in wanted):
-                print(steps(rec))
+        chosen = {str(r.get("company")): r for r in records(args.artifacts)
+                  if not wanted or any(w in str(r.get("company", "")).lower() for w in wanted)}
+        for rec in chosen.values():
+            print(steps(rec))
+        if args.artifacts.is_dir():  # (the review pages' values against the profile's: live_audit.py)
+            for line in live_audit.values_findings("values", chosen, args.artifacts):
+                print(line)
         return 0
     if args.changes:
         sorted_ = triage(last_comment())

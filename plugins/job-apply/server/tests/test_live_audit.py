@@ -79,3 +79,97 @@ def test_main_fails_with_error_lines_only_when_something_was_found(tmp_path, cap
     out = capsys.readouterr().out
     assert "::error::pipeline/Example Fab: a consent the desk never gives: ticked “Join our talent community”" in out
     assert "audit: 1 finding (1 records, 1 files)" in out
+
+
+WORKDAY_REVIEW = """<html><body><h2>Review</h2><p>Legal Name Jobdesk Test</p><p>Email Address <input type="email" value="x@example.com"></p>
+<h3>My Experience</h3><h4>Work Experience</h4><p>Work Experience 1</p><p>Job Title Equipment Technician</p>
+<p>Company Example Fab</p><p>Location Chandler, AZ</p><p>I currently work here Yes</p><p>From {start}</p>{to}
+<h4>Education</h4><p>Education 1</p><p>School or University Arizona State University</p><p>Degree {degree}</p>
+<p>Field of Study Electrical Engineering</p><p>From {efrom}</p><p>To (Actual or Expected) 2020</p>
+<h4>Certifications</h4><p>No Response</p>{more}
+<script>var hint = "From 01/1999 Degree Doctorate";</script><style>.x::before {{ content: "Example Bank"; }}</style>
+<select><option>Choose...</option><option selected>Bachelor's</option><option>Master's Degree</option></select>
+</body></html>"""
+PROFILE = {"name": "Jobdesk Test", "levels": ["high_school", "bachelor"], "others": ["Example Staffing", "Example Bank"],
+           "work": [{"title": "Equipment Technician", "company": "Example Fab", "start": "2021-03", "end": "present"}],
+           "education": [{"school": "Arizona State University", "degree": "Bachelor of Science", "start": "2016",
+                          "end": "2020"}]}
+
+
+def review(start="03/2021", to="", degree="Bachelor of Science", efrom="2016", more=""):
+    return la.page_text(WORKDAY_REVIEW.format(start=start, to=to, degree=degree, efrom=efrom, more=more))
+
+
+def test_a_review_page_as_the_profile_has_it_says_nothing():
+    """Tokyo Electron's Workday review page (run 105): the job from 03/2021, still held; the school 2016 to 2020, a
+    Bachelor of Science. A script's and a style's words, a list's other entries and a box's value aren't the page's."""
+    assert list(la.page_findings("accounts/TEL", review(), PROFILE)) == []
+    assert list(la.page_findings("accounts/TEL", review(start="March 2021", efrom="08/2016"), PROFILE)) == []
+    text = review()
+    assert "Example Bank" not in text and "01/1999" not in text and "Master's Degree" not in text
+    assert "Bachelor's" in text and "x@example.com" in text  # (a list's chosen entry, a box's value)
+
+
+def test_a_date_a_degree_or_another_roles_employer_not_the_profiles_is_said():
+    """Early Warning Services, KLA and Hitachi (run 105): the test identity's job saved at the tenant by an earlier run
+    starts 02/2021 where the profile says 2021-03; Western Alliance Bank: its school from 1900. Said one line each,
+    with the profile's own value; a job to a date where the profile's is still held, a master's beside a school
+    the profile holds a bachelor's from, and another role's employer too."""
+    found = list(la.page_findings("accounts/Early Warning Services",
+                                  review(start="02/2021", to="<p>To 05/2024</p>", degree="Master of Science",
+                                         efrom="1900", more="<p>Previously at Example Bank</p>"), PROFILE))
+    assert found == [
+        "accounts/Early Warning Services: the review page names another role's employer, Example Bank",
+        "accounts/Early Warning Services: the review page shows a job from 02/2021; the profile's start 2021-03",
+        "accounts/Early Warning Services: the review page shows a job to 05/2024; the profile's are still held",
+        "accounts/Early Warning Services: the review page shows a school from 1900; the profile's start 2016",
+        "accounts/Early Warning Services: beside Arizona State University the review page shows a master degree "
+        "(“Master of Science”); the profile's levels: bachelor, high_school",
+    ]
+
+
+def test_the_postings_own_degree_words_are_not_the_applicants():
+    """American Express' Oracle page (run 105) says "Degree Level : Master's Degree" among the posting's details, far
+    from the applicant's school; a Degree read beside the school is the applicant's, one elsewhere isn't."""
+    posting = "<p>Posting Details: Degree Level : Master's Degree Job Schedule : Full time</p>"
+    assert list(la.page_findings("hr/AmEx", la.page_text(posting + WORKDAY_REVIEW.format(
+        start="03/2021", to="", degree="BS", efrom="2016", more="")), PROFILE)) == []
+    # (and a profile with no degree: a bachelor's beside its school is the "never overstate" rule broken)
+    none = {**PROFILE, "levels": [], "education": [{"school": "Arizona State University", "start": "2016"}]}
+    found = list(la.page_findings("hr/AmEx", review(degree="Bachelor of Science"), none))
+    assert len(found) == 1 and "shows a bachelor degree" in found[0] and "the profile's levels: none" in found[0]
+
+
+def test_a_date_is_read_as_the_profile_or_a_page_writes_it():
+    assert la.month_year("2021-03") == (3, 2021) and la.month_year("03/2021") == (3, 2021)
+    assert la.month_year("3/1/2021") == (3, 2021) and la.month_year("March 2021") == (3, 2021)
+    assert la.month_year("Mar. 2021") == (3, 2021) and la.month_year(2016) == (None, 2016)
+    assert la.month_year("present") == (None, None) and la.month_year("") == (None, None)
+    assert la.same_date("02/2021", "2021-03") is False and la.same_date("2021", "2021-03") is True
+    assert la.same_date("08/2016", 2016) is True and la.same_date("1900", "2016") is False
+
+
+def test_the_values_check_reads_each_review_page_its_machine_saved(tmp_path, capsys, monkeypatch):
+    """A record that reached the review page with its profile noted is read against the page in pipeline/<employer>/
+    (a shard's folder too); one that stopped earlier, or has no profile (an older run's), isn't. A value that isn't
+    the profile's is a ::warning:: line and never fails the audit."""
+    for name in la.SECRETS:
+        monkeypatch.delenv(name, raising=False)
+    folder = tmp_path / "live-accounts-1"
+    for employer, start in (("early-warning-services", "02/2021"), ("tokyo-electron-tel", "03/2021"), ("kla", "02/2021")):
+        (folder / "shard-2" / "pipeline" / employer).mkdir(parents=True)
+        (folder / "shard-2" / "pipeline" / employer / "page.html").write_text(
+            WORKDAY_REVIEW.format(start=start, to="", degree="Bachelor of Science", efrom="2016", more=""), encoding="utf-8")
+    ready = {**rec("Early Warning Services", ["reached the review page"]), "profile": PROFILE}
+    fine = {**rec("Tokyo Electron (TEL)", ["reached the review page"]), "profile": PROFILE}
+    old = rec("KLA", ["reached the review page"])  # (no profile noted: an older run's)
+    stopped = {**rec("KLA", ["filled 9 boxes"], status="needs_you"), "profile": PROFILE}
+    (folder / "run.log").write_text(text(ready, fine, old), encoding="utf-8")
+    assert la.values_findings("accounts", la.live_compare.read_log(text(ready, fine, old, stopped), "LIVE_PIPELINE "),
+                              folder) == ["accounts/Early Warning Services: the review page shows a job from 02/2021; "
+                                          "the profile's start 2021-03"]
+    assert la.main(["--log", f"accounts={folder / 'run.log'}", "--folder", str(folder)]) == 0
+    out = capsys.readouterr().out
+    assert "::warning::accounts/Early Warning Services: the review page shows a job from 02/2021" in out
+    assert "::error::" not in out
+    assert "audit: nothing found (3 records, 4 files); values: 1 not the profile's (2 review pages read)" in out

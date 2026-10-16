@@ -190,6 +190,33 @@ def use_role(name: str, email: str | None = None) -> None:
     (_HOME / "profile.yaml").write_text(yaml.safe_dump(profile), encoding="utf-8")
 
 
+def profile_values(path: Path | None = None) -> dict[str, Any]:
+    """What the review page should show of this run's applicant, noted in each employer's record ("profile") for
+    the live audit's values check (live_audit.py): the name, the jobs and schools (title, company, start, end;
+    school, degree, start, end), the degree levels the profile holds, and the other roles' employers (never on
+    this role's application). Never the email, the phone, the address or a password."""
+    try:
+        prof = yaml.safe_load((path or _HOME / "profile.yaml").read_text(encoding="utf-8")) or {}
+    except (OSError, yaml.YAMLError):
+        return {}
+
+    def entries(key: str, fields: tuple[str, ...]) -> list[dict[str, str]]:
+        return [{k: str(e[k]) for k in fields if e.get(k) not in (None, "")}
+                for e in prof.get(key) or [] if isinstance(e, dict)]
+
+    def employers(profile: dict[str, Any]) -> set[str]:
+        return {str(e["company"]) for e in profile.get("work_history") or [] if isinstance(e, dict) and e.get("company")}
+
+    personal = prof.get("personal") or {}
+    degrees = (prof.get("education") or {}).get("degrees_earned") or []
+    others = set().union(employers(FAKE_PROFILE), *(employers(r) for r in ROLES.values())) - employers(prof)
+    return {"name": " ".join(str(personal.get(k) or "") for k in ("first_name", "last_name")).strip(),
+            "work": entries("work_history", ("title", "company", "start", "end")),
+            "education": entries("education_history", ("school", "degree", "start", "end")),
+            "levels": sorted({str(d["level"]) for d in degrees if isinstance(d, dict) and d.get("level")}),
+            "others": sorted(others)}
+
+
 def start_test_identity(announce: bool = True, everywhere: bool = False) -> list[dict[str, str]]:
     """--test-identity: from here on, everything the run prints has the identity's email and
     passwords masked; its passwords are the desk's saved ones for this run (in the environment,
@@ -2082,6 +2109,7 @@ async def pipeline_main(companies: list[dict[str, Any]], out: Path, fixtures: bo
             use_role(ROLE_AT.get(company["name"], "technician"), company["name"] if PLUS else None)
         else:  # the test inbox's address where a site refuses example.com, else the run's own
             use_role(ROLE, live_identity.broad_email(company["name"], os.environ))
+        rec["profile"] = profile_values()  # (what its review page should show: live_audit.py's values check)
         try:
             await asyncio.wait_for(check_pipeline(company, out, rec, fixtures), wait)
         except Exception as e:  # noqa: BLE001
