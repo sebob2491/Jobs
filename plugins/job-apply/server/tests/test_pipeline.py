@@ -2531,6 +2531,7 @@ def test_a_resume_parse_notice_is_not_an_error(srv, monkeypatch):
 
 
 @pytest.mark.parametrize("query", ["", "?quiet"])
+@pytest.mark.real_waits  # (the step saves for longer than the tests' shortened STEP_SAVE_WAIT: the wait itself is the point)
 def test_a_step_still_saving_after_three_presses_is_waited_on(srv, monkeypatch, query):
     """KLA's Workday (live run 11, Oct 11): every box of Application Questions 2 of 2 answered, its Save and
     Continue took a while to go on, and the desk stopped after its presses ("The page didn't move on"); the next

@@ -90,6 +90,35 @@ def browser_available() -> bool:
     return any(playwright_browsers().glob("chromium-*"))
 
 
+# The desk's waits for pages that draw late (their production values in pipeline.py and browser.py), shortened for the
+# tests: a mock site here draws at once or within a few seconds (the longest, 5 s, is workday-account.html's &slow
+# refusal), and a test that sits out the production 10 to 30 seconds for a button that never comes spends them for
+# nothing (the whole-program review of Oct 15: 87 wait-heavy tests, 562 s of worker time). A test that sets a wait
+# itself keeps its own value (its setattr comes after this one), and one timed against the real waits on purpose opts
+# out with @pytest.mark.real_waits.
+FAST_WAITS = {
+    "pipeline": {"LATE_BUTTONS_WAIT": 5, "SIGN_IN_SETTLE": 7, "RESET_SETTLE": 7, "STEP_SAVE_WAIT": 6, "STEP_LOAD_WAIT": 8,
+                 "BLANK_PAGE_WAIT": 8, "SIGN_IN_STEP_WAIT": 8, "ACCOUNT_WAIT": 7, "ACCOUNT_STEP_WAIT": 5, "NOTICE_WAIT": 3,
+                 "NEW_TAB_WAIT": 3, "ACCOUNT_DRAW_WAIT": 3},
+    "browser": {"SETTLE_WAIT": 4, "CONFIRM_WAIT": 5, "UPLOAD_SHOWN_WAIT": 6, "FRAME_WAIT": 4},
+}
+
+
+def pytest_configure(config):
+    config.addinivalue_line("markers", "real_waits: keep the desk's production waits (a test timed against them)")
+
+
+@pytest.fixture(autouse=True)
+def fast_waits(request, monkeypatch):
+    if request.node.get_closest_marker("real_waits"):
+        return
+    from job_apply import browser, pipeline
+    for name, value in FAST_WAITS["pipeline"].items():
+        monkeypatch.setattr(pipeline, name, value)
+    for name, value in FAST_WAITS["browser"].items():
+        monkeypatch.setattr(browser, name, value)
+
+
 @pytest.fixture
 def loop():
     lp = asyncio.new_event_loop()
