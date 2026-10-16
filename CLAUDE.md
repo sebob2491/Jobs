@@ -45,6 +45,9 @@ the scrubber (`python -m job_apply.fixtures`) before they become test fixtures.
     aren't required (a failure doesn't block the merge), so look at them yourself. Windows reads and
     writes text as cp1252 unless told otherwise: give every text file `encoding="utf-8"`, tests too.
     Build paths with pathlib (`as_posix()` for a relative path shown, `Path.as_uri()` for `file://`).
+  - The `weekly` workflow (Mondays, or by hand) audits the lock's packages (pip-audit: a finding fails it) and
+    lists the week's failed tests in its summary, flakes first (`scripts/flake_rate.py`: a test that failed on a
+    commit whose tests passed in another run or attempt).
 - Live checks against real employer sites: `uv run python scripts/live_smoke.py`.
   - Add `--pipeline --fake-passwords --parallel 4` to drive the Job Desk pipeline. The full run takes about 6 minutes.
   - Add `--lists phoenix-metro` to check another list, and `--role hr` (or `--role finance`) to look

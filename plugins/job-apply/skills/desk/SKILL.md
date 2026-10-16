@@ -14,7 +14,9 @@ The desk is a local web page served by this plugin. It does what the `find-jobs`
   education doesn't meet, senior titles, clearances, export control, travel.
 - **Apply to selected** works through the picked jobs one at a time in the automation
   browser. It clicks through Apply, autofills every page, adds Workday's work and
-  education blocks, and stops at each review page.
+  education blocks, and stops at each review page. Before they go, it says what will stop
+  them: a job system with no saved password, no email app password for sites that email a
+  code, common questions not answered yet. The person can go ahead or see to those first.
 - **Needs you** collects whatever it can't do alone:
   - questions the profile doesn't answer, answered right on the page. Answers are
     remembered in `~/.job-apply/answers.yaml` unless the user unticks "remember".
@@ -119,7 +121,8 @@ The desk is a local web page served by this plugin. It does what the `find-jobs`
 - **Common questions** (a card, while any are unanswered) asks the questions most
   applications ask that the profile doesn't answer (`data/question_bank.yaml`). Answered
   once, each goes to `answers.yaml` and fills that question at every employer from then on;
-  **Your answers** under it shows the ones given.
+  **Your answers** under it shows the ones given. Claude can ask them in chat too
+  (`common_questions`, as setup does).
 - **My applications** (a tab beside Recommended and All) lists each job sent in, or filled
   and waiting on its review page, newest first, with where it stands in the tracker.
 - **Tailor my resume for each job** holds each picked job, before its browser tab

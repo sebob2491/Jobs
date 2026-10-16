@@ -865,3 +865,23 @@ def test_a_posting_takes_its_employers_name_from_any_of_the_plugins_lists(srv, m
         "    search: https://careers.odd.example\n", encoding="utf-8")
     assert srv.listed_employer("https://careers.odd.example/job/Phoenix-Tech-AZ-85001/1/") is None
     assert srv.listed_employer(aps) == "Arizona Public Service"
+
+
+def test_setup_asks_the_common_questions_the_profile_doesnt_answer(srv):
+    """The review of Oct 15 (worth building, 2): the common questions (data/question_bank.yaml) were asked only on the
+    desk's card, never in setup. setup_status counts the unanswered, and common_questions lists the ones the desk asks
+    (not one the profile answers: the tests' profile says how it heard of jobs) and saves the person's answers, each
+    with the bank's pattern; an answer that isn't one of its question's choices is turned away, the others kept."""
+    from job_apply import config
+
+    asked = srv.common_questions()
+    ids = [q["id"] for q in asked["questions"]]
+    assert "heard_about" not in ids and {"shift", "background_check"} <= set(ids), ids
+    assert all("match" not in q for q in asked["questions"])
+    assert srv.setup_status()["common_questions_unanswered"] == asked["unanswered"] == len(ids)
+    out = srv.common_questions(answers=[{"id": "shift", "answer": "Nights"}, {"id": "background_check", "answer": "Maybe"},
+                                        {"id": "nonsense", "answer": "Yes"}])
+    assert out["saved"] == ["shift"] and set(out["errors"]) == {"background_check", "nonsense"}, out
+    assert {q["id"]: q["answer"] for q in out["questions"]}["shift"] == "Nights"
+    assert {q["id"]: q["answer"] for q in config.question_bank()}["shift"] == "Nights"
+    assert out["unanswered"] == srv.setup_status()["common_questions_unanswered"] == len(ids) - 1

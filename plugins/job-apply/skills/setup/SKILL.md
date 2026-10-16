@@ -149,6 +149,13 @@ through its `missing` and `profile_gaps` together.
    - `preferences.how_did_you_hear`: ask, or leave it empty and the desk asks once on its
      common-questions card. Profiles made from the template before 0.3.175 hold its old preset
      `LinkedIn`, which went into every application: ask whether that's true, and clear it if not.
+   - **Common questions.** Run `common_questions`: the questions most applications ask that the
+     profile doesn't answer (desired pay, start date, shifts...), the ones the desk's Common
+     questions card would stop to ask. Ask the unanswered ones together, each choice question with
+     AskUserQuestion and its `choices` (a text one, such as desired pay, in their own words), and
+     save what they say with `common_questions(answers=[{"id": ..., "answer": ...}])`. Only their
+     answers, never a guess; one they'd rather leave stays on the desk's card. `setup_status`'s
+     `common_questions_unanswered` counts the ones left.
 
 4. Write `~/.job-apply/profile.yaml` and keep its comments. Run `setup_status` again
    until `profile_complete` is true. If its `profile_gaps` lists `work_history dates: <jobs>`,

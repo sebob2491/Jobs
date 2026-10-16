@@ -1,0 +1,43 @@
+name: weekly
+
+# Once a week (and by hand), two looks that don't belong on every change (the review of Oct 15):
+# - the packages uv.lock pins, against the advisories PyPI and OSV know of: a finding fails the run, and GitHub
+#   mails the repository's owner about a failed scheduled run;
+# - the tests that failed in the week's CI runs, a flake (its commit's tests passed in another run or attempt)
+#   told from a real failure, in the run's summary.
+on:
+  schedule:
+    - cron: "23 14 * * 1"  # Mondays, 7:23 in Arizona
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  dependencies:
+    name: dependency audit (pip-audit)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: plugins/job-apply/server
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      # (every package the lock pins, the dev extras' too, by name and version: --no-deps, as the list is whole)
+      - run: uv export --frozen --all-extras --no-emit-project --no-hashes --format requirements-txt -o "$RUNNER_TEMP/requirements.txt"
+      - run: uvx pip-audit@2.9.0 --requirement "$RUNNER_TEMP/requirements.txt" --no-deps --disable-pip --progress-spinner off
+
+  flakes:
+    name: flake rate (the week's CI)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: plugins/job-apply/server
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 scripts/flake_rate.py --repo "$GITHUB_REPOSITORY" --days 7 >> "$GITHUB_STEP_SUMMARY"
+        env:
+          GH_TOKEN: ${{ github.token }}

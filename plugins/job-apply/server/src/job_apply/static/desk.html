@@ -296,6 +296,7 @@ let busy = false;
 let reporting = false;  // a problem report being written
 let notesShown = [];  // the notes in the Notes panel: Clear removes those, not one taken since
 let autoSearchedAt = 0;
+let preflightSeen = "";  // what Apply last said would stop the ticked jobs, and the person went ahead anyway
 const STALE_SEARCH = 12 * 3600;  // seconds: listings older than this are searched again, also on a desk left open
 
 // Openings shown on earlier visits, kept in this browser only: the others are tagged New
@@ -1032,6 +1033,14 @@ document.addEventListener("click", (e) => {
     const auto = state.settings.auto_submit && !state.settings.dry_run && !state.settings.troubleshoot;
     if (auto && !confirm(`Submit ${urls.length} application(s) for you wherever nothing needs you?`)) return;
     act(async () => {
+      // what will stop these jobs, said once before they go (the same list isn't asked about twice)
+      const pre = await api("/api/preflight", {urls});
+      const said = (pre.lines || []).join("\n");
+      if (said && said !== preflightSeen) {
+        if (!confirm("Before these go:\n\n" + pre.lines.map((x) => "\u2022 " + x).join("\n\n")
+                     + "\n\nApply anyway? (Cancel to see to these first.)")) return;
+        preflightSeen = said;
+      }
       const out = await api("/api/apply", {urls, submit: auto});
       selected.clear();
       if ((out.already_applied || []).length) alert("Already applied or skipped, so not queued: " + out.already_applied.join(", ")

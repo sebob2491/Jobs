@@ -21,6 +21,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 
 from . import config
 from .ats import ATS_NAMES, detect_ats, greenhouse_form_url, shared_system, workday_parts
+from .autofill import common_questions as bank_questions
 from .autofill import (is_eeo_rule, is_empty_value, is_how_heard, is_name_rule, is_school_rule, place_words,
                        plan_autofill, profile_entries, resolve_field)
 from .browser import BrowserSession, BrowserUnavailable, SiteDown, SubmitBlocked
@@ -255,7 +256,34 @@ def setup_status() -> dict[str, Any]:
         "employer_lists": list(employer_lists()),  # what a person's own file can name under `lists:`
         **({"employer_list_problem": problem} if (problem := _employer_list_problem()) else {}),
         "jobs_by_status": tracker().counts(),
+        # the common questions the desk would stop to ask (common_questions lists them, and saves the answers)
+        "common_questions_unanswered": sum(1 for q in bank_questions(prof) if q.get("answer") in (None, "")),
     }
+
+
+@tool()
+def common_questions(answers: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+    """The common questions most applications ask that a profile doesn't answer (how they heard of jobs, desired
+    pay, start date, shifts, relocating...), as the Job Desk's "Common questions" card asks them: each with its
+    id, the question to ask the person (`ask`), its `kind` ("choice", with its `choices`, or "text") and their
+    `answer` so far. Ask the unanswered in setup, the choices with AskUserQuestion.
+
+    answers: the person's answers to keep, [{"id": "shift", "answer": "Nights"}]: each fills every wording of its
+    question at every employer (kept in ~/.job-apply/answers.yaml); an empty answer takes one out. Only what the
+    person said: never a guess. One that isn't among its question's choices is turned away (`errors`)."""
+    saved: list[str] = []
+    errors: dict[str, str] = {}
+    for item in answers or []:
+        bank_id = str((item or {}).get("id") or "")
+        try:
+            config.save_bank_answer(bank_id, (item or {}).get("answer"))
+        except ValueError as e:
+            errors[bank_id or "?"] = str(e)
+        else:
+            saved.append(bank_id)
+    asked = bank_questions(config.Profile.load())
+    return {"questions": asked, "unanswered": sum(1 for q in asked if q.get("answer") in (None, "")),
+            "saved": saved, **({"errors": errors} if errors else {})}
 
 
 @tool()
