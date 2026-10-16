@@ -88,7 +88,8 @@ _SECRET_BOX = re.compile(r'\sdata-ja-secret\b', re.I)
 
 # ms a pick-only list that is open and still empty, or owned and not drawn yet, is waited on (a site fetching its
 # entries: SuccessFactors' took longer than 8 s in run 111). A list that is genuinely empty, or a box that stays
-# "expanded", costs the wait once per such field per fill (under the lock)
+# "expanded", costs the wait once per such field per fill (under the lock); one found closed after the first read is
+# opened once more first, and its wait begins then (about 12.5 s in all)
 PICK_LIST_WAIT = 10000
 # s a frame's form read (EXTRACT_JS) is waited on: a page whose script has hung answers never
 READ_TIMEOUT = 20
@@ -106,6 +107,21 @@ _LIST_LOADING_JS = """el => {
     // one absent there is a list that didn't open, the review of 0.3.188)
     if (!box) { if (owns) return true; continue; }
     return box.getClientRects().length > 0 && !box.querySelector('[role="option"]');
+  }
+  return false;
+}"""
+
+
+# Is this box's list open: the box (or a wrapper) saying it's expanded, or the list it owns or controls in the page and
+# shown? (A pick-only list that closed itself again before its choices were read: _type_and_pick opens it once more)
+_LIST_OPEN_JS = """el => {
+  const up = [];
+  for (let n = el, d = 0; n && n.getAttribute && d < 4; n = n.parentElement, d++) up.push(n);
+  if (up.some((n) => n.getAttribute('aria-expanded') === 'true')) return true;  // (any level first: the review's)
+  for (const n of up) {
+    const ref = n.getAttribute('aria-owns') || n.getAttribute('aria-controls');
+    const box = ref ? document.getElementById(ref.split(/\\s+/)[0]) : null;
+    if (box) return box.getClientRects().length > 0;
   }
   return false;
 }"""
@@ -2135,6 +2151,22 @@ class BrowserSession:
         except (PlaywrightError, PlaywrightTimeout):
             return False
 
+    async def _reopen(self, page: Page, field_id: str, loc: Locator) -> bool:
+        """Open a pick-only list once more, by a click alone: never an ArrowDown, which on some lists changes the value
+        while closed (the review's). False when it won't take a click (not opened again)."""
+        try:
+            await self._frame_for(page, field_id).evaluate(MARK_OPTIONS_JS)
+            await loc.click(timeout=2500)
+            return True
+        except (PlaywrightError, PlaywrightTimeout):
+            return False
+
+    async def _list_open(self, loc: Locator) -> bool:
+        try:
+            return bool(await loc.evaluate(_LIST_OPEN_JS, timeout=FOCUS_TIMEOUT))
+        except (PlaywrightError, PlaywrightTimeout):
+            return True  # (can't tell: not opened again, which could close it)
+
     async def _clear_search(self, page: Page, loc: Locator) -> None:
         """Empty a picker's box after a search that found nothing to pick. SuccessFactors keeps
         the typed words, and a box with words in it reads as answered: the desk went on to the
@@ -2161,16 +2193,27 @@ class BrowserSession:
         def no_choice(listed: list[str]) -> bool:  # (nothing, or its placeholder alone: "No Selection")
             return not any(not is_empty_value(o) for o in listed)
 
-        if pick_only and no_choice(options):
+        async def choices_come(listed: list[str]) -> list[str]:
             # SuccessFactors' paginated selects fetch their entries when first opened, a few seconds on some servers
             # (Freeport-McMoRan's Ethnicity, Edwards Vacuum's Protected Veteran, Rogers' Gender and Ethnicity: the
             # desk read no choices and asked the person, 20 runs): a list open and still empty, or on its placeholder
             # alone, is waited on
             waited = 2500
-            while no_choice(options) and waited < PICK_LIST_WAIT and (options or await self._list_loading(loc)):
+            while no_choice(listed) and waited < PICK_LIST_WAIT and (listed or await self._list_loading(loc)):
                 await page.wait_for_timeout(500)
                 waited += 500
-                options = await self._field_options(page, field["id"], loc, 0)
+                listed = await self._field_options(page, field["id"], loc, 0)
+            return listed
+
+        if pick_only and no_choice(options):
+            if not await self._list_open(loc) and await self._reopen(page, field["id"], loc):
+                # It opened and closed again by itself before its choices were read (Edwards Vacuum's Protected
+                # Veteran, run 114: its five choices shown half a second after the click, the list gone again by two;
+                # opened a second time, they stay; its box owns the list, so its absence read as still loading and was
+                # waited on in vain): opened once more, and read as the first time. (A site still fetching, its list
+                # not drawn yet, takes the second click as the first: run 111's, the fixture's &nolist)
+                options = await self._field_options(page, field["id"], loc, 2500)
+            options = await choices_come(options)
         choice = (_choose(text, options, field, exact_only=len(options) > SHORT_MENU and not pick_only)
                   if options else None)
         groups_key = _groups_key(page.url, field)

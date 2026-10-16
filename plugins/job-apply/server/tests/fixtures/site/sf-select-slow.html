@@ -14,7 +14,9 @@
      every later opening shows them at once; &placeholderfirst: the first opening shows "No Selection" alone until
      then, as Amkor's list opens); &nolist: the list isn't in the page at all until its entries came, nor the box said
      expanded (as Edwards Vacuum's and Freeport-McMoRan's draw theirs, run 111), and goes from the page again when
-     closed. "No Selection" is the empty choice. -->
+     closed; &closes: an opening after the box was left (it lost the focus) closes again by itself a moment later,
+     none of its entries drawn (Edwards Vacuum's Protected Veteran, run 114: its choices shown for a moment, the list
+     gone again before they were read; opened again from the box, they stay). "No Selection" is the empty choice. -->
 <h1>Career Opportunities: Equipment Technician (10557)</h1>
 <form id="apply" novalidate>
   <label for="fn">Legal First Name *</label><input id="fn" required>
@@ -34,6 +36,14 @@
   const all = ['No Selection', 'I am a protected veteran', 'I am a veteran but not a protected veteran',
                'I am not a protected veteran', 'I choose not to self-identify'];
   const NOLIST = new URLSearchParams(location.search).has('nolist');
+  const CLOSES = new URLSearchParams(location.search).has('closes');
+  let left = true;  // (the box left since its list last opened: the next opening closes again by itself)
+  const closesNow = () => {
+    if (!CLOSES || !left) return false;
+    left = false;
+    setTimeout(close, 300);  // (shown empty for a moment, then gone)
+    return true;
+  };
   const box = document.getElementById('51:_input');
   const list = document.getElementById(box.getAttribute('aria-owns'));
   const holder = list.parentElement;
@@ -60,6 +70,7 @@
     if (NOLIST && !list.isConnected) holder.append(list);
     list.classList.add('open');
     box.setAttribute('aria-expanded', 'true');
+    if ((fetched || !SLOW) && closesNow()) { fetched = true; list.innerHTML = ''; return; }
     if (fetched || !SLOW) { fetched = true; draw(); return; }
     list.innerHTML = '';  // (the entries still on their way from the server)
     if (PLACEHOLDER_FIRST) {
@@ -68,7 +79,7 @@
       o.textContent = 'No Selection';
       list.append(o);
     }
-    setTimeout(() => { fetched = true; if (list.classList.contains('open')) draw(); }, SLOW);
+    setTimeout(() => { fetched = true; if (list.classList.contains('open') && !closesNow()) draw(); }, SLOW);
   };
   const close = () => {
     wanted = false;
@@ -79,7 +90,7 @@
   box.addEventListener('click', show);
   document.getElementById('51:_selectButton').addEventListener('click', () => { box.focus(); show(); });
   box.addEventListener('keyup', (e) => { if (e.key === 'Escape') close(); else show(); });
-  box.addEventListener('blur', close);
+  box.addEventListener('blur', () => { left = true; close(); });
   document.getElementById('apply').addEventListener('submit', (e) => {
     e.preventDefault();
     document.body.innerHTML = '<h1>Thank you for applying!</h1>';
