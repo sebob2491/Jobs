@@ -65,6 +65,9 @@ the scrubber (`python -m job_apply.fixtures`) before they become test fixtures.
     and writes. The nightly's `accounts` check runs it once the repository has them as secrets, with
     `--everywhere`: at every employer on both lists (about 100), a code-sending system's employers in one
     `--parallel` group (one inbox).
+  - Each check's machine audits what it wrote (`scripts/live_audit.py`): a consent the desk never gives (a newsletter,
+    job alerts, a talent community, marketing, texts or calls, arbitration, at-will, a waiver), a submit, or the test
+    identity's secrets, an emailed code or a security answer in a file fail that job with an `::error::` line each.
   - Compare a run with the previous one per employer. A changed outcome is the signal. The nightly's changes comment opens with
     **Went backwards** when an employer the last run took to its review page no longer gets there (the regression alarm).
   - Run live checks from a worktree of their own (`git worktree add ../Jobs-live origin/main`): a branch

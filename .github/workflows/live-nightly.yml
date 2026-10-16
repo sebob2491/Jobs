@@ -181,6 +181,17 @@ jobs:
           # (ARGS unquoted: it's the matrix's own list of options)
           uv run --frozen python scripts/live_smoke.py $ARGS $PLUS ${COMPANIES:+--companies "$COMPANIES"} --out "live-$SLOT" 2>&1 \
             | tee "live-$SLOT/run.log"
+      - name: Audit what it wrote
+        # the rules audit (scripts/live_audit.py): a consent the desk never gives, a submit, or the test identity's
+        # secrets, an emailed code or a security answer in a file fail this job, one ::error:: line a finding
+        if: steps.setup.outputs.ready == 'true'
+        env:
+          CHECK: ${{ matrix.check }}
+          SLOT: ${{ matrix.slot || matrix.check }}
+          LIVE_TEST_EMAIL: ${{ secrets.LIVE_TEST_EMAIL }}
+          LIVE_TEST_EMAIL_PASSWORD: ${{ matrix.check == 'accounts' && secrets.LIVE_TEST_EMAIL_PASSWORD || '' }}
+          LIVE_TEST_SITE_PASSWORD: ${{ matrix.check == 'accounts' && secrets.LIVE_TEST_SITE_PASSWORD || '' }}
+        run: uv run --frozen python scripts/live_audit.py --log "$CHECK=live-$SLOT/run.log" --folder "live-$SLOT"
       - name: Note how it ended
         if: always()
         env:

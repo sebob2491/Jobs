@@ -152,10 +152,10 @@ def with_test_resume(profile: Mapping[str, Any], folder: Path) -> dict[str, Any]
     home) and the profile's documents pointing to it, so the live check reaches the steps past a
     form's "upload your resume"."""
     resume = folder / RESUME_NAME
-    profile = copy.deepcopy(dict(profile))
-    profile["documents"] = {**(profile.get("documents") or {}), "resume": str(resume)}
-    resume.write_bytes(resume_pdf(profile))
-    return profile
+    own: dict[str, Any] = copy.deepcopy(dict(profile))
+    own["documents"] = {**(own.get("documents") or {}), "resume": str(resume)}
+    resume.write_bytes(resume_pdf(own))
+    return own
 
 
 def tiny_pdf(lines: Iterable[tuple[int, str]]) -> bytes:
@@ -370,7 +370,8 @@ def inbox_report(env: Mapping[str, str], senders: Iterable[str] = (), paused_at:
                 shown = email.utils.parseaddr(sender)[1]
                 subject = " ".join(str(head.get("Subject") or "").split())
                 try:  # whether the desk reads a code from it
-                    raw = next((p for p in box.fetch(mid, "(BODY.PEEK[])")[1] if isinstance(p, tuple)), None)
+                    parts = box.fetch(mid, "(BODY.PEEK[])")[1]  # (bytes, as mailbox.py sends them: imaplib takes them)
+                    raw = next((p for p in parts if isinstance(p, tuple)), None)
                     code = raw is not None and bool(mailbox.message_code(
                         email.message_from_bytes(raw[1], policy=email.policy.default)))
                 except Exception:  # noqa: BLE001 - an odd message: said as one the desk can't read a code from
