@@ -370,7 +370,7 @@ def inbox_report(env: Mapping[str, str], senders: Iterable[str] = (), paused_at:
                 shown = email.utils.parseaddr(sender)[1]
                 subject = " ".join(str(head.get("Subject") or "").split())
                 try:  # whether the desk reads a code from it
-                    parts = box.fetch(mid, "(BODY.PEEK[])")[1]  # type: ignore[arg-type]  # imaplib takes bytes too
+                    parts = box.fetch(mid, "(BODY.PEEK[])")[1]  # (bytes, as mailbox.py sends them: imaplib takes them)
                     raw = next((p for p in parts if isinstance(p, tuple)), None)
                     code = raw is not None and bool(mailbox.message_code(
                         email.message_from_bytes(raw[1], policy=email.policy.default)))
