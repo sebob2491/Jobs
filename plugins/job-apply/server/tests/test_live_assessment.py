@@ -52,26 +52,26 @@ def _take(path_query: str, vendors: tuple[str, ...] = ()) -> dict:
 
 
 @pytest.mark.skipif(not browser_available(), reason="needs Chromium")
-def test_an_assessment_is_taken_with_random_answers_and_the_application_page_comes_back():
+@pytest.mark.parametrize("late, boxes", [("", ""), ("&late=3000", ""), ("", "?boxes"), ("", "?boxes=apart")],
+                         ids=["now", "late", "boxes", "boxes-apart"])
+def test_an_assessment_is_taken_with_random_answers_and_the_application_page_comes_back(late, boxes):
     """Circle K's and Taylor Morrison's Workday (run 56): "Take Assessment" opens the vendor's assessment in a new
     tab. Each page's questions are answered at random and its way on pressed (its Submit too, on the vendor's site),
-    until the assessment brings the tab back to the application, its Take Assessment gone."""
+    until the assessment brings the tab back to the application, its Take Assessment gone. (One case a run, so the
+    four go side by side under -n auto: each takes its pages at the taker's own pace, the review of Oct 15.)"""
     # the application at 127.0.0.1, the vendor at localhost: two sites
     # (and one that opens a moment after the press: Circle K's and Taylor Morrison's, run 57)
-    for late in ("", "&late=3000"):
-        result = _take("?vendor=http://localhost:PORT/site/assessment-vendor.html" + late)
-        assert result["end"] == "back on the application", (late, result)
-    pressed = [s.get("pressed") for s in result["steps"]]
-    assert pressed[:4] == ["Take Assessment", "Start", "Next", "Submit"], result
-    assert result["steps"][2]["answered"] == 3 and result["steps"][3]["answered"] == 2, result
-    assert "done=1" in result["back_at"], result  # (the application's page, its assessment done)
     # Circle K's question page (run 60): a row of boxes to tick one of, its Next drawn only once one is ticked
-    for shape in ("", "=apart"):  # (a group of boxes, or each its own as Circle K's read)
-        boxes = _take("?vendor=" + f"http://localhost:PORT/site/assessment-vendor.html?boxes{shape}".replace("?", "%3F")
-                      .replace("=", "%3D"))
-        assert boxes["end"] == "back on the application", (shape, boxes)
-        assert [s.get("pressed") for s in boxes["steps"]][:4] == ["Take Assessment", "Start", "Next", "Submit"], boxes
-        assert boxes["steps"][2]["answered"] == 1, (shape, boxes)
+    # (?boxes: a group of boxes, or each its own as Circle K's read, ?boxes=apart)
+    vendor = f"http://localhost:PORT/site/assessment-vendor.html{boxes}".replace("?", "%3F").replace("=", "%3D")
+    result = _take("?vendor=" + vendor + late)
+    assert result["end"] == "back on the application", (late, boxes, result)
+    assert [s.get("pressed") for s in result["steps"]][:4] == ["Take Assessment", "Start", "Next", "Submit"], result
+    if boxes:
+        assert result["steps"][2]["answered"] == 1, (boxes, result)
+    else:
+        assert result["steps"][2]["answered"] == 3 and result["steps"][3]["answered"] == 2, result
+        assert "done=1" in result["back_at"], result  # (the application's page, its assessment done)
 
 
 @pytest.mark.skipif(not browser_available(), reason="needs Chromium")
@@ -173,32 +173,31 @@ def test_the_test_identity_makes_a_create_account_choice_the_desk_leaves_to_the_
 
 
 @pytest.mark.skipif(not browser_available(), reason="needs Chromium")
-def test_an_assessments_answer_tiles_are_clicked_and_a_word_list_that_wants_more_gets_more():
+@pytest.mark.parametrize("mode", ["tiles", "tiles=fixed", "bestworst", "tiles=dead", "words", "words=many"])
+def test_an_assessments_answer_tiles_are_clicked_and_a_word_list_that_wants_more_gets_more(mode):
     """Circle K's (run 62): its statements' answers are tiles to click under "Answers" (nothing read as a box but its
     Auto Advance switch), and the taker found no way on. One is clicked at random, and the page goes on by itself.
     The Predictive Index's word list (run 62) stayed after its Continue: pressed once and stayed, more words are ticked
-    (as many as its error asks for, run 63: "Please select 5 more"; else one), and it goes on."""
-    def take(mode: str) -> dict:
-        vendor = f"http://localhost:PORT/site/assessment-vendor.html?{mode}"
-        return _take("?vendor=" + vendor.replace("?", "%3F").replace("=", "%3D").replace("&", "%26"))
-
-    for mode in ("tiles", "tiles=fixed"):  # (fixed: its heading stays "1 Statement", the review of 0.3.150)
-        tiles = take(mode)
-        assert tiles["end"] == "back on the application", (mode, tiles)
-        clicked = [s for s in tiles["steps"] if s.get("clicked")]
+    (as many as its error asks for, run 63: "Please select 5 more"; else one), and it goes on. (One mode a run, so
+    the six go side by side under -n auto, the review of Oct 15.)"""
+    vendor = f"http://localhost:PORT/site/assessment-vendor.html?{mode}"
+    out = _take("?vendor=" + vendor.replace("?", "%3F").replace("=", "%3D").replace("&", "%26"))
+    if mode in ("tiles", "tiles=fixed"):  # (fixed: its heading stays "1 Statement", the review of 0.3.150)
+        assert out["end"] == "back on the application", (mode, out)
+        clicked = [s for s in out["steps"] if s.get("clicked")]
         assert len(clicked) == 2 and clicked[0]["tiles"] == ["Strongly disagree", "Disagree", "Neutral", "Agree",
-                                                             "Strongly agree"], (mode, tiles)  # (no link, no Help)
-        assert all(not s.get("questions") for s in clicked), tiles  # (its Auto Advance switch is no question to answer)
-    marks = take("bestworst")  # (Circle K's "most likely / least likely" marks, run 64)
-    assert marks["end"] == "back on the application", marks
-    assert [s["clicked"].split(" of ")[1] for s in marks["steps"] if s.get("clicked")] == ["3", "3"], marks
-    dead = take("tiles=dead")  # (tiles that take no click: three clicks that change nothing end it)
-    assert dead["end"] == "the page didn't move on" and sum(1 for s in dead["steps"] if s.get("clicked")) == 3, dead
-    words = take("words")
-    assert words["end"] == "back on the application", words
-    stayed = next((s for s in words["steps"] if s.get("ticked_more")), {})
-    assert "Please select at least 2 words." in stayed.get("errors", []) and stayed.get("chosen"), words
-    many = take("words=many")  # (as many more as the page asks: PI's "Please select 5 more", run 63)
-    assert many["end"] == "back on the application", many
-    assert "Please select 3 more words." in next((s for s in many["steps"] if s.get("ticked_more")), {}).get("errors", []), \
-        many
+                                                             "Strongly agree"], (mode, out)  # (no link, no Help)
+        assert all(not s.get("questions") for s in clicked), out  # (its Auto Advance switch is no question to answer)
+    elif mode == "bestworst":  # (Circle K's "most likely / least likely" marks, run 64)
+        assert out["end"] == "back on the application", out
+        assert [s["clicked"].split(" of ")[1] for s in out["steps"] if s.get("clicked")] == ["3", "3"], out
+    elif mode == "tiles=dead":  # (tiles that take no click: three clicks that change nothing end it)
+        assert out["end"] == "the page didn't move on" and sum(1 for s in out["steps"] if s.get("clicked")) == 3, out
+    elif mode == "words":
+        assert out["end"] == "back on the application", out
+        stayed = next((s for s in out["steps"] if s.get("ticked_more")), {})
+        assert "Please select at least 2 words." in stayed.get("errors", []) and stayed.get("chosen"), out
+    else:  # words=many: as many more as the page asks (PI's "Please select 5 more", run 63)
+        assert out["end"] == "back on the application", out
+        assert "Please select 3 more words." in next((s for s in out["steps"] if s.get("ticked_more")), {}).get(
+            "errors", []), out
