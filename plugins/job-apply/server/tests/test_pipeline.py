@@ -9186,14 +9186,17 @@ def test_an_empty_block_the_desk_added_in_a_frame_is_deleted_when_the_saved_one_
 
 
 @pytest.mark.parametrize("query, picked", [("?slow=6000", True), ("?slow=6000&placeholderfirst", True),
-                                           ("?slow=6000&nolist", True), ("?slow=20000", False)])
+                                           ("?slow=6000&nolist", True), ("?slow=20000", False),
+                                           ("?slow=600&closes", True), ("?slow=600&nolist&closes", True),
+                                           ("?slow=20000&nolist", False)])
 def test_a_self_identification_list_that_fetches_its_choices_on_first_open_is_waited_on(srv, monkeypatch, query, picked):
     """SuccessFactors' paginated selects (Freeport-McMoRan's Ethnicity, Edwards Vacuum's Protected Veteran, Rogers'
     Gender and Ethnicity: 20 of the live check's runs) fetch their entries when first opened, a few seconds on their
     servers: the desk read no choices in its two and a half seconds and asked the person, though the list's "I choose
     not to self-identify" is the profile's own answer. A list open and still empty, or on its "No Selection" alone,
     or not drawn at all yet (&nolist: Edwards' and Freeport's in run 111, where 0.3.185's wait never began), is waited
-    on (PICK_LIST_WAIT, 10 s); one still empty after that is asked about as before."""
+    on (PICK_LIST_WAIT, 10 s); one still empty after that is asked about as before. One that closed again by itself
+    before its choices were read (&closes: Edwards' in run 114) is opened once more."""
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
     job = srv.add_job(url=fixture_url("site/sf-select-slow.html") + query, title="ET", company="Example Semi")["job"]
     applier = Applier(srv)
