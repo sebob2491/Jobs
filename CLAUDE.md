@@ -68,6 +68,9 @@ the scrubber (`python -m job_apply.fixtures`) before they become test fixtures.
   - Each check's machine audits what it wrote (`scripts/live_audit.py`): a consent the desk never gives (a newsletter,
     job alerts, a talent community, marketing, texts or calls, arbitration, at-will, a waiver), a submit, or the test
     identity's secrets, an emailed code or a security answer in a file fail that job with an `::error::` line each.
+    Its values check reads each review page reached against the profile the check applied with (a job or school
+    from or to a date the profile doesn't give, a degree of a level it doesn't have, another role's employer): a
+    `::warning::` line each, never a failure; `nightly_summary.py --artifacts <folder>` prints them too.
   - Compare a run with the previous one per employer. A changed outcome is the signal. The nightly's changes comment opens with
     **Went backwards** when an employer the last run took to its review page no longer gets there (the regression alarm).
   - Run live checks from a worktree of their own (`git worktree add ../Jobs-live origin/main`): a branch
