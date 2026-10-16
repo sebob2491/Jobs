@@ -448,11 +448,18 @@ _OTHER_QUESTION = re.compile(r"\b(?:have|do|are|will|can|did|were|would|has|is) 
                              r"consent|certify|understand|have read|read|confirm)\b)", re.I)
 # An attestation's consequence clauses, which say nothing about the person: "I understand that if I am employed,
 # false statements are cause for dismissal", "this is a drug-free workplace", "eligibility for employment is
-# contingent on a background check", "I may be required to present a valid driver's license" (the review of 0.3.175).
-# Blanked before _CLAIMS and _OTHER_QUESTION read an attestation's label
+# contingent on a background check", "I may be required to present a valid driver's license" (the review of 0.3.175);
+# and an agreement's own asides ("I am aware that I can withdraw my consent", "I understand that I am providing my
+# information voluntarily", "I have a copy of it": the review of 0.3.176). Blanked before _CLAIMS and _OTHER_QUESTION
+# read a label
 _CONSEQUENCE = re.compile(r"\b(?:if|when|should|once) i am\b|\bi (?:understand|acknowledge)(?: that)? i am (?:subject|not guaranteed|"
-                          r"applying|required|being considered)\b|\bdrug[- ]free\b|\beligibility for (?:employment|hire)\b|"
-                          r"\b(?:may|will|would) be required to (?:present|provide|show|obtain|pass|submit)\b[^.;]*", re.I)
+                          r"applying|required|being considered|providing)\b|\bdrug[- ]free\b|\beligibility for (?:employment|hire)\b|"
+                          r"\b(?:may|will|would) be required to (?:present|provide|show|obtain|pass|submit)\b[^.;]*|"
+                          r"\bi am aware\b|\bi have a copy\b", re.I)
+# A Create Account box's age statement ("I am 16 years or older, and I have read the Privacy Notice": Microchip's
+# Workday), which the profile answers (work_authorization.over_18) when it says the person is over 18
+_AGE_STATED = re.compile(r"\bi am (?:at least )?(?:1[3-8]|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen)"
+                         r"(?: years?)?(?: of age| old)?(?: or (?:older|over|above))?\b", re.I)
 
 
 def _about_person(label: str) -> bool:
@@ -2134,8 +2141,11 @@ class Applier:
             sign_in_step = bool(_SIGN_IN_STEP.search(" ".join(data.get("headings") or [])))
             # (a page with nothing but its language picker too: _app_fields, the review of 0.3.161)
             blank = not (_app_fields(data) or data.get("actions") or data.get("headings")) and len(text.strip()) < 40
+            # (a gate's page is read whole for a legal waiver, past the 4,000 characters a look reads: a long privacy
+            # agreement's arbitration clause sits at its end, the review of 0.3.176)
+            gate_text = (await srv.page_text(40000) if action is None and _agreement_button(data) is not None else text)
             gate_now = action is None and (button := _agreement_button(data)) is not None \
-                and f"{_page_key(data)} {button['text'].strip()}" not in agreed and _terms_gate(button, data) \
+                and f"{_page_key(data)} {button['text'].strip()}" not in agreed and _terms_gate(button, data, gate_text) \
                 and _may_accept_notices()
             # (a form with no button at all yet is a step still being drawn too: KLA's Workday showed only the last
             # step's resume box for a while, its questions and Save and Continue drawn after, live run 9, Oct 11)
@@ -2255,7 +2265,7 @@ class Applier:
                         return self._pause(run, "stuck", f"I pressed \u201c{said}\u201d for you (settings.accept_notices), "
                                            "but the page stayed: it may want a box filled or a check passed first. "
                                            "Look at it in the browser window, then press Resume.")
-                    if _terms_gate(agree, data) and _may_accept_notices():
+                    if _terms_gate(agree, data, await srv.page_text(40000)) and _may_accept_notices():
                         try:
                             clicked = await self._press_agreement(agree["id"])
                         except KeyError:  # the page changed between looking and clicking: look again
@@ -3884,6 +3894,11 @@ class Applier:
         terms, takes_ok = _terms_notice(heading, notice.get("text") or "")
         ai = bool(_AI_NOTICE.search(said) and _ABOUT_APPLYING.search(said)) or terms \
             or _test_identity_agrees(heading, said, _test_identity())
+        # (never one whose words also waive a right or sign the person up, nor one headed as something never agreed
+        # to: the review of Oct 15 found the AI notice's path without the terms notice's guards)
+        if ai and (_WAIVES.search(notice.get("text") or "") or _SIGNS_UP.search(notice.get("text") or "")
+                   or _NEVER_AGREED.search(heading)):
+            ai = False
         agree = next((b for b in notice.get("buttons") or [] if not b.get("disabled")
                       and (_AGREES.match(final_text(b.get("text") or ""))
                            or takes_ok and _TAKES_IN.match(final_text(b.get("text") or "")))), None)
@@ -4548,11 +4563,13 @@ def _attestation(q: dict[str, Any]) -> Any:
     return yes[0] if len(yes) == 1 else None
 
 
-def _terms_gate(button: dict[str, Any], data: dict[str, Any]) -> bool:
+def _terms_gate(button: dict[str, Any], data: dict[str, Any], text: str = "") -> bool:
     """A page whose way on accepts the employer's privacy notice or terms ("I Acknowledge the
     Privacy Notice"; "I Accept" under a "Privacy Agreement" heading): its button, headings or title
     say so, not a privacy link in its footer. Never one that also sends the application ("I Accept
-    and Apply"), nor one about what's never agreed to (a talent community, an arbitration agreement).
+    and Apply"), nor one about what's never agreed to (a talent community, an arbitration agreement),
+    nor one on a page whose words (`text`, the page's, read whole by the callers) waive a right (arbitration, a
+    jury trial: the review of Oct 15).
     Its headings are those of its own frame: Charles Schwab's careers page around its iCIMS frame
     has a "Join our talent network" sign-up of its own beside the gate (live, Oct 10)."""
     said = button.get("text") or ""
@@ -4560,7 +4577,7 @@ def _terms_gate(button: dict[str, Any], data: dict[str, Any]) -> bool:
     frame = re.match(r"f\d+-", str(button.get("id") or ""))
     own = framed.get(frame.group(0) if frame else "") if isinstance(framed, dict) else None
     about = " ".join([*(own if own is not None else data.get("headings") or []), str(data.get("title") or "")])
-    if _SENDS_TOO.search(said) or _NEVER_AGREED.search(f"{said} {about}"):
+    if _SENDS_TOO.search(said) or _NEVER_AGREED.search(f"{said} {about}") or _WAIVES.search(text or ""):
         return False
     return bool(_TERMS.search(said) or _TERMS.search(about))
 
@@ -4995,12 +5012,29 @@ def _account_details(data: dict[str, Any], text: str) -> dict[str, Any] | None:
 def _terms_boxes(data: dict[str, Any]) -> list[dict[str, Any]]:
     """A Create Account form's boxes that agree to the site's terms, still unticked: the required
     ones, or its terms, or a privacy notice read. Never a newsletter's, job alerts' or text
-    messages' (_NOT_TERMS)."""
+    messages' (_NOT_TERMS), nor a legal waiver's (arbitration), the terms of employment, or a box that
+    also says something about the person (the review of Oct 15), except an age the profile answers ("I am 16
+    years or older, and I have read the Privacy Notice": Microchip's, ticked where the profile says over 18)."""
+    over_18 = _profile_over_18()
+
+    def claims(label: str) -> bool:
+        return _about_person(_AGE_STATED.sub(" ", label) if over_18 else label)
+
     return [f for f in data.get("fields") or [] if f.get("kind") == "checkbox" and is_empty_value(f.get("value"))
             and (_READ_UNDERSTOOD.match(f.get("label") or "")  # (what it agrees to is above it: _said_terms reads it)
                  or _TERMS_BOX.search(f.get("label") or "") and not _NOT_TERMS.search(f.get("label") or "")
                  and not _MORE_THAN_TERMS.search(_LASTS.sub("", f.get("label") or ""))
+                 and not _WAIVES.search(f.get("label") or "") and not _EMPLOYMENT_TERMS.search(f.get("label") or "")
+                 and not claims(f.get("label") or "")
                  and (f.get("required") or _TERMS_ONLY.search(f.get("label") or "")))]
+
+
+def _profile_over_18() -> bool:
+    """Whether the profile says the person is over 18 (work_authorization.over_18); a profile with a typo says nothing."""
+    try:
+        return config.Profile.load().get("work_authorization.over_18") is True
+    except ValueError:
+        return False
 
 
 def _privacy_statement(data: dict[str, Any]) -> dict[str, Any] | None:

@@ -774,10 +774,13 @@ def test_an_apply_menu_is_followed_through_to_the_application(srv, monkeypatch):
     assert r.url.endswith("/signin.html")
 
 
-def test_cookie_dialog_is_declined_never_accepted(srv, monkeypatch):
-    """Infineon's cookie dialog covers the whole form; the desk presses Reject, never Accept."""
+@pytest.mark.parametrize("page, button", [("cookie-form.html", "Reject"), ("cookie-words.html", "Decline")],
+                         ids=["dialog", "words-only"])
+def test_cookie_dialog_is_declined_never_accepted(srv, monkeypatch, page, button):
+    """Infineon's cookie dialog covers the whole form; the desk presses Reject, never Accept. A banner known by its
+    words alone (0.3.176: a fixed bar named nothing) is declined the same way."""
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
-    job = srv.add_job(url=fixture_url("site/cookie-form.html"), title="FSE", company="Example Fab")["job"]
+    job = srv.add_job(url=fixture_url(f"site/{page}"), title="FSE", company="Example Fab")["job"]
     applier = Applier(srv)
 
     async def go():
@@ -791,7 +794,7 @@ def test_cookie_dialog_is_declined_never_accepted(srv, monkeypatch):
 
     r, accepted = run(go())
     assert r.status == "ready", (r.reason, r.log)
-    assert "declined cookies (“Reject”)" in r.log and accepted == 0
+    assert f"declined cookies (“{button}”)" in r.log and accepted == 0, r.log
 
 
 def test_a_cookie_banner_with_no_way_to_decline_is_the_persons_unless_they_allow_it(srv, monkeypatch, job_apply_home):
@@ -977,14 +980,17 @@ def test_with_accept_notices_the_desk_agrees_to_an_ai_notice_and_an_attestation(
                and line.endswith("for you (settings.accept_notices)") for line in r.log), r.log
 
 
-@pytest.mark.parametrize("notice, settings", [("privacy", {}), ("other", {}), ("privacy", {"accept_notices": False})],
-                         ids=["privacy", "other", "privacy-off"])
+@pytest.mark.parametrize("notice, settings", [("privacy", {}), ("other", {}), ("privacy", {"accept_notices": False}),
+                                              ("waiver", {}), ("signup", {})],
+                         ids=["privacy", "other", "privacy-off", "waiver", "signup"])
 def test_a_privacy_dialog_over_the_form_is_agreed_and_another_is_the_persons(srv, monkeypatch, job_apply_home, notice,
                                                                               settings):
     """settings.accept_notices agrees to the employer's privacy notice too, the owner's call (Oct
     10): a privacy policy over the form, with Cancel and Ok, is taken in with its Ok. Any other
     dialog over the form (about neither AI screening nor privacy), or any with the setting off,
-    stops the desk for the person."""
+    stops the desk for the person. So does the AI notice itself when its words also bind the person to
+    arbitration (waiver) or join them to a talent community with job alerts (signup): the review of Oct 15
+    found the AI notice's path without the guards the privacy notice's has."""
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
     notice_settings(job_apply_home, **settings)
     job = srv.add_job(url=fixture_url("site/ai-notice-form.html") + f"?notice={notice}", title="Equipment Technician",
@@ -1010,6 +1016,8 @@ def test_a_privacy_dialog_over_the_form_is_agreed_and_another_is_the_persons(srv
     assert shown["agreed"] == 0 and shown["first"] == "", shown
     if notice == "other":
         assert "“Before you continue”" in r.reason and "accept_notices" not in r.reason, r.reason
+    elif notice in ("waiver", "signup"):  # (not the setting's to give: no hint that it would)
+        assert "Use of the Eightfold AI" in r.reason and "accept_notices" not in r.reason, r.reason
     else:
         assert "“Privacy Policy of Example Corp”" in r.reason and "accept_notices: true" in r.reason, r.reason
 
@@ -1099,17 +1107,20 @@ def test_a_profile_dialog_is_known_by_its_offer_not_its_name():
     assert start(dialog("Upload your resume", "Enter information", disabled=True)) is None
 
 
-@pytest.mark.parametrize("settings", [{}, {"accept_notices": False}], ids=["on", "off"])
+@pytest.mark.parametrize("settings, query", [({}, ""), ({"accept_notices": False}, ""), ({}, "?waiver=1")],
+                         ids=["on", "off", "waiver"])
 def test_a_privacy_agreement_before_the_application_is_accepted_for_the_person(srv, monkeypatch, job_apply_home,
-                                                                                settings):
+                                                                                settings, query):
     """Kforce's Taleo career section (live, Oct 2026) puts a privacy agreement before the
     application, its only ways on "I Accept" and "I Decline". With settings.accept_notices (the
     owner's call, Oct 10) the desk accepts it for the person, says so, and goes on to fill the
-    application; with it off the agreement is theirs to press."""
+    application; with it off the agreement is theirs to press. So is one whose words also bind them
+    to arbitration (0.3.176: the page's words are read whole for a waiver, the review's)."""
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
     monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 1)
     notice_settings(job_apply_home, **settings)
-    job = srv.add_job(url=fixture_url("site/privacy-agreement.html"), title="Recruiter", company="Example Staffing")["job"]
+    job = srv.add_job(url=fixture_url("site/privacy-agreement.html") + query, title="Recruiter",
+                      company="Example Staffing")["job"]
     applier = Applier(srv)
 
     async def go():
@@ -1122,9 +1133,10 @@ def test_a_privacy_agreement_before_the_application_is_accepted_for_the_person(s
             await applier.stop()
 
     r = run(go())
-    if settings:
+    if settings or query:
         assert (r.status, r.need) == ("needs_you", "stuck") and "“I Accept”" in r.reason, (r.reason, r.log)
-        assert r.url.endswith("privacy-agreement.html")
+        assert r.url.endswith("privacy-agreement.html" + query), r.url
+        assert not any(line.startswith("agreed") for line in r.log), r.log
         return
     assert "agreed to Example Staffing's “I Accept” for you (settings.accept_notices)" in r.log, r.log
     assert r.url.endswith("generic_form.html") and any(line.startswith("filled") for line in r.log), r.log
@@ -8271,6 +8283,8 @@ def test_a_privacy_notice_received_is_ticked_on_create_account_but_never_a_sign_
     assert ticked("I have received the Example Fab Applicant Privacy Notice.")
     assert ticked("I have read and received a copy of the Privacy Policy")
     assert not ticked("I agree to receive emails about new jobs")
+    # (the review of 0.3.176: a required consent that takes in more than the account: a drug screening)
+    assert not ticked("I consent to a background check and drug screening as part of my application")
     assert not ticked("I have received the Privacy Notice and agree to receive job alerts by email")
     # (the review's) the notice's own name is still read: one for a talent pool or future openings isn't the terms
     for label in ("I have received the Talent Pool Privacy Notice.", "I have received the Future Opportunities Privacy Notice.",
@@ -9373,6 +9387,16 @@ def test_a_sign_in_that_led_elsewhere_is_told_from_an_email_first_one():
     ("I consent to receive text updates about my account", False),
     ("I agree to the processing of my personal data for recruitment and for future vacancies", False),
     ("I consent to the GDPR retention of my data in the talent pool", False),
+    # the review of Oct 15: a legal waiver, the terms of employment or a fact about the person beside the terms
+    ("I agree to the terms of use and to binding arbitration of any dispute", False),
+    ("I acknowledge that my employment would be at-will and agree to the site's terms", False),
+    ("I agree to the terms and confirm I am authorized to work in the United States", False),
+    # (its review: an agreement's own asides claim nothing; an age the profile answers is ticked: Microchip's Workday)
+    ("I consent to the processing of my personal data as described in the Privacy Policy. I am aware that I can "
+     "withdraw my consent at any time.", True),
+    ("I agree to the terms and conditions and I understand that I am providing my information voluntarily", True),
+    ("I agree that I have read the data privacy statement and I have a copy of it", True),
+    ("I am 16 years or older, and I have read the Microchip Recruitment Privacy Notice.", True),
 ])
 def test_a_workday_create_accounts_own_agreement_is_its_terms(label, ticked):
     """The first nightly at every employer (Oct 11): nine Workday Create Account forms stopped on a box of their
@@ -9381,6 +9405,18 @@ def test_a_workday_create_accounts_own_agreement_is_its_terms(label, ticked):
     never one that also signs the person up for anything (_NOT_TERMS), nor one saying something else."""
     box = {"id": "t", "kind": "checkbox", "label": label, "value": False}
     assert (pipeline._terms_boxes({"fields": [box]}) == [box]) is ticked
+
+
+def test_a_terms_gate_on_a_page_that_waives_a_right_is_the_persons():
+    """The review of Oct 15: _terms_gate read the gate's button, headings and title, never the page's words, so an
+    "I Accept" under a "Privacy Agreement" heading was pressed on a page whose text also binds the person to
+    arbitration. The page's words are read for a waiver."""
+    gate = {"id": "b1", "text": "I Accept"}
+    page = {"headings": ["Privacy Agreement"], "title": "Apply"}
+    words = "Please read our privacy agreement. We keep the details you give us for recruiting."
+    assert pipeline._terms_gate(gate, page, words)
+    assert not pipeline._terms_gate(gate, page, words + " By accepting you agree to binding arbitration of any dispute "
+                                                        "and waive your right to a jury trial.")
 
 
 def test_a_bare_i_agree_is_ticked_only_where_the_words_above_it_are_the_sites_terms(srv, tmp_path):

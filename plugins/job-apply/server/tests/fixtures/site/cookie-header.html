@@ -1,0 +1,24 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Sign in - Example Fab</title>
+<style>
+  #top { position: sticky; top: 0; background: #eee; padding: 12px; }
+  #shell { position: fixed; inset: 0; overflow: auto; }
+</style>
+</head>
+<body>
+<!-- a sticky site header with a cookie-policy link, and a fixed app shell around the whole page (its review of
+     0.3.176): neither is a cookie banner, so the sign-in's own buttons are its own -->
+<div id="shell">
+  <div id="top"><a href="/privacy">Privacy</a> <a href="/cookies">Cookie Policy</a> <a href="/help">Help</a></div>
+  <h1>Sign in</h1>
+  <p>We use cookies on this site as our Cookie Policy says. Sign in to continue your application.</p>
+  <form id="signin" onsubmit="event.preventDefault(); window.signedIn = (window.signedIn || 0) + 1;">
+    <label for="em">Email Address</label><input id="em" type="email">
+    <label for="pw">Password</label><input id="pw" type="password">
+    <button type="submit">Sign In</button>
+    <button type="button" onclick="window.agreed = (window.agreed || 0) + 1;">I agree</button>
+  </form>
+</div>
+</body>
+</html>
