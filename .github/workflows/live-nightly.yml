@@ -277,6 +277,19 @@ jobs:
             if [ -f live-compare/comment.md ]; then cat live-compare/comment.md; echo; fi
             cat live-compare/body.md
           } >> "$GITHUB_STEP_SUMMARY"
+      - name: Questions no common question covers yet
+        # (the question bank's coverage, the review of Oct 15: what two employers or more asked the test applicant that
+        # data/question_bank.yaml could ask once; a look, never a failure)
+        continue-on-error: true
+        run: |
+          runs=()
+          for d in live-pipeline live-hr live-accounts-*; do [ -f "$d/pipeline.json" ] && runs+=("$d"); done
+          [ ${#runs[@]} -gt 0 ] || exit 0
+          {
+            echo "### Questions no common question covers yet (two employers or more)"; echo; echo '```'
+            uv run --frozen python scripts/question_bank.py --min 2 "${runs[@]}" | head -40
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
       - name: Update the issue
         if: github.event_name == 'schedule' || github.ref_name == github.event.repository.default_branch
         env:

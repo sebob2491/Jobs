@@ -526,6 +526,7 @@ class Desk:
                     if posting is None:
                         out.append({"url": url, "error": f"couldn't read the posting: {_first_line(e)}"})
                         continue
+            posting.company = self.srv.listed_employer(url) or posting.company
             job, _ = self.srv.tracker().upsert(posting.to_dict())
             out.append({"url": job["url"], "job_id": job["id"], "title": job.get("title"), "company": job.get("company"),
                         "status": job.get("status"), "warnings": posting.warnings})

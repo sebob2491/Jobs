@@ -72,6 +72,8 @@ the scrubber (`python -m job_apply.fixtures`) before they become test fixtures.
     from or to a date the profile doesn't give, a degree of a level it doesn't have, another role's employer): a
     `::warning::` line each, never a failure; `nightly_summary.py --artifacts <folder>` prints them too. The pages the
     live check saves carry each box's value (a React form's boxes hold theirs as properties), never a password's.
+    On the search check's machine, one `::warning::` line a job system whose postings came back without a title,
+    a place or their text (the search check reads each as the desk reads a pasted link).
   - Compare a run with the previous one per employer. A changed outcome is the signal. The nightly's changes comment opens with
     **Went backwards** when an employer the last run took to its review page no longer gets there (the regression alarm).
   - Run live checks from a worktree of their own (`git worktree add ../Jobs-live origin/main`): a branch
@@ -84,7 +86,8 @@ the scrubber (`python -m job_apply.fixtures`) before they become test fixtures.
   tables), `--artifacts <zip or folder> --companies "A,B"` (each employer's rounds, questions with their
   choices, and the page where it stopped). Use it instead of reading the issue's body or a run's logs.
   A run's artifact downloads with the GitHub tools' artifact link and curl.
-  `--timing <zip or folder>` gives each job system's time (middle, 90%) and the slowest employers.
+  `--timing <zip or folder>` gives each job system's time (middle, 90%) and the slowest employers; with
+  `--against <an earlier run's>` (a week before: artifacts are kept 7 days), a system twice as slow says so.
   `--import-fixtures <zip or folder> [--companies "A,B"] [--replace]` copies the scrubbed pages a run
   stopped on into `tests/fixtures/live` (one already there stays unless replaced), so the offline tests
   check them; look each over before committing it (the repo is public).

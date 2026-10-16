@@ -147,6 +147,60 @@ def find_jsonld_jobposting(soup: BeautifulSoup) -> dict[str, Any] | None:
     return None
 
 
+_MICRODATA_POSTING = re.compile(r"schema\.org/JobPosting$", re.I)
+
+
+def _is_posting_type(itemtype: str | None) -> bool:
+    return bool(itemtype and _MICRODATA_POSTING.search(itemtype))
+
+
+def _props(scope: Any, name: str) -> list[Any]:
+    """A scope's own properties by name, never those of a scope inside it (an employer's own description)."""
+    found = scope.find_all(attrs={"itemprop": lambda v: bool(v) and name in v.split()})
+    if not scope.has_attr("itemscope"):
+        return found
+    return [tag for tag in found if tag.find_parent(attrs={"itemscope": True}) is scope]
+
+
+def _microdata_value(tag: Any) -> str:
+    """A microdata property's value: a meta tag's content, a nested scope's name (none without one: its
+    text is an employer's "Visit our website"), or the text."""
+    if tag is None:
+        return ""
+    if tag.has_attr("content"):
+        return " ".join(str(tag["content"]).split())
+    if tag.has_attr("itemscope"):
+        named = _props(tag, "name")
+        return _microdata_value(named[0]) if named else ""
+    return " ".join(tag.get_text(" ", strip=True).split())
+
+
+def microdata_jobposting(soup: BeautifulSoup) -> dict[str, Any] | None:
+    """A posting a page gives as schema.org microdata rather than JSON-LD, shaped like JSON-LD's
+    (SuccessFactors' career sites, EY's, APS', SRP's: a JobPosting scope with its place, date and
+    employer as meta tags, then the title and the text). Its text is the whole scope's: a posting's
+    shift, travel and qualifications sit beside its description (Rogers'). A place naming only its
+    country isn't one (the posting's lines may name the city). None without a scope or a title."""
+    scope = soup.find(itemtype=_is_posting_type)
+    if scope is None:
+        return None
+    places: list[Any] = []
+    for place in _props(scope, "jobLocation"):
+        addr = (_props(place, "address") or [place])[0]
+        parts = {k: _microdata_value((_props(addr, k) or [None])[0])
+                 for k in ("addressLocality", "addressRegion", "addressCountry")}
+        if parts["addressLocality"] or parts["addressRegion"]:
+            places.append({"address": parts})
+        elif not any(parts.values()) and _microdata_value(place):
+            places.append(_microdata_value(place))
+    first = {name: (_props(scope, name) or [None])[0] for name in ("title", "hiringOrganization", "employmentType")}
+    return {"title": _microdata_value(first["title"]),
+            "hiringOrganization": {"name": _microdata_value(first["hiringOrganization"])},
+            "jobLocation": places,
+            "description": str(scope),
+            "employmentType": _microdata_value(first["employmentType"])}
+
+
 def _unescaped(raw: str) -> str:
     """HTML that was escaped once more ("&lt;p&gt;Requirements..."), as some sites' JSON-LD is."""
     return html.unescape(raw) if "&lt;" in raw and "<" not in raw else raw
@@ -276,9 +330,16 @@ def microdata_date(soup: BeautifulSoup) -> str:
 def parse_html(raw_html: str, url: str) -> Posting:
     soup = BeautifulSoup(raw_html, "html.parser")
     ld = find_jsonld_jobposting(soup)
-    ukg = None if ld else ukg_posting(raw_html, url)
+    micro = None if ld else microdata_jobposting(soup)
+    ukg = None if ld or (micro and micro["title"]) else ukg_posting(raw_html, url)
     if ld:
         p = posting_from_jsonld(ld, url)
+    elif micro and micro["title"]:
+        p = posting_from_jsonld(micro, url)
+        p.parse_method = "microdata"
+        if len(p.description) <= 200:  # (Posting.is_useful's) a scope around little but its meta tags: the page's
+            main = soup.find("main") or soup.find(attrs={"role": "main"}) or soup.body or soup  # type: ignore[call-overload]  # bs4 stubs want a name too
+            p.description = html_to_text(str(main))
     elif ukg:
         p = ukg
     else:
@@ -299,7 +360,7 @@ def parse_html(raw_html: str, url: str) -> Posting:
         p.warnings.append("No structured JobPosting data; title/company may need correcting.")
     p.apply_url = p.apply_url or _find_apply_link(soup, url)
     p.posted_at = p.posted_at or microdata_date(soup)
-    p.location = p.location or successfactors_place(soup)
+    p.location = p.location or (_location_from_ld(micro["jobLocation"]) if micro else "") or successfactors_place(soup)
     if not p.location and "career_job_req_id=" in url:  # SuccessFactors' older sites: only the text says
         p.location = place_in_text(p.description)
     return p

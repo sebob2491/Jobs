@@ -826,3 +826,42 @@ def test_a_workday_posting_takes_its_employers_listed_name_not_workdays_legal_en
     assert run(srv.ingest_job(intel))["job"]["company"] == "Intel"
     other = "https://acme.wd1.myworkdayjobs.com/External/job/Phoenix-AZ/Technician_R1"
     assert run(srv.ingest_job(other))["job"]["company"] == "100 Intel Corporation"
+
+
+def test_a_successfactors_career_site_posting_takes_its_employers_listed_name(srv, monkeypatch):
+    """Run 116's posting reads: a SuccessFactors career site's posting names its employer as the site's own account
+    does ("rogersco" for Rogers Corporation, "Busch" for Pfeiffer Vacuum, its owner). A posting on a listed
+    employer's own career site takes the list's name; one on SuccessFactors' shared hosts keeps its own (other
+    employers' sites are there too)."""
+    from job_apply.postings import Posting
+
+    async def fetched(url: str) -> Posting:
+        return Posting(url=url, title="Internal Auditor", company="rogersco", description="Audit.",
+                       parse_method="microdata")
+
+    monkeypatch.setattr(srv, "fetch_posting", fetched)
+    rogers = "https://careers.rogerscorp.com/job/Chandler-Internal-Auditor-AZ-85224/1437936000/"
+    assert run(srv.ingest_job(rogers))["job"]["company"] == "Rogers Corporation"
+    shared = "https://career8.successfactors.com/career?company=rogersco&career_job_req_id=1"
+    assert run(srv.ingest_job(shared))["job"]["company"] == "rogersco"
+
+
+def test_a_posting_takes_its_employers_name_from_any_of_the_plugins_lists(srv, monkeypatch, job_apply_home):
+    """The review of 0.3.192: an employer on a list the person doesn't search (APS is on phoenix-metro, not the
+    default semiconductor list) kept its site's short name, "APS", and "Have you ever been employed by APS?" read
+    "No" for a person whose work history says Arizona Public Service. A list entry of the person's written oddly
+    (its search a bare address) leaves the posting its own name, never an error."""
+    from job_apply.postings import Posting
+
+    async def fetched(url: str) -> Posting:
+        return Posting(url=url, title="2027 Summer Internship - Forestry", company="APS", description="Trees.",
+                       parse_method="microdata")
+
+    monkeypatch.setattr(srv, "fetch_posting", fetched)
+    aps = "https://careers.aps.com/job/PHOENIX-2027-Summer-Internship-Forestry-AZ-85021/1427332600/"
+    assert run(srv.ingest_job(aps))["job"]["company"] == "Arizona Public Service"
+    (job_apply_home / "companies.yaml").write_text(
+        "companies:\n  - name: Odd Co\n    careers_url: https://careers.odd.example\n"
+        "    search: https://careers.odd.example\n", encoding="utf-8")
+    assert srv.listed_employer("https://careers.odd.example/job/Phoenix-Tech-AZ-85001/1/") is None
+    assert srv.listed_employer(aps) == "Arizona Public Service"

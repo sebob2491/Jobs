@@ -331,28 +331,42 @@ async def ingest_job(url: str, use_browser: bool = False) -> dict[str, Any]:
             posting = finalize(parse_html(await browser.html(), url))
         except BrowserUnavailable as e:
             return {"saved": False, "error": str(e)}
-    posting.company = _listed_employer(url) or posting.company
+    posting.company = listed_employer(url) or posting.company
     job, created = tracker().upsert(posting.to_dict())
     return {"saved": True, "created": created, "job": job, "warnings": posting.warnings}
 
 
-def _listed_employer(url: str) -> str | None:
-    """The name a Workday posting's employer goes by on the person's lists, from its career site (its host and
-    tenant): Workday's own name for it is a legal entity ("100 Intel Corporation", "0001 Applied Materials, Inc",
-    the tailoring test of Oct 12), which named the job's folder and missed the desk's lists by name."""
+def listed_employer(url: str) -> str | None:
+    """The name a posting's employer goes by on the plugin's lists (and the person's own), from its career site: a
+    Workday site's host and tenant, or a SuccessFactors career site on the employer's own address. Workday's own name
+    for it is a legal entity ("100 Intel Corporation", "0001 Applied Materials, Inc", the tailoring test of Oct 12),
+    and a career site's its account's ("rogersco" for Rogers Corporation, "APS": run 116), which named the job's
+    folder, missed the desk's lists by name, and read "No" to "Have you ever been employed by APS?" for a person who
+    worked at Arizona Public Service. SuccessFactors' own hosts carry many employers' sites: a posting there keeps
+    its own name. (One employer's site may show a sister company's postings: Pfeiffer Vacuum's shows Busch's, named
+    Pfeiffer Vacuum here, as the search names them.)"""
     parts = workday_parts(url)
-    if not parts:
+    host = (urlsplit(url).hostname or "").lower()
+    own_site = detect_ats(url) == "successfactors" and shared_system(url) is None
+    if not parts and not own_site:
         return None
     try:
-        listed = load_companies()
+        listed = every_employer()
     except Exception:  # (a person's companies.yaml with a mistake: the posting keeps its own name)
         return None
+    named = []
     for c in listed:
-        for site in (c.get("careers_url"), (c.get("search") or {}).get("workday")):
-            theirs = workday_parts(f"{site}/x") if isinstance(site, str) else None
-            if theirs and (theirs["host"], theirs["tenant"]) == (parts["host"], parts["tenant"]):
-                return str(c["name"])
-    return None
+        if not isinstance(c, dict):
+            continue
+        search: dict[str, Any] = c["search"] if isinstance(c.get("search"), dict) else {}
+        for site in (c.get("careers_url"), search.get("workday")):
+            theirs = workday_parts(f"{site}/x") if parts and isinstance(site, str) else None
+            if parts and theirs and (theirs["host"], theirs["tenant"]) == (parts["host"], parts["tenant"]):
+                return str(c.get("name") or "") or None
+        sf = search.get("successfactors")
+        if own_site and isinstance(sf, str) and (urlsplit(sf).hostname or "").lower() == host and c.get("name"):
+            named.append(str(c["name"]))
+    return named[0] if len(set(named)) == 1 else None
 
 
 async def read_icims_posting(url: str) -> Posting:

@@ -303,3 +303,85 @@ def test_every_listed_own_address_system_is_known():
                     and detect_ats(company.get("careers_url")) != "successfactors":
                 missing.append(f"{company['name']}: {company.get('careers_url')} isn't read as successfactors")
     assert not missing, missing
+
+
+def sf_career_page(scope: str) -> str:
+    """A SuccessFactors career site's posting page (EY's, APS', SRP's, Qorvo's: live, Oct 2026), as schema.org
+    microdata: a JobPosting scope holding the place, date and employer as meta tags, then the title and the text."""
+    return ('<html><head><title>Field Technician Job Details | Example Utility</title></head><body>'
+            '<nav><a href="/search/">Search Jobs</a><a href="/talentcommunity/">Join our Talent Community</a></nav>'
+            f'<div class="jobDisplayShell" itemscope="itemscope" itemtype="http://schema.org/JobPosting">{scope}</div>'
+            '<footer>Equal opportunity employer. Cookie settings.</footer></body></html>')
+
+
+SF_SCOPE = ('<span itemprop="jobLocation" itemscope="" itemtype="http://schema.org/Place"><span itemprop="address" '
+            'itemscope="" itemtype="http://schema.org/PostalAddress"><meta itemprop="addressLocality" content="Gilbert">'
+            '<meta itemprop="addressRegion" content="AZ"><meta itemprop="postalCode" content="85233">'
+            '<meta itemprop="addressCountry" content="US"></span></span>'
+            '<meta itemprop="datePosted" content="Sat Sep 26 07:00:00 UTC 2026">'
+            '<meta itemprop="hiringOrganization" content="Example Utility">'
+            '<div class="jobDisplay"><h1><span itemprop="title">Field Technician     </span></h1>'
+            '<span itemprop="description"><span class="jobdescription"><p>Maintain substation equipment.</p>'
+            '<p>Requires two years of electrical experience.</p>'
+            + '<p>Inspects, tests and repairs breakers, relays and transformers on a rotating schedule.</p>' * 2
+            + '</span></span></div>')
+
+
+def test_a_postings_microdata_gives_its_place_employer_and_title():
+    """Run 116's posting reads: SuccessFactors career sites (EY, APS, SRP, Freeport, Qorvo, Rogers, Pfeiffer) give
+    their posting as microdata, not JSON-LD, and the posting came back with no place and no employer (a pasted link
+    was saved without them, and Find jobs couldn't check where it is), its title from the page's own title. Read,
+    they're the posting's like JSON-LD's, its text the posting's own (not the menu's or the footer's)."""
+    url = "https://careers.example.com/job/Gilbert-Field-Technician-AZ-85233/1424499100/"
+    p = finalize(parse_html(sf_career_page(SF_SCOPE), url))
+    assert (p.title, p.company, p.location, p.posted_at) == \
+        ("Field Technician", "Example Utility", "Gilbert, AZ, US", "2026-09-26"), p
+    assert p.parse_method == "microdata" and not p.warnings, p.warnings
+    assert "substation" in p.description and "Talent Community" not in p.description and "Cookie" not in p.description
+
+
+def test_a_postings_microdata_in_other_shapes():
+    url = "https://careers.example.com/job/1/"
+    # an employer given as its own scope, two places, and no text of its own: the page's is kept
+    scope = (SF_SCOPE.replace('<meta itemprop="hiringOrganization" content="Example Utility">',
+                              '<div itemprop="hiringOrganization" itemscope itemtype="http://schema.org/Organization">'
+                              '<span itemprop="name">Example Utility</span></div>')
+             .replace('<span itemprop="jobLocation"', '<span itemprop="jobLocation" itemscope><span itemprop="address" '
+                      'itemscope><meta itemprop="addressLocality" content="Tempe"><meta itemprop="addressRegion" '
+                      'content="AZ"></span></span><span itemprop="jobLocation"', 1)
+             .replace('<span itemprop="description">', '<span>'))
+    p = parse_html(sf_career_page(scope), url)
+    assert (p.company, p.location) == ("Example Utility", "Tempe, AZ; Gilbert, AZ, US"), p
+    assert "substation" in p.description
+    # one without a title isn't read as the posting (the page's text is), but its place still is
+    bare = parse_html(sf_career_page(SF_SCOPE.replace('itemprop="title"', "")), url)
+    assert (bare.parse_method, bare.location) == ("page-text", "Gilbert, AZ, US")
+    # JSON-LD, where a page has both, is read first
+    ld = ('<script type="application/ld+json">{"@type": "JobPosting", "title": "Line Worker", '
+          '"hiringOrganization": {"name": "Example Utility"}, "description": "Climb poles."}</script>')
+    assert parse_html(sf_career_page(SF_SCOPE).replace("</head>", ld + "</head>"), url).title == "Line Worker"
+
+
+def test_a_microdata_postings_text_is_its_whole_scope_and_its_own_properties():
+    """The review of 0.3.192: its text was only the description property, and Rogers' (live) keeps its shift, its
+    travel and its qualifications beside that (4,137 chars of text read as 1,031); a short description with the
+    requirements in another property read as "couldn't be read" and was held. An employer given as a scope of its
+    own, with a description of its own, gave its description as the job's. A place that names only the country
+    hid the one the posting's lines name."""
+    url = "https://careers.example.com/job/1/"
+    scope = (SF_SCOPE.replace('<meta itemprop="hiringOrganization" content="Example Utility">',
+                              '<div itemprop="hiringOrganization" itemscope itemtype="http://schema.org/Organization">'
+                              '<span itemprop="description">We keep the lights on.</span>'
+                              '<span itemprop="name">Example Utility</span></div>')
+             .replace("</div>", '<p>Approximate Travel: 10%</p><span itemprop="qualifications">A bachelor\'s degree in '
+                      'electrical engineering is required; ITAR rules apply.</span></div>', 1))
+    p = parse_html(sf_career_page(scope), url)
+    assert p.company == "Example Utility" and "substation" in p.description, p
+    assert "Travel: 10%" in p.description and "ITAR" in p.description, p.description
+    assert "Talent Community" not in p.description and "Cookie" not in p.description
+    nameless = scope.replace('<span itemprop="name">Example Utility</span>', "Visit our website")
+    assert parse_html(sf_career_page(nameless), url).company == ""
+    country = (SF_SCOPE.replace('<meta itemprop="addressLocality" content="Gilbert">', "")
+               .replace('<meta itemprop="addressRegion" content="AZ">', ""))
+    page = sf_career_page(country).replace("<footer>", '<div class="joblayouttoken">Phoenix AZ</div><footer>')
+    assert parse_html(page, url).location == "Phoenix, AZ"
