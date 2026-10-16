@@ -546,7 +546,9 @@ def question_pattern(label: str) -> str:
     """A pattern that matches this question's label again, however its spacing and
     required-markers come out ("Are you willing to relocate?*")."""
     text = re.sub(r"\(required\)|\*", " ", label or "", flags=re.I).strip(" :?")
-    return r"\s+".join(re.escape(w) for w in text.split())
+    # (a marker between its words too: "Email * (work)" read again with its star never matched the pattern made
+    # without it, so its answer was never used again: a property test of the review of Oct 15's found it)
+    return r"(?:\s|\*|\((?i:required)\))+".join(re.escape(w) for w in text.split())
 
 
 def label_sentences(label: str) -> list[str]:
@@ -667,7 +669,10 @@ def save_answer(label: str, answer: Any, source: str = "") -> dict[str, Any]:
         raise ValueError("A question needs a label to be remembered")
     data = _answers_file()
     old = data.get("answers")
-    entries = [a for a in (old if isinstance(old, list) else []) if not (isinstance(a, dict) and a.get("match") == match)]
+    # (the same question answered again replaces its answer, by its pattern or by its words: a pattern written before
+    # question_pattern took markers between words is the same question)
+    entries = [a for a in (old if isinstance(old, list) else [])
+               if not (isinstance(a, dict) and (a.get("match") == match or a.get("question") == label.strip()))]
     entry: dict[str, Any] = {"match": match, "answer": answer, "question": label.strip()}
     core = question_core(label)
     if core != " ".join(label_sentences(label)):  # the question in a longer label: asked in other wording around it

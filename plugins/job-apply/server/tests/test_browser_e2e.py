@@ -255,6 +255,22 @@ def test_an_answer_that_picks_a_group_is_chosen_again_among_its_entries(srv, job
     assert heard["value"] == "Company Career Site"
 
 
+def test_the_persons_pick_from_a_groups_entries_is_picked_inside_the_group(srv):
+    """Hitachi's Workday (run 112): the profile's answer picked the group "Career Website", which opened its own
+    entries, and the person (the card) picked one of them, "Hitachi Digital Career Site (…)". The desk typed it into
+    the search, which on that site finds the top level's names only, and the answer never went in, round after round.
+    An entry the desk saw a group open is picked inside that group."""
+    run(srv.browser.goto(fixture_url("workday_prompt_2026.html") + "?groups=staffing&topsearch"))
+    heard = by_label(run(srv.inspect_form(include_dropdown_options=False))["fields"], "how did you hear")
+    out = run(srv.fill_form([{"id": heard["id"], "value": "Website / Job Board Posting"}]))
+    assert not out["results"][0]["ok"] and "Glassdoor" in out["results"][0]["options"], out
+    heard = by_label(run(srv.inspect_form(include_dropdown_options=False))["fields"], "how did you hear")
+    out = run(srv.fill_form([{"id": heard["id"], "value": "Glassdoor"}]))
+    assert out["results"][0]["ok"] and "Website / Job Board Posting > Glassdoor" in out["results"][0]["result"], out
+    assert by_label(run(srv.inspect_form(include_dropdown_options=False))["fields"], "how did you hear")["value"] == \
+        "Glassdoor"
+
+
 def test_how_did_you_hear_is_chosen_again_from_a_list_that_drew_late(srv, job_apply_home):
     """Workday's "How Did You Hear About Us?" (live, issue #112, note 27): the prompt listed nothing when the
     page was read, so "Company Website" went to the fill as it was and found no match in the list that came
@@ -1945,3 +1961,15 @@ def test_a_resume_box_whose_group_says_it_is_required_is_required(srv):
     assert by_label(fields, "Upload Resume/CV")["required"]
     assert not by_label(fields, "Upload Additional Attachments")["required"]
     assert not by_label(fields, "Second resume (optional)")["required"]  # (nor one that says it's optional)
+
+
+def test_a_lists_groups_are_remembered_per_tenant_on_a_shared_workday_host():
+    """The review of 0.3.189: on Workday's shared myworkdaysite.com, every tenant's lists were remembered under one key
+    (its language part and "recruiting"), so another tenant's group could be opened for an answer."""
+    from job_apply.browser import _groups_key
+
+    field = {"label": "How Did You Hear About Us?*"}
+    one = _groups_key("https://wd1.myworkdaysite.com/en-US/recruiting/acme/External/job/X_R1/apply", field)
+    two = _groups_key("https://wd1.myworkdaysite.com/en-US/recruiting/other/External/job/Y_R2/apply", field)
+    assert one != two and one is not None and one[0] == "wd1.myworkdaysite.com/acme/External"
+    assert _groups_key("https://acme.wd1.myworkdayjobs.com/en-US/External/job/X_R1/apply", {"label": ""}) is None

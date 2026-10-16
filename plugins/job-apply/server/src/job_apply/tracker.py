@@ -129,12 +129,20 @@ def _locked(method):
     return wrapper
 
 
+# seconds a write waits for another process's to finish before it gives up
+DB_TIMEOUT = 15
+
+
 class Tracker:
     def __init__(self, path: Path | None = None):
         self.path = path or config.db_path()
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
-        self.conn = sqlite3.connect(self.path, check_same_thread=False)
+        # (two processes may share the tracker, Claude's tools and a second session's: one waits out the other's write
+        # instead of failing at once with "database is locked", the review of Oct 15. The journal stays SQLite's own,
+        # not WAL: a home on a network drive or a synced folder (JOB_APPLY_HOME) can't hold WAL's shared memory, and a
+        # synced copy would miss what's still in its log, the review of 0.3.189)
+        self.conn = sqlite3.connect(self.path, check_same_thread=False, timeout=DB_TIMEOUT)
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA foreign_keys = ON")
         self.conn.executescript(_SCHEMA)

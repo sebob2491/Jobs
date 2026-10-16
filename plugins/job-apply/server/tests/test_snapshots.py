@@ -65,3 +65,47 @@ def test_iframe_snapshot_keeps_frame(srv, tmp_path):
     assert 'src="iframe-test.frame-1.html"' in host
     expect = json.loads((tmp_path / "iframe-test.expect.json").read_text(encoding="utf-8"))
     assert run(check_fixture_extraction(srv, tmp_path / "iframe-test.html", expect)) == []
+
+
+def test_saved_pages_are_capped_and_can_be_forgotten(srv, monkeypatch):
+    """The review of Oct 15: the pages saved for debugging (every frame's HTML and a screenshot, the person's details on
+    it among them) were kept for ever, with no way to clear them. A job's folder keeps the newest DEBUG_KEEP; the
+    pages a job stopped on keep their own count; forget_saved_pages deletes them, one job's or every job's."""
+    from job_apply import server
+
+    monkeypatch.setattr(server, "DEBUG_KEEP", 2)
+    job = srv.add_job(url=fixture_url("generic_form.html"), title="FSE", company="Example Litho")["job"]
+    run(srv.open_application(job_id=job["id"]))
+    debug = Path(job["folder"]) / "debug"
+    debug.mkdir(parents=True, exist_ok=True)
+    (debug / "20260101-000000-000-stop").mkdir()  # (a stop's page: the desk's own count)
+    saved = [run(srv.debug_snapshot(note=f"n{i}"))["saved_to"] for i in range(3)]
+    kept = sorted(d.name for d in debug.iterdir())
+    assert kept == ["20260101-000000-000-stop", *sorted(Path(s).name for s in saved[1:])], kept
+    assert run(srv.forget_saved_pages(job_id=job["id"]))["removed"] == 3
+    assert not debug.exists() and Path(job["folder"]).exists()
+
+
+def test_forgetting_saved_pages_takes_every_folders_and_the_reports_and_keeps_the_submit_record(srv, job_apply_home):
+    """The review of 0.3.189: forget_saved_pages walked only the tracker's rows (a folder whose row was merged away kept
+    its pages), and left the problem reports' pages and report.zip and the screenshot tool's pictures, though it said
+    it took them. Every job folder's go; the pictures of a page before and after its Submit stay (the record of what
+    was sent), and so does a report's text."""
+    from job_apply import config
+
+    apps = config.applications_dir()
+    orphan = apps / "0099-merged-away"
+    (orphan / "debug" / "20260101-000000-000").mkdir(parents=True)
+    (orphan / "screenshot-20260101-000000.jpg").write_bytes(b"jpg")
+    (orphan / "before-submit.jpg").write_bytes(b"jpg")
+    (orphan / "after-submit.jpg").write_bytes(b"jpg")
+    report = job_apply_home / "reports" / "0099-20260101-000000"
+    (report / "pages").mkdir(parents=True)
+    (report / "pages" / "page-1.html").write_text("<p>page</p>", encoding="utf-8")
+    (report / "report.zip").write_bytes(b"zip")
+    (report / "report.md").write_text("what happened", encoding="utf-8")
+    out = run(srv.forget_saved_pages())
+    assert out["removed"] == 3, out
+    assert not (orphan / "debug").exists() and not (orphan / "screenshot-20260101-000000.jpg").exists()
+    assert (orphan / "before-submit.jpg").exists() and (orphan / "after-submit.jpg").exists()
+    assert not (report / "pages").exists() and not (report / "report.zip").exists() and (report / "report.md").exists()

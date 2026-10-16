@@ -79,7 +79,7 @@ def test_a_password_resets_link_is_found_only_when_one_was_asked_for():
 
 def _message(sender: str, subject: str, body: str, html: bool = False) -> bytes:
     kind = "text/html" if html else "text/plain"
-    return (f"From: {sender}\r\nTo: sam@gmail.com\r\nSubject: {subject}\r\n"
+    return (f"From: {sender}\r\nTo: sam@example.com\r\nSubject: {subject}\r\n"
             f"Date: {email.utils.formatdate()}\r\nMIME-Version: 1.0\r\nContent-Type: {kind}; charset=utf-8\r\n\r\n"
             f"{body}\r\n").encode()
 
@@ -169,6 +169,8 @@ class FakeImap:
 def imap(monkeypatch):
     FakeImap.reset()
     monkeypatch.setattr(mailbox.imaplib, "IMAP4_SSL", FakeImap)
+    # (the fake inbox is an example.com one: no real provider's address in the tests' mail, the review of Oct 15)
+    monkeypatch.setitem(mailbox.IMAP_HOSTS, "example.com", "imap.example.com")
     return FakeImap
 
 
@@ -176,11 +178,11 @@ def test_the_newest_code_from_the_job_site_since_the_wait_began(imap):
     since = time.time()
     imap.messages = [
         (since - 3600, _message("no-reply@careers.ti.com", "Your code", "Your verification code is 111111")),  # old
-        (since + 30, _message("Deals <deals@shop.com>", "Your code", "Your verification code is 222222")),  # not the site
+        (since + 30, _message("Deals <deals@shop.example.com>", "Your code", "Your verification code is 222222")),  # not the site
         (since + 40, _message("no-reply@careers.ti.com", "Verify your email",
                               "<p>Your verification code is <b>333333</b></p>", html=True)),
     ]
-    found = mailbox.search("sam@gmail.com", "app-password", since, {"ti.com"}, "code")
+    found = mailbox.search("sam@example.com", "app-password", since, {"ti.com"}, "code")
     assert (found.kind, found.value, found.sender) == ("code", "333333", "careers.ti.com")
     calls = imap.instances[0].calls
     assert ("select", "INBOX", True) in calls  # read-only: nothing is marked read
@@ -191,10 +193,10 @@ def test_the_newest_code_from_the_job_site_since_the_wait_began(imap):
                                               (b"3", "(BODY.PEEK[])")]
     assert calls[-1] == ("logout",)
     imap.messages = imap.messages[:2]
-    assert mailbox.search("sam@gmail.com", "app-password", since, {"ti.com"}, "code") is None
+    assert mailbox.search("sam@example.com", "app-password", since, {"ti.com"}, "code") is None
     imap.messages, imap.date_last = imap.messages + [(since + 50, _message(
         "no-reply@careers.ti.com", "Verify", "Your verification code is 444444"))], True
-    assert mailbox.search("sam@gmail.com", "app-password", since, {"ti.com"}, "code").value == "444444"
+    assert mailbox.search("sam@example.com", "app-password", since, {"ti.com"}, "code").value == "444444"
 
 
 def test_mail_another_job_s_by_its_subject_is_passed_over(imap):
@@ -215,11 +217,11 @@ def test_mail_another_job_s_by_its_subject_is_passed_over(imap):
         seen.append((domain, subject))
         return "onsemi" in subject
 
-    assert mailbox.search("sam@gmail.com", "pw", since, allowed, "code", others=others).value == "222222"
+    assert mailbox.search("sam@example.com", "pw", since, allowed, "code", others=others).value == "222222"
     assert ("workflow.email.us-phoenix-1.ocs.oraclecloud.com", "onsemi Confirm Your Identity") in seen
     imap.messages = imap.messages[:1]
-    assert mailbox.search("sam@gmail.com", "pw", since, allowed, "code", others=others) is None
-    assert mailbox.search("sam@gmail.com", "pw", since, allowed, "code").value == "111111"  # (as before, without)
+    assert mailbox.search("sam@example.com", "pw", since, allowed, "code", others=others) is None
+    assert mailbox.search("sam@example.com", "pw", since, allowed, "code").value == "111111"  # (as before, without)
     fetches = [c[2] for i in imap.instances for c in i.calls if c[0] == "fetch" and "HEADER" in c[2]]
     assert "SUBJECT" in fetches[0] and "SUBJECT" not in fetches[-1], fetches
 
@@ -238,14 +240,14 @@ def test_a_malformed_message_is_passed_over(imap, monkeypatch):
         return real(msg)
 
     monkeypatch.setattr(mailbox, "_parts", parts)
-    assert mailbox.search("sam@gmail.com", "app-password", since, {"ti.com"}, "code").value == "555555"
+    assert mailbox.search("sam@example.com", "app-password", since, {"ti.com"}, "code").value == "555555"
 
 
 def test_the_mail_service_is_reached_over_a_checked_connection(imap, monkeypatch):
     """imaplib's IMAP4_SSL alone checks neither the server's certificate nor its name (the review of Oct 15):
     anything on the way could stand in for Gmail and take the app password. The connection checks both, and a
     certificate that doesn't check out is said, with the app password unsent."""
-    assert mailbox.search("sam@gmail.com", "app-password", time.time(), {"ti.com"}, "code") is None
+    assert mailbox.search("sam@example.com", "app-password", time.time(), {"ti.com"}, "code") is None
     ctx = imap.instances[0].ssl_context
     assert isinstance(ctx, ssl.SSLContext) and ctx.verify_mode == ssl.CERT_REQUIRED and ctx.check_hostname
     assert ctx.cert_store_stats()["x509_ca"] > 0  # (the system's root certificates, or certifi's)
@@ -257,7 +259,7 @@ def test_the_mail_service_is_reached_over_a_checked_connection(imap, monkeypatch
 
     monkeypatch.setattr(mailbox.imaplib, "IMAP4_SSL", Refuses)
     with pytest.raises(MailboxError, match="certificate didn't check out.*nothing was sent to it") as e:
-        mailbox.search("sam@gmail.com", "app-password", time.time(), {"ti.com"}, "code")
+        mailbox.search("sam@example.com", "app-password", time.time(), {"ti.com"}, "code")
     # (not in a refused app password's words: the desk would retire the saved one until a new one is saved)
     assert "app password" not in str(e.value) and "self-signed certificate" in str(e.value)
 
@@ -265,9 +267,9 @@ def test_the_mail_service_is_reached_over_a_checked_connection(imap, monkeypatch
 def test_a_refused_app_password_says_so(imap):
     imap.accept = False
     with pytest.raises(MailboxError, match="app password"):
-        mailbox.search("sam@gmail.com", "wrong", time.time(), {"ti.com"}, "code")
-    with pytest.raises(MailboxError, match="can't read mail for example.com"):
-        mailbox.search("sam@example.com", "x", time.time(), {"ti.com"}, "code")
+        mailbox.search("sam@example.com", "wrong", time.time(), {"ti.com"}, "code")
+    with pytest.raises(MailboxError, match="can't read mail for example.org"):
+        mailbox.search("sam@example.org", "x", time.time(), {"ti.com"}, "code")
 
 
 def test_mail_after_another_jobs_wait_began_is_that_jobs(imap):
@@ -279,8 +281,8 @@ def test_mail_after_another_jobs_wait_began_is_that_jobs(imap):
         (since + 60, _message("other@otp.workday.com", "Verify", "Your verification code is 222222")),
     ]
     workday = mailbox.ATS_MAIL_DOMAINS["workday"]
-    assert mailbox.search("sam@gmail.com", "pw", since, workday, "code").value == "222222"
-    assert mailbox.search("sam@gmail.com", "pw", since, workday, "code", before=since + 50).value == "111111"
+    assert mailbox.search("sam@example.com", "pw", since, workday, "code").value == "222222"
+    assert mailbox.search("sam@example.com", "pw", since, workday, "code", before=since + 50).value == "111111"
 
 
 def test_the_code_not_a_job_number_a_minute_count_or_a_phone_number():
@@ -305,7 +307,7 @@ def test_a_code_split_by_its_markup_or_only_in_the_html_is_read(imap):
     both.set_content("Hi Sam, your code is in the HTML version of this email.")
     both.add_alternative("<p>Your verification code is <b>55</b><b>1234</b></p>", subtype="html")
     imap.messages = [(since + 10, bytes(both))]
-    assert mailbox.search("sam@gmail.com", "app-password", since, {"ti.com"}, "code").value == "551234"
+    assert mailbox.search("sam@example.com", "app-password", since, {"ti.com"}, "code").value == "551234"
 
 
 def test_the_confirmation_link_not_a_tagged_logo_or_a_deactivate_link():
@@ -323,13 +325,13 @@ def test_a_mail_service_hiccup_isnt_a_refused_password(imap, error):
     (a refusal would have it wait for a new one that isn't needed)."""
     imap.login_error = error
     with pytest.raises(MailboxError) as e:
-        mailbox.search("sam@gmail.com", "abcd efgh ijkl mnop", time.time(), {"ti.com"}, "code")
+        mailbox.search("sam@example.com", "abcd efgh ijkl mnop", time.time(), {"ti.com"}, "code")
     assert "app password" not in str(e.value)
 
 
 def test_an_app_password_with_odd_characters_is_said_to_be_wrong(imap):
     with pytest.raises(MailboxError, match="app password"):
-        mailbox.search("sam@gmail.com", "p\u00e4sswort", time.time(), {"ti.com"}, "code")
+        mailbox.search("sam@example.com", "p\u00e4sswort", time.time(), {"ti.com"}, "code")
 
 
 def test_mail_from_before_the_wait_can_be_left_out(imap):
@@ -337,8 +339,8 @@ def test_mail_from_before_the_wait_can_be_left_out(imap):
     wait began is that job's: no looking back."""
     since = time.time()
     imap.messages = [(since - 60, _message("acme@otp.workday.com", "Verify", "Your verification code is 111111"))]
-    assert mailbox.search("sam@gmail.com", "pw", since, {"workday.com"}, "code").value == "111111"
-    assert mailbox.search("sam@gmail.com", "pw", since, {"workday.com"}, "code", look_back=0) is None
+    assert mailbox.search("sam@example.com", "pw", since, {"workday.com"}, "code").value == "111111"
+    assert mailbox.search("sam@example.com", "pw", since, {"workday.com"}, "code", look_back=0) is None
 
 
 def test_codes_from_greenhouses_mail_domain_and_an_employers_own_eightfold_site():
@@ -373,14 +375,14 @@ def test_the_code_wherever_the_email_puts_it(imap):
     since = time.time()
     imap.messages = [(since + 10, _alternative("Verify", "Hi Sam, see the HTML version.",
                                                "<span>Your verification code</span><span>482913</span>"))]
-    assert mailbox.search("sam@gmail.com", "pw", since, {"ti.com"}, "code").value == "482913"
+    assert mailbox.search("sam@example.com", "pw", since, {"ti.com"}, "code").value == "482913"
     imap.messages = [(since + 10, _alternative(
         "Verify", "Your verification code is in this email.\nApplication 2617841 received.",
         "<p>Your verification code is <b>551234</b></p><p>Application 2617841 received.</p>"))]
-    assert mailbox.search("sam@gmail.com", "pw", since, {"ti.com"}, "code").value == "551234"
+    assert mailbox.search("sam@example.com", "pw", since, {"ti.com"}, "code").value == "551234"
     imap.messages = [(since + 10, _message("no-reply@careers.ti.com", "Your verification code",
                                            "Use 482913 to verify your email address."))]
-    assert mailbox.search("sam@gmail.com", "pw", since, {"ti.com"}, "code").value == "482913"
+    assert mailbox.search("sam@example.com", "pw", since, {"ti.com"}, "code").value == "482913"
 
 
 def test_a_placeholder_link_or_a_deactivation_in_a_links_query_isnt_opened():
@@ -395,7 +397,7 @@ def test_a_refusal_that_also_says_try_later_is_a_refusal(imap):
     imap.login_error = imaplib.IMAP4.error("[AUTHENTICATIONFAILED] Invalid credentials. Too many failed attempts, "
                                            "try again later.")
     with pytest.raises(MailboxError, match="app password"):
-        mailbox.search("sam@gmail.com", "abcd efgh ijkl mnop", time.time(), {"ti.com"}, "code")
+        mailbox.search("sam@example.com", "abcd efgh ijkl mnop", time.time(), {"ti.com"}, "code")
 
 
 def test_brassrings_passcode_mail_from_its_own_domains(imap):
@@ -414,7 +416,7 @@ def test_brassrings_passcode_mail_from_its_own_domains(imap):
     since = time.time()
     imap.messages = [(since + 8, _message("Edward Jones <noreply@kenexa.com>", "Your Passcode",
                                           "Your passcode is 482913. It will expire in 10 minutes."))]
-    found = mailbox.search("sam@gmail.com", "app-password", since, brassring, "code")
+    found = mailbox.search("sam@example.com", "app-password", since, brassring, "code")
     assert (found.value, found.sender, found.spam) == ("482913", "kenexa.com", False)
 
 
@@ -429,7 +431,7 @@ def test_a_passcode_email_is_read_as_a_code(imap, body, markup):
     plain or an HTML body, whether the words are in the body or only in the subject."""
     since = time.time()
     imap.messages = [(since + 8, _message("Edward Jones <noreply@brassring.com>", "Your Passcode", body, html=markup))]
-    assert mailbox.search("sam@gmail.com", "app-password", since, {"brassring.com"}, "code").value == "482913"
+    assert mailbox.search("sam@example.com", "app-password", since, {"brassring.com"}, "code").value == "482913"
 
 
 def _signed(raw: bytes) -> bytes:
@@ -443,7 +445,7 @@ def test_a_code_in_the_spam_folder_is_read_when_the_inbox_has_none(imap):
     same site's mail since the wait began) when the inbox has no code; a code in the inbox comes first."""
     since = time.time()
     spam = "[Gmail]/Spam"
-    imap.messages = [(since + 5, _message("Deals <deals@shop.com>", "Your code", "Your verification code is 222222"))]
+    imap.messages = [(since + 5, _message("Deals <deals@shop.example.com>", "Your code", "Your verification code is 222222"))]
     imap.spam = [
         (since - 3600, _message("noreply@brassring.com", "Your Passcode", "Your passcode is 111111")),  # before the wait
         (since + 9, _message("Offers <offers@shop.com>", "Your Passcode", "Your passcode is 333333")),  # not the site
@@ -451,7 +453,7 @@ def test_a_code_in_the_spam_folder_is_read_when_the_inbox_has_none(imap):
         # the newest, claiming the site's address, but not passed by the mail service: a forgery, never read
         (since + 15, _message("noreply@brassring.com", "Your Passcode", "Your passcode is 999999")),
     ]
-    found = mailbox.search("sam@gmail.com", "app-password", since, {"brassring.com"}, "code")
+    found = mailbox.search("sam@example.com", "app-password", since, {"brassring.com"}, "code")
     assert (found.kind, found.value, found.sender, found.spam) == ("code", "482913", "brassring.com", True)
     calls = imap.instances[0].calls
     assert ("select", "INBOX", True) in calls and ("select", f'"{spam}"', True) in calls  # both read-only
@@ -459,12 +461,12 @@ def test_a_code_in_the_spam_folder_is_read_when_the_inbox_has_none(imap):
     assert calls[-1] == ("logout",)
     # a code in the inbox is the answer: its Spam folder isn't opened
     imap.messages.append((since + 20, _message("noreply@brassring.com", "Your Passcode", "Your passcode is 555555")))
-    found = mailbox.search("sam@gmail.com", "app-password", since, {"brassring.com"}, "code")
+    found = mailbox.search("sam@example.com", "app-password", since, {"brassring.com"}, "code")
     assert (found.value, found.spam) == ("555555", False)
     assert ("select", f'"{spam}"', True) not in imap.instances[-1].calls
     # nothing in either: nothing
     imap.messages, imap.spam = [], imap.spam[:2]
-    assert mailbox.search("sam@gmail.com", "app-password", since, {"brassring.com"}, "code") is None
+    assert mailbox.search("sam@example.com", "app-password", since, {"brassring.com"}, "code") is None
 
 
 @pytest.mark.parametrize("name, flagged", [("[Gmail]/Spam", True), ("Junk", True), ("Bulk Mail", True),
@@ -473,20 +475,20 @@ def test_the_spam_folder_is_found_by_its_flag_or_its_name(imap, name, flagged):
     imap.junk_name, imap.junk_flagged = name, flagged
     since = time.time()
     imap.spam = [(since + 10, _signed(_message("noreply@brassring.com", "Your Passcode", "Your passcode is 482913")))]
-    found = mailbox.search("sam@gmail.com", "app-password", since, {"brassring.com"}, "code")
+    found = mailbox.search("sam@example.com", "app-password", since, {"brassring.com"}, "code")
     assert found is not None and found.value == "482913" and found.spam
     assert ("select", f'"{name}"', True) in imap.instances[0].calls
 
 
 def test_an_account_with_no_spam_folder_or_one_that_wont_open_is_just_the_inbox(imap):
     since = time.time()
-    imap.messages = [(since + 5, _message("Deals <deals@shop.com>", "Your code", "Your verification code is 222222"))]
+    imap.messages = [(since + 5, _message("Deals <deals@shop.example.com>", "Your code", "Your verification code is 222222"))]
     imap.junk_name = None
-    assert mailbox.search("sam@gmail.com", "app-password", since, {"brassring.com"}, "code") is None
+    assert mailbox.search("sam@example.com", "app-password", since, {"brassring.com"}, "code") is None
     imap.junk_name, imap.spam_broken = "[Gmail]/Spam", True
-    assert mailbox.search("sam@gmail.com", "app-password", since, {"brassring.com"}, "code") is None
+    assert mailbox.search("sam@example.com", "app-password", since, {"brassring.com"}, "code") is None
     imap.messages = [(since + 5, _message("noreply@brassring.com", "Your Passcode", "Your passcode is 482913"))]
-    assert mailbox.search("sam@gmail.com", "app-password", since, {"brassring.com"}, "code").value == "482913"
+    assert mailbox.search("sam@example.com", "app-password", since, {"brassring.com"}, "code").value == "482913"
 
 
 def test_a_confirmation_link_in_the_spam_folder_is_found_too(imap):
@@ -495,5 +497,17 @@ def test_a_confirmation_link_in_the_spam_folder_is_found_too(imap):
     verify = "https://careers.acme.com/account/verify?token=abc"
     imap.spam = [(since + 10, _signed(_message("no-reply@careers.acme.com", "Confirm your email",
                                                f"Confirm your email address: {verify}")))]
-    found = mailbox.search("sam@gmail.com", "app-password", since, {"acme.com"}, "link", own)
+    found = mailbox.search("sam@example.com", "app-password", since, {"acme.com"}, "link", own)
     assert (found.kind, found.value, found.spam) == ("link", verify, True)
+
+
+def test_another_kind_of_code_is_never_taken_for_the_sign_up_code():
+    """The review of Oct 15: "promo code SAVE20" and "ZIP code 85201" in a mail were taken for its code (bounded by the
+    sender check and the 15-minute window, still the wrong code typed). The words before "code" say which kind it is."""
+    from job_apply.mailbox import find_code
+
+    assert find_code("Use promo code SAVE20 at checkout. Your verification code is 482913.") == "482913"
+    assert find_code("The postal code 85201 is on file. Verification code: 773311") == "773311"
+    assert find_code("Enter ZIP code 85201 to see jobs near you.") is None
+    assert find_code("Your promo code SAVE20 expires soon") is None
+    assert find_code("Your code: 218335") == "218335"

@@ -83,6 +83,7 @@ the scrubber (`python -m job_apply.fixtures`) before they become test fixtures.
   tables), `--artifacts <zip or folder> --companies "A,B"` (each employer's rounds, questions with their
   choices, and the page where it stopped). Use it instead of reading the issue's body or a run's logs.
   A run's artifact downloads with the GitHub tools' artifact link and curl.
+  `--timing <zip or folder>` gives each job system's time (middle, 90%) and the slowest employers.
   `--import-fixtures <zip or folder> [--companies "A,B"] [--replace]` copies the scrubbed pages a run
   stopped on into `tests/fixtures/live` (one already there stays unless replaced), so the offline tests
   check them; look each over before committing it (the repo is public).

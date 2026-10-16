@@ -179,10 +179,25 @@ def _snapshot_dir() -> Path:
     return base / "debug" / stamp
 
 
+# Saved pages kept in a debug folder (the newest; the pages a job stopped on keep their own count): a page holds every
+# frame's HTML and a screenshot, so they're never kept for ever (the review of Oct 15)
+DEBUG_KEEP = 20
+
+
+def _keep_newest(debug: Path) -> None:
+    """The newest DEBUG_KEEP saved pages of a debug folder kept, older ones gone (the stops' pages are the desk's own)."""
+    with contextlib.suppress(OSError):
+        saved = sorted(d for d in debug.iterdir() if d.is_dir() and not d.name.endswith("-stop"))
+        for old in saved[:-DEBUG_KEEP]:
+            shutil.rmtree(old, ignore_errors=True)
+
+
 async def _auto_snapshot(note: str, details: Any) -> str | None:
     """Capture the page when something didn't fill, so it can be debugged later."""
     try:
-        return str(await browser.snapshot(_snapshot_dir(), note=note, details=details))
+        path = await browser.snapshot(_snapshot_dir(), note=note, details=details)
+        _keep_newest(path.parent)
+        return str(path)
     except Exception:  # never let debugging break the actual tool call
         return None
 
@@ -499,6 +514,21 @@ def logged_emails(since_days: int | None = 90) -> dict[str, Any]:
     return {"count": len(rows), "threads": rows}
 
 
+def _forget_old_name(folder: Path, prof: config.Profile, kind: str, name: str) -> None:
+    """A job's document under the name 0.3.188 and before gave it ("Mary Ann_Rivera_Resume.pdf": the names as written),
+    gone once it's written under today's: else it sorted first and was uploaded, or its too-long marker held the job for
+    ever (the review of 0.3.189). Only in a job's own folder, and only that one name."""
+    old_stem = "_".join(str(p) for p in [prof.get("personal.first_name"), prof.get("personal.last_name")] if p)
+    old = f"{old_stem}_{'Resume' if kind == 'resume' else 'Cover_Letter'}" if old_stem else kind
+    if old == name:
+        return
+    for ext in (".pdf", ".md", ".too-long"):
+        path = folder / f"{old}{ext}"
+        with contextlib.suppress(OSError, ValueError):
+            if path.parent.resolve() == folder.resolve() and path.is_file():  # (a name with "/" in it: never elsewhere)
+                path.unlink()
+
+
 @tool()
 async def render_document(kind: str, markdown: str, job_id: int | None = None, default: bool = False) -> dict[str, Any]:
     """Turn a tailored resume or cover letter written in Markdown into a PDF in the job's
@@ -517,10 +547,15 @@ async def render_document(kind: str, markdown: str, job_id: int | None = None, d
     job_id = job["id"] if job else None
     folder = config.ensure_home() if job is None else Path(job["folder"])
     prof = config.Profile.load()
-    stem = "_".join(p for p in [prof.get("personal.first_name"), prof.get("personal.last_name")] if p)
+    # (a name as a file's name: words joined by "_", never a character a file system refuses or reads as a folder,
+    # "Ana/Luisa" or "O'Brien: Jr", the review of Oct 15; accented letters kept)
+    stem = "_".join(part for p in [prof.get("personal.first_name"), prof.get("personal.last_name")] if p
+                    for part in [re.sub(r"[^\w-]+", "_", str(p)).strip("_")] if part)
     name = f"{stem}_{'Resume' if kind == 'resume' else 'Cover_Letter'}" if stem else kind
     source = folder / f"{name}.md"
     folder.mkdir(parents=True, exist_ok=True)
+    if job_id is not None:
+        _forget_old_name(folder, prof, kind, name)
     source.write_text(markdown, encoding="utf-8")
     try:
         pages = await render_pdf(to_html(markdown, kind, title=name.replace("_", " ")), folder / f"{name}.pdf")
@@ -820,7 +855,46 @@ async def debug_snapshot(note: str = "") -> dict[str, Any]:
     a button that does nothing, a missed label — so the case can become a regression test
     (see the README's "Turning a failure into a test")."""
     path = await browser.snapshot(_snapshot_dir(), note=note)
+    _keep_newest(path.parent)
     return {"saved_to": str(path), "files": sorted(p.name for p in path.iterdir())}
+
+
+@tool()
+async def forget_saved_pages(job_id: int | None = None) -> dict[str, Any]:
+    """Delete the pages saved of the person's applications: each job folder's debug/ (the pages saved to look into a
+    stop) and its screenshot-*.jpg (the screenshot tool's), and the problem reports' pages and report.zip; one job's
+    with job_id, else every job's and the home's own debug/. They hold each frame's HTML or a picture of the page as
+    it was, the person's details on it among them. What stays: the pictures of a page before and after its Submit (the
+    record of what was sent), a report's text, and everything else in the folders."""
+    reports = config.home() / "reports"
+    if job_id is not None:
+        job = _job(job_id)
+        folders = [Path(job["folder"])] if job.get("folder") else []
+        report_dirs = sorted(reports.glob(f"{int(job['id']):04d}-*"))
+        debugs = [f / "debug" for f in folders]
+    else:
+        # (every job folder there is, the tracker's or not: one whose row was merged into another's keeps its own)
+        folders = sorted(p for p in config.applications_dir().glob("*") if p.is_dir())
+        report_dirs = sorted(reports.glob("*"))
+        debugs = [f / "debug" for f in folders] + [config.home() / "debug"]
+    removed = 0
+    for debug in debugs:
+        if debug.is_dir():
+            removed += sum(1 for d in debug.iterdir() if d.is_dir())
+            shutil.rmtree(debug, ignore_errors=True)
+    for folder in folders:
+        for shot in folder.glob("screenshot-*.jpg"):
+            with contextlib.suppress(OSError):
+                shot.unlink()
+                removed += 1
+    for report in report_dirs:
+        pages = report / "pages"
+        if pages.is_dir():
+            removed += sum(1 for p in pages.iterdir() if p.is_file())
+            shutil.rmtree(pages, ignore_errors=True)
+        with contextlib.suppress(OSError):
+            (report / "report.zip").unlink(missing_ok=True)
+    return {"removed": removed, "note": f"Deleted {removed} saved page(s) and screenshot(s)."}
 
 
 @tool(drives=True)

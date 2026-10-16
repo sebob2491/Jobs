@@ -209,7 +209,9 @@ def tables(state: dict[str, dict[str, str]], detail: dict[str, dict[str, str]]) 
 
 # --- the last run's changes, sorted ---------------------------------------------------------
 
-_CHANGE = re.compile(r"^- (.+?): (?:`(.+?)`|\*new\*) \u2192 `(.+?)` \(`(.*)`\)\s*$")
+# (an employer gone from a check, "*no longer checked*", and a change with no detail are lines too: the review of Oct 15
+# found both dropped)
+_CHANGE = re.compile(r"^- (.+?): (?:`(.+?)`|\*new\*) \u2192 (?:`(.+?)`|\*no longer checked\*)(?: \(`(.*)`\))?\s*$")
 # where a stop is a site's or the rules' doing, not the desk's: no fix of the desk's moves it on
 _EXPECTED = re.compile(r"^(Bot check|No opening found|Site blocks automated browsers|Site error|Account needed|"
                        r"Account form \(.+\) with a CAPTCHA|Account made as you apply|Cookie banner with no decline|"
@@ -229,9 +231,10 @@ def triage(comment: str) -> dict[str, list[str]]:
     """The last run's changes (live_compare.py's comment) in four lists: "better" (an employer got further),
     "expected" (it stops where a site or the product's rules stop it: a bot check, an account step a practice
     run never takes, a site's error, no openings), "added" (an employer new to a check, as far as the check goes:
-    a list grown, a check widened, run 104's thirty-nine chip employers new to the search check) and "look"
-    (likely the desk's: the ones to read first). Each line: "<check>: <employer>: <old> -> <new>: <where it stops>"."""
-    out: dict[str, list[str]] = {"look": [], "expected": [], "better": [], "added": []}
+    a list grown, a check widened, run 104's thirty-nine chip employers new to the search check), "gone" (one a check
+    no longer has) and "look" (likely the desk's: the ones to read first). Each line: "<check>: <employer>: <old> ->
+    <new>: <where it stops>"."""
+    out: dict[str, list[str]] = {"look": [], "expected": [], "better": [], "added": [], "gone": []}
     check = ""
     for line in comment.splitlines():
         if line.startswith("**"):
@@ -240,7 +243,10 @@ def triage(comment: str) -> dict[str, list[str]]:
         m = _CHANGE.match(line)
         if not m:
             continue
-        name, old, new, detail = m.group(1), m.group(2) or "new", m.group(3), m.group(4)
+        name, old, new, detail = m.group(1), m.group(2) or "new", m.group(3), m.group(4) or ""
+        if new is None:  # (a list or a check that no longer has it)
+            out["gone"].append(f"{check}: {name}: {old} -> no longer checked")
+            continue
         where, _ = why(new, detail)
         said = f"{check}: {name}: {old} -> {new}: {where}"
         if old == "new" and new in (*_FURTHER, "works", "no search"):
@@ -336,6 +342,37 @@ def import_fixtures(where: Path, wanted: list[str], into: Path = LIVE_FIXTURES, 
     return copied
 
 
+def timing(recs: list[dict[str, Any]], slowest: int = 5) -> list[str]:
+    """How long each job system's employers took in a run (the seconds each record keeps): the middle and the 90th
+    percentile, and the rounds, per system; then the slowest employers. The review of Oct 15: the time was recorded and
+    never summarised, so a site growing slower showed nowhere."""
+    from job_apply.ats import detect_ats
+
+    def system(r: dict[str, Any]) -> str:
+        rounds = r.get("rounds") or []
+        url = (rounds[-1].get("url") if rounds else None) or (r.get("posting") or {}).get("url")
+        return detect_ats(url) if url else "unknown"
+
+    def pct(values: list[float], q: float) -> float:
+        ordered = sorted(values)
+        return ordered[min(len(ordered) - 1, int(round(q * (len(ordered) - 1))))]
+
+    timed = [r for r in recs if isinstance(r.get("seconds"), (int, float))]
+    by: dict[str, list[dict[str, Any]]] = {}
+    for r in timed:
+        by.setdefault(system(r), []).append(r)
+    out = []
+    for name, group in sorted(by.items(), key=lambda kv: -pct([r["seconds"] for r in kv[1]], 0.5)):
+        secs = [float(r["seconds"]) for r in group]
+        rounds = [len(r.get("rounds") or []) for r in group]
+        out.append(f"{name}: {len(group)} employer(s), {pct(secs, 0.5):.0f} s middle, {pct(secs, 0.9):.0f} s at 90%, "
+                   f"{pct([float(x) for x in rounds], 0.5):.0f} round(s) middle")
+    if timed:
+        out.append("slowest: " + ", ".join(f"{r.get('company')} ({float(r['seconds']):.0f} s)"
+                                            for r in sorted(timed, key=lambda r: -float(r["seconds"]))[:slowest]))
+    return out
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--issue-file", help="a saved copy of the issue (its API JSON), instead of fetching it")
@@ -349,7 +386,12 @@ def main(argv: list[str] | None = None) -> int:
                     help="with --artifacts or --import-fixtures: these employers only (comma-separated)")
     ap.add_argument("--import-fixtures", type=Path, help="a run's artifact: copy its scrubbed stop pages into the tests")
     ap.add_argument("--replace", action="store_true", help="with --import-fixtures: replace fixtures already there")
+    ap.add_argument("--timing", type=Path, help="a run's artifact: the time each job system's employers took")
     args = ap.parse_args(argv)
+    if args.timing:
+        for line in timing(list(records(args.timing))):
+            print(line)
+        return 0
     if args.import_fixtures:
         wanted = [re.sub(r"[^a-z0-9]+", "-", w.strip().lower()).strip("-") for w in args.companies.split(",") if w.strip()]
         for name in import_fixtures(args.import_fixtures, wanted, replace=args.replace):
@@ -368,7 +410,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.changes:
         sorted_ = triage(last_comment())
         for key, title in (("look", "Look at (likely the desk's)"), ("expected", "Expected (a site's or the rules')"),
-                           ("better", "Better"), ("added", "Added (new to a check, as far as it goes)")):
+                           ("better", "Better"), ("added", "Added (new to a check, as far as it goes)"),
+                           ("gone", "Gone (no longer checked)")):
             print(f"{title}: {len(sorted_[key])}")
             for said in sorted_[key]:
                 print(f"  {said}")

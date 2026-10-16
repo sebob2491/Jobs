@@ -47,8 +47,15 @@ jobs:
       - name: Type check the live check's scripts (mypy)
         if: matrix.part == 1
         run: uv run --frozen mypy scripts  # (a step of its own: checked with the sources, job_apply resolves twice)
+      # (the browser Playwright downloads, kept between runs by the lock file that pins Playwright: its system
+      # libraries are still installed each run, the download isn't: the review of Oct 15)
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ms-playwright-${{ runner.os }}-${{ hashFiles('plugins/job-apply/server/uv.lock') }}
       - run: uv run --frozen playwright install --with-deps chromium
-      - run: uv run --frozen pytest -q -n auto
+      # (the 25 slowest tests named at the end of each part, so a test that grows slow shows)
+      - run: uv run --frozen pytest -q -n auto --durations=25
         env:
           JOB_APPLY_TEST_SHARD: ${{ matrix.part }}/2
 
@@ -76,10 +83,14 @@ jobs:
           enable-cache: true
           cache-dependency-glob: plugins/job-apply/server/uv.lock
       - run: uv sync --frozen --extra dev
+      - uses: actions/cache@v4
+        with:
+          path: ~\AppData\Local\ms-playwright
+          key: ms-playwright-${{ runner.os }}-${{ hashFiles('plugins/job-apply/server/uv.lock') }}
       - run: uv run --frozen playwright install chromium
       - name: The tests find the browser (else every browser test would be skipped, not failed)
         run: uv run --frozen python -c "import sys; sys.path.insert(0, 'tests'); from conftest import browser_available; sys.exit(not browser_available())"
-      - run: uv run --frozen pytest -q -n auto
+      - run: uv run --frozen pytest -q -n auto --durations=25
         env:
           JOB_APPLY_TEST_SHARD: ${{ matrix.part }}/2
 
