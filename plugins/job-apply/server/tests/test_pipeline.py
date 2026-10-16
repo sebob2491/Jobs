@@ -9945,3 +9945,120 @@ def test_a_box_workdays_own_field_alert_says_is_empty_though_it_shows_the_answer
     typed = next(i for i, line in enumerate(r.log) if line.startswith("typed again what the page said was empty though it showed it"))
     clicks = [i for i, line in enumerate(r.log) if line.startswith("clicked “Save and Continue”")]
     assert clicks and sum(c > typed for c in clicks) == 1, r.log  # (typed again once, then the step pressed once more)
+
+
+def test_a_refusal_for_want_of_verification_drawn_after_the_look_is_still_the_wait(srv, monkeypatch, job_apply_home):
+    """Vanguard's Workday again (run 100, on 0.3.178): its refusal, "Verify your account before you sign in…",
+    is drawn a moment after Sign In is pressed; the desk's next look saw the form alone, the sign-in then
+    counted as refused when the alert came, and a password reset was asked for before the page was looked at
+    again. A refusal is read as it stands when it's judged: for want of the account's verification, it's the
+    wait and the site's resend, never a reset."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "MAIL_POLL_SECONDS", 0)
+    monkeypatch.setenv("JOB_APPLY_SECRET_EMAIL_PASSWORD", "an-app-password")
+    monkeypatch.setattr(pipeline.mailbox, "imap_host", lambda address: "imap.example.com")
+    saved_password(monkeypatch)
+    manage_accounts(job_apply_home)
+    asked = []
+
+    with served_fixtures() as site:
+        link = f"{site}site/workday-verify.html"
+
+        def inbox(address, password, since, senders, want, allowed_link, before=None, look_back=None, others=None):
+            asked.append(want)
+            return pipeline.mailbox.Found(want, link, "myworkday.com", time.time()) if want == "link" else None
+
+        monkeypatch.setattr(pipeline.mailbox, "search", inbox)
+        job = srv.add_job(url=f"{site}site/workday-account.html?exists=not-a-real-password&verify=stale&slow", title="FSE",
+                          company="Example Fab")["job"]
+        applier = Applier(srv)
+
+        async def go():
+            applier.start()
+            try:
+                r = applier.enqueue(job["id"])
+                await until(lambda: r.seen_form and r.status not in ("queued", "running"), about=state(r))
+                return r, await workday_did(r.page)
+            finally:
+                await applier.stop()
+
+        r, did = run(go())
+    log = r.log
+    assert "link" in asked and "reset" not in asked, asked
+    assert (did.get("resends", 0), did.get("resets", 0), did.get("presses", 0), did["signIns"]) == (1, 0, 0, 2), (did, log)
+    assert not any("password reset" in line for line in log) and r.need not in ("sign_in", "email_code"), (r.reason, log)
+
+
+def test_a_new_accounts_refusal_drawn_after_the_look_is_still_the_wait(srv, monkeypatch, job_apply_home):
+    """The same for the account the desk just made: Workday's "An email has been sent to you. Please verify your
+    account" is its Sign In's answer too, drawn a moment after the press (the review of 0.3.180). After the one
+    reset asked before the account was made (the saved password refused, no reset email: the way to Create
+    Account), the desk waits for the link, asks for no second reset and presses no second Create Account; the link
+    opened, it signs in once."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "RESET_MAIL_WAIT", 4)
+    monkeypatch.setattr(pipeline, "MAIL_POLL_SECONDS", 0)
+    monkeypatch.setenv("JOB_APPLY_SECRET_EMAIL_PASSWORD", "an-app-password")
+    monkeypatch.setattr(pipeline.mailbox, "imap_host", lambda address: "imap.example.com")
+    saved_password(monkeypatch)
+    manage_accounts(job_apply_home)
+    asked = []
+
+    with served_fixtures() as site:
+        link = f"{site}site/workday-verify.html"
+
+        def inbox(address, password, since, senders, want, allowed_link, before=None, look_back=None, others=None):
+            asked.append(want)
+            return pipeline.mailbox.Found(want, link, "myworkday.com", time.time()) if want == "link" else None
+
+        monkeypatch.setattr(pipeline.mailbox, "search", inbox)
+        job = srv.add_job(url=f"{site}site/workday-account.html?verify=late&slow", title="FSE",
+                          company="Example Fab")["job"]
+        applier = Applier(srv)
+
+        async def go():
+            applier.start()
+            try:
+                r = applier.enqueue(job["id"])
+                await until(lambda: r.seen_form and r.status not in ("queued", "running"), about=state(r))
+                return r, await workday_did(r.page)
+            finally:
+                await applier.stop()
+
+        r, did = run(go())
+    log = r.log
+    assert "reset" in asked and "link" in asked and asked.index("reset") < asked.index("link"), asked
+    # (one refused before the account was made, one for want of the link, one after it; one reset, before the account)
+    assert (did["created"], did["presses"], did.get("resets", 0), did["signIns"]) == (1, 1, 1, 3), (did, log)
+    made = next(i for i, line in enumerate(log) if line.startswith("pressed \u201cCreate Account\u201d"))
+    resets = [i for i, line in enumerate(log) if "asked it to email a password reset" in line]
+    assert resets and all(i < made for i in resets), log
+    waited = next(i for i, line in enumerate(log) if "emailed you a link to verify your new account" in line)
+    opened = log.index("opened the confirmation link from your email (sent from myworkday.com)")
+    assert made < waited < opened and r.need not in ("sign_in", "email_code"), (r.reason, log)
+    assert sum(line.startswith("created your account on") for line in log) == 1, log
+
+
+def test_a_posting_page_that_is_the_sites_own_error_page_is_said_in_its_words(srv, monkeypatch):
+    """BrassRing's error page where Edward Jones' posting should be (run 100): "Error. An error occurred while
+    processing your request.", the same after the one reload. The desk said it couldn't find the button that
+    moves the application on; the page is the site's own trouble, said in its words."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    job = srv.add_job(url=fixture_url("site/brassring-error.html"), title="Learning Experience Designer",
+                      company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert (r.status, r.need) == ("needs_you", "stuck"), (r.reason, r.log)
+    assert "An error occurred while processing your request" in r.reason and "reloaded" in r.reason, r.reason
+    assert "couldn't find the button" not in r.reason, r.reason
+    assert any("so I reloaded it" in line for line in r.log), r.log

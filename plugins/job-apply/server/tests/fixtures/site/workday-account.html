@@ -23,7 +23,9 @@
      the test identity's from an earlier run): Sign In is refused, whatever the password, with "Verify your
      account before you sign in or request a verification email.", and from then on the page shows Workday's
      "Still can't sign in?" blurb with its "Resend Account Verification" (presses counted in wd.resends, each
-     said to have sent a new email); once the link was opened, the password is checked as usual.
+     said to have sent a new email); once the link was opened, the password is checked as usual. &slow (with
+     ?verify=stale or ?verify=late): the refusal is drawn five seconds after the press (as Workday's comes a moment
+     after it, live: the desk's next look saw the form alone).
      ?cover: Sign In's button drawn as KLA's was (live, Oct 2026): a form's "Sign In" button, hidden
      (aria-hidden, tabindex -2), under a div of the site's own (role="button", data-automation-id="click_filter",
      named "Submit") that takes the click. The hidden button does nothing, and nothing is said. -->
@@ -76,13 +78,19 @@
       const account = got('account', null);
       if (stale()) {
         put('refused', true);
-        $('err').textContent = VERIFY_FIRST;
-        if (!$('resend')) { $('err').insertAdjacentHTML('afterend', blurb()); wireResend(); }
+        const refuse = () => {
+          $('err').textContent = VERIFY_FIRST;
+          if (!$('resend')) { $('err').insertAdjacentHTML('afterend', blurb()); wireResend(); }
+        };
+        if (q.has('slow')) setTimeout(refuse, 5000); else refuse();
       }
       else if (unverified()) {
         put('refused', true);
-        $('err').textContent = VERIFY;
-        if (!$('resend')) { $('err').insertAdjacentHTML('afterend', blurb()); wireResend(); }
+        const refuse = () => {
+          $('err').textContent = VERIFY;
+          if (!$('resend')) { $('err').insertAdjacentHTML('afterend', blurb()); wireResend(); }
+        };
+        if (q.has('slow')) setTimeout(refuse, 5000); else refuse();
       }
       else if (account !== null && $('pw').value === account) location.href = 'step1.html';
       else $('err').textContent = 'You may have entered the wrong email address or password or your account might be locked.';

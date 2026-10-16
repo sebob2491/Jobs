@@ -46,6 +46,7 @@ ONCE_SETTLE = 1.0  # seconds after filling the person's answers before checking 
 MAX_STEPS = 30  # passes over a job's pages (Avnet's Workday, run 53: an account and seven steps took 15)
 LATE_BUTTONS_WAIT = 10  # seconds for a page's buttons to be drawn
 SIGN_IN_SETTLE = 10  # seconds a sign-in sent, its form still on show, may take before it counts as refused
+REFUSAL_SETTLE = 2  # seconds a refused sign-in's alert may still take to show once it counts as refused (Workday's)
 RESET_SETTLE = 15  # the same for a new password sent: its reset form still on show, no error yet (Workday's)
 STEP_SAVE_WAIT = 20  # for a step pressed three times that's still saving (KLA's Workday), before it counts as stuck
 STEP_LOAD_WAIT = 30  # for a step still loading its questions, its loading dots on show (KLA's Workday)
@@ -1881,12 +1882,7 @@ class Applier:
                 if asked == "no_account":
                     sign_ins["submitted"] = sign_ins["wants_account"] = 1
                     continue
-            alerts = " ".join(data.get("errors") or [])
-            if (kind == "sign_in" and manage and not run.verifying
-                    and (sign_ins.get("made") or _VERIFY_FIRST.search(alerts)
-                         or run.accounts_tried and _VERIFY_SENT.search(alerts))
-                    and _VERIFY_EMAIL.search(said_exists)
-                    and sum(f.get("kind") == "password" and not _code_box(f) for f in data.get("fields") or []) == 1):
+            if kind == "sign_in" and manage and not run.verifying and _wants_verification(run, data, text, sign_ins):
                 # the account just made says it emailed a link to verify it (Banner Health's Workday, live,
                 # Oct 2026): its Sign In takes no password before the link is opened. Or an account there from
                 # before, never verified, refuses the sign-in for that (Vanguard's, the test identity, run 98:
@@ -1915,6 +1911,22 @@ class Applier:
                         await self._wait_for_change(data, LATE_BUTTONS_WAIT)
                     continue
                 if done == "refused":
+                    if manage and not run.verifying:
+                        # the refusal as it stands now, not as the lap's look had it: Workday's comes a moment after the
+                        # press (Vanguard's, run 100: the look saw the form alone, the sign-in counted as refused, and a
+                        # reset was asked for). Its alert may still be on its way where the sign-in counted as refused
+                        # at once (no settle wait on this pass: the review): a moment more for it. For want of the
+                        # account's verification (an account from before, or the one just made), it's the wait
+                        shown_now, shown_text = await self._look()
+                        deadline = time.monotonic() + REFUSAL_SETTLE
+                        while (not shown_now.get("errors") and time.monotonic() < deadline
+                               and sum(f.get("kind") == "password" and not _code_box(f)
+                                       for f in shown_now.get("fields") or []) == 1):
+                            await asyncio.sleep(0.5)
+                            shown_now, shown_text = await self._look()
+                        if _wants_verification(run, shown_now, shown_text, sign_ins):
+                            # (the account made: its sign-in waits on the link, it isn't refused)
+                            return await self._await_verify_email(run, shown_now, shown_text)
                     run.account_made = ""  # (its sign-in is refused: no account was made)
                 asked = await self._ask_for_reset(run, data, sign_ins) if done == "refused" and manage else None
                 if asked == "paused":
@@ -1941,7 +1953,9 @@ class Applier:
                 if done == "prefilled" and manage and not run.accounts_tried and await self._make_account(run, data):
                     # a new account: its sign-in (where the site asks for one) is tried afresh, once more
                     # however many the refused password had
-                    sign_ins.pop("submitted", None), sign_ins.pop("create_account", None)
+                    # (and its settle wait is the new sign-in's own: spent on the page before the account, the next
+                    # press counted as refused at once, before Workday's "An email has been sent" was drawn: 0.3.180)
+                    sign_ins.pop("submitted", None), sign_ins.pop("create_account", None), sign_ins.pop("settled", None)
                     sign_ins["made"] = 1
                     run.sign_in_tries = min(run.sign_in_tries, SIGN_IN_TRIES - 1)
                     continue
@@ -2399,6 +2413,16 @@ class Applier:
                                                                              run.start_reloaded else "")
                                        + ". That's the site's own trouble: reload the page in the browser window (now, or "
                                        "later), then press Resume.")
+                said_error = _SPENT_PAGE.search(" ".join([*(data.get("headings") or []), (full or text)[:3000]]))
+                if (run.start_reloaded and run.opened_fresh and not pressed and not run.seen_form and not run.pressed_before
+                        and not _app_fields(data) and not data.get("actions") and said_error):
+                    # the site's own error page where the posting should be, still after the one reload (BrassRing's for
+                    # Edward Jones, run 100: "Error. An error occurred while processing your request."): the site's
+                    # trouble, said in its words, not as a step button not found
+                    await self._bring_forward(run)
+                    return self._pause(run, "stuck", f"{_site(run, data)}'s page for this job says \u201c{said_error.group(0)}"
+                                       "\u201d, even after I reloaded it. That's the site's own trouble: open the posting "
+                                       "in the browser window later (then press Resume), or skip the job.")
                 if (run.start_reloaded and run.opened_fresh and not pressed and not run.seen_form
                         and not run.pressed_before and not _app_fields(data) and not data.get("actions")
                         and not data.get("headings")):
@@ -4696,6 +4720,18 @@ def _sign_up_box(data: dict[str, Any], submits: list[dict[str, Any]]) -> bool:
     return (0 < len(fields) <= 4 and len(submits) == 1 and bool(_ENTRY.match(final_text(submits[0]["text"])))
             and all(f.get("kind") != "file" and _CONTACT_FIELD.match(norm(clean_label(f.get("label") or "")))
                     for f in fields))
+
+
+def _wants_verification(run: Run, data: dict[str, Any], text: str, sign_ins: dict[str, int]) -> bool:
+    """A sign-in page refusing for want of the account's verification, with one password box and the page's words
+    of verifying: the account the desk just made (Banner Health's "An email has been sent to you. Please verify
+    your account"), or made on an earlier pass with the page still saying it emailed the link (a Resume before the
+    link was opened), or an account from before whose refusal is in the page's own alerts ("Verify your account
+    before you sign in", Vanguard's). Judged at the lap's look and again as a refusal stands (0.3.178 to 0.3.180)."""
+    alerts = " ".join(data.get("errors") or [])
+    return bool((sign_ins.get("made") or _VERIFY_FIRST.search(alerts) or run.accounts_tried and _VERIFY_SENT.search(alerts))
+                and _VERIFY_EMAIL.search(" ".join([alerts, text[:3000]]))
+                and sum(f.get("kind") == "password" and not _code_box(f) for f in data.get("fields") or []) == 1)
 
 
 def _forgot_action(actions: list[dict[str, Any]]) -> dict[str, Any] | None:

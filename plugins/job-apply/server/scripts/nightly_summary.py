@@ -133,6 +133,8 @@ def why(outcome: str, said: str) -> tuple[str, str]:
         return "Cookie banner with no decline", "Choose in the banner (or turn on accept_cookies)"
     if "Something went wrong" in d:
         return "Site error (\"Something went wrong\")", "Being looked into"
+    if "site's own trouble" in d:  # (the site's error page where the posting should be, "Content missing", an empty page)
+        return "Site error (the site's own page)", "Reload or open the posting later, then Resume"
     # steps that are the person's by the desk's rules (run 51: Circle K's and Taylor Morrison's assessments, Kforce's
     # screening, the State of Arizona's name and email sent first)
     if "take its assessment" in d:
