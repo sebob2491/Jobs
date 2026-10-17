@@ -493,8 +493,8 @@ const STOP_WORDS = {questions: ["question card", "question cards"], sign_in: ["s
   tailor: ["tailored resume", "tailored resumes"], restarted: ["restart", "restarts"], failed: ["failure", "failures"],
   other: ["other stop", "other stops"]};
 const stopWords = (kind, n) => (STOP_WORDS[kind] || [String(kind).replace(/_/g, " "), String(kind).replace(/_/g, " ")])[n === 1 ? 0 : 1];
-const ENDED_WORDS = {ready: "at its review page", submitted: "sent", failed: "failed", skipped: "skipped",
-  stopped: "cut short when the desk stopped"};
+const ENDED_WORDS = {ready: "at its review page", submitted: "sent by the desk", failed: "failed", skipped: "skipped",
+  stopped: "cut short when the desk stopped", marked_applied: "marked as applied"};
 const jobsSaid = (n) => `${n} job${n === 1 ? "" : "s"}`;
 function whenSaid(iso) {
   const d = new Date(iso);
@@ -504,7 +504,8 @@ function renderWeek(h) {
   const body = $("week-body");
   if (!h.any) {
     body.innerHTML = `<p>No history yet. Each time the desk is done with a job for now (at its review page, sent,
-      stopped for you, failed or skipped), it writes it down, and this window sums up the last 7 days.</p>`;
+      stopped for you, failed, skipped or marked as applied), it writes it down, and this window sums up the last 7
+      days.</p>`;
     return;
   }
   if (!h.lines) {
@@ -513,11 +514,13 @@ function renderWeek(h) {
   }
   const pauses = Object.entries(h.pauses || {});
   const said = [
-    `Filled up to their review page: ${jobsSaid(h.reviewed)}. Sent: ${jobsSaid(h.submitted)}.`,
+    `Filled up to their review page: ${jobsSaid(h.reviewed)}. Sent by the desk: ${jobsSaid(h.submitted)}.`
+      + (h.marked ? ` Marked as applied: ${jobsSaid(h.marked)}.` : ""),
     pauses.length ? `Stopped for you: ${inWords(pauses.map(([k, n]) => `${n} ${stopWords(k, n)}`))}.` : "It never stopped for you.",
     `Failed: ${jobsSaid(h.failed)}. Skipped: ${jobsSaid(h.skipped)}.`
       + (h.stopped ? ` Cut short when the desk stopped: ${jobsSaid(h.stopped)}.` : ""),
-    h.timed_jobs ? `Time: ${h.minutes} minutes in all; a job took ${h.median_minutes} minutes (the median of ${jobsSaid(h.timed_jobs)}).` : "",
+    h.timed_jobs ? `Time with the desk (waits included; jobs at once overlap): ${h.minutes} minutes in all; a job took `
+      + `${h.median_minutes} minutes (the median of ${jobsSaid(h.timed_jobs)}).` : "",
   ].filter(Boolean);
   const stops = (h.stops || []).map((s) => `<li>${esc(s.company)}: ${s.times} time${s.times === 1 ? "" : "s"}, most often
     ${esc(stopWords(s.kind, 1))}</li>`).join("");

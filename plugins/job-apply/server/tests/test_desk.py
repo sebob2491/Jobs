@@ -3097,7 +3097,7 @@ def test_this_week_sums_up_the_desks_history(srv, job_apply_home):
         _history_line(now, 10, 5.0, job_id=1, company="Old Co", title="Tech", outcome="needs_you", need="sign_in"),
         _history_line(now, 6, 4.0, job_id=2, company="Acme Fab", title="FSE", outcome="needs_you", need="sign_in"),
         _history_line(now, 5.9, 2.0, job_id=2, company="Acme Fab", title="FSE", outcome="ready"),
-        _history_line(now, 5, None, job_id=2, company="Acme Fab", title="FSE", outcome="submitted"),
+        _history_line(now, 5, None, job_id=2, company="Acme Fab", title="FSE", outcome="marked_applied"),
         _history_line(now, 4, 6.0, job_id=3, company="Acme Fab", title="Tech", outcome="needs_you", need="questions"),
         _history_line(now, 3.8, 1.0, job_id=3, company="Acme Fab", title="Tech", outcome="needs_you", need="sign_in"),
         _history_line(now, 3.5, 3.0, job_id=4, company="Other Litho", title="Tech", outcome="needs_you",
@@ -3131,10 +3131,11 @@ def test_this_week_sums_up_the_desks_history(srv, job_apply_home):
     empty, refused, bad, week, month = run(go())
     assert (empty["any"], empty["lines"], empty["recent"], empty["stops"]) == (False, 0, [], []), empty
     assert refused == [403, 403, 403] and bad == [400, 400, 400, 400], (refused, bad)
-    assert {k: week[k] for k in ("days", "any", "lines", "jobs", "reviewed", "submitted", "failed", "skipped",
+    # (marked as applied by the person: neither filled up to its review page by the desk, nor sent by it)
+    assert {k: week[k] for k in ("days", "any", "lines", "jobs", "reviewed", "submitted", "marked", "failed", "skipped",
                                  "stopped", "pauses", "minutes", "median_minutes", "timed_jobs")} == {
-        "days": 7, "any": True, "lines": 10, "jobs": 6, "reviewed": 2, "submitted": 2, "failed": 1, "skipped": 1,
-        "stopped": 1, "pauses": {"sign_in": 2, "questions": 1, "bot_check": 1}, "minutes": 26.5,
+        "days": 7, "any": True, "lines": 10, "jobs": 6, "reviewed": 2, "submitted": 1, "marked": 1, "failed": 1,
+        "skipped": 1, "stopped": 1, "pauses": {"sign_in": 2, "questions": 1, "bot_check": 1}, "minutes": 26.5,
         "median_minutes": 6.0, "timed_jobs": 5}, week
     assert [(s["company"], s["times"], s["kind"]) for s in week["stops"]] == [
         ("Acme Fab", 3, "sign_in"), ("Other Litho", 2, "bot_check")], week["stops"]
@@ -3142,11 +3143,52 @@ def test_this_week_sums_up_the_desks_history(srv, job_apply_home):
     assert week["recent"][0]["minutes"] == 0.5 and week["recent"][0]["company"] == "Acme Fab", week["recent"]
     assert (month["lines"], month["jobs"], month["pauses"]["sign_in"]) == (11, 7, 3), month
     # Claude's desk_history tool says the same, the desk open or not
-    told = srv.desk_history(recent=3)
+    told = run(srv.desk_history(recent=3))
     assert {k: v for k, v in told.items() if k not in ("file", "since")} == {
         k: v for k, v in week.items() if k != "since"} and told["file"].endswith("runs.jsonl"), told
     with pytest.raises(ValueError):
-        srv.desk_history(days=0)
+        run(srv.desk_history(days=0))
+
+
+def test_this_week_takes_lines_changed_by_hand(srv, job_apply_home):
+    """The review of 0.3.204: a line changed by hand could break This week: "minutes": Infinity (which json reads) made
+    the window's JSON one that can't be sent, and a time before 1970 without its offset can't be told on some systems.
+    Such lines are passed over (their numbers that aren't, and the lines whose time can't be told), and nothing that
+    isn't a finite number or plain words is listed."""
+    from job_apply import history
+
+    now = history.stamp(time.time() - 60)
+    lines = [
+        f'{{"job_id": NaN, "company": "Acme Fab", "outcome": "ready", "minutes": Infinity, "rounds": Infinity, '
+        f'"pages": -Infinity, "ended": "{now}"}}',
+        f'{{"job_id": 5, "company": "Acme Fab", "outcome": "ready", "minutes": 2.0, "resumes": NaN, "reason": ["a"], '
+        f'"ended": "{now}"}}',
+        '{"job_id": 6, "company": "Acme Fab", "outcome": "failed", "ended": "1900-01-01T00:00:00"}',
+        '{"job_id": 7, "company": "Acme Fab", "outcome": "failed", "ended": "0001-01-01T00:00:00"}',
+        '{"job_id": 8, "company": "Acme Fab", "outcome": "failed", "ended": "9999-12-31T23:59:59-12:00"}',
+    ]
+    (job_apply_home / "runs.jsonl").write_text("".join(line + "\n" for line in lines), encoding="utf-8")
+    desk = Desk(srv)
+    desk.applier.start = lambda: None
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with _client(desk) as c:
+                return await c.get("/api/history?days=366", headers={"x-desk-token": desk.token})
+        finally:
+            await desk.stop()
+
+    answer = run(go())
+    assert answer.status_code == 200, answer.text
+    week = answer.json()
+    assert (week["minutes"], week["timed_jobs"], week["reviewed"]) == (2.0, 1, 2), week
+    assert all(isinstance(v, str) or v == v and abs(v) != float("inf") for e in week["recent"] for v in e.values()), \
+        week["recent"]
+    unnumbered = next(e for e in week["recent"] if e["outcome"] == "ready" and "minutes" not in e)
+    timed = next(e for e in week["recent"] if e.get("minutes") == 2.0)
+    assert {"job_id", "rounds", "pages"}.isdisjoint(unnumbered) and {"resumes", "reason"}.isdisjoint(timed), \
+        week["recent"]
 
 
 def test_the_desk_page_shows_each_log_lines_time_and_this_week(srv, job_apply_home):
@@ -3196,5 +3238,6 @@ def test_the_desk_page_shows_each_log_lines_time_and_this_week(srv, job_apply_ho
     assert len(times) == 3 and all(len(t) == 5 and t[2] == ":" and t.replace(":", "").isdigit() for t in times), times
     assert lines[0].startswith(times[0]) and lines[0].endswith("opened the posting"), lines
     assert "No history yet" in none_yet, none_yet
-    assert "Filled up to their review page: 1 job. Sent: 0 jobs." in week and "Example Fab" in week, week
+    assert "Filled up to their review page: 1 job. Sent by the desk: 0 jobs." in week and "Example Fab" in week, week
+    assert "Time with the desk (waits included; jobs at once overlap)" in week, week
     assert "at its review page (3.5 min)" in week and "a job took 3.5 minutes" in week, week

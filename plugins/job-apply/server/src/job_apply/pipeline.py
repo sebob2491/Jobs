@@ -934,6 +934,9 @@ class Run:
     pass_steps: set[tuple] = field(default_factory=set)
     rounds: int = 0
     resumes: int = 0
+    # gone in, but not sent by the desk: the person's "I submitted it", the tracker saying so already, or the site saying
+    # it went in (its lines' outcome is "marked_applied", not "submitted")
+    marked: bool = False
     page: Any = None  # its browser tab
     updated: float = field(default_factory=time.time)
 
@@ -947,7 +950,7 @@ class Run:
                                                                         "account_answers", "employer_mail", "others_mail",
                                                                         "went_in", "draft_pages", "submit_pressed",
                                                                         "sending", "cut_short", "started",
-                                                                        "pass_steps", "rounds", "resumes")},
+                                                                        "pass_steps", "rounds", "resumes", "marked")},
                 # (only for the cards that show it: a job queued or under way has none, and 30 of them made the
                 # page's state megabytes, every poll)
                 "went_in": None if self.status in ("queued", "running") else self.went_in.public()}
@@ -1439,8 +1442,9 @@ class Applier:
             was = run.status
             run.status, run.need, run.blocking, run.reason = "submitted", "", False, "Marked as applied."
             run.left = run.submit_unsent = run.left_at_restart = False
+            run.marked = run.marked or was != "submitted"  # (one the desk sent stays its own)
             if was != "submitted" and job_id not in self._slots:  # (one under way: its pass's line says it)
-                self._note_history(run, "submitted")
+                self._note_history(run, "marked_applied")
             self._wake.set()
         self._save_queue()
 
@@ -1722,12 +1726,13 @@ class Applier:
 
     # ------------------------------------------------------------- history
     def _note_history(self, run: Run, outcome: str, began: float | None = None, kind: str = "",
-                      at_once: int | None = None) -> None:
+                      at_once: int | None = None, need: str | None = None, reason: str | None = None) -> None:
         """A line in the desk's history (history.HISTORY_FILE): for a pass at this job that has ended (`began`: when it
-        began, `kind` its task's), or for the person's Skip or I submitted it while it wasn't under way (no pass: no
-        minutes). The job's number, employer, title and site; how it ended and why, in the desk's own words with anything
-        the person or the inbox gave taken out (_history_hidden); the steps it went through, its rounds and Resumes, and
-        Jobs at once. Whatever goes wrong, the job goes on."""
+        began, `kind` its task's; `need` and `reason` as it ended, where they've changed since), or for the person's Skip
+        or I submitted it while it wasn't under way (no pass: no minutes). The job's number, employer, title and site; how
+        it ended and why, in the desk's own words with anything the person or the inbox gave taken out, as far as can be
+        told (_history_hidden); the steps it went through, its rounds and Resumes, and Jobs at once. Whatever goes wrong,
+        the job goes on."""
         try:
             ended = time.time()
             company, title, url = run.company, run.title, run.url
@@ -1743,8 +1748,8 @@ class Applier:
                 entry["ended"] = history.stamp(ended)
             entry["outcome"] = outcome
             if outcome == "needs_you":
-                entry["need"] = run.need
-            entry["reason"] = history.short_reason(run.reason, self._history_hidden(run))
+                entry["need"] = run.need if need is None else need
+            entry["reason"] = history.short_reason(run.reason if reason is None else reason, self._history_hidden(run))
             if began is not None and kind != "submit":  # (a Submit's pass presses no step of the form)
                 entry["pages"] = len(run.pass_steps)
             entry.update(rounds=run.rounds, resumes=run.resumes,
@@ -1755,14 +1760,20 @@ class Applier:
 
     @staticmethod
     def _history_hidden(run: Run) -> set[str]:
-        """What a line of the history never holds, should a reason quote a page that shows it: the desk's secrets (each
-        job system's password, the inbox's), the codes the inbox gave for this job, the digest of the password it signed
-        in with, and every answer it has: the person's for this application alone, an account form's security answers,
-        and what went into the form."""
+        """What a line of the history keeps out, should a reason quote a page that shows it: the desk's secrets (each job
+        system's password, the inbox's), the codes the inbox gave for this job, the digest of the password it signed in
+        with, every answer it has (the person's for this application alone, an account form's security answers, what
+        went into the form) and the profile's own words (but its settings and its files' paths). Not the desk's own
+        words for a box ("ticked", "Yes"): history.short_reason takes them out as whole words, 4 characters or more."""
         hidden = set(_secret_values()) | {mail[1] for mail, job_id in list(_MAIL_TAKEN.items()) if job_id == run.job_id}
         hidden |= _texts(run.once) | _texts(run.account_answers) | {run.sign_in_key}
         hidden |= {str(e.get("value") or "") for e in list(run.went_in.answers.values())}
-        return hidden
+        try:
+            data = config.Profile.load().data
+            hidden |= _texts({k: v for k, v in data.items() if k not in ("settings", "documents")}, skip=("match",))
+        except Exception:  # (a profile that won't load: nothing more is hidden)
+            pass
+        return {v for v in hidden if " ".join(v.split()).casefold() not in _DESK_WORDS}
 
     # ------------------------------------------------------------- worker
     async def _worker(self) -> None:
@@ -1949,6 +1960,7 @@ class Applier:
         cut = False  # (and its pass cut short by that, not ended by itself)
         began, at_once = time.time(), self.at_once()  # (for the pass's line in the desk's history)
         run.pass_steps = set()
+        ended_as: tuple[str, str, str] | None = None  # (how its pages ended, before its stop's page was saved)
         try:
             with self.srv.browser.desk_view(run.job_id):
                 held = self._hold_tools(run.job_id)
@@ -1962,12 +1974,14 @@ class Applier:
                             # this job's from its start until then (the review of jobs at once)
                             await self._take_inbox(run, step=False)
                     await self._strict(self._submit(run) if kind == "submit" else self._drive_again_if_redrawn(run))
+                    ended_as = (run.status, run.need, run.reason)
                     await self._strict(self._save_stop(run))
                 except asyncio.CancelledError:
                     cancelled = cut = True
                     raise
                 except TabClosed:
-                    if run.status != "skipped":
+                    # (skipped, or marked applied, as it went: that stands)
+                    if run.status not in ("skipped", "submitted"):
                         run.status, run.need, run.blocking = "failed", "", False
                         run.reason = "Its tab was closed. Press Resume to start this application again."
                         # (every tab goes with the browser: a pass the browser's closing cut short is picked up again
@@ -1975,7 +1989,7 @@ class Applier:
                         run.cut_short = run.page is not None and self.srv.browser.lost(run.page) == "browser"
                         self._log(run, run.reason)
                 except Exception as e:
-                    if run.status != "skipped":
+                    if run.status not in ("skipped", "submitted"):
                         run.status, run.need = "failed", ""
                         run.reason = (f"Something went wrong: {type(e).__name__}: "
                                       f"{str(e).splitlines()[0][:200] if str(e) else ''}")
@@ -2008,9 +2022,15 @@ class Applier:
                 del self._slots[run.job_id]
             if not cancelled:  # (cut short: the queue stays as it was kept, this job under way in it)
                 self._save_queue()
-            outcome = "stopped" if cut and run.status in ("failed", "queued", "running") else run.status
-            if outcome in history.OUTCOMES:  # (not one queued again as it went: its next pass's line says it)
-                self._note_history(run, outcome, began, kind, at_once)
+            outcome, need, reason = run.status, run.need, run.reason
+            if cut and outcome in ("failed", "queued", "running"):
+                outcome = "stopped"
+            elif outcome in ("queued", "running") and ended_as is not None:
+                outcome, need, reason = ended_as  # (queued again as its stop's page was saved: a Resume pressed then)
+            if outcome == "submitted" and run.marked:
+                outcome = "marked_applied"
+            if outcome in history.OUTCOMES:
+                self._note_history(run, outcome, began, kind, at_once, need, reason)
             self._wake.set()
 
     # ------------------------------------------------------------- jobs at once
@@ -2784,7 +2804,7 @@ class Applier:
         job = self.srv.tracker().get(run.job_id, with_description=False) or {}
         if job.get("status") not in FINISHED:
             return False
-        run.status, run.need, run.blocking = "submitted", "", False
+        run.status, run.need, run.blocking, run.marked = "submitted", "", False, True
         self._forget_draft_changes(run)  # (gone in: its draft's changes are no longer kept)
         run.reason = f"Already marked {job['status']}, so it isn't applied to again."
         self._log(run, run.reason)
@@ -2872,7 +2892,7 @@ class Applier:
                 # It went, so it's marked applied and never filled in again. (Not a step of the form that
                 # thanks them: "Thank you for your application. Please complete the below questions.")
                 srv.tracker().update(run.job_id, status="applied", note="submitted on the site")
-                run.status, run.need, run.blocking, run.left = "submitted", "", False, False
+                run.status, run.need, run.blocking, run.left, run.marked = "submitted", "", False, False, True
                 self._forget_draft_changes(run)  # (gone in: its draft's changes are no longer kept)
                 run.reason = f"Submitted: {_site(run, data)} says \u201c{gone[0]}\u201d."
                 self._log(run, run.reason)
@@ -2880,7 +2900,7 @@ class Applier:
             if applied := _applied_before(data, text):
                 # applied to already (by hand, or before the tracker knew): never filled, or sent, again
                 srv.tracker().update(run.job_id, status="applied", note="the site says it was applied to already")
-                run.status, run.need, run.blocking, run.left = "submitted", "", False, False
+                run.status, run.need, run.blocking, run.left, run.marked = "submitted", "", False, False, True
                 self._forget_draft_changes(run)  # (gone in: its draft's changes are no longer kept)
                 run.reason = f"Applied to already: {_site(run, data)} says \u201c{applied}\u201d It isn't filled in again."
                 self._log(run, run.reason)
@@ -5927,7 +5947,7 @@ class Applier:
             moved = _bare(data.get("url") or "") not in {_bare(u) for u in (review, job.get("url"), job.get("apply_url")) if u}
             if gone := _sent_already(data, text, moved):
                 srv.tracker().update(run.job_id, status="applied", note="submitted on the site")
-                run.status, run.need, run.blocking, run.left = "submitted", "", False, False
+                run.status, run.need, run.blocking, run.left, run.marked = "submitted", "", False, False, True
                 self._forget_draft_changes(run)  # (gone in: its draft's changes are no longer kept)
                 run.reason = f"Submitted: {_site(run, data)} says \u201c{gone}\u201d."
             else:
@@ -6211,15 +6231,21 @@ def _host(url: Any) -> str:
         return ""
 
 
-def _texts(value: Any) -> set[str]:
-    """Every text in an answer (one of a list's, a dict's values), for _history_hidden."""
+def _texts(value: Any, skip: tuple[str, ...] = ()) -> set[str]:
+    """Every text in an answer or the profile (one of a list's, a dict's values, but those under the keys in `skip`),
+    for _history_hidden."""
     if isinstance(value, str):
         return {value}
     if isinstance(value, dict):
-        value = list(value.values())
+        value = [v for k, v in value.items() if k not in skip]
     if isinstance(value, (list, tuple, set)):
-        return {t for v in value for t in _texts(v)}
+        return {t for v in value for t in _texts(v, skip)}
     return set()
+
+
+# The desk's own words for what went into a box (_went_value's), and a choice's: never hidden from a line's reason
+_DESK_WORDS = {"ticked", "not ticked", "checked", "unchecked", "selected", "yes", "no", "true", "false", "none",
+               "(set)", "uploaded", "(unconfirmed)"}
 
 
 def tailored_ready(job: dict[str, Any]) -> bool:

@@ -297,12 +297,14 @@ gone in: its card asks you to check. A desk page you left open has to be opened 
 Claude to open the job desk): its key is new each time the desk starts.
 
 Each line of a job's log on the desk shows the time it happened. Each time the desk is done
-with a job for now (at its review page, sent, stopped for you, failed, skipped, or cut short
-by the desk stopping), it writes a line in `~/.job-apply/runs.jsonl`: the job, when it began
-and ended, the minutes it took, how it ended and why, and how many steps it went through.
-**This week** in the header sums the last 7 days up: jobs filled to their review page and
-sent, its stops for you by kind, failed and skipped, the minutes a job took, and the
-employers it stopped at most, with the latest lines. Or ask Claude how the week went.
+with a job for now (at its review page, sent, stopped for you, failed, skipped, cut short by
+the desk stopping, or marked as applied), it writes a line in `~/.job-apply/runs.jsonl`: the
+job, when it began and ended, the minutes it took, how it ended and why, and how many steps
+it went through. Your answers, codes and passwords are kept out of it, as far as the desk can
+tell. **This week** in the header sums the last 7 days up: jobs filled to their review page,
+sent by the desk and marked as applied, its stops for you by kind, failed and skipped, the
+time with the desk (waits included, and jobs filled at once overlap), and the employers it
+stopped at most, with the latest lines. Or ask Claude how the week went.
 
 To add jobs from anywhere else, paste their links (LinkedIn, Indeed or any company
 site) into the box above the list. The desk reads each posting, scores it and ticks it
@@ -331,7 +333,7 @@ Everything personal stays on your machine in `~/.job-apply/`. Set
 | `companies.yaml` | Optional: which of the plugin's employer lists to search (`lists:`) and employers of your own, in place of the default list. |
 | `recommendations.json`, `desk.json` | The Job Desk's last search, and its switches ("Submit for me", "Jobs at once") |
 | `desk-queue.json` | The Job Desk's queue, kept for a restart: each job's number and where it was, never your answers |
-| `runs.jsonl` | The Job Desk's history: a line each time it's done with a job for now (when, how long, how it ended and why), never your answers, codes or passwords. The newest 4000 lines or so are kept. |
+| `runs.jsonl` | The Job Desk's history: a line each time it's done with a job for now (when, how long, how it ended and why), with your answers, codes and passwords kept out as far as the desk can tell. The newest 4000 lines or so are kept. |
 | `browser/` | The automation browser's profile, which keeps your sign-ins |
 | `applications/<id>-<company>-<title>/` | Tailored resume and cover letter, screenshots, submission record, `debug/` snapshots |
 

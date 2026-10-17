@@ -13749,3 +13749,197 @@ def test_the_history_of_an_account_and_security_question_flow_holds_no_secret(sr
     for kept_out in (secret, "In what city were you born?", "not-a-real-password", "an-app-password", "123456"):
         assert kept_out not in text, (kept_out, text)
     assert not r.sign_in_key or r.sign_in_key not in text
+
+
+def _hanging_open(monkeypatch, srv, url: str, ending: str = "returns"):
+    """open_application held until the test lets it go (`go_on`, an event made on the test's loop), then answering as
+    the site opened (or, `ending` "raises", failing): a pass under way, for as long as the test wants."""
+    held: dict = {"opening": []}
+
+    async def hang(**kwargs):
+        held["opening"].append(kwargs.get("job_id"))
+        await held["go_on"].wait()
+        if ending == "raises":
+            raise RuntimeError("the site went away")
+        return {"url": url}
+
+    monkeypatch.setattr(srv, "open_application", hang)
+    return held
+
+
+def test_a_skip_mid_pass_is_one_line_with_its_minutes(srv, monkeypatch):
+    """The review of 0.3.204: Skip pressed while the job's pass is under way writes no line of its own; the pass, ending
+    skipped, writes the one line, with its minutes."""
+    url = "https://careers.acme-fab.example/apply/1"
+    held = _hanging_open(monkeypatch, srv, url)
+    job = srv.add_job(url=url, title="FSE", company="Acme Fab")["job"]["id"]
+    applier = Applier(srv)
+
+    async def go():
+        held["go_on"] = asyncio.Event()
+        applier.start()
+        r = applier.enqueue(job)
+        try:
+            await until(lambda: held["opening"] == [job], about=state(r))
+            await applier.skip(job)
+            held["go_on"].set()
+            await until(lambda: job not in applier._slots, about=state(r))
+        finally:
+            await applier.stop()
+        return r
+
+    r = run(go())
+    assert r.status == "skipped", (r.status, r.reason)
+    lines = _history_lines()
+    assert [e["outcome"] for e in lines] == ["skipped"] and "minutes" in lines[0] and "started" in lines[0], lines
+
+
+def test_i_submitted_it_on_a_job_at_its_review_page_is_one_marked_applied_line(srv, monkeypatch):
+    """The review of 0.3.204: the person's "I submitted it" on a job waiting at its review page (not under way) is a
+    line of its own, with no minutes, and it's "marked_applied", never "submitted": that's the desk's own send."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    url = "https://careers.acme-fab.example/apply/1"
+    job = srv.add_job(url=url, title="FSE", company="Acme Fab")["job"]["id"]
+    applier = Applier(srv)
+
+    async def go():
+        await _serve(srv, {url: _form("Acme Fab")}, [])
+        applier.start()
+        try:
+            r = applier.enqueue(job)
+            await until(lambda: r.status not in ("queued", "running") and job not in applier._slots, about=state(r))
+            assert r.status == "ready", (r.status, r.reason)
+            srv.tracker().update(job, status="applied", note="marked applied in the Job Desk")  # (as the desk's does)
+            applier.mark_applied(job)
+            applier.mark_applied(job)  # (twice: one line)
+            return r
+        finally:
+            await applier.stop()
+
+    run(go())
+    lines = _history_lines()
+    assert [e["outcome"] for e in lines] == ["ready", "marked_applied"], lines
+    assert "minutes" not in lines[1] and "started" not in lines[1] and lines[1]["reason"] == "Marked as applied.", lines
+
+
+@pytest.mark.parametrize("ending", ["returns", "raises"])
+def test_i_submitted_it_mid_pass_is_one_line_and_stands(srv, monkeypatch, ending):
+    """The review of 0.3.204: "I submitted it" pressed while the job's pass is under way writes no line of its own; the
+    pass, ending, writes the one line (marked_applied, with its minutes). And should the pass then fail ("raises": the
+    site going away under it), the job stays marked applied, as a skipped one stays skipped: it was "failed", and a
+    Resume offered to fill it again."""
+    url = "https://careers.acme-fab.example/apply/1"
+    held = _hanging_open(monkeypatch, srv, url, ending)
+    job = srv.add_job(url=url, title="FSE", company="Acme Fab")["job"]["id"]
+    applier = Applier(srv)
+
+    async def go():
+        held["go_on"] = asyncio.Event()
+        applier.start()
+        r = applier.enqueue(job)
+        try:
+            await until(lambda: held["opening"] == [job], about=state(r))
+            srv.tracker().update(job, status="applied", note="marked applied in the Job Desk")
+            applier.mark_applied(job)
+            held["go_on"].set()
+            await until(lambda: job not in applier._slots, about=state(r))
+        finally:
+            await applier.stop()
+        return r
+
+    r = run(go())
+    assert (r.status, r.reason) == ("submitted", "Marked as applied."), (r.status, r.reason, r.log)
+    lines = _history_lines()
+    assert [e["outcome"] for e in lines] == ["marked_applied"] and "minutes" in lines[0], lines
+
+
+def test_a_stop_queued_again_as_its_page_is_saved_is_still_a_line(srv, monkeypatch):
+    """The review of 0.3.204: Resume pressed while the pass that paused is still saving the page it stopped on (its last
+    step) put the job back in the queue before the pass ended, so the pause had no line. The pass's line says how its
+    pages ended (needs_you, questions), and the pass the Resume began has its own."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    url = "https://careers.acme-fab.example/apply/1"
+    pages = {url: _form("Acme Fab", "Do you hold an active TS/SCI clearance?")}
+    job = srv.add_job(url=url, title="FSE", company="Acme Fab")["job"]["id"]
+    applier = Applier(srv)
+    real_save = Applier._save_stop
+    held: dict = {"saves": 0}
+
+    async def slow_save(self, run_):
+        held["saves"] += 1
+        if held["saves"] == 1:  # (the first pass's: held until the Resume is pressed)
+            held["entered"].set()
+            await held["go_on"].wait()
+        await real_save(self, run_)
+
+    monkeypatch.setattr(Applier, "_save_stop", slow_save)
+
+    async def go():
+        held["entered"], held["go_on"] = asyncio.Event(), asyncio.Event()
+        await _serve(srv, pages, [])
+        applier.start()
+        try:
+            r = applier.enqueue(job)
+            await held["entered"].wait()
+            assert (r.status, r.need) == ("needs_you", "questions"), (r.status, r.reason)
+            applier.resume(job)  # (as its stop's page is being saved)
+            held["go_on"].set()
+            await until(lambda: held["saves"] == 2 and job not in applier._slots and r.status == "needs_you",
+                        about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    run(go())
+    lines = _history_lines()
+    assert [(e["outcome"], e.get("need")) for e in lines] == [("needs_you", "questions")] * 2, lines
+    assert all("question" in e["reason"] for e in lines), lines
+
+
+def test_the_history_is_counted_once_not_read_at_every_line(monkeypatch):
+    """The review of 0.3.204: past about 250 KB (a real line is about 550 bytes), every line written read the whole
+    file again to count its lines. They're counted once, then kept count of: the file is read again only to cut it
+    back."""
+    from job_apply import history
+
+    monkeypatch.setattr(history, "_COUNTS", {}, raising=False)
+    path = history.history_path()
+    line = json.dumps({"job_id": 1, "company": "Acme Fab", "outcome": "ready", "reason": "x" * 400,
+                       "ended": "2026-10-16T09:00:00-07:00"})
+    path.write_text((line + "\n") * 1000, encoding="utf-8")
+    reads: list[Path] = []
+    real_read = Path.read_text
+
+    def read_text(self, *args, **kwargs):
+        if self == path:
+            reads.append(self)
+        return real_read(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", read_text)
+    for i in range(5):
+        assert history.append({"job_id": i, "company": "Acme Fab", "outcome": "ready", "reason": "y" * 400,
+                               "ended": "2026-10-17T09:00:00-07:00"})
+    assert len(reads) == 1, len(reads)
+    assert len(path.read_bytes().splitlines()) == 1005
+
+
+def test_a_history_reason_hides_whole_words_and_the_profiles_own(srv, monkeypatch):
+    """The review of 0.3.204. Answers are hidden from a line's reason as whole words or phrases, and never the desk's
+    own words for a box ("ticked", "Yes"): a reason kept its sense. And beyond the run's own answers: the profile's own
+    words (its last name, its city), a phone number however it's written, and a long answer by its start."""
+    from job_apply import history
+
+    applier = Applier(srv)
+    long_answer = "I maintained the etch tools across three fabs and trained the night shift on " + "x" * 200
+    r = Run(9, "FSE", "Acme Fab", status="needs_you", need="stuck", url="https://careers.acme-fab.example/apply",
+            once={"q1": "Mesa", "q2": long_answer})
+    r.went_in.put("t", {"label": "I agree", "value": "ticked", "page": "Details"})
+    r.went_in.put("y", {"label": "Relocate?", "value": "Yes", "page": "Details"})
+    r.reason = ("The box I ticked says Yes; the Mesas office and Mesa are closed to Rivera of Chandler at (602) 555-0199: "
+                + long_answer[:60])
+    applier._note_history(r, "needs_you", time.time() - 60, "apply", 1)
+    said = _history_lines()[0]["reason"]
+    assert said.startswith("The box I ticked says Yes; the Mesas office and … are closed"), said
+    for hidden in ("Rivera", "Chandler", "555-0199", "I maintained the etch tools"):
+        assert hidden not in said, (hidden, said)
+    assert len(said) <= history.REASON_CHARS

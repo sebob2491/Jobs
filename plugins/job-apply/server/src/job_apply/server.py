@@ -1102,22 +1102,25 @@ async def open_job_desk(open_browser: bool = True) -> dict[str, Any]:
 
 
 @tool()
-def desk_history(days: int = 7, recent: int = 20) -> dict[str, Any]:
+async def desk_history(days: int = 7, recent: int = 20) -> dict[str, Any]:
     """How the Job Desk's last `days` days went (its "This week" window), from the line it
     writes in ~/.job-apply/runs.jsonl each time it's done with a job for now (the desk
-    needn't be open): jobs filled up to their review page (`reviewed`, sent ones included),
-    `submitted`, `failed`, `skipped`, passes cut short by the desk stopping (`stopped`), its
-    stops for the user by kind (`pauses`: questions, sign_in, bot_check, email_code, ...),
-    the minutes spent (in all, and the median of a job's), the employers it stopped at most
-    (`stops`, with the kind of stop), and its newest `recent` lines, newest first (each with
-    the job, when it began and ended, its minutes, how it ended and why, the steps it went
-    through, the desk's rounds that took the user to it and their Resumes). `any` is false
-    when there's no history yet. Use it for "how did this week go?"."""
+    needn't be open): jobs filled up to their review page (`reviewed`, ones the desk sent
+    included), sent by the desk (`submitted`), marked as applied by the user or found
+    already applied (`marked`), `failed`, `skipped`, passes cut short by the desk stopping
+    (`stopped`), its stops for the user by kind (`pauses`: questions, sign_in, bot_check,
+    email_code, ...), the time with the desk (`minutes` in all and `median_minutes` a job:
+    waits for sites and the inbox included, and jobs filled at once overlap, so it's more
+    than the work itself), the employers it stopped at most (`stops`, with the kind of
+    stop), and its newest `recent` lines, newest first (each with the job, when it began and
+    ended, its minutes, how it ended and why, the steps it went through, the desk's rounds
+    that took the user to it and their Resumes). `any` is false when there's no history
+    yet. Use it for "how did this week go?"."""
     from . import history
 
     if not 1 <= days <= 366 or not 1 <= recent <= 200:
         raise ValueError("days should be from 1 to 366, and recent from 1 to 200")
-    return {**history.summary(days, recent), "file": str(history.history_path())}
+    return {**await asyncio.to_thread(history.summary, days, recent), "file": str(history.history_path())}
 
 
 def _mark_ready(job: dict[str, Any], note: str) -> None:
