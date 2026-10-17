@@ -149,6 +149,15 @@ The desk is a local web page served by this plugin. It does what the `find-jobs`
   keeps the queue and the other says so, keeping none; about a minute after the first ends, the other takes it up, its
   jobs held for **Resume queue** while its own go on. A folder that allows no lock (some network drives) keeps no
   queue, and the desk says so.
+- **History.** Each line of a job's log on the desk shows the time it was logged (the computer's own clock). Each time
+  the desk is done with a job for now (at its review page, sent, stopped for the user with the kind of stop, failed,
+  skipped, or cut short by the desk stopping), it writes a line in `~/.job-apply/runs.jsonl`: the job, its site, when
+  the pass began and ended and its minutes, how it ended and why (the desk's own words, never an answer, code or
+  password), the steps it went through, how many times the desk's rounds took the user to it and they pressed Resume,
+  and Jobs at once. **This week** (in the header) sums up the last 7 days: jobs filled to their review page and sent,
+  the stops for the user by kind, failed and skipped, the minutes in all and a job's median, the employers it stopped at
+  most, and the latest lines. For "how did this week go?", call `desk_history()` (`days=` for another span); the desk
+  needn't be open.
 - **A newer version**: the desk looks at the plugin's published version when it starts and
   every few hours, and says when a newer one is out, with the two update commands (then a
   restart of the Claude app). Best done between runs. `JOB_APPLY_NO_UPDATE_CHECK=1` turns the look off.

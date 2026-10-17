@@ -3072,3 +3072,129 @@ def test_a_job_waiting_for_its_tailored_resume_comes_back_waiting_for_it(srv, mo
             await after.applier.stop()
 
     run(go())
+
+
+# ------------------------------------------------------------- the desk's history: This week
+def _history_line(now: float, days_ago: float, minutes: float | None = None, **entry) -> dict:
+    """A line of runs.jsonl as the desk writes it, its pass ended `days_ago` days before `now`."""
+    from job_apply import history
+
+    ended = now - days_ago * 86400
+    line = {**entry, "ended": history.stamp(ended)}
+    if minutes is not None:
+        line.update(started=history.stamp(ended - minutes * 60), minutes=minutes)
+    return line
+
+
+def test_this_week_sums_up_the_desks_history(srv, job_apply_home):
+    """The review of Oct 15 (worth building 5): /api/history (the page's This week) sums up the last 7 days of the
+    desk's history: the jobs filled up to their review page (sent ones too) and sent, its stops for the person by kind,
+    failed, skipped and cut short, the minutes a job took (in all, and the median), the employers it stopped at most,
+    and its newest lines. A line older than the days asked for, or that won't read, is left out. Locked to this computer
+    and this page, as every call is."""
+    now = time.time()
+    lines = [
+        _history_line(now, 10, 5.0, job_id=1, company="Old Co", title="Tech", outcome="needs_you", need="sign_in"),
+        _history_line(now, 6, 4.0, job_id=2, company="Acme Fab", title="FSE", outcome="needs_you", need="sign_in"),
+        _history_line(now, 5.9, 2.0, job_id=2, company="Acme Fab", title="FSE", outcome="ready"),
+        _history_line(now, 5, None, job_id=2, company="Acme Fab", title="FSE", outcome="submitted"),
+        _history_line(now, 4, 6.0, job_id=3, company="Acme Fab", title="Tech", outcome="needs_you", need="questions"),
+        _history_line(now, 3.8, 1.0, job_id=3, company="Acme Fab", title="Tech", outcome="needs_you", need="sign_in"),
+        _history_line(now, 3.5, 3.0, job_id=4, company="Other Litho", title="Tech", outcome="needs_you",
+                      need="bot_check"),
+        _history_line(now, 3, 1.0, job_id=4, company="Other Litho", title="Tech", outcome="failed"),
+        _history_line(now, 2, 9.0, job_id=5, company="Third Tool", title="FSE", outcome="submitted"),
+        _history_line(now, 1, None, job_id=6, company="Fourth Fab", title="FSE", outcome="skipped"),
+        _history_line(now, 0.5, 0.5, job_id=7, company="Acme Fab", title="Operator", outcome="stopped"),
+    ]
+    desk = Desk(srv)
+    desk.applier.start = lambda: None
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with _client(desk) as c:
+                h = {"x-desk-token": desk.token}
+                empty = (await c.get("/api/history", headers=h)).json()
+                (job_apply_home / "runs.jsonl").write_text(
+                    "".join(json.dumps(e) + "\n" for e in lines) + '{"job_id": 8, "outco\n', encoding="utf-8")
+                refused = [(await c.get("/api/history")).status_code,
+                           (await c.get("/api/history", headers={"x-desk-token": "guess"})).status_code,
+                           (await c.get("/api/history", headers={**h, "host": "evil.example"})).status_code]
+                bad = [(await c.get(f"/api/history?days={d}", headers=h)).status_code for d in ("0", "abc", "400", "-1")]
+                week = (await c.get("/api/history?recent=3", headers=h)).json()
+                month = (await c.get("/api/history?days=30", headers=h)).json()
+                return empty, refused, bad, week, month
+        finally:
+            await desk.stop()
+
+    empty, refused, bad, week, month = run(go())
+    assert (empty["any"], empty["lines"], empty["recent"], empty["stops"]) == (False, 0, [], []), empty
+    assert refused == [403, 403, 403] and bad == [400, 400, 400, 400], (refused, bad)
+    assert {k: week[k] for k in ("days", "any", "lines", "jobs", "reviewed", "submitted", "failed", "skipped",
+                                 "stopped", "pauses", "minutes", "median_minutes", "timed_jobs")} == {
+        "days": 7, "any": True, "lines": 10, "jobs": 6, "reviewed": 2, "submitted": 2, "failed": 1, "skipped": 1,
+        "stopped": 1, "pauses": {"sign_in": 2, "questions": 1, "bot_check": 1}, "minutes": 26.5,
+        "median_minutes": 6.0, "timed_jobs": 5}, week
+    assert [(s["company"], s["times"], s["kind"]) for s in week["stops"]] == [
+        ("Acme Fab", 3, "sign_in"), ("Other Litho", 2, "bot_check")], week["stops"]
+    assert [(e["job_id"], e["outcome"]) for e in week["recent"]] == [(7, "stopped"), (6, "skipped"), (5, "submitted")]
+    assert week["recent"][0]["minutes"] == 0.5 and week["recent"][0]["company"] == "Acme Fab", week["recent"]
+    assert (month["lines"], month["jobs"], month["pauses"]["sign_in"]) == (11, 7, 3), month
+    # Claude's desk_history tool says the same, the desk open or not
+    told = srv.desk_history(recent=3)
+    assert {k: v for k, v in told.items() if k not in ("file", "since")} == {
+        k: v for k, v in week.items() if k != "since"} and told["file"].endswith("runs.jsonl"), told
+    with pytest.raises(ValueError):
+        srv.desk_history(days=0)
+
+
+def test_the_desk_page_shows_each_log_lines_time_and_this_week(srv, job_apply_home):
+    """Each line of a job's log on the desk shows the time it was logged (HH:MM, this computer's clock), and the desk's
+    JSON carries the times beside the lines. The header's This week opens a window that sums up the desk's history,
+    and says so plainly when there's none yet."""
+    from job_apply.pipeline import Run
+
+    desk = Desk(srv)
+    desk.applier.start = lambda: None
+    desk.search.update(status="done", at=time.time())
+    job = srv.add_job(url=fixture_url("site/posting.html"), title="Field Service Engineer", company="Example Fab")["job"]
+    r = desk.applier.runs[job["id"]] = Run(job["id"], "Field Service Engineer", "Example Fab", status="running")
+    for line in ("opened the posting", "clicked “Apply”", "filled 4 field(s) on “Your Details”"):
+        desk.applier._log(r, line)
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with _client(desk) as c:
+                shown = (await c.get("/api/state", headers={"x-desk-token": desk.token})).json()
+            async with person_browser() as browser:
+                page = await browser.new_page()
+                await page.goto(desk.url)
+                await page.wait_for_selector("#work .log .when")
+                times = await page.locator("#work .log .when").all_inner_texts()
+                lines = await page.locator("#work .log li").all_inner_texts()
+                await page.click("#week-btn")
+                await page.wait_for_selector("#week[open] #week-body p")
+                none_yet = await page.inner_text("#week-body")
+                await page.click("#week button[data-act=week-close]")
+                (job_apply_home / "runs.jsonl").write_text(json.dumps(_history_line(
+                    time.time(), 0.1, 3.5, job_id=job["id"], company="Example Fab", title="Field Service Engineer",
+                    host="careers.example.com", outcome="ready", reason="Filled and waiting on the review page.")) + "\n",
+                    encoding="utf-8")
+                await page.click("#week-btn")
+                await page.wait_for_selector("#week[open] #week-recent li")
+                week = await page.inner_text("#week-body")
+                await browser.close()
+                return shown, times, lines, none_yet, week
+        finally:
+            await desk.stop()
+
+    shown, times, lines, none_yet, week = run(go())
+    kept = next(o["run"] for o in shown["listings"] + shown["others"] if o["job_id"] == job["id"] and o["run"])
+    assert len(kept["log_at"]) == len(kept["log"]) == 3 and all(t > 0 for t in kept["log_at"]), kept
+    assert len(times) == 3 and all(len(t) == 5 and t[2] == ":" and t.replace(":", "").isdigit() for t in times), times
+    assert lines[0].startswith(times[0]) and lines[0].endswith("opened the posting"), lines
+    assert "No history yet" in none_yet, none_yet
+    assert "Filled up to their review page: 1 job. Sent: 0 jobs." in week and "Example Fab" in week, week
+    assert "at its review page (3.5 min)" in week and "a job took 3.5 minutes" in week, week

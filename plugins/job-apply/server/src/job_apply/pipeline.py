@@ -36,7 +36,7 @@ from collections.abc import Callable, Iterator
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlparse, urlsplit, urlunsplit
 
-from . import config, mailbox, report
+from . import config, history, mailbox, report
 from .search import every_employer
 from .ats import ATS_NAMES, detect_ats, shared_system
 from .autofill import (classes_only, clean_label, degree_kinds_listed, degree_not_listed, entry_list_unloaded, entry_of,
@@ -926,6 +926,14 @@ class Run:
     site: str = ""
     site_since: float = 0.0
     began: int = 0
+    # When each line of the log was logged (time.time(), 0 for one put there some other way), beside it and cut with it
+    log_at: list[float] = field(default_factory=list)
+    # For its lines in the desk's history (history.HISTORY_FILE): the steps the desk pressed the way on from in this pass
+    # (_step_key's, each once), and how many times one of the desk's rounds took the person to it and they pressed its
+    # Resume, since it came to the desk
+    pass_steps: set[tuple] = field(default_factory=set)
+    rounds: int = 0
+    resumes: int = 0
     page: Any = None  # its browser tab
     updated: float = field(default_factory=time.time)
 
@@ -938,7 +946,8 @@ class Run:
                                                                         "entries_short", "entries_told", "entries_ok",
                                                                         "account_answers", "employer_mail", "others_mail",
                                                                         "went_in", "draft_pages", "submit_pressed",
-                                                                        "sending", "cut_short", "started")},
+                                                                        "sending", "cut_short", "started",
+                                                                        "pass_steps", "rounds", "resumes")},
                 # (only for the cards that show it: a job queued or under way has none, and 30 of them made the
                 # page's state megabytes, every poll)
                 "went_in": None if self.status in ("queued", "running") else self.went_in.public()}
@@ -1301,6 +1310,7 @@ class Applier:
             run.hands_on = True  # (on any card: a questions card's Resume is for answers typed into the page itself)
             self._draft_off(run)  # (and a saved draft's boxes are theirs too from here on)
         run = self.enqueue(job_id, submit=bool(run and run.submit), front=True)
+        run.resumes += 1  # (for its lines in the desk's history)
         self.go_on_for(run)
         self.pressed.add(job_id)  # (the person's own press: it goes even while the queue is paused)
         if signing_in:
@@ -1426,8 +1436,11 @@ class Applier:
         _forget_draft_changes(self.srv, job_id)  # (gone in: a draft's changes kept for it go)
         run = self.runs.get(job_id)
         if run is not None:
+            was = run.status
             run.status, run.need, run.blocking, run.reason = "submitted", "", False, "Marked as applied."
             run.left = run.submit_unsent = run.left_at_restart = False
+            if was != "submitted" and job_id not in self._slots:  # (one under way: its pass's line says it)
+                self._note_history(run, "submitted")
             self._wake.set()
         self._save_queue()
 
@@ -1437,6 +1450,7 @@ class Applier:
         if self.srv.tracker().get(job_id, with_description=False) is None:
             raise KeyError(f"No job with id {job_id}")  # a stale page: no entry is made for it
         run = self.runs.get(job_id)
+        was = run.status if run else ""
         if run is None or run.status != "skipped":  # (a second Skip keeps where it was before the first)
             place = next((i for i, task in enumerate(self.tasks) if task == ("apply", job_id)), None)
             self._before_skip[job_id] = (run.status if run else "", place)
@@ -1452,6 +1466,9 @@ class Applier:
         self._log(run, f"skipped by itself: posting closed ({closed})" if closed else "skipped")
         self.srv.tracker().update(job_id, status="skipped", note="skipped by the Job Desk: posting closed" if closed
                                   else "skipped in the Job Desk")
+        # (a job on the desk, not under way: one under way has its pass's line, which says it)
+        if was not in ("", "skipped") and job_id not in self._slots:
+            self._note_history(run, "skipped")
         self._save_queue()
         for tab in self.srv.browser.lineage(run.page):  # its application tab, and the tab that opened it
             if not tab.is_closed():
@@ -1703,6 +1720,50 @@ class Applier:
         self.runs[job_id] = run
         self._log(run, said)
 
+    # ------------------------------------------------------------- history
+    def _note_history(self, run: Run, outcome: str, began: float | None = None, kind: str = "",
+                      at_once: int | None = None) -> None:
+        """A line in the desk's history (history.HISTORY_FILE): for a pass at this job that has ended (`began`: when it
+        began, `kind` its task's), or for the person's Skip or I submitted it while it wasn't under way (no pass: no
+        minutes). The job's number, employer, title and site; how it ended and why, in the desk's own words with anything
+        the person or the inbox gave taken out (_history_hidden); the steps it went through, its rounds and Resumes, and
+        Jobs at once. Whatever goes wrong, the job goes on."""
+        try:
+            ended = time.time()
+            company, title, url = run.company, run.title, run.url
+            if not (company and title and url):  # (skipped before it was ever begun, say)
+                job = self.srv.tracker().get(run.job_id, with_description=False) or {}
+                company, title, url = (company or job.get("company") or "", title or job.get("title") or "",
+                                       url or job.get("url") or "")
+            entry: dict[str, Any] = {"job_id": run.job_id, "company": company, "title": title, "host": _host(url)}
+            if began is not None:
+                entry.update(started=history.stamp(began), ended=history.stamp(ended),
+                             minutes=round(max(ended - began, 0.0) / 60, 1))
+            else:
+                entry["ended"] = history.stamp(ended)
+            entry["outcome"] = outcome
+            if outcome == "needs_you":
+                entry["need"] = run.need
+            entry["reason"] = history.short_reason(run.reason, self._history_hidden(run))
+            if began is not None and kind != "submit":  # (a Submit's pass presses no step of the form)
+                entry["pages"] = len(run.pass_steps)
+            entry.update(rounds=run.rounds, resumes=run.resumes,
+                         jobs_at_once=at_once if at_once is not None else self.at_once())
+            history.append(entry)
+        except Exception:
+            logging.getLogger(__name__).warning("couldn't note job %s in the desk's history", run.job_id, exc_info=True)
+
+    @staticmethod
+    def _history_hidden(run: Run) -> set[str]:
+        """What a line of the history never holds, should a reason quote a page that shows it: the desk's secrets (each
+        job system's password, the inbox's), the codes the inbox gave for this job, the digest of the password it signed
+        in with, and every answer it has: the person's for this application alone, an account form's security answers,
+        and what went into the form."""
+        hidden = set(_secret_values()) | {mail[1] for mail, job_id in list(_MAIL_TAKEN.items()) if job_id == run.job_id}
+        hidden |= _texts(run.once) | _texts(run.account_answers) | {run.sign_in_key}
+        hidden |= {str(e.get("value") or "") for e in list(run.went_in.answers.values())}
+        return hidden
+
     # ------------------------------------------------------------- worker
     async def _worker(self) -> None:
         while True:
@@ -1717,6 +1778,8 @@ class Applier:
     def start_round(self, job_id: int) -> None:
         """The person is at this job's tab in one of the desk's rounds (focus() brought it up): its bot check, or
         its review page to check before they press Submit."""
+        if self.round_job != job_id and job_id in self.runs:
+            self.runs[job_id].rounds += 1  # (for its lines in the desk's history)
         self.round_job, self.round_at = job_id, time.time()
         self._wake.set()
 
@@ -1883,6 +1946,9 @@ class Applier:
         """One job's pass (or the Submit the person pressed), in a task and a browser view of its own: up to
         settings.jobs_at_once go at once, each in its own tab."""
         cancelled = False  # (the desk stopping, or the program ending: kept as it was, for the next start)
+        cut = False  # (and its pass cut short by that, not ended by itself)
+        began, at_once = time.time(), self.at_once()  # (for the pass's line in the desk's history)
+        run.pass_steps = set()
         try:
             with self.srv.browser.desk_view(run.job_id):
                 held = self._hold_tools(run.job_id)
@@ -1898,7 +1964,7 @@ class Applier:
                     await self._strict(self._submit(run) if kind == "submit" else self._drive_again_if_redrawn(run))
                     await self._strict(self._save_stop(run))
                 except asyncio.CancelledError:
-                    cancelled = True
+                    cancelled = cut = True
                     raise
                 except TabClosed:
                     if run.status != "skipped":
@@ -1942,6 +2008,9 @@ class Applier:
                 del self._slots[run.job_id]
             if not cancelled:  # (cut short: the queue stays as it was kept, this job under way in it)
                 self._save_queue()
+            outcome = "stopped" if cut and run.status in ("failed", "queued", "running") else run.status
+            if outcome in history.OUTCOMES:  # (not one queued again as it went: its next pass's line says it)
+                self._note_history(run, outcome, began, kind, at_once)
             self._wake.set()
 
     # ------------------------------------------------------------- jobs at once
@@ -2586,9 +2655,14 @@ class Applier:
 
     # ------------------------------------------------------------- one job
     def _log(self, run: Run, text: str) -> None:
+        """A line in the job's log (its last 40 are kept), with when it was logged beside it (Run.log_at)."""
+        if len(run.log_at) != len(run.log):  # (lines put there some other way have no time of their own)
+            run.log_at = (run.log_at + [0.0] * len(run.log))[:len(run.log)]
         run.log.append(text)
+        run.log_at.append(round(time.time(), 1))
         run.logged += 1
         del run.log[:-40]
+        del run.log_at[:-40]
         run.updated = time.time()
 
     def _pause(self, run: Run, need: str, reason: str, questions: list[dict[str, Any]] | None = None,
@@ -3728,6 +3802,7 @@ class Applier:
                                    "without reaching its review page, so I stopped here. Check where it is in the "
                                    "browser window, press its Next if there's more, then press Resume.")
             pressed.append(key)
+            run.pass_steps.add(key)  # (the steps gone through, for the pass's line in the desk's history)
             if kind == "page":
                 on_pages.add(key)
             pressed_on.append(f"\u201c{action['text'].strip()}\u201d on {_page_said(data)}")
@@ -6126,6 +6201,25 @@ def _read_queue() -> dict[str, Any] | None:
     if not isinstance(since, (int, float)) or isinstance(since, bool) or since > time.time():
         since = mtime  # (a queue kept without it: as old as its file)
     return {"paused": kept.get("paused") is True, "jobs": jobs, "since": float(since)}
+
+
+def _host(url: Any) -> str:
+    """An address's host, or "" for one that has none (or won't read)."""
+    try:
+        return urlparse(str(url or "")).hostname or ""
+    except ValueError:
+        return ""
+
+
+def _texts(value: Any) -> set[str]:
+    """Every text in an answer (one of a list's, a dict's values), for _history_hidden."""
+    if isinstance(value, str):
+        return {value}
+    if isinstance(value, dict):
+        value = list(value.values())
+    if isinstance(value, (list, tuple, set)):
+        return {t for v in value for t in _texts(v)}
+    return set()
 
 
 def tailored_ready(job: dict[str, Any]) -> bool:
