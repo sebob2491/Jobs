@@ -2168,8 +2168,6 @@ def test_the_openings_bar_shows_where_each_job_stands_and_troubleshooting_ticks_
     (bot checks to solve, the ones the desk is stuck on for Claude, ready...), each with its count, and Bot checks
     offers the round that solves them; a group picked hides the others, which are never applied to; and in
     troubleshooting, Select recommended ticks one opening per employer (its others most likely stop the same way)."""
-    from playwright.async_api import async_playwright
-
     from job_apply.pipeline import Run
 
     low = {"score": 20, "reasons": [], "concerns": [], "blocked": False, "recommended": False}
@@ -2191,8 +2189,7 @@ def test_the_openings_bar_shows_where_each_job_stands_and_troubleshooting_ticks_
     async def go():
         await desk.start(port=0, open_browser=False)
         try:
-            async with async_playwright() as pw:
-                browser = await pw.chromium.launch(**launch_options())
+            async with person_browser() as browser:
                 page = await browser.new_page()
                 await page.goto(desk.url)
                 await page.wait_for_selector("#stops:not([hidden]) [data-stop='bot']")
@@ -2228,7 +2225,6 @@ def test_the_openings_bar_shows_where_each_job_stands_and_troubleshooting_ticks_
                 await asyncio.sleep(2)
                 assert await page.evaluate("document.activeElement.dataset.stop") == "new"
                 await page.click("[data-stop='any']")
-                await browser.close()
         finally:
             await desk.stop()
 
@@ -2239,8 +2235,6 @@ def test_select_recommended_where_the_desk_goes_all_the_way_ticks_only_those_emp
     """The review of 0.3.195: with "Only where the desk goes all the way" on, Select recommended ticked a job of the
     person's own (tracked, saved) at another employer too. It ticks the recommended openings at those employers only,
     as before; the person's own still show, and they tick them themselves."""
-    from playwright.async_api import async_playwright
-
     from job_apply import config as cfg
 
     handled = sorted(cfg.handled_employers())[0]
@@ -2256,15 +2250,13 @@ def test_select_recommended_where_the_desk_goes_all_the_way_ticks_only_those_emp
     async def go():
         await desk.start(port=0, open_browser=False)
         try:
-            async with async_playwright() as pw:
-                browser = await pw.chromium.launch(**launch_options())
+            async with person_browser() as browser:
                 page = await browser.new_page()
                 await page.goto(desk.url)
                 await page.wait_for_selector("[data-pick='https://example.com/saved']")
                 await page.click("[data-act='select-recommended']")
                 ticked = await page.eval_on_selector_all("[data-pick]:checked", "bs => bs.map((b) => b.dataset.pick)")
                 assert ticked == ["https://example.com/handled"], ticked
-                await browser.close()
         finally:
             await desk.stop()
 
