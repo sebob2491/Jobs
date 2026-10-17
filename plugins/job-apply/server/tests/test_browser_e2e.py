@@ -613,7 +613,8 @@ def test_an_add_button_a_toast_covers_for_a_moment_is_pressed_once_it_clears(srv
     """Workday's My Experience (issue #112, note 32): "added 1 work block(s)", then the work section's Add button
     was "covered" and its other blocks were left off (the page reached the form with 2 of 5 jobs). A cover that
     goes away on its own, a toast or a re-render, is waited on: the button is pressed again a little later. (The
-    note here goes after 6 s; the one press that found it there gave up after 3.)"""
+    note here goes after 8 s, between the first press's timeout and the second's: the one press that found it there
+    gave up after 3.)"""
     run(srv.browser.goto(fixture_url("site/workday-my-experience.html") + "?toast"))
     education = run(srv.add_entries("education"))
     assert (education["clicks"], education["after"]) == (1, 1), education
