@@ -238,7 +238,7 @@ def test_find_issue_takes_the_oldest_with_the_title():
 
 
 def _run(tmp_path, issues, pipeline_records, search_records=(), partial=(), hr_records=None, finance_records=None,
-         accounts_records=None, expect=0):
+         accounts_records=None, expect=0, extra=()):
     (tmp_path / "pipeline.log").write_text(log("LIVE_PIPELINE ", pipeline_records), encoding="utf-8")
     (tmp_path / "search.log").write_text(log("LIVE_RESULT ", search_records), encoding="utf-8")
     (tmp_path / "issues.json").write_text(json.dumps(issues), encoding="utf-8")
@@ -252,7 +252,7 @@ def _run(tmp_path, issues, pipeline_records, search_records=(), partial=(), hr_r
     argv = ["--issues", str(tmp_path / "issues.json"), "--run-url", "https://example.com/run/3",
             "--log", f"pipeline={tmp_path / 'pipeline.log'}", "--log", f"search={tmp_path / 'search.log'}", *hr,
             "--body-out", str(tmp_path / "body.md"), "--comment-out", str(tmp_path / "comment.md"),
-            "--github-output", str(out), *[a for p in partial for a in ("--partial", p)]]
+            "--github-output", str(out), *[a for p in partial for a in ("--partial", p)], *extra]
     assert lc.main(argv) == expect
     outputs = dict(line.split("=", 1) for line in out.read_text(encoding="utf-8").splitlines())
     body, comment = tmp_path / "body.md", tmp_path / "comment.md"
@@ -518,3 +518,207 @@ def test_an_employer_still_back_from_an_earlier_run_is_said_in_the_body(tmp_path
     body, comment, _ = _run(tmp_path, [issue], [pipeline_rec("ASM"), pipeline_rec("KLA")], [search_rec("USAA")])
     assert "KLA: `needs_you stuck` → `ready`" in comment
     assert "Still back" not in body and lc.read_reached(body)["pipeline"]["KLA"] == "2026-10-18"
+
+
+# --- the trend issue: the last runs' counts, and the employers that flip -------------------------------
+
+TREND = "Nightly live trends"
+
+
+def _trend_run(tmp_path, trend_issues, pipeline_records, search_records=(), issues=(), **kw):
+    """_run with the trend issue's arguments: (the trend issue's new body or None, the body, the comment, outputs)."""
+    (tmp_path / "trend-issues.json").write_text(json.dumps(trend_issues), encoding="utf-8")
+    out = tmp_path / "trend.md"
+    extra = ["--trend-issues", str(tmp_path / "trend-issues.json"), "--trend-body-out", str(out)]
+    body, comment, outputs = _run(tmp_path, list(issues), pipeline_records, search_records, extra=extra, **kw)
+    return (out.read_text(encoding="utf-8") if out.exists() else None), body, comment, outputs
+
+
+@pytest.fixture
+def clock(monkeypatch):
+    when = {"day": 17}
+    monkeypatch.setattr(lc, "_now", lambda: datetime(2026, 10, when["day"], 10, 17, tzinfo=timezone.utc))
+    return when
+
+
+def test_the_first_trend_body_starts_the_history(tmp_path, clock):
+    """The issue holds one run: a second issue keeps the last runs' counts per check (at the review page out of those
+    checked; the search check's: its searches that work), each outcome's count and the median seconds an employer
+    took, and each employer's run as a letter. Neither issue's saved block reads as the other's."""
+    pipeline = [pipeline_rec("ASM"), pipeline_rec("KLA", "needs_you", "sign_in", seconds=100.0)]
+    search = [search_rec("USAA"), search_rec("Intel", az=0, error="HTTP 503")]
+    trend, body, comment, outputs = _trend_run(tmp_path, [], pipeline, search)
+    assert outputs["trend_issue"] == "" and comment is None
+    saved = lc.read_trend(trend)
+    assert saved.runs == [{"at": "2026-10-17 10:17 UTC", "run_url": "https://example.com/run/3", "checks": {
+        "pipeline": {"reached": 1, "total": 2, "outcomes": {"needs_you sign_in": 1, "ready": 1}, "median_seconds": 71},
+        "search": {"reached": 1, "total": 2, "outcomes": {"error": 1, "works": 1}, "median_seconds": 30}}}]
+    assert saved.letters == {"pipeline": {"ASM": "R", "KLA": "x"}, "search": {"Intel": "x", "USAA": "R"}}
+    assert "| Run | pipeline | search |" in trend
+    assert "| [2026-10-17 10:17 UTC](https://example.com/run/3) | 1/2 · 71 s | 1/2 · 30 s |" in trend
+    assert "### Flipping\n" in trend and "\nNone.\n" in trend
+    assert lc.read_state(trend) is None and lc.read_trend(body) is None  # (never taken for each other)
+    assert lc.STATE_MARK not in trend and lc.TREND_MARK not in body
+
+
+def test_each_run_is_added_to_the_trend_issues_history(tmp_path, clock):
+    """The next run reads the history from the trend issue (by its own title, whatever else its label's list holds),
+    adds itself, and names the issue to edit; the table shows the newest run first."""
+    trend = _trend_run(tmp_path, [], [pipeline_rec("ASM"), pipeline_rec("KLA", "needs_you", "sign_in")])[0]
+    main_body = (tmp_path / "body.md").read_text(encoding="utf-8")
+    listed = [{"number": 54, "title": "Nightly live check", "state": "OPEN", "body": main_body},
+              {"number": 70, "title": TREND, "state": "OPEN", "body": trend}]
+    clock["day"] = 18
+    trend, _, _, outputs = _trend_run(tmp_path, listed, [pipeline_rec("ASM"), pipeline_rec("KLA")])
+    assert outputs["trend_issue"] == "70"
+    saved = lc.read_trend(trend)
+    assert [run["at"] for run in saved.runs] == ["2026-10-17 10:17 UTC", "2026-10-18 10:17 UTC"]
+    assert [run["checks"]["pipeline"]["reached"] for run in saved.runs] == [1, 2]
+    assert saved.letters["pipeline"] == {"ASM": "RR", "KLA": "xR"}
+    rows = [line for line in trend.splitlines() if line.startswith("| [")]
+    assert rows[0].startswith("| [2026-10-18 10:17 UTC]") and rows[1].startswith("| [2026-10-17 10:17 UTC]")
+    assert lc.find_issue(listed, TREND)["number"] == 70 and lc.find_issue(listed)["number"] == 54
+
+
+def test_the_trend_keeps_the_last_sixty_runs(tmp_path, clock):
+    trend = None
+    for i in range(60):
+        trend = lc.add_run(trend, {"pipeline": {"ASM": Result("ready")}}, at=f"run {i}")
+    assert len(trend.runs) == 60
+    issue = {"number": 70, "title": TREND, "state": "OPEN", "body": lc.render_trend(trend)}
+    saved = lc.read_trend(_trend_run(tmp_path, [issue], [pipeline_rec("ASM")])[0])
+    assert len(saved.runs) == lc.TREND_RUNS == 60
+    assert saved.runs[0]["at"] == "run 1" and saved.runs[-1]["at"] == "2026-10-17 10:17 UTC"
+    assert saved.letters == {"pipeline": {"ASM": "R" * 20}}
+
+
+def test_each_employer_keeps_its_last_twenty_runs_letters():
+    """R at the review page, x not, - not in the check that run; the oldest first, twenty kept. One gone from its
+    check for twenty runs is let go."""
+    trend = None
+    for i in range(25):
+        pipeline = {"ASM": Result("ready" if i % 2 else "needs_you stuck")}
+        if i < 3:
+            pipeline["KLA"] = Result("ready")
+        trend = lc.add_run(trend, {"pipeline": pipeline}, at=f"run {i}")
+        if i == 21:
+            assert trend.letters["pipeline"]["KLA"] == "R" + "-" * 19
+    assert trend.letters == {"pipeline": {"ASM": "Rx" * 10}}  # (runs 5 to 24: the oldest, run 5, reached)
+    assert all(len(said) <= lc.TREND_LETTERS for found in trend.letters.values() for said in found.values())
+
+
+def test_a_check_that_didnt_finish_or_didnt_run_adds_no_counts_and_its_employers_get_dashes(tmp_path, clock):
+    """A check the run left partial, or didn't run (the accounts check without its secrets), says nothing of its
+    employers that night: no counts, and "-" for each. A site down for its maintenance is "-" too."""
+    trend = _trend_run(tmp_path, [], [pipeline_rec("ASM"), pipeline_rec("KLA")], [search_rec("USAA")],
+                       accounts_records=[pipeline_rec("KLA")])[0]
+    issue = {"number": 70, "title": TREND, "state": "OPEN", "body": trend}
+    clock["day"] = 18
+    down = search_rec("USAA", az=0, error="SearchError: usaa.wd1.myworkdayjobs.com is down for maintenance")
+    trend = _trend_run(tmp_path, [issue], [pipeline_rec("ASM")], [down], partial=["pipeline"])[0]
+    saved = lc.read_trend(trend)
+    assert set(saved.runs[0]["checks"]) == {"pipeline", "search", "accounts"}
+    assert saved.runs[1]["checks"] == {"search": {"reached": 0, "total": 1, "outcomes": {"site down": 1},
+                                                  "median_seconds": 30}}
+    assert saved.letters == {"pipeline": {"ASM": "R-", "KLA": "R-"}, "accounts": {"KLA": "R-"},
+                             "search": {"USAA": "R-"}}
+    row = next(line for line in trend.splitlines() if line.startswith("| [2026-10-18"))
+    assert row == "| [2026-10-18 10:17 UTC](https://example.com/run/3) | — | — | 0/1 · 30 s |"
+    assert lc.letter("pipeline", lc.SITE_DOWN) == "-" and lc.letter("search", "no search") == "x"
+
+
+def test_a_malformed_trend_body_starts_a_fresh_history_without_failing_the_compare(tmp_path, clock, capsys):
+    good = lc.render_trend(lc.add_run(None, {"pipeline": {"ASM": Result("ready")}}, at="run 0"))
+    saved = good.split(lc.TREND_MARK, 1)[1].split("```json\n", 1)[1].split("\n```", 1)[0]
+    data = json.loads(saved)
+    columns = {**data["counts"]["pipeline"], "reached": [1, 1]}  # (a column longer than the runs)
+    broken = [f"{lc.TREND_MARK}\n```json\n{{not json\n```\n", "Someone rewrote this issue.",
+              good.replace(saved, json.dumps({**data, "version": 99})),
+              good.replace(saved, json.dumps({**data, "runs": "run 0"})),
+              good.replace(saved, json.dumps({**data, "counts": {"pipeline": columns}}))]
+    assert lc.read_trend(good) is not None
+    for body in broken:
+        assert lc.read_trend(body) is None, body
+        issue = {"number": 70, "title": TREND, "state": "OPEN", "body": body}
+        trend, main_body, _, outputs = _trend_run(tmp_path, [issue], [pipeline_rec("KLA")])
+        assert main_body and outputs["trend_issue"] == "70"
+        assert [run["at"] for run in lc.read_trend(trend).runs] == ["2026-10-17 10:17 UTC"]
+        said = capsys.readouterr().out
+        assert "::warning::the trend issue #70 has no saved history to add to; starting afresh" in said
+    # the issues' list itself unreadable: no trend body (the issue stays as it was), and the compare goes on
+    (tmp_path / "bad.json").write_text("{not json", encoding="utf-8")
+    extra = ["--trend-issues", str(tmp_path / "bad.json"), "--trend-body-out", str(tmp_path / "t.md")]
+    body, _, outputs = _run(tmp_path, [], [pipeline_rec("KLA")], extra=extra)
+    assert body and not (tmp_path / "t.md").exists() and outputs["trend_issue"] == ""
+    assert "::warning::the trend issue's body wasn't written (JSONDecodeError" in capsys.readouterr().out
+
+
+def test_the_trend_body_fits_githubs_size_with_sixty_runs_of_four_checks():
+    """The biggest history it keeps: sixty runs of four checks, 110 employers in each with long names, eight outcomes a
+    check, every employer flipping (so the flipping section is full). Well within GitHub's 65,536 characters, all
+    sixty runs kept; past a smaller size, the oldest runs are let go."""
+    names = [f"Employer With A Long Name {i:03d} Inc" for i in range(110)]
+    apply = ["ready", "needs_you sign_in", "needs_you stuck", "needs_you bot_check", "needs_you your_submit",
+             "needs_you questions", "no postings", "crash"]
+    search = ["works", "no search", "error", "empty"]
+    trend = None
+    for run in range(lc.TREND_RUNS):
+        current = {c: {n: Result(apply[(run + i + k) % 8]) for i, n in enumerate(names)}
+                   for k, c in enumerate(("pipeline", "hr", "accounts"))}
+        current["search"] = {n: Result(search[(run + i) % 4]) for i, n in enumerate(names)}
+        seconds = {c: {n: 100.0 + 7 * i + run for i, n in enumerate(names)} for c in current}
+        trend = lc.add_run(trend, current, at=f"2026-{8 + run // 28:02d}-{run % 28 + 1:02d} 10:17 UTC", seconds=seconds,
+                           run_url=f"https://github.com/sebob2491/Jobs/actions/runs/{39068637558 + run}")
+    assert len(trend.letters) == 4 and all(len(found) == 110 for found in trend.letters.values())
+    body = lc.render_trend(trend)
+    assert len(body) < 50_000, len(body)
+    assert lc.read_trend(body) == trend  # (all of it: sixty runs, every count and letter)
+    assert "and 90 more (`scripts/nightly_summary.py --trend` names them all)" in body
+    smaller = lc.render_trend(trend, limit=40_000)
+    assert len(smaller) <= 40_000 and 0 < len(lc.read_trend(smaller).runs) < 60
+    with pytest.raises(lc.BodyTooLong):
+        lc.render_trend(trend, limit=20_000)  # (the letters alone are more)
+
+
+def test_the_issue_comes_out_the_same_with_the_trend_issue(tmp_path, clock):
+    """The trend issue is written beside the issue, never into it: its body and comment are the same, byte for byte."""
+    night1 = [pipeline_rec("ASM"), pipeline_rec("KLA", "needs_you", "sign_in")]
+    night2 = [pipeline_rec("ASM", "needs_you", "stuck", "Workday didn't move on."), pipeline_rec("KLA")]
+    without, with_ = tmp_path / "without", tmp_path / "with"
+    without.mkdir()
+    with_.mkdir()
+    body, _, _ = _run(without, [], night1, [search_rec("USAA")], partial=["search"])
+    trend, body2, _, _ = _trend_run(with_, [], night1, [search_rec("USAA")], partial=["search"])
+    assert body2 == body and trend
+    issue = {"number": 7, "title": "Nightly live check", "state": "OPEN", "body": body}
+    clock["day"] = 18
+    body, comment, outputs = _run(without, [issue], night2, [search_rec("USAA")])
+    trend_issue = {"number": 70, "title": TREND, "state": "OPEN", "body": trend}
+    _, body2, comment2, outputs2 = _trend_run(with_, [trend_issue], night2, [search_rec("USAA")], issues=[issue])
+    assert (body2, comment2) == (body, comment) and "**Went backwards:**" in comment
+    assert outputs2 == {**outputs, "trend_issue": "70"}
+
+
+WORKFLOW = Path(__file__).resolve().parents[4] / ".github" / "workflows" / "live-nightly.yml"
+
+
+def test_the_workflow_keeps_the_trend_issue_apart_from_the_issue():
+    """The "fresh" job reads the issue as the first open one with the live-check label: the trend issue has a label of
+    its own (made if missing), and every step that finds either issue looks it up by its own label and title."""
+    yaml = pytest.importorskip("yaml")
+    flow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+    compare = flow["jobs"]["compare"]
+    assert compare["env"]["ISSUE_LABEL"] == "live-check" and compare["env"]["ISSUE_TITLE"] == lc.ISSUE_TITLE
+    assert compare["env"]["TREND_LABEL"] == "live-trends" and compare["env"]["TREND_TITLE"] == lc.TREND_TITLE == TREND
+    steps = {step.get("name", ""): step for step in compare["steps"]}
+    run = steps["Compare with the last run"]["run"]
+    assert 'gh issue list --label "$TREND_LABEL" --state all --limit 5' in run
+    assert '--trend-issues live-compare/trend-issues.json --trend-title "$TREND_TITLE"' in run
+    update = steps["Update the trend issue"]
+    assert update["if"] == steps["Update the issue"]["if"]  # (full runs of the default branch only, as the issue)
+    assert 'gh label create "$TREND_LABEL" --force' in update["run"]
+    assert 'gh issue create --title "$TREND_TITLE" --label "$TREND_LABEL"' in update["run"]
+    assert "live-check" not in update["run"] and "ISSUE" not in update["run"].replace("TREND_ISSUE", "")
+    fresh = flow["jobs"]["fresh"]["steps"][0]["run"]
+    assert "--label live-check" in fresh and f'select(.title == "{lc.ISSUE_TITLE}")' in fresh
+    assert "live-trends" not in fresh

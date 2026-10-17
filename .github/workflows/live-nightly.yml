@@ -18,7 +18,10 @@ name: live-nightly
 # It gets a comment only when an employer's result changes; on a quiet night only its body's
 # "Last checked" line and tables are rewritten, which notifies no one. A run whose check
 # didn't finish fails (employers it didn't reach keep their last result).
-# Only runs of the default branch write to the issue: a manual run from another branch shows
+# A second issue, "Nightly live trends" (label live-trends, never live-check: the steps here find the first
+# issue by that label and its title), keeps the history: the last 60 runs' counts per check, each employer's
+# last 20 runs, and the employers whose result keeps flipping. Its body is rewritten, never commented on.
+# Only runs of the default branch write to the issues: a manual run from another branch shows
 # its comparison in the job summary only.
 # The five checks run at once, each on a machine of its own (a fraction of the time they took
 # one after another); the compare job then reads their logs.
@@ -73,7 +76,9 @@ jobs:
           REPO: ${{ github.repository }}
         run: |
           if [ "$EVENT" != schedule ]; then echo "go=true" >> "$GITHUB_OUTPUT"; exit 0; fi
-          body=$(gh issue list --repo "$REPO" --label live-check --state open --limit 1 --json body --jq '.[0].body' || true)
+          # (by its title too: the trend issue, "Nightly live trends", never has its label, but nothing else may count)
+          body=$(gh issue list --repo "$REPO" --label live-check --state open --limit 10 --json title,body \
+            --jq '[.[] | select(.title == "Nightly live check")][0].body // ""' || true)
           last=$(printf '%s' "$body" | sed -n 's/^Last checked: \([0-9-]* [0-9:]*\) UTC.*/\1/p' | head -1)
           if [ -n "$last" ] && [ $(( $(date -u +%s) - $(date -u -d "$last" +%s) )) -lt 43200 ]; then
             echo "A full run was written to the issue at $last UTC, within 12 hours: this late scheduled run skips." >> "$GITHUB_STEP_SUMMARY"
@@ -223,6 +228,9 @@ jobs:
       GH_REPO: ${{ github.repository }}
       ISSUE_TITLE: Nightly live check
       ISSUE_LABEL: live-check
+      # the history's issue: its own title and label (never live-check, which the "fresh" job reads the first one by)
+      TREND_TITLE: Nightly live trends
+      TREND_LABEL: live-trends
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
@@ -243,8 +251,14 @@ jobs:
           mkdir -p live-compare
           gh issue list --label "$ISSUE_LABEL" --state all --limit 100 \
             --json number,title,state,body > live-compare/issues.json
+          # the history so far (none yet, or not to be had: a fresh one starts, and the compare goes on)
+          gh issue list --label "$TREND_LABEL" --state all --limit 5 \
+            --json number,title,state,body > live-compare/trend-issues.json \
+            || echo '[]' > live-compare/trend-issues.json
           args=(--issues live-compare/issues.json --title "$ISSUE_TITLE" --run-url "$RUN_URL"
                 --body-out live-compare/body.md --comment-out live-compare/comment.md
+                --trend-issues live-compare/trend-issues.json --trend-title "$TREND_TITLE"
+                --trend-body-out live-compare/trend.md
                 --github-output "$GITHUB_OUTPUT")
           # the accounts check's machines, as one check: their logs one after another; finished only if all did,
           # not set up if none was
@@ -276,6 +290,9 @@ jobs:
           {
             if [ -f live-compare/comment.md ]; then cat live-compare/comment.md; echo; fi
             cat live-compare/body.md
+            if [ -f live-compare/trend.md ]; then  # (the history's tables, without its saved block)
+              echo; echo "## Trends"; echo; sed '/^<details>/,$d' live-compare/trend.md
+            fi
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Questions no common question covers yet
         # (the question bank's coverage, the review of Oct 15: what two employers or more asked the test applicant that
@@ -309,6 +326,23 @@ jobs:
           fi
           # after the comment: if this fails, the next run reports the change again, not never
           gh issue edit "$ISSUE" --body-file live-compare/body.md
+      - name: Update the trend issue
+        # (as the issue above: full runs of the default branch only; after it, so the last run's results come first)
+        if: github.event_name == 'schedule' || github.ref_name == github.event.repository.default_branch
+        env:
+          TREND_ISSUE: ${{ steps.compare.outputs.trend_issue }}
+        run: |
+          if [ ! -f live-compare/trend.md ]; then  # (live_compare.py said why in its log)
+            echo "No trend body was written: the trend issue stays as it was."
+            exit 0
+          fi
+          if [ -z "$TREND_ISSUE" ]; then  # the first run: the issue, under its own label (made if missing)
+            gh label create "$TREND_LABEL" --force --color 0E8A16 \
+              --description "The nightly live check's history: counts per run, and the employers that flip"
+            gh issue create --title "$TREND_TITLE" --label "$TREND_LABEL" --body-file live-compare/trend.md
+            exit 0
+          fi
+          gh issue edit "$TREND_ISSUE" --body-file live-compare/trend.md
       - uses: actions/upload-artifact@v4
         if: always()
         with:

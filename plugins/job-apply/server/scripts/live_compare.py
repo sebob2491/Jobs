@@ -3,7 +3,8 @@
     uv run python scripts/live_compare.py --issues issues.json \
         --log pipeline=live-pipeline/run.log --log search=live-search/run.log --log hr=live-hr/run.log \
         [--log accounts=live-accounts/run.log] [--partial search] \
-        --run-url URL --body-out body.md --comment-out comment.md [--github-output "$GITHUB_OUTPUT"]
+        --run-url URL --body-out body.md --comment-out comment.md [--github-output "$GITHUB_OUTPUT"] \
+        [--trend-issues trend-issues.json --trend-body-out trend.md]
 
 Reads what scripts/live_smoke.py printed (one LIVE_PIPELINE or LIVE_RESULT line of JSON per
 employer), turns each employer's record into one outcome that stays put from night to night,
@@ -37,6 +38,15 @@ from a check that didn't finish (--partial) keeps its last outcome, and a check 
 no employers at all keeps all of its last outcomes: a broken run isn't an employer's change.
 Nor is a site down for its maintenance (Workday's at weekends): "site down" keeps the
 employer's last outcome too.
+
+The history goes in a second issue, "Nightly live trends" (label live-trends: never live-check, which the
+workflow's other steps look the first one up by): with --trend-issues (`gh issue list --label live-trends
+--json number,title,state,body`) and --trend-body-out, its new body is written too. It keeps the last 60
+runs' counts per check (the employers at the review page, or whose search works, out of those checked; each
+outcome's count; the median seconds an employer took) and each employer's last 20 runs as letters (R there,
+x not, - not checked), and names the employers that flip (3 changes or more in their last 10 runs). A check
+that didn't finish, or didn't run, adds no counts that night and gives its employers "-". A missing or
+unreadable history starts afresh; trouble with it never fails the compare.
 """
 
 from __future__ import annotations
@@ -44,7 +54,9 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import statistics
 import sys
+from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -181,6 +193,12 @@ def results(check: str, text: str) -> dict[str, Result]:
         outcome, detail = spec.outcome(rec)
         out[name] = Result(outcome, _short(detail))
     return out
+
+
+def run_seconds(check: str, text: str) -> dict[str, float]:
+    """How long the check took at each employer (the seconds live_smoke.py keeps in each record), where it says."""
+    return {name: float(rec["seconds"]) for name, rec in read_log(text, CHECKS[check].prefix).items()
+            if isinstance(rec.get("seconds"), (int, float)) and not isinstance(rec.get("seconds"), bool)}
 
 
 def compare(previous: dict[str, dict[str, str]] | None, current: dict[str, dict[str, Result]],
@@ -402,6 +420,245 @@ def find_issue(issues: Any, title: str = ISSUE_TITLE) -> dict[str, Any] | None:
     return min(mine, key=lambda i: i.get("number") or 0) if mine else None
 
 
+# --- the trend issue: the last runs' counts, and the employers that flip ----------------------------------
+
+TREND_TITLE = "Nightly live trends"  # (label live-trends; the issue above is found by its own title and label)
+TREND_MARK = "<!-- live-trends state -->"  # the saved history's JSON block comes right after this
+TREND_VERSION = 1
+TREND_RUNS = 60  # the runs kept
+TREND_LETTERS = 20  # each employer's last runs kept as letters, per check
+TREND_SHOWN = 14  # the runs in the body's table
+FLIP_WINDOW = 10  # an employer flips when its result changed FLIP_MIN times or more in its last FLIP_WINDOW runs
+FLIP_MIN = 3
+FLIP_SHOWN = 20  # the flipping employers the body names per check (nightly_summary.py --trend names them all)
+TREND_ORDER = ("pipeline", "hr", "accounts", "search", "finance")  # (the order the table shows them in)
+
+
+class Trend(NamedTuple):
+    """The trend issue's history. runs: oldest first, each {"at", "run_url", "checks": {check: {"reached", "total",
+    "outcomes": {outcome: count}, "median_seconds"?}}}, where "reached" is the employers an apply check took as far
+    as it goes (the search check's: its searches that work) and a check the run left partial or didn't run is left
+    out. letters: {check: {employer: its last runs' letters, oldest first}}, R reached (works), x not, - not checked
+    (the check partial or not run, the employer not in it, or its site down for maintenance)."""
+    runs: list[dict[str, Any]]
+    letters: dict[str, dict[str, str]]
+
+
+def _ordered(checks: Any) -> list[str]:
+    return sorted(checks, key=lambda c: (TREND_ORDER.index(c) if c in TREND_ORDER else len(TREND_ORDER), c))
+
+
+def letter(check: str, outcome: str) -> str:
+    """One run's letter for an employer: R as far as the check goes (the search check: its search works), x not,
+    - a site down for its maintenance (not the employer's own result)."""
+    if outcome == SITE_DOWN:
+        return "-"
+    return "R" if (outcome == "works" if check == "search" else outcome in REACHED) else "x"
+
+
+def add_run(trend: Trend | None, current: dict[str, dict[str, Result]], *, at: str, run_url: str = "",
+            partial: set[str] | frozenset[str] = frozenset(),
+            seconds: dict[str, dict[str, float]] | None = None) -> Trend:
+    """The history with this run added (the oldest past TREND_RUNS let go): each check that finished counted, and a
+    letter for each employer of each check (- where the check didn't finish or didn't run, or the employer isn't in
+    it now). An employer with no R or x in its last TREND_LETTERS runs is let go."""
+    counted = {check: found for check, found in current.items() if found and check not in partial}
+    checks: dict[str, dict[str, Any]] = {}
+    for check in _ordered(counted):
+        found = counted[check]
+        one: dict[str, Any] = {
+            "reached": sum(1 for r in found.values() if letter(check, r.outcome) == "R"), "total": len(found),
+            "outcomes": dict(sorted(Counter(r.outcome for r in found.values()).items()))}
+        took = [s for name, s in ((seconds or {}).get(check) or {}).items() if name in found]
+        if took:
+            one["median_seconds"] = round(statistics.median(took))
+        checks[check] = one
+    runs = [*(trend.runs if trend else []), {"at": at, "run_url": run_url, "checks": checks}][-TREND_RUNS:]
+    before = trend.letters if trend else {}
+    letters: dict[str, dict[str, str]] = {}
+    for check in _ordered({*before, *counted}):
+        found, was = counted.get(check) or {}, before.get(check) or {}
+        strings = {}
+        for name in sorted({*was, *found}, key=str.lower):
+            said = (was.get(name, "") + (letter(check, found[name].outcome) if name in found else "-"))[-TREND_LETTERS:]
+            if said.strip("-"):
+                strings[name] = said
+        if strings:
+            letters[check] = strings
+    return Trend(runs, letters)
+
+
+def flips(letters: str, window: int = FLIP_WINDOW) -> int:
+    """How many times an employer's result changed in its last `window` runs (the runs it wasn't checked in skipped)."""
+    seen = [c for c in letters[-window:] if c != "-"]
+    return sum(1 for a, b in zip(seen, seen[1:]) if a != b)
+
+
+def flipping(trend: Trend, at_least: int = FLIP_MIN,
+             window: int = FLIP_WINDOW) -> dict[str, list[tuple[str, str, int]]]:
+    """{check: [(employer, its last `window` letters, how many times it changed)]}: the employers whose result changed
+    `at_least` times or more in their last `window` runs, the most changes first."""
+    out: dict[str, list[tuple[str, str, int]]] = {}
+    for check in _ordered(trend.letters):
+        found = [(name, said[-window:], flips(said, window)) for name, said in trend.letters[check].items()]
+        found = sorted((f for f in found if f[2] >= at_least), key=lambda f: (-f[2], f[0].lower()))
+        if found:
+            out[check] = found
+    return out
+
+
+def _pack(trend: Trend) -> dict[str, Any]:
+    """The history as saved: the runs' counts a column per check and figure (a list with one entry a run, null where the
+    check added no counts that run), so each name is written once, not sixty times: the runs as rows ran past
+    GitHub's size for the body with sixty runs of four checks."""
+    runs = trend.runs
+    counts: dict[str, Any] = {}
+    for check in _ordered({c for run in runs for c in run["checks"]}):
+        ones = [run["checks"].get(check) for run in runs]
+        entry: dict[str, Any] = {key: [one[key] if one else None for one in ones] for key in ("reached", "total")}
+        entry["outcomes"] = {o: [one["outcomes"].get(o, 0) if one else None for one in ones]
+                             for o in sorted({o for one in ones if one for o in one["outcomes"]})}
+        if any(one and one.get("median_seconds") is not None for one in ones):
+            entry["median_seconds"] = [one.get("median_seconds") if one else None for one in ones]
+        counts[check] = entry
+    return {"version": TREND_VERSION, "runs": [{"at": run["at"], "run_url": run.get("run_url") or ""} for run in runs],
+            "counts": counts, "letters": trend.letters}
+
+
+def _unpack(data: dict[str, Any]) -> Trend:
+    """The history _pack saved (ValueError, TypeError, KeyError or AttributeError where it doesn't read)."""
+    runs: list[dict[str, Any]] = [{"at": str(run["at"]), "run_url": str(run.get("run_url") or ""), "checks": {}}
+                                  for run in data["runs"]]
+    n = len(runs)
+    for check, entry in (data.get("counts") or {}).items():
+        reached, total, outcomes = entry["reached"], entry["total"], entry.get("outcomes") or {}
+        took = entry.get("median_seconds") or [None] * n
+        if any(not isinstance(col, list) or len(col) != n for col in (reached, total, took, *outcomes.values())):
+            raise ValueError(f"{check}: a column of another length than the runs'")
+        for i, run in enumerate(runs):
+            if total[i] is None:
+                continue
+            one: dict[str, Any] = {"reached": int(reached[i]), "total": int(total[i]),
+                                   "outcomes": {str(o): int(col[i]) for o, col in outcomes.items() if col[i]}}
+            if took[i] is not None:
+                one["median_seconds"] = round(float(took[i]))
+            run["checks"][str(check)] = one
+    for run in runs:
+        run["checks"] = {c: run["checks"][c] for c in _ordered(run["checks"])}
+    letters: dict[str, dict[str, str]] = {}
+    for check, found in (data.get("letters") or {}).items():
+        for name, said in (found.items() if isinstance(found, dict) else ()):
+            said = "".join(c for c in str(said) if c in "Rx-")[-TREND_LETTERS:]  # (anything else: an edit's)
+            if said.strip("-"):
+                letters.setdefault(str(check), {})[str(name)] = said
+    return Trend(runs[-TREND_RUNS:], letters)
+
+
+_TREND = re.compile(re.escape(TREND_MARK) + r"\s*```json[ \t]*\r?\n(.*?)\r?\n[ \t]*```", re.S)
+
+
+def read_trend(body: str | None) -> Trend | None:
+    """The history a body written by render_trend saved; None when it has none readable (a fresh one starts)."""
+    m = _TREND.search(body or "")
+    if not m:
+        return None
+    try:
+        data = json.loads(m.group(1))
+        if not isinstance(data, dict) or data.get("version") != TREND_VERSION:
+            return None
+        return _unpack(data)
+    except (ValueError, TypeError, KeyError, AttributeError):
+        return None
+
+
+def _trend_cell(one: dict[str, Any] | None) -> str:
+    if not one:
+        return "—"
+    took = one.get("median_seconds")
+    return f"{one['reached']}/{one['total']}" + (f" · {took} s" if took is not None else "")
+
+
+def _trend_body(trend: Trend) -> str:
+    shown = trend.runs[-TREND_SHOWN:][::-1]
+    checks = _ordered({c for run in shown for c in run["checks"]})
+    lines = [
+        "<!-- Rewritten by .github/workflows/live-nightly.yml after every full run: edits here are lost. -->",
+        "The nightly live check's history (the \"Nightly live check\" issue holds the last run's results, and its "
+        "changes). Each run's checks, newest first: the employers taken to the review page out of those checked "
+        "(search: the searches that work), and the median time an employer took. A check that didn't finish, or "
+        "didn't run, adds nothing that night (—).",
+        "",
+    ]
+    if checks:
+        lines += ["| Run | " + " | ".join(checks) + " |", "|---|" + "---|" * len(checks)]
+        for run in shown:
+            when = f"[{run['at']}]({run['run_url']})" if run.get("run_url") else run["at"]
+            lines.append(f"| {when} | " + " | ".join(_trend_cell(run["checks"].get(c)) for c in checks) + " |")
+    else:
+        lines.append("No run has finished a check yet.")
+    flip = flipping(trend)
+    lines += ["", "### Flipping", "",
+              f"Employers whose result changed {FLIP_MIN} times or more in their last {FLIP_WINDOW} runs, their "
+              "letters oldest first: `R` at the review page (search: it works), `x` not, `-` not checked. "
+              "`scripts/nightly_summary.py --handled` leaves them out of data/desk_handled.yaml.", ""]
+    if not flip:
+        lines.append("None.")
+    for check, found in flip.items():
+        more = len(found) - FLIP_SHOWN
+        lines.append(f"- **{check}** ({len(found)}): "
+                     + ", ".join(f"{_cell(name)} `{said}`" for name, said, _ in found[:FLIP_SHOWN])
+                     + (f", and {more} more (`scripts/nightly_summary.py --trend` names them all)" if more > 0 else ""))
+    saved = json.dumps(_pack(trend), separators=(",", ":"), sort_keys=True, ensure_ascii=False)
+    lines += ["", "<details><summary>Saved history (the next run adds to it)</summary>", "",
+              TREND_MARK, "```json", saved, "```", "", "</details>", ""]
+    return "\n".join(lines)
+
+
+def render_trend(trend: Trend, limit: int = BODY_LIMIT) -> str:
+    """The trend issue's body, within GitHub's size: its oldest runs let go if it would outgrow it (BodyTooLong when
+    even one run doesn't fit)."""
+    while True:
+        body = _trend_body(trend)
+        if len(body) <= limit or len(trend.runs) <= 1:
+            break
+        trend = Trend(trend.runs[1:], trend.letters)
+    if len(body) > limit:
+        raise BodyTooLong(f"the trend issue's body would be {len(body):,} characters, over GitHub's {limit:,}")
+    return body
+
+
+def write_trend(issues_path: Path | None, out: Path, current: dict[str, dict[str, Result]], *, at: str,
+                run_url: str, partial: set[str] | frozenset[str], seconds: dict[str, dict[str, float]],
+                title: str = TREND_TITLE) -> dict[str, Any] | None:
+    """The trend issue's new body, written to `out`; the issue it's for (None: there's none yet). Its last body
+    missing or unreadable starts a fresh history. Any trouble writes no body, so the issue stays as it was, and
+    never fails the compare: the other issue's results come first."""
+    if out.exists():
+        out.unlink()
+    issue = None
+    try:
+        issues = json.loads(issues_path.read_text(encoding="utf-8")) if issues_path and issues_path.exists() else []
+        issue = find_issue(issues, title)
+        trend = read_trend(issue.get("body")) if issue else None
+        if issue and trend is None:
+            print(f"::warning::the trend issue #{issue.get('number')} has no saved history to add to; starting afresh")
+        new = add_run(trend, current, at=at, run_url=run_url, partial=partial, seconds=seconds)
+        body = render_trend(new)
+    except Exception as e:  # noqa: BLE001 - the history is a look back, never a reason to lose tonight's results
+        print(f"::warning::the trend issue's body wasn't written ({type(e).__name__}: {e})")
+        return issue
+    out.write_text(body, encoding="utf-8")
+    kept = read_trend(body)
+    kept_runs = len(kept.runs) if kept else 0
+    print(f"trend issue body: {len(body):,} of {BODY_LIMIT:,} characters, {kept_runs} runs")
+    if kept_runs < len(new.runs):
+        print(f"::warning::the trend issue keeps {kept_runs} runs of {len(new.runs)}: more would outgrow GitHub's size")
+    for check, found in flipping(new).items():
+        for name, said, n in found:
+            print(f"flipping: {name} ({check}; {n} changes in its last {FLIP_WINDOW} runs: {said})")
+    return issue
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--log", action="append", default=[], metavar="CHECK=PATH",
@@ -413,10 +670,17 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--run-url", default="")
     ap.add_argument("--body-out", type=Path, required=True, help="the issue's new body")
     ap.add_argument("--comment-out", type=Path, required=True, help="the changes, written only when there are some")
-    ap.add_argument("--github-output", type=Path, help="append issue=, issue_state= and changes= here")
+    ap.add_argument("--github-output", type=Path,
+                    help="append issue=, issue_state= and changes= here (and trend_issue= with --trend-body-out)")
+    ap.add_argument("--trend-issues", type=Path,
+                    help="`gh issue list --label live-trends --json number,title,state,body` output: the history")
+    ap.add_argument("--trend-title", default=TREND_TITLE, help="the title of the issue that holds the history")
+    ap.add_argument("--trend-body-out", type=Path,
+                    help="the trend issue's new body (none written when it can't be: the issue stays as it was)")
     args = ap.parse_args(argv)
 
     current: dict[str, dict[str, Result]] = {}
+    seconds: dict[str, dict[str, float]] = {}
     for spec in args.log:
         check, sep, path = spec.partition("=")
         if not sep or check not in CHECKS:
@@ -427,6 +691,7 @@ def main(argv: list[str] | None = None) -> int:
             text = ""
             print(f"::warning::{check}: can't read {path} ({e})")
         current[check] = results(check, text)
+        seconds[check] = run_seconds(check, text)
         print(f"{check}: {len(current[check])} employers reported")
         if not current[check]:
             print(f"::warning::{check}: no employers reported; keeping the last run's results")
@@ -462,10 +727,17 @@ def main(argv: list[str] | None = None) -> int:
         print(f"::warning::{c.employer} ({c.check}) no longer reaches the review page: now {c.after}")
     if not changes:
         print("no changes" + (" (nothing saved to compare with)" if previous is None else ""))
+    trend_issue = None
+    if args.trend_body_out:  # (after the other issue's body and comment, which come out as they did without it)
+        trend_issue = write_trend(args.trend_issues, args.trend_body_out, current,
+                                  at=now.strftime("%Y-%m-%d %H:%M UTC"), run_url=args.run_url, partial=partial,
+                                  seconds=seconds, title=args.trend_title)
     if args.github_output:
         number, issue_state = (issue.get("number") or "", issue.get("state") or "") if issue else ("", "")
         with args.github_output.open("a", encoding="utf-8") as f:
             f.write(f"issue={number}\nissue_state={issue_state}\nchanges={len(changes)}\nwent_back={len(back)}\n")
+            if args.trend_body_out:
+                f.write(f"trend_issue={(trend_issue or {}).get('number') or ''}\n")
     return 0
 
 
