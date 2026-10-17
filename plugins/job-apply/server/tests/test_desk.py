@@ -337,33 +337,126 @@ def test_jobs_already_applied_to_are_never_queued_again(srv):
     assert desk.apply(urls=["javascript:alert(1)"], job_ids=[], submit=False) == ([], [])
 
 
-def test_opening_the_page_searches_when_the_last_search_is_stale(srv, monkeypatch):
-    searched = []
+def test_the_desk_searches_by_itself_only_with_its_switch_on_and_a_search_can_be_stopped(srv, monkeypatch):
+    """Issue #112, note 44: the page searched by itself whenever the openings were 12 hours old, with no setting, and
+    Pause queue didn't stop it. It searches only when Find jobs is pressed, unless "Search by itself every 12 hours"
+    is on (off by default), and then not while the queue is paused. A search running is said in the header (by
+    itself, or pressed), with Stop search beside it: the search ends, and the openings found before it stay."""
+    searched: list[str] = []
+    gate: dict[str, asyncio.Event] = {}
 
     async def fake_search(query, companies=None, location=None, limit_per_company=10):
         searched.append(query)
+        await gate["open"].wait()  # (a search taking its time, as the real one does)
         return {"results": [], "errors": {}, "browser_only": []}
 
     monkeypatch.setattr(srv, "search_company_jobs", fake_search)
     desk = Desk(srv)
     desk.applier.start = lambda: None
+    assert desk.auto_search is False  # (off unless the person turns it on)
 
     async def go():
+        gate["open"] = asyncio.Event()
         await desk.start(port=0, open_browser=False)
         try:
             async with person_browser() as browser:
                 page = await browser.new_page()
-                await page.goto(desk.url)
-                for _ in range(50):
-                    if searched and desk.search["status"] == "done":
-                        break
-                    await asyncio.sleep(0.1)
+                await page.goto(desk.url)  # never searched before: the old page searched on opening
+                await page.wait_for_selector("text=Press Find jobs")
+                await asyncio.sleep(3.5)  # (two of the page's refreshes)
+                assert not searched and desk.search["status"] == "idle"
+                assert not await page.is_checked("#auto-search") and await page.is_hidden("#stop-search")
+                # turned on while the queue is paused: still nothing
+                desk.applier.paused = True
+                await page.check("#auto-search")
+                await asyncio.sleep(3.5)
+                assert desk.auto_search is True and not searched
+                # the queue resumed: the page searches by itself, and says so, with Stop search beside it
+                desk.applier.paused = False
+                await page.wait_for_selector("#stop-search:not([hidden])")
+                assert desk.search["auto"] is True
+                assert "Searching by itself" in await page.inner_text("#searched")
+                assert await page.is_disabled("#find")
+                n = len(searched)
+                await page.click("#stop-search")
+                await page.wait_for_selector("#stop-search", state="hidden")
+                assert desk.search["status"] == "idle" and desk.search["stopped"]
+                assert "Search stopped" in await page.inner_text("#searched")
+                await asyncio.sleep(3.5)
+                assert len(searched) == n  # (not started again by itself)
+                # Find jobs pressed: a search said as pressed, which finishes
+                await page.click("#find")
+                await page.wait_for_selector("#stop-search:not([hidden])")
+                assert desk.search["auto"] is False
+                assert (await page.inner_text("#searched")).startswith("Searching, started")
+                gate["open"].set()
+                await page.wait_for_selector("#stop-search", state="hidden")
+                assert desk.search["status"] == "done"
+                assert "Search stopped" not in await page.inner_text("#searched")
                 await browser.close()
         finally:
             await desk.stop()
 
     run(go())
-    assert len(searched) == 1 and desk.search["status"] == "done"
+    saved = json.loads((srv.config.home() / "desk.json").read_text(encoding="utf-8"))
+    assert saved["auto_search"] is True and Desk(srv).auto_search is True  # (kept for next time)
+
+
+def test_a_search_asked_by_the_page_itself_needs_the_switch_and_a_running_queue(srv, monkeypatch):
+    """The server's side of note 44: a search the page asks for by itself ({"auto": true}) starts only with the
+    switch on and the queue not paused; Find jobs (no "auto") always does. Stop search keeps the openings before."""
+    gate: dict[str, asyncio.Event] = {}
+
+    async def fake_search(query, companies=None, location=None, limit_per_company=10):
+        await gate["open"].wait()
+        return {"results": [], "errors": {}, "browser_only": []}
+
+    monkeypatch.setattr(srv, "search_company_jobs", fake_search)
+    desk = Desk(srv)
+    desk.applier.start = lambda: None
+    before = time.time() - 13 * 3600
+    desk.search.update(status="done", at=before)
+    desk.listings = [{"url": "https://example.com/job/1", "title": "Technician", "company": "Example Fab"}]
+
+    async def go():
+        gate["open"] = asyncio.Event()
+        await desk.start(port=0, open_browser=False)
+        try:
+            h = {"x-desk-token": desk.token}
+            async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{desk.port}", timeout=20, trust_env=False) as c:
+                assert (await c.post("/api/search/stop", json={})).status_code == 403
+                assert (await c.post("/api/search", headers=h, json={"auto": True})).json() == {"started": False}
+                assert (await c.post("/api/search/stop", headers=h, json={})).json() == {"stopped": False}
+                assert (await c.post("/api/settings", headers=h, json={"auto_search": True})).json()["auto_search"]
+                desk.applier.paused = True
+                assert (await c.post("/api/search", headers=h, json={"auto": True})).json() == {"started": False}
+                desk.applier.paused = False
+                assert (await c.post("/api/search", headers=h, json={"auto": True})).json() == {"started": True}
+                await asyncio.sleep(0.2)
+                state = (await c.get("/api/state", headers=h)).json()
+                assert state["search"]["status"] == "running" and state["search"]["auto"] is True
+                assert state["settings"]["auto_search"] is True
+                assert (await c.post("/api/search/stop", headers=h, json={})).json() == {"stopped": True}
+                state = (await c.get("/api/state", headers=h)).json()
+                # the openings found before stay, with when they were found
+                assert state["search"]["status"] == "done" and state["search"]["at"] == before
+                assert state["search"]["stopped"] and [r["url"] for r in state["listings"]] == ["https://example.com/job/1"]
+                # Find jobs needs no switch
+                assert (await c.post("/api/settings", headers=h, json={"auto_search": False})).json()["auto_search"] is False
+                assert (await c.post("/api/search", headers=h, json={})).json() == {"started": True}
+                await asyncio.sleep(0.2)
+                assert desk.search["status"] == "running" and desk.search["auto"] is False
+                assert desk.search["stopped"] is None
+                gate["open"].set()
+                for _ in range(50):
+                    if desk.search["status"] == "done":
+                        break
+                    await asyncio.sleep(0.1)
+                assert desk.search["status"] == "done" and desk.search["at"] > before
+        finally:
+            await desk.stop()
+
+    run(go())
 
 
 def test_a_site_password_goes_to_secrets_only(srv):
@@ -615,7 +708,8 @@ def test_the_tailoring_switch_is_kept_and_its_waiting_jobs_listed(srv, job_apply
             h = {"x-desk-token": desk.token}
             async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{desk.port}", timeout=20, trust_env=False) as c:
                 r = await c.post("/api/settings", headers=h, json={"tailor_resumes": True})
-                assert r.json() == {"auto_submit": False, "tailor_resumes": True, "handled_only": False, "troubleshoot": False}
+                assert r.json() == {"auto_submit": False, "tailor_resumes": True, "handled_only": False, "troubleshoot": False,
+                                    "auto_search": False}
                 await desk.applier.stop()  # hold the queue still while the waiting job is set up
                 desk.applier.runs[job["id"]] = Run(job["id"], "FSE", "Example Fab", status="needs_you", need="tailor")
                 state = (await c.get("/api/state", headers=h)).json()
@@ -779,7 +873,8 @@ def test_troubleshooting_searches_every_list_shows_where_the_desk_stops_and_send
                 await page.wait_for_selector("text=HR Generalist", state="detached")
                 listed = list(desk.listings)
                 await page.check("#troubleshoot")
-                # the other way's openings are cleared, and the page searches again, troubleshooting's way
+                # the other way's openings are cleared; Find jobs searches again, troubleshooting's way
+                await page.click("#find")
                 for _ in range(100):
                     if searched and desk.search["status"] == "done":
                         break
@@ -812,7 +907,7 @@ def test_troubleshooting_searches_every_list_shows_where_the_desk_stops_and_send
 
     run(go())
     assert desk.applier.runs[job["id"]].status == "ready"  # nothing sent
-    assert len(searched) == 2 and all(every for _, every in searched), searched  # (the page's own, and Find jobs)
+    assert len(searched) == 2 and all(every for _, every in searched), searched  # (pressed on the page, and Claude's)
     assert "human resources" in searched[0][0] and "recruiter" in searched[0][0], searched
     saved = json.loads((job_apply_home / "desk.json").read_text(encoding="utf-8"))
     assert saved["troubleshoot"] is True and saved["handled_only"] is False

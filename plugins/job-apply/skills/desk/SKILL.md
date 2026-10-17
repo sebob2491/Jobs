@@ -12,6 +12,11 @@ The desk is a local web page served by this plugin. It does what the `find-jobs`
   `preferences.titles` in its `preferences.locations` (or home state). It ranks each
   opening, with plain reasons and concerns under it: a degree requirement the user's
   education doesn't meet, senior titles, clearances, export control, travel.
+  It searches only when pressed. **Search by itself every 12 hours** (beside
+  Troubleshooting, off unless the user turns it on) also searches when the openings are
+  over 12 hours old, but not while the queue is paused. While a search runs, the header
+  says so (by itself, or pressed) with **Stop search** beside it: the search ends and the
+  openings found before it stay.
 - **Apply to selected** works through the picked jobs one at a time in the automation
   browser. It clicks through Apply, autofills every page, adds Workday's work and
   education blocks, and stops at each review page. Before they go, it says what will stop

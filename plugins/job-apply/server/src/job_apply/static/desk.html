@@ -175,6 +175,7 @@ footer { max-width: 1240px; margin: 0 auto; padding: 0 16px 24px; color: var(--m
     <button id="pause-btn" data-act="pause" title="The job under way finishes what it is doing; no other job starts until you press Resume queue" hidden>Pause queue</button>
     <button id="area-btn" data-act="area" title="What and where Find jobs searches: the job titles, places and employer lists">What and where</button>
     <button id="find" data-act="find">Find jobs</button>
+    <button id="stop-search" data-act="stop-search" title="The search ends; the openings found before it stay" hidden>Stop search</button>
   </div>
 </header>
 <main>
@@ -189,6 +190,7 @@ footer { max-width: 1240px; margin: 0 auto; padding: 0 16px 24px; color: var(--m
       </div>
       <label class="openings-only handled-switch" title="Only the employers where, in the plugin's live check, the desk took a test applicant all the way to the application's review page. Bot checks, CAPTCHAs and steps it can't do yet are elsewhere."><input type="checkbox" id="handled-only"> Only where the desk goes all the way</label>
       <label class="openings-only handled-switch" title="To get the desk going at more employers: Find jobs searches every list's employers (yours, and HR jobs too), and only the openings where the desk doesn't go all the way yet show, whatever their fit. Nothing is sent while it's on."><input type="checkbox" id="troubleshoot"> Troubleshooting</label>
+      <label class="openings-only handled-switch" title="Off: the desk searches only when you press Find jobs. On: it also searches by itself when the openings are over 12 hours old (on opening, or on a page left open), but not while the queue is paused. The header says when a search is running, with Stop search beside it."><input type="checkbox" id="auto-search"> Search by itself every 12 hours</label>
       <span class="spacer"></span>
       <span class="openings-only links"><button class="link" data-act="select-recommended">Select recommended</button>
       <button class="link" data-act="select-none">Clear</button></span>
@@ -354,7 +356,9 @@ let reporting = false;  // a problem report being written
 let notesShown = [];  // the notes in the Notes panel: Clear removes those, not one taken since
 let autoSearchedAt = 0;
 let preflightSeen = "";  // what Apply last said would stop the ticked jobs, and the person went ahead anyway
-const STALE_SEARCH = 12 * 3600;  // seconds: listings older than this are searched again, also on a desk left open
+// seconds: with "Search by itself" on (off unless the person turns it on: issue #112, note 44), openings older than
+// this are searched again, also on a desk left open; never while the queue is paused
+const STALE_SEARCH = 12 * 3600;
 
 // Openings shown on earlier visits, kept in this browser only: the others are tagged New
 // for the whole of this visit. The first visit tags nothing.
@@ -840,14 +844,20 @@ function renderHeader() {
   const sr = state.search;
   $("find").innerHTML = sr.status === "running" ? `<span class="spin"></span> Searching…` : "Find jobs";
   $("find").disabled = sr.status === "running";
+  $("stop-search").hidden = sr.status !== "running";
   // Pause queue while jobs are queued or running; Resume queue (with how many wait) while paused
   const lined = allRuns(), lineWaits = lined.filter((r) => r.status === "queued").length;
   $("pause-btn").hidden = !state.paused && !lineWaits && !lined.some((r) => r.status === "running");
   $("pause-btn").dataset.act = state.paused ? "resume" : "pause";
   $("pause-btn").textContent = state.paused ? `Resume queue${lineWaits ? ` (${lineWaits} waiting)` : ""}` : "Pause queue";
   const fresh = (state.listings || []).filter((r) => isNew(r) && (r.added || (r.fit && r.fit.recommended))).length;
-  $("searched").textContent = sr.status === "failed" ? "Search failed: " + (sr.error || "")
-    : sr.at ? "Searched " + ago(sr.at) + (fresh ? ` · ${fresh} new` : "") : "";
+  $("searched").textContent = sr.status === "running"
+    ? (sr.auto ? "Searching by itself (the openings were over 12 hours old), started " : "Searching, started ") + ago(sr.started)
+    : sr.status === "failed" ? "Search failed: " + (sr.error || "")
+    : [sr.stopped && sr.stopped > (sr.at || 0) ? "Search stopped" : "",
+       sr.at ? "Searched " + ago(sr.at) + (fresh ? ` · ${fresh} new` : "") : ""].filter(Boolean).join(" · ");
+  const autoSearch = $("auto-search");
+  if (document.activeElement !== autoSearch) autoSearch.checked = !!s.auto_search;
   const auto = $("auto");
   if (document.activeElement !== auto) auto.checked = !!s.auto_submit;
   auto.disabled = s.dry_run;
@@ -1132,9 +1142,10 @@ async function load() {
     rememberSeen((state.listings || []).map((r) => r.url));
     const sr = state.search;
     const now = Date.now() / 1000;
-    if (sr.status !== "running" && (!sr.at || now - sr.at > STALE_SEARCH) && now - autoSearchedAt > STALE_SEARCH) {
+    if (state.settings.auto_search && !state.paused && sr.status !== "running"
+        && (!sr.at || now - sr.at > STALE_SEARCH) && now - autoSearchedAt > STALE_SEARCH) {
       autoSearchedAt = now;  // fresh listings on opening, and twice a day on a desk left open
-      await api("/api/search", {});
+      await api("/api/search", {auto: true});
     }
   } catch (e) {
     $("notices").innerHTML = e.status === 403
@@ -1230,6 +1241,7 @@ document.addEventListener("click", (e) => {
   const a = t.dataset.act, job = t.dataset.job, jobAct = t.dataset.jobAct;
   if (!state && (a || jobAct)) return;  // the page hasn't loaded yet
   if (a === "find") act(() => api("/api/search", {}));
+  if (a === "stop-search") act(() => api("/api/search/stop", {}));
   if (a === "area") openArea();
   if (a === "area-close") { areaDraft = null; $("area").close(); }
   if (a === "area-title-add") { areaAdd("titles", $("area-title-new").value); $("area-title-new").value = ""; }
@@ -1413,6 +1425,7 @@ document.addEventListener("change", (e) => {
     act(() => api("/api/settings", {auto_submit: t.checked}));
   }
   if (t.id === "tailor") act(() => api("/api/settings", {tailor_resumes: t.checked}));
+  if (t.id === "auto-search") act(() => api("/api/settings", {auto_search: t.checked}));
   if (t.id === "handled-only") {
     // what the switch hides isn't applied to unseen
     if (t.checked) (state.listings || []).forEach((r) => { if (!kept(r)) selected.delete(r.url); });

@@ -176,7 +176,7 @@ def test_the_desks_what_and_where_window_saves_and_finds_jobs_again(srv):
     desk.listings = [{"url": "https://example.com/job/1", "title": "Technician", "company": "Example Fab"}]
     searched: list[float] = []
 
-    async def find_jobs():
+    async def find_jobs(auto=False):
         searched.append(time.time())
 
     desk.find_jobs = find_jobs
