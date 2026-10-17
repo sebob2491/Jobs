@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import errno
 import functools
 import hashlib
 import json
@@ -25,6 +26,7 @@ import logging
 import os
 import re
 import shutil
+import sys
 import time
 from collections import deque
 from dataclasses import dataclass, field
@@ -141,6 +143,92 @@ def _take_code(mail: tuple[str, str, float], job_id: int) -> None:
 
 FINISHED = {"applied", "interviewing", "offer", "rejected", "withdrawn"}  # tracker statuses never applied to again
 UNSKIP_WAIT = 10  # seconds an Undo waits for the worker to finish the step a job was skipped in
+# The Job Desk's queue, kept in the person's own folder as it changes so a restart of the desk (a Claude app restart, a
+# crash, a plugin update) picks it up again (the review of Oct 15): each job's number in its place in line, whether it
+# was queued (never begun), under way or waiting on the person, whether Submit for me was on for it and whether a Submit
+# was pressed for it; and whether the queue was paused. Never an answer, a code, a password or a page's words
+# (Applier._saved_queue). One desk keeps it at a time (QUEUE_LOCK: two Claude sessions share the folder)
+QUEUE_FILE = "desk-queue.json"
+QUEUE_LOCK = "desk-queue.lock"
+# A kept queue older than this (days) is said with its age as it comes back (paused, as any)
+QUEUE_STALE_DAYS = 7
+# said on the review card of a job whose Submit the person pressed before the desk restarted (never carried over)
+SUBMIT_UNSENT = "Your Submit from before the desk restarted wasn't sent: press Submit again to send it."
+# on the card of a job begun before the desk restarted (under way, or waiting on the person): it isn't queued again by
+# itself, as the person may have worked in its tab (sent it on the site, say). Resume fills it again, never sending it
+RESTART_BEGUN = ("The desk restarted before this application was finished. If you sent it yourself on the site, press I "
+                 "submitted it already. Otherwise Resume fills it again up to its review page (nothing is sent), or Skip "
+                 "job.")
+# and on the card of one whose Submit was pressed (or being pressed) then: it may have gone, so it isn't queued again
+RESTART_CHECK = ("Submit was pressed for this job before the desk restarted, and it may have gone in, so the desk "
+                 "didn't queue it again. Check your email or the site: if it went in, press I submitted it; if it "
+                 "didn't, press Resume and it's filled again up to its review page (nothing is sent).")
+# said on a desk that another one (another Claude session's) keeps the queue for (looked at again about this often,
+# seconds: once that one has ended, this one keeps it, and picks up what it kept), or that can't keep one at all
+QUEUE_ELSEWHERE = ("Another Job Desk is running (another Claude Code session's), and the queue is kept there: this "
+                   "one's queue isn't picked up again after a restart.")
+QUEUE_LOCK_RETRY = 60
+QUEUE_NO_LOCK = "The desk can't keep its queue across a restart here (its folder doesn't allow a lock)."
+
+
+def queue_path() -> Path:
+    return config.home() / QUEUE_FILE
+
+
+# The queue lock this process holds, by its file: the open file (the operating system's lock on it goes with the
+# process, however it ends) and how many of this process's desks keep the queue with it (one in the app; a test's few)
+_QUEUE_LOCKS: dict[str, list[Any]] = {}
+
+
+def _take_queue_lock() -> str:
+    """Keep the desk's queue in this process: "mine"; "theirs" while another process's desk keeps it (its lock held);
+    or "none" when the lock can't be had here at all (a folder that can't be written, or a file system with no locks)."""
+    path = config.home() / QUEUE_LOCK
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        key = str(path.resolve())
+        held = _QUEUE_LOCKS.get(key)
+        if held is not None:
+            held[1] += 1
+            return "mine"
+        fd = os.open(path, os.O_RDWR | os.O_CREAT | getattr(os, "O_BINARY", 0), 0o600)
+    except OSError:
+        return "none"
+    try:
+        if sys.platform == "win32":
+            import msvcrt
+            msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError as e:
+        os.close(fd)
+        # held by another (EWOULDBLOCK; Windows' lock violation, as EACCES), or no locks to be had (ENOLCK, ENOTSUP)
+        held_errors = ({errno.EACCES, getattr(errno, "EDEADLOCK", errno.EDEADLK)} if sys.platform == "win32"
+                       else {errno.EAGAIN, errno.EWOULDBLOCK})
+        return "theirs" if e.errno in held_errors else "none"
+    with contextlib.suppress(OSError):  # (which process holds it, for anyone looking)
+        os.ftruncate(fd, 0)
+        os.write(fd, str(os.getpid()).encode())
+    _QUEUE_LOCKS[key] = [fd, 1]
+    return "mine"
+
+
+def _give_back_queue_lock() -> None:
+    key = str((config.home() / QUEUE_LOCK).resolve())
+    held = _QUEUE_LOCKS.get(key)
+    if held is None:
+        return
+    held[1] -= 1
+    if held[1] <= 0:
+        del _QUEUE_LOCKS[key]
+        with contextlib.suppress(OSError):
+            if sys.platform == "win32":
+                import msvcrt
+                os.lseek(held[0], 0, os.SEEK_SET)
+                msvcrt.locking(held[0], msvcrt.LK_UNLCK, 1)
+        with contextlib.suppress(OSError):
+            os.close(held[0])
 
 _BOT_TITLE = re.compile(r"just a moment|attention required|access denied|pardon our interruption|security check|"
                         r"are you a robot|bot (?:check|detection)", re.I)
@@ -712,7 +800,7 @@ class Run:
     status: str = "queued"  # queued | running | needs_you | ready | submitted | failed | skipped
     # questions | sign_in | bot_check | email_code | captcha | your_submit | stuck
     # | submit_failed (pressed, the form is still there) | check_submit (pressed, no confirmation)
-    # | tailor (waiting for Claude to write a resume for this job)
+    # | tailor (waiting for Claude to write a resume for this job) | restarted (begun before the desk restarted)
     need: str = ""
     reason: str = ""
     questions: list[dict[str, Any]] = field(default_factory=list)
@@ -805,6 +893,19 @@ class Run:
     # Submit was pressed for this job before and no confirmation showed (its folder keeps the
     # record): it may have gone, so it's never pressed again without the person
     pressed_before: bool = False
+    # Kept in the desk's saved queue (QUEUE_FILE), for a restart: its pass has begun (in this run of the desk, or one
+    # before a restart: such a job comes back on a card, never queued by itself); the person pressed Submit for it and
+    # that Submit hasn't gone yet (waiting its turn, or under way); its Submit is being pressed this moment (a restart
+    # meanwhile never queues it again: it may have gone); and its pass was cut short by the desk stopping or the browser
+    # closing, not by anything of its own. After a restart: left for the person on a card with no tab (RESTART_BEGUN,
+    # or RESTART_CHECK for a Submit pressed then that may have gone in), whose Resume fills it again and never sends it;
+    # and a Submit the person pressed before it, which wasn't sent (its review card says to press it again)
+    started: bool = False
+    submit_pressed: bool = False
+    sending: bool = False
+    cut_short: bool = False
+    submit_unsent: bool = False
+    left_at_restart: bool = False
     # Its reload for "Something went wrong" brought back only the site's header and footer, and that was said: a Resume
     # on that page, still so, is said the same (Northern Trust's and Axcelis' Workday, runs 88 and 90)
     came_back_empty: bool = False
@@ -836,7 +937,8 @@ class Run:
                                                                         "account_finished", "verifying", "verify_resent", "mail_looks", "mail_last",
                                                                         "entries_short", "entries_told", "entries_ok",
                                                                         "account_answers", "employer_mail", "others_mail",
-                                                                        "went_in", "draft_pages")},
+                                                                        "went_in", "draft_pages", "submit_pressed",
+                                                                        "sending", "cut_short", "started")},
                 # (only for the cards that show it: a job queued or under way has none, and 30 of them made the
                 # page's state megabytes, every poll)
                 "went_in": None if self.status in ("queued", "running") else self.went_in.public()}
@@ -1011,8 +1113,26 @@ class Applier:
     person's own attention: while a pause needs their hands (Run.blocking) or they're in one of the desk's rounds, no
     job starts, and no other tab comes to the front (_bring_forward, keep_front); the jobs under way go on in theirs."""
 
-    def __init__(self, srv: Any):
+    def __init__(self, srv: Any, keep_queue: bool = False):
         self.srv = srv  # the server module: its tools, tracker() and browser
+        # The Job Desk's own queue is kept in QUEUE_FILE as it changes, and picked up again as the desk starts after a
+        # restart (keep_queue: the desk's; the live check's appliers and a test's own keep none). Whether this desk keeps
+        # it (QUEUE_LOCK, taken as it starts: None until then, and nothing is written before it's read back), or another
+        # desk does (queue_elsewhere); what was written last (the same queue isn't written again); and whether the desk
+        # is stopping: what that cuts short stays as it was kept, under way. The jobs queued again as it started (they
+        # wait for the person's Resume queue, said on the desk until then), and how old their kept queue was (days)
+        self.keep_queue = keep_queue
+        self._queue_owner: bool | None = None
+        self.queue_elsewhere = self.queue_unlockable = False
+        self._lock_refused = False  # (once refused: a queue picked up later is a takeover's, the desk's own going on)
+        self._lock_tried = 0.0
+        self._queue_restored = self._restoring = False
+        self._queue_said = ""
+        self._queue_since: float | None = None  # (when the queue kept now began: its age outlasts the restarts)
+        self._closing = False
+        self._restored_ids: set[int] = set()
+        self._restored_days = 0
+        self._taken_over = False
         self.runs: dict[int, Run] = {}
         self.tasks: deque[tuple[str, int]] = deque()
         self.auto_submit = False
@@ -1050,7 +1170,37 @@ class Applier:
         self._before_skip: dict[int, tuple[str, int | None]] = {}
 
     # ------------------------------------------------------------- control
+    def restore(self) -> None:
+        """The desk starting: keep its queue from now on, unless another desk does (QUEUE_LOCK), and, at its first start,
+        pick up the queue it kept before a restart (_restore_queue). Before it serves its page (Desk.start): a call from
+        a page left open must never meet the queue before it's back, nor write it over."""
+        self._closing = False
+        if not self.keep_queue:
+            return
+        if not self._queue_owner:
+            taken = _take_queue_lock()
+            self._lock_tried = time.monotonic()
+            self._queue_owner = taken == "mine"
+            self.queue_elsewhere, self.queue_unlockable = taken == "theirs", taken == "none"
+            self._lock_refused = self._lock_refused or not self._queue_owner
+        if self._queue_owner and not self._queue_restored:
+            self._queue_restored = True
+            self._restore_queue(takeover=self._lock_refused)
+        self._save_queue()  # (as it is now: anything queued before it was back is kept from here on)
+
+    def queue_note(self) -> str | None:
+        """Said on the desk while its queue isn't kept: another desk keeps it, or the lock can't be had here."""
+        return QUEUE_ELSEWHERE if self.queue_elsewhere else QUEUE_NO_LOCK if self.queue_unlockable else None
+
+    def _retry_queue_lock(self) -> None:
+        """While another desk keeps the queue, look again about every QUEUE_LOCK_RETRY seconds: once it has ended, this
+        one keeps the queue, and picks up what it kept (held for the person, this desk's own queue going on)."""
+        if (self.keep_queue and self.queue_elsewhere and not self._closing
+                and time.monotonic() - self._lock_tried >= QUEUE_LOCK_RETRY):
+            self.restore()
+
     def start(self) -> None:
+        self.restore()
         if self._worker_task is None or self._worker_task.done():
             self._worker_task = asyncio.get_running_loop().create_task(self._worker())
         # (a tab a job filled meanwhile opens never stays over the one the person is at for another)
@@ -1058,6 +1208,10 @@ class Applier:
             self.srv.browser.keep_front = self._front_tab
 
     async def stop(self) -> None:
+        # the queue kept as it stands, the jobs under way among it: what stopping cuts short is picked up again at the
+        # next start, so nothing is kept from here on (each job cut short would be kept as failed)
+        self._save_queue()
+        self._closing = True
         # (cancelled until it has ended: a cancellation dropped on the way (Python 3.10's wait_for drops one that
         # comes as what it waits on ends) left the worker going on for ever, and this waiting on it, CI's 3.10
         # run of 0.3.188). The worker first, so it starts no job meanwhile, then the jobs under way
@@ -1075,6 +1229,9 @@ class Applier:
         with contextlib.suppress(AttributeError):
             if self.srv.browser.keep_front == self._front_tab:
                 self.srv.browser.keep_front = None
+        if self._queue_owner:  # (another desk may keep it now: this one takes it again as it starts, if it can)
+            self._queue_owner = None
+            _give_back_queue_lock()
 
     @property
     def current(self) -> int | None:
@@ -1110,18 +1267,24 @@ class Applier:
         if run.status == "running" and (job_id in self._slots or job_id in self._driving):
             return run
         run.status, run.need, run.reason, run.blocking, run.questions = "queued", "", "", False, []
-        run.left = False
+        run.left = run.cut_short = run.left_at_restart = False
         self._behind.discard(job_id)  # (its pause, waiting to be brought up, is over)
         # a Submit pressed earlier with no confirmation (in this run of the desk or before it was
         # restarted) may have sent the application: Submit for me doesn't press it again
-        run.pressed_before = run.pressed_before or _pressed_before(job) or any(
-            str(e.get("note") or "").startswith("pressed Submit;") for e in self.srv.tracker().events(job_id))
+        run.pressed_before = run.pressed_before or self._press_recorded(job)
         run.submit = submit and not run.pressed_before
         run.updated = time.time()
         self._cancel(job_id)
         (self.tasks.appendleft if front else self.tasks.append)(("apply", job_id))
         self._wake.set()
+        self._save_queue()
         return run
+
+    def _press_recorded(self, job: dict[str, Any]) -> bool:
+        """Was Submit pressed for this job with no confirmation showing: its folder's record (submission.json), or the
+        tracker's note? It may have gone."""
+        return _pressed_before(job) or any(str(e.get("note") or "").startswith("pressed Submit;")
+                                           for e in self.srv.tracker().events(job["id"]))
 
     def resume(self, job_id: int) -> Run:
         """The person pressed Resume. On a sign-in card, a saved password the site refused gets one more
@@ -1173,8 +1336,10 @@ class Applier:
         if run.status not in ("ready", "needs_you"):
             raise ValueError(f"Job {job_id} isn't waiting on a review page")
         run.status, run.reason = "queued", "Submitting…"
+        run.submit_pressed, run.submit_unsent = True, False  # (pressed again, after a restart that didn't send it)
         self.tasks.appendleft(("submit", job_id))
         self._wake.set()
+        self._save_queue()
         return run
 
     def wake(self) -> None:
@@ -1185,12 +1350,40 @@ class Applier:
         """The person pressed Pause queue: the job under way finishes its pass, and none starts after it
         until Resume queue (issue #112, note 36: a queue of about 90 had no way to stop but quitting Claude
         Code, which broke the job in progress). A Submit they press still goes, and the tabs left waiting
-        are still watched."""
+        are still watched. Kept with the queue: a restarted desk is still paused."""
         self.paused = True
+        self._save_queue()
 
     def resume_queue(self) -> None:
         self.paused = False
+        self._restored_ids.clear()  # (the jobs back from before a restart go on: said no more)
         self._wake.set()
+        self._save_queue()
+
+    def restored_notice(self) -> str | None:
+        """Said on the desk while jobs queued again after a restart (or picked up from a desk that has ended) wait for
+        the person's Resume queue, with how many of them Submit for me sends once they're filled."""
+        held = [job_id for kind, job_id in self.tasks if kind == "apply" and job_id in self._restored_ids]
+        n = len(held)
+        if not n:
+            return None
+        kept = f" (kept {self._restored_days} days ago)" if self._restored_days > QUEUE_STALE_DAYS else ""
+        whose = (" the Job Desk before this one kept (it has ended)" if self._taken_over else
+                 " from before the desk restarted")
+        said = (f"{n} job{'s' if n != 1 else ''}{whose}{kept} {'are' if n != 1 else 'is'} back in the queue, "
+                f"{'held' if self._taken_over else 'paused'}. Press Resume queue to go on.")
+        sends = sum(1 for job_id in held if self.runs[job_id].submit) if self.auto_submit and not self.hold_submits else 0
+        if sends and n == 1:
+            said += " It goes in by Submit for me once it's filled; turn Submit for me off first if you'd rather check it."
+        elif sends:
+            goes, filled = ("goes", "it's") if sends == 1 else ("go", "they're")
+            said += (f" {sends} of them {goes} in by Submit for me once {filled} filled; turn Submit for me off first if "
+                     "you'd rather check each.")
+        return said
+
+    def _held_back(self, task: tuple[str, int]) -> bool:
+        """A job queued again after a restart (or from a desk that has ended), waiting for the person's Resume queue."""
+        return task[0] == "apply" and task[1] in self._restored_ids and task[1] not in self.pressed
 
     def set_tailor(self, on: bool) -> None:
         self.tailor = on
@@ -1234,8 +1427,9 @@ class Applier:
         run = self.runs.get(job_id)
         if run is not None:
             run.status, run.need, run.blocking, run.reason = "submitted", "", False, "Marked as applied."
-            run.left = False
+            run.left = run.submit_unsent = run.left_at_restart = False
             self._wake.set()
+        self._save_queue()
 
     async def skip(self, job_id: int, closed: str = "") -> Run:
         """The person's Skip, or, with `closed` (what the site says, in its words), the desk's own Skip of a job whose
@@ -1254,9 +1448,11 @@ class Applier:
         if closed:
             run.reason = f"Skipped: posting closed. {closed} Undo puts it back."
         run.account_answers = {}  # (an account form's answers from its card, for that form alone: never kept)
+        run.submit_unsent = run.left_at_restart = False
         self._log(run, f"skipped by itself: posting closed ({closed})" if closed else "skipped")
         self.srv.tracker().update(job_id, status="skipped", note="skipped by the Job Desk: posting closed" if closed
                                   else "skipped in the Job Desk")
+        self._save_queue()
         for tab in self.srv.browser.lineage(run.page):  # its application tab, and the tab that opened it
             if not tab.is_closed():
                 try:
@@ -1287,6 +1483,13 @@ class Applier:
             await asyncio.sleep(0.1)
         tracker.unskip(job_id, note="skip undone in the Job Desk")
         before, place = self._before_skip.pop(job_id, (None, None))
+        try:
+            return self._put_back(job_id, run, before, place)
+        finally:
+            self._save_queue()
+
+    def _put_back(self, job_id: int, run: Run | None, before: str | None, place: int | None) -> Run | None:
+        """Undo's second half: the job back where it was before its Skip (unskip)."""
         if run is None or run.status != "skipped":
             return run
         if run.closed_skipped:  # (the desk's own Skip of a closed posting, undone: that posting is the person's now)
@@ -1315,6 +1518,8 @@ class Applier:
         return True
 
     def _cancel(self, job_id: int) -> None:
+        if ("submit", job_id) in self.tasks and job_id in self.runs:
+            self.runs[job_id].submit_pressed = False  # (the person's Submit, waiting its turn, is gone with its task)
         self.tasks = deque(t for t in self.tasks if t[1] != job_id)
         self.pressed.discard(job_id)  # (a press for a task that's gone isn't one for the next: the re-check of 0.3.196)
         self._first.discard(job_id)  # (and a solved check's place beside the others is that task's alone)
@@ -1365,10 +1570,144 @@ class Applier:
         self._note_activity(run, data)
         return self._twice(run, self._looks_past(run, data, text))
 
+    # ------------------------------------------------------------- kept across a restart
+    def _kept(self, run: Run) -> bool:
+        """Is this job among the queue kept for a restart, outside the queue's own tasks: under way (or its pass cut
+        short by the desk stopping or the browser closing), waiting on the person, or with a Submit pressed for it?"""
+        if run.status in ("submitted", "skipped"):
+            return False
+        return (run.job_id in self._slots or run.status in ("running", "needs_you", "ready") or run.sending
+                or run.submit_pressed or run.status == "failed" and run.cut_short)
+
+    def _saved_queue(self) -> dict[str, Any]:
+        """The queue as QUEUE_FILE keeps it: the jobs begun (under way, or waiting on the person) in the order they
+        began, then the queue's in its order; for each only its number, where it was ("queued" for one whose
+        application was never begun: waiting its turn, or for a tailored resume, said so), whether Submit for me was on
+        for it (for one never begun: the only kind it goes on for after a restart), whether the person had pressed
+        Submit for it, and whether a Submit pressed for it may have gone in; and since when the queue has been kept (its
+        age outlasts the restarts, until it empties). Nothing the person typed or a page said."""
+        in_line = list(dict.fromkeys(job_id for _, job_id in self.tasks))
+        waiting = set(in_line)
+        begun = sorted((r for r in self.runs.values() if r.job_id not in waiting and self._kept(r)),
+                       key=lambda r: (r.began, r.job_id))
+        jobs: list[dict[str, Any]] = []
+        for job_id in [r.job_id for r in begun] + in_line:
+            run = self.runs.get(job_id)
+            if run is None:
+                continue
+            state = ("queued" if not run.started else
+                     "waiting" if run.status in ("needs_you", "ready") else "under_way")
+            entry: dict[str, Any] = {"id": job_id, "state": state}
+            if run.submit and state == "queued":
+                entry["submit"] = True
+            if state == "queued" and run.status == "needs_you" and run.need == "tailor":
+                entry["tailor"] = True
+            if run.submit_pressed or run.submit_unsent:  # (and one not sent before an earlier restart: said still)
+                entry["pressed"] = True
+            if run.sending or run.pressed_before:
+                entry["may_have_gone"] = True
+            jobs.append(entry)
+        if not jobs:
+            self._queue_since = None  # (emptied: the next queue's age starts with it)
+            return {"paused": self.paused, "jobs": jobs}
+        if self._queue_since is None:
+            self._queue_since = time.time()
+        return {"paused": self.paused, "jobs": jobs, "since": self._queue_since}
+
+    def _save_queue(self) -> bool:
+        """Keep the queue (QUEUE_FILE) as it is now, whole or not at all, if this desk keeps it (only once it's been
+        read back: Applier.restore). Whatever goes wrong, the queue goes on. False when it couldn't be kept."""
+        if not self.keep_queue or not self._queue_owner or self._closing or self._restoring:
+            return True
+        try:
+            text = json.dumps(self._saved_queue())
+            if text == self._queue_said:
+                return True
+            path = queue_path()
+            path.parent.mkdir(parents=True, exist_ok=True)
+            config.write_text_atomic(path, text)
+            self._queue_said = text
+            return True
+        except Exception:
+            logging.getLogger(__name__).warning("couldn't keep the desk's queue", exc_info=True)
+            return False
+
+    def _restore_queue(self, takeover: bool = False) -> None:
+        """The desk starting after a restart, with the queue it kept (QUEUE_FILE). The jobs never begun are queued again
+        in their order, each with Submit for me only if it had it and it's still on, as for any job queued now (one
+        waiting for a tailored resume waits for it again); and the queue comes back paused, said on the desk, so none
+        starts without the person's Resume queue (a queue kept weeks ago too, said with its age). A job begun before
+        the restart (under way, or waiting on the person) isn't queued again: the person may have worked in its tab,
+        even sent it on the site, so its card asks them to say so, and its Resume fills it again up to its review page,
+        never sending it; a Submit they pressed then wasn't sent (its card and its review card say so). One whose Submit
+        was pressed and may have gone in (its folder's record, the tracker's note, or a press under way as the desk
+        stopped) is said so on its card. A job gone in since (applied, or past that), skipped, or no longer in the
+        tracker is left out. Once back, they take their slots as any job does (Jobs at once).
+
+        `takeover`: the queue of another desk that has ended, picked up by this one as it runs: only the jobs it adds
+        wait for the person's Resume queue, this desk's own going on."""
+        saved = _read_queue()
+        if saved is None:
+            return
+        held_before = set(self._restored_ids)
+        self._restoring = True  # (the kept queue isn't written over until it's all back)
+        try:
+            for entry in saved["jobs"]:
+                try:
+                    self._restore_job(entry)
+                except Exception:  # (one job that won't come back never keeps the others out)
+                    logging.getLogger(__name__).warning("couldn't pick job %s up again", entry.get("id"), exc_info=True)
+        finally:
+            self._restoring = False
+        if saved["jobs"]:
+            self._queue_since = min(t for t in (self._queue_since, saved["since"]) if t is not None)
+        self._restored_days = int(max(time.time() - saved["since"], 0.0) // 86400)
+        self._taken_over = takeover and self._restored_ids != held_before
+        if not takeover:
+            self.paused = self.paused or saved["paused"] or bool(self._restored_ids)
+        self._wake.set()
+        self._save_queue()
+
+    def _restore_job(self, entry: dict[str, Any]) -> None:
+        job_id = entry["id"]
+        if job_id in self.runs:  # (queued already, since the desk started)
+            return
+        job = self.srv.tracker().get(job_id, with_description=False)
+        if job is None or job.get("status") in FINISHED or job.get("status") == "skipped":
+            return
+        pressed = entry.get("pressed") is True
+        if entry.get("may_have_gone") is True or self._press_recorded(job):
+            card, pressed = RESTART_CHECK, False
+            said = "the desk restarted after Submit was pressed for it, so it wasn't queued again: it may have gone in"
+        elif entry.get("state") != "queued" or pressed:
+            card = RESTART_BEGUN + (" Your Submit from before the restart wasn't sent." if pressed else "")
+            said = "the desk restarted before it was finished, so it wasn't queued again: it's on its card for you"
+        else:
+            # (never begun: queued again, Submit for me only if it had it and it's still on; held for Resume queue)
+            submit = entry.get("submit") is True and self.auto_submit and not self.hold_submits
+            self._restored_ids.add(job_id)
+            if entry.get("tailor") is True and self.tailor and not tailored_ready(job):
+                # (waiting for its tailored resume still: listed for Claude to write it, queued once it's there)
+                run = Run(job_id, job.get("title") or "", job.get("company") or "", status="needs_you", need="tailor",
+                          reason=_TAILOR_SAYS, submit=submit, paused_at=time.time())
+                self.runs[job_id] = run
+            else:
+                run = self.enqueue(job_id, submit=submit)
+                run.reason = "Picked up again after the desk restarted: waiting for Resume queue."
+            self._log(run, "picked up again after the desk restarted")
+            return
+        run = Run(job_id, job.get("title") or "", job.get("company") or "", status="needs_you",
+                  need="check_submit" if card == RESTART_CHECK else "restarted", reason=card,
+                  pressed_before=card == RESTART_CHECK, left_at_restart=True, started=True, submit_unsent=pressed,
+                  paused_at=time.time())
+        self.runs[job_id] = run
+        self._log(run, said)
+
     # ------------------------------------------------------------- worker
     async def _worker(self) -> None:
         while True:
             try:
+                self._retry_queue_lock()
                 await self._tick()
             except asyncio.CancelledError:
                 raise
@@ -1466,7 +1805,8 @@ class Applier:
             self._wake.clear()
             # with a job left waiting on the person, look at its tab again soon
             left = [r for r in self.runs.values() if r.left and r.status == "needs_you"]
-            await self._sleep(self._poll_for(left) if left else 30)
+            # (and, while another desk keeps the queue, back in time to look again: _retry_queue_lock)
+            await self._sleep(min(self._poll_for(left) if left else 30, QUEUE_LOCK_RETRY if self.queue_elsewhere else 30))
             return
         # paused: only what the person pressed for a job goes (its Submit, its Resume, its answers on its card)
         pressed = next((t for t in self.tasks if t[1] in self.pressed), None) if self.paused and submit is None else None
@@ -1480,7 +1820,8 @@ class Applier:
         # are the site's own); a Submit the person pressed first, and only that while the queue holds for them
         held = self._blocker() is not None or self._in_round()
         order = [t for t in self.tasks if t[0] == "submit"] + (
-            [] if held else [t for t in self.tasks if t[1] in self.pressed] if self.paused else list(self.tasks))
+            [] if held else [t for t in self.tasks if t[1] in self.pressed] if self.paused else
+            [t for t in self.tasks if not self._held_back(t)])
         task = next((t for t in order if (self._submit_free(t[1]) if t[0] == "submit" else self._site_free(t[1]))),
                     None)
         if self._full() and not (task is not None and self._goes_beside(task)):
@@ -1499,6 +1840,7 @@ class Applier:
         self._began += 1
         run.began, run.site, run.site_since = self._began, "", 0.0
         self._slots[job_id] = asyncio.get_running_loop().create_task(self._run_task(kind, run))
+        self._save_queue()  # (under way now)
         if self._full():
             await self._until_one_is_done()  # (one at once: the job's whole pass, as ever)
 
@@ -1540,6 +1882,7 @@ class Applier:
     async def _run_task(self, kind: str, run: Run) -> None:
         """One job's pass (or the Submit the person pressed), in a task and a browser view of its own: up to
         settings.jobs_at_once go at once, each in its own tab."""
+        cancelled = False  # (the desk stopping, or the program ending: kept as it was, for the next start)
         try:
             with self.srv.browser.desk_view(run.job_id):
                 held = self._hold_tools(run.job_id)
@@ -1554,10 +1897,16 @@ class Applier:
                             await self._take_inbox(run, step=False)
                     await self._strict(self._submit(run) if kind == "submit" else self._drive_again_if_redrawn(run))
                     await self._strict(self._save_stop(run))
+                except asyncio.CancelledError:
+                    cancelled = True
+                    raise
                 except TabClosed:
                     if run.status != "skipped":
                         run.status, run.need, run.blocking = "failed", "", False
                         run.reason = "Its tab was closed. Press Resume to start this application again."
+                        # (every tab goes with the browser: a pass the browser's closing cut short is picked up again
+                        # after a restart, as one the desk's stopping cut short is)
+                        run.cut_short = run.page is not None and self.srv.browser.lost(run.page) == "browser"
                         self._log(run, run.reason)
                 except Exception as e:
                     if run.status != "skipped":
@@ -1570,19 +1919,29 @@ class Applier:
                         elif lost == "browser":
                             # (Playwright: "Target page, context or browser has been closed", issue #112, note 36)
                             run.reason = "The automation browser was closed. Press Resume to start this application again."
+                            run.cut_short = True
                         self._log(run, run.reason)
                         logging.getLogger(__name__).warning("job %s stopped on an error", run.job_id, exc_info=True)
                 finally:
                     self._give_back_tools(held)
                     run.inbox = False  # (a code it waits on now holds the others as the person's pause does)
-                    if run.status == "running":  # the desk was stopped part-way
+                    # the desk was stopped part-way (or before the pass had begun its pages): kept as under way
+                    if run.status == "running" or cancelled and kind != "submit" and run.status == "queued":
                         run.status, run.reason = "failed", "Stopped before it finished. Press Resume to carry on."
+                        run.cut_short = cancelled
+                    if kind == "submit" and not cancelled:
+                        run.submit_pressed = False  # (the person's Submit has had its go)
                     run.updated = time.time()
             with contextlib.suppress(Exception):  # (a tab that won't close: never the job's surprise)
                 await self._close_done_tabs()
+        except asyncio.CancelledError:
+            cancelled = True
+            raise
         finally:
             if self._slots.get(run.job_id) is asyncio.current_task():
                 del self._slots[run.job_id]
+            if not cancelled:  # (cut short: the queue stays as it was kept, this job under way in it)
+                self._save_queue()
             self._wake.set()
 
     # ------------------------------------------------------------- jobs at once
@@ -2385,6 +2744,7 @@ class Applier:
         # Resume. Any other way back here (the queue carrying on after an emailed code, say) isn't that.
         waited_out = run.try_later and run.page is not None and not run.page.is_closed()
         run.try_later = False
+        run.started = True  # (its application begins: after a restart it's left on a card, never queued by itself)
         if not await self._open(run):
             return
         stalls, entries_done, refilled, dismissed = 0, set(), set(), set()
@@ -3398,6 +3758,8 @@ class Applier:
                 run.draft = True
                 self._log(run, f"{_site(run, data)} kept this application from an earlier visit (a saved draft), so I "
                           "went on with it; I'll check the answers it holds against your profile")
+                if run.hands_on:  # (gone on with on the person's Resume: the draft is theirs, kept so for a restart)
+                    self._draft_off(run)
             run.page = srv.browser.current_tab or run.page
             if _fingerprint(clicked) == looked and await self._new_tab_soon(run, NEW_TAB_WAIT):
                 continue  # asml.com's Apply Now opens Workday in a new tab a moment after the click
@@ -3912,10 +4274,12 @@ class Applier:
         _forget_draft_changes(self.srv, run.job_id)
 
     def _draft_off(self, run: Run) -> None:
-        """A draft's answers are re-checked no more for this job (Run.draft_off), said once in its log."""
+        """A draft's answers are re-checked no more for this job (Run.draft_off), said once in its log, and kept in its
+        folder: after a restart of the desk, a draft the person had taken over isn't re-checked either."""
         if run.draft and not run.draft_off:
             run.draft_off = True
             self._log(run, "draft not re-checked from here on: what you change in the browser stays as you leave it")
+            _keep_draft_off(self.srv, run.job_id)
 
     def _note_skipped(self, run: Run, result: dict[str, Any]) -> None:
         """Optional fields that wouldn't take the profile's answer are skipped, and said so. So
@@ -5365,7 +5729,7 @@ class Applier:
         if _CAPTCHA.search(text):
             srv._mark_ready(job, "filled by the Job Desk; has a CAPTCHA")
             return self._pause(run, "captcha", "Filled. The form has a CAPTCHA: tick it in the browser, then "
-                               "press Submit here.")
+                               "press Submit here." + (f" {SUBMIT_UNSENT}" if run.submit_unsent else ""))
         shown = "; ".join(e for e in _flagged(data) if not _ERROR_COUNT.match(e))[:300].rstrip(" .")
         invalid = [f["id"] for f in data.get("fields") or [] if f.get("invalid")
                    and f.get("kind") in ("select", "listbox", "combobox", "radio_group")]
@@ -5408,6 +5772,8 @@ class Applier:
                            "answers to your profile's (see What went in)" + (", so Submit for me left it for you" if sends
                                                                               else "")
                            + ": check them before you press Submit.")
+        if run.submit_unsent:  # (the person's Submit from before a restart is never carried over: theirs to press again)
+            run.reason += f" {SUBMIT_UNSENT}"
         self._log(run, "reached the review page")
 
     async def _submit(self, run: Run, by_person: bool = True) -> None:
@@ -5442,7 +5808,22 @@ class Applier:
         if run.status == "skipped":  # skipped while the page was being checked
             return
         review = run.url  # (the page it waited on for this Submit)
-        result = await srv.submit_application(job_id=run.job_id, user_confirmed=True)
+        # kept as being pressed while it is: a restart meanwhile (the program ended mid-press) never queues it again, as
+        # it may have gone. Over once the press has had its answer, or failed (its record and the tracker's note say).
+        # Not kept (a full disk, say, where its folder's record of the press may not be written either): not pressed,
+        # as a restart mid-press couldn't tell it may have gone
+        run.sending = True
+        if not self._save_queue():
+            run.sending = False
+            return self._pause(run, "your_submit", "Not sent: the desk couldn't record that this application is being "
+                               "sent (is the disk full?), so a restart could send it twice. Press Submit yourself in the "
+                               "browser window, then press I submitted it here.")
+        try:
+            result = await srv.submit_application(job_id=run.job_id, user_confirmed=True)
+        except Exception:
+            run.sending = False
+            raise
+        run.sending = False
         if result.get("submitted") and not result.get("confirmed"):
             run.pressed_before = True  # it may have gone: Submit for me never presses it again
         if result.get("submitted") and result.get("confirmed"):
@@ -5722,6 +6103,29 @@ def _pressed_before(job: dict[str, Any]) -> bool:
     except (OSError, ValueError):
         return False
     return isinstance(record, dict) and not record.get("confirmed")
+
+
+def _read_queue() -> dict[str, Any] | None:
+    """The queue the desk kept (QUEUE_FILE), as {"paused": bool, "jobs": [{"id": int, ...}], "since": when it began
+    being kept}; None when there's none. One that won't read (cut short, changed by hand) is said in the log, without
+    its words, and the desk starts without it."""
+    path = queue_path()
+    try:
+        kept = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(kept, dict) or not isinstance(kept.get("jobs"), list):
+            raise ValueError("not a kept queue")
+        mtime = path.stat().st_mtime
+    except FileNotFoundError:
+        return None
+    except (OSError, ValueError):
+        logging.getLogger(__name__).warning("the desk's kept queue (%s) wouldn't read, so it starts without it",
+                                            QUEUE_FILE)
+        return None
+    jobs = [e for e in kept["jobs"] if isinstance(e, dict) and type(e.get("id")) is int]
+    since = kept.get("since")
+    if not isinstance(since, (int, float)) or isinstance(since, bool) or since > time.time():
+        since = mtime  # (a queue kept without it: as old as its file)
+    return {"paused": kept.get("paused") is True, "jobs": jobs, "since": float(since)}
 
 
 def tailored_ready(job: dict[str, Any]) -> bool:
@@ -6914,9 +7318,26 @@ def _save_draft_changes(srv: Any, run: Run) -> None:
             return
         path.parent.mkdir(parents=True, exist_ok=True)
         # (whole or not at all: a file cut short by a crash would let the job go unheld: the final review)
-        config.write_text_atomic(path, json.dumps({"draft_changed": True, "changed": list(run.went_in.changed)}))
+        config.write_text_atomic(path, json.dumps({"draft_changed": True, "changed": list(run.went_in.changed),
+                                                   **({"draft_off": True} if run.draft_off else {})}))
     except Exception:
         logging.getLogger(__name__).warning("couldn't keep job %s's draft changes", run.job_id, exc_info=True)
+
+
+def _keep_draft_off(srv: Any, job_id: int) -> None:
+    """Keep that this job's draft is the person's now (Run.draft_off), beside what the desk changed in it. One that
+    won't read is left as it is (it holds the job all the same: _restore_draft_changes)."""
+    try:
+        path = _draft_file(srv, job_id)
+        if path is None:
+            return
+        kept: Any = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
+        if not isinstance(kept, dict) or kept.get("draft_off") is True:
+            return
+        path.parent.mkdir(parents=True, exist_ok=True)
+        config.write_text_atomic(path, json.dumps({**kept, "draft_off": True}))
+    except Exception:
+        logging.getLogger(__name__).warning("couldn't keep that job %s's draft is yours now", job_id, exc_info=True)
 
 
 def _restore_draft_changes(srv: Any, run: Run) -> None:
@@ -6943,6 +7364,8 @@ def _restore_draft_changes(srv: Any, run: Run) -> None:
         run.draft_changed = True
         run.went_in.change(DRAFT_UNREAD)
         return
+    if kept.get("draft_off") is True:  # (taken over by the person before a restart: theirs still, never re-checked)
+        run.draft_off = True
     if not kept.get("draft_changed"):
         return
     run.draft_changed = True

@@ -8155,6 +8155,142 @@ def test_a_submit_with_no_confirmation_isnt_pressed_again_by_submit_for_me(srv, 
     assert any("no confirmation" in e["note"] for e in srv.tracker().events(job["id"]))
 
 
+def _desks_applier(srv) -> Applier:
+    """An applier that keeps its queue for a restart, as the Job Desk's does."""
+    applier = Applier(srv)
+    applier.keep_queue = True
+    return applier
+
+
+def test_a_submit_pressed_before_a_restart_is_never_carried_over(srv, monkeypatch):
+    """The desk's queue, kept across a restart (the review of Oct 15, worth building 4), never carries a Submit over.
+    The person pressed Submit for one job while another's was being pressed (its site slow to answer), and the desk
+    restarted before either was done. The one whose Submit waited its turn comes back on a card that says that Submit
+    wasn't sent: its Resume fills it again up to its review page, even with Submit for me on, and pressed again there,
+    it goes. The one whose Submit was being pressed may have gone in: its card says to check. A job never begun, queued
+    with Submit for me on, goes in after the restart (once the person resumes the queue), as it's still on."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    sites = ("acme-fab", "other-litho", "third-tool")
+    pages = {f"https://careers.{s}.example/apply/1": _form(s.replace("-", " ").title()) for s in sites}
+    posts: list[str] = []
+    pressed, pressing, for_me = (srv.add_job(url=f"https://careers.{s}.example/apply/1", title="FSE",
+                                             company=s.replace("-", " ").title())["job"]["id"] for s in sites)
+    real_submit = srv.submit_application
+    pressing_now: list[int] = []
+
+    async def slow_submit(**kwargs):  # (the site slow to answer: its press under way as the desk restarts)
+        pressing_now.append(kwargs["job_id"])
+        await asyncio.Event().wait()
+
+    async def go():
+        await _serve(srv, pages, posts)
+        before = _desks_applier(srv)
+        before.start()
+        one, two = before.enqueue(pressed), before.enqueue(pressing)
+        await until(lambda: one.status == two.status == "ready", about=lambda: (state(one)(), state(two)()))
+        before.pause_queue()
+        before.auto_submit = True
+        before.enqueue(for_me, submit=True)  # (Submit for me on for it: waiting its turn, the queue paused)
+        monkeypatch.setattr(srv, "submit_application", slow_submit)
+        before.submit_now(pressing)
+        await until(lambda: pressing_now == [pressing], about=state(two))
+        before.submit_now(pressed)  # (waits its turn: one job at a time)
+        await asyncio.sleep(1)
+        assert one.status == "queued" and ("submit", pressed) in before.tasks
+        await before.stop()  # the restart
+        monkeypatch.setattr(srv, "submit_application", real_submit)
+
+        after = _desks_applier(srv)
+        after.auto_submit = True  # (still on)
+        after.start()
+        try:
+            one, two, mine = after.runs[pressed], after.runs[pressing], after.runs[for_me]
+            assert after.paused and [j for _, j in after.tasks] == [for_me] and mine.submit
+            assert (one.status, one.need, one.left_at_restart, one.submit) == ("needs_you", "restarted", True, False)
+            assert one.reason == pipeline.RESTART_BEGUN + " Your Submit from before the restart wasn't sent.", one.reason
+            assert (two.status, two.need, two.left_at_restart, two.reason) == ("needs_you", "check_submit", True,
+                                                                               pipeline.RESTART_CHECK)
+            after.resume_queue()
+            await until(lambda: mine.status == "submitted", about=state(mine))
+            assert posts == ["https://careers.third-tool.example/posted"], posts
+            after.resume(pressed)  # its card's Resume: filled again, Submit for me on, and not sent
+            await until(lambda: one.status not in ("queued", "running"), about=state(one))
+            assert one.status == "ready" and one.reason.endswith(pipeline.SUBMIT_UNSENT), (one.status, one.reason)
+            await asyncio.sleep(1)
+            assert posts == ["https://careers.third-tool.example/posted"], posts
+            after.submit_now(pressed)  # pressed again: it goes
+            await until(lambda: one.status not in ("queued", "running"), about=state(one))
+            assert one.status == "submitted" and not one.submit_unsent, (one.status, one.reason)
+            assert two.status == "needs_you" and pressing not in [j for _, j in after.tasks]
+        finally:
+            await after.stop()
+
+    run(go())
+    assert posts == ["https://careers.third-tool.example/posted", "https://careers.acme-fab.example/posted"], posts
+
+
+def test_a_submit_the_desk_cant_record_as_being_sent_isnt_pressed(srv, monkeypatch):
+    """The review of the restart (L6): a Submit is kept as being pressed while it is, so a restart meanwhile never
+    queues it again. Where that can't be written (a full disk, where the job's own record of the press may not be
+    written either), a restart mid-press couldn't tell it may have gone: it isn't pressed, and the card asks the person
+    to press the site's Submit themselves."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    url = "https://careers.acme-fab.example/apply/1"
+    posts: list[str] = []
+    job = srv.add_job(url=url, title="FSE", company="Acme Fab")["job"]["id"]
+
+    async def go():
+        await _serve(srv, {url: _form("Acme Fab")}, posts)
+        applier = _desks_applier(srv)
+        applier.start()
+        try:
+            r = applier.enqueue(job)
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            assert r.status == "ready", r.reason
+            kept = pipeline.queue_path()
+            kept.unlink()
+            kept.mkdir()  # (nothing can be written there now, as on a full disk)
+            applier.submit_now(job)
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert (r.status, r.need) == ("needs_you", "your_submit") and "couldn't record" in r.reason, (r.status, r.reason)
+    assert posts == [] and not r.sending
+
+
+def test_a_draft_the_person_took_over_isnt_rechecked_after_a_restart(srv, monkeypatch):
+    """The review of the restart (L4): that a saved draft is the person's now (their Resume, or a stop where they may
+    have changed its boxes: Run.draft_off) lived in memory alone, so after a restart the job, picked again from the
+    list, had its draft re-checked against the profile over what they had changed. It's kept in the job's folder
+    (beside the draft's changes), and the draft is left as it is."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 1)
+    job = srv.add_job(url=fixture_url("site/workday-continue-posting.html"), title="Equipment Technician",
+                      company="Example Fab")["job"]
+    # before the restart: the draft went on with after the person's Resume
+    Applier(srv)._draft_off(Run(job["id"], "Equipment Technician", "Example Fab", draft=True))
+    applier = Applier(srv)  # (the desk, restarted)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])  # (ticked again in the list: no Resume of its own)
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert r.status == "ready" and "review.html" in r.url, (r.status, r.reason, r.log)
+    saved = dict(parse_qsl(urlparse(r.url).query))
+    assert (saved["ln"], saved["rd-1"]) == ("Rivers", "Ran the wet benches on nights."), (saved, r.log)
+    assert r.draft and r.draft_off and not r.draft_changed, r.log
+    assert not any(line.startswith("re-checked the saved draft's answers") for line in r.log), r.log
+
+
 def test_the_step_before_the_review_page_isnt_taken_for_it(srv, monkeypatch):
     """Step 3 of 4 goes on with "Review"; its footer has a job-alerts box with a "Submit".
     Submit for me presses Review, then the review page's own Submit."""

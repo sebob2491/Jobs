@@ -284,6 +284,18 @@ waits in **Needs you** with **I submitted it** rather than being counted as sent
 again, it stops at the review page for you. A job-alerts or newsletter box with its own
 Submit (in a site's footer, say) is never taken for the application's.
 
+A restart (of the Claude app, a crash, a plugin update) doesn't lose the queue. Once the
+desk is open again, the jobs it hadn't begun are back in the queue in their order, paused:
+a notice at the top says how many, and how many of them Submit for me will send once
+they're filled (it applies only if it's still on), and nothing starts until you press
+**Resume queue**. A job it had begun isn't queued again by itself, as you may have sent it
+on the site: its card says the desk restarted before the application was finished, with
+**I submitted it already**, **Resume** (filled again up to its review page, never sent) and
+**Skip job**. A Submit you pressed before the restart wasn't sent, and that
+card says so. A job whose Submit was being pressed, or showed no confirmation, may have
+gone in: its card asks you to check. A desk page you left open has to be opened again (ask
+Claude to open the job desk): its key is new each time the desk starts.
+
 To add jobs from anywhere else, paste their links (LinkedIn, Indeed or any company
 site) into the box above the list. The desk reads each posting, scores it and ticks it
 for Apply. Jobs Claude saves from Indeed or LinkedIn show up in the same list. Without
@@ -310,6 +322,7 @@ Everything personal stays on your machine in `~/.job-apply/`. Set
 | `answers.yaml` | Answers you gave in the Job Desk, reused on later applications. Edit or delete entries freely. |
 | `companies.yaml` | Optional: which of the plugin's employer lists to search (`lists:`) and employers of your own, in place of the default list. |
 | `recommendations.json`, `desk.json` | The Job Desk's last search, and its switches ("Submit for me", "Jobs at once") |
+| `desk-queue.json` | The Job Desk's queue, kept for a restart: each job's number and where it was, never your answers |
 | `browser/` | The automation browser's profile, which keeps your sign-ins |
 | `applications/<id>-<company>-<title>/` | Tailored resume and cover letter, screenshots, submission record, `debug/` snapshots |
 

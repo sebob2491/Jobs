@@ -132,8 +132,23 @@ The desk is a local web page served by this plugin. It does what the `find-jobs`
   in the list unticked if the desk hadn't begun it. Undo sends nothing: the job stops at its review page.
 - **Pause queue** (in the header, while jobs are queued or running) lets the jobs under way finish their pass and
   starts no other until **Resume queue**. A Submit the user presses still goes, and jobs waiting on them are still
-  watched. A restarted desk starts with the queue going. To stop the queue, never close the automation browser: that
+  watched. A paused queue stays paused after a restart. To stop the queue, never close the automation browser: that
   breaks the job in progress (it says so, and its **Resume** opens the application again).
+- **A restart** (of the Claude app, a crash, a plugin update) doesn't lose the queue. The desk keeps it in
+  `~/.job-apply/desk-queue.json` (each job's number and where it was: nothing the user typed or a page said). Once
+  it's open again, the jobs it hadn't begun are back in the queue in their order, **paused** (one waiting for a
+  tailored resume waits for it again): a notice at the top says how many, how many of them Submit for me will send once
+  they're filled (it applies only if it's still on), and how old the queue is past a week; nothing starts until the user
+  presses **Resume queue**. A job it had begun (under way, or waiting on the user) isn't queued again by itself, since
+  the user may have sent it on the site: its card says the desk restarted before the application was finished, with
+  **I submitted it already**, **Resume** (filled again from the start up to its review page, never sent) and **Skip
+  job**. A Submit the user pressed before the restart was never sent: that card says so. One whose Submit was being
+  pressed, or was pressed with no confirmation, may have gone in: its card asks the user to check (**I submitted it**,
+  or **Resume**, which sends nothing). One applied to or skipped meanwhile is left out. A desk page left open doesn't
+  reconnect (its key is new at each start): open the desk again (`open_job_desk`). With two Claude sessions, one desk
+  keeps the queue and the other says so, keeping none; about a minute after the first ends, the other takes it up, its
+  jobs held for **Resume queue** while its own go on. A folder that allows no lock (some network drives) keeps no
+  queue, and the desk says so.
 - **A newer version**: the desk looks at the plugin's published version when it starts and
   every few hours, and says when a newer one is out, with the two update commands (then a
   restart of the Claude app). Best done between runs. `JOB_APPLY_NO_UPDATE_CHECK=1` turns the look off.

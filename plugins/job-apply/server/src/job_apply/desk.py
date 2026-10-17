@@ -3,7 +3,8 @@ the ones picked with one button.
 
 It is served by the plugin on 127.0.0.1 and drives the same browser session as Claude's
 tools. Every API call needs the random token in the page's address and a local Host
-header, so other websites open in the same browser can't reach it.
+header, so other websites open in the same browser can't reach it. The token is new at
+each start; the queue outlasts a restart of the desk (pipeline.QUEUE_FILE).
 
     uv run --project <plugin>/server job-apply-desk      # on its own, without Claude
 """
@@ -81,7 +82,8 @@ def _free_port(preferred: int) -> int:
 class Desk:
     def __init__(self, srv: Any):
         self.srv = srv
-        self.applier = Applier(srv)
+        # (its queue kept as it changes, and picked up again as the desk starts after a restart: pipeline.QUEUE_FILE)
+        self.applier = Applier(srv, keep_queue=True)
         self.fetch = fetch_posting  # reads each recommended posting's requirements
         self.token = secrets.token_urlsafe(18)
         self.port: int | None = None
@@ -174,6 +176,9 @@ class Desk:
 
     async def start(self, port: int = DEFAULT_PORT, open_browser: bool = True) -> str:
         """Serve the desk in the running event loop (inside the MCP server)."""
+        # the queue kept before a restart, back before the page is served: a call from it never meets (nor writes over)
+        # the queue before that
+        self.applier.restore()
         if self._serve_task is None or self._serve_task.done():
             self.port = _free_port(port)
             cfg = uvicorn.Config(self.app(), host="127.0.0.1", port=self.port, log_config=None, access_log=False,
@@ -791,6 +796,10 @@ class Desk:
             "current": self.applier.current,
             "queued": [jid for kind, jid in self.applier.tasks if kind == "apply"],
             "paused": self.applier.paused,  # (Pause queue: nothing new starts until Resume queue)
+            # the jobs back in the queue after a restart, waiting for Resume queue; and why the queue isn't kept here, if
+            # it isn't (another desk keeps it, or the folder allows no lock)
+            "restored": self.applier.restored_notice(),
+            "queue_note": self.applier.queue_note(),
             "counts": t.counts(),
             "notes": report.notes_count(),  # notes on the desk's stops, waiting to be filed
         }
