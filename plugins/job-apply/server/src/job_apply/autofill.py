@@ -904,14 +904,25 @@ _UNDER_18, _OVER_18 = _age(True), _age(False)
 _SIGNED_DATE = re.compile(r"^date$|today s date|date signed|signature date|date of signature")
 
 
+def date_form(field: dict) -> str:
+    """How a box takes a whole date (strptime's form): a date input's ISO form; else in the order its hint shows (the
+    form reader's `date`: "dd/mm/yyyy" is "%d/%m/%Y"); else the US month/day/year."""
+    if field.get("input_type") == "date":
+        return "%Y-%m-%d"
+    hint = field.get("date")
+    m = re.fullmatch(r"([dmy]+)([/.\-])([dmy]+)\2([dmy]+)", hint.lower()) if isinstance(hint, str) else None
+    if not m or sorted(m.group(i)[0] for i in (1, 3, 4)) != ["d", "m", "y"]:
+        return "%m/%d/%Y"
+    return m.group(2).join({"d": "%d", "m": "%m"}.get(m.group(i)[0]) or ("%Y" if len(m.group(i)) > 2 else "%y")
+                           for i in (1, 3, 4))
+
+
 def _date_for(field: dict, day: date) -> str:
-    """A day as the date box takes it: one part (Workday's Month / Day / Year boxes), or whole."""
+    """A day as the date box takes it: one part (Workday's Month / Day / Year boxes), or whole (date_form)."""
     sub = norm(field.get("sublabel"))
     if sub in ("month", "day", "year"):
         return {"month": f"{day.month:02d}", "day": f"{day.day:02d}", "year": str(day.year)}[sub]
-    if field.get("input_type") == "date":
-        return day.isoformat()
-    return day.strftime("%m/%d/%Y")
+    return day.strftime(date_form(field))
 
 
 def _today_for(field: dict) -> str:
@@ -933,28 +944,40 @@ _START_DAY = re.compile(
     r"ideal)( possible| available)? (start|starting) date\b|\bavailable to (start|begin)\b|\bearliest (date|start)\b|"
     r"\bwhen (can|could|would|will) you (start|begin)\b|\bwhen (would|could|will) you be available\b|"
     r"\bsoonest\b.{0,30}\b(start|begin)\b|\bstart date availability\b")
+# ... and not one asking when something else happens ("Earliest date available for an interview", "What is the earliest
+# date you could interview?", "Anticipated start date of degree": the review's)
+_OTHER_DAY = re.compile(r"\b(interview\w*|meet\w*|call|calls|assessment\w*|test\w*|orientation|degree\w*|graduat\w*|"
+                        r"program\w*|course\w*|class\w*|shift\w*)\b")
 # A wait that runs from something besides an offer ("2 weeks after graduation"): no day the profile says
 _OTHER_START = re.compile(r"\b(graduat\w*|semester|term|school|class(es)?|course\w*|program|internship|contract|lease|"
-                          r"move|moving|relocat\w*|visa|permit|clearance|summer|fall|spring|winter)\b")
+                          r"move|moving|relocat\w*|visa|permit|clearance|background|screening|drug|summer|fall|spring|"
+                          r"winter)\b")
+# A start at once ("Immediately", "ASAP")
+_AT_ONCE = re.compile(r"\b(immediate(ly)?|asap|as soon as possible|right away|now|today)\b")
 # The forms a profile writes a date in
-_DATE_FORMS = ("%Y-%m-%d", "%m/%d/%Y", "%B %d, %Y", "%b %d, %Y", "%B %d %Y", "%b %d %Y", "%d %B %Y", "%d %b %Y")
+_DATE_FORMS =("%Y-%m-%d", "%m/%d/%Y", "%B %d, %Y", "%b %d, %Y", "%B %d %Y", "%b %d %Y", "%d %B %Y", "%d %b %Y")
 
 
 def _start_on(value: Any) -> date | None:
     """The day the profile's earliest start (preferences.earliest_start, or the person's own answer) makes, for a
     box that takes a date: a date, as itself ("2026-11-01", "11/01/2026", "November 1, 2026"); "Immediately" today;
     a wait from an offer ("2 weeks after offer", "30 days notice", "1 month") today and the wait. None for anything
-    else ("after graduation", "2-4 weeks", "December"): never a day the profile doesn't say."""
+    else ("after graduation", "2-4 weeks", "December", a date gone by, "Immediately after 2 weeks notice"): never a
+    day the profile doesn't say, nor a sooner one."""
     text = re.sub(r"\s+", " ", str(value or "")).strip().rstrip(".")
     for form in _DATE_FORMS:
         try:
-            return datetime.strptime(text, form).date()
+            day = datetime.strptime(text, form).date()
         except ValueError:
             continue
+        return day if day >= date.today() else None
     words = norm(text)
     if re.search(r"\d{4}", words) or _OTHER_START.search(words):
         return None  # (a date in another form, or a wait from something else)
-    if re.fullmatch(r"(available )?(now|today|any ?time)|(available )?immediately( available)?", words):
+    if _AT_ONCE.search(words) and (re.search(r"\d", words) or _WAIT.search(words)):
+        return None  # (at once and after a wait both: "Immediately after 2 weeks notice", "ASAP, 2 weeks required")
+    if re.fullmatch(r"(available )?(now|today|any ?time|as soon as possible)|(available )?immediately( available)?",
+                    words):
         return date.today()
     days = _days(text)
     return date.today() + timedelta(days=days) if days is not None else None
@@ -967,7 +990,8 @@ def _dated(field: dict, ans: Answer | None) -> Answer | None:
     if ans is None or ans.value == SKIP or not _takes_date(field):
         return ans
     label = norm(clean_label(_without_notes(field.get("label") or field.get("name") or "")))
-    start = bool(_START_DAY.search(label)) and not _PAST_BLOCK.search(norm(field.get("section")))
+    start = bool(_START_DAY.search(label)) and not _OTHER_DAY.search(label) \
+        and not _PAST_BLOCK.search(norm(field.get("section")))
     if ans.rule != "start_date" and not start:
         return ans
     day = _start_on(ans.value) if start else None

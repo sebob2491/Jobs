@@ -411,6 +411,29 @@ def test_the_names_a_page_gives_an_employer_are_found_and_its_own_words_are_not(
         "Springfield, IL", "Springfield", "Shelbyville, Illinois, United States", "Shelbyville, Illinois", "Shelbyville"}
 
 
+def test_an_anonymous_report_takes_out_only_names_never_everyday_words_and_every_way_a_place_is_written():
+    """The review of the fix for note 42: "Employment at Will" made "Will" a name, so "Will you now ... require
+    sponsorship?" read "the employer you now ...", and every "will" left the saved pages; "Engineering Careers" and
+    "Remote Jobs" took "Engineering" and "Remote" out everywhere, any case. A name found on a page is taken out only as
+    written, never an everyday word. And a job's place written as Workday writes it ("US-IL-Springfield"), without its
+    comma ("Springfield IL"), with its ZIP code, or one of a list ("Springfield, IL / Shelbyville, IL") goes too."""
+    run_ = Run(32, "Equipment Technician", "Example Fab", status="needs_you", need="stuck",
+               page_info={"title": "Engineering Careers", "headings": ["Employment at Will", "Life at Northwind Group"],
+                          "actions": ["Remote Jobs"]})
+    job = {"id": 32, "title": "Equipment Technician", "company": "Example Fab", "ats": "workday",
+           "location": "US-IL-Springfield / Shelbyville IL", "url": "https://exfab.wd1.myworkdayjobs.com/x"}
+    say, secrets = report._anonymous(job, run_, [job["url"]], [])
+    for kept in ("Will you now or in the future require sponsorship?", "Engineering degree required?",
+                 "Do you have engineering experience?", "Remote work: will you travel?"):
+        assert say(kept) == kept, kept
+    assert not {"Will", "will", "Engineering", "Remote"} & set(secrets)
+    assert say("Life at Northwind Group, where Northwind people work") == "Life at the employer, where the employer people work"
+    assert say("the northwind way") == "the northwind way"  # (as written only)
+    for place in ("Remove Springfield, IL 62701", "Remove US-IL-Springfield", "Remove Springfield IL",
+                  "Remove Shelbyville, Illinois"):
+        assert say(place) == "Remove the job's location", place
+
+
 def test_claude_can_make_the_report_anonymous_too(srv):
     job = srv.add_job(url="https://acme.wd1.myworkdayjobs.com/External/job/x", title="Technician",
                       company="Example Litho")["job"]

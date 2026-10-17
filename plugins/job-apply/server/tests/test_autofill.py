@@ -2870,3 +2870,27 @@ def test_a_date_box_asking_when_you_can_start_gets_the_day_the_profile_makes():
     assert answer("2 weeks after offer", section="Work Experience 1") != in_two_weeks
     # a box that takes words keeps the profile's
     assert answer("2 weeks after offer", date=None, kind="text") == "2 weeks after offer"
+
+
+def test_a_date_box_for_another_day_or_an_unclear_start_gets_no_day():
+    """The review of the fix for note 41: "Earliest date available for an interview" took the start date (an answer the
+    profile doesn't give), and so did "Anticipated start date of degree"; "Immediately after 2 weeks notice" and
+    "ASAP, 2 weeks notice required" made today (sooner than the person said), and a date gone by was given as itself.
+    None of them gets a day. And a box hinted day first ("DD/MM/YYYY") gets the day in that order."""
+    from datetime import date, timedelta
+
+    def answer(earliest, label="Preferred Start Date", **kw):
+        field = {"id": "1", "label": label, "kind": "combobox", "value": "", "date": True, **kw}
+        a = resolve_field(field, Profile({"preferences": {"earliest_start": earliest}}))
+        return a and a.value
+
+    for label in ("Earliest date available for an interview", "What is the earliest date you could interview?",
+                  "Anticipated start date of degree", "Earliest start date for orientation"):
+        assert answer("2 weeks after offer", label) is None, label
+    for unclear in ("Immediately after 2 weeks notice", "ASAP, 2 weeks notice required",
+                    "Available immediately; prefer 2 weeks", "2025-06-01", "2 weeks after background check"):
+        assert answer(unclear) is None, unclear
+    day = date.today() + timedelta(days=14)
+    assert answer("2 weeks after offer", kind="text", date="dd/mm/yyyy") == day.strftime("%d/%m/%Y")
+    assert answer("2 weeks after offer", kind="text", date="yyyy-mm-dd") == day.isoformat()
+    assert answer("2 weeks after offer", kind="text", date="dd.mm.yy") == day.strftime("%d.%m.%y")

@@ -21,7 +21,8 @@
      you hear about us? are Eightfold's search lists: open on a click, narrow as typed, take a click on a choice, and
      close on Escape or a click beside them. ?stays=1: the calendar stays open once a day is picked (as one with an OK
      button does), until Escape. ?escape=box: it takes Escape on its box alone (as rc-picker's does), and says on its
-     box that it's open (aria-expanded). -->
+     box that it's open (aria-expanded). ?last=N: its Next month is disabled N months on. ?plain=1: its arrows don't
+     say what they move, and it has a form's own Next button (window.wizardNext counts its presses). -->
 <h2>Additional Personal Information</h2>
 <div id="app">
   <div class="field">
@@ -66,16 +67,20 @@
   <div tabindex="-1" id="partial">
     <span id="dp-dialog-1-label" class="sr-only">Choose a date</span>
     <div>
-      <button type="button" aria-label="Previous year (Control + left)" data-testid="picker-header-super-prev-btn">&laquo;</button>
-      <button type="button" aria-label="Previous month (PageUp)" data-testid="picker-header-prev-btn">&lsaquo;</button>
+      <button type="button" aria-label="Previous year (Control + left)" data-testid="picker-header-super-prev-btn"
+              data-step="-12">&laquo;</button>
+      <button type="button" aria-label="Previous month (PageUp)" data-testid="picker-header-prev-btn" data-step="-1">&lsaquo;</button>
       <button type="button" id="month-name"></button>
-      <button type="button" aria-label="Next month (PageDown)" data-testid="picker-header-next-btn">&rsaquo;</button>
-      <button type="button" aria-label="Next year (Control + right)" data-testid="picker-header-super-next-btn">&raquo;</button>
+      <button type="button" aria-label="Next month (PageDown)" data-testid="picker-header-next-btn" data-step="1"
+              id="next-month">&rsaquo;</button>
+      <button type="button" aria-label="Next year (Control + right)" data-testid="picker-header-super-next-btn"
+              data-step="12">&raquo;</button>
     </div>
     <table role="grid">
       <thead><tr role="row"><th>Su</th><th>Mo</th><th>Tu</th><th>We</th><th>Th</th><th>Fr</th><th>Sa</th></tr></thead>
       <tbody id="days"></tbody>
     </table>
+    <button type="button" aria-label="Next" id="wizard-next" hidden>Next</button>
   </div>
 </div>
 <script>
@@ -130,6 +135,14 @@
   const iso = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
   let picked = null, view = new Date(), committed = '';
   window.pickerOpened = 0;
+  window.wizardNext = 0;
+  const params = new URLSearchParams(location.search);
+  const today = new Date(), last = params.get('last');
+  if (params.get('plain')) {
+    for (const b of picker.querySelectorAll('[data-step]')) { b.removeAttribute('aria-label'); b.removeAttribute('data-testid'); }
+    document.getElementById('wizard-next').hidden = false;
+    document.getElementById('wizard-next').addEventListener('click', () => { window.wizardNext += 1; });
+  }
   const draw = () => {
     document.getElementById('month-name').textContent = `${MONTHS[view.getMonth()].slice(0, 3)} ${view.getFullYear()}`;
     const first = new Date(view.getFullYear(), view.getMonth(), 1);
@@ -147,6 +160,9 @@
       rows += '</tr>';
     }
     document.getElementById('days').innerHTML = rows;
+    const end = last && (view.getFullYear() - today.getFullYear()) * 12 + view.getMonth() - today.getMonth() >= Number(last);
+    document.getElementById('next-month').disabled = !!end;
+    document.getElementById('next-month').setAttribute('aria-disabled', String(!!end));
   };
   const open = () => {
     if (!picker.hidden) return;
@@ -176,16 +192,14 @@
   for (const type of ['mousedown', 'mouseup', 'click']) {
     backdrop.addEventListener(type, (e) => { e.preventDefault(); e.stopPropagation(); });
   }
-  for (const el of new URLSearchParams(location.search).get('escape') === 'box' ? [start] : [picker, start]) {
+  for (const el of params.get('escape') === 'box' ? [start] : [picker, start]) {
     el.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !picker.hidden) { e.stopPropagation(); close(); } });
   }
   start.addEventListener('blur', () => { if (start.value !== committed) start.value = committed; });
   picker.addEventListener('click', (e) => {
-    const nav = e.target.closest('button[data-testid]');
+    const nav = e.target.closest('button[data-step]');
     if (nav) {
-      const step = { 'picker-header-prev-btn': -1, 'picker-header-next-btn': 1, 'picker-header-super-prev-btn': -12,
-                     'picker-header-super-next-btn': 12 }[nav.getAttribute('data-testid')];
-      view = new Date(view.getFullYear(), view.getMonth() + step, 1);
+      view = new Date(view.getFullYear(), view.getMonth() + Number(nav.getAttribute('data-step')), 1);
       draw();
       return;
     }
@@ -195,7 +209,7 @@
     picked = new Date(y, m - 1, d);
     committed = `${MONTHS[m - 1].slice(0, 3)} ${d}, ${y}`;
     start.value = committed;
-    if (new URLSearchParams(location.search).get('stays')) draw();
+    if (params.get('stays')) draw();
     else close();
   });
 </script>

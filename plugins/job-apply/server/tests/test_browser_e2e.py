@@ -2100,6 +2100,54 @@ def test_a_picker_that_takes_escape_on_its_box_alone_is_closed_there(srv):
     assert run(page.evaluate("() => document.getElementById('picker').hidden"))
 
 
+_ESCAPES = "<script>window.escapes = 0; document.addEventListener('keydown', (e) => { if (e.key === 'Escape') " \
+           "window.escapes += 1; }, true);</script>"
+
+
+def test_a_notice_or_a_calendar_no_box_opened_is_never_closed_as_a_picker(srv):
+    """The review of the fix for note 41: any dialog holding a list or a grid, shown or not, counted as a picker and
+    was closed with an Escape: a notice about AI screening with a hidden list of languages went with nothing agreed
+    and nothing said. Only a calendar's days or a list's choices on show, in a dialog a box outside it opened, is a
+    picker; and none is closed while a notice is open over the page (that's answered, or the person's)."""
+    run(srv.open_application(url=fixture_url("jsonld_posting.html")))
+    page = run(srv.browser.page())
+    form = "<form><label for=first>First name</label><input id=first></form>"
+    notice = ("<div role='dialog' aria-modal='true' id='notice' aria-labelledby='nh' style='position:fixed;top:5%;"
+              "left:20%;width:60%;height:30%;background:#fff'><h2 id='nh'>Notice about AI screening</h2>"
+              "<p>We use AI to review applications.</p>{list}<button id='ok'>I Accept</button></div>")
+    calendar = ("<div role='dialog' id='cal' style='position:fixed;top:60%;left:20%;width:60%;height:30%;"
+                "background:#fff'><table role='grid'><tr><td role='gridcell' title='2026-11-02'>2</td>"
+                "<td role='gridcell' title='2026-11-03'>3</td></tr></table></div>")
+    opener = "<input id='when' aria-haspopup='dialog' aria-expanded='true' aria-label='Select date'>"
+    for page_html in (
+            form + notice.format(list="<ul role='listbox' hidden><li role='option'>English</li></ul>"),  # (a notice)
+            form + calendar,  # (a calendar no box opened: a page's own)
+            form + opener + calendar + notice.format(list="")):  # (a picker, under a notice)
+        run(page.set_content(page_html + _ESCAPES))
+        field = next(f for f in run(srv.inspect_form(include_dropdown_options=False))["fields"]
+                     if f["label"] == "First name")
+        run(srv.fill_form([{"id": field["id"], "value": "Sam"}]))
+        assert run(page.evaluate("() => window.escapes")) == 0, page_html
+
+
+def test_a_calendar_that_wont_move_on_says_so_and_a_forms_next_is_never_pressed(srv):
+    """The review's: a calendar whose Next month is disabled at its last month was pressed anyway, and waited out a
+    click's timeout; and one whose arrows don't say they move a month had its form's own "Next" pressed instead. Each
+    says the day isn't offered, and nothing else is pressed."""
+    from datetime import date, timedelta
+
+    later = (date.today() + timedelta(days=75)).strftime("%m/%d/%Y")
+    for query in ("?last=1", "?plain=1"):
+        run(srv.open_application(url=fixture_url("site/eightfold-start-date.html") + query))
+        page = run(srv.browser.page())
+        start = next(f for f in run(srv.inspect_form(include_dropdown_options=False))["fields"]
+                     if f["label"] == "Preferred Start Date")
+        out = run(srv.fill_form([{"id": start["id"], "value": later}]))
+        assert "its calendar didn't offer" in out["results"][0]["error"], (query, out["results"])
+        assert run(page.evaluate("() => window.wizardNext")) == 0, query
+        assert run(page.evaluate("() => document.getElementById('picker').hidden")), query
+
+
 def test_a_date_pickers_box_is_read_as_one_that_takes_a_date(srv):
     """Infineon's Eightfold page (captured live): its Preferred Start Date is a combobox hinted "Select date", whose
     calendar opens as a dialog; the reader says it takes a date, and no list beside it does."""
@@ -2107,3 +2155,19 @@ def test_a_date_pickers_box_is_read_as_one_that_takes_a_date(srv):
     fields = run(srv.browser.inspect(include_dropdown_options=False))["fields"]
     dated = [f["label"] for f in fields if f.get("date")]
     assert dated == ["Preferred Start Date"], dated
+
+
+def test_a_date_box_hinted_day_first_takes_its_date_day_first(srv):
+    """The review's: a box hinted "DD/MM/YYYY" was read as one that takes a date and given 10/31/2026, month first.
+    The reader keeps the hint's order, and the box gets the day in it: typed, or picked in a calendar it opens."""
+    from datetime import date
+
+    from job_apply.browser import _as_date
+
+    run(srv.open_application(url=fixture_url("jsonld_posting.html")))
+    page = run(srv.browser.page())
+    run(page.set_content("<form><label for=a>Preferred Start Date</label><input id=a placeholder='DD/MM/YYYY'>"
+                         "<label for=b>Available start date</label><input id=b placeholder='yyyy-mm-dd'></form>"))
+    fields = run(srv.inspect_form(include_dropdown_options=False))["fields"]
+    assert [f.get("date") for f in fields] == ["dd/mm/yyyy", "yyyy-mm-dd"], fields
+    assert _as_date("02/11/2026", fields[0]) == date(2026, 11, 2) and _as_date("2026-11-02", fields[1]) == date(2026, 11, 2)

@@ -84,14 +84,31 @@ _PAGE_WORDS = {
     "general", "screening", "cover", "letter", "new", "listing", "listings", "postings", "posting", "dashboard", "help",
     "faq", "benefits", "about", "inc", "llc", "workday", "sap", "successfactors", "icims", "oracle", "taleo", "cloud",
     "eightfold", "greenhouse", "lever", "smartrecruiters", "ashby", "avature", "brassring", "jobvite", "phenom",
-    "applicantstack", "paycom", "ukg", "pro", "infor", "cornerstone", "linkedin", "indeed", "company", "redacted"}
+    "applicantstack", "paycom", "ukg", "pro", "infor", "cornerstone", "linkedin", "indeed", "company", "redacted",
+    # (and everyday words a page writes with a capital, in a heading or a title: "Employment at Will", "Engineering
+    # Careers", "Remote Jobs", "Life at Work": the review's)
+    "will", "remote", "hybrid", "engineering", "engineer", "engineers", "global", "worldwide", "international", "team",
+    "teams", "people", "culture", "values", "mission", "life", "risk", "night", "nights", "day", "days", "heights",
+    "height", "level", "levels", "every", "main", "office", "offices", "headquarters", "manufacturing", "operations",
+    "technology", "technical", "technician", "technicians", "sales", "finance", "marketing", "hr", "it", "students",
+    "student", "graduates", "graduate", "internships", "internship", "interns", "veterans", "military", "diversity",
+    "inclusion", "perks", "news", "events", "story", "stories", "featured", "latest", "hot", "open", "browse",
+    "explore", "discover", "future", "purpose", "impact", "safety", "quality", "acknowledgment", "acknowledgement",
+    "hours", "time", "full", "part", "temporary", "contract", "seasonal", "entry", "senior", "staff", "manager",
+    "management", "leadership", "executive", "support", "service", "services", "customer", "health", "healthcare",
+    "nursing", "retail", "warehouse", "logistics", "driver", "drivers", "corporate", "field", "production",
+    "maintenance", "research", "development", "science", "design", "data", "software", "hardware", "security", "legal",
+    "admin", "administrative", "accounting", "north", "south", "east", "west", "america", "americas", "europe", "asia",
+    "emea", "apac", "local", "regional", "national", "early", "professionals", "professional", "today",
+    "acquisition", "apprenticeships", "apprenticeship", "benefit", "rewards", "total"}
 # A job's place that names no place ("Remote", "Multiple Locations")
 _ANYWHERE = {"remote", "hybrid", "on site", "onsite", "virtual", "multiple locations", "various locations",
              "united states", "united states of america", "usa", "us", "anywhere", "nationwide", "work from home"}
 _STATES = {s.lower() for pair in US_STATES.items() for s in pair}
 # What follows a place said as "the job's location" that was its state or country ("Springfield, IL")
-_PLACE_TAIL = re.compile(r"(the job's location)((?:,\s*(?:[A-Z]{2}|" + "|".join(sorted(US_STATES.values(), key=len,
-                         reverse=True)) + r"|United States(?: of America)?|USA|US)\b)+)")
+_PLACE_TAIL = re.compile(r"(the job's location)((?:(?:,\s*|\s+)(?:" + "|".join(US_STATES) + r")\b(?:\s+\d{5}(?:-\d{4})?)?"
+                         r"|\s+\d{5}(?:-\d{4})?\b|,\s*(?:" + "|".join(sorted(US_STATES.values(), key=len, reverse=True))
+                         + r"|United States(?: of America)?|USA|US)\b)+)")
 # "the the employer", from "the Example Group" ("Privacy Policy of the the employer": issue #112, note 42)
 _THE_THE = re.compile(r"\b([Tt]he) the (employer|job)\b")
 # "the employer Group", once an employer's short form has been said ("Apply I Acme Group")
@@ -126,27 +143,43 @@ def report_strings(prof: config.Profile) -> list[str]:
 
 
 def _city(place: Any) -> str:
-    """A place's city ("Springfield" in "Springfield, IL"): never a state, nor one that names no place ("Remote")."""
-    city = re.sub(r"\([^)]*\)", " ", place.split(",")[0]).strip() if isinstance(place, str) else ""
-    return "" if city.lower() in _ANYWHERE | _STATES else city
+    """A place's city: its first part that's neither a state nor a country nor no place at all ("Springfield" in
+    "Springfield, IL", "AZ, Springfield", "US-IL-Springfield" as Workday writes one, "Springfield IL 62701"), else ""."""
+    if not isinstance(place, str):
+        return ""
+    place = re.sub(r"\([^)]*\)", " ", place)
+    if m := re.fullmatch(r"\s*[A-Z]{2,3}\s*-\s*[A-Z]{2}\s*-\s*(.+?)\s*", place):  # (country-state-city)
+        place = m.group(1)
+    for part in place.split(","):
+        part = re.sub(r"\s+\d{5}(?:-\d{4})?$", "", part.strip())  # (its ZIP code)
+        if (words := part.split()) and len(words) > 1 and words[-1] in US_STATES:
+            part = " ".join(words[:-1])  # ("Springfield IL")
+        if part and part.lower() not in _ANYWHERE | _STATES and not part.isdigit():
+            return part
+    return ""
 
 
 def _place_forms(location: Any) -> list[str]:
-    """How a page may name a job's place ("Springfield, IL; Shelbyville, IL"): each place as given, its city and
-    state, and its city alone ("Remove Springfield, Illinois" on Eightfold's location chip: issue #112, note 42)."""
+    """How a page may name a job's place ("Springfield, IL; Shelbyville, IL", "Springfield, IL / Shelbyville, IL"):
+    each place as given, its city and state, and its city alone ("Remove Springfield, Illinois" on Eightfold's
+    location chip: issue #112, note 42)."""
     forms: set[str] = set()
-    for place in re.split(r"[;|]", str(location or "")):
+    for place in re.split(r"\s*[;|]\s*|\s+/\s+", str(location or "")):
         parts = [p.strip() for p in place.split(",") if p.strip()]
         forms |= {", ".join(parts), ", ".join(parts[:2]), _city(", ".join(parts))} if parts else set()
     return [f for f in forms if len(f) >= 3 and f.lower() not in _ANYWHERE | _STATES]
 
 
 def _named(words: str) -> str:
-    """Words that are a name ("Example Group"), not a site's own ("Job Details") nor a stand-in: else ""."""
+    """Words that are a name ("Example Group"), not a site's own ("Job Details"), an everyday word ("Will") or a
+    place's ("Arizona"), nor a stand-in: else ""."""
     words = re.sub(r"'s$|[.,:;!?]+$", "", words.strip())
     if len(words) < 3 or not re.fullmatch(_NAME, words) or REDACTED in words:
         return ""
-    return words if any(w not in _PAGE_WORDS for w in re.findall(r"[a-z0-9&']+", words.lower())) else ""
+    own = [w for w in re.findall(r"[a-z0-9&']+", words.lower()) if w not in _PAGE_WORDS]
+    if len(words.split()) == 1 and words.lower() in _COMMON_WORDS | _COMPANY_WORDS | _STATES | _ANYWHERE:
+        return ""
+    return words if own else ""
 
 
 def _names_given(titles: list[str], texts: list[str]) -> set[str]:
@@ -160,7 +193,8 @@ def _names_given(titles: list[str], texts: list[str]) -> set[str]:
             if (bare := _SITE_TAIL.sub("", part)) != part:
                 found.add(_named(bare))
             elif len(parts) > 1 and i in (0, len(parts) - 1) and all(
-                    "the job" in other or "the employer" in other or not _named(other)
+                    "the job" in other or "the employer" in other
+                    or not [w for w in re.findall(r"[a-z0-9&']+", other.lower()) if w not in _PAGE_WORDS]
                     for other in parts[:i] + parts[i + 1:]):
                 found.add(_named(part))
     return found - {""}
@@ -298,13 +332,16 @@ def _anonymous(job: dict[str, Any], run: Any, urls: list[Any], secrets: list[str
     titles = [str(t) for t in [info.get("title"), *(p.get("title") for p in pages or [])] if t]
     texts = [str(t) for t in [*(info.get("headings") or []), *(info.get("actions") or []), getattr(run, "reason", ""),
                               *(getattr(run, "log", None) or [])] if t]
+    found = set()
     for name in _names_given([unnamed(t) for t in titles], [unnamed(t) for t in texts]):
         words = name.split()  # (and the name less its last words that aren't its name: "Example Group" -> "Example")
         while words:
             form = " ".join(words)
-            if len(form) >= 4 or len(form) >= 3 and form.isupper():
-                said.setdefault(form, "the employer")
-                exact |= {form} if _as_written(form, name) else set()
+            if (len(form) >= 4 or len(form) >= 3 and form.isupper()) and (len(words) > 1 or _named(form)) \
+                    and form not in said:
+                said[form] = "the employer"
+                exact.add(form)  # (only as written: a name found on a page, never its words in a sentence)
+                found.add(form)
             if len(words) < 2 or words[-1].strip(".,").lower() not in _COMPANY_WORDS:
                 break
             words = words[:-1]
@@ -314,7 +351,11 @@ def _anonymous(job: dict[str, Any], run: Any, urls: list[Any], secrets: list[str
     # "Springfield, Illinois")
     kept = [name for name in [*said, *sites] if said.get(name) != "the job's location" or "," not in name]
     secrets = sorted({*secrets, *(s for name in kept for s in _spellings(name) if len(s) >= 2)}, key=len, reverse=True)
-    scrub = _scrubber(secrets)
+    # (the text says a name found on a page only as written, so its scrubber never takes it in another case; the saved
+    # pages lose it in any)
+    written = {s for name in found for s in _spellings(name)} - {s for name in kept if name not in found
+                                                                 for s in _spellings(name)}
+    scrub = _scrubber([s for s in secrets if s not in written])
     return (lambda text: scrub(unnamed(text))), secrets
 
 
