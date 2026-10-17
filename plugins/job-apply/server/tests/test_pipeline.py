@@ -7231,7 +7231,8 @@ async def _crash(tab):
     await until(lambda: crashed)
 
 
-@pytest.mark.parametrize("how", ["answered", "resumed", "crashed", "closed", "browser", "home"])
+@pytest.mark.parametrize("how", ["answered", "resumed", pytest.param("crashed", marks=pytest.mark.own_browser),
+                                 "closed", "browser", "home"])
 def test_a_job_picked_up_again_carries_on_with_the_form_in_its_tab(srv, monkeypatch, how):
     """Eightfold, live (Oct 2026): a job waiting on a question on its one-page form was picked
     up again by opening its posting and pressing Apply Now, onto a fresh form without the resume
@@ -7326,6 +7327,7 @@ def test_a_step_that_redraws_but_doesnt_move_on_stops_after_three_presses(srv, m
     assert presses == 3, (presses, r.log)
 
 
+@pytest.mark.own_browser  # (it crashes a tab: now and then Chromium goes down whole with it)
 def test_a_crashed_tab_closed_since_is_still_said_to_have_crashed(srv):
     """A job's tab that crashed and was closed after it (by Chrome, or the desk) crashed: a picked-up
     job said "its tab was closed" for one (a full test run under load, Oct 10)."""
@@ -7340,6 +7342,7 @@ def test_a_crashed_tab_closed_since_is_still_said_to_have_crashed(srv):
     assert run(go()) == ("crashed", "crashed")
 
 
+@pytest.mark.own_browser  # (it crashes a tab: now and then Chromium goes down whole with it)
 def test_a_tab_that_crashes_while_its_job_runs_is_opened_again_on_resume(srv, monkeypatch):
     """A tab whose page crashes while the desk fills it is no use to the desk again, even
     reloaded: the job says so, and Resume opens it in a new tab. (Each Resume failed again in
@@ -9606,6 +9609,7 @@ def test_the_tabs_of_jobs_that_went_in_are_closed_but_the_newest_few(srv, monkey
     assert open_ == [True, False, False, False, True, True], open_
 
 
+@pytest.mark.own_browser  # (it crashes a tab: now and then Chromium goes down whole with it)
 def test_a_paused_jobs_tab_that_crashes_doesnt_hold_the_queue(srv, monkeypatch):
     """A job holding the queue for the person's sign-in, whose tab crashes ("Aw, Snap!"): a
     crashed tab isn't closed to Playwright, so the desk went on reading it and holding the

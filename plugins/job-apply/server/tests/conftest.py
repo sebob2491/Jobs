@@ -1,11 +1,15 @@
 import asyncio
+import contextlib
+import inspect
 import os
 import sys
 import zlib
 from pathlib import Path
+from typing import Any
 
 import pytest
 import yaml
+from playwright.async_api import Browser, async_playwright
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -106,6 +110,8 @@ FAST_WAITS = {
 
 def pytest_configure(config):
     config.addinivalue_line("markers", "real_waits: keep the desk's production waits (a test timed against them)")
+    config.addinivalue_line("markers", "own_browser: the desk starts a browser of its own for this test, as the app "
+                                       "does, instead of a context in the worker's (see one_browser_per_worker)")
 
 
 @pytest.fixture(autouse=True)
@@ -119,12 +125,164 @@ def fast_waits(request, monkeypatch):
         monkeypatch.setattr(browser, name, value)
 
 
-@pytest.fixture
-def loop():
-    lp = asyncio.new_event_loop()
-    asyncio.set_event_loop(lp)
+# ---------------------------------------------------------------- one browser per worker
+# Each test used to start a Playwright and a Chromium of its own: about 1.2 s a test, for some 500 tests (the code
+# review of Oct 16). Now each xdist worker (or a run without xdist) starts them once, on an event loop its tests share
+# (`loop`), and each test gets a fresh context in that browser: cookies, storage, cache, downloads, viewport and routes
+# of its own, as a browser started for it had. What a test leaves running on the loop is cancelled after it, and what
+# it leaves open in the browser is closed. A test that needs a browser process of its own (one that crashes a tab,
+# which now and then takes the whole browser down with it) says so with @pytest.mark.own_browser: the desk then starts
+# one for it, as the app does.
+
+
+class _Worker:
+    """This worker's event loop, Playwright and browser."""
+    loop: asyncio.AbstractEventLoop | None = None
+    playwright: Any = None
+    browser: Any = None
+    launched: dict = {}  # the options it was launched with
+
+
+WORKER = _Worker()
+
+
+def worker_launch() -> dict:
+    """What the worker's browser is launched with: the tests' Chromium, headless."""
+    return {"headless": True, **launch_options()}
+
+
+async def worker_playwright():
+    if WORKER.playwright is None:
+        WORKER.playwright = await async_playwright().start()
+    return WORKER.playwright
+
+
+async def worker_browser():
+    """The worker's browser: started the first time a test asks for it (and again if it went down, or a test has
+    another Chromium named for the tests)."""
+    if WORKER.browser is None or not WORKER.browser.is_connected() or WORKER.launched != worker_launch():
+        if WORKER.browser is not None:
+            with contextlib.suppress(Exception):
+                await WORKER.browser.close()
+        WORKER.launched = worker_launch()
+        WORKER.browser = await (await worker_playwright()).chromium.launch(**WORKER.launched)
+    return WORKER.browser
+
+
+def _stop_leftovers(lp: asyncio.AbstractEventLoop) -> None:
+    """Cancel what a test left running on the loop, so that none of it runs on into the next test (a loop of each
+    test's own, closed after it, stopped it there). A Playwright's connection is left to its stop: the worker's runs on
+    for the next test, and the one of a browser of the test's own is stopped as that browser closes (cancelled, the
+    close would wait forever for the browser's answer)."""
+    left = [t for t in asyncio.all_tasks(lp) if getattr(t.get_coro(), "__qualname__", "") != "Connection.run"]
+    for task in left:
+        task.cancel()
+    if left:
+        lp.run_until_complete(asyncio.wait(left, timeout=30))
+    stuck = [t for t in left if not t.done()]
+    assert not stuck, f"what the test left running wouldn't stop: {stuck}"
+
+
+@pytest.fixture(scope="session")
+def worker_loop():
+    lp = WORKER.loop = asyncio.new_event_loop()
     yield lp
+    for end in (WORKER.browser and WORKER.browser.close, WORKER.playwright and WORKER.playwright.stop):
+        if end:
+            with contextlib.suppress(Exception):
+                lp.run_until_complete(end())
+    WORKER.loop = WORKER.playwright = WORKER.browser = None
     lp.close()
+
+
+@pytest.fixture
+def loop(worker_loop):
+    """The worker's event loop (the worker's browser runs on it), for this test."""
+    asyncio.set_event_loop(worker_loop)
+    yield worker_loop
+    _stop_leftovers(worker_loop)
+    asyncio.set_event_loop(None)  # (a test that runs a coroutine without asking for a loop fails, as it did)
+
+
+# (Browser.new_context's options: launch_persistent_context's others are the browser's own)
+_CONTEXT_OPTIONS = set(inspect.signature(Browser.new_context).parameters) - {"self"}
+
+
+class _WorkerPlaywright:
+    """`async_playwright()` as the desk's BrowserSession gets it in a test: each launch it asks for is a fresh context
+    in the worker's browser, and its stop leaves the worker's Playwright running. A launch the worker's browser can't
+    stand in for (another browser or channel, a window shown, launch options of its own) is the real
+    launch_persistent_context, in a browser of its own; on a loop other than the worker's (a test's asyncio.run), the
+    session gets a Playwright of its own, as before."""
+
+    def __init__(self, opened: list) -> None:
+        self.opened = opened
+        self.chromium = self
+
+    async def start(self):
+        if asyncio.get_running_loop() is not WORKER.loop:
+            return await async_playwright().start()
+        return self
+
+    async def stop(self) -> None:
+        pass  # (the worker's: kept for its next test)
+
+    async def launch_persistent_context(self, **options):
+        launch = {k: v for k, v in options.items() if k not in _CONTEXT_OPTIONS and k != "user_data_dir"}
+        if launch == worker_launch():
+            browser = await worker_browser()
+            ctx = await browser.new_context(**{k: v for k, v in options.items() if k in _CONTEXT_OPTIONS})
+        else:
+            ctx = await (await worker_playwright()).chromium.launch_persistent_context(**options)
+        self.opened.append(ctx)
+        return ctx
+
+
+@pytest.fixture(autouse=True)
+def one_browser_per_worker(request, monkeypatch):
+    if request.node.get_closest_marker("own_browser"):
+        yield
+        return
+    from job_apply import browser
+    opened: list = []
+    monkeypatch.setattr(browser, "async_playwright", lambda: _WorkerPlaywright(opened))
+    yield
+    for ctx in opened:  # (any the test left open: srv closes the desk's)
+        with contextlib.suppress(Exception):
+            WORKER.loop.run_until_complete(ctx.close())
+
+
+class _PersonsBrowser:
+    """The person's own browser, beside the desk's, in the worker's browser: as Browser.new_page has it, each page in
+    a fresh context of its own."""
+
+    def __init__(self, browser) -> None:
+        self._browser = browser
+        self._contexts: list = []
+
+    async def new_page(self, **options):
+        ctx = await self._browser.new_context(**options)
+        self._contexts.append(ctx)
+        return await ctx.new_page()
+
+    async def close(self) -> None:
+        while self._contexts:
+            await self._contexts.pop().close()
+
+
+@contextlib.asynccontextmanager
+async def person_browser():
+    """A browser of the person's own, for a test of the desk's page: fresh, and closed afterwards."""
+    if asyncio.get_running_loop() is not WORKER.loop:
+        async with async_playwright() as pw:
+            yield await pw.chromium.launch(**launch_options())
+        return
+    person = _PersonsBrowser(await worker_browser())
+    try:
+        yield person
+    finally:
+        with contextlib.suppress(Exception):
+            await person.close()
 
 
 @pytest.fixture
@@ -135,10 +293,13 @@ def srv(job_apply_home, loop):
     server._tracker = None
     server.browser.current_job_id = None
     yield server
-    loop.run_until_complete(server.browser.close())
-    if server._tracker:
-        server._tracker.close()
-        server._tracker = None
+    try:
+        _stop_leftovers(loop)  # (before the browser and the tracker close under it)
+    finally:
+        loop.run_until_complete(server.browser.close())
+        if server._tracker:
+            server._tracker.close()
+            server._tracker = None
 
 
 def run(coro):

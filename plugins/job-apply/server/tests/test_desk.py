@@ -7,7 +7,7 @@ import time
 
 import httpx
 import pytest
-from conftest import browser_available, fixture_url, launch_options, run
+from conftest import browser_available, fixture_url, person_browser, run
 
 import job_apply.pipeline as pipeline
 from job_apply import autofill, config
@@ -123,8 +123,6 @@ def test_desk_finds_applies_and_submits(srv, monkeypatch):
 
 def test_desk_page_buttons_reach_the_api(srv, tmp_path):
     """Click through the real page in a separate browser: pick a job, press Apply, answer a question."""
-    from playwright.async_api import async_playwright
-
     from job_apply.pipeline import Run
 
     posting = fixture_url("site/posting.html")
@@ -153,8 +151,7 @@ def test_desk_page_buttons_reach_the_api(srv, tmp_path):
     async def go():
         await desk.start(port=0, open_browser=False)
         try:
-            async with async_playwright() as pw:
-                browser = await pw.chromium.launch(**launch_options())
+            async with person_browser() as browser:
                 page = await browser.new_page()
                 await page.goto(desk.url)
                 await page.wait_for_selector("text=Field Service Engineer")
@@ -229,8 +226,6 @@ def test_the_banner_names_the_job_waited_on_and_the_profile_gaps_are_in_words(sr
     """The banner names the job the queue is waiting on; what to do is in its Needs you card
     (the banner used to repeat all of it). What the profile still needs is said in words,
     not as profile.yaml's keys."""
-    from playwright.async_api import async_playwright
-
     from job_apply.pipeline import Run
 
     desk = Desk(srv)
@@ -245,8 +240,7 @@ def test_the_banner_names_the_job_waited_on_and_the_profile_gaps_are_in_words(sr
     async def go():
         await desk.start(port=0, open_browser=False)
         try:
-            async with async_playwright() as pw:
-                browser = await pw.chromium.launch(**launch_options())
+            async with person_browser() as browser:
                 page = await browser.new_page()
                 await page.goto(desk.url)
                 await page.wait_for_selector("#notices .waiting")
@@ -269,8 +263,6 @@ def test_the_banner_names_the_job_waited_on_and_the_profile_gaps_are_in_words(sr
 def test_the_page_alerts_when_a_job_needs_you(srv):
     """With alerts on, a job that comes to need the person (or is ready to submit) brings up
     one desktop notification; what was already waiting when the page opened doesn't."""
-    from playwright.async_api import async_playwright
-
     from job_apply.pipeline import Run
 
     desk = Desk(srv)
@@ -294,8 +286,7 @@ def test_the_page_alerts_when_a_job_needs_you(srv):
     async def go():
         await desk.start(port=0, open_browser=False)
         try:
-            async with async_playwright() as pw:
-                browser = await pw.chromium.launch(**launch_options())
+            async with person_browser() as browser:
                 page = await browser.new_page()
                 await page.add_init_script(fake)
                 await page.goto(desk.url)
@@ -347,8 +338,6 @@ def test_jobs_already_applied_to_are_never_queued_again(srv):
 
 
 def test_opening_the_page_searches_when_the_last_search_is_stale(srv, monkeypatch):
-    from playwright.async_api import async_playwright
-
     searched = []
 
     async def fake_search(query, companies=None, location=None, limit_per_company=10):
@@ -362,8 +351,7 @@ def test_opening_the_page_searches_when_the_last_search_is_stale(srv, monkeypatc
     async def go():
         await desk.start(port=0, open_browser=False)
         try:
-            async with async_playwright() as pw:
-                browser = await pw.chromium.launch(**launch_options())
+            async with person_browser() as browser:
                 page = await browser.new_page()
                 await page.goto(desk.url)
                 for _ in range(50):
@@ -469,8 +457,6 @@ def test_pasted_links_are_read_saved_and_listed(srv):
 
 
 def test_openings_new_since_the_last_visit_are_tagged(srv):
-    from playwright.async_api import async_playwright
-
     desk = Desk(srv)
     desk.applier.start = lambda: None
     desk.search.update(status="done", at=time.time())
@@ -481,8 +467,7 @@ def test_openings_new_since_the_last_visit_are_tagged(srv):
     async def go():
         await desk.start(port=0, open_browser=False)
         try:
-            async with async_playwright() as pw:
-                browser = await pw.chromium.launch(**launch_options())
+            async with person_browser() as browser:
                 page = await browser.new_page()
                 await page.goto(desk.url)
                 await page.wait_for_selector("text=Field Service Engineer")
@@ -676,8 +661,6 @@ def test_the_queue_is_paused_and_resumed_through_the_api(srv):
 def test_the_pause_button_pauses_and_resumes_the_queue(srv):
     """The header's Pause queue shows while jobs are queued or running, turns into Resume queue (with how many wait)
     once pressed, and the Working on card says the queue is paused (issue #112, note 36)."""
-    from playwright.async_api import async_playwright
-
     from job_apply.pipeline import Run
 
     job = srv.add_job(url=fixture_url("generic_form.html"), title="Technician", company="Example Litho")["job"]
@@ -688,8 +671,7 @@ def test_the_pause_button_pauses_and_resumes_the_queue(srv):
     async def go():
         await desk.start(port=0, open_browser=False)
         try:
-            async with async_playwright() as pw:
-                browser = await pw.chromium.launch(**launch_options())
+            async with person_browser() as browser:
                 page = await browser.new_page()
                 await page.goto(desk.url)
                 await page.wait_for_selector("#plugin-version:not(:empty)")  # the page has its state
@@ -716,8 +698,6 @@ def test_only_where_the_desk_goes_all_the_way_shows_those_employers_alone_and_is
     """The owner (Oct 12): a switch to show only the openings where the plugin works all the way. The employers
     are the live check's (data/desk_handled.yaml: a test applicant reached the review page there); their openings
     carry a chip, the switch hides the rest (and drops them from what's picked), and it's kept for next time."""
-    from playwright.async_api import async_playwright
-
     from job_apply import config
 
     assert "intel" in config.handled_employers() and "example fab" not in config.handled_employers()
@@ -733,8 +713,7 @@ def test_only_where_the_desk_goes_all_the_way_shows_those_employers_alone_and_is
     async def go():
         await desk.start(port=0, open_browser=False)
         try:
-            async with async_playwright() as pw:
-                browser = await pw.chromium.launch(**launch_options())
+            async with person_browser() as browser:
                 page = await browser.new_page()
                 await page.goto(desk.url)
                 await page.wait_for_selector("text=Field Service Engineer")
@@ -769,8 +748,6 @@ def test_troubleshooting_searches_every_list_shows_where_the_desk_stops_and_send
     searches every list's employers (the person's own file names only one) for the profile's titles and HR ones;
     the page shows only the openings where the desk doesn't go all the way yet, whatever their fit; and nothing is
     sent while it's on (Submit is refused, Submit for me held). It turns "Only where the desk goes all the way" off."""
-    from playwright.async_api import async_playwright
-
     from job_apply import desk as desk_module
     from job_apply.pipeline import Run
 
@@ -795,8 +772,7 @@ def test_troubleshooting_searches_every_list_shows_where_the_desk_stops_and_send
     async def go():
         await desk.start(port=0, open_browser=False)
         try:
-            async with async_playwright() as pw:
-                browser = await pw.chromium.launch(**launch_options())
+            async with person_browser() as browser:
                 page = await browser.new_page()
                 await page.goto(desk.url)
                 await page.check("#handled-only")
@@ -997,8 +973,6 @@ def test_the_page_keeps_its_lists_steady(srv):
     poll; the "Not searched automatically" list closed itself every refresh; a job already
     filled on its review page could be ticked and started over; and a page without the key
     said Claude Code might not be running."""
-    from playwright.async_api import async_playwright
-
     from job_apply.pipeline import Run
 
     desk = Desk(srv)
@@ -1014,8 +988,7 @@ def test_the_page_keeps_its_lists_steady(srv):
     async def go():
         await desk.start(port=0, open_browser=False)
         try:
-            async with async_playwright() as pw:
-                browser = await pw.chromium.launch(**launch_options())
+            async with person_browser() as browser:
                 page = await browser.new_page()
                 await page.goto(desk.url)
                 await page.wait_for_selector("#skipped-sites summary")
@@ -1171,8 +1144,6 @@ def test_report_a_problem_shows_the_report_with_a_link_to_file_it(srv, job_apply
     """The report was shown in a confirm() and GitHub opened with window.open after the wait,
     which browsers block as a pop-up; a submitted job had no Report button at all, and a
     double click wrote two reports."""
-    from playwright.async_api import async_playwright
-
     from job_apply.pipeline import Run
 
     desk = Desk(srv)
@@ -1185,8 +1156,7 @@ def test_report_a_problem_shows_the_report_with_a_link_to_file_it(srv, job_apply
     async def go():
         await desk.start(port=0, open_browser=False)
         try:
-            async with async_playwright() as pw:
-                browser = await pw.chromium.launch(**launch_options())
+            async with person_browser() as browser:
                 page = await browser.new_page()
                 await page.goto(desk.url)
                 button = page.locator(f"button[data-job='{job['id']}'][data-job-act='report']")
@@ -1210,8 +1180,6 @@ def test_report_a_problem_can_leave_out_which_job_it_was(srv, job_apply_home):
     text. The dialog's box makes it again with the job system alone, and clearing it names it again."""
     from urllib.parse import parse_qs, urlsplit
 
-    from playwright.async_api import async_playwright
-
     from job_apply.pipeline import Run
 
     desk = Desk(srv)
@@ -1225,8 +1193,7 @@ def test_report_a_problem_can_leave_out_which_job_it_was(srv, job_apply_home):
     async def go():
         await desk.start(port=0, open_browser=False)
         try:
-            async with async_playwright() as pw:
-                browser = await pw.chromium.launch(**launch_options())
+            async with person_browser() as browser:
                 page = await browser.new_page()
                 await page.goto(desk.url)
                 await page.click(f"button[data-job='{job['id']}'][data-job-act='report']")
@@ -1258,8 +1225,6 @@ def test_the_report_box_goes_back_when_the_report_cant_be_made_again(srv, job_ap
     no link."""
     import threading
 
-    from playwright.async_api import async_playwright
-
     from job_apply import report
     from job_apply.pipeline import Run
 
@@ -1284,8 +1249,7 @@ def test_the_report_box_goes_back_when_the_report_cant_be_made_again(srv, job_ap
     async def go():
         await desk.start(port=0, open_browser=False)
         try:
-            async with async_playwright() as pw:
-                browser = await pw.chromium.launch(**launch_options())
+            async with person_browser() as browser:
                 page = await browser.new_page()
                 alerts, links = [], []
 
@@ -1333,8 +1297,6 @@ def test_a_report_that_cant_be_made_doesnt_bring_back_another_jobs(srv, job_appl
     kept for the page, not the job: when job B's report failed, the dialog took back job A's, with
     its box and its link, and Open would file a public issue about A. A job's report starts with
     nothing of another's; one that can't be made leaves no link, the box unticked and no text."""
-    from playwright.async_api import async_playwright
-
     from job_apply import report
     from job_apply.pipeline import Run
 
@@ -1359,8 +1321,7 @@ def test_a_report_that_cant_be_made_doesnt_bring_back_another_jobs(srv, job_appl
     async def go():
         await desk.start(port=0, open_browser=False)
         try:
-            async with async_playwright() as pw:
-                browser = await pw.chromium.launch(**launch_options())
+            async with person_browser() as browser:
                 page = await browser.new_page()
                 alerts = []
 
@@ -1468,7 +1429,6 @@ def test_the_notes_are_counted_in_the_header_shown_as_one_issue_and_cleared(srv,
     panel with all of them as the one issue they make, and Clear once they're filed."""
     from urllib.parse import parse_qs, urlsplit
 
-    from playwright.async_api import async_playwright
 
     desk = Desk(srv)
     desk.applier.start = lambda: None
@@ -1477,8 +1437,7 @@ def test_the_notes_are_counted_in_the_header_shown_as_one_issue_and_cleared(srv,
     async def go():
         await desk.start(port=0, open_browser=False)
         try:
-            async with async_playwright() as pw:
-                browser = await pw.chromium.launch(**launch_options())
+            async with person_browser() as browser:
                 page = await browser.new_page()
                 page.on("dialog", lambda d: asyncio.ensure_future(d.accept()))  # Clear's "are you sure"
                 await page.goto(desk.url)
@@ -1553,7 +1512,6 @@ def test_the_desk_page_fits_its_window(srv, width):
     """The Site passwords card's job-system list was as wide as its longest choice ("SuccessFactors:
     TSMC Arizona, ..."), and nothing let it shrink: the page ran past a 1280-wide window, and a
     phone's, and scrolled sideways."""
-    from playwright.async_api import async_playwright
 
     desk = Desk(srv)
     desk.applier.start = lambda: None
@@ -1562,8 +1520,7 @@ def test_the_desk_page_fits_its_window(srv, width):
     async def go():
         await desk.start(port=0, open_browser=False)
         try:
-            async with async_playwright() as pw:
-                browser = await pw.chromium.launch(**launch_options())
+            async with person_browser() as browser:
                 page = await browser.new_page(viewport={"width": width, "height": 900})
                 await page.goto(desk.url)
                 await page.wait_for_selector("#pw-site option", state="attached")
@@ -1583,8 +1540,6 @@ def test_undo_on_the_page_puts_a_skipped_job_back(srv, width):
     """Skip couldn't be undone. After Skip, the job's card (and its row in the list) offers Undo:
     a job the desk had begun goes back in the queue, with the tracker's status from before; one
     skipped before the desk restarted goes back to the list, unticked. The page still fits a phone."""
-    from playwright.async_api import async_playwright
-
     from job_apply.pipeline import Run
 
     fit = {"score": 80, "reasons": ["title matches"], "concerns": [], "blocked": False, "recommended": True}
@@ -1603,8 +1558,7 @@ def test_undo_on_the_page_puts_a_skipped_job_back(srv, width):
     async def go():
         await desk.start(port=0, open_browser=False)
         try:
-            async with async_playwright() as pw:
-                browser = await pw.chromium.launch(**launch_options())
+            async with person_browser() as browser:
                 page = await browser.new_page(viewport={"width": width, "height": 900})
                 await page.goto(desk.url)
                 await page.click(f"#needs button[data-job='{begun['id']}'][data-job-act=skip]")
@@ -1688,7 +1642,6 @@ def test_the_page_lists_my_applications_folds_an_idle_side_and_closes_a_tip(srv,
     """My applications lists each job sent in with where it stands; with nothing needing the person, being
     worked on or done, one short card stands for the three; a tip closed stays closed; and an opening
     without a location doesn't say so."""
-    from playwright.async_api import async_playwright
 
     for i, (company, status) in enumerate([("Intel", "applied"), ("ASML", "rejected"), ("KLA", "saved")]):
         job = srv.add_job(url=f"https://example.com/jobs/{i}", title="Technician", company=company)["job"]
@@ -1703,8 +1656,7 @@ def test_the_page_lists_my_applications_folds_an_idle_side_and_closes_a_tip(srv,
     async def go():
         await desk.start(port=0, open_browser=False)
         try:
-            async with async_playwright() as pw:
-                browser = await pw.chromium.launch(**launch_options())
+            async with person_browser() as browser:
                 page = await browser.new_page()
                 await page.goto(desk.url)
                 await page.wait_for_selector("#idle-card:not([hidden])")
@@ -1731,7 +1683,6 @@ def test_the_page_lists_my_applications_folds_an_idle_side_and_closes_a_tip(srv,
 def test_the_common_questions_are_asked_once_on_the_page_and_kept(srv, job_apply_home):
     """The question bank's card: each unanswered question asked; a choice made is saved to answers.yaml with the
     bank's pattern at once, and the card counts it; a choice that isn't one of its own is turned away."""
-    from playwright.async_api import async_playwright
 
     desk = Desk(srv)
     desk.applier.start = lambda: None
@@ -1747,8 +1698,7 @@ def test_the_common_questions_are_asked_once_on_the_page_and_kept(srv, job_apply
                 r = await c.post("/api/bank", json={"id": "relocate", "answer": "Maybe"},
                                  headers={"x-desk-token": desk.token})
                 assert r.status_code == 400
-            async with async_playwright() as pw:
-                browser = await pw.chromium.launch(**launch_options())
+            async with person_browser() as browser:
                 page = await browser.new_page()
                 await page.goto(desk.url)
                 await page.wait_for_selector("#bank-card:not([hidden]) select[data-bank=shift]")
@@ -1767,8 +1717,6 @@ def test_the_bot_checks_waiting_are_solved_in_one_round(srv):
     """Bot checks wait in their tabs while the queue goes on (the owner's call, Oct 11). The desk says how many wait;
     "Solve them" brings up the oldest one's tab, and the next one's as soon as it's past its check. The person
     solves each: the desk only shows them."""
-    from playwright.async_api import async_playwright
-
     from job_apply.pipeline import Run
 
     desk = Desk(srv)
@@ -1795,8 +1743,7 @@ def test_the_bot_checks_waiting_are_solved_in_one_round(srv):
     async def go():
         await desk.start(port=0, open_browser=False)
         try:
-            async with async_playwright() as pw:
-                browser = await pw.chromium.launch(**launch_options())
+            async with person_browser() as browser:
                 page = await browser.new_page()
                 await page.goto(desk.url)
                 await page.wait_for_selector("#notices [data-act=bot-round]")
@@ -1833,8 +1780,6 @@ def test_the_applications_ready_for_the_persons_submit_are_reviewed_in_one_round
     """For a batch (the owner's mega apply, Oct 12): "Review them" brings each application filled to the person's
     Submit up in turn; "Submit this one" sends the one shown (their press), "I submitted it" says they pressed the
     site's own last button, and the next comes up once it's gone. Nothing is sent without the person's press."""
-    from playwright.async_api import async_playwright
-
     from job_apply.pipeline import Run
 
     desk = Desk(srv)
@@ -1865,8 +1810,7 @@ def test_the_applications_ready_for_the_persons_submit_are_reviewed_in_one_round
     async def go():
         await desk.start(port=0, open_browser=False)
         try:
-            async with async_playwright() as pw:
-                browser = await pw.chromium.launch(**launch_options())
+            async with person_browser() as browser:
                 page = await browser.new_page()
                 await page.goto(desk.url)
                 await page.wait_for_selector("#notices [data-act=review-round]")
@@ -1904,8 +1848,6 @@ def test_jobs_stopped_on_a_bot_check_or_captcha_are_marked_and_a_forms_captcha_i
     """The owner (Oct 12): which jobs stopped on a bot check or CAPTCHA? Each says so on its card, and the
     filled form with a CAPTCHA before its Submit comes up in the "Review them" round with the others ready
     to send: the person ticks it and presses "Submit this one" (their press; the desk never solves one)."""
-    from playwright.async_api import async_playwright
-
     from job_apply.pipeline import Run
 
     desk = Desk(srv)
@@ -1932,8 +1874,7 @@ def test_jobs_stopped_on_a_bot_check_or_captcha_are_marked_and_a_forms_captcha_i
     async def go():
         await desk.start(port=0, open_browser=False)
         try:
-            async with async_playwright() as pw:
-                browser = await pw.chromium.launch(**launch_options())
+            async with person_browser() as browser:
                 page = await browser.new_page()
                 await page.goto(desk.url)
                 await page.wait_for_selector("#needs .task h3 .pill")
@@ -1969,8 +1910,6 @@ def test_a_question_asked_for_want_of_the_profiles_choice_isnt_remembered_by_def
     asked about, and what the person picks there is for that site: remembered, it would go in at every later site,
     where the profile's decline is a choice (the review of 0.3.138). Its "Remember" box starts unticked; another
     question's starts ticked."""
-    from playwright.async_api import async_playwright
-
     from job_apply.pipeline import Run
 
     desk = Desk(srv)
@@ -1987,8 +1926,7 @@ def test_a_question_asked_for_want_of_the_profiles_choice_isnt_remembered_by_def
     async def go():
         await desk.start(port=0, open_browser=False)
         try:
-            async with async_playwright() as pw:
-                browser = await pw.chromium.launch(**launch_options())
+            async with person_browser() as browser:
                 page = await browser.new_page()
                 await page.goto(desk.url)
                 await page.wait_for_selector("[data-remember]")
@@ -2007,8 +1945,6 @@ def test_a_box_whose_words_say_little_shows_the_words_above_it_and_isnt_remember
     words above it, now on its card. Its "Remember" box starts unticked: remembered, the answer would go in at every
     later "Acknowledgment", whatever that one says (and "Acknowledgment" was missed as a consent, spelled without the
     e)."""
-    from playwright.async_api import async_playwright
-
     from job_apply.pipeline import Run
 
     desk = Desk(srv)
@@ -2031,8 +1967,7 @@ def test_a_box_whose_words_say_little_shows_the_words_above_it_and_isnt_remember
     async def go():
         await desk.start(port=0, open_browser=False)
         try:
-            async with async_playwright() as pw:
-                browser = await pw.chromium.launch(**launch_options())
+            async with person_browser() as browser:
                 page = await browser.new_page()
                 await page.goto(desk.url)
                 await page.wait_for_selector("[data-remember]")
@@ -2058,8 +1993,6 @@ def test_an_account_forms_security_questions_on_the_card_go_into_that_form_alone
     person's to choose. On the card they say they're for that account only, with no "Remember" box; answered, they're
     kept apart for that form (Run.account_answers): never remembered, never among the application's answers (which go
     into every box with its label), never on the desk page. The application's own questions beside them are as ever."""
-    from playwright.async_api import async_playwright
-
     from job_apply.pipeline import Run, placed_key, question_key
 
     desk = Desk(srv)
@@ -2076,8 +2009,7 @@ def test_an_account_forms_security_questions_on_the_card_go_into_that_form_alone
     async def go():
         await desk.start(port=0, open_browser=False)
         try:
-            async with async_playwright() as pw:
-                browser = await pw.chromium.launch(**launch_options())
+            async with person_browser() as browser:
                 page = await browser.new_page()
                 await page.goto(desk.url)
                 await page.wait_for_selector('[data-q="Security questions | Question 1 Answer | "]')
@@ -2135,8 +2067,6 @@ def test_every_card_says_i_submitted_it_already(srv):
     """Issue #112, note 31 (the owner's ask): an application sent on the site itself, whatever the desk's card
     waited on, is marked applied from that card: "I submitted it already" on the questions, sign-in, stuck,
     ready and failed cards alike. It counts as applied, and the job is never queued again."""
-    from playwright.async_api import async_playwright
-
     from job_apply.pipeline import Run
 
     desk = Desk(srv)
@@ -2156,8 +2086,7 @@ def test_every_card_says_i_submitted_it_already(srv):
     async def go():
         await desk.start(port=0, open_browser=False)
         try:
-            async with async_playwright() as pw:
-                browser = await pw.chromium.launch(**launch_options())
+            async with person_browser() as browser:
                 page = await browser.new_page()
                 await page.goto(desk.url)
                 await page.wait_for_selector("#done .task")
@@ -2185,8 +2114,6 @@ def test_a_review_rounds_submit_sends_only_the_application_its_banner_names(srv)
     """The review of the round: a review page whose tab was closed is passed over for the next one, and the banner
     went on naming the closed one for up to a poll while its Submit would have sent the next, which the person never
     chose. The banner names the one brought up at once, and its Submit sends only the one it names."""
-    from playwright.async_api import async_playwright
-
     from job_apply.pipeline import Run
 
     desk = Desk(srv)
@@ -2211,8 +2138,7 @@ def test_a_review_rounds_submit_sends_only_the_application_its_banner_names(srv)
     async def go():
         await desk.start(port=0, open_browser=False)
         try:
-            async with async_playwright() as pw:
-                browser = await pw.chromium.launch(**launch_options())
+            async with person_browser() as browser:
                 page = await browser.new_page()
                 await page.goto(desk.url)
                 await page.click("#notices [data-act=review-round]")
