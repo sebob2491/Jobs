@@ -79,6 +79,11 @@ the scrubber (`python -m job_apply.fixtures`) before they become test fixtures.
     a place or their text (the search check reads each as the desk reads a pasted link).
   - Compare a run with the previous one per employer. A changed outcome is the signal. The nightly's changes comment opens with
     **Went backwards** when an employer the last run took to its review page no longer gets there (the regression alarm).
+  - The nightly's compare job (`scripts/live_compare.py`) writes two issues: "Nightly live check" (label `live-check`,
+    #54: the last run's tables, and a comment when an outcome changed) and "Nightly live trends" (label `live-trends`,
+    never `live-check`: the last 60 runs' counts per check and median seconds, each employer's last 20 runs as letters,
+    and the employers that flip, 3 changes or more in their last 10 runs). A check that didn't finish adds nothing to
+    the history.
   - Run live checks from a worktree of their own (`git worktree add ../Jobs-live origin/main`): a branch
     switch or cherry-pick in the main checkout changes the scripts under a running check.
 - The nightly's results: `uv run python scripts/nightly_summary.py` (counts per check, and the employers still back:
@@ -88,6 +93,9 @@ the scrubber (`python -m job_apply.fixtures`) before they become test fixtures.
   rules'; then the better), `--tables` (Where It Stands' employer
   tables), `--artifacts <zip or folder> --companies "A,B"` (each employer's rounds, questions with their
   choices, and the page where it stopped). Use it instead of reading the issue's body or a run's logs.
+  `--trend [N]` (from the trend issue: the last N runs, 14 by default, newest first: each check's reached/total and
+  median seconds, then the employers that flip; `--trend-file` reads a saved copy). `--handled` leaves out the employers
+  that flip in the accounts or pipeline check, one stderr line each (without the trend issue, a warning, and as before).
   A run's artifact downloads with the GitHub tools' artifact link and curl.
   `--timing <zip or folder>` gives each job system's time (middle, 90%) and the slowest employers; with
   `--against <an earlier run's>` (a week before: artifacts are kept 7 days), a system twice as slow says so.

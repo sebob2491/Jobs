@@ -4,6 +4,7 @@ as live_compare.py writes it, and from a run's saved results. No network: the bo
 import importlib.util
 import json
 import sys
+import urllib.error
 import zipfile
 from pathlib import Path
 
@@ -260,3 +261,115 @@ def test_a_rounds_pick_list_probe_is_printed_with_it():
     said = ns.steps(rec).splitlines()
     at = next(i for i, line in enumerate(said) if line.startswith("      Q: Protected Veteran"))
     assert said[at + 1].startswith('      pick list: {"label": "Protected Veteran", "before"'), said
+
+
+# --- the trend issue: the last runs, and the employers that flip ---------------------------------------------------
+
+def _trend(runs):
+    """The trend issue's history from runs of {check: {employer: outcome}}: a run a day from Oct 1, 95 s an employer."""
+    trend = None
+    for day, run in enumerate(runs, 1):
+        current = {check: {name: lc.Result(o) for name, o in found.items()} for check, found in run.items()}
+        seconds = {check: {name: 95.0 for name in found} for check, found in run.items()}
+        trend = lc.add_run(trend, current, at=f"2026-10-{day:02d} 10:17 UTC", run_url=f"https://example.com/run/{day}",
+                           seconds=seconds)
+    return trend
+
+
+def _saved(tmp_path, name, data):
+    path = tmp_path / name
+    path.write_text(json.dumps(data), encoding="utf-8")
+    return str(path)
+
+
+def test_the_trend_says_each_checks_runs_newest_first_and_the_employers_that_flip(tmp_path, capsys):
+    """--trend: each check's employers at the review page out of those checked, run by run (a run that didn't check
+    one says "-"), with the median seconds; then the employers whose result changed 3 times or more lately."""
+    runs = []
+    for i in range(10):
+        run = {"search": {"USAA": "works"}}
+        if i != 4:  # (the accounts check didn't run that night)
+            run["accounts"] = {"KLA": "ready" if i % 2 == 0 else "needs_you stuck", "onsemi": "ready"}
+        runs.append(run)
+    body = lc.render_trend(_trend(runs))
+    path = _saved(tmp_path, "trend.json", {"number": 70, "title": "Nightly live trends", "body": body})
+    assert ns.main(["--trend", "3", "--trend-file", path]) == 0
+    out = capsys.readouterr().out.splitlines()
+    assert out[0].startswith("the last 3 run(s), newest first")
+    assert [line.split() for line in out[1:4]] == [
+        [f"2026-10-{day:02d}", "10:17", "UTC", "accounts", "1/2" if day % 2 == 0 else "2/2", "95", "s",
+         "search", "1/1", "95", "s"] for day in (10, 9, 8)]
+    assert out[4].startswith("flipping (3 changes or more in their last 10 runs")
+    assert out[5:] == ["  accounts: KLA RxRx-xRxRx (7 changes)"]
+    # all ten (fewer than the 14 it shows), from the list of issues the label gives
+    listed = _saved(tmp_path, "issues.json", [{"number": 54, "title": "Nightly live check", "body": "the other"},
+                                              {"number": 70, "title": "Nightly live trends", "body": body}])
+    assert ns.main(["--trend", "--trend-file", listed]) == 0
+    out = capsys.readouterr().out.splitlines()
+    assert out[0].startswith("the last 10 run(s)") and len(out) == 1 + 10 + 2
+    assert out[6].split()[:5] == ["2026-10-05", "10:17", "UTC", "accounts", "-"]
+    assert ns.main(["--trend", "--trend-file", _saved(tmp_path, "other.json", {"body": "no history here"})]) == 1
+    assert "the trend issue can't be read: its body holds no saved history" in capsys.readouterr().err
+
+
+def test_an_employer_flips_when_its_result_changed_three_times_in_its_last_ten_runs():
+    assert (lc.flips("RxR"), lc.flips("RxRx")) == (2, 3)
+    assert lc.flips("RxRxRxRxRx" + "R" * 10) == 0  # (changed often, but not in its last ten runs)
+    assert lc.flips("R" * 14 + "RRxRxR") == 4
+    assert lc.flips("R-x--R-") == 2  # (the runs it wasn't checked in skipped)
+    trend = lc.Trend([], {"accounts": {"KLA": "RRRRRRRxRx", "onsemi": "RRRRRRRRxR", "Intel": "xRxRxRxRxRRRRRRRRRRR"},
+                          "search": {"USAA": "RxRxRRRRRR"}})
+    assert lc.flipping(trend) == {"accounts": [("KLA", "RRRRRRRxRx", 3)], "search": [("USAA", "RxRxRRRRRR", 4)]}
+    assert ns.flippers(trend) == {"KLA": "3 changes in the accounts check's last 10 runs: RRRRRRRxRx"}
+
+
+def _handled_issue(tmp_path):
+    state = {"accounts": {"Intel": "ready", "KLA": "ready", "onsemi": "ready", "Aerotek": "needs_you bot_check"}}
+    current = {"accounts": {name: lc.Result(o, READY if o == "ready" else BOT)
+                            for name, o in state["accounts"].items()}}
+    body = lc.render_body(state, current, checked_at="2026-10-17 10:17 UTC", run_url="https://example.com/run/9")
+    return body, _saved(tmp_path, "issue.json", {"body": body})
+
+
+def test_handled_leaves_out_the_employers_that_flip(tmp_path, capsys):
+    """An employer the accounts or pipeline check took all the way some nights only isn't one the desk goes all the way
+    at: --handled leaves it out of data/desk_handled.yaml, and says so (on stderr: the YAML stays as it is)."""
+    _, issue = _handled_issue(tmp_path)
+    trend = lc.Trend([], {"accounts": {"KLA": "RxRxRRRRRR", "Intel": "RRRRRRRRRR", "Aerotek": "xRxRxRxxxx"},
+                          "pipeline": {"onsemi": "xRxRxRRRRR"}, "search": {"Intel": "RxRxRxRxRx"}})
+    path = _saved(tmp_path, "trend.json", {"body": lc.render_trend(trend)})
+    assert ns.main(["--handled", "--issue-file", issue, "--trend-file", path]) == 0
+    out, err = capsys.readouterr()
+    assert out == 'employers:\n  - "Intel"\n'
+    assert err.splitlines() == ["left out: KLA (flips: 4 changes in the accounts check's last 10 runs: RxRxRRRRRR)",
+                                "left out: onsemi (flips: 5 changes in the pipeline check's last 10 runs: xRxRxRRRRR)"]
+    # and the summary's drift from desk_handled.yaml says a listed one that flips apart, not as gone
+    flip = ns.flippers(lc.read_trend(lc.render_trend(trend)))
+    assert ns.handled_drift(["Intel", "KLA", "onsemi"], ["Intel", "KLA", "Micron"], flip) == [
+        "desk_handled.yaml: 1 listed, not all the way in the last run: Micron",
+        "desk_handled.yaml: 1 listed that flip (--handled leaves them out): KLA"]
+
+
+def test_handled_without_the_trend_issue_is_as_before_with_a_warning(tmp_path, capsys, monkeypatch):
+    body, issue = _handled_issue(tmp_path)
+    before = 'employers:\n  - "Intel"\n  - "KLA"\n  - "onsemi"\n'
+    assert ns.main(["--handled", "--issue-file", issue, "--trend-file", str(tmp_path / "missing.json")]) == 0
+    out, err = capsys.readouterr()
+    assert out == before
+    assert err.startswith("warning: the trend issue isn't available (FileNotFoundError") and "aren't left out" in err
+
+    def offline(url):
+        if url.endswith("/issues/54"):
+            return {"body": body, "comments": 0}
+        raise urllib.error.URLError("no network")
+    monkeypatch.setattr(ns, "fetch", offline)
+    assert ns.main(["--handled"]) == 0
+    out, err = capsys.readouterr()
+    assert out == before and "warning: the trend issue isn't available (URLError: <urlopen error no network>)" in err
+
+    def never(url):
+        raise AssertionError(f"fetched {url}")
+    monkeypatch.setattr(ns, "fetch", never)  # (a saved copy of the issue: nothing is fetched)
+    assert ns.main(["--handled", "--issue-file", issue]) == 0
+    out, err = capsys.readouterr()
+    assert out == before and "--issue-file without --trend-file" in err

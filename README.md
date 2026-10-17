@@ -453,7 +453,9 @@ How many openings a search finds changes daily and is never compared. The issue 
 a comment, which notifies you, only when an employer's result changes or an employer
 joins or leaves a list. The body also names the employers an earlier run took to the
 review page that the last run didn't, with the date each last got there. It's reopened if
-it was closed. A check that doesn't finish
+it was closed. A second issue, "Nightly live trends" (label `live-trends`), keeps the
+history: the last 60 runs' counts per check and median times, and the employers whose
+result keeps flipping; its body is rewritten each run, without a comment. A check that doesn't finish
 fails the run, and the employers it didn't reach keep their last result. Each run's
 reports and logs are kept as an artifact for 7 days. GitHub pauses scheduled workflows
 in a repository with no activity for 60 days.

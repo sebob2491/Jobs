@@ -7,7 +7,11 @@ whole body or a run's logs.
         # expected (a site's or the rules': a bot check, an account step practice runs never take, a site
         # error, no openings), and to look at (likely the desk's: read these first)
     uv run python scripts/nightly_summary.py --tables              # Where It Stands' employer tables (markdown)
-    uv run python scripts/nightly_summary.py --handled             # data/desk_handled.yaml's employers (YAML)
+    uv run python scripts/nightly_summary.py --handled             # data/desk_handled.yaml's employers (YAML),
+        # less the ones that flip (the trend issue's; each left out said on stderr)
+    uv run python scripts/nightly_summary.py --trend [N]           # the trend issue's last N runs (14), newest
+        # first: each check's employers at the review page / checked (search: works / checked), the median seconds
+        # an employer took, and the employers that flip (their result changed 3 times or more in their last 10 runs)
     uv run python scripts/nightly_summary.py --artifacts DIR_OR_ZIP [--companies "KLA,Intel"]
         # each named employer's steps from a run's saved results (a live-* artifact, unzipped or not):
         # every round's status, reason, last log lines, questions (with their choices) and the page's
@@ -17,8 +21,10 @@ whole body or a run's logs.
         # tests/test_live_fixtures.py then checks every night's stops offline
 
 The issue ("Nightly live check", #54) is read over GitHub's public API, no sign-in needed; `--issue-file`
-reads a saved copy instead. A run's artifacts need a signed-in download (the GitHub tools' artifact link,
-fetched with curl), then `--artifacts` reads them here.
+reads a saved copy instead. The trend issue ("Nightly live trends", label live-trends: the last 60 runs) is
+read the same way, found by its label; `--trend-file` reads a saved copy (its API JSON). With `--issue-file`,
+the trend comes only from `--trend-file`: nothing is fetched. A run's artifacts need a signed-in download (the
+GitHub tools' artifact link, fetched with curl), then `--artifacts` reads them here.
 """
 
 from __future__ import annotations
@@ -31,7 +37,7 @@ import urllib.request
 import zipfile
 from collections import Counter
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Iterable, Iterator
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import live_audit  # noqa: E402  (scripts/live_audit.py, beside this one: the review pages' values)
@@ -40,7 +46,9 @@ import live_compare  # noqa: E402  (scripts/live_compare.py, beside this one)
 REPO = "sebob2491/Jobs"
 HANDLED_FILE = Path(__file__).resolve().parents[2] / "data" / "desk_handled.yaml"
 ISSUE = 54
+TREND_LABEL = "live-trends"  # (the trend issue's own label: the issue above has live-check)
 CHECKS = ("pipeline", "hr", "accounts", "search", "finance")
+HANDLED_FLIPS = ("accounts", "pipeline")  # the checks whose flipping employers --handled leaves out
 
 
 def fetch(url: str) -> Any:
@@ -64,6 +72,72 @@ def last_comment() -> str:
         return ""
     page = fetch(f"https://api.github.com/repos/{REPO}/issues/{ISSUE}/comments?per_page=1&page={n}")
     return page[0]["body"] if page else ""
+
+
+# --- the trend issue: the last runs, and the employers that flip ----------------------------------------------
+
+class NoTrend(Exception):
+    """The trend issue couldn't be read (its reason in its message)."""
+
+
+def load_trend(path: str | None = None, *, offline: bool = False) -> live_compare.Trend:
+    """The trend issue's history: from a saved copy (the issue's API JSON, or a list of issues as the API or
+    `gh issue list --json` gives them), else fetched by its label (none when `offline`). NoTrend when it can't be."""
+    if not path and offline:
+        raise NoTrend("--issue-file without --trend-file: nothing is fetched")
+    try:
+        data = json.loads(Path(path).read_text(encoding="utf-8")) if path else \
+            fetch(f"https://api.github.com/repos/{REPO}/issues?labels={TREND_LABEL}&state=all&per_page=10")
+    except (OSError, ValueError) as e:  # (no network, an HTTP error, a file that isn't there or isn't JSON)
+        raise NoTrend(f"{type(e).__name__}: {e}") from e
+    if isinstance(data, list):
+        issue = live_compare.find_issue(data, live_compare.TREND_TITLE)
+        if issue is None:
+            raise NoTrend(f"no issue titled {live_compare.TREND_TITLE!r} with the label {TREND_LABEL}")
+        data = issue
+    trend = live_compare.read_trend(data.get("body") if isinstance(data, dict) else str(data))
+    if trend is None:
+        raise NoTrend("its body holds no saved history")
+    return trend
+
+
+def trend_lines(trend: live_compare.Trend, runs: int = live_compare.TREND_SHOWN) -> list[str]:
+    """The last `runs` runs, newest first: each check's employers at the review page out of those checked (search: works
+    out of those checked) and the median seconds an employer took; then the employers that flip."""
+    shown = trend.runs[-runs:][::-1] if runs > 0 else []
+    checks = live_compare._ordered({c for run in shown for c in run["checks"]})
+    out = [f"the last {len(shown)} run(s), newest first: each check's employers at the review page / checked (search: "
+           "works / checked), and the median seconds an employer took (- a check that didn't finish or didn't run)"]
+    for run in shown:
+        cells = []
+        for check in checks:
+            one = run["checks"].get(check)
+            said = f"{one['reached']}/{one['total']}" if one else "-"
+            if one and one.get("median_seconds") is not None:
+                said += f" {one['median_seconds']} s"
+            cells.append(f"{check} {said:<13}")
+        out.append(f"{run['at']}  " + " ".join(cells).rstrip())
+    flip = live_compare.flipping(trend)
+    if not flip:
+        out.append(f"flipping: none ({live_compare.FLIP_MIN} changes or more in an employer's last "
+                   f"{live_compare.FLIP_WINDOW} runs)")
+    else:
+        out.append(f"flipping ({live_compare.FLIP_MIN} changes or more in their last {live_compare.FLIP_WINDOW} runs; "
+                   "R at the review page or search works, x not, - not checked; oldest first):")
+        for check, found in flip.items():
+            out += [f"  {check}: {name} {said} ({n} changes)" for name, said, n in found]
+    return out
+
+
+def flippers(trend: live_compare.Trend, checks: tuple[str, ...] = HANDLED_FLIPS) -> dict[str, str]:
+    """The employers that flip in these checks ({employer: why}), as --handled leaves them out."""
+    out: dict[str, str] = {}
+    for check, found in live_compare.flipping(trend).items():
+        if check in checks:
+            for name, said, n in found:
+                why_ = f"{n} changes in the {check} check's last {live_compare.FLIP_WINDOW} runs: {said}"
+                out[name] = f"{out[name]}; {why_}" if name in out else why_
+    return out
 
 
 def details(body: str) -> dict[str, dict[str, str]]:
@@ -190,18 +264,24 @@ def listed_handled(path: Path = HANDLED_FILE) -> list[str]:
     return [str(n) for n in names if n]
 
 
-def handled_drift(now: list[str], listed: list[str]) -> list[str]:
+def handled_drift(now: list[str], listed: list[str], flipping: Iterable[str] = ()) -> list[str]:
     """data/desk_handled.yaml against the last run (the review of Oct 15): employers the accounts check now takes all
     the way that it doesn't list, and ones it lists that the last run didn't take there (a bot check or a site's
-    error that night, or a real step back). Refreshed with --handled before a release."""
+    error that night, or a real step back). Refreshed with --handled before a release, which leaves out the
+    employers that flip (`flipping`, from the trend issue): those are said apart, and only when listed."""
+    flips = {n.casefold() for n in flipping}
     went, have = {n.casefold() for n in now}, {n.casefold() for n in listed}
-    new = [n for n in now if n.casefold() not in have]
-    not_now = [n for n in listed if n.casefold() not in went]
+    new = [n for n in now if n.casefold() not in have and n.casefold() not in flips]
+    not_now = [n for n in listed if n.casefold() not in went and n.casefold() not in flips]
+    listed_flipping = [n for n in listed if n.casefold() in flips]
     out = []
     if new:
         out.append(f"desk_handled.yaml: {len(new)} all the way in the last run, not listed: {', '.join(new)}")
     if not_now:
         out.append(f"desk_handled.yaml: {len(not_now)} listed, not all the way in the last run: {', '.join(not_now)}")
+    if listed_flipping:
+        out.append(f"desk_handled.yaml: {len(listed_flipping)} listed that flip (--handled leaves them out): "
+                   + ", ".join(listed_flipping))
     return out
 
 
@@ -426,7 +506,13 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--changes", action="store_true", help="the last run's changes (the issue's last comment)")
     ap.add_argument("--tables", action="store_true", help="Where It Stands' employer tables, in markdown")
     ap.add_argument("--handled", action="store_true",
-                    help="the employers the accounts check took all the way, for data/desk_handled.yaml")
+                    help="the employers the accounts check took all the way, for data/desk_handled.yaml (less the ones "
+                    "that flip in the accounts or pipeline check: each said on stderr)")
+    ap.add_argument("--trend", type=int, nargs="?", const=live_compare.TREND_SHOWN, metavar="N",
+                    help=f"the last N runs (default {live_compare.TREND_SHOWN}), newest first, from the trend issue; "
+                    "and the employers that flip")
+    ap.add_argument("--trend-file", help="with --trend or --handled: a saved copy of the trend issue (its API JSON), "
+                    "instead of fetching it")
     ap.add_argument("--artifacts", type=Path, help="a run's live-* artifact (zip or unzipped folder)")
     ap.add_argument("--companies", default="",
                     help="with --artifacts or --import-fixtures: these employers only (comma-separated)")
@@ -436,6 +522,15 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--against", type=Path, help="with --timing: an earlier run's artifact (a week before: artifacts "
                     "are kept 7 days); a job system twice as slow as there says so")
     args = ap.parse_args(argv)
+    if args.trend is not None:
+        try:
+            trend = load_trend(args.trend_file, offline=bool(args.issue_file))
+        except NoTrend as e:
+            print(f"the trend issue can't be read: {e}", file=sys.stderr)
+            return 1
+        for line in trend_lines(trend, args.trend):
+            print(line)
+        return 0
     if args.timing:
         for line in timing(list(records(args.timing)), earlier=list(records(args.against)) if args.against else None):
             print(line)
@@ -467,7 +562,17 @@ def main(argv: list[str] | None = None) -> int:
     body = issue_body(args.issue_file)
     state = live_compare.read_state(body) or {}
     if args.handled:
-        quoted = [json.dumps(n) for n in handled(state, details(body))]  # (any name, quoted: YAML reads "No" as false)
+        names = handled(state, details(body))
+        try:  # (an employer that flips gets there some nights only: the desk can't count on it)
+            flip = flippers(load_trend(args.trend_file, offline=bool(args.issue_file)))
+        except NoTrend as e:
+            print(f"warning: the trend issue isn't available ({e}): the employers that flip aren't left out",
+                  file=sys.stderr)
+            flip = {}
+        for name in names:
+            if name in flip:
+                print(f"left out: {name} (flips: {flip[name]})", file=sys.stderr)
+        quoted = [json.dumps(n) for n in names if n not in flip]  # (any name, quoted: YAML reads "No" as false)
         print("employers:\n" + "\n".join(f"  - {n}" for n in quoted))
     elif args.tables:
         print(tables(state, details(body)))
@@ -481,7 +586,11 @@ def main(argv: list[str] | None = None) -> int:
         for check, name, date in live_compare.still_back(state, live_compare.read_reached(body)):
             print(f"still back: {name} ({check}; last there {date})")
         if state.get("accounts"):
-            for line in handled_drift(handled(state, details(body)), listed_handled()):
+            try:  # (as --handled leaves them out; without the trend issue, as before)
+                flip = flippers(load_trend(args.trend_file, offline=bool(args.issue_file)))
+            except NoTrend:
+                flip = {}
+            for line in handled_drift(handled(state, details(body)), listed_handled(), flip):
                 print(line)
     return 0
 
