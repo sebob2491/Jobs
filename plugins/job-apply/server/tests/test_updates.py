@@ -2,7 +2,7 @@
 
 import httpx
 import pytest
-from conftest import browser_available, launch_options, run
+from conftest import browser_available, person_browser, run
 
 from job_apply import config, updates
 from job_apply.desk import Desk
@@ -64,8 +64,6 @@ def test_no_look_at_all_when_turned_off(monkeypatch, loop):
 
 @pytest.mark.skipif(not browser_available(), reason="no browser")
 def test_the_desk_page_says_a_newer_version_is_out(srv, monkeypatch):
-    from playwright.async_api import async_playwright
-
     monkeypatch.setattr(config, "plugin_version", lambda: "0.3.70")
     desk = Desk(srv)
     desk.applier.start = lambda: None
@@ -74,8 +72,7 @@ def test_the_desk_page_says_a_newer_version_is_out(srv, monkeypatch):
     async def go():
         await desk.start(port=0, open_browser=False)
         try:
-            async with async_playwright() as pw:
-                browser = await pw.chromium.launch(**launch_options())
+            async with person_browser() as browser:
                 page = await browser.new_page()
                 await page.goto(desk.url)
                 await page.wait_for_selector("#notices .notice")
