@@ -590,27 +590,29 @@ class WentIn:
     agreed: list[str] = field(default_factory=list)  # notices, terms and attestations agreed to for the person
     accounts: list[str] = field(default_factory=list)  # accounts made
     full: bool = False  # answers past WENT_IN_ANSWERS went in too, not kept here
-    # Each box's place as first kept, by its id, and the box that took each place last: a box keeps its place while
-    # the page around it changes (an error heading drawn over it, a block added). Never in public()
+    # Each box's place as first kept, by its page's address and its id (a box keeps its place while the page around it
+    # changes: an error heading drawn over it, a block added), and the page each place was first taken on. Never in
+    # public()
     places: dict[str, str] = field(default_factory=dict)
-    owners: dict[str, str] = field(default_factory=dict)
+    claimed: dict[str, str] = field(default_factory=dict)
 
-    def key_for(self, box_id: str, base: str) -> str:
-        """The place a box is kept under: its first one. New, it's `base` (the page's address, the box's section, label
-        and sub-label, and which of the boxes so placed it is: _went_bases). Held already by a box of the same page load
-        (an id holds its load's own letters: formjs' __jaDoc), that's another box (a step drawn in place at one
-        address), so this one gets a place of its own; held by one of an earlier load, it's this box on the page loaded
-        again, whose last answer is this one's."""
-        if box_id in self.places:
-            return self.places[box_id]
-        owner = self.owners.get(base)
-        load, theirs = _page_load(box_id), _page_load(owner or "")
-        key = f"{base} | {box_id}" if owner is not None and (None in (load, theirs) or load == theirs) else base
-        if len(self.places) >= 4 * WENT_IN_ANSWERS:  # (the oldest go: boxes of pages long gone)
-            for old in list(self.places)[:WENT_IN_ANSWERS]:
-                del self.places[old]
-            self.owners = {k: v for k, v in self.owners.items() if v in self.places}
-        self.places[box_id], self.owners[key] = key, box_id
+    def key_for(self, url: str, box_id: str, base: str, page: str) -> str:
+        """The place a box is kept under: its first one, by its page's address and its id (an id alone is its page
+        load's three letters and a count, which a load elsewhere can repeat). New, it's `base` (the page's address, the
+        box's section, label and sub-label, and which of the boxes so placed it is: _went_bases) where that place is
+        free or was taken on the same page: the box drawn again (a Workday address block redrawn after its Country
+        changed, a step gone back to) or the page loaded again, whose last answer is this one's. Taken on another page
+        at the same address (a step drawn in place, or loaded afresh: Taleo's flow.jsf), this is another box: `base`
+        with its page's name."""
+        at = f"{url} {box_id}"
+        if at in self.places:
+            return self.places[at]
+        for kept in (self.places, self.claimed):  # (the oldest go: boxes of pages long gone)
+            if len(kept) >= 4 * WENT_IN_ANSWERS:
+                for old in list(kept)[:WENT_IN_ANSWERS]:
+                    del kept[old]
+        first = self.claimed.setdefault(base, page)
+        self.places[at] = key = base if first == page else f"{base} | {question_key(page)}"
         return key
 
     @_quietly
@@ -5960,19 +5962,27 @@ def _kept_out(box: dict[str, Any], value: Any, secrets: set[str]) -> bool:
     desk's secrets."""
     if box.get("kind") == "password" or box.get("account") or _code_box(box):
         return True
-    words = [str(box.get(k) or "") for k in ("label", "section", "sublabel", "name")]
+    words = [_no_clearance(box.get(k)) for k in ("label", "section", "sublabel", "name")]
     if any(_KEPT_OUT.search(w) or _SECURITY_QUESTION.search(w) for w in words):
         return True
     return _holds_secret(", ".join(str(v) for v in value) if isinstance(value, (list, tuple)) else str(value), secrets)
 
 
+def _no_clearance(text: Any) -> str:
+    """Words as the panel reads them for a security question: without a security clearance's ("Security Clearance
+    Questions" over Northrop's, Boeing's and Honeywell's clearance questions is no account's security question)."""
+    return re.sub(r"\bsecurity\s+clearances?\b", "clearance", str(text or ""), flags=re.I)
+
+
 def _guarded(pages: tuple[dict[str, Any], ...]) -> set[str]:
     """The boxes (by id) of a page's security questions and their answers, named so by the boxes or by the form's
-    heading alone (BrassRing's "Security questions" over "Question 1 Answer"): never on the panel."""
+    heading alone (BrassRing's "Security questions" over "Question 1 Answer"): never on the panel. Never a security
+    clearance's questions (_no_clearance)."""
     out: set[str] = set()
     for data in pages:
-        fields = [f for f in data.get("fields") or [] if isinstance(f, dict)]
-        out |= {str(f.get("id")) for f in _security_boxes(fields, data.get("headings"))}
+        fields = [{**f, "label": _no_clearance(f.get("label"))} for f in data.get("fields") or [] if isinstance(f, dict)]
+        headings = [_no_clearance(h) for h in data.get("headings") or []]
+        out |= {str(f.get("id")) for f in _security_boxes(fields, headings)}
     return out
 
 
@@ -5984,12 +5994,6 @@ def _page_name(data: dict[str, Any]) -> str:
     headings = [h for h in data.get("headings") or [] if isinstance(h, str) and not _ERRORS_HEADING.match(h.strip())
                 and not _errorish(h) and norm(h) not in sections]
     return _where({**data, "headings": headings}).strip("“”")
-
-
-def _page_load(box_id: str) -> str | None:
-    """The page load a box's id was given on: its letters (formjs' __jaDoc), after any frame's "f2-"."""
-    m = re.match(r"(?:f\d+-)?([a-z]{3})\d", box_id or "")
-    return m.group(1) if m else None
 
 
 def _went_bases(data: dict[str, Any], boxes: list[dict[str, Any]]) -> dict[str, str]:
@@ -6012,9 +6016,11 @@ def _went_forget(run: Run, data: dict[str, Any], section: str) -> None:
     """A block deleted from the page (a school's): what went into its boxes, and what was left empty in them, off the
     panel (by their places as kept, and as an earlier load of the page would have kept them)."""
     boxes = [f for f in data.get("fields") or [] if isinstance(f, dict)]
-    bases = _went_bases(data, boxes)
+    bases, url, page = _went_bases(data, boxes), _steady_url(data.get("url")), question_key(_page_name(data))
     ids = [str(f.get("id")) for f in boxes if f.get("section") == section]
-    run.went_in.forget({run.went_in.places[i] for i in ids if i in run.went_in.places} | {bases[i] for i in ids})
+    places = run.went_in.places
+    run.went_in.forget({places[f"{url} {i}"] for i in ids if f"{url} {i}" in places}
+                       | {bases[i] for i in ids} | {f"{bases[i]} | {page}" for i in ids})
 
 
 def _page_boxes(pages: tuple[dict[str, Any], ...]) -> list[dict[str, Any]]:
@@ -6075,7 +6081,7 @@ def _went_in(run: Run, filled: list[dict[str, Any]], *pages: dict[str, Any], sho
     Nothing here goes into the log, and nothing going wrong here stops the job."""
     if not filled or not pages:
         return
-    page = _page_name(pages[0])
+    page, url = _page_name(pages[0]), _steady_url(pages[0].get("url"))
     boxes = _page_boxes(pages)
     by_id, bases, secrets, guarded = {str(f["id"]): f for f in boxes}, _went_bases(pages[0], boxes), _secret_values(), \
         _guarded(pages)
@@ -6094,7 +6100,7 @@ def _went_in(run: Run, filled: list[dict[str, Any]], *pages: dict[str, Any], sho
         named = _box_said(box)
         if kind == "file":  # (said as the document it is: an upload's own words can be "Accepted file format: .pdf")
             named["label"] = _DOCUMENTS.get(rule) or named["label"]
-        key = run.went_in.key_for(fid, bases.get(fid) or f"{_steady_url(pages[0].get('url'))} | {placed_key(box)} | 1")
+        key = run.went_in.key_for(url, fid, bases.get(fid) or f"{url} | {placed_key(box)} | 1", page)
         run.went_in.put(key, {"page": page, **named, "value": said, "kind": kind})
 
 
@@ -6104,7 +6110,7 @@ def _went_left(run: Run, result: dict[str, Any], *pages: dict[str, Any]) -> None
     its answer, or the box wouldn't take it), for the panel's "Left empty": the page's as its latest fill left them."""
     if not pages:
         return
-    page = _page_name(pages[0])
+    page, url = _page_name(pages[0]), _steady_url(pages[0].get("url"))
     secrets, guarded, left = _secret_values(), _guarded(pages), {}
     bases = _went_bases(pages[0], _page_boxes(pages))
     now = {str(f.get("id")): f for f in pages[-1].get("fields") or [] if isinstance(f, dict)}
@@ -6118,10 +6124,10 @@ def _went_left(run: Run, result: dict[str, Any], *pages: dict[str, Any]) -> None
         why = (f"your profile's answer “{q['unmatched']}” isn't one of its choices" if q.get("unmatched")
                else "it wouldn't take your profile's answer" if q.get("error") else "your profile doesn't answer it")
         _, why = _went_value({}, why, "")
-        key = run.went_in.key_for(qid, bases.get(qid) or f"{_steady_url(pages[0].get('url'))} | {placed_key(q)} | 1")
+        key = run.went_in.key_for(url, qid, bases.get(qid) or f"{url} | {placed_key(q)} | 1", page)
         left[key] = {"page": page, **_box_said(q), "why": why}
     places = run.went_in.places
-    run.went_in.leave({places[i] for i in bases if i in places}, left)
+    run.went_in.leave({places[f"{url} {i}"] for i in bases if f"{url} {i}" in places}, left)
 
 
 def question_key(label: str) -> str:

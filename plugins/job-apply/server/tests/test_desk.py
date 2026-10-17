@@ -2070,8 +2070,6 @@ def test_a_cards_what_went_in_shows_the_answers_as_text_and_nothing_secret(srv, 
     to for the person, the account made and the optional questions left empty, so the person checks them at a glance.
     What's in it is the page's and the profile's words, shown as text, never as HTML. Never a password, a security
     answer or an emailed code; and none of it in a problem report or a note. It fits a phone's width."""
-    from playwright.async_api import async_playwright
-
     from job_apply import report
     from job_apply.pipeline import Run, _went_in, _went_left
 
@@ -2108,8 +2106,7 @@ def test_a_cards_what_went_in_shows_the_answers_as_text_and_nothing_secret(srv, 
     async def go():
         await desk.start(port=0, open_browser=False)
         try:
-            async with async_playwright() as pw:
-                browser = await pw.chromium.launch(**launch_options())
+            async with person_browser() as browser:
                 tab = await browser.new_page(viewport={"width": width, "height": 900})
                 await tab.goto(desk.url)
                 panel = tab.locator(f'#done details[data-went="{jobs[0]["id"]}"]')
@@ -2129,7 +2126,6 @@ def test_a_cards_what_went_in_shows_the_answers_as_text_and_nothing_secret(srv, 
                 html, title = await tab.content(), await tab.title()
                 sizes = await tab.evaluate("() => [document.documentElement.scrollWidth, "
                                            "document.documentElement.clientWidth]")
-                await browser.close()
                 return closed, summary, seen, tags, still, other, html, title, sizes
         finally:
             await desk.stop()

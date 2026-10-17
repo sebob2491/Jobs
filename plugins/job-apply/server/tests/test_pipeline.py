@@ -585,6 +585,12 @@ def test_what_went_in_keeps_no_password_code_or_security_answer_and_stays_small(
                             {"id": "def2", "kind": "text", "label": "Question 1 Answer"}]}
     pipeline._went_in(r, [{"id": "def1", "value": "Name of your first pet"}, {"id": "def2", "value": "Biscuit"}],
                       brassring)
+    # a security clearance's questions (Northrop's, Boeing's) are no account's security questions: they stay on it
+    clearance = {"url": "https://example.com/questions", "title": "Apply", "headings": ["Security Clearance Questions"],
+                 "fields": [{"id": "jkl1", "kind": "radio_group", "label": "Answer: do you hold an active clearance?"},
+                            {"id": "jkl2", "kind": "select", "label": "Clearance level",
+                             "section": "Security Clearance Questions"}]}
+    pipeline._went_in(r, [{"id": "jkl1", "value": "Yes"}, {"id": "jkl2", "value": "None"}], clearance)
     shown = json.dumps(r.public())  # (plain json.dumps: the page's state is written so)
     for secret in ("typed-in-a-password-box", "481516", "Flagstaff Ridge 1987", "662607", "Hunter-22-secret",
                    "Rex the dog", "Blue Heron", "first pet", "Biscuit"):
@@ -592,7 +598,8 @@ def test_what_went_in_keeps_no_password_code_or_security_answer_and_stays_small(
     went = r.public()["went_in"]
     assert [(a["label"], a["value"]) for a in went["answers"]] == [
         ("First Name", "Samuel"), ("Cover note", ("word " * 60)[:pipeline.WENT_IN_CHARS - 1].rstrip() + "…"),
-        ("Date", "10"), ("Date", "2026"), ("Zip Code", "85225"), ("Where do you live?", "Chandler, Arizona")], \
+        ("Date", "10"), ("Date", "2026"), ("Zip Code", "85225"), ("Where do you live?", "Chandler, Arizona"),
+        ("Answer: do you hold an active clearance?", "Yes"), ("Clearance level", "None")], \
         went["answers"]  # (a value that is the secret "Arizona" alone stays off)
     assert [q["label"] for q in went["left"]] == ["Middle Name"] and r.log == []
     for status in ("queued", "running"):
@@ -657,16 +664,34 @@ def test_a_box_keeps_its_place_on_the_panel_while_the_page_around_it_changes():
     assert [(a["page"], a["section"], a["label"]) for a in one.public()["went_in"]["answers"]] == [
         ("Apply for this Job", "", "First Name"), ("Apply for this Job", "Education", "School")]
 
-    # two steps drawn in place at one address (one page load): two boxes; the page loaded again: the same box
+    # other steps at one address (drawn in place, or loaded afresh: Taleo's flow.jsf): boxes of their own. The same
+    # step's boxes drawn again with new ids (a Workday address block redrawn after its Country changed, the step gone
+    # back to), or the page loaded again: the same boxes, a box left empty and answered since no longer "left empty"
     spa = Run(3, status="ready")
+    explain = {"kind": "text", "label": "If yes, please explain"}
+    middle = {"kind": "text", "label": "Middle Name"}
     step1 = {"url": url, "title": "Apply", "headings": ["Questions"],
-             "fields": [{"id": "xyz1", "kind": "text", "label": "If yes, please explain"}]}
-    step2 = {**step1, "headings": ["Disclosures"], "fields": [{"id": "xyz9", "kind": "text", "label": "If yes, please explain"}]}
-    again = {**step1, "fields": [{"id": "qrs1", "kind": "text", "label": "If yes, please explain"}]}
+             "fields": [{"id": "xyz1", **explain}, {"id": "xyz2", **middle}]}
+    step2 = {**step1, "headings": ["Disclosures"], "fields": [{"id": "xyz9", **explain}]}
+    fresh = {**step1, "headings": ["Self Identify"], "fields": [{"id": "qrs1", **explain}]}
+    redrawn = {**step1, "fields": [{"id": "xyz20", **explain}, {"id": "xyz21", **middle}]}
+    again = {**step1, "fields": [{"id": "tuv1", **explain}, {"id": "tuv2", **middle}]}
     _went_in(spa, [{"id": "xyz1", "value": "A cousin"}], step1)
+    _went_left(spa, {"needs_input": [{"id": "xyz2", **middle, "required": False}]}, step1)
     _went_in(spa, [{"id": "xyz9", "value": "A patent"}], step2)
-    _went_in(spa, [{"id": "qrs1", "value": "A cousin in Tempe"}], again)
-    assert [a["value"] for a in spa.public()["went_in"]["answers"]] == ["A cousin in Tempe", "A patent"]
+    _went_in(spa, [{"id": "qrs1", "value": "A board seat"}], fresh)
+    _went_in(spa, [{"id": "xyz20", "value": "A cousin in Tempe"}, {"id": "xyz21", "value": "J"}], redrawn)
+    _went_in(spa, [{"id": "tuv1", "value": "A cousin in Mesa"}], again)
+    # (and an id a load elsewhere repeats, its three letters and its count, is another box)
+    _went_in(spa, [{"id": "xyz1", "value": "480-555-0123"}],
+             {"url": "https://example.com/contact", "title": "Apply", "headings": ["Contact"],
+              "fields": [{"id": "xyz1", "kind": "text", "label": "Phone"}]})
+    went = spa.public()["went_in"]
+    assert [(a["page"], a["label"], a["value"]) for a in went["answers"]] == [
+        ("Questions", "If yes, please explain", "A cousin in Mesa"), ("Disclosures", "If yes, please explain", "A patent"),
+        ("Self Identify", "If yes, please explain", "A board seat"), ("Questions", "Middle Name", "J"),
+        ("Contact", "Phone", "480-555-0123")], went["answers"]
+    assert went["left"] == [], went["left"]
 
     # the page as filled: the choice a list made of the profile's words, never a secret's "(set)" or an emptied box's
     shown = Run(4, status="ready")
