@@ -2063,6 +2063,92 @@ def test_the_desk_page_still_loads_after_a_look_in_the_inbox(srv):
     assert not {"employer_mail", "others_mail"} & r.public().keys()
 
 
+@pytest.mark.parametrize("width", [1280, 390])
+def test_a_cards_what_went_in_shows_the_answers_as_text_and_nothing_secret(srv, job_apply_home, width):
+    """The whole-program review's worth-building list, item 3: a ready job's card (and a stopped one's) has a panel,
+    closed until opened, with what went into the application: its answers by page, the files put up, what was agreed
+    to for the person, the account made and the optional questions left empty, so the person checks them at a glance.
+    What's in it is the page's and the profile's words, shown as text, never as HTML. Never a password, a security
+    answer or an emailed code; and none of it in a problem report or a note. It fits a phone's width."""
+    from playwright.async_api import async_playwright
+
+    from job_apply import report
+    from job_apply.pipeline import Run, _went_in, _went_left
+
+    desk = Desk(srv)
+    desk.applier.start = lambda: None
+    desk.search.update(status="done", at=time.time())
+    jobs = [srv.add_job(url=f"https://example.com/job/{i}", title="Technician", company="Example Fab")["job"]
+            for i in range(2)]
+    marked = "<b>Bold</b><img src=x onerror=\"document.title='pwned'\">"
+    secret = "Flagstaff Ridge 1987"
+    page = {"title": "Apply", "headings": ["My Information"], "fields": [
+        {"id": "1", "kind": "text", "label": "First Name *"}, {"id": "2", "kind": "text", "label": "Referral note"},
+        {"id": "3", "kind": "file", "label": "Resume/CV"}, {"id": "4", "kind": "password", "label": "Password"},
+        {"id": "5", "kind": "text", "label": "Answer", "section": "Security questions"},
+        {"id": "6", "kind": "text", "label": "Middle Name"}, {"id": "7", "kind": "text", "label": "Portfolio"}]}
+    ready = Run(jobs[0]["id"], "Technician", "Example Fab", status="ready",
+                reason="Filled and waiting on the review page.")
+    _went_in(ready, [{"id": "1", "value": "Sam"}, {"id": "2", "value": marked},
+                     {"id": "3", "value": str(job_apply_home / "resume.pdf"), "from": "documents.resume"},
+                     {"id": "4", "value": "not-a-real-password"}, {"id": "5", "value": secret},
+                     {"id": "7", "value": "https://example.com/" + "a" * 200}], page)
+    _went_left(ready, {"needs_input": [{"id": "6", "kind": "text", "label": "Middle Name", "required": False}]}, page)
+    ready.went_in.agree("agreed to Example Fab's notice “AI in hiring”")
+    ready.went_in.account("created your account on Example Fab's site with your saved password and agreed to its "
+                          "terms (manage_accounts: false in profile.yaml leaves this to you)")
+    stopped = Run(jobs[1]["id"], "Technician", "Example Fab", status="needs_you", need="questions",
+                  reason="1 question your profile doesn't answer.",
+                  questions=[{"id": "9", "kind": "text", "label": "Desired salary", "required": True}])
+    _went_in(stopped, [{"id": "1", "value": "Sam"}], page)
+    desk.applier.runs.update({jobs[0]["id"]: ready, jobs[1]["id"]: stopped})
+    state = desk.state()
+    assert json.dumps(state)  # (as the page's /state route writes it: no default=str)
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with async_playwright() as pw:
+                browser = await pw.chromium.launch(**launch_options())
+                tab = await browser.new_page(viewport={"width": width, "height": 900})
+                await tab.goto(desk.url)
+                panel = tab.locator(f'#done details[data-went="{jobs[0]["id"]}"]')
+                await panel.wait_for(state="attached")
+                closed = await panel.evaluate("(el) => el.open")
+                summary = await panel.locator("summary").inner_text()
+                await panel.locator("summary").click()
+                seen = await panel.inner_text()
+                tags = await panel.evaluate("(el) => el.querySelectorAll('b, img').length")
+                await tab.wait_for_timeout(1200)  # (a refresh or two: the panel stays open, as drawn)
+                still = await panel.evaluate("(el) => el.open")
+                other = await tab.locator(f'#needs details[data-went="{jobs[1]["id"]}"] summary').inner_text()
+                html, title = await tab.content(), await tab.title()
+                sizes = await tab.evaluate("() => [document.documentElement.scrollWidth, "
+                                           "document.documentElement.clientWidth]")
+                await browser.close()
+                return closed, summary, seen, tags, still, other, html, title, sizes
+        finally:
+            await desk.stop()
+
+    closed, summary, seen, tags, still, other, html, title, (scroll, client) = run(go())
+    assert closed is False and still is True
+    assert summary == "What went in (3 answers, 1 file, 1 agreement, 1 account made, 1 left empty)", summary
+    for words in ("My Information", "First Name", "Sam", marked, "Resume: resume.pdf",
+                  "agreed to Example Fab's notice “AI in hiring”",
+                  "created your account on Example Fab's site with your saved password and agreed to its terms",
+                  "Middle Name (your profile doesn't answer it)"):
+        assert words in seen, (words, seen)
+    assert tags == 0 and "pwned" not in title  # (the marked-up answer is its words, not the page's)
+    assert "manage_accounts: false" not in seen and str(job_apply_home) not in seen
+    assert other == "What went in (1 answer)", other  # (the stopped job's too)
+    assert scroll <= client, (scroll, client)  # (a long answer wraps: no sideways scroll, on a phone either)
+    for kept_out in ("not-a-real-password", secret):
+        assert kept_out not in html and kept_out not in json.dumps(state), kept_out
+    # the panel is the person's own page alone: nothing of it in a problem report or a note on the stop
+    said = report.build(jobs[0], ready)["preview"] + report.note(jobs[0], ready)
+    assert "Referral note" not in said and "Bold" not in said, said
+
+
 def test_every_card_says_i_submitted_it_already(srv):
     """Issue #112, note 31 (the owner's ask): an application sent on the site itself, whatever the desk's card
     waited on, is marked applied from that card: "I submitted it already" on the questions, sign-in, stuck,

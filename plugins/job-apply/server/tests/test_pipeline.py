@@ -457,6 +457,140 @@ def test_saved_password_signs_in_without_the_person(srv, monkeypatch):
     assert "pressed “Sign In” with your saved password" in r.log
 
 
+def test_what_went_in_is_kept_for_the_jobs_card_and_never_its_password(srv, monkeypatch):
+    """The whole-program review's worth-building list, item 3: with 30 jobs ready, the person read 30 review pages again
+    to check them. Each job keeps what went into it, for the "What went in" panel on its desk card (a stopped job's
+    too): the profile's answers and the person's own, by page and box, a box's last answer only. Never the saved
+    password the desk signed in with, nor the sign-in's boxes (not the application's), and none of it in the log;
+    public() stays plain JSON (a frozenset once broke the desk's whole state)."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    saved_password(monkeypatch)
+    job = srv.add_job(url=fixture_url("site/posting.html"), title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status == "needs_you", about=state(r))
+            assert r.need == "questions", r.reason
+            stopped = json.loads(json.dumps(r.public()))["went_in"]
+            for q in r.questions:  # (the person's answers, for this application only)
+                r.once[question_key(q["label"])] = "Yes"
+            applier.enqueue(job["id"], front=True)
+            await until(lambda: r.status in ("ready", "failed") or r.status == "needs_you" and r.need != "questions",
+                        about=state(r))
+            return r, stopped
+        finally:
+            await applier.stop()
+
+    r, stopped = run(go())
+    assert r.status == "ready", (r.status, r.reason, r.log)
+    went = json.loads(json.dumps(r.public()))["went_in"]  # (plain json.dumps, as the page's state is written)
+    said = [(a["page"], a["label"], a["value"]) for a in went["answers"]]
+    assert said == [
+        ("My Information", "First Name", "Sam"), ("My Information", "Last Name", "Rivera"),
+        ("My Information", "Email", "sam.rivera@example.com"), ("My Information", "Phone Number", "480-555-0123"),
+        ("My Information", "City", "Chandler"), ("My Information", "State", "Arizona"),
+        ("Application Questions", "Are you legally authorized to work in the United States?", "Yes"),
+        ("Application Questions", "Do you have a valid driver's license?", "Yes"),
+        ("Application Questions", "I agree to the terms of this application", "Yes")], said
+    # on the card it stopped on, what had gone in by then (the questions asked were the card's)
+    assert [(a["page"], a["label"]) for a in stopped["answers"]] == [(p, label) for p, label, _ in said[:7]], stopped
+    assert went["files"] == [] and went["agreed"] == [] and went["accounts"] == [] and went["left"] == []
+    shown = json.dumps(r.public())
+    assert "not-a-real-password" not in shown and "Sign In" not in {a["page"] for a in went["answers"]}
+    assert not any("Arizona" in line or "Chandler" in line for line in r.log), r.log  # (nothing of it logged)
+
+
+def test_what_went_in_names_the_files_cuts_a_long_answer_short_and_says_what_was_left_empty(srv, monkeypatch,
+                                                                                         job_apply_home):
+    """The panel names the files put up by their names (never the folder they're in), shows a long answer's start
+    (a text area's), and lists the optional questions left empty: a cover letter the profile has none of, and a
+    question it doesn't answer."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    path = job_apply_home / "profile.yaml"
+    profile = yaml.safe_load(path.read_text(encoding="utf-8"))
+    story = "Maintained etch and deposition tools on a 300mm line. " * 12  # (over 600 characters)
+    profile["answers"].append({"match": "equipment experience", "answer": story})
+    path.write_text(yaml.safe_dump(profile), encoding="utf-8")
+    job = srv.add_job(url=fixture_url("site/what-went-in.html"), title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert r.status == "ready", (r.status, r.reason, r.log)
+    went = json.loads(json.dumps(r.public()))["went_in"]
+    assert went["files"] == [{"label": "Resume", "name": "resume.pdf"}], went["files"]
+    answers = {a["label"]: a["value"] for a in went["answers"]}
+    assert answers["First Name"] == "Sam" and answers["Email"] == "sam.rivera@example.com", answers
+    long = answers["Tell us about your equipment experience"]
+    assert len(long) == pipeline.WENT_IN_CHARS and long.endswith("…") and story.startswith(long[:-1].rstrip()), long
+    assert [(q["label"], q["why"]) for q in went["left"]] == [
+        ("Cover Letter", "your profile doesn't answer it"),
+        ("What do you like to do outside of work?", "your profile doesn't answer it")], went["left"]
+    assert str(job_apply_home) not in json.dumps(went)  # (the file's name alone, not where it is)
+
+
+def test_what_went_in_keeps_no_password_code_or_security_answer_and_stays_small(monkeypatch):
+    """Never on the panel, nor anywhere in the desk page's state: anything typed into a password box, an emailed code,
+    a security question's answer (an account form's own boxes too), or a value holding one of the desk's saved
+    secrets, whatever box it went into. A box's last answer stands in its first place; boxes that share a label keep
+    their own (Workday's Month and Year are each a "Date"). Bounded: WENT_IN_ANSWERS answers a job, WENT_IN_CHARS of
+    each, and nothing of it logged."""
+    monkeypatch.setenv("JOB_APPLY_SECRET_WORKDAY_PASSWORD", "Hunter-22-secret")
+    r = Run(1, "Technician", "Example Fab")
+    page = {"title": "Apply", "headings": ["My Information"], "fields": [
+        {"id": "1", "kind": "text", "label": "First Name"},
+        {"id": "2", "kind": "password", "label": "Create a password"},
+        {"id": "3", "kind": "text", "label": "Enter the verification code we sent to your email"},
+        {"id": "4", "kind": "text", "label": "Question 1 Answer", "section": "Security questions"},
+        {"id": "5", "kind": "text", "label": "Answer", "account": True},
+        {"id": "6", "kind": "text", "label": "Referral note"},
+        {"id": "7", "kind": "textarea", "label": "Cover note"},
+        {"id": "8", "kind": "text", "label": "Date", "role": "spinbutton"},
+        {"id": "9", "kind": "text", "label": "Date", "role": "spinbutton"},
+        {"id": "10", "kind": "text", "label": "Middle Name"}]}
+    pipeline._went_in(r, [{"id": "1", "value": "Sam"}, {"id": "2", "value": "typed-in-a-password-box"},
+                          {"id": "3", "value": "481516"}, {"id": "4", "value": "Flagstaff Ridge 1987"},
+                          {"id": "5", "value": "Rex the dog"}, {"id": "6", "value": "see Hunter-22-secret"},
+                          {"id": "7", "value": "word " * 200}, {"id": "8", "value": "10"},
+                          {"id": "9", "value": "2026"}], page)
+    pipeline._went_in(r, [{"id": "1", "value": "Samuel"}], page)  # (a later round's answer to the same box)
+    pipeline._went_left(r, {"needs_input": [{"id": "10", "kind": "text", "label": "Middle Name", "required": False},
+                                            {"id": "2", "kind": "password", "label": "Password", "required": False}],
+                            "failed": []}, page)
+    shown = json.dumps(r.public())  # (plain json.dumps: the page's state is written so)
+    for secret in ("typed-in-a-password-box", "481516", "Flagstaff Ridge 1987", "Rex the dog", "Hunter-22-secret"):
+        assert secret not in shown, secret
+    went = r.public()["went_in"]
+    assert [(a["label"], a["value"]) for a in went["answers"]] == [
+        ("First Name", "Samuel"), ("Cover note", ("word " * 60)[:pipeline.WENT_IN_CHARS - 1].rstrip() + "…"),
+        ("Date", "10"), ("Date", "2026")], went["answers"]
+    assert [q["label"] for q in went["left"]] == ["Middle Name"] and r.log == []
+
+    many = Run(2, "Technician", "Example Fab")
+    boxes = {"title": "Apply", "headings": ["Questions"],
+             "fields": [{"id": str(i), "kind": "text", "label": f"Question {i}"} for i in range(250)]}
+    pipeline._went_in(many, [{"id": str(i), "value": "x" * 1000} for i in range(250)], boxes)
+    for line in [f"agreed to notice {i}" for i in range(100)]:
+        many.went_in.agree(line)
+    went = many.public()["went_in"]
+    assert len(went["answers"]) == pipeline.WENT_IN_ANSWERS and went["full"] is True
+    assert {len(a["value"]) for a in went["answers"]} == {pipeline.WENT_IN_CHARS}
+    assert len(went["agreed"]) == pipeline.WENT_IN_LINES
+    assert len(json.dumps(many.public())) < 150_000  # (30 jobs of it, at most, on the page's state)
+    assert Run(3).public()["went_in"] is None  # (nothing yet: no panel)
+
+
 def test_workday_style_dialog_is_followed(srv, monkeypatch):
     """Workday's Apply opens a dialog on the same page (a fifth heading), and announces
     "… page is loaded" to screen readers; neither may read as "the page didn't move on"."""
@@ -1127,6 +1261,14 @@ def test_with_accept_notices_the_desk_agrees_to_an_ai_notice_and_an_attestation(
     assert f"agreed to Example Corp's notice “{NOTICE}” for you (settings.accept_notices)" in r.log, r.log
     assert any(line.startswith("picked “I Agree” for “Terms and Conditions")
                and line.endswith("for you (settings.accept_notices)") for line in r.log), r.log
+    # and on the job's "What went in" panel: each agreed to, the resume by its name, the profile's answers
+    went = json.loads(json.dumps(r.public()))["went_in"]
+    assert went["agreed"][0] == f"agreed to Example Corp's notice “{NOTICE}”", went["agreed"]
+    assert len(went["agreed"]) == 2 and went["agreed"][1].startswith("picked “I Agree” for “Terms and Conditions"), \
+        went["agreed"]
+    assert went["files"] == [{"label": "Resume", "name": "resume.pdf"}], went["files"]
+    assert {(a["label"], a["value"]) for a in went["answers"]} >= {("First name", "Sam"),
+                                                                   ("Country of Residence", "United States")}, went
 
 
 @pytest.mark.parametrize("notice, settings", [("privacy", {}), ("other", {}), ("privacy", {"accept_notices": False}),
@@ -1557,6 +1699,12 @@ def test_with_manage_accounts_the_desk_creates_the_account(srv, monkeypatch, job
     r = run(go())
     assert any(line.startswith("created your account on") and "agreed to its terms" in line for line in r.log), r.log
     assert r.need != "sign_in" and "Create Account" not in r.reason, (r.status, r.reason, r.log)
+    # on the job's "What went in" panel: the account made, never its password, nor the account form's boxes
+    went = json.loads(json.dumps(r.public()))["went_in"]
+    assert len(went["accounts"]) == 1 and went["accounts"][0].startswith("created your account on") \
+        and went["accounts"][0].endswith("and agreed to its terms"), went["accounts"]
+    assert "not-a-real-password" not in json.dumps(r.public())
+    assert not any("assword" in a["label"] for a in went["answers"]), went
 
 
 @pytest.mark.parametrize("chosen", [True, False])
@@ -1741,6 +1889,12 @@ def test_an_emailed_passcode_in_a_password_box_takes_the_inbox_code_never_the_sa
     assert kept.get("passcode") == "123456", (kept, log)
     assert not any("Continue” with your saved password" in line for line in r.log), log
     assert "entered the code from your email" in log and any("“My Information”" in line for line in r.log), log
+    # the job's "What went in" panel names the account made and the application's answers: never the emailed code,
+    # nor the password
+    went, shown = r.public()["went_in"], json.dumps(r.public())
+    assert went["accounts"] and went["accounts"][0].startswith("created your account on"), went
+    assert ("First Name", "Sam") in {(a["label"], a["value"]) for a in went["answers"]}, went
+    assert "123456" not in shown and "not-a-real-password" not in shown
 
 
 @pytest.mark.parametrize("how", ["notices-off", "practice"])
@@ -3337,6 +3491,9 @@ def test_brassrings_security_question_is_answered_on_the_card_for_that_form_alon
     assert config.saved_answers() == [] and r.once == {}, (config.saved_answers(), r.once)
     assert secret not in shown and secret not in json.dumps(r.public()) and secret not in "\n".join(r.log)
     assert '"(set)"' in shown and "screenshot" not in shown and r.account_answers == {}, shown[-3000:]
+    # nor on the job's "What went in" panel: neither the question chosen nor its answer
+    went = json.dumps(r.public()["went_in"])
+    assert "In what city were you born?" not in went and secret not in went, went
 
 
 def test_brassrings_application_is_begun_with_lets_get_started_once_the_account_is_made(srv, monkeypatch,

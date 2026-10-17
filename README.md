@@ -203,7 +203,11 @@ opens a page on your computer (served by the plugin on `127.0.0.1`):
      background.
 4. Press **Submit** on each finished application, or turn on **Submit for me**, so
    that every application that needs nothing from you is sent. LinkedIn and Indeed
-   are always yours to submit.
+   are always yours to submit. Each finished application's card (and a stopped one's)
+   has a **What went in** panel: the answers the desk gave on each page, the files it
+   put up, what it agreed to for you, any account it made and the optional questions it
+   left empty, so you can check them without reading every review page again. It never
+   shows a password, an emailed code or a security answer.
 5. Pressed **Skip job** by mistake? **Undo** on its card (or by its row in the list) puts it back
    where it was, back in the queue or in the list, and sends nothing: it stops at its review page for you.
 
