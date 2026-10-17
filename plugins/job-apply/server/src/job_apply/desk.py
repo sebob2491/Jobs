@@ -91,8 +91,11 @@ class Desk:
         # list's employers, for the profile's titles and HR ones, and the page shows only the openings where the desk
         # doesn't go all the way yet, whatever their fit. Nothing is sent meanwhile (Applier.hold_submits)
         self.troubleshoot = False
+        # Find jobs searches when the person presses it. With this on (off unless they turn it on: issue #112, note
+        # 44), the page also searches by itself once the openings are 12 hours old, but not while the queue is paused
+        self.auto_search = False
         self.search: dict[str, Any] = {"status": "idle", "at": None, "error": None, "query": "", "location": None,
-                                       "errors": {}, "browser_only": []}
+                                       "errors": {}, "browser_only": [], "auto": False, "stopped": None}
         self._search_task: asyncio.Task | None = None
         self._searches = 0  # (counts the openings cleared: a search started before keeps none of what it finds)
         self._left_searches: set[asyncio.Task] = set()  # (still running after a clear: held until they end)
@@ -119,6 +122,7 @@ class Desk:
             self.applier.auto_submit = saved.get("auto_submit") is True
             self.applier.tailor = saved.get("tailor_resumes") is True
             self.handled_only = saved.get("handled_only") is True
+            self.auto_search = saved.get("auto_search") is True
             self.troubleshoot = saved.get("troubleshoot") is True and not self.handled_only
             self.applier.hold_submits = self.troubleshoot
         except (OSError, ValueError, AttributeError):
@@ -129,7 +133,8 @@ class Desk:
         _settings_path().write_text(json.dumps({"auto_submit": self.applier.auto_submit,
                                                 "tailor_resumes": self.applier.tailor,
                                                 "handled_only": self.handled_only,
-                                                "troubleshoot": self.troubleshoot}), encoding="utf-8")
+                                                "troubleshoot": self.troubleshoot,
+                                                "auto_search": self.auto_search}), encoding="utf-8")
 
     # ------------------------------------------------------------- serving
     @property
@@ -142,6 +147,7 @@ class Desk:
             r("/", self.page_view),
             r("/api/state", self.state_view),
             r("/api/search", self.search_view, methods=["POST"]),
+            r("/api/search/stop", self.search_stop_view, methods=["POST"]),
             r("/api/apply", self.apply_view, methods=["POST"]),
             r("/api/preflight", self.preflight_view, methods=["POST"]),
             r("/api/answer", self.answer_view, methods=["POST"]),
@@ -239,9 +245,32 @@ class Desk:
     async def search_view(self, request: Request) -> Response:
         if not self._allowed(request, api=True):
             return self._forbidden()
+        try:
+            auto = (await self._body(request)).get("auto") is True
+        except ValueError as e:
+            return self._bad(e)
+        if auto and (not self.auto_search or self.applier.paused):
+            # (a page that asks by itself: only with the switch on, and never while the queue is paused)
+            return JSONResponse({"started": False})
         if self._search_task is None or self._search_task.done():
-            self._search_task = asyncio.get_running_loop().create_task(self.find_jobs())
+            self._search_task = asyncio.get_running_loop().create_task(self.find_jobs(auto=auto))
         return JSONResponse({"started": True})
+
+    async def search_stop_view(self, request: Request) -> Response:
+        """Stop search: the search under way ends, and the openings found before it stay."""
+        if not self._allowed(request, api=True):
+            return self._forbidden()
+        return JSONResponse({"stopped": await self.stop_search()})
+
+    async def stop_search(self) -> bool:
+        """The search under way, if any, stopped (find_jobs says so in self.search). Whether one was."""
+        task = self._search_task
+        if task is None or task.done():
+            return False
+        task.cancel()
+        with contextlib.suppress(BaseException):
+            await task
+        return True
 
     async def apply_view(self, request: Request) -> Response:
         if not self._allowed(request, api=True):
@@ -377,6 +406,8 @@ class Desk:
         if "handled_only" in body:
             self.handled_only = body["handled_only"] is True
             self.troubleshoot = self.troubleshoot and not self.handled_only
+        if "auto_search" in body:
+            self.auto_search = body["auto_search"] is True
         if "troubleshoot" in body:
             was, self.troubleshoot = self.troubleshoot, body["troubleshoot"] is True
             self.handled_only = self.handled_only and not self.troubleshoot
@@ -385,10 +416,11 @@ class Desk:
                 # cleared, for Find jobs to search again, so none is applied to by mistake
                 self._forget_openings()
         self.applier.hold_submits = self.troubleshoot
-        if any(k in body for k in ("auto_submit", "tailor_resumes", "handled_only", "troubleshoot")):
+        if any(k in body for k in ("auto_submit", "tailor_resumes", "handled_only", "troubleshoot", "auto_search")):
             self._save_settings()
         return JSONResponse({"auto_submit": self.applier.auto_submit, "tailor_resumes": self.applier.tailor,
-                             "handled_only": self.handled_only, "troubleshoot": self.troubleshoot})
+                             "handled_only": self.handled_only, "troubleshoot": self.troubleshoot,
+                             "auto_search": self.auto_search})
 
     def _forget_openings(self) -> None:
         """The openings found so far cleared, for Find jobs to search again (where or how it searches changed). A
@@ -399,7 +431,7 @@ class Desk:
             self._search_task.add_done_callback(self._left_searches.discard)
         self._search_task = None
         self.listings = []
-        self.search.update(status="idle", at=None)
+        self.search.update(status="idle", at=None, auto=False, stopped=None)
         with contextlib.suppress(OSError):
             _recommendations_path().unlink()
 
@@ -479,8 +511,10 @@ class Desk:
             raise FetchError(f"not read in the browser: {url}")
         return await self.srv.read_icims_posting(url)
 
-    async def find_jobs(self) -> None:
-        self.search.update(status="running", error=None, started=time.time())
+    async def find_jobs(self, auto: bool = False) -> None:
+        """Every employer's career site searched for the profile's titles and places (`auto`: the page's own search
+        of openings 12 hours old, said as such while it runs). Stopped (Stop search), the openings before it stay."""
+        self.search.update(status="running", error=None, started=time.time(), auto=auto, stopped=None)
         searching = self._searches  # (a search started before the openings were cleared keeps none it finds)
         try:
             every = self.troubleshoot  # (as it was when Find jobs was pressed)
@@ -501,6 +535,10 @@ class Desk:
                                errors=out["errors"], browser_only=out["browser_only"])
             config.ensure_home()
             _recommendations_path().write_text(json.dumps({**out, "at": at}, default=str), encoding="utf-8")
+        except asyncio.CancelledError:
+            if searching == self._searches:
+                self.search.update(status="done" if self.search.get("at") else "idle", stopped=time.time())
+            raise
         except Exception as e:
             if searching == self._searches:
                 self.search.update(status="failed", error=f"{type(e).__name__}: {str(e)[:300]}")
@@ -712,7 +750,8 @@ class Desk:
                          "manage_accounts": settings.may_manage_accounts,
                          "manage_accounts_chosen": settings.manage_accounts_chosen,
                          "auto_submit": self.applier.auto_submit, "tailor_resumes": self.applier.tailor,
-                         "handled_only": self.handled_only, "troubleshoot": self.troubleshoot},
+                         "handled_only": self.handled_only, "troubleshoot": self.troubleshoot,
+                         "auto_search": self.auto_search},
             "tailoring": len(self.applier.tailoring()),
             # saved or not, never the value
             "passwords": {name.removesuffix("_password"): saved for name, saved in

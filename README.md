@@ -165,6 +165,9 @@ opens a page on your computer (served by the plugin on `127.0.0.1`):
    weren't there on your last visit are tagged **New**. Ones listed only as "US -
    Multiple Locations", "Remote - US (Field Based)" and the like are kept and marked
    "check the posting": you may be able to do them from your area.
+   It searches only when you press it, unless you turn on **Search by itself every 12
+   hours** (off by default; it waits while the queue is paused). A search running is
+   shown in the header, with **Stop search** beside it.
 2. Tick the ones you want, or press **Select recommended**, then **Apply to
    selected**. **Select recommended** leaves out openings whose posting asks for a
    degree you don't have (unless it says "or equivalent experience"), and ones the
