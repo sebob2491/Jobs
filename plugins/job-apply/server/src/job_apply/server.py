@@ -807,21 +807,27 @@ def forget_presets(job_id: int) -> None:
 
 
 @tool(drives=True)
-async def autofill(job_id: int | None = None, overwrite: bool = False, redo: list[str] | None = None) -> dict[str, Any]:
+async def autofill(job_id: int | None = None, overwrite: bool = False, redo: list[str] | None = None,
+                   refresh: bool = False, keep: list[str] | None = None) -> dict[str, Any]:
     """Fill every field on the current page that the profile answers with confidence
     (contact details, address, work authorization, sponsorship, EEO choices, resume upload,
     saved answers). Returns what was filled and the fields still needing a decision —
-    draft those from the profile/resume and confirm anything subjective with the user."""
+    draft those from the profile/resume and confirm anything subjective with the user.
+    `refresh`: on an application saved earlier (a draft), also put the profile's answer into
+    boxes that show a different one (never a box the profile doesn't answer, nor one holding
+    the user's own saved answer, nor the ids in `keep`); those are marked "refreshed"."""
     job = _job_here(job_id) if (job_id is not None or browser.current_job_id is not None) else {}
     data = await browser.inspect(include_dropdown_options=True)
     prof = config.Profile.load()
     seen = _PRESETS_SEEN.setdefault(job.get("id") or data.get("url"), set())
-    plan = plan_autofill(data["fields"], prof, job, overwrite=overwrite, redo=set(redo or []), presets_done=seen)
+    plan = plan_autofill(data["fields"], prof, job, overwrite=overwrite, redo=set(redo or []), presets_done=seen,
+                         refresh=refresh, keep=set(keep or []))
     results = await browser.fill([{"id": f["id"], "value": f["value"], "names": is_name_rule(f.get("rule") or ""),
                                    "near": place_words(f.get("rule") or "", prof),
                                    "pick_only": is_eeo_rule(f.get("rule") or ""),
-                                   # (answered again, where the page lost it, even showing the answer: a date's parts)
-                                   "again": f["id"] in (redo or [])}
+                                   # (answered again, where the page lost it, even showing the answer: a date's parts;
+                                   # and a draft's date part that shows another than the profile's)
+                                   "again": f["id"] in (redo or []) or bool(f.get("again"))}
                                   for f in plan["to_fill"]]) if plan["to_fill"] else []
     if plan.get("judged"):  # (one whose fill didn't go in isn't judged yet: it's tried again, or asked)
         went, filling = {r["id"] for r in results if r.get("ok")}, {f["id"] for f in plan["to_fill"]}
@@ -866,7 +872,8 @@ async def autofill(job_id: int | None = None, overwrite: bool = False, redo: lis
     filled, failed = [], []
     for r in results:
         src = by_id.get(r["id"], {})
-        entry = {"id": r["id"], "label": src.get("label"), "value": src.get("value"), "from": src.get("rule")}
+        entry = {"id": r["id"], "label": src.get("label"), "value": src.get("value"), "from": src.get("rule"),
+                 **({"refreshed": True} if src.get("refreshed") else {})}
         if r["ok"]:
             filled.append(entry)
         else:

@@ -1,0 +1,39 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>My Information</title></head>
+<body>
+<!-- An application step the site kept from an earlier visit (a draft, issue #112, note 38): its boxes hold the answers
+     given then. Some are out of date against the profile now (the last name, the job's description), one is the
+     person's own saved answer (clean room: "No", where their saved answer is "Yes"), one is a question the profile
+     doesn't answer, and the phone is this application's own answer in the tests that give it -->
+<div>current step 1 of 2</div>
+<h2>My Information</h2>
+<form id="step" novalidate>
+  <label for="fn">First Name *</label><input id="fn" required value="Sam">
+  <label for="ln">Last Name *</label><input id="ln" required value="Rivers">
+  <label for="em">Email *</label><input id="em" type="email" required value="sam.rivera@example.com">
+  <label for="ph">Phone Number</label><input id="ph" type="tel" value="480-555-0000">
+  <div role="group" aria-labelledby="we-1">
+    <h4 id="we-1">Work Experience 1</h4>
+    <label for="jt-1">Job Title *</label><input id="jt-1" required value="Equipment Technician">
+    <label for="co-1">Company *</label><input id="co-1" required value="Intel">
+    <label for="rd-1">Role Description</label><textarea id="rd-1">Ran the wet benches on nights.</textarea>
+  </div>
+  <label for="cr">Do you have clean room experience? *</label>
+  <select id="cr" required><option value="">Select One</option><option>Yes</option><option selected>No</option></select>
+  <label for="tool">What is your favorite tool? *</label><input id="tool" required value="Torque wrench">
+  <button type="submit">Save and Continue</button>
+</form>
+<div id="err" role="alert"></div>
+<script>
+  document.getElementById('step').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const missing = ['fn', 'ln', 'em', 'jt-1', 'co-1', 'cr', 'tool'].filter((id) => !document.getElementById(id).value);
+    if (missing.length) { document.getElementById('err').textContent = 'Error: ' + missing.length + ' required field(s) are empty'; return; }
+    // what the step saved, in the review page's address for the test to read
+    location.href = 'review.html?' + new URLSearchParams(
+      ['fn', 'ln', 'em', 'ph', 'jt-1', 'co-1', 'rd-1', 'cr', 'tool'].map((id) => [id, document.getElementById(id).value]));
+  });
+</script>
+</body>
+</html>

@@ -683,7 +683,8 @@ function jobButtons(r, which) {
 // only the panel and its counts; what's in it is the page's and the profile's words, so it's drawn as text alone
 // (wentFill), never as HTML.
 const WENT_PARTS = [["answers", "answer", "answers"], ["files", "file", "files"], ["agreed", "agreement", "agreements"],
-  ["accounts", "account made", "accounts made"], ["left", "left empty", "left empty"]];
+  ["accounts", "account made", "accounts made"], ["changed", "draft answer changed", "draft answers changed"],
+  ["left", "left empty", "left empty"]];
 function wentPanel(r) {
   const w = r.went_in;
   if (!w) return "";
@@ -739,6 +740,8 @@ function wentFill(runs) {
     list("Files put up", (w.files || []).map((f) => `${f.label}: ${f.name}`));
     list("Agreed to for you", w.agreed || []);
     list("Account", w.accounts || []);
+    // (a saved draft's answers the desk changed to the profile's: "<box>: <old> → <new>", to check before Submit)
+    list("Changed from the saved draft", w.changed || []);
     list("Left empty (optional)", (w.left || []).map((q) => `${q.section ? `${q.section}: ` : ""}${q.label} (${q.why})`));
     if (w.full) add(body, "p", "Only the first answers are listed: the review page has them all.");
     panel.querySelector(".went-body")?.remove();

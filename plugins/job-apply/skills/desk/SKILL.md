@@ -22,6 +22,13 @@ The desk is a local web page served by this plugin. It does what the `find-jobs`
   education blocks, and stops at each review page. Before they go, it says what will stop
   them: a job system with no saved password, no email app password for sites that email a
   code, common questions not answered yet. The person can go ahead or see to those first.
+  A posting the site says has closed or been filled is skipped by itself (its card quotes
+  the site; Undo puts it back). A saved draft's **Continue Application** is the way in
+  when it's the page's only one and the draft is this job's. Its answers are checked
+  against the profile (never the person's own written words, self-identification or
+  how-heard answers), and a draft the desk changed waits on its review page, even with
+  Submit for me on, its card listing each change. A page that loads blank is loaded
+  again up to twice before the person is asked.
 - **Needs you** collects whatever it can't do alone:
   - questions the profile doesn't answer, answered right on the page. Answers are
     remembered in `~/.job-apply/answers.yaml` unless the user unticks "remember".

@@ -2190,6 +2190,7 @@ def test_a_cards_what_went_in_shows_the_answers_as_text_and_nothing_secret(srv, 
     ready.went_in.agree("agreed to Example Fab's notice “AI in hiring”")
     ready.went_in.account("created your account on Example Fab's site with your saved password and agreed to its "
                           "terms (manage_accounts: false in profile.yaml leaves this to you)")
+    ready.went_in.change("Last Name: Rivers \u2192 Rivera")  # (a saved draft's answer the desk changed: note 38's review)
     stopped = Run(jobs[1]["id"], "Technician", "Example Fab", status="needs_you", need="questions",
                   reason="1 question your profile doesn't answer.",
                   questions=[{"id": "9", "kind": "text", "label": "Desired salary", "required": True}])
@@ -2227,11 +2228,13 @@ def test_a_cards_what_went_in_shows_the_answers_as_text_and_nothing_secret(srv, 
 
     closed, summary, seen, tags, still, other, html, title, (scroll, client) = run(go())
     assert closed is False and still is True
-    assert summary == "What went in (3 answers, 1 file, 1 agreement, 1 account made, 1 left empty)", summary
+    assert summary == ("What went in (3 answers, 1 file, 1 agreement, 1 account made, 1 draft answer changed, "
+                       "1 left empty)"), summary
     for words in ("My Information", "First Name", "Sam", marked, "Resume: resume.pdf",
                   "agreed to Example Fab's notice “AI in hiring”",
                   "created your account on Example Fab's site with your saved password and agreed to its terms",
-                  "Middle Name (your profile doesn't answer it)"):
+                  "Middle Name (your profile doesn't answer it)", "Changed from the saved draft",
+                  "Last Name: Rivers \u2192 Rivera"):
         assert words in seen, (words, seen)
     assert tags == 0 and "pwned" not in title  # (the marked-up answer is its words, not the page's)
     assert "manage_accounts: false" not in seen and str(job_apply_home) not in seen
@@ -2241,7 +2244,7 @@ def test_a_cards_what_went_in_shows_the_answers_as_text_and_nothing_secret(srv, 
         assert kept_out not in html and kept_out not in json.dumps(state), kept_out
     # the panel is the person's own page alone: nothing of it in a problem report or a note on the stop
     said = report.build(jobs[0], ready)["preview"] + report.note(jobs[0], ready)
-    assert "Referral note" not in said and "Bold" not in said, said
+    assert "Referral note" not in said and "Bold" not in said and "Rivers" not in said, said
 
 
 def test_every_card_says_i_submitted_it_already(srv):

@@ -1,0 +1,21 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Equipment Technician - Example Fab</title></head>
+<body>
+<!-- like a Workday job page for a job the desk began on an earlier visit (issue #112, note 38): Workday kept the
+     application as a draft, and the page shows "Continue Application" where its Apply usually is. ?apply: the page
+     shows Apply instead (a fresh application's way in), leading to the same filled-in page -->
+<h1>Example Fab Careers</h1>
+<h2>Equipment Technician</h2>
+<h3>Job Details:</h3>
+<p>Chandler, AZ. Full time. Keep the fab's etch and deposition tools running.</p>
+<a data-automation-id="continueButton" role="button" id="way-in" href="draft-form.html">Continue Application</a>
+<script>
+  if (new URLSearchParams(location.search).has('apply')) {
+    const a = document.getElementById('way-in');
+    a.textContent = 'Apply';
+    a.setAttribute('data-automation-id', 'adventureButton');
+  }
+</script>
+</body>
+</html>

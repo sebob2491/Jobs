@@ -213,6 +213,12 @@ opens a page on your computer (served by the plugin on `127.0.0.1`):
    shows a password, an emailed code or a security answer.
 5. Pressed **Skip job** by mistake? **Undo** on its card (or by its row in the list) puts it back
    where it was, back in the queue or in the list, and sends nothing: it stops at its review page for you.
+6. A posting the site says has closed or been filled is skipped by itself, with the site's
+   words on its card (**Undo** puts it back). A saved draft from an earlier visit (Workday's
+   **Continue Application**) is picked up where it was, and its answers are checked against
+   your profile. If the desk changes any, the card's **What went in** lists each one
+   ("old → new") and the job waits on its review page for you, even with **Submit for me**
+   on. A page that loads blank is loaded again once or twice before it asks you.
 
 Each employer has its own account on its job site. In the desk's **Site passwords**
 card, save one password for a job system: Workday (15 of the semiconductor employers and 27 of the
