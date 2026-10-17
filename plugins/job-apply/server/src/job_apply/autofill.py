@@ -2548,6 +2548,57 @@ def site_default(f: dict) -> bool:
         and norm(f.get("value")) == norm(options[0]) and not any(is_empty_value(o) for o in options)
 
 
+# A country list, the address's or the phone's dial code's, by its label
+_COUNTRY_LIST = re.compile(r"^(country|country region|country or region|country territory|country of residence|"
+                           r"(phone )?country (phone |dial(ing)? |calling )?code)$")
+
+
+# The person's own address or phone, where a country list is theirs today: a section naming one, or none at all (Workday's
+# Country heads My Information on its own); never a past job's, a school's, a previous or another's address
+_THEIR_COUNTRY = re.compile(r"\b(address|contact|personal|my information|phone|home|residence|legal name)\b")
+_NOT_THEIRS_NOW = re.compile(r"\b(previous|prior|former|past|mailing|billing|shipping|emergency|reference|relative|"
+                             r"preferred|desired|job|work|relocat\w*|other|alternate|temporary|secondary)\b")
+# Dial codes several countries share: the code alone doesn't say the country (a US number under Canada's +1 is
+# refused as "not valid for this region", as run 118's under Mexico's was)
+_SHARED_CODES = {"1", "7", "44", "47", "61", "262", "590", "599"}
+_DIAL_CODE = re.compile(r"\(\s*\+?\s*(\d{1,4})\s*\)|\+\s*(\d{1,4})")
+
+
+def preset_key(f: dict) -> str:
+    """A country list's place in a job, by its label and section (its id changes when the page draws it again)."""
+    return f"{norm(clean_label(f.get('label') or ''))}|{norm(f.get('section') or '')}"
+
+
+def preset_country(f: dict, prof: Profile, done: set[str] | frozenset[str] = frozenset()) -> bool:
+    """A country list a site opened on a country, which no one chose: Onto Innovation's Workday on Mexico (the live
+    check's run 118, Oct 16), with Mexico's name boxes and its +52 dial code under it, for a profile in the United
+    States (its phone number then refused as "not valid for this region"). Read as answered, it stayed. The profile's
+    country goes in where it's another, once a job (`done`: the lists already looked at in it, by preset_key, kept by
+    the server for the job, so a pick since is the person's however the page draws it again). Only the person's own
+    address or phone country (a section naming one, or none); never a select with an empty choice to start on (someone
+    picked what it shows)."""
+    section = norm(f.get("section") or "")
+    if section and (not _THEIR_COUNTRY.search(section) or _NOT_THEIRS_NOW.search(section) or _PAST_BLOCK.search(section)):
+        return False
+    if f.get("kind") == "select" and any(is_empty_value(o) for o in f.get("options") or []):
+        return False
+    return f.get("kind") in ("select", "listbox", "combobox") and not f.get("multiple") and not f.get("judged") \
+        and bool(prof.get("personal.address.country")) and preset_key(f) not in done \
+        and bool(_COUNTRY_LIST.match(norm(clean_label(f.get("label") or ""))))
+
+
+def same_country(a: Any, b: Any, dial: bool = False) -> bool:
+    """"United States" is "United States of America", and "United States of America (+1)" is "USA +1": the same
+    country (and the same dial code, where both say one). A dial code's list (`dial`), or a side saying only its code
+    ("+1"), is the same where the codes are, and for a code several countries share, the names too: a US number under
+    Canada (+1) is refused for its region."""
+    codes = [[a or b for a, b in _DIAL_CODE.findall(str(x))] for x in (a, b)]
+    names = [canonical_country(_DIAL_CODE.sub(" ", str(x)).strip(" -")) for x in (a, b)]
+    if codes[0] and codes[1] and (not names[0] or not names[1] or dial and not set(codes[0]) & _SHARED_CODES):
+        return codes[0] == codes[1]
+    return names[0] == names[1] and (not codes[0] or not codes[1] or codes[0] == codes[1])
+
+
 def common_questions(prof: Profile) -> list[dict[str, Any]]:
     """The common questions (data/question_bank.yaml) the person is asked, on the desk's card and in setup: each with
     their answer where they gave one, and not one their profile answers already (asked in its example's words), unless
@@ -2563,7 +2614,7 @@ def common_questions(prof: Profile) -> list[dict[str, Any]]:
 
 
 def plan_autofill(fields: list[dict], prof: Profile, job: dict | None = None, overwrite: bool = False,
-                  redo: set[str] | None = None) -> dict[str, Any]:
+                  redo: set[str] | None = None, presets_done: set[str] | None = None) -> dict[str, Any]:
     """Split fields into ones we can fill and ones that need a decision. Not a sign-up's boxes
     beside the application (a talent community's email and consent: the form reader's aside)."""
     fields = _with_context([f for f in fields if not f.get("aside")])
@@ -2572,6 +2623,7 @@ def plan_autofill(fields: list[dict], prof: Profile, job: dict | None = None, ov
     needs_input: list[dict] = []
     already: list[str] = []
     judged: list[str] = []  # lists on the site's first choice, filled or left as they are (site_default)
+    presets: dict[str, str] = {}  # country lists looked at once (preset_country): id -> preset_key
     for f in fields:
         # a read-only text box can't be typed in, but a read-only dropdown is a pick-only
         # menu (Infineon's "Preferred location"): it still takes a choice
@@ -2584,7 +2636,10 @@ def plan_autofill(fields: list[dict], prof: Profile, job: dict | None = None, ov
         rejected = f["id"] in (redo or set()) and f.get("kind") in ("select", "listbox", "combobox", "radio_group", "text") \
             and not is_empty_value(f.get("value"))
         has_value = not is_empty_value(f.get("value")) and not unset and not rejected
-        defaulted = has_value and site_default(f)
+        preset = has_value and not overwrite and preset_country(f, prof, presets_done or frozenset())
+        if preset:
+            presets[f["id"]] = preset_key(f)
+        defaulted = has_value and (site_default(f) or preset)
         if has_value and not overwrite and not defaulted:
             already.append(f["id"])
             continue
@@ -2598,7 +2653,11 @@ def plan_autofill(fields: list[dict], prof: Profile, job: dict | None = None, ov
             options = []
         ans = resolve_field({**f, "options": options}, prof, job, file_inputs, unmatched=missed)
         if defaulted and not overwrite and (ans is None and not missed or ans is not None and (
-                ans.value == SKIP or choose_option(str(ans.value), [str(f.get("value"))], exact_only=True) is not None)):
+                ans.value == SKIP or choose_option(str(ans.value), [str(f.get("value"))], exact_only=True) is not None
+                or preset and same_country(ans.value, f.get("value"), dial=(dial := "code" in norm(clean_label(f.get("label") or ""))))
+                or preset and dial and same_country(_phone_code(prof, job or {}), f.get("value"), dial=True))):
+            # (a dial code's list by the profile's own code, not the entry its address's country picked from the list's
+            # choices: a +52 number with a US address keeps Mexico (+52), the re-check of 0.3.196)
             # (the site's first choice, where the profile says nothing else, or says the same: left as it is; the same
             # word for word, as "Bachelor's Degree" isn't an "Associate's Degree" a list opens on: the review)
             already.append(f["id"])
@@ -2668,7 +2727,7 @@ def plan_autofill(fields: list[dict], prof: Profile, job: dict | None = None, ov
         needs_input[:] = [q for q in needs_input if norm(clean_label(q.get("label") or "")) not in declined]
     needs_input.sort(key=lambda f: not f.get("required"))
     return {"to_fill": to_fill, "needs_input": needs_input, "already_filled": already,
-            **({"judged": judged} if judged else {})}
+            **({"judged": judged} if judged else {}), **({"presets": presets} if presets else {})}
 
 
 def _asked(f: dict) -> dict:

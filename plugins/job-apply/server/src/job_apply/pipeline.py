@@ -1071,6 +1071,7 @@ class Applier:
 
     def _cancel(self, job_id: int) -> None:
         self.tasks = deque(t for t in self.tasks if t[1] != job_id)
+        self.pressed.discard(job_id)  # (a press for a task that's gone isn't one for the next: the re-check of 0.3.196)
 
     def _go_on_without(self, run: Run, why: str) -> None:
         """Stop holding the queue for a job that waits on the person; it's still watched."""
@@ -1098,6 +1099,7 @@ class Applier:
             if moved and run.left and run.status == "needs_you":
                 try:
                     self.enqueue(run.job_id, submit=run.submit, front=True)
+                    self.pressed.add(run.job_id)  # (it was under way: it carries on, Pause queue or not, as in _tick)
                 except (KeyError, ValueError):  # gone, or marked applied meanwhile: nothing to watch for
                     run.left = False
 
@@ -1171,6 +1173,9 @@ class Applier:
                     return
                 try:
                     self.enqueue(blocker.job_id, submit=blocker.submit, front=True)
+                    # the job under way, past its sign-in or code, carries on: Pause queue holds new jobs only (issue
+                    # #112, note 43: Oracle's, past Verify, waited as "queued" with its tab half-filled and no card)
+                    self.pressed.add(blocker.job_id)
                 except ValueError:  # marked applied meanwhile
                     pass
             elif time.time() - blocker.active_at > HANDS_ON_IDLE:
@@ -1749,6 +1754,7 @@ class Applier:
                 with contextlib.suppress(Exception):
                     await run.page.close()  # its "Aw, Snap!" page: the new tab takes its place
         run.page = await srv.browser.new_tab()
+        srv.forget_presets(run.job_id)  # (a fresh form: the country lists it presets are the site's again)
         opened = await srv.open_application(job_id=run.job_id)
         run.page = srv.browser.current_tab or run.page
         if "error" in opened or opened.get("navigation_error"):
@@ -2286,8 +2292,11 @@ class Applier:
                     return bool(q.get("error")) and not str(q["error"]).startswith("KeyError")
 
                 pending = [q for q in pending if refused(q) or not answered(q)]
-                if _new_required(before, data) and page_key not in refilled:
-                    refilled.add(page_key)  # answers drew new questions ("If yes, explain"): fill those too
+                if (_new_required(before, data) or result.get("countries_corrected")) and page_key not in refilled:
+                    # answers drew new questions ("If yes, explain"): fill those too; or a country the site preset,
+                    # corrected, drew that country's boxes over the old ones' ids (Onto's Workday, run 118: Mexico's
+                    # "Father's Family Name" relabelled Last Name), and what was planned for the other is gone
+                    refilled.add(page_key)
                     continue
                 if not run.list_reloaded and not run.hands_on and not run.pressed_before and run.page is not None \
                         and (unloaded := _unloaded_lists(pending, data, config.Profile.load())):
