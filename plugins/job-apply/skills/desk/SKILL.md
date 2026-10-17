@@ -189,7 +189,22 @@ The desk is a local web page served by this plugin. It does what the `find-jobs`
   **Your answers** under it shows the ones given. Claude can ask them in chat too
   (`common_questions`, as setup does).
 - **My applications** (a tab beside Recommended and All) lists each job sent in, or filled
-  and waiting on its review page, newest first, with where it stands in the tracker.
+  and waiting on its review page, newest first, with where it stands in the tracker and
+  when the employer last wrote ("Heard 2026-10-03: confirmation", with the email's
+  one-line summary as its tooltip; "No reply yet" before any). A bar over it groups them:
+  **Waiting** (nothing heard yet), **Heard back** (a confirmation, an assessment or another
+  email, and nothing further), **Interviews** (interviewing or an offer) and **Closed**
+  (rejected or withdrawn); the group picked is kept in that browser.
+  - One applied to `settings.follow_up_days` days ago (10 unless the profile says) with
+    no email logged, not even a confirmation, is marked **Follow up?** with the day it
+    became due. Offer to draft a polite follow-up email for it, as a Gmail draft only
+    (see the track-responses skill).
+  - An interview's row (or one whose newest email is an assessment) has **Prep me**. The
+    page can't reach Claude, so it copies a request for the user to paste to you ("Prep
+    me for my interview: job 12, Technician at Example Fab (use interview-prep)"). When
+    it's pasted, run the interview-prep skill for that job.
+  - The emails are the ones the track-responses skill logged, read through the Gmail
+    connector with `email_tracking` on: never with the desk's email app password.
 - **Tailor my resume for each job** holds each picked job, before its browser tab
   opens, until Claude has written a resume for it (see Tailoring resumes). The page
   says how many are waiting. **Use my usual resume** sends one on without.

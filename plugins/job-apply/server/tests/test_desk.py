@@ -4,10 +4,12 @@ import asyncio
 import json
 import os
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 import httpx
 import pytest
+import yaml
 from conftest import browser_available, fixture_url, person_browser, run
 
 import job_apply.pipeline as pipeline
@@ -3241,3 +3243,169 @@ def test_the_desk_page_shows_each_log_lines_time_and_this_week(srv, job_apply_ho
     assert "Filled up to their review page: 1 job. Sent by the desk: 0 jobs." in week and "Example Fab" in week, week
     assert "Time with the desk (waits included; jobs at once overlap)" in week, week
     assert "at its review page (3.5 min)" in week and "a job took 3.5 minutes" in week, week
+
+
+# ------------------------------------------------------------- after submit: My applications
+AFTER_NOW = datetime(2026, 10, 17, 12, 0, tzinfo=timezone.utc)
+AFTER_GROUPS = {"Quiet Fab": "waiting", "Fresh Fab": "waiting", "Ready Fab": "waiting", "Ack Fab": "heard",
+                "Quiz Fab": "heard", "Talk Fab": "interviews", "Test Fab": "interviews", "Offer Fab": "interviews",
+                "No Fab": "closed", "Gone Fab": "closed"}
+
+
+def _after_submit_jobs(srv, monkeypatch) -> dict[str, int]:
+    """An application at each stage after it was sent in (and a job only saved), with the tracker's clock at AFTER_NOW:
+    Quiet Fab applied 16 days before with no reply (a follow-up due since Oct 11), Fresh Fab 5 days before, Ready Fab
+    not sent yet; Ack Fab confirmed; Quiz Fab sent an assessment, and the person put it back to applied; Talk Fab and
+    Test Fab are interviewing (Test Fab's newest email an assessment), Offer Fab has an offer; No Fab was turned down and
+    Gone Fab withdrawn."""
+    from job_apply import tracker
+
+    monkeypatch.setattr(tracker, "_clock", lambda: AFTER_NOW)
+    t = srv.tracker()
+    ids: dict[str, int] = {}
+
+    def job(company, status="applied", applied_at="2026-09-20T15:00:00+00:00"):
+        jid = srv.add_job(url=f"https://example.com/jobs/{company.split()[0].lower()}", title="Technician",
+                          company=company)["job"]["id"]
+        srv.update_job(jid, status=status)
+        t.conn.execute("UPDATE jobs SET applied_at = ? WHERE id = ?", (applied_at, jid))
+        t.conn.commit()
+        ids[company] = jid
+        return jid
+
+    job("Quiet Fab", applied_at="2026-10-01T15:00:00+00:00")
+    job("Fresh Fab", applied_at="2026-10-12T09:00:00+00:00")
+    job("Ready Fab", status="ready_to_submit", applied_at="")
+    srv.log_email(job("Ack Fab"), "ack-1", "confirmation", "We received your application", "2026-09-21")
+    srv.log_email(job("Quiz Fab"), "quiz-1", "assessment", "Online skills test, due in 5 days", "2026-10-02")
+    srv.update_job(ids["Quiz Fab"], status="applied", event_note="not an interview yet")
+    srv.log_email(job("Talk Fab"), "talk-1", "confirmation", "Received", "2026-09-21")
+    srv.log_email(ids["Talk Fab"], "talk-2", "interview", "Phone screen request, reply with availability", "2026-10-06")
+    srv.log_email(job("Test Fab"), "test-1", "assessment", "HireVue video interview by Friday", "2026-10-09")
+    job("Offer Fab", status="offer")
+    srv.log_email(job("No Fab"), "no-1", "rejection", "Not moving forward", "2026-10-04")
+    job("Gone Fab", status="withdrawn")
+    job("Saved Fab", status="saved", applied_at="")
+    return ids
+
+
+def test_my_applications_say_when_each_last_heard_whether_to_follow_up_and_its_group(srv, job_apply_home, monkeypatch):
+    """The code review's worth building 7 (after submit): each application in the desk's state carries its newest
+    email logged (category, when it came, that day and its one-line summary) and how many are logged; the day a
+    follow-up became due, for one applied to settings.follow_up_days days ago (10 by default) with no email at all; and
+    its group (waiting, heard, interviews, closed). Claude's list_jobs says the same, small, and only for a job sent in."""
+    ids = _after_submit_jobs(srv, monkeypatch)
+    desk = Desk(srv)
+    desk.applier.start = lambda: None
+    state = desk.state()
+    apps = {a["company"]: a for a in state["applications"]}
+    assert {c: a["group"] for c, a in apps.items()} == AFTER_GROUPS, apps
+    assert {c: a["follow_up_due"] for c, a in apps.items() if a["follow_up_due"]} == {"Quiet Fab": "2026-10-11"}
+    assert state["settings"]["follow_up_days"] == 10
+    assert (apps["Quiet Fab"]["last_heard"], apps["Quiet Fab"]["emails"]) == (None, 0)
+    assert apps["Talk Fab"]["last_heard"] == {"category": "interview", "received_at": "2026-10-06", "day": "2026-10-06",
+                                              "summary": "Phone screen request, reply with availability"}
+    assert apps["Talk Fab"]["emails"] == 2 and apps["Ack Fab"]["emails"] == 1
+    assert (apps["Quiz Fab"]["last_heard"]["category"], apps["Test Fab"]["last_heard"]["category"]) == ("assessment",) * 2
+    listed = {j["company"]: j for j in srv.list_jobs()["jobs"]}
+    assert (listed["Quiet Fab"]["last_heard"], listed["Quiet Fab"]["follow_up_due"]) == (None, "2026-10-11")
+    assert listed["Talk Fab"]["last_heard"] == {"category": "interview", "day": "2026-10-06",
+                                                "summary": "Phone screen request, reply with availability"}
+    assert listed["Talk Fab"]["follow_up_due"] is None and listed["Talk Fab"]["id"] == ids["Talk Fab"]
+    assert {"last_heard", "follow_up_due"}.isdisjoint(listed["Saved Fab"]), listed["Saved Fab"]
+    # the person's own number of days
+    profile = yaml.safe_load((job_apply_home / "profile.yaml").read_text(encoding="utf-8"))
+    profile["settings"]["follow_up_days"] = 4
+    (job_apply_home / "profile.yaml").write_text(yaml.safe_dump(profile), encoding="utf-8")
+    due = {a["company"]: a["follow_up_due"] for a in desk.state()["applications"] if a["follow_up_due"]}
+    assert due == {"Quiet Fab": "2026-10-05", "Fresh Fab": "2026-10-16"}, due
+    assert {j["company"]: j.get("follow_up_due") for j in srv.list_jobs()["jobs"] if j.get("follow_up_due")} == due
+
+
+def test_my_applications_on_the_page_are_grouped_marked_for_follow_up_and_copy_a_prep_request(srv, monkeypatch):
+    """My applications on the desk's page: a bar groups the applications (Waiting, with how many are due a follow-up;
+    Heard back; Interviews; Closed), with counts, and the group picked is kept in the browser. Each row says when the
+    employer last wrote ("Heard <day>: <category>", the summary as its tooltip) or "No reply yet", and one due a
+    follow-up says "Follow up?" with its day. An interview's row, and one whose newest email is an assessment, has
+    Prep me: the page can't reach Claude, so it copies a request to paste to Claude and says so. Nothing is sent."""
+    ids = _after_submit_jobs(srv, monkeypatch)
+    desk = Desk(srv)
+    desk.applier.start = lambda: None
+    desk.search.update(status="done", at=time.time())
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with person_browser() as browser:
+                page = await browser.new_page(permissions=["clipboard-read", "clipboard-write"])
+                sent: list[str] = []
+                page.on("request", lambda r: sent.append(r.url) if not r.url.startswith(desk.url.split("?")[0]) else None)
+                await page.goto(desk.url)
+                await page.wait_for_function("document.getElementById('mine-count').textContent === '(10)'")
+                seen = {"hidden_on_openings": await page.locator("#app-groups").is_hidden()}
+                await page.click("[data-filter=mine]")
+                await page.wait_for_selector("#app-groups:not([hidden]) button")
+                seen["bar"] = " ".join((await page.inner_text("#app-groups")).split())
+                await page.click("[data-app-group=interviews]")
+                await page.wait_for_selector("[data-app-group=interviews][aria-pressed=true]")
+                seen["interviews"] = await page.inner_text("#rows")
+                seen["interview_preps"] = await page.locator("#rows [data-act=prep]").count()
+                talk = page.locator("#rows li", has_text="Talk Fab")
+                seen["heard"] = " ".join((await talk.locator(".heard").inner_text()).split())
+                seen["heard_tip"] = await talk.locator(".heard").get_attribute("title")
+                await talk.locator("[data-act=prep]").click()
+                await page.wait_for_function("document.getElementById('toast').textContent.includes('Copied')")
+                seen["toast"] = await page.inner_text("#toast")
+                seen["copied"] = await page.evaluate("navigator.clipboard.readText()")
+                await page.locator("#rows li", has_text="Test Fab").locator("[data-act=prep]").click()
+                await page.wait_for_function("async () => (await navigator.clipboard.readText()).includes('Test Fab')")
+                seen["copied_test"] = await page.evaluate("navigator.clipboard.readText()")
+                await page.click("[data-app-group=heard]")
+                await page.wait_for_selector("[data-app-group=heard][aria-pressed=true]")
+                seen["heard_rows"] = await page.inner_text("#rows")
+                seen["heard_preps"] = [await page.locator("#rows li", has_text=c).locator("[data-act=prep]").count()
+                                       for c in ("Quiz Fab", "Ack Fab")]
+                await page.click("[data-app-group=waiting]")
+                await page.wait_for_selector("[data-app-group=waiting][aria-pressed=true]")
+                seen["waiting"] = await page.inner_text("#rows")
+                seen["quiet"] = " ".join((await page.inner_text("#rows li:has-text('Quiet Fab')")).split())
+                seen["waiting_preps"] = await page.locator("#rows [data-act=prep]").count()
+                await page.reload()
+                await page.wait_for_function("document.getElementById('mine-count').textContent === '(10)'")
+                await page.click("[data-filter=mine]")
+                await page.wait_for_selector("#app-groups:not([hidden]) button")
+                seen["kept"] = await page.get_attribute("[data-app-group=waiting]", "aria-pressed")
+                seen["kept_rows"] = await page.inner_text("#rows")
+                await page.set_viewport_size({"width": 390, "height": 900})
+                seen["sizes"] = await page.evaluate("() => [document.documentElement.scrollWidth, "
+                                                    "document.documentElement.clientWidth]")
+                await page.click("[data-filter=recommended]")
+                seen["hidden_again"] = await page.locator("#app-groups").is_hidden()
+                seen["sent"] = sent
+                await browser.close()
+                return seen
+        finally:
+            await desk.stop()
+
+    seen = run(go())
+    assert seen["hidden_on_openings"] and seen["hidden_again"], seen
+    assert seen["bar"] == "All 10 Waiting 3, 1 to follow up Heard back 2 Interviews 3 Closed 2", seen["bar"]
+    interviews = seen["interviews"]
+    assert all(c in interviews for c in ("Talk Fab", "Test Fab", "Offer Fab")) and "Quiet Fab" not in interviews, interviews
+    assert seen["interview_preps"] == 3, seen
+    assert seen["heard"] == "Heard 2026-10-06: interview", seen["heard"]
+    assert seen["heard_tip"] == "Phone screen request, reply with availability (2 emails logged)", seen["heard_tip"]
+    assert seen["toast"] == "Copied: paste it to Claude", seen["toast"]
+    assert seen["copied"] == (f"Prep me for my interview: job {ids['Talk Fab']}, Technician at Talk Fab "
+                              "(use interview-prep)"), seen["copied"]
+    assert seen["copied_test"] == (f"Prep me for my assessment: job {ids['Test Fab']}, Technician at Test Fab "
+                                   "(use interview-prep)"), seen["copied_test"]
+    assert "Quiz Fab" in seen["heard_rows"] and "Heard 2026-09-21: confirmation" in seen["heard_rows"], seen["heard_rows"]
+    assert seen["heard_preps"] == [1, 0], seen
+    waiting = seen["waiting"]
+    assert all(c in waiting for c in ("Quiet Fab", "Fresh Fab", "Ready Fab")) and "Ack Fab" not in waiting, waiting
+    assert "Follow up? Due 2026-10-11" in seen["quiet"] and "No reply yet" in seen["quiet"], seen["quiet"]
+    assert waiting.count("Follow up?") == 1 and seen["waiting_preps"] == 0, waiting
+    assert seen["kept"] == "true" and "Quiet Fab" in seen["kept_rows"] and "Talk Fab" not in seen["kept_rows"], seen
+    assert seen["sizes"][0] <= seen["sizes"][1], seen["sizes"]
+    assert seen["sent"] == [], seen["sent"]  # (nothing went anywhere but the desk)

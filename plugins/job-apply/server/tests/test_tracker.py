@@ -1,3 +1,4 @@
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -209,3 +210,97 @@ def test_two_processes_share_the_tracker_without_locking_each_other_out(tmp_path
     finally:
         first.close()
         second.close()
+
+
+# ------------------------------------------------------------- after submit: last heard, follow-up, groups
+def _applied(t, name: str, applied_at: str, status: str = "applied") -> int:
+    """A job at `status`, applied to at `applied_at` (the tracker's own form: UTC, to the second)."""
+    job, _ = t.upsert({"url": f"https://example.com/jobs/{name}", "title": "Technician", "company": name})
+    t.update(job["id"], status=status)
+    t.conn.execute("UPDATE jobs SET applied_at = ? WHERE id = ?", (applied_at, job["id"]))
+    t.conn.commit()
+    return job["id"]
+
+
+def test_last_heard_is_each_jobs_newest_email_read_in_one_query(job_apply_home):
+    """The code review's worth building 7 (after submit): each job's newest logged email (its category, when it came,
+    that day and its one-line summary) and how many are logged for it, for every job in one query (not one a job).
+    Newest is by when it came, not when it was logged: a newsletter logged late isn't news after the interview, and
+    received_at is as Claude wrote it (a date, an ISO time, an email's Date header). A blank received_at is the time it
+    was logged; a job with no email isn't there."""
+    t = Tracker()
+    talk, rejected, quiet, unsaid = (_applied(t, n, "2026-09-28T15:00:00+00:00") for n in ("Talk", "No", "Quiet", "Unsaid"))
+    t.log_email(talk, "t-1", "confirmation", "We received your application", "2026-09-29")
+    t.log_email(talk, "t-2", "interview", "Phone screen request, reply with availability", "2026-10-06T16:30:00Z")
+    t.log_email(talk, "t-0", "other", "Talent community newsletter", "Wed, 30 Sep 2026 09:00:00 -0700")
+    t.log_email(rejected, "n-1", "confirmation", "Received", "2026-10-01")
+    t.log_email(rejected, "n-2", "rejection", "Not moving forward", "2026-10-03")
+    t.log_email(unsaid, "u-1", "confirmation", "Thanks for applying")  # (no received_at given)
+    logged = t.conn.execute("SELECT logged_at FROM emails WHERE thread_id = 'u-1'").fetchone()[0]
+
+    asked: list[str] = []
+    t.conn.set_trace_callback(asked.append)
+    try:
+        heard = t.last_heard()
+    finally:
+        t.conn.set_trace_callback(None)
+    assert len(asked) == 1 and asked[0].lstrip().upper().startswith("SELECT"), asked
+    assert heard[talk] == {"category": "interview", "received_at": "2026-10-06T16:30:00Z", "day": "2026-10-06",
+                           "summary": "Phone screen request, reply with availability", "emails": 3}, heard[talk]
+    assert (heard[rejected]["category"], heard[rejected]["day"], heard[rejected]["emails"]) == ("rejection", "2026-10-03",
+                                                                                                  2), heard[rejected]
+    assert heard[unsaid] == {"category": "confirmation", "received_at": logged, "day": logged[:10],
+                             "summary": "Thanks for applying", "emails": 1}, heard[unsaid]
+    assert quiet not in heard and set(heard) == {talk, rejected, unsaid}
+    t.close()
+
+
+NOW = datetime(2026, 10, 17, 12, 0, tzinfo=timezone.utc)
+
+
+def test_a_follow_up_is_due_once_an_application_has_waited_its_days_with_no_reply(job_apply_home):
+    """An application applied to settings.follow_up_days days ago or more (10 by default), with no email logged for it,
+    is due a follow-up from the day those days ran out; one that hasn't waited that long isn't yet. Any email counts as
+    heard, a "we received your application" too (and one logged before it was marked applied: logging it is what marked
+    it). One interviewing, with an offer, rejected or withdrawn is never due, nor one not sent in yet. Each falls in one
+    group: waiting, heard (an email came and it's no further on), interviews or closed."""
+    from job_apply.tracker import standing
+
+    t = Tracker()
+    due = _applied(t, "Due", "2026-10-05T12:00:00+00:00")  # 12 days ago
+    edge = _applied(t, "Edge", "2026-10-07T12:00:00+00:00")  # 10 days ago to the minute: due today
+    early = _applied(t, "Early", "2026-10-08T09:00:00+00:00")  # 9 days ago
+    acked = _applied(t, "Acked", "2026-09-01T12:00:00+00:00")
+    t.log_email(acked, "a-1", "confirmation", "We received your application", "2026-09-01")
+    talking = _applied(t, "Talking", "2026-09-01T12:00:00+00:00", status="interviewing")
+    offered = _applied(t, "Offered", "2026-09-01T12:00:00+00:00", status="offer")
+    closed = [_applied(t, n, "2026-09-01T12:00:00+00:00", status=n.lower()) for n in ("Rejected", "Withdrawn")]
+    ready = _applied(t, "Ready", "", status="ready_to_submit")
+    heard = t.last_heard()
+
+    def stands(job_id, days=10):
+        return standing(t.get(job_id), heard.get(job_id), days, now=NOW)
+
+    assert stands(due) == {"last_heard": None, "emails": 0, "follow_up_due": "2026-10-15", "group": "waiting"}
+    assert stands(edge)["follow_up_due"] == "2026-10-17"
+    assert stands(early) == {"last_heard": None, "emails": 0, "follow_up_due": None, "group": "waiting"}
+    assert stands(acked) == {"last_heard": {"category": "confirmation", "received_at": "2026-09-01", "day": "2026-09-01",
+                                            "summary": "We received your application"},
+                             "emails": 1, "follow_up_due": None, "group": "heard"}
+    assert [(stands(j)["follow_up_due"], stands(j)["group"]) for j in (talking, offered, *closed, ready)] == [
+        (None, "interviews"), (None, "interviews"), (None, "closed"), (None, "closed"), (None, "waiting")]
+    # the person's own number of days
+    assert stands(due, days=12)["follow_up_due"] == "2026-10-17" and stands(due, days=13)["follow_up_due"] is None
+    assert stands(early, days=7)["follow_up_due"] == "2026-10-15"
+    # a confirmation logged first, which is what marked the job applied (its applied_at the moment it was logged)
+    first, _ = t.upsert({"url": "https://example.com/jobs/first", "title": "Technician", "company": "First"})
+    t.update(first["id"], status="ready_to_submit")
+    t.log_email(first["id"], "f-1", "confirmation", "Received", "2026-09-01")
+    assert t.get(first["id"])["status"] == "applied"
+    later = datetime.now(timezone.utc) + timedelta(days=60)
+    assert standing(t.get(first["id"]), t.last_heard()[first["id"]], 10, now=later)["follow_up_due"] is None
+    assert standing(t.get(first["id"]), None, 10, now=later)["follow_up_due"] is not None  # (with none logged: due)
+    # an applied_at changed by hand: one past the calendar's end, or words, is never due (and breaks nothing)
+    for said in ("9999-12-31T00:00:00+00:00", "last week", ""):
+        assert standing({"status": "applied", "applied_at": said}, None, 10, now=NOW)["follow_up_due"] is None, said
+    t.close()

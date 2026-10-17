@@ -37,6 +37,7 @@ from .postings import FetchError, Posting, fetch_posting, finalize, parse_html
 from .recommend import recommend, score_listing
 from .search import (MAX_ALTERNATIVES, alternatives, load_companies, own_companies_path, search_area,
                      set_search_area)
+from .tracker import APPLICATION_STATUSES, standing
 from .updates import UpdateCheck
 
 PAGE = Path(__file__).resolve().parent / "static" / "desk.html"
@@ -771,8 +772,11 @@ class Desk:
                 "handled": str(item.get("company") or "").strip().casefold() in handled,
             })
         tracked = t.list(limit=300)
-        # what the person applied to, and where each stands (the page's My applications)
-        applications = [{k: j.get(k) for k in ("id", "title", "company", "url", "status", "applied_at", "updated_at")}
+        # what the person applied to, and where each stands (the page's My applications): the newest email logged for
+        # it, how many there are, whether it's time to follow up, and its group
+        heard = t.last_heard()
+        applications = [{**{k: j.get(k) for k in ("id", "title", "company", "url", "status", "applied_at", "updated_at")},
+                         **standing(j, heard.get(j["id"]), settings.follow_up_days)}
                         for j in tracked if j["status"] in APPLICATION_STATUSES]
         # jobs added another way (Claude from Indeed or LinkedIn, or by hand) and not finished yet
         for brief in tracked[:200]:
@@ -802,7 +806,8 @@ class Desk:
                          "manage_accounts_chosen": settings.manage_accounts_chosen,
                          "auto_submit": self.applier.auto_submit, "tailor_resumes": self.applier.tailor,
                          "handled_only": self.handled_only, "troubleshoot": self.troubleshoot,
-                         "auto_search": self.auto_search, "jobs_at_once": self.applier.at_once()},
+                         "auto_search": self.auto_search, "jobs_at_once": self.applier.at_once(),
+                         "follow_up_days": settings.follow_up_days},
             "tailoring": len(self.applier.tailoring()),
             # saved or not, never the value
             "passwords": {name.removesuffix("_password"): saved for name, saved in
@@ -834,10 +839,6 @@ class Desk:
 # job systems with no saved password of their own that email a sign-up code or link (Oracle Recruiting's codes), beside
 # the ones the desk keeps a password for, whose accounts are made with an emailed link or code
 MAILS_CODES = {"oracle_hcm"}
-
-
-# a job the person sent in (or is about to): listed under My applications with where it stands
-APPLICATION_STATUSES = ("ready_to_submit", "applied", "interviewing", "offer", "rejected", "withdrawn")
 
 
 _UNREAD = object()  # (a profile.yaml that doesn't read just now)
