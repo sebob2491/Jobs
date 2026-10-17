@@ -5724,6 +5724,44 @@ def test_an_emailed_code_or_link_is_read_from_the_inbox(srv, monkeypatch, query)
     assert any("watching your inbox" in line for line in r.log), r.log
 
 
+def test_a_job_past_its_emailed_code_carries_on_with_the_queue_paused(srv, monkeypatch):
+    """Issue #112, note 43 (Oracle, 0.3.194): the desk entered the emailed code and pressed Verify, and the job dropped
+    back to "queued" for good, its tab left half-filled on the application's first section, no card for it. The job
+    held the queue for its code; put back in it once past the code, it waited as any new start does (Pause queue on).
+    The job under way carries on after its code, Pause queue or not: only new jobs wait on Resume queue."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "MAIL_POLL_SECONDS", 0)
+    monkeypatch.setenv("JOB_APPLY_SECRET_EMAIL_PASSWORD", "an-app-password")
+    monkeypatch.setattr(pipeline.mailbox, "imap_host", lambda address: "imap.example.com")
+    job = srv.add_job(url=fixture_url("site/verify-email.html") + "?code&split", title="FSE", company="Example Fab")["job"]
+    other = srv.add_job(url=fixture_url("site/late-form.html"), title="ET", company="Example Semi")["job"]
+    applier = Applier(srv)
+    arrived = []  # the code's in the inbox once the queue is paused
+
+    def inbox(address, password, since, senders, want, allowed_link, before=None, look_back=None, others=None):
+        return pipeline.mailbox.Found("code", "123456", "careers.example.com", time.time()) if arrived else None
+
+    monkeypatch.setattr(pipeline.mailbox, "search", inbox)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            applier.enqueue(other["id"])
+            await until(lambda: r.need == "email_code", about=state(r))
+            applier.pause_queue()
+            arrived.append(True)
+            await until(lambda: r.need == "questions" or r.status == "ready", about=state(r))
+            return r, applier.runs[other["id"]]
+        finally:
+            await applier.stop()
+
+    r, waiting = run(go())
+    assert "pressed “Verify”" in r.log, r.log
+    assert any(line.startswith("filled") for line in r.log[r.log.index("pressed “Verify”"):]), r.log  # (the page after)
+    assert waiting.status == "queued"  # (a new job still waits for Resume queue)
+
+
 def test_a_code_that_comes_after_the_queue_went_on_is_still_used(srv, monkeypatch):
     """No one at the browser: after a while the other jobs go ahead without the one waiting on
     its emailed code. A code that arrives after that is still read from the inbox, between
@@ -5750,6 +5788,42 @@ def test_a_code_that_comes_after_the_queue_went_on_is_still_used(srv, monkeypatc
             second = applier.enqueue(other["id"])
             await until(lambda: first.left, about=state(first))  # the queue went on without it
             await until(lambda: second.status not in ("queued", "running"), about=state(second))
+            sent["yet"] = True  # the email arrives now
+            await until(lambda: first.need == "questions" or first.status == "ready", about=state(first))
+            return first
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert "entered the code from your email (sent from careers.example.com)" in r.log, r.log
+
+
+def test_a_job_the_queue_went_on_without_carries_on_past_its_code_with_the_queue_paused(srv, monkeypatch):
+    """The re-check of 0.3.196 (issue #112, note 43's other way in): a job the queue went on without, its code put in
+    between jobs while Pause queue is on, waited as "queued" with no card. It was under way: it carries on."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "HANDS_ON_IDLE", 1)
+    monkeypatch.setattr(pipeline, "MAIL_POLL_SECONDS", 0)
+    monkeypatch.setenv("JOB_APPLY_SECRET_EMAIL_PASSWORD", "an-app-password")
+    monkeypatch.setattr(pipeline.mailbox, "imap_host", lambda address: "imap.example.com")
+    waiting = srv.add_job(url=fixture_url("site/verify-email.html") + "?code", title="FSE", company="Example Fab")["job"]
+    other = srv.add_job(url=fixture_url("generic_form.html"), title="Technician", company="Example Litho")["job"]
+    applier = Applier(srv)
+    sent = {"yet": False}
+
+    def inbox(address, password, since, senders, want, allowed_link, before=None, look_back=None, others=None):
+        return pipeline.mailbox.Found("code", "123456", "careers.example.com", time.time()) if sent["yet"] else None
+
+    monkeypatch.setattr(pipeline.mailbox, "search", inbox)
+
+    async def go():
+        applier.start()
+        try:
+            first = applier.enqueue(waiting["id"])
+            second = applier.enqueue(other["id"])
+            await until(lambda: first.left, about=state(first))  # the queue went on without it
+            await until(lambda: second.status not in ("queued", "running"), about=state(second))
+            applier.pause_queue()
             sent["yet"] = True  # the email arrives now
             await until(lambda: first.need == "questions" or first.status == "ready", about=state(first))
             return first
@@ -7824,6 +7898,36 @@ def test_a_banners_other_ways_to_decline_count_too():
     for words, in_banner in (("No thanks", False), ("Deny", False), ("Accept all", True), ("Got it", True),
                              ("Manage preferences", True), ("Cookie settings", True)):
         assert not declines_cookies(words, in_banner), words
+
+
+def test_a_country_the_site_preset_is_the_profiles_and_its_boxes_are_read_again(srv, monkeypatch):
+    """Onto Innovation's Workday (the live check's run 118, Oct 16) opened My Information on Country = Mexico and its phone
+    code on Mexico (+52): the desk left them as answered, asked the person Mexico's "Father's Family Name", and the
+    profile's Arizona number was refused as not valid for that region. The profile's country goes in, and the page,
+    whose boxes Workday relabels for it, is read and filled again: Last Name from the profile, no question left."""
+    from job_apply import server
+
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    server._PRESETS_SEEN.clear()
+    job = srv.add_job(url=fixture_url("site/workday-country-preset.html"), title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert r.status == "ready", (r.need, r.reason, r.questions, r.log)
+    assert r.url.endswith("review.html") and not any("Family" in str(q.get("label")) for q in r.questions), r.log
+    # opened again in a new tab (its first closed unsaved), the site's preset is the site's again (the review's)
+    server._PRESETS_SEEN[job["id"]] = {"country|"}
+    server.forget_presets(job["id"])
+    assert job["id"] not in server._PRESETS_SEEN
 
 
 def test_a_form_still_being_drawn_is_waited_for(srv, monkeypatch):

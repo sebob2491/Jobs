@@ -10,6 +10,7 @@ from job_apply.autofill import (
     plan_autofill,
     polarity,
     resolve_field,
+    same_country,
 )
 from job_apply.config import Profile
 
@@ -1531,6 +1532,56 @@ def test_a_list_on_its_first_choice_with_no_empty_one_is_the_sites_and_takes_the
     assert [t["id"] for t in plan_autofill([gender], decliner, {}, overwrite=True)["to_fill"]] == ["g"]
 
 
+def test_a_country_list_the_site_preset_to_another_country_takes_the_profiles():
+    """Onto Innovation's Workday (run 118) opened on Mexico and Mexico (+52) for a profile in the United States: read
+    as answered, they stayed, and the phone number was refused. A country list (the address's, the phone's dial code)
+    the site preset to another country takes the profile's, once (judged); the same country however it's written
+    stays; a profile with no country, a country of citizenship, or a list judged once already: as before."""
+    prof = Profile({"personal": {"phone": "480-555-0199", "phone_country_code": "+1",
+                                 "address": {"country": "United States", "city": "Chandler"}}})
+    country = {"id": "c", "kind": "listbox", "label": "Country*", "value": "Mexico", "required": True}
+    code = {"id": "p", "kind": "combobox", "label": "Country Phone Code*", "value": "Mexico (+52)", "required": True}
+    plan = plan_autofill([country, code], prof, {})
+    assert [(t["id"], t["rule"]) for t in plan["to_fill"]] == [("c", "country"), ("p", "phone_code")], plan
+    assert plan["judged"] == ["c", "p"]
+    same = [{**country, "value": "United States of America"}, {**code, "value": "USA +1"},
+            {**country, "id": "r", "label": "Country/Region", "value": "United States"}]
+    plan = plan_autofill(same, prof, {})
+    assert plan["to_fill"] == [] and plan["already_filled"] == ["c", "p", "r"] and plan["judged"] == ["c", "p", "r"]
+    assert plan_autofill([country, code], Profile({"personal": {"phone": "480-555-0199"}}), {})["to_fill"] == []
+    citizenship = {**country, "id": "z", "label": "Country of Citizenship"}
+    assert plan_autofill([citizenship], prof, {})["already_filled"] == ["z"]
+    assert plan_autofill([{**country, "judged": True}], prof, {})["already_filled"] == ["c"]
+    assert not same_country("Canada (+1)", "United States of America (+1)")
+    assert not same_country("Mexico (+52)", "United States of America (+1)")
+    # (the review of 0.3.196) only the person's own address or phone: never a past job's, a school's or another address's
+    for section in ("Work Experience", "Education", "Previous Address", "Mailing Address", "Licenses 1"):
+        assert plan_autofill([{**country, "section": section}], prof, {})["to_fill"] == [], section
+    for section in ("Address", "Phone", "My Information"):
+        assert plan_autofill([{**country, "section": section}], prof, {})["to_fill"], section
+    # a select with an empty choice to start on: someone picked what it shows
+    picked = {"id": "s", "kind": "select", "label": "Country", "value": "Canada", "options": ["Select...", "Canada", "United States"]}
+    assert plan_autofill([picked], prof, {})["to_fill"] == []
+    # once a job: a list looked at already (by label and section) is the person's since
+    plan = plan_autofill([country], prof, {})
+    assert plan["presets"] == {"c": "country|"}
+    assert plan_autofill([country], prof, {}, presets_done={"country|"})["already_filled"] == ["c"]
+    # a dial code's list by its code: +52 for a +52 number stays, as does Canada's +1 for a +1 number; a code alone too
+    mexican = Profile({"personal": {"phone": "55 1234 5678", "phone_country_code": "+52",
+                                    "address": {"country": "United States", "city": "Chandler"}}})
+    assert plan_autofill([code], mexican, {})["to_fill"] == []
+    # (the re-check) its choices read too: Mexico (+52) is the profile's code, whatever the address's country picks
+    codes = ["Canada (+1)", "Mexico (+52)", "United States of America (+1)"]
+    assert plan_autofill([{**code, "options": codes}], mexican, {})["to_fill"] == []
+    assert [t["id"] for t in plan_autofill([{**code, "options": codes}], prof, {})["to_fill"]] == ["p"]
+    assert same_country("+1", "United States of America (+1)") and same_country("United States (1)", "USA +1")
+    # (the re-check) +1 is several countries': a US number under Canada (+1) is refused for its region, so it's taken
+    assert [t["id"] for t in plan_autofill([{**code, "value": "Canada (+1)"}], prof, {})["to_fill"]] == ["p"]
+    # nor a job's location, a place they'd like to work, or another address
+    for section in ("Preferred Location", "Work Location", "Other Address", "Temporary Address"):
+        assert plan_autofill([{**country, "section": section}], prof, {})["to_fill"] == [], section
+
+
 def test_a_list_the_page_marks_invalid_takes_the_profiles_answer_and_a_required_self_id_is_answered():
     """Live run 13 (Oct 2026). Northrop's Eightfold drew its phone "Country code" on Mexico (+52) and marked it
     invalid ("Enter a valid phone number and country code"); the desk left it, as a box with a value. A list
@@ -1547,8 +1598,11 @@ def test_a_list_the_page_marks_invalid_takes_the_profiles_answer_and_a_required_
     plan = plan_autofill([code, birth], p, {}, redo={"c"})  # (the review step's, once a job)
     got = {t["id"]: t["value"] for t in plan["to_fill"]}
     assert set(got) == {"c", "b"} and got["b"] == "Male", plan
-    # never on an ordinary pass (the person may have chosen it), nor for a box not named
-    assert plan_autofill([code], p, {})["already_filled"] == ["c"]
+    # on an ordinary pass too, since run 118 (Onto's Workday, whose phone code on Mexico wasn't marked invalid): a
+    # country the site preset to another than the profile's is the site's, taken once (judged: a pick since is the
+    # person's, test_a_country_list_the_site_preset_to_another_country_takes_the_profiles)
+    assert [t["id"] for t in plan_autofill([code], p, {})["to_fill"]] == ["c"]
+    assert plan_autofill([{**code, "judged": True}], p, {})["already_filled"] == ["c"]
     # a decline in the profile never gets the list's own "Not Specified" placeholder back: it's asked
     declined = Profile({"eeo": {"gender": "I choose not to disclose"}})
     plan = plan_autofill([birth], declined, {})

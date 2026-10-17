@@ -1,0 +1,84 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Workday-style My Information</title>
+<style>
+  ul[role=listbox] { border: 1px solid #999; list-style: none; padding: 0; margin: 0; }
+  ul[role=listbox][hidden] { display: none; }
+  li[role=option] { padding: 2px 6px; }
+</style>
+</head>
+<body>
+<!-- like Onto Innovation's Workday (the live check's run 118, Oct 16): My Information opened on Country = Mexico, its
+     phone code on Mexico (+52), with Mexico's name boxes ("Father's Family Name"). Another country picked, Workday keeps
+     the same boxes and relabels them (Last Name). Save and Continue takes a +1 number only with a +1 code -->
+<div data-automation-id="progressBarActiveStep">My Information</div>
+<h2>My Information</h2>
+<div data-automation-id="formField-country">
+  <label id="country-label">Country<abbr title="required">*</abbr></label>
+  <button type="button" id="country" aria-haspopup="listbox" data-value="Mexico">Mexico</button>
+</div>
+<div data-automation-id="formField-givenName">
+  <label for="given" id="given-label">Given Name(s)<abbr title="required">*</abbr></label>
+  <input id="given" type="text">
+</div>
+<div data-automation-id="formField-familyName">
+  <label for="family" id="family-label">Father's Family Name<abbr title="required">*</abbr></label>
+  <input id="family" type="text">
+</div>
+<div data-automation-id="formField-countryPhoneCode">
+  <label id="cpc-label">Country Phone Code<abbr title="required">*</abbr></label>
+  <button type="button" id="cpc" aria-haspopup="listbox" data-value="Mexico (+52)">Mexico (+52)</button>
+</div>
+<div data-automation-id="formField-phoneNumber">
+  <label for="phone">Phone Number<abbr title="required">*</abbr></label>
+  <input id="phone" type="text">
+</div>
+<div id="error" role="alert"></div>
+<ul role="listbox" id="popup" hidden></ul>
+<button type="button" data-automation-id="pageFooterNextButton" id="next">Save and Continue</button>
+<script>
+  const lists = {
+    country: ['Canada', 'Mexico', 'United States of America'],
+    cpc: ['Canada (+1)', 'Mexico (+52)', 'United States of America (+1)'],
+  };
+  const popup = document.getElementById('popup');
+  function relabel(country) {
+    const mx = country === 'Mexico';
+    document.getElementById('given-label').firstChild.textContent = mx ? 'Given Name(s)' : 'First Name';
+    document.getElementById('family-label').firstChild.textContent = mx ? "Father's Family Name" : 'Last Name';
+  }
+  for (const id of Object.keys(lists)) {
+    const btn = document.getElementById(id);
+    btn.addEventListener('click', () => setTimeout(() => {
+      popup.innerHTML = '';
+      for (const it of lists[id]) {
+        const li = document.createElement('li');
+        li.setAttribute('role', 'option');
+        li.textContent = it;
+        li.addEventListener('click', () => {
+          btn.textContent = btn.dataset.value = it;
+          popup.hidden = true;
+          if (id === 'country') relabel(it);
+        });
+        popup.appendChild(li);
+      }
+      popup.hidden = false;
+      btn.after(popup);
+    }, 100));
+  }
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') popup.hidden = true; });
+  document.getElementById('next').addEventListener('click', () => {
+    const v = (id) => document.getElementById(id).value.trim();
+    const code = document.getElementById('cpc').dataset.value;
+    if (!v('given') || !v('family') || !v('phone')) {
+      document.getElementById('error').textContent = 'Error: required fields are empty';
+    } else if (!code.includes('+1')) {
+      document.getElementById('error').textContent =
+        'Error: Enter a phone number in the valid format: The number is not valid for this region.';
+    } else {
+      location.href = 'review.html';
+    }
+  });
+</script>
+</body>
+</html>

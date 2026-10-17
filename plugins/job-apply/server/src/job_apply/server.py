@@ -794,6 +794,18 @@ SCHOOL_NOT_LISTED = ("Other", "Not Listed")
 _NOT_IN_LIST = re.compile(r"doesn't match any (suggestion|option)|nothing in its list matched")
 
 
+# The country lists each job's pages showed on a country the site preset (autofill.preset_country), looked at once a job:
+# a pick since is the person's, however the page draws the list again (a mark on the element goes with it: the review of
+# 0.3.196). By job (or page, filled with none), by autofill.preset_key.
+_PRESETS_SEEN: dict[Any, set[str]] = {}
+
+
+def forget_presets(job_id: int) -> None:
+    """The job's application opened again in a new tab: a fresh form, whose preset country lists are the site's again
+    (the review of 0.3.196: closed unsaved and opened again, Workday showed Mexico again, and it stayed)."""
+    _PRESETS_SEEN.pop(job_id, None)
+
+
 @tool(drives=True)
 async def autofill(job_id: int | None = None, overwrite: bool = False, redo: list[str] | None = None) -> dict[str, Any]:
     """Fill every field on the current page that the profile answers with confidence
@@ -803,7 +815,8 @@ async def autofill(job_id: int | None = None, overwrite: bool = False, redo: lis
     job = _job_here(job_id) if (job_id is not None or browser.current_job_id is not None) else {}
     data = await browser.inspect(include_dropdown_options=True)
     prof = config.Profile.load()
-    plan = plan_autofill(data["fields"], prof, job, overwrite=overwrite, redo=set(redo or []))
+    seen = _PRESETS_SEEN.setdefault(job.get("id") or data.get("url"), set())
+    plan = plan_autofill(data["fields"], prof, job, overwrite=overwrite, redo=set(redo or []), presets_done=seen)
     results = await browser.fill([{"id": f["id"], "value": f["value"], "names": is_name_rule(f.get("rule") or ""),
                                    "near": place_words(f.get("rule") or "", prof),
                                    "pick_only": is_eeo_rule(f.get("rule") or ""),
@@ -814,6 +827,10 @@ async def autofill(job_id: int | None = None, overwrite: bool = False, redo: lis
         went, filling = {r["id"] for r in results if r.get("ok")}, {f["id"] for f in plan["to_fill"]}
         await browser.mark_judged([i for i in plan["judged"] if i not in filling],
                                   [i for i in plan["judged"] if i in filling and i in went])
+    # a preset country left as it was (the profile's already) is looked at; one corrected, once its fill went in
+    presets = plan.get("presets") or {}
+    corrected = [i for i in presets if i in {f["id"] for f in plan["to_fill"]} and i in {r["id"] for r in results if r.get("ok")}]
+    seen.update(key for i, key in presets.items() if i in corrected or i not in {f["id"] for f in plan["to_fill"]})
     by_id = {f["id"]: f for f in plan["to_fill"]}
     fields = {f["id"]: f for f in data["fields"]}
     # an answer that matched only a group (Robert Half's "Website / Job Board Posting", holding
@@ -868,6 +885,7 @@ async def autofill(job_id: int | None = None, overwrite: bool = False, redo: lis
         "failed": failed,
         **({"debug_snapshot": snapshot} if snapshot else {}),
         "needs_input": plan["needs_input"],
+        **({"countries_corrected": corrected} if corrected else {}),  # (the page may now draw that country's boxes)
         "already_filled": len(plan["already_filled"]),
         "errors": after["errors"],
         "actions": [a for a in after["actions"] if not a.get("disabled")][:25],

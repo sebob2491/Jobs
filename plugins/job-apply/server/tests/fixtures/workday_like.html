@@ -63,6 +63,11 @@
     popup.hidden = false;
     anchor.after(popup);
   }
+  // ?preset: the site opens its phone code on a country no one chose (Onto Innovation's Workday on Mexico, run 118)
+  if (new URLSearchParams(location.search).has('preset')) {
+    const cpc = document.getElementById('cpc');
+    cpc.textContent = cpc.dataset.value = 'Mexico (+52)';
+  }
   for (const id of Object.keys(lists)) {
     const btn = document.getElementById(id);
     btn.addEventListener('click', () => {

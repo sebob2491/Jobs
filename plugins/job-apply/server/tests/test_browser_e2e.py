@@ -95,6 +95,32 @@ def test_workday_style_widgets(srv):
     assert run(srv.click("Submit"))["clicked"] is False
 
 
+def test_a_country_the_site_preset_takes_the_profiles_once(srv):
+    """Onto Innovation's Workday (the live check's run 118, Oct 16) opened its application on Mexico, its phone code
+    on Mexico (+52), and the desk left them as answered: the profile's Arizona number was then refused as "not valid
+    for this region". A country list the site preset to another country than the profile's takes the profile's, once:
+    a pick of another since (the person's, while the desk waits) stays, the list drawn again or not."""
+    from job_apply import server
+
+    server._PRESETS_SEEN.clear()
+    run(srv.browser.goto(fixture_url("workday_like.html") + "?preset"))
+    assert by_label(run(srv.inspect_form(include_dropdown_options=False))["fields"], "country phone code")["value"] \
+        == "Mexico (+52)"
+    result = run(srv.autofill())
+    assert not result["failed"], result["failed"]
+    code = by_label(run(srv.inspect_form(include_dropdown_options=False))["fields"], "country phone code")
+    assert code["value"] == "United States of America (+1)" and code.get("judged"), code
+    # the person picks another: it stays
+    page = run(srv.browser.page())
+    # (drawn again, as a page may: a new element, without the desk's mark; the review of 0.3.196)
+    run(page.evaluate("() => { const b = document.getElementById('cpc'), n = b.cloneNode(false);"
+                      " n.textContent = n.dataset.value = 'Mexico (+52)'; n.removeAttribute('data-ja-default-judged');"
+                      " b.replaceWith(n); }"))
+    run(srv.autofill())
+    assert by_label(run(srv.inspect_form(include_dropdown_options=False))["fields"], "country phone code")["value"] \
+        == "Mexico (+52)"
+
+
 def test_a_dropdown_just_above_a_sticky_footer_is_picked_with_a_real_click(srv):
     """A Workday "Application Questions" page (live, Oct 2026): ten Yes/No dropdowns took their
     answers, but the last, a long sponsorship question with a note, sat just above the sticky
