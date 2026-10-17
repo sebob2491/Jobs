@@ -96,6 +96,29 @@ ATS_NAMES = {
 }
 
 
+# Job boards: sites that list other employers' postings. A posting saved from one and from the employer's own site is
+# one job in the tracker, the employer's site preferred (tracker.Tracker.upsert)
+JOB_BOARDS = {"indeed": "Indeed", "linkedin": "LinkedIn", "glassdoor": "Glassdoor", "ziprecruiter": "ZipRecruiter",
+              "monster": "Monster"}
+_BOARD_DOMAINS: list[tuple[str, tuple[str, ...]]] = [
+    ("glassdoor", ("glassdoor.com", "glassdoor.ca", "glassdoor.co.uk")),
+    ("ziprecruiter", ("ziprecruiter.com", "ziprecruiter.co.uk")),
+    ("monster", ("monster.com", "monster.ca", "monster.co.uk")),
+]
+
+
+def job_board(url: str | None) -> str | None:
+    """The job board an address is on (one of JOB_BOARDS), or None for an employer's own site or job system."""
+    shared = shared_system(url)
+    if shared in JOB_BOARDS:
+        return shared
+    host, _ = _host_and_path(url or "")
+    for board, domains in _BOARD_DOMAINS:
+        if any(host == d or host.endswith("." + d) for d in domains):
+            return board
+    return None
+
+
 def detect_ats(url: str | None) -> str:
     if not url:
         return "company_site"

@@ -340,6 +340,81 @@ def test_jobs_already_applied_to_are_never_queued_again(srv):
     assert desk.apply(urls=["javascript:alert(1)"], job_ids=[], submit=False) == ([], [])
 
 
+INDEED_JOB = "https://www.indeed.com/viewjob?jk=0a1b2c3d4e5f6a7b"
+INTEL_JOB = "https://intel.wd1.myworkdayjobs.com/External/job/US-Arizona-Chandler/Equipment-Technician_JR0286553"
+
+
+def test_a_posting_from_indeed_and_the_employers_site_is_one_row_also_on_indeed(srv):
+    """The code review's worth building 8: the same job saved from Indeed (by Claude) and found on the employer's site
+    (Find jobs) was two rows, and Apply could send two applications for it. It's one row, the employer's posting, which
+    says it's also on Indeed (Indeed's posting a link, in a tab of its own); its Apply makes them one job, applied for
+    on the employer's site."""
+    saved = srv.add_job(url=INDEED_JOB, title="Equipment Technician", company="Intel Corporation",
+                        location="Chandler, AZ", source="indeed")["job"]
+    desk = Desk(srv)
+    desk.applier.start = lambda: None
+    desk.search.update(status="done", at=time.time())
+    fit = {"score": 80, "reasons": ["title matches"], "concerns": [], "blocked": False, "recommended": True}
+    other = "https://careers.example-fab.example/jobs/2"
+    desk.listings = [{"url": INTEL_JOB, "title": "Equipment Technician", "company": "Intel",
+                      "location": "US-Arizona-Chandler", "ats": "workday", "fit": fit},
+                     {"url": other, "title": "Field Service Engineer", "company": "Example Fab",
+                      "location": "Phoenix, AZ", "fit": fit}]
+    rows = desk.state()["listings"]
+    assert [r["url"] for r in rows] == [INTEL_JOB, other]  # (the Indeed job isn't listed again)
+    assert rows[0]["job_id"] == saved["id"] and rows[0]["also_on"] == [{"site": "Indeed", "url": INDEED_JOB}]
+    assert rows[1]["job_id"] is None and rows[1]["also_on"] == []
+    assert desk.apply(urls=[INTEL_JOB], job_ids=[], submit=False) == ([saved["id"]], [])
+    job = srv.tracker().get(saved["id"])
+    assert (job["url"], job["ats"], len(srv.tracker().list())) == (INTEL_JOB, "workday", 1)
+    rows = desk.state()["listings"]
+    assert [(r["url"], r["job_id"]) for r in rows] == [(INTEL_JOB, saved["id"]), (other, None)]
+    assert rows[0]["also_on"] == [{"site": "Indeed", "url": INDEED_JOB}]
+    # applied to (on the employer's site): Indeed's posting, pasted or found again, is never queued
+    srv.update_job(saved["id"], status="applied")
+    assert desk.apply(urls=[INDEED_JOB], job_ids=[], submit=True) == ([], ["Equipment Technician"])
+
+    async def go():
+        srv.update_job(saved["id"], status="saved")
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with person_browser() as browser:
+                page = await browser.new_page()
+                await page.goto(desk.url)
+                row = page.locator("li.row", has_text="Equipment Technician")
+                await row.wait_for()
+                also = row.locator("a", has_text="Also on Indeed")
+                assert await also.get_attribute("href") == INDEED_JOB
+                assert await also.get_attribute("target") == "_blank"
+                assert await page.locator("li.row").count() == 2
+                await browser.close()
+        finally:
+            await desk.stop()
+
+    run(go())
+
+
+def test_a_pasted_indeed_link_for_a_job_saved_from_the_employers_site_makes_no_new_one(srv):
+    """Indeed's link to a job the tracker has from the employer's site, pasted on the desk: that job, ready for Apply on
+    the employer's site, Indeed's link kept as its alias. Never a second job, which Apply would send in again."""
+    own = srv.add_job(url=INTEL_JOB, title="Equipment Technician (JR0286553)", company="Intel",
+                      location="Chandler, AZ")["job"]
+    desk = Desk(srv)
+    desk.applier.start = lambda: None
+
+    async def fetched(url):
+        return Posting(url=url, title="Equipment Technician", company="Intel Corporation", location="Chandler, Arizona",
+                       description="Maintain 300mm tools. " * 20, ats="indeed", source="indeed")
+
+    desk.fetch = fetched
+    added = run(desk.add_links([INDEED_JOB + "&from=serp"]))
+    assert [(a["job_id"], a["url"]) for a in added] == [(own["id"], INTEL_JOB)]
+    jobs = srv.tracker().list()
+    assert [(j["id"], j["url"], j["apply_url"]) for j in jobs] == [(own["id"], INTEL_JOB, "")]
+    assert srv.tracker().find_by_url(INDEED_JOB)["id"] == own["id"]
+    assert [r["job_id"] for r in desk.state()["listings"]] == [own["id"]]
+
+
 def test_the_desk_searches_by_itself_only_with_its_switch_on_and_a_search_can_be_stopped(srv, monkeypatch):
     """Issue #112, note 44: the page searched by itself whenever the openings were 12 hours old, with no setting, and
     Pause queue didn't stop it. It searches only when Find jobs is pressed, unless "Search by itself every 12 hours"
@@ -2792,6 +2867,48 @@ def test_submit_for_me_goes_on_after_a_restart_only_while_it_is_still_on(srv):
         await third.applier.stop()
 
     run(go())
+
+
+def test_a_kept_queue_naming_a_job_made_one_with_another_goes_on_with_the_one_kept(srv):
+    """One posting saved twice before (from Indeed and from the employer's site) is one job once the tracker opens
+    after an update (Tracker._merge_copies), and the queue the desk kept may name the one gone. It never crashes: the
+    queue goes on with the job kept, once, and never with one applied to on Indeed; Submit for me only for one never
+    begun (begun on Indeed, it may have gone in there)."""
+    t = srv.tracker()
+
+    def older(url, status, company, title, source=""):  # (as a version before saved it)
+        with t._lock:
+            cur = t.conn.execute("INSERT INTO jobs (url, status, company, title, location, source, created_at, "
+                                 "updated_at) VALUES (?, ?, ?, ?, 'Chandler, AZ', ?, 'x', 'x')",
+                                 (url, status, company, title, source))
+            t.conn.commit()
+        return cur.lastrowid
+
+    intel_indeed = older(INDEED_JOB, "saved", "Intel Corporation", "Equipment Technician", "indeed")
+    intel = older(INTEL_JOB, "saved", "Intel", "Equipment Technician")
+    lam_indeed = older("https://www.indeed.com/viewjob?jk=1111111111111111", "applied", "Lam Research",
+                       "Field Service Engineer", "indeed")
+    lam = older("https://careers.lamresearch.com/careers/job/1", "saved", "Lam Research", "Field Service Engineer")
+    kla_indeed = older("https://www.indeed.com/viewjob?jk=2222222222222222", "in_progress", "KLA", "Technician",
+                       "indeed")
+    kla = older("https://kla.wd1.myworkdayjobs.com/Search/job/Chandler-AZ/Technician_1", "saved", "KLA", "Technician")
+    (other,) = _jobs(srv, 1)
+    _keep_queue([lam, intel, other, intel_indeed, kla], submit=True)
+    t.close()
+    srv._tracker = None  # (the update: the tracker opens again)
+
+    desk = Desk(srv)
+    desk.applier.auto_submit = True
+    desk.applier.restore()
+    q = desk.applier
+    try:
+        assert [j for _, j in q.tasks] == [intel_indeed, other, kla_indeed]
+        assert q.runs[intel_indeed].submit and q.runs[other].submit and not q.runs[kla_indeed].submit
+        assert not {intel, lam, lam_indeed, kla} & set(q.runs)
+        assert [e["id"] for e in _kept_queue()["jobs"]] == [intel_indeed, other, kla_indeed]
+        assert srv.tracker().get(intel) is None and srv.tracker().get(intel_indeed)["url"] == INTEL_JOB
+    finally:
+        run(q.stop())
 
 
 def test_a_queue_kept_long_ago_comes_back_paused_and_says_how_old_it_is(srv, monkeypatch):

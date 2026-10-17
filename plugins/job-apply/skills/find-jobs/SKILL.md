@@ -67,7 +67,10 @@ The goal is a short, deduplicated list of real openings saved to the tracker
    and ask them to paste the postings they like. Then run `ingest_job` on each.
 
 5. **Deduplicate and rank.** `list_jobs` shows what's already tracked. The tracker
-   also collapses repeated URLs. Rank by fit with the profile: title match,
+   also collapses repeated URLs, and keeps the same job from Indeed (or LinkedIn) and the
+   employer's own site as one job (same employer, title and city), applied for on the
+   employer's site, with the board's link kept as an alias. So save the employer's posting
+   of an Indeed job too: it doesn't add a job. Rank by fit with the profile: title match,
    location, hard requirements met. Roles that need a clearance, degree or citizenship
    the user doesn't have (and don't accept equivalent experience) go below the ranked
    list, each with its reason, as the Job Desk shows them under **All**: the user decides.

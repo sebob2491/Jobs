@@ -1691,10 +1691,18 @@ class Applier:
         self._save_queue()
 
     def _restore_job(self, entry: dict[str, Any]) -> None:
-        job_id = entry["id"]
+        job_id, t = entry["id"], self.srv.tracker()
+        into = t.merged_into(job_id) if t.get(job_id, with_description=False) is None else None
+        if into is not None:
+            # one posting saved twice (from Indeed and the employer's site, say), made one job as the tracker opened:
+            # the queue goes on with the job kept, once (never applied to again, as any job: below), and Submit for me
+            # only where that one was never begun (begun on the job board, it may have gone in there)
+            kept = t.get(into, with_description=False) or {}
+            job_id, entry = into, {**entry, "id": into, "submit": entry.get("submit") is True
+                                   and kept.get("status") == "saved"}
         if job_id in self.runs:  # (queued already, since the desk started)
             return
-        job = self.srv.tracker().get(job_id, with_description=False)
+        job = t.get(job_id, with_description=False)
         if job is None or job.get("status") in FINISHED or job.get("status") == "skipped":
             return
         pressed = entry.get("pressed") is True

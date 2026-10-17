@@ -768,12 +768,15 @@ function renderRows() {
     // skipped (here or before the desk restarted): Undo puts it back
     const undo = r.job_id != null && (r.status === "skipped" || (r.run && r.run.status === "skipped"))
       ? `<button class="link" data-job="${r.job_id}" data-job-act="unskip" title="Put this job back where it was before you skipped it">Undo</button>` : "";
+    // the same posting saved from a job board too: one row, applied for on the employer's site; the board's link here
+    const also = (r.also_on || []).map((a) => link(a.url, `Also on ${esc(a.site)}`, "also")).join(" · ");
     return {key: r.url, html: `<li class="row ${DONE.has(r.status) ? "done" : ""}">
       <input type="checkbox" data-pick="${esc(r.url)}" ${checked} ${done ? "disabled" : ""} aria-label="Select ${esc(r.title)}">
       <span class="score ${scoreClass(fit.score)}" title="How well it fits your profile, out of 100 (${RECOMMEND_AT} or more is recommended). The tags below say why.">${esc(fit.score)}</span>
       <div>${link(r.url, esc(r.title), "title")}
         <div class="meta">${[esc(r.company), r.location ? `<span title="${esc(r.location)}">${esc(places(r.location))}</span>` : "",
           r.posted ? `<span class="nowrap">${esc(shownDate(r.posted))}</span>` : ""].filter(Boolean).join(" · ")}</div>
+        ${also ? `<div class="meta also-on" title="The same posting, saved from a job board too. It's applied for on the employer's site.">${also}</div>` : ""}
         <div class="chips">${chips}</div></div>
       <div class="state">${statusPill(r)}${undo}</div></li>`};
   });
