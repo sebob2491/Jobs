@@ -2696,10 +2696,185 @@ def common_questions(prof: Profile) -> list[dict[str, Any]]:
             if q.get("answer") not in (None, "") or not profile_answers(q)]
 
 
+# The kinds of box a saved draft's answer is checked in against the profile's (plan_autofill's refresh): never a file (the
+# draft's upload stays), a password, a group of check boxes, a list of several choices, nor a search prompt (Workday's
+# School or Skills: a pick there adds to what it holds)
+_REFRESHED_KINDS = {"text", "textarea", "select", "radio_group", "listbox", "combobox", "checkbox"}
+
+
+# An answer that's a number written any way: a ZIP, a phone number, a salary ("$65,000"), a year
+_NUMBERISH = re.compile(r"[\s$€£+()#.,/-]*\d[\d\s$€£+()#.,/-]*[kK]?")
+# A phone number's country code before it ("+1 480-555-0123", "1-480-555-0123")
+_DIAL_PREFIX = re.compile(r"^\s*(?:\+\s*\d{1,3}|1)[\s.)-]+(?=\(?\d{3})")
+# A block of the form for one of the profile's entries (Work Experience 2's "work_history[2].title")
+_ENTRY_RULE = re.compile(r"(work_history|education_history)\[(\d+)\]\.(\w+)")
+
+
+def _same_number(said: str, given: str) -> bool:
+    """Is the number a box shows the profile's? The same digits, or the profile's followed by more set apart from them
+    (a ZIP+4's "85225-1234", a phone's "480-555-0123 ext 45", a salary's "$65,000.00"; never "650000" for "65000"), or
+    the same value ("3.40" for "3.4")."""
+    try:
+        if float(re.sub(r"[$€£,\s]", "", said)) == float(re.sub(r"[$€£,\s]", "", given)):
+            return True
+    except ValueError:
+        pass
+    g = re.sub(r"\D", "", given)
+    places = [i for i, ch in enumerate(said) if ch.isdigit()]
+    s = "".join(said[i] for i in places)
+    if not g or not s.startswith(g):
+        return False
+    if len(s) == len(g):
+        return True
+    between = said[places[len(g) - 1] + 1:places[len(g)]]  # (what parts the profile's digits from the rest)
+    return bool(between) and not re.fullmatch(r"[,\s]*", between)
+
+
+def _same_place(said: str, given: str) -> bool:
+    """The same place, written another way: "Chandler, AZ" for "Chandler", "Chandler, Arizona" for "Chandler, AZ",
+    "United States of America" for "United States". (Not a street address: _same_address.)"""
+    a, b = ([_place_part(p) for p in _place_parts(x)] for x in (said, given))
+    short, long = sorted((a, b), key=len)
+    return bool(short) and long[:len(short)] == short or same_country(said, given)
+
+
+def _same_address(said: str, given: str) -> bool:
+    """The same street address, the whole of it, its case, punctuation and abbreviations aside ("100 West Main Street" is
+    "100 W Main St"; "100 W Main St, Apt 5" is not "100 W Main St")."""
+    return bool(_place_part(given)) and _place_part(said) == _place_part(given)
+
+
+def _same_zip(said: str, given: str) -> bool:
+    """The same ZIP: its digits, or a ZIP+4's first 5 where one side has 5 ("85225-1234", "85225 1234" are "85225")."""
+    a, b = re.sub(r"\D", "", said), re.sub(r"\D", "", given)
+    if not a or not b:
+        return False
+    return a == b or (len(a) == 5 or len(b) == 5) and len(a) in (5, 9) and len(b) in (5, 9) and a[:5] == b[:5]
+
+
+# A saved answer's box that holds the person's own words (a sentence, more than a few words): never one of their saved
+# answers in its place, whose pattern only roughly matched the question ("clean ?room" for "Please describe your clean
+# room experience": the review of note 38's refresh)
+_WORDS_OF_THEIR_OWN = re.compile(r"[.!?;,]\s*\w|\w\s+\w+\s+\w+\s+\w")
+
+
+def _saved_for(f: dict, ans: Answer, prof: Profile) -> bool:
+    """Was this saved answer (answers.yaml's, rule "answers[<match>]") given for this very question: answered in the Job
+    Desk to these words, or saved under the pattern of these words alone? Never a hand-written pattern, a common
+    question's (the question bank's), nor any other loose match."""
+    m = re.fullmatch(r"answers\[(.*)\]", str(ans.rule), re.S)
+    if m is None:
+        return True  # (not a saved answer)
+    labels = {_bare_question(f.get("label") or ""), _bare_question(_without_notes(f.get("label") or ""))}
+    for item in _listed(prof.get("answers")):
+        if not isinstance(item, dict) or str(item.get("match")) != m.group(1) or item.get("bank"):
+            continue
+        if item.get("question") and _bare_question(str(item["question"])) in labels:
+            return True
+        if str(item.get("match")) == config.question_pattern(f.get("label") or ""):
+            return True
+    return False
+
+
+def _same_url(said: str, given: str) -> bool:
+    """"linkedin.com/in/someone" is "https://www.linkedin.com/in/someone/"."""
+    def bare(u: str) -> str:
+        return re.sub(r"^(?:https?://)?(?:www\.)?", "", u.strip().lower()).rstrip("/")
+    return bool(bare(given)) and bare(said) == bare(given)
+
+
+def _entry_blocks(fields: list[dict], prof: Profile, job: dict | None, file_inputs: int) -> set[str]:
+    """The form's blocks for the profile's entries (a job's, a school's: matched to them by their place, the second
+    block to the second entry) whose employer or school box shows that entry's: only those are blocks of that entry. A
+    draft's blocks in another order (or a job left out) hold another entry's (the review of note 38's refresh)."""
+    ok: set[str] = set()
+    off: set[str] = set()
+    for f in fields:
+        if not f.get("section") or is_empty_value(f.get("value")):
+            continue
+        ans = resolve_field(f, prof, job, file_inputs)
+        m = _ENTRY_RULE.fullmatch(ans.rule) if ans is not None else None
+        if ans is None or m is None or m.group(3) not in ("company", "employer", "school"):
+            continue
+        same = choose_option(str(ans.value), [str(f["value"])], names=True) is not None
+        (ok if same else off).add(str(f["section"]))
+    return ok - off
+
+
+def _differs(f: dict, prof: Profile, job: dict | None, file_inputs: int, blocks: set[str]) -> Answer | None:
+    """The profile's answer for a box that shows another (a saved draft's, given on an earlier visit, issue #112, note
+    38: the work descriptions changed in the profile since), or None: where the profile doesn't answer it, or what it
+    shows says the same (a number, a place, a date, an address written another way: _same_number, _same_place), or
+    in a block whose employer or school isn't the entry's (`blocks`: _entry_blocks). Never a self-identification
+    answer (one the person declined to give at this employer stays declined) nor how they heard of the job: those
+    the draft's stay. The person's own saved answers (answers.yaml's) go in where the draft shows another only where
+    they were given for this very question (_saved_for), never into a box of the person's own words (a text area, a
+    sentence), and a text starting with the same yes or no is the same answer."""
+    if f.get("kind") not in _REFRESHED_KINDS or f.get("search") or f.get("multiple"):
+        return None
+    ans = resolve_field(f, prof, job, file_inputs)
+    if ans is None or ans.value in (None, "", SKIP) or is_eeo_rule(ans.rule) \
+            or is_how_heard(ans.rule, clean_label(f.get("label") or "")):
+        return None
+    if _ENTRY_RULE.fullmatch(ans.rule) and str(f.get("section") or "") not in blocks:
+        return None
+    shown = f.get("value")
+    if f.get("kind") == "checkbox":
+        return ans if isinstance(ans.value, bool) and ans.value != bool(shown) else None
+    said, given = str(shown if shown is not None else ""), str(ans.value)
+    if norm(said) == norm(given):
+        return None
+    # (the person's own words are typed: a text box's or a text area's; a list's, a radio's or a tick's shown value is one
+    # of its own choices, compared as a choice below, whatever its wording: "Yes, but I will need sponsorship" is not
+    # the profile's "Yes, I am authorized to work for any employer", the third review)
+    typed = f.get("kind") in ("text", "textarea")
+    own_words = typed and (f.get("kind") == "textarea" or bool(_WORDS_OF_THEIR_OWN.search(said.strip())))
+    if str(ans.rule).startswith("answers[") and (not _saved_for(f, ans, prof) or own_words):
+        return None
+    if typed and (yes := polarity(given)) is not None:
+        if polarity(said) == yes:
+            return None  # (the same yes or no, said more fully: "Yes, up to 10 hours a week")
+        if own_words and len(given.split()) <= 2:
+            return None  # (never a bare yes or no in place of the person's own words: "Yes, within 6 months ...")
+    if f.get("role") == "spinbutton":
+        a, b = re.sub(r"\D", "", given), re.sub(r"\D", "", said)
+        return ans if a and b and int(a) != int(b) else None
+    entry = _ENTRY_RULE.fullmatch(ans.rule)
+    field_of = entry.group(3) if entry else ans.rule
+    if field_of in ("start", "end") and parse_month_year(said)[1] and parse_month_year(said) == parse_month_year(given):
+        return None
+    if field_of in ("postal", "postal_code") and _same_zip(said, given):
+        return None
+    if field_of in ("address1", "address2"):
+        if _same_address(said, given):
+            return None
+    elif field_of in ("location", "country", "city", "state", "home_state", "county") and _same_place(said, given):
+        return None
+    if ans.rule in ("linkedin", "website") and _same_url(said, given):
+        return None
+    if _NUMBERISH.fullmatch(given) and (_same_number(said, given) or ans.rule == "phone" and (
+            _same_number(_DIAL_PREFIX.sub("", said), given) or _same_number(said, _DIAL_PREFIX.sub("", given)))):
+        return None
+    if not typed:
+        # a choice: the option the profile's answer picks among the box's own, against the one shown ("Yes, up to 75%"
+        # is not "Yes, up to 25%", which a loose match of the two words took for it); with no options read, the two
+        # words alone, matched as a choice is
+        options = [str(o) for o in f.get("options") or [] if not is_empty_value(o)]
+        picked = choose_option(given, options) if options else None
+        if picked is not None:
+            return None if norm(picked) == norm(said) else ans
+        if choose_option(given, [said], exact_only=True) is not None:
+            return None
+    return ans
+
+
 def plan_autofill(fields: list[dict], prof: Profile, job: dict | None = None, overwrite: bool = False,
-                  redo: set[str] | None = None, presets_done: set[str] | None = None) -> dict[str, Any]:
+                  redo: set[str] | None = None, presets_done: set[str] | None = None, refresh: bool = False,
+                  keep: set[str] | None = None) -> dict[str, Any]:
     """Split fields into ones we can fill and ones that need a decision. Not a sign-up's boxes
-    beside the application (a talent community's email and consent: the form reader's aside)."""
+    beside the application (a talent community's email and consent: the form reader's aside).
+    `refresh`: boxes that show an answer already (a saved draft's, given on an earlier visit) get the
+    profile's where it differs (_differs), marked "refreshed"; never those in `keep` (the person's own)."""
     fields = _with_context([f for f in fields if not f.get("aside")])
     file_inputs = sum(1 for f in fields if f.get("kind") == "file")
     to_fill: list[dict] = []
@@ -2707,6 +2882,7 @@ def plan_autofill(fields: list[dict], prof: Profile, job: dict | None = None, ov
     already: list[str] = []
     judged: list[str] = []  # lists on the site's first choice, filled or left as they are (site_default)
     presets: dict[str, str] = {}  # country lists looked at once (preset_country): id -> preset_key
+    blocks: set[str] | None = None  # (with refresh: the entries' blocks that are theirs, _entry_blocks, read once)
     for f in fields:
         # a read-only text box can't be typed in, but a read-only dropdown is a pick-only
         # menu (Infineon's "Preferred location"): it still takes a choice
@@ -2724,6 +2900,14 @@ def plan_autofill(fields: list[dict], prof: Profile, job: dict | None = None, ov
             presets[f["id"]] = preset_key(f)
         defaulted = has_value and (site_default(f) or preset)
         if has_value and not overwrite and not defaulted:
+            if refresh and blocks is None:
+                blocks = _entry_blocks(fields, prof, job, file_inputs)
+            stale = _differs(f, prof, job, file_inputs, blocks or set()) if refresh and f["id"] not in (keep or set()) \
+                else None
+            if stale is not None:
+                to_fill.append({"id": f["id"], "label": f.get("label", ""), "value": stale.value, "rule": stale.rule,
+                                "refreshed": True, **({"again": True} if f.get("role") == "spinbutton" else {})})
+                continue
             already.append(f["id"])
             continue
         missed: list[Answer] = []

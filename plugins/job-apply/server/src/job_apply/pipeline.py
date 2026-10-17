@@ -57,10 +57,18 @@ STEP_SAVE_WAIT = 20  # for a step pressed three times that's still saving (KLA's
 STEP_LOAD_WAIT = 30  # for a step still loading its questions, its loading dots on show (KLA's Workday)
 INDICATOR_GONE_SETTLE = 3  # seconds more, the indicator gone and nothing to press yet, for the step's button to follow
 BLANK_PAGE_WAIT = 30  # for a page with nothing on it yet to draw (Infineon's application, now and then)
+# times a page a press led to, with nothing drawn on it after the wait, is loaded again (on a pass at the job) before the
+# person is asked to (Eightfold's apply page after its Apply Now came up blank white, and drew its form once the person
+# reloaded it: issue #112, note 40)
+BLANK_RELOADS = 2
 SIGN_IN_STEP_WAIT = 25  # Workday's sign-in step can take longer to draw its buttons (Applied's)
 LEFT_SIGN_IN_SETTLE = 3  # seconds before a sign-in page that led elsewhere is taken for one with no sign-in
 ACCOUNT_DRAW_WAIT = 4  # for the application below a Create Account form to be drawn (Qorvo's)
 HANDS_ON = {"sign_in", "email_code"}
+# The stops after which a saved draft's answers are still re-checked (Run.draft_off): what the person answers without
+# the application's own boxes (a questions card, an emailed code, a sign-in, a bot check). After any other, or a Resume,
+# what they change in the tab is theirs
+_DRAFT_GOES_ON = {"questions", "email_code", "sign_in", "bot_check"}
 # What the desk's rounds take the person to, one tab at a time, starting no other job meanwhile: bot checks to solve,
 # and applications filled to the step the person sends (a ready one's review page is "ready", not a need; one with a
 # CAPTCHA before its Submit is "captcha": the person ticks it, then sends it)
@@ -182,6 +190,13 @@ def _app_fields(data: dict[str, Any]) -> list[dict[str, Any]]:
 _CLOSED = re.compile(
     r"\b(?:posting|job|position|requisition|opening|vacancy)\b[^.]{0,60}?\b(?:has|have|is|was)\b(?: already)?(?: been)?"
     r" (?:expired|filled|closed|no longer (?:available|open|active|accepting))|no longer accepting applications", re.I)
+# A posting's words that only say when or how it closes, never that it has (the review of note 39's): a condition before
+# them in their sentence ("Applications will be accepted until the position has been filled", "If this job has
+# expired, ..."), and after them, how it's filled or what it's closed for or to ("filled on a rolling basis", "closed
+# for maintenance", "closed to external applicants")
+_CLOSED_IF = re.compile(r"\b(?:until|till|unless|if|when|whenever|once|after|before|as soon as)\b", re.I)
+_CLOSED_HOW = re.compile(r"\s*(?:on (?:a |an )?(?:rolling|ongoing|first)|for (?:maintenance|the (?:day|weekend|holidays?)|"
+                         r"today|now)|on weekends|to (?:external|internal|outside)\b|quickly|soon|as soon)", re.I)
 # The site saying this person applied for this job before (issue #112, note 30: Workday's job page "You applied for
 # this job on <date>." over its View Application, an Eightfold application saying it was applied to already): a
 # sentence of its own that starts with it, never "If you are an internal candidate or you have already applied for
@@ -421,6 +436,16 @@ _ENTRY = re.compile(r"^(apply manually|apply now|apply online|apply|easy apply|q
                     r"apply for (?:this|the) (?:job|position|role)(?: online)?|"
                     r"apply to (?:this )?job|start (?:your |my )?application|i'?m interested|"
                     r"continue to application|apply on (?:the )?(?:company|employer)(?:'s)? (?:site|website))$", re.I)
+# The way back into an application the site kept from an earlier visit (Workday's job page shows "Continue Application"
+# where its Apply was, its data-automation-id "continueButton": issue #112, note 38): a draft, whose answers are checked
+# against the profile (Run.draft). The way in only on a page whose one way in it is, and only where it's this job's
+# (_own_draft); never a dialog's way on (_notice), nor a sign-up's or an account page's button: those stop as before
+_DRAFT_ENTRY = re.compile(r"^continue (?:your |my )?(?:saved )?application$", re.I)
+
+
+def _way_in(text: str) -> bool:
+    """A posting's way into its application: an Apply (_ENTRY), or a saved draft's Continue Application."""
+    return bool(_ENTRY.match(text) or _DRAFT_ENTRY.match(text))
 # The words of a button that sends an application once it's filled in: on a form, never the way in
 _APPLY_SENDS = re.compile(r"^(apply|apply now|apply online|easy apply|quick apply|apply for (?:this|the) (?:job|position|role)"
                           r"(?: online)?|apply to (?:this )?job)$", re.I)
@@ -589,6 +614,9 @@ class WentIn:
     left: dict[str, dict[str, str]] = field(default_factory=dict)  # optional questions left empty, by place
     agreed: list[str] = field(default_factory=list)  # notices, terms and attestations agreed to for the person
     accounts: list[str] = field(default_factory=list)  # accounts made
+    # a saved draft's answers the desk changed to the profile's, "<label>: <old> → <new>" (issue #112, note 38's review):
+    # here alone, as the draft's old answers are no detail of the profile's that a report's scrubber knows
+    changed: list[str] = field(default_factory=list)
     full: bool = False  # answers past WENT_IN_ANSWERS went in too, not kept here
     # Each box's place as first kept, by its page's address and its id (a box keeps its place while the page around it
     # changes: an error heading drawn over it, a block added), and the page each place was first taken on. Never in
@@ -654,18 +682,23 @@ class WentIn:
         self._say(self.agreed, line)
 
     @_quietly
+    def change(self, line: str) -> None:
+        self._say(self.changed, line)
+
+    @_quietly
     def account(self, line: str) -> None:
         # (without the log's hint of where to turn the setting off)
         self._say(self.accounts, re.sub(r"\s*\(manage_accounts: false[^)]*\)\s*$", "", line))
 
     def public(self) -> dict[str, Any] | None:
-        if not (self.answers or self.left or self.agreed or self.accounts):
+        if not (self.answers or self.left or self.agreed or self.accounts or self.changed):
             return None
         return {"answers": [{k: v for k, v in e.items() if k != "kind"} for e in self.answers.values()
                             if e.get("kind") != "file"],
                 "files": [{"label": e["label"], "name": e["value"]} for e in self.answers.values()
                           if e.get("kind") == "file"],
                 "agreed": list(self.agreed), "accounts": list(self.accounts),
+                **({"changed": list(self.changed)} if self.changed else {}),  # (a saved draft's only)
                 "left": [dict(e) for e in self.left.values()], "full": self.full}
 
 
@@ -704,6 +737,19 @@ class Run:
     account_in: bool = False  # an account made for this job, and signed in to (Run.account_made said)
     load_reloaded: bool = False  # reloaded once for a step still loading after its wait (Workday's placeholders, run 57)
     list_reloaded: bool = False  # reloaded once for a school's list with no choices at all (GCU's Degree list, run 61)
+    # gone in through the site's "Continue Application" (a draft it kept from an earlier visit, issue #112, note 38): its
+    # boxes are given the profile's answer where they show another, once a page (draft_pages), until draft_off: the
+    # person's Resume, or a stop other than one they answer without the application's boxes (a questions card, an emailed
+    # code, a sign-in, a bot check: _DRAFT_GOES_ON), after which what they change in the tab is theirs. draft_changed:
+    # a box the draft had filled holds another answer since (never sent by Submit for me: _finish)
+    draft: bool = False
+    draft_off: bool = False
+    draft_changed: bool = False
+    draft_pages: set[tuple] = field(default_factory=set)
+    # skipped by the desk itself, its posting closed (issue #112, note 39); and that skip undone by the person: a closed
+    # posting is theirs then, never skipped by itself again
+    closed_skipped: bool = False
+    closed_undone: bool = False
     hands_on: bool = False  # the person pressed Resume on it: what they did in the browser is never reloaded away
     invalid_redone: bool = False  # the review page's invalid lists answered again from the profile (once a job)
     reset_no_mail: bool = False  # and none came in RESET_MAIL_WAIT: no account there, most likely, so one is made
@@ -773,7 +819,7 @@ class Run:
                                                                         "account_finished", "verifying", "verify_resent", "mail_looks", "mail_last",
                                                                         "entries_short", "entries_told", "entries_ok",
                                                                         "account_answers", "employer_mail", "others_mail",
-                                                                        "went_in")},
+                                                                        "went_in", "draft_pages")},
                 # (only for the cards that show it: a job queued or under way has none, and 30 of them made the
                 # page's state megabytes, every poll)
                 "went_in": None if self.status in ("queued", "running") else self.went_in.public()}
@@ -796,7 +842,7 @@ def classify(data: dict[str, Any], text: str) -> str:
         return "sign_in"  # Workday: "Sign in with email / Google / Apple"
     if any(_code_box(f) for f in fields):
         return "email_code"
-    if not fields and _VERIFY_EMAIL.search(text[:3000]) and not any(_ENTRY.match(final_text(a)) for a in actions):
+    if not fields and _VERIFY_EMAIL.search(text[:3000]) and not any(_way_in(final_text(a)) for a in actions):
         return "email_code"  # "we sent you a link to verify your account"
     return "form" if fields else "page"
 
@@ -808,6 +854,12 @@ def pick_next(actions: list[dict[str, Any]], in_form: bool) -> dict[str, Any] | 
     steps = [a for a in usable if _STEP.match(final_text(a["text"]))]
     entries = [a for a in usable if _ENTRY.match(final_text(a["text"])) and not _SOCIAL.search(a["text"])
                and not (_AVOID.search(a["text"]) and "manually" not in a["text"].lower())]
+    # a saved draft's "Continue Application", on a page (never a form's step), where it's the page's one way in: beside an
+    # Apply, or with others like it (a list of applications kept, each another job's, as a candidate home lists them),
+    # it's not (issue #112, note 38's review). Whose draft it is, _drive asks (_own_draft)
+    drafts = [a for a in usable if _DRAFT_ENTRY.match(final_text(a["text"]))]
+    if not in_form and not entries and len(drafts) == 1:
+        entries = drafts
     # an open menu's own entry ("Apply Now" under Qorvo's "Apply now ▾") before the toggle again
     entries.sort(key=lambda a: (not a.get("menu"), "manually" not in a["text"].lower()))
     order = (steps + entries) if in_form else (entries + steps)
@@ -1018,6 +1070,7 @@ class Applier:
             run.load_reloaded = True  # (what they did in the browser is never reloaded away: a loading page is said)
         if run is not None:
             run.hands_on = True  # (on any card: a questions card's Resume is for answers typed into the page itself)
+            self._draft_off(run)  # (and a saved draft's boxes are theirs too from here on)
         run = self.enqueue(job_id, submit=bool(run and run.submit), front=True)
         self.go_on_for(run)
         self.pressed.add(job_id)  # (the person's own press: it goes even while the queue is paused)
@@ -1111,13 +1164,16 @@ class Applier:
         """The person (or Claude) says this job is applied to: it leaves the queue, and any
         hold on the queue for it ends. The tracker already says so."""
         self._cancel(job_id)
+        _forget_draft_changes(self.srv, job_id)  # (gone in: a draft's changes kept for it go)
         run = self.runs.get(job_id)
         if run is not None:
             run.status, run.need, run.blocking, run.reason = "submitted", "", False, "Marked as applied."
             run.left = False
             self._wake.set()
 
-    async def skip(self, job_id: int) -> Run:
+    async def skip(self, job_id: int, closed: str = "") -> Run:
+        """The person's Skip, or, with `closed` (what the site says, in its words), the desk's own Skip of a job whose
+        posting has closed (issue #112, note 39: nothing about it needs the person). Undo puts either back."""
         if self.srv.tracker().get(job_id, with_description=False) is None:
             raise KeyError(f"No job with id {job_id}")  # a stale page: no entry is made for it
         run = self.runs.get(job_id)
@@ -1128,9 +1184,13 @@ class Applier:
         self.runs[job_id] = run
         self._cancel(job_id)
         run.status, run.need, run.blocking, run.reason = "skipped", "", False, "Skipped. Undo puts it back."
+        run.closed_skipped = bool(closed)
+        if closed:
+            run.reason = f"Skipped: posting closed. {closed} Undo puts it back."
         run.account_answers = {}  # (an account form's answers from its card, for that form alone: never kept)
-        self._log(run, "skipped")
-        self.srv.tracker().update(job_id, status="skipped", note="skipped in the Job Desk")
+        self._log(run, f"skipped by itself: posting closed ({closed})" if closed else "skipped")
+        self.srv.tracker().update(job_id, status="skipped", note="skipped by the Job Desk: posting closed" if closed
+                                  else "skipped in the Job Desk")
         for tab in self.srv.browser.lineage(run.page):  # its application tab, and the tab that opened it
             if not tab.is_closed():
                 try:
@@ -1163,6 +1223,8 @@ class Applier:
         before, place = self._before_skip.pop(job_id, (None, None))
         if run is None or run.status != "skipped":
             return run
+        if run.closed_skipped:  # (the desk's own Skip of a closed posting, undone: that posting is the person's now)
+            run.closed_skipped, run.closed_undone = False, True
         if before == "":  # skipped before the desk began it
             del self.runs[job_id]
             return None
@@ -1214,6 +1276,8 @@ class Applier:
                 except Exception:  # a tab mid-way through loading: looked at again next time, not holding the rest
                     continue
             if moved and run.left and run.status == "needs_you":
+                # (carried on by itself: the person may have changed later pages of a saved draft by hand in its tab)
+                self._draft_off(run)
                 try:
                     self.enqueue(run.job_id, submit=run.submit, front=True)
                     self.pressed.add(run.job_id)  # (it was under way: it carries on, Pause queue or not, as in _tick)
@@ -1800,6 +1864,8 @@ class Applier:
         run.paused_host = urlparse(run.url).hostname or ""
         run.hold_host = ""
         self._log(run, reason)
+        if need not in _DRAFT_GOES_ON:  # (a stop the person may change the application's boxes at: theirs from here on)
+            self._draft_off(run)
         if need in NOTED or need == "questions" and any(q.get("error") for q in run.questions):
             self._take_note(run)
 
@@ -1871,7 +1937,7 @@ class Applier:
                 with contextlib.suppress(Exception):
                     await run.page.close()  # its "Aw, Snap!" page: the new tab takes its place
         # a form begun afresh: what went into one before is gone with it (an account made there is still there)
-        run.went_in = WentIn(accounts=run.went_in.accounts)
+        run.went_in = WentIn(accounts=run.went_in.accounts, changed=run.went_in.changed)  # (and a draft's answers changed)
         run.page = await srv.browser.new_tab()
         srv.forget_presets(run.job_id)  # (a fresh form: the country lists it presets are the site's again)
         opened = await srv.open_application(job_id=run.job_id)
@@ -1892,6 +1958,7 @@ class Applier:
         if job.get("status") not in FINISHED:
             return False
         run.status, run.need, run.blocking = "submitted", "", False
+        self._forget_draft_changes(run)  # (gone in: its draft's changes are no longer kept)
         run.reason = f"Already marked {job['status']}, so it isn't applied to again."
         self._log(run, run.reason)
         return True
@@ -1913,6 +1980,8 @@ class Applier:
         srv = self.srv
         if self._already_done(run):
             return
+        if not run.draft_changed:  # (a draft the desk changed before it was restarted: still held, its card's lines back)
+            _restore_draft_changes(srv, run)
         run.status, run.need, run.reason = "running", "", "Working on it"
         if self.tailor and not run.usual_resume:
             job = srv.tracker().get(run.job_id, with_description=False) or {}
@@ -1945,6 +2014,7 @@ class Applier:
         saved_waited: set[tuple[Any, ...]] = set()  # steps waited on as still saving (once a step)
         bare_waited: set[tuple[Any, ...]] = set()  # forms with no step button yet, waited on to be drawn (once a page)
         reloaded: set[tuple[Any, ...]] = set()  # steps reloaded for saying what they saved already exists (once a page)
+        blank_loads: dict[str, int] = {}  # pages a press led to loaded again for coming up blank, by address (_nothing_drawn)
         account_waited = False
         sign_ins: dict[str, int] = {}  # what the saved password was used for on this pass
         pressed: list[tuple[Any, ...]] = []  # (page, button) for each button pressed on this pass
@@ -1972,6 +2042,7 @@ class Applier:
                 # thanks them: "Thank you for your application. Please complete the below questions.")
                 srv.tracker().update(run.job_id, status="applied", note="submitted on the site")
                 run.status, run.need, run.blocking, run.left = "submitted", "", False, False
+                self._forget_draft_changes(run)  # (gone in: its draft's changes are no longer kept)
                 run.reason = f"Submitted: {_site(run, data)} says \u201c{gone[0]}\u201d."
                 self._log(run, run.reason)
                 return
@@ -1979,6 +2050,7 @@ class Applier:
                 # applied to already (by hand, or before the tracker knew): never filled, or sent, again
                 srv.tracker().update(run.job_id, status="applied", note="the site says it was applied to already")
                 run.status, run.need, run.blocking, run.left = "submitted", "", False, False
+                self._forget_draft_changes(run)  # (gone in: its draft's changes are no longer kept)
                 run.reason = f"Applied to already: {_site(run, data)} says \u201c{applied}\u201d It isn't filled in again."
                 self._log(run, run.reason)
                 return
@@ -2004,7 +2076,7 @@ class Applier:
                 run.try_later = run.status == "needs_you"
                 return
             actions = data.get("actions") or []
-            entry_here = any(_ENTRY.match(final_text(a["text"])) and not a.get("disabled") for a in actions)
+            entry_here = any(_way_in(final_text(a["text"])) and not a.get("disabled") for a in actions)
             if kind == "form" and entry_here and not _application_like(data):
                 kind = "page"  # a posting with a "send me similar jobs" box: go in through Apply
             if (kind == "page" and not data.get("fields") and _RESET_DONE.search(text[:2000])
@@ -2370,7 +2442,7 @@ class Applier:
                             self._log(run, f"couldn't press the {section} section's Add button: something on the page "
                                       "covers it, so its blocks are left as they are")
                         self._note_short_entries(run, section, added, data)
-                result = await srv.autofill(job_id=run.job_id)
+                result = await self._autofill(run, data, filled_ids)
                 if result["filled"]:
                     self._log(run, f"filled {len(result['filled'])} field(s) on {_where(data)}")
                 filled_ids |= {str(f["id"]) for f in result["filled"] if f.get("id")}
@@ -2460,7 +2532,7 @@ class Applier:
                     if back_page == _step_page(data):
                         return self._pause(run, "stuck", stuck)  # (nothing to fill, tick or ask: pressing again won't do)
                 actions = data.get("actions") or []
-                entry_here = any(_ENTRY.match(final_text(a["text"])) and not a.get("disabled") for a in actions)
+                entry_here = any(_way_in(final_text(a["text"])) and not a.get("disabled") for a in actions)
             # a step button beside a Submit (a footer "Submit" on step 1 of 4) means there's more to
             # fill: the review page is only where Submit is the way on
             forward_here = any(_FORWARD.match(final_text(a["text"])) and not a.get("disabled") and not a.get("is_submit")
@@ -2508,7 +2580,9 @@ class Applier:
                 # slow pages (Intel's Workday, Eightfold forms) draw their buttons late (and a page reached again, the
                 # desk having done something since, is a new visit: its address can be the same)
                 waited.add((_page_key(data), run.logged))
-                wait = SIGN_IN_STEP_WAIT if sign_in_step else BLANK_PAGE_WAIT if blank else LATE_BUTTONS_WAIT
+                # (a page a press led to with nothing drawn on it, its shell's words and all: the blank page's wait, note 40)
+                empty_now = bool(pressed) and _nothing_drawn(data, text)
+                wait = SIGN_IN_STEP_WAIT if sign_in_step else BLANK_PAGE_WAIT if blank or empty_now else LATE_BUTTONS_WAIT
                 if await self._wait_for_progress(wait, data):
                     continue
             drawn = (_page_key(data), _boxes(data))  # a page that has drawn more since is waited on again
@@ -2596,10 +2670,46 @@ class Applier:
                     return self._pause(run, "stuck", f"\u201c{greyed[0]['text']}\u201d is greyed out, so the site still "
                                        "wants something" + (f": {said}" if said else ".") +
                                        " Fix it in the browser, then press Resume.")
-                if blank:  # still, after the wait? (it was read before it)
+                # a page with nothing drawn on it after the wait, but the posting's own page opened on this pass with
+                # nothing pressed (that one's said below, reloaded once first): Eightfold's apply page after its Apply
+                # Now (issue #112, note 40) came up blank white, the app shell with no headings, boxes or buttons, and
+                # the form came once the person reloaded it. It didn't load
+                empty = not (run.opened_fresh and not pressed) and _nothing_drawn(data, text)
+                if blank or empty:  # still, after the wait? (it was read before it)
                     now, now_text = await self._look()
-                    blank = not (_app_fields(now) or now.get("actions") or now.get("headings")) \
+                    blank = blank and not (_app_fields(now) or now.get("actions") or now.get("headings")) \
                         and len(now_text.strip()) < 40
+                    empty = empty and _nothing_drawn(now, now_text)
+                if empty and now.get("busy") and (_page_key(now), "busy", run.logged) not in waited:
+                    # turned busy on this look (a loading indicator drawn since the first): waited out as a blank page is,
+                    # then looked at again, and loaded again as any other if it still has nothing on it (the review)
+                    waited.add((_page_key(now), "busy", run.logged))
+                    if await self._wait_for_progress(BLANK_PAGE_WAIT, now):
+                        continue
+                    now, now_text = await self._look()
+                    if not _nothing_drawn(now, now_text):
+                        continue  # (something drawn since: the page read again from the top)
+                if empty:
+                    site, where = _site(run, now), _bare(now.get("url") or "")
+                    after = f" after {pressed_on[-1]}" if pressed else ""
+                    if (pressed and blank_loads.get(where, 0) < BLANK_RELOADS and not run.pressed_before
+                            and not run.hands_on and run.page is not None):
+                        # loaded again where the desk's own press on this pass led to it, up to BLANK_RELOADS times a
+                        # page, each one waited on as a new page (its log line makes it one): by its address, so nothing
+                        # the press sent is sent again. Never after a Submit was pressed for the job, nor after the
+                        # person's Resume (what they did in the tab would go), as for every other reload here; nor a page
+                        # the queue came back to by itself (the person was at work in the tab)
+                        blank_loads[where] = blank_loads.get(where, 0) + 1
+                        self._log(run, f"{site}'s page came up blank{after} (no headings, boxes or buttons), so I loaded "
+                                  "it again")
+                        await _load_again(run.page)
+                        continue
+                    await self._bring_forward(run)
+                    times = blank_loads.get(where, 0)
+                    again = f", even after I loaded it again{' twice' if times == 2 else ''}" if times else ""
+                    return self._pause(run, "stuck", f"{site}'s page loaded blank{after}: nothing on it (no headings, "
+                                       f"boxes or buttons){again}. The site may be slow: reload the page in the browser "
+                                       "window (or try again later), then press Resume.")
                 if blank:
                     return self._pause(run, "stuck", "The page stayed blank: the site may be slow or down. Reload it "
                                        "in the browser, then press Resume.")
@@ -2639,8 +2749,23 @@ class Applier:
                     run.hold_host = run.paused_host
                     return
                 if closed := _closed_notice(data, text):  # only where nothing else explains the stop
-                    return self._pause(run, "stuck", f"{_site(run, data)} says this posting has closed: \u201c{closed}\u201d "
-                                       "There's nothing to apply to, so skip this job.")
+                    said = f"{_site(run, data)} says \u201c{closed}\u201d" + ("" if closed[-1:] in ".!?" else ".")
+                    if run.closed_undone:  # (the person put it back after the desk skipped it for this: theirs now)
+                        await self._bring_forward(run)
+                        return self._pause(run, "stuck", f"{said} You put this job back after I skipped it for that, so "
+                                           "it's yours: look at it in the browser window, then skip it, or press Resume "
+                                           "if there's a way on after all.")
+                    if run.hands_on or run.seen_form or _app_fields(data):
+                        # in the application already, or after the person's Resume, or with boxes of it on the page: the
+                        # words may be about something else there, and what's been done is the person's to judge
+                        await self._bring_forward(run)
+                        return self._pause(run, "stuck", f"{_site(run, data)} says this posting has closed: "
+                                           f"\u201c{closed}\u201d If so, there's nothing to apply to: skip this job; "
+                                           "otherwise go on in the browser window, then press Resume.")
+                    # nothing to apply to, and nothing in it for the person to do (issue #112, note 39: the owner's call):
+                    # skipped by itself, said among the jobs done, and the queue goes on. Undo puts it back
+                    await self.skip(run.job_id, closed=said)
+                    return
                 if _maintenance_page(data):
                     return self._pause(run, "stuck", f"{_site(run, data)} is down for maintenance (it sent the job to "
                                        f"{_bare(data.get('url') or '')}). Try again in a few hours: press Resume once "
@@ -2758,6 +2883,15 @@ class Applier:
                                        "still so), then press Resume.")
                 return self._pause(run, "stuck", "I couldn't find the button that moves this application on. "
                                    "Press it in the browser window, then press Resume.")
+            if _DRAFT_ENTRY.match(final_text(action["text"])) and not _own_draft(
+                    action, data, str((srv.tracker().get(run.job_id, with_description=False) or {}).get("url") or "")):
+                # an application kept from an earlier visit, on a page that doesn't say it's this job's (a candidate
+                # home, a sidebar: another job's draft would be filled, and its review page shown, as this job's)
+                await self._bring_forward(run)
+                return self._pause(run, "stuck", f"{_site(run, data)} shows “{action['text'].strip()}”, for an "
+                                   "application it kept from an earlier visit, but nothing on the page says it's this "
+                                   "job's, so I didn't press it. If it is, press it in the browser window, then press "
+                                   "Resume; if not, open this job's posting there, or skip the job.")
             if (kind == "form" and action.get("form_fields") == len(data.get("fields") or [])
                     and _sign_up_box(data, [action])):
                 return await self._sign_up_pause(run, data, action)  # the same box, sent by a plain button
@@ -2852,6 +2986,13 @@ class Applier:
             if clicked.get("clicked") is False:  # the guard says it's the final submit
                 return await self._finish(run, data, text)
             self._log(run, f"clicked “{action['text']}”")
+            if _DRAFT_ENTRY.match(final_text(action["text"])) and kind == "page" and not run.draft:
+                # an application the site kept from an earlier visit (a draft), with the answers it was given then:
+                # the profile's may have changed since (issue #112, note 38: the work descriptions), so its boxes are
+                # checked against the profile, page by page (Applier._autofill)
+                run.draft = True
+                self._log(run, f"{_site(run, data)} kept this application from an earlier visit (a saved draft), so I "
+                          "went on with it; I'll check the answers it holds against your profile")
             run.page = srv.browser.current_tab or run.page
             if _fingerprint(clicked) == looked and await self._new_tab_soon(run, NEW_TAB_WAIT):
                 continue  # asml.com's Apply Now opens Workday in a new tab a moment after the click
@@ -3278,6 +3419,98 @@ class Applier:
         if failed:
             self._log(run, f"{len(failed)} of your answers didn't go in")
         return failed
+
+    async def _autofill(self, run: Run, data: dict[str, Any], own: set[str] | None = None) -> dict[str, Any]:
+        """The profile's answers into the page's empty boxes (srv.autofill). On a saved draft's pages (Run.draft: gone in
+        through the site's "Continue Application", issue #112, note 38), once a page and only until the job first pauses
+        after going in (from then on the person may be at work in its tab: a Resume, a tab the queue carried on with by
+        itself, a card answered, and what they changed there is theirs), also into boxes that show another answer than
+        the profile's: the draft's, given on an earlier visit, may be out of date. Never a box the profile doesn't
+        answer, a self-identification or how-heard answer, this application's own answers (run.once), nor any other
+        plan_autofill's refresh leaves alone. Said in the log either way. A box that won't take the profile's answer is
+        read again: what it holds is said, and one left empty is asked as any box a fill didn't go into."""
+        page = _answers_page(data)
+        checking = run.draft and not run.draft_off and not run.hands_on
+        before = {str(f.get("id")): f for f in data.get("fields") or [] if isinstance(f, dict)}
+
+        def replaced(filled: list[dict[str, Any]]) -> list[tuple[dict[str, Any], Any, Any]]:
+            # what else went into a box the draft had filled, and changed it (the third review: a preset country set
+            # right, a list on its first choice answered again): the draft's answers changed all the same. Never a box
+            # this pass filled itself (filled_ids: its "before" is the desk's own fill)
+            out = []
+            for f in filled:
+                box = before.get(str(f.get("id"))) or {}
+                old = box.get("value")
+                if f.get("refreshed") or str(f.get("id")) in (own or set()) or is_empty_value(old) or unset_choice(box) \
+                        or norm(old) == norm(f.get("value")):
+                    continue
+                out.append((box, old, f.get("value")))
+            return out
+        if not checking or page in run.draft_pages:
+            result = await self.srv.autofill(job_id=run.job_id)
+            if checking and (others := replaced(result.get("filled") or [])):
+                self._draft_changes(run, others, data)
+            return result
+        run.draft_pages.add(page)
+        keep = [str(f["id"]) for f in data.get("fields") or [] if f.get("id") is not None
+                and (placed_key(f) in run.once or question_key(f.get("label") or "") in run.once)]
+        result = await self.srv.autofill(job_id=run.job_id, refresh=True, keep=keep)
+        changed = [f for f in result.get("filled") or [] if f.get("refreshed")]
+        refused = [f for f in result.get("failed") or [] if f.get("refreshed")]
+        # what each box the refresh went into held, and holds now (for the job's "What went in" panel alone: the log, notes
+        # and reports never say a draft's answer, which the profile no longer holds and no scrubber knows)
+        changes: list[tuple[dict[str, Any], Any, Any]] = [
+            (before.get(str(f.get("id"))) or {"id": f.get("id"), "label": f.get("label")},
+             (before.get(str(f.get("id"))) or {}).get("value"), f.get("value")) for f in changed]
+        changes += replaced(result.get("filled") or [])
+        kept: list[dict[str, Any]] = []
+        emptied: set[str] = set()
+        if refused:
+            now = {str(f.get("id")): f for f in (await self._look(text=False))[0].get("fields") or []}
+            emptied = {str(f.get("id")) for f in refused if is_empty_value(now.get(str(f.get("id")), {}).get("value"))}
+            # (one left empty is a fill that didn't go in, as any other: asked; one holding something, said by its label)
+            result["failed"] = [f for f in result.get("failed") or [] if not f.get("refreshed")
+                                or str(f.get("id")) in emptied]
+            kept = [f for f in refused if str(f.get("id")) not in emptied and str(f.get("id")) in now]
+            for f in refused:  # (half typed, or emptied: changed all the same)
+                box, held = before.get(str(f.get("id"))) or {}, now.get(str(f.get("id")), {}).get("value")
+                if str(held if held is not None else "") != str(box.get("value") if box.get("value") is not None else ""):
+                    changes.append((box or {"id": f.get("id"), "label": f.get("label")}, box.get("value"), held))
+        if changes:
+            self._draft_changes(run, changes, data)
+
+        def named(fields: list[dict[str, Any]]) -> str:
+            return ", ".join(dict.fromkeys(f"“{_short(clean_label(f.get('label') or '') or 'a field')}”"
+                                           for f in fields))
+        where = _where(data)
+        if changed:
+            self._log(run, f"re-checked the saved draft's answers on {where}: {len(changed)} field(s) showed another "
+                      f"answer than your profile's, so I put your profile's in: {named(changed)}")
+        elif not refused:
+            self._log(run, f"re-checked the saved draft's answers on {where}: they match your profile")
+        if refused:
+            self._log(run, f"re-checked the saved draft's answers on {where}: {len(refused)} field(s) wouldn't take "
+                      "your profile's answer" + (f"; as they are now: {named(kept)}" if kept else "")
+                      + (f"; {len(emptied)} left empty, so they're asked" if emptied else ""))
+        return result
+
+    def _draft_changes(self, run: Run, changes: list[tuple[dict[str, Any], Any, Any]], page: dict[str, Any]) -> None:
+        """A saved draft's answers the desk changed: never sent by Submit for me (the person checks them first: _finish),
+        each on the job's "What went in" panel, and both kept in the job's own folder for after a restart of the desk
+        (_save_draft_changes)."""
+        run.draft_changed = True
+        _went_changed(run, changes, page)
+        _save_draft_changes(self.srv, run)
+
+    def _forget_draft_changes(self, run: Run) -> None:
+        """The job went in (the person's Submit, or marked applied): its draft's changes are no longer kept."""
+        _forget_draft_changes(self.srv, run.job_id)
+
+    def _draft_off(self, run: Run) -> None:
+        """A draft's answers are re-checked no more for this job (Run.draft_off), said once in its log."""
+        if run.draft and not run.draft_off:
+            run.draft_off = True
+            self._log(run, "draft not re-checked from here on: what you change in the browser stays as you leave it")
 
     def _note_skipped(self, run: Run, result: dict[str, Any]) -> None:
         """Optional fields that wouldn't take the profile's answer are skipped, and said so. So
@@ -4737,7 +4970,9 @@ class Applier:
         if shown and sends:  # Insight's review page lists what's still missing
             return self._pause(run, "stuck", f"The review page shows errors: {shown}. Fix them in the browser, then "
                                "press Submit.")
-        if sends and not run.entries_short:  # (jobs or schools left off: the person's)
+        # (jobs or schools left off, and a saved draft whose answers the desk changed to the profile's: the person's to
+        # check, and to send: issue #112, note 38's review)
+        if sends and not run.entries_short and not run.draft_changed:
             return await self._submit(run, by_person=False)
         srv._mark_ready(job, "filled by the Job Desk")
         run.status, run.need = "ready", ""
@@ -4753,6 +4988,11 @@ class Applier:
             names = " and ".join(_blocks(s, *n) for s, n in run.entries_short.items())
             run.reason += (f" Note: {_site(run, data)} shows only {names} (the Add button was covered): add the rest "
                            "in the browser before you press Submit.")
+        if run.draft_changed:
+            run.reason += (" Note: this is an application the site kept from an earlier visit, and I changed some of its "
+                           "answers to your profile's (see What went in)" + (", so Submit for me left it for you" if sends
+                                                                              else "")
+                           + ": check them before you press Submit.")
         self._log(run, "reached the review page")
 
     async def _submit(self, run: Run, by_person: bool = True) -> None:
@@ -4792,6 +5032,7 @@ class Applier:
             run.pressed_before = True  # it may have gone: Submit for me never presses it again
         if result.get("submitted") and result.get("confirmed"):
             run.status, run.need, run.reason = "submitted", "", "Submitted."
+            self._forget_draft_changes(run)  # (gone in: its draft's changes are no longer kept)
         elif result.get("submitted"):
             try:
                 still = bool(await srv.browser.find_submit())
@@ -4816,6 +5057,7 @@ class Applier:
             if gone := _sent_already(data, text, moved):
                 srv.tracker().update(run.job_id, status="applied", note="submitted on the site")
                 run.status, run.need, run.blocking, run.left = "submitted", "", False, False
+                self._forget_draft_changes(run)  # (gone in: its draft's changes are no longer kept)
                 run.reason = f"Submitted: {_site(run, data)} says \u201c{gone}\u201d."
             else:
                 return self._pause(run, "stuck", "I couldn't find a Submit button on this page. If you sent it yourself "
@@ -5741,6 +5983,66 @@ def _page_sig(data: dict[str, Any]) -> tuple:
             tuple(sorted(f.get("label") or "" for f in data.get("fields") or [] if isinstance(f, dict))))
 
 
+# A requisition's id at the end of a posting's address (Workday's ".../job/<place>/<title>_R12345", "_JR-0012345")
+_REQ_IN_PATH = re.compile(r"_([A-Za-z]{0,6}-?\d[\w-]*)/?$")
+
+
+def _own_draft(action: dict[str, Any], data: dict[str, Any], job_url: str) -> bool:
+    """Is a saved draft's Continue Application this job's (issue #112, note 38's review)? On the job's own page (its
+    address, and the job ids in its query, the job's), or its link going on from the job's address or naming the job's
+    id (Workday's ".../<title>_<req id>/apply"). Not on any other page with one draft's button on it (a candidate home,
+    a sidebar): whose it is isn't known there."""
+    if not job_url:
+        return False
+    page, href = str(data.get("url") or ""), str(action.get("href") or "")
+
+    def steady(url: str) -> str:
+        return _bare(url).rstrip("/").lower()
+    if steady(page) == steady(job_url) and _job_ids(page) == _job_ids(job_url):
+        return True
+    if not href:
+        return False
+    if steady(href) == steady(job_url) or steady(href).startswith(steady(job_url) + "/"):
+        return True
+    ids = set(_job_ids(job_url).values())
+    if m := _REQ_IN_PATH.search(urlparse(job_url).path):
+        ids.add(m.group(1))
+    # (an id of 4 characters or more, as a whole part of the link: one of its path's parts, or what follows a part's last
+    # "_" (Workday's "<title>_<req id>"), or a query value; a "2" from an address ending "_2" is no job's id, and a
+    # link's "?step=2" isn't it: the review)
+    ids = {i.lower() for i in ids if len(i) >= 4}
+    parts = urlparse(href)
+    segments = [s.lower() for s in parts.path.split("/") if s]
+    pieces = set(segments) | {s.rsplit("_", 1)[-1] for s in segments} | {v.lower() for _, v in parse_qsl(parts.query)}
+    return bool(ids & pieces)
+
+
+def _nothing_drawn(data: dict[str, Any], text: str) -> bool:
+    """A page with nothing drawn on it: no headings, boxes (but its own language picker) or buttons (Eightfold's apply
+    page, issue #112, note 40: its app shell, and no form), and nothing in its words that says why. Never a bot check
+    or a CAPTCHA (the person's), nor a page whose words are its own message: a posting closed, an error the page shows
+    or the site's own error page, a confirmation, an application sent before."""
+    if _app_fields(data) or data.get("actions") or data.get("headings") or data.get("captcha") \
+            or data.get("challenge") or data.get("empty_frame") or any(_errorish(e) for e in data.get("errors") or []):
+        return False
+    said = (text or "")[:3000]
+    return not (_BOT_BADGE.search(said) or _BOT_TEXT.search(said) or _ROBOT.search(said) or _closed_notice(data, said)
+                or _maintenance_page(data) or _ERROR_PAGE.search(said) or _SPENT_PAGE.search(said)
+                or _REFRESH_ASKED.search(said) or _CONTENT_MISSING.search(said) or confirmations(said)
+                or _applied_before(data, said))
+
+
+async def _load_again(page: Any) -> None:
+    """Load a page again by its address: a fresh GET, so nothing a form's POST sent is sent again, as a reload of the
+    page that POST answered would. One whose address has a fragment (a single-page app's route, which a visit to the
+    same address wouldn't load again) is reloaded."""
+    with contextlib.suppress(Exception):
+        if urlsplit(page.url).fragment:
+            await page.reload(wait_until="load")
+        else:
+            await page.goto(page.url, wait_until="load")
+
+
 def _maintenance_page(data: dict[str, Any]) -> bool:
     """A site down for maintenance: the job sent on to a page named for it (Workday's
     community.workday.com/maintenance-page, asml.com/en/maintenance's "We'll be back.", live, Oct 2026)."""
@@ -5805,11 +6107,22 @@ def _applied_before(data: dict[str, Any], text: str) -> str:
 
 
 def _closed_notice(data: dict[str, Any], text: str) -> str:
-    """The page's own words that its posting has closed, or "" when it doesn't say so."""
+    """The page's own words that its posting has closed, or "" when it doesn't say so: the sentence that says it, within
+    the element that says it (the page's text puts each element of its own on a line of its own). Never the page's
+    header and menus before it: SuccessFactors' "Sorry, this position has been filled.", a paragraph of its own, was
+    quoted with the 200 characters of the site's header and navigation above it, to the first comma (issue #112, note
+    39)."""
     for said in list(data.get("errors") or []) + [text or ""]:
-        if m := _CLOSED.search(said):
-            start, end = said.rfind(".", 0, m.start()) + 1, said.find(".", m.end())
-            return " ".join(said[start:end + 1 if end >= 0 else len(said)].split())[:200]
+        for m in _CLOSED.finditer(said):
+            line = said.rfind("\n", 0, m.start()) + 1
+            line_end = said.find("\n", m.end())
+            line_end = len(said) if line_end < 0 else line_end
+            start, end = max(said.rfind(".", 0, m.start()) + 1, line), said.find(".", m.end(), line_end)
+            before = said[start:m.start()]
+            if _CLOSED_IF.search(said[start:m.end()]) or _CLOSED_HOW.match(said[m.end():line_end]) \
+                    or before.count("(") > before.count(")"):
+                continue  # (a condition, how a posting is filled, what a board is closed for, or an aside about another)
+            return " ".join(said[start:end + 1 if end >= 0 else line_end].split())[:200]
     return ""
 
 
@@ -6102,6 +6415,98 @@ def _went_in(run: Run, filled: list[dict[str, Any]], *pages: dict[str, Any], sho
             named["label"] = _DOCUMENTS.get(rule) or named["label"]
         key = run.went_in.key_for(url, fid, bases.get(fid) or f"{url} | {placed_key(box)} | 1", page)
         run.went_in.put(key, {"page": page, **named, "value": said, "kind": kind})
+
+
+WENT_CHANGED_CHARS = 60  # of each side of a draft's answer changed, on the panel ("<label>: <old> → <new>")
+
+
+@_quietly
+def _went_changed(run: Run, changes: list[tuple[dict[str, Any], Any, Any]], page: dict[str, Any]) -> None:
+    """A saved draft's answers the desk changed to the profile's (Applier._autofill), each as "<label>: <old> → <new>",
+    for the job's "What went in" panel alone (never the log, a note or a report: the draft's old answer is no detail of
+    the profile's that a scrubber would know). Never a password, a code or a security answer (_kept_out, _guarded), nor a
+    value that holds one of the desk's secrets, on either side."""
+    secrets, guarded = _secret_values(), _guarded((page,))
+
+    def said(box: dict[str, Any], value: Any) -> str:
+        _, words = _went_value(box, value, "")
+        words = words or "(empty)"
+        return words if len(words) <= WENT_CHANGED_CHARS else words[:WENT_CHANGED_CHARS - 1].rstrip() + "…"
+    for box, old, new in changes:
+        if str(box.get("id")) in guarded or _kept_out(box, old if old is not None else "", secrets) \
+                or _kept_out(box, new if new is not None else "", secrets):
+            continue
+        named = _box_said(box)
+        label = f"{named['section']}: {named['label']}" if named["section"] else named["label"]
+        run.went_in.change(f"{label}: {said(box, old)} → {said(box, new)}")
+
+
+# A saved draft's answers the desk changed, kept in the job's own folder (beside submission.json) so a restart of the desk
+# still holds the job from Submit for me and shows them on its card: never in the log, a note, a report or a saved page
+DRAFT_FILE = "draft-changes.json"
+# said on the card of a job whose kept changes won't read back (cut short, or changed by hand): it's held all the same
+DRAFT_UNREAD = "Earlier changes the desk made to this saved draft couldn't be read back: check its answers on the review page"
+
+
+def _draft_file(srv: Any, job_id: int) -> Path | None:
+    job = srv.tracker().get(job_id, with_description=False) or {}
+    return Path(job["folder"]) / DRAFT_FILE if job.get("folder") else None
+
+
+def _save_draft_changes(srv: Any, run: Run) -> None:
+    """Keep that the desk changed this job's draft, and the lines its card shows for it (_went_changed's, a secret
+    never among them). Whatever goes wrong writing it, the job goes on (held for this run of the desk all the same)."""
+    try:
+        path = _draft_file(srv, run.job_id)
+        if path is None:
+            return
+        path.parent.mkdir(parents=True, exist_ok=True)
+        # (whole or not at all: a file cut short by a crash would let the job go unheld: the final review)
+        config.write_text_atomic(path, json.dumps({"draft_changed": True, "changed": list(run.went_in.changed)}))
+    except Exception:
+        logging.getLogger(__name__).warning("couldn't keep job %s's draft changes", run.job_id, exc_info=True)
+
+
+def _restore_draft_changes(srv: Any, run: Run) -> None:
+    """A job the desk changed the draft of before it was restarted: held from Submit for me again, and its card's lines
+    back (none holding a secret saved since). One gone in since (applied, or past that) has none: they're forgotten."""
+    try:
+        path = _draft_file(srv, run.job_id)
+        if path is None or not path.is_file():
+            return
+        job = srv.tracker().get(run.job_id, with_description=False) or {}
+        if job.get("status") in FINISHED:
+            path.unlink(missing_ok=True)
+            return
+    except Exception:
+        logging.getLogger(__name__).warning("couldn't look for job %s's draft changes", run.job_id, exc_info=True)
+        return
+    try:
+        kept = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(kept, dict):
+            raise ValueError("not an object")
+    except Exception:
+        # there, but it won't read (cut short, changed by hand): the job is held all the same, and the card says why
+        logging.getLogger(__name__).warning("couldn't read job %s's draft changes", run.job_id, exc_info=True)
+        run.draft_changed = True
+        run.went_in.change(DRAFT_UNREAD)
+        return
+    if not kept.get("draft_changed"):
+        return
+    run.draft_changed = True
+    try:
+        secrets = _secret_values()
+        for line in kept.get("changed") or []:
+            if isinstance(line, str) and not _holds_secret(line, secrets):
+                run.went_in.change(line)
+    except Exception:
+        logging.getLogger(__name__).warning("couldn't read job %s's draft changes", run.job_id, exc_info=True)
+
+
+def _forget_draft_changes(srv: Any, job_id: int) -> None:
+    with contextlib.suppress(Exception):
+        if (path := _draft_file(srv, job_id)) is not None:
+            path.unlink(missing_ok=True)
 
 
 @_quietly

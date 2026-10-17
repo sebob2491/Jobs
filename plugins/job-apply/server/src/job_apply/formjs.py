@@ -832,6 +832,8 @@ EXTRACT_JS = r"""
     if (actions.length >= 60 && !isSubmit && !formSubmit && !STEP.test(t)) continue;
     const a = { id: idOf(el), text: t };
     if (applyItem) a.menu = true;
+    // a saved draft's "Continue Application" link: where it goes, which says whose application it is (issue #112, note 38)
+    if (el.tagName === 'A' && el.href && /^\s*continue\b.*\bapplication\s*$/i.test(t)) a.href = el.href;
     // A cookie banner's own buttons (OneTrust's sits at the very end of a long page, past
     // the page text the desk reads)
     const consent = el.closest(CONSENT_BOX);

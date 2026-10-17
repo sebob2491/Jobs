@@ -7,7 +7,7 @@ import contextlib
 import json
 import time
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import parse_qsl, urlparse
 
 import pytest
 import yaml
@@ -4791,6 +4791,237 @@ def test_a_page_a_sign_in_led_to_is_never_reloaded_for_having_no_way_on(srv, mon
     assert not any("showed no way on to the application" in line for line in r.log), r.log
     # (and it got as far as the page with no way on, where the reload would have been)
     assert (r.status, r.need) == ("needs_you", "stuck") and "couldn't find the button" in r.reason, (r.reason, r.log)
+
+
+# An application page that came up blank: the site's app shell, with no headings, boxes or buttons (Eightfold's apply
+# page after its Apply Now, issue #112, note 40), and words that say nothing (more than a blank page's few)
+_BLANK_SHELL = ('<html><head><title>Careers</title></head><body><div id="root"></div><div class="legal">Example Fab '
+                'careers site. Copyright 2026 Example Fab. All rights reserved.</div></body></html>')
+_BLANK_FORM = ('<html><head><title>Careers</title></head><body><h2>Apply</h2><form id="f" novalidate>'
+               '<label for="fn">First Name</label><input id="fn" required><label for="em">Email</label>'
+               '<input id="em" type="email" required><button type="submit">Save and Continue</button></form>'
+               "<script>document.getElementById('f').addEventListener('submit', (e) => { e.preventDefault(); "
+               "location.href = '/review'; });</script></body></html>")
+_BLANK_REVIEW = ('<html><head><title>Review</title></head><body><h2>Review</h2><p>Check your application.</p><form '
+                 'onsubmit="event.preventDefault()"><button type="submit">Submit</button></form></body></html>')
+
+
+async def _serve_counted(srv, pages: dict, gets: dict, posts: list) -> None:
+    """Serve `pages` by address (a ("POST", address) key for a POST's answer), counting each address's GETs: a page
+    given as a list is its answers to each GET in turn, its last one for every GET after."""
+    async def handler(route):
+        req = route.request
+        url = req.url.split("#")[0]
+        if req.method == "POST":
+            posts.append(url)
+            body = pages.get(("POST", url), "<html><body>not found</body></html>")
+        else:
+            gets[url] = gets.get(url, 0) + 1
+            body = pages.get(url, "<html><body>not found</body></html>")
+            if isinstance(body, list):
+                body = body[min(gets[url], len(body)) - 1]
+        await route.fulfill(status=200, content_type="text/html", body=body)
+
+    await srv.browser.page()
+    await srv.browser._ctx.route("https://**.example/**", handler)
+
+
+@pytest.mark.parametrize("blanks", [1, 2, 9])
+def test_a_page_a_press_led_to_that_came_up_blank_is_loaded_again_before_asking(srv, monkeypatch, blanks):
+    """Issue #112, note 40: after Eightfold's Apply Now, its apply page (careers/apply?pid=...) stayed blank white: the
+    app shell, no headings, boxes or buttons. The desk said "I couldn't find the button that moves this application
+    on"; the person reloaded it, the form came, and they pressed Resume. A page a press led to with nothing drawn on
+    it didn't load: after the wait it's loaded again (up to twice), and goes on once it draws; still blank, the card
+    says it loaded blank and to reload it. The person's Resume on it is never loaded again by the desk."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 1)
+    monkeypatch.setattr(pipeline, "BLANK_PAGE_WAIT", 2)
+    base = "https://careers.example-fab.example"
+    posting, apply = f"{base}/careers/job/1", f"{base}/careers/apply?pid=1"
+    pages = {posting: '<html><head><title>Careers</title></head><body><h1>Equipment Technician</h1><p>Chandler, AZ.'
+                      '</p><a href="/careers/apply?pid=1">Apply Now</a></body></html>',
+             apply: [_BLANK_SHELL] * blanks + [_BLANK_FORM], f"{base}/review": _BLANK_REVIEW}
+    gets: dict[str, int] = {}
+    posts: list[str] = []
+    job = srv.add_job(url=posting, title="Equipment Technician", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        await _serve_counted(srv, pages, gets, posts)
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            first = (r.status, r.need, r.reason, gets.get(apply))
+            if r.status == "needs_you":
+                applier.resume(job["id"])  # (Resume pressed without a reload: the desk doesn't load it again either)
+                await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r, first
+        finally:
+            await applier.stop()
+
+    r, (status, need, reason, loads) = run(go())
+    again = [line for line in r.log if "came up blank after “Apply Now”" in line and "so I loaded it again"
+             in line]
+    if blanks <= 2:
+        assert status == "ready" and r.seen_form, (status, reason, r.log)
+        assert len(again) == blanks and loads == blanks + 1, (again, loads, r.log)
+    else:
+        assert (status, need) == ("needs_you", "stuck") and "couldn't find the button" not in reason, (reason, r.log)
+        assert reason.startswith("Example Fab's site's page loaded blank after “Apply Now”") \
+            and "even after I loaded it again twice" in reason and "reload the page" in reason, reason
+        assert len(again) == 2 and loads == 3, (again, loads, r.log)
+        # the person's Resume, the page still blank: said again, never loaded again by the desk
+        assert (r.status, r.need) == ("needs_you", "stuck") and "loaded blank" in r.reason, (r.reason, r.log)
+        assert "even after" not in r.reason and gets.get(apply) == 3, (r.reason, gets)
+    assert posts == []
+
+
+def test_a_blank_page_a_forms_post_led_to_is_loaded_again_without_sending_the_form_again(srv, monkeypatch):
+    """A blank page a step's POST answered (issue #112, note 40's reload, after a press): loaded again by its address,
+    so the step isn't sent a second time, as a reload of a POST's answer would."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 1)
+    monkeypatch.setattr(pipeline, "BLANK_PAGE_WAIT", 2)
+    base = "https://careers.example-fab.example"
+    step, sent = f"{base}/apply/step1", f"{base}/apply/step2"
+    pages = {step: '<html><head><title>Apply</title></head><body><h2>Your Details</h2><form method="post" '
+                   'action="/apply/step2"><label for="fn">First Name</label><input id="fn" name="fn" required>'
+                   '<button type="submit">Next</button></form></body></html>',
+             ("POST", sent): _BLANK_SHELL, sent: _BLANK_REVIEW}
+    gets: dict[str, int] = {}
+    posts: list[str] = []
+    job = srv.add_job(url=step, title="Equipment Technician", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        await _serve_counted(srv, pages, gets, posts)
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert r.status == "ready" and r.url == sent, (r.status, r.reason, r.log)
+    assert posts == [sent] and gets.get(sent) == 1, (posts, gets, r.log)  # (the step sent once; loaded again by a GET)
+    assert sum("came up blank after “Next”" in line for line in r.log) == 1, r.log
+
+
+def test_a_blank_shell_a_press_led_to_gets_the_blank_pages_wait_before_its_loaded_again(srv, monkeypatch):
+    """The review of note 40's reload: an app shell with words enough not to be a blank page (its footer) had only the
+    wait for a page's late buttons before it was loaded again. It gets the blank page's wait: one that draws its form
+    within it is never loaded again."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 1)
+    monkeypatch.setattr(pipeline, "BLANK_PAGE_WAIT", 10)
+    base = "https://careers.example-fab.example"
+    posting, apply = f"{base}/careers/job/1", f"{base}/careers/apply?pid=1"
+    late = _BLANK_SHELL.replace("</body>", "<script>setTimeout(() => { document.open(); document.write("
+                                + json.dumps(_BLANK_FORM).replace("</", "<\\/") + "); document.close(); }, 3000);</script></body>")
+    pages = {posting: '<html><head><title>Careers</title></head><body><h1>Equipment Technician</h1>'
+                      '<a href="/careers/apply?pid=1">Apply Now</a></body></html>', apply: late, f"{base}/review": _BLANK_REVIEW}
+    gets: dict[str, int] = {}
+    job = srv.add_job(url=posting, title="Equipment Technician", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        await _serve_counted(srv, pages, gets, [])
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert r.status == "ready" and gets.get(apply) == 1, (r.status, r.reason, gets, r.log)
+    assert not any("so I loaded it again" in line for line in r.log), r.log
+
+
+def test_a_blank_shell_that_turns_busy_is_waited_out_then_loaded_again(srv, monkeypatch):
+    """The second review of note 40's reload: a blank page that showed a loading indicator only on the second look was
+    stopped on at once ("reload it"). Busy, it's waited out as a blank page is, then loaded again as any other."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 1)
+    monkeypatch.setattr(pipeline, "BLANK_PAGE_WAIT", 3)
+    base = "https://careers.example-fab.example"
+    posting, apply = f"{base}/careers/job/1", f"{base}/careers/apply?pid=1"
+    busy = _BLANK_SHELL.replace("</body>", "<script>setTimeout(() => document.body.insertAdjacentHTML('beforeend', "
+                                "'<div aria-busy=\"true\" style=\"width:20px;height:20px\"></div>'), 1500);</script></body>")
+    pages = {posting: '<html><head><title>Careers</title></head><body><h1>Equipment Technician</h1>'
+                      '<a href="/careers/apply?pid=1">Apply Now</a></body></html>',
+             apply: [busy, _BLANK_FORM], f"{base}/review": _BLANK_REVIEW}
+    gets: dict[str, int] = {}
+    job = srv.add_job(url=posting, title="Equipment Technician", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        await _serve_counted(srv, pages, gets, [])
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert r.status == "ready" and gets.get(apply) == 2, (r.status, r.reason, gets, r.log)
+    assert sum("so I loaded it again" in line for line in r.log) == 1, r.log
+
+
+def test_another_jobs_draft_is_never_gone_into_as_this_one(srv, monkeypatch):
+    """The review of note 38: a page with one Continue Application that nothing says is this job's (the job's posting
+    sent on to a candidate home listing another job's draft) is never pressed: another job's application would be
+    filled, and its review page shown, as this job's. The desk stops and says so."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 1)
+    base = "https://careers.example-fab.example"
+    posting, home, other = (f"{base}/job/Equipment-Technician_R100", f"{base}/userHome",
+                            f"{base}/job/Process-Engineer_R200/apply")
+    pages = {posting: "<html><body><script>location.replace('/userHome')</script></body></html>",
+             home: '<html><head><title>Candidate Home</title></head><body><h2>My Applications</h2><p>Process Engineer: '
+                   'not submitted</p><a role="button" href="/job/Process-Engineer_R200/apply">Continue Application</a>'
+                   '</body></html>',
+             other: "<html><body><h2>My Information</h2><label for='n'>First Name</label><input id='n'></body></html>"}
+    gets: dict[str, int] = {}
+    job = srv.add_job(url=posting, title="Equipment Technician", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        await _serve_counted(srv, pages, gets, [])
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert (r.status, r.need) == ("needs_you", "stuck") and "nothing on the page says it's this job's" in r.reason, \
+        (r.reason, r.log)
+    assert other not in gets and not r.draft, (gets, r.log)
+
+
+def test_a_page_with_only_a_bot_check_or_a_message_is_never_blank():
+    """What _nothing_drawn takes for a page that didn't load: nothing drawn, and no words of its own that say why."""
+    shell = {"url": "https://careers.example-fab.example/apply", "fields": [], "actions": [], "headings": []}
+    words = "Example Fab careers site. Copyright 2026 Example Fab. All rights reserved."
+    assert pipeline._nothing_drawn(shell, words) and pipeline._nothing_drawn(shell, "")
+    assert not pipeline._nothing_drawn({**shell, "captcha": "reCAPTCHA"}, "")
+    assert not pipeline._nothing_drawn({**shell, "challenge": True}, "")
+    assert not pipeline._nothing_drawn(shell, "Protected by reCAPTCHA. " + words)
+    assert not pipeline._nothing_drawn(shell, "Checking your browser before accessing the site.")
+    assert not pipeline._nothing_drawn(shell, "Sorry, this position has been filled.")
+    assert not pipeline._nothing_drawn(shell, "Oops, something went wrong. Technical Details: 500")
+    assert not pipeline._nothing_drawn({**shell, "headings": ["Apply"]}, words)
+    assert not pipeline._nothing_drawn({**shell, "actions": [{"id": "1", "text": "Apply"}]}, words)
+    assert not pipeline._nothing_drawn({**shell, "errors": ["Please enter your email address"]}, words)
 
 
 def test_a_review_page_whose_submit_is_greyed_while_it_draws_is_waited_on(srv, monkeypatch, job_apply_home):
@@ -9658,10 +9889,12 @@ def test_a_self_identification_list_that_fetches_its_choices_on_first_open_is_wa
         assert "showed no choices" in r.questions[0]["error"] and values == ["Sam", ""], (r.questions, values)
 
 
-def test_a_posting_that_has_closed_says_so(srv, monkeypatch):
+def test_a_posting_that_has_closed_is_skipped_by_itself(srv, monkeypatch):
     """Edward Jones' BrassRing page for an expired posting (live, Oct 2026) says "The job posting
     you are looking for has expired or the position has already been filled", and the desk said
-    it couldn't find the button. It says the posting has closed."""
+    it couldn't find the button; then it said the posting had closed, and stopped for the person to skip
+    it. Nothing about a closed posting needs the person (issue #112, note 39: the owner's call): it's
+    skipped by itself, with the site's words, among the jobs done."""
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
     monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 1)
     job = srv.add_job(url=fixture_url("site/expired-posting.html"), title="Analyst", company="Example Investments")["job"]
@@ -9677,9 +9910,507 @@ def test_a_posting_that_has_closed_says_so(srv, monkeypatch):
             await applier.stop()
 
     r = run(go())
-    assert (r.status, r.need) == ("needs_you", "stuck") and "has closed" in r.reason, (r.reason, r.log)
-    assert "expired or the position has already been filled" in r.reason and "find the button" not in r.reason
-    assert not r.blocking
+    assert (r.status, r.need) == ("skipped", "") and r.reason.startswith("Skipped: posting closed."), (r.reason, r.log)
+    assert "“The job posting you are looking for has expired or the position has already been filled.”" \
+        in r.reason and "find the button" not in r.reason, r.reason
+    assert not r.blocking and srv.get_job(job["id"])["job"]["status"] == "skipped"
+
+
+def test_a_filled_position_is_skipped_by_itself_quoted_in_its_own_words_and_undo_puts_it_back(srv, monkeypatch):
+    """Issue #112, note 39: an employer's SuccessFactors career site said of a job "Sorry, this position has been
+    filled." The desk stopped the job for the person, with a card telling them to skip it, quoting the site's header
+    and menus up to the first comma ("Your Career at ... CREATE ALERT Sorry,"). The job is skipped by itself (the
+    tracker's "skipped", its tab closed), quoting the paragraph that said it, and the queue goes on to the next job.
+    Undo puts it back: the tracker's status from before, and the job queued again, where a posting still closed is
+    the person's to look at (never skipped by itself again)."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 1)
+    closed = srv.add_job(url=fixture_url("site/sf-posting-filled.html"), title="Equipment Technician",
+                         company="Example Fab")["job"]["id"]
+    after = srv.add_job(url=fixture_url("site/step1.html"), title="FSE", company="Example Fab")["job"]["id"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(closed)
+            nxt = applier.enqueue(after)
+            # (the queue went on to the next job, and filled it as far as it goes)
+            await until(lambda: r.status not in ("queued", "running") and nxt.status not in ("queued", "running"),
+                        about=state(nxt))
+            assert nxt.seen_form and not nxt.blocking, state(nxt)()
+            skipped = (r.status, r.need, r.reason, r.page.is_closed(), srv.get_job(closed)["job"]["status"])
+            await applier.unskip(closed)
+            undone = srv.get_job(closed)["job"]["status"]
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r, skipped, undone
+        finally:
+            await applier.stop()
+
+    r, (status, need, reason, tab_closed, tracked), undone = run(go())
+    assert (status, need, tracked) == ("skipped", "", "skipped") and tab_closed, (status, reason, r.log)
+    assert reason == ("Skipped: posting closed. Example Fab's site says “Sorry, this position has been filled.” "
+                      "Undo puts it back."), reason
+    assert any(line.startswith("skipped by itself: posting closed") for line in r.log), r.log
+    assert undone == "in_progress", undone
+    # put back by the person: theirs to look at, never skipped by itself again
+    assert (r.status, r.need) == ("needs_you", "stuck"), (r.status, r.reason, r.log)
+    assert r.reason.startswith("Example Fab's site says “Sorry, this position has been filled.” You put this "
+                               "job back"), r.reason
+    assert srv.get_job(closed)["job"]["status"] == "in_progress"
+
+
+@pytest.mark.parametrize("how", ["resumed", "in the form"])
+def test_a_closed_posting_the_person_or_the_form_has_been_at_is_theirs_to_skip(srv, monkeypatch, how):
+    """The review of note 39: a job is skipped by itself only on the way in. After the person's Resume, or once the
+    desk is in the application, words saying the posting closed may be about something else there, and what's been
+    done is theirs to judge: the job stops for them, as before, quoting the site's own words, and nothing is skipped."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 1)
+    job = srv.add_job(url=fixture_url("site/sf-posting-filled.html"), title="Equipment Technician",
+                      company="Example Fab")["job"]
+    applier = Applier(srv)
+    applier.runs[job["id"]] = Run(job["id"], "Equipment Technician", "Example Fab", hands_on=how == "resumed",
+                                  seen_form=how == "in the form")
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert (r.status, r.need) == ("needs_you", "stuck"), (r.status, r.reason, r.log)
+    assert r.reason.startswith("Example Fab's site says this posting has closed: “Sorry, this position has been "
+                               "filled.” If so"), r.reason
+    assert srv.get_job(job["id"])["job"]["status"] != "skipped" and not r.page.is_closed()
+
+
+def test_a_closed_postings_words_are_quoted_from_the_element_that_says_so():
+    """The quote is the sentence that says the posting closed, within its own line of the page's text (an element of
+    its own), never the header and menus before it (issue #112, note 39)."""
+    header = ("Your Career at Example Fab\nJobs at Example Group\nLanguage\nView profile / Sign in\nEmployee login\n"
+              "Show More Options\nClear\nSelect how often (in days) to receive an alert:\nCREATE ALERT\n")
+    assert pipeline._closed_notice({}, header + "Sorry, this position has been filled.\nExample Fab is an equal "
+                                   "opportunity employer.") == "Sorry, this position has been filled."
+    assert pipeline._closed_notice({}, header + "Sorry, this position has been filled") \
+        == "Sorry, this position has been filled"
+    said = "Jobs. The job posting you are looking for has expired or the position has already been filled. Look again."
+    assert pipeline._closed_notice({}, said) == ("The job posting you are looking for has expired or the position has "
+                                                 "already been filled.")
+    assert pipeline._closed_notice({"errors": ["This job is no longer available."]}, "") == "This job is no longer available."
+    assert pipeline._closed_notice({}, header) == ""
+    # a posting's ordinary words about when or how it closes, never that it has (the review's)
+    for said in ("Applications will be accepted until the position has been filled.",
+                 "This posting will remain open until the position is filled.",
+                 "This position is filled on a rolling basis.", "Our job board is closed for maintenance.",
+                 "If this job has expired, search for similar ones.",
+                 "Note: the requisition is closed to external applicants.",
+                 "Recently closed jobs: Technician II (position has been filled)"):
+        assert pipeline._closed_notice({}, said) == "", said
+    assert pipeline._closed_notice({}, "The position you applied for has been filled by an internal candidate.") \
+        == "The position you applied for has been filled by an internal candidate."
+    # (closed to new applicants is closed: the second review)
+    assert pipeline._closed_notice({}, "This position is closed to new applicants.") \
+        == "This position is closed to new applicants."
+
+
+@pytest.mark.parametrize("way_in", ["continue", "submit for me", "apply"])
+def test_a_saved_drafts_continue_application_is_the_way_in_and_its_answers_are_checked(srv, monkeypatch, way_in):
+    """Issue #112, note 38: Workday kept a job the desk began on an earlier visit as a draft, and its job page showed
+    "Continue Application" where Apply usually is. The desk didn't take it for the way in: it reloaded the page and
+    said it couldn't find the button. It's the way in, as Apply is; and the draft's boxes hold the answers given then,
+    which may be out of date (the work descriptions had changed in the profile since): on its pages the profile's
+    answer goes in where the box shows another, and the log says so by the boxes' labels. Never a box the profile
+    doesn't answer (the favourite tool), a saved answer that only roughly matches (clean room's), nor their answer for
+    this application (the phone). An application gone into by Apply, its boxes filled (a resume's parse, say), keeps
+    what they show. The reviews: the draft's old answers are on the job's card alone ("What went in": "Last Name:
+    Rivers → Rivera"), never in its log or a report; and Submit for me never sends a draft whose answers the desk
+    changed: it waits on its review page for the person to check them."""
+    from job_apply import report
+
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 1)
+    query = "?apply" if way_in == "apply" else ""
+    job = srv.add_job(url=fixture_url("site/workday-continue-posting.html") + query, title="Equipment Technician",
+                      company="Example Fab")["job"]
+    applier = Applier(srv)
+    applier.auto_submit = way_in == "submit for me"
+    applier.runs[job["id"]] = Run(job["id"], "Equipment Technician", "Example Fab",
+                                  once={question_key("Phone Number"): "480-555-0000"})
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"], submit=applier.auto_submit)
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert r.status == "ready" and "review.html" in r.url, (r.status, r.reason, r.log)
+    saved = dict(parse_qsl(urlparse(r.url).query))
+    kept = {"fn": "Sam", "em": "sam.rivera@example.com", "ph": "480-555-0000", "jt-1": "Equipment Technician",
+            "co-1": "Intel", "tool": "Torque wrench", "cr": "No"}
+    assert {k: saved.get(k) for k in kept} == kept, (saved, r.log)
+    checked = [line for line in r.log if line.startswith("re-checked the saved draft's answers")]
+    if way_in != "apply":
+        assert "clicked “Continue Application”" in r.log, r.log
+        assert any("kept this application from an earlier visit (a saved draft)" in line for line in r.log), r.log
+        assert (saved["ln"], saved["rd-1"]) == ("Rivera", "Maintained 300mm etch and deposition tools."), (saved, r.log)
+        assert checked == ["re-checked the saved draft's answers on “My Information”: 2 field(s) showed another "
+                           "answer than your profile's, so I put your profile's in: “Last Name”, “Role "
+                           "Description”"], r.log
+        assert r.draft_changed and "I changed some of its answers to your profile's (see What went in)" in r.reason
+        assert ("Submit for me left it for you" in r.reason) == (way_in == "submit for me"), r.reason
+        assert r.public()["went_in"]["changed"] == [
+            "Last Name: Rivers → Rivera",
+            "Work Experience 1: Role Description: Ran the wet benches on nights. → Maintained 300mm etch and "
+            "deposition tools."]
+        said = "\n".join(r.log) + report.build(srv.tracker().get(job["id"]), r)["preview"]
+        for old in ("Rivers", "Ran the wet benches"):  # (the phone, kept, is in the test page's review address)
+            assert old not in said, old  # (the draft's old answers: on the card alone)
+    else:
+        assert (saved["ln"], saved["rd-1"]) == ("Rivers", "Ran the wet benches on nights."), (saved, r.log)
+        assert not checked and not r.draft and not r.draft_changed, r.log
+
+
+@pytest.mark.parametrize("case", ["stopped", "refused"])
+def test_a_drafts_boxes_are_left_after_a_stop_and_one_refusing_its_answer_is_read_again(srv, monkeypatch, case):
+    """The reviews of note 38's refresh. A draft's job whose re-checking stopped ("stopped": the person's Resume, or a
+    stop where they may have changed its boxes) has its pages filled as any others, what they show left. A box that
+    won't take the profile's answer ("refused") is read again: one holding something is said by its label (never what
+    it holds: a draft's old answer is no detail of the profile's a report's scrubber knows), and one the fill left empty
+    is asked, as any fill that didn't go in. What changed is on the job's card ("What went in") alone."""
+    from job_apply import report
+
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    job = srv.add_job(url=fixture_url("site/draft-form.html"), title="Equipment Technician", company="Example Fab")["job"]
+    applier = Applier(srv)
+    applier.runs[job["id"]] = Run(job["id"], "Equipment Technician", "Example Fab", draft=True,
+                                  draft_off=case == "stopped")
+    if case == "refused":
+        real = srv.autofill
+
+        async def autofill(*args, **kwargs):  # (the last name's fill emptied the box; the description's left it)
+            out = await real(*args, **kwargs)
+            if not kwargs.get("refresh"):
+                return out
+            await srv.browser.current_tab.evaluate("() => { document.getElementById('ln').value = ''; "
+                                                   "document.getElementById('rd-1').value = 'Ran the wet benches'; }")
+            def gone(f):
+                return bool(f.get("refreshed")) and any(w in (f.get("label") or "") for w in ("Last Name", "Role Description"))
+            refused = [{**f, "error": "TimeoutError: didn't take", "kind": "text", "required": True}
+                       for f in out["filled"] if gone(f)]
+            return {**out, "filled": [f for f in out["filled"] if not gone(f)], "failed": out["failed"] + refused}
+        monkeypatch.setattr(srv, "autofill", autofill)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    checked = [line for line in r.log if line.startswith("re-checked the saved draft's answers")]
+    if case == "stopped":
+        assert r.status == "ready" and not checked and not r.draft_changed, (r.status, r.reason, r.log)
+        saved = dict(parse_qsl(urlparse(r.url).query))
+        assert (saved["ln"], saved["rd-1"], saved["cr"]) == ("Rivers", "Ran the wet benches on nights.", "No"), saved
+    else:
+        assert checked == ["re-checked the saved draft's answers on “My Information”: 1 field(s) showed another "
+                           "answer than your profile's, so I put your profile's in: “Phone Number”",
+                           "re-checked the saved draft's answers on “My Information”: 2 field(s) wouldn't take "
+                           "your profile's answer; as they are now: “Role Description”; 1 left empty, so "
+                           "they're asked"], r.log
+        assert r.status == "needs_you" and "Last Name" in r.reason, (r.need, r.reason, r.questions, r.log)
+        assert r.draft_changed and r.went_in.changed == [
+            "Phone Number: 480-555-0000 → 480-555-0123", "Last Name: Rivers → (empty)",
+            "Work Experience 1: Role Description: Ran the wet benches on nights. → Ran the wet benches"], \
+            r.went_in.changed
+        said = "\n".join(r.log) + report.build(srv.tracker().get(job["id"]), r)["preview"] + report.note(
+            srv.tracker().get(job["id"]), r)
+        for old in ("Rivers", "Ran the wet benches", "480-555-0000"):
+            assert old not in said, old  # (the draft's old answers: on the card alone)
+
+
+def test_a_drafts_answers_are_rechecked_after_a_card_but_not_after_a_stop_or_a_resume(srv):
+    """The second review of note 38's refresh: a draft's re-checking went on no further after its job's first pause,
+    a questions card's among them, and said nothing. It goes on after a stop the person answers without the
+    application's boxes (a questions card, an emailed code, a sign-in, a bot check); after any other, or the person's
+    Resume, it stops for good, said once in the log ("draft not re-checked from here on")."""
+    jobs = [srv.add_job(url=f"https://example.com/jobs/{i}", title="Technician", company="Example Fab")["job"]["id"]
+            for i in range(2)]
+    applier = Applier(srv)
+    card, stop = (Run(j, "Technician", "Example Fab", draft=True) for j in jobs)
+    applier.runs.update({card.job_id: card, stop.job_id: stop})
+    for need in ("questions", "email_code", "sign_in", "bot_check"):
+        applier._pause(card, need, "Waiting on you.")
+    assert not card.draft_off and not any("draft not re-checked" in line for line in card.log), card.log
+    applier._pause(stop, "stuck", "The page didn't move on.")
+    applier._pause(stop, "stuck", "The page didn't move on again.")
+    assert stop.draft_off and sum("draft not re-checked from here on" in line for line in stop.log) == 1, stop.log
+    applier.resume(card.job_id)
+    assert card.draft_off and card.log[-1].startswith("draft not re-checked from here on"), card.log
+
+
+def test_a_drafts_changed_answers_on_its_card_never_show_a_secret(monkeypatch):
+    """What changed in a saved draft is shown on its card as "<label>: <old> → <new>", by the panel's rules: never a
+    password, a code or a security answer, nor a value holding one of the desk's secrets."""
+    monkeypatch.setenv("JOB_APPLY_SECRET_EXAMPLE_FAB", "Hunter2-Example!")
+    r = Run(1, "Technician", "Example Fab", status="ready")
+    page = {"url": "https://example.com/apply", "headings": ["My Information"], "fields": []}
+    boxes = [{"id": "1", "kind": "text", "label": "Last Name *"}, {"id": "2", "kind": "password", "label": "Password"},
+             {"id": "3", "kind": "text", "label": "Answer", "section": "Security questions"},
+             {"id": "4", "kind": "text", "label": "Referral note"}, {"id": "5", "kind": "text", "label": "Passcode"}]
+    pipeline._went_changed(r, [(boxes[0], "Rivers", "Rivera"), (boxes[1], "old-pass", "new-pass"),
+                               (boxes[2], "Flagstaff", "Tucson"), (boxes[3], "note Hunter2-Example! here", "Hello"),
+                               (boxes[4], "123456", "654321")], {**page, "fields": boxes})
+    assert r.went_in.changed == ["Last Name: Rivers → Rivera"], r.went_in.changed
+    assert r.public()["went_in"]["changed"] == ["Last Name: Rivers → Rivera"]
+
+
+def test_a_drafts_changes_are_kept_across_a_restart_and_forgotten_once_it_goes_in(srv, monkeypatch):
+    """The third review of note 38's: the hold on a draft the desk changed (never sent by Submit for me) and its card's
+    lines lived in memory alone, and a restart of the desk lost them. They're kept in the job's own folder (never in the
+    log, a note, a report or a saved page), read back when the job is applied to again (a line holding a saved secret
+    left out), and forgotten once it goes in: the person's own Submit, or marked applied."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setenv("JOB_APPLY_SECRET_EXAMPLE_FAB", "Hunter2-Example!")
+    job = srv.add_job(url=fixture_url("site/draft-form.html"), title="Equipment Technician", company="Example Fab")["job"]
+    earlier = Run(job["id"], "Equipment Technician", "Example Fab")  # (the desk before its restart)
+    Applier(srv)._draft_changes(earlier, [({"id": "1", "kind": "text", "label": "Last Name *"}, "Rivers", "Rivera")],
+                                {"url": "https://example.com/apply", "fields": []})
+    path = Path(srv.tracker().get(job["id"])["folder"]) / pipeline.DRAFT_FILE
+    kept = json.loads(path.read_text(encoding="utf-8"))
+    assert kept == {"draft_changed": True, "changed": ["Last Name: Rivers → Rivera"]}, kept
+    kept["changed"].append("Note: Hunter2-Example! → hello")  # (a secret saved since: never read back)
+    path.write_text(json.dumps(kept), encoding="utf-8")
+    applier = Applier(srv)  # (the desk, restarted: the job's Run made afresh)
+    applier.auto_submit = True
+    applier.runs[job["id"]] = Run(job["id"], "Equipment Technician", "Example Fab", draft=True, draft_off=True)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"], submit=True)
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            held = (r.status, r.reason, list(r.went_in.changed), path.exists())
+            applier.submit_now(job["id"])  # (the person's own Submit, which goes)
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r, held
+        finally:
+            await applier.stop()
+
+    r, (status, reason, changed, still) = run(go())
+    assert status == "ready" and "Submit for me left it for you" in reason and still, (status, reason, r.log)
+    assert changed == ["Last Name: Rivers → Rivera"], changed
+    assert r.status == "submitted" and not path.exists(), (r.status, r.reason, r.log)
+    assert not any("Rivers" in line for line in r.log)
+    # marked applied: forgotten too
+    Applier(srv)._draft_changes(earlier, [({"id": "1", "kind": "text", "label": "Last Name *"}, "Rivers", "Rivera")],
+                                {"url": "https://example.com/apply", "fields": []})
+    assert path.exists()
+    applier.mark_applied(job["id"])
+    assert not path.exists()
+
+
+def test_a_drafts_kept_changes_that_wont_read_still_hold_it(srv):
+    """The final review of note 38's: the draft's kept changes were written in place, so a crash mid-write could cut them
+    short, and a file that wouldn't read was passed over: after a restart the job wasn't held, and Submit for me sent a
+    draft the desk had changed. They're written whole or not at all, and one that won't read holds the job all the
+    same, its card saying why."""
+    job = srv.add_job(url=fixture_url("site/draft-form.html"), title="Equipment Technician", company="Example Fab")["job"]
+    folder = Path(srv.tracker().get(job["id"])["folder"])
+    earlier = Run(job["id"], "Equipment Technician", "Example Fab")
+    Applier(srv)._draft_changes(earlier, [({"id": "1", "kind": "text", "label": "Last Name *"}, "Rivers", "Rivera")],
+                                {"url": "https://example.com/apply", "fields": []})
+    assert [f.name for f in folder.iterdir() if f.name.startswith(pipeline.DRAFT_FILE)] == [pipeline.DRAFT_FILE]
+    for broken in ('{"draft_changed": true, "changed": ["Last Na', "[1, 2]", "\x00\xff"):
+        (folder / pipeline.DRAFT_FILE).write_text(broken, encoding="utf-8")
+        again = Run(job["id"], "Equipment Technician", "Example Fab")
+        pipeline._restore_draft_changes(srv, again)
+        assert again.draft_changed and again.went_in.changed == [pipeline.DRAFT_UNREAD], (broken, again.went_in.changed)
+    (folder / pipeline.DRAFT_FILE).write_text('{"draft_changed": false}', encoding="utf-8")
+    fine = Run(job["id"], "Equipment Technician", "Example Fab")
+    pipeline._restore_draft_changes(srv, fine)
+    assert not fine.draft_changed and not fine.went_in.changed
+
+
+def test_a_draft_list_on_its_first_choice_answered_again_is_a_change_of_the_draft(srv, monkeypatch):
+    """The third review of note 38's: a draft's boxes the desk answers again outside the re-check (a list on the site's
+    first choice, a preset country set right) changed the draft all the same, and weren't counted: Submit for me sent
+    it. They're the draft's changes too, on its card, and it waits for the person."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    job = srv.add_job(url=fixture_url("site/draft-site-default.html"), title="Equipment Technician",
+                      company="Example Fab")["job"]
+    applier = Applier(srv)
+    applier.auto_submit = True
+    applier.runs[job["id"]] = Run(job["id"], "Equipment Technician", "Example Fab", draft=True)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"], submit=True)
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert r.status == "ready" and "Submit for me left it for you" in r.reason, (r.status, r.reason, r.log)
+    assert dict(parse_qsl(urlparse(r.url).query)).get("g") == "Decline to self-identify", r.url
+    assert r.went_in.changed == ["Gender: Male → Decline to self-identify"], r.went_in.changed
+
+
+def test_a_draft_job_the_queue_carries_on_with_by_itself_is_no_longer_rechecked(srv, monkeypatch):
+    """The third review of note 38's: a job left waiting on the person, whose tab the queue found past its pause and
+    carried on with by itself: the person may have changed a saved draft's later pages by hand there. Its re-checking
+    stops for good, said in its log."""
+    job = srv.add_job(url="https://example.com/jobs/1", title="Technician", company="Example Fab")["job"]["id"]
+    applier = Applier(srv)
+    r = Run(job, "Technician", "Example Fab", status="needs_you", need="bot_check", left=True, draft=True)
+    r.page = object()
+    applier.runs[job] = r
+
+    async def past(_run):
+        return True
+    monkeypatch.setattr(applier, "_past_pause", past)
+    monkeypatch.setattr(srv.browser, "lost", lambda page: "")
+    run(applier._pick_up_left())
+    assert r.status == "queued" and r.draft_off, (r.status, r.log)
+    assert r.log[-1].startswith("draft not re-checked from here on"), r.log
+
+
+def test_continue_application_is_the_way_in_only_where_its_the_pages_one():
+    """A saved draft's "Continue Application" (issue #112, note 38) is the way in on a page whose one way in it is (its
+    job's page); never beside an Apply, on a form, nor among several (a candidate home's applications, each another
+    job's). A dialog with one still stops the desk (_notice), as before."""
+    def acts(*texts):
+        return [{"id": str(i), "text": t} for i, t in enumerate(texts)]
+    assert pick_next(acts("Sign In", "Continue Application"), False)["text"] == "Continue Application"
+    assert pick_next(acts("Continue your application"), False)["text"] == "Continue your application"
+    assert pick_next(acts("Continue Application", "Apply"), False)["text"] == "Apply"
+    assert pick_next(acts("Continue Application", "Continue Application", "Search for Jobs"), False) is None
+    assert pick_next(acts("Continue Application"), True) is None
+    assert pick_next(acts("Save and Continue", "Continue Application"), True)["text"] == "Save and Continue"
+    dialog = {"dialogs": [{"heading": "Application in progress", "buttons": [{"text": "Continue Application"},
+                                                                          {"text": "Start Over"}]}]}
+    assert pipeline._notice(dialog) is not None
+    assert classify({"title": "Job", "fields": [], "actions": acts("Continue Application")},
+                    "Check your email to verify your account later.") == "page"
+
+
+def test_a_drafts_continue_application_is_pressed_only_where_its_this_jobs():
+    """Whose draft a Continue Application is (the review of note 38's): the job's own page, or its link going on from
+    the job's address or naming its requisition; never another page's (a candidate home with one draft)."""
+    job = "https://acme.wd1.myworkdayjobs.com/External/job/Chandler-AZ/Equipment-Technician_R12345"
+    button = {"id": "1", "text": "Continue Application"}
+    assert pipeline._own_draft(button, {"url": job}, job)
+    assert pipeline._own_draft({**button, "href": job + "/apply"}, {"url": "https://acme.wd1.myworkdayjobs.com/x"}, job)
+    other_locale = "https://acme.wd1.myworkdayjobs.com/en-US/External/job/Chandler-AZ/Equipment-Technician_R12345/apply"
+    assert pipeline._own_draft({**button, "href": other_locale}, {"url": "https://acme.wd1.myworkdayjobs.com/en-US"}, job)
+    home = {"url": "https://acme.wd1.myworkdayjobs.com/External/userHome"}
+    assert not pipeline._own_draft(button, home, job)
+    assert not pipeline._own_draft({**button, "href": "https://acme.wd1.myworkdayjobs.com/External/job/Tempe-AZ/"
+                                                      "Process-Engineer_R12346/apply"}, home, job)
+    eightfold = "https://careers.example-fab.example/careers?pid=7700123"
+    assert pipeline._own_draft({**button, "href": "https://careers.example-fab.example/careers/apply?pid=7700123"},
+                               home, eightfold)
+    assert not pipeline._own_draft(button, {"url": "https://careers.example-fab.example/careers?pid=7700999"}, eightfold)
+    # an id of a few characters is no job's id, and a job's id is a whole part of the link (the second review: a job
+    # address ending "_2" made a link's "?step=2" this job's draft)
+    short = "https://careers.example-fab.example/job/Technician_2"
+    assert not pipeline._own_draft({**button, "href": "https://careers.example-fab.example/apply?step=2"}, home, short)
+    assert not pipeline._own_draft({**button, "href": "https://acme.wd1.myworkdayjobs.com/External/job/Tempe-AZ/"
+                                                      "Process-Engineer_R123456/apply"}, home, job)
+
+
+def test_a_drafts_boxes_take_the_profiles_answer_only_where_it_differs():
+    """plan_autofill's refresh (a saved draft's boxes, issue #112, note 38, and its reviews): the profile's answer where
+    a box shows another, and a saved answer given for that very question (overtime's, answered on the desk); never a
+    box the profile doesn't answer, one kept for them, a file, a self-identification answer (one declined at this
+    employer stays declined), how they heard, a block whose employer isn't its entry's (a draft's jobs in another
+    order), a saved answer whose pattern only roughly matches (clean room's "clean ?room"), the person's own words (a
+    sentence, a text area) in place of a saved answer or a bare yes or no, nor one showing the profile's answer said
+    another way (a ZIP+4, a phone's extension or country code, a salary's "$65,000", a place, an address, a URL, a date,
+    a yes or no said more fully)."""
+    import copy
+
+    from conftest import PROFILE
+
+    from job_apply.autofill import plan_autofill
+    data = copy.deepcopy(PROFILE)
+    data["preferences"]["desired_salary"] = "65000"
+    overtime = "Are you able to work overtime?"
+    data["answers"] = [{"match": config.question_pattern(overtime), "answer": "Yes", "question": overtime},
+                       *data["answers"]]
+    prof = config.Profile(data)
+
+    def box(i, label, value, kind="text", **more):
+        return {"id": i, "kind": kind, "label": label, "value": value, **more}
+    yes_no = ["Select One", "Yes", "No"]
+    fields = [box("fn", "First Name", "Sam"), box("ln", "Last Name", "Rivers"),
+              box("ph", "Phone Number", "+1 (480) 555-0123"), box("ph2", "Mobile Phone", "480-555-0000"),
+              box("ext", "Home Phone", "480-555-0123 ext 45"), box("zip", "Postal Code", "85225 1234"),
+              box("city", "City", "Chandler, AZ"), box("addr", "Address Line 1", "100 West Main Street"),
+              box("li", "LinkedIn Profile", "linkedin.com/in/samrivera"), box("sal", "Desired Salary", "$65,000"),
+              box("cr", "Do you have clean room experience?", "No", "select", options=yes_no),
+              box("crd", "Please describe your clean room experience", "4 years in Class 10 fabs, full bunny suit."),
+              box("ot", overtime, "No", "select", options=yes_no),
+              box("ot2", f"{overtime} If so, how many hours?", "Yes, up to 10 hours a week"),
+              box("ot3", overtime, "Yes, I can"),
+              box("rel", "Are you willing to relocate?", "Yes", "radio_group", options=["Yes", "No"]),
+              box("rel2", "Would you consider relocating to Hillsboro, OR? Tell us more.",
+                  "Yes, within 6 months for this role."),
+              box("gen", "Gender", "Male", "select", options=["Select One", "Male", "Female", "Decline to self-identify"]),
+              box("hh", "How did you hear about us?", "Employee Referral", "select",
+                  options=["Select One", "LinkedIn", "Employee Referral"]),
+              box("tool", "What is your favorite tool?", "Torque wrench"),
+              box("cv", "Resume", "old-resume.pdf", "file"), box("em", "Email", "sam.old@example.com"),
+              # (the first block, its employer the first job's: its own boxes checked; the second, the first job's again
+              # where the second job's should be: left as it is)
+              box("co1", "Company", "Intel", section="Work Experience 1"),
+              box("lo1", "Location", "Chandler, Arizona", section="Work Experience 1"),
+              box("from1", "From", "3/2021", section="Work Experience 1"),
+              box("rd1", "Role Description", "Ran the wet benches.", "textarea", section="Work Experience 1"),
+              box("co2", "Company", "Intel", section="Work Experience 2"),
+              box("jt2", "Job Title", "Equipment Technician", section="Work Experience 2")]
+    # (a choice's own wording is no sentence of the person's: the option the profile's answer picks against the one
+    # shown, whatever the words; the third review's)
+    spons = ["Yes, I will require sponsorship now or in the future", "No"]
+    auth = ["Yes, I am authorized to work for any employer", "Yes, but I will need sponsorship", "No"]
+    trav = ["Yes, up to 25%", "Yes, up to 75%", "No"]
+    fields += [box("sp", "Will you now or in the future require sponsorship for employment visa status?", spons[0],
+                   "radio_group", options=spons),
+               box("au", "Are you legally authorized to work in the United States?", auth[1], "select",
+                   options=["Select One", *auth]),
+               box("tr", "Are you willing to travel?", trav[0], "select", options=["Select One", *trav]),
+               box("rel3", "Are you willing to relocate?", "Yes, for the right role", "radio_group",
+                   options=["Yes, for the right role", "No"])]
+    plan = plan_autofill(fields, prof, {"company": "Example Fab"}, refresh=True, keep={"em"})
+    assert {t["id"]: t["value"] for t in plan["to_fill"]} == {
+        "ln": "Rivera", "ph2": "480-555-0123", "ot": "Yes", "rel": "No",
+        "rd1": "Maintained 300mm etch and deposition tools.", "sp": "No", "au": auth[0], "tr": "Yes, up to 75%",
+        "rel3": "No"}, plan["to_fill"]
+    assert all(t.get("refreshed") for t in plan["to_fill"]) and not plan["needs_input"], plan
+    assert plan_autofill(fields, prof, {})["to_fill"] == []  # (without refresh: what's there stays)
+    # a street address is the whole of it (an apartment isn't the street's), and another ZIP is another
+    apartment = [box("addr", "Address Line 1", "100 W Main St, Apt 5"), box("zip", "Postal Code", "85226")]
+    assert {t["id"]: t["value"] for t in plan_autofill(apartment, prof, {}, refresh=True)["to_fill"]} == {
+        "addr": "100 W Main St", "zip": "85225"}
+    # a self-identification answer the draft declined stays declined, whatever the profile says now
+    data["eeo"]["gender"] = "Male"
+    declined = [box("gen", "Gender", "Decline to self-identify", "select",
+                    options=["Select One", "Male", "Female", "Decline to self-identify"])]
+    assert plan_autofill(declined, config.Profile(data), {}, refresh=True)["to_fill"] == []
 
 
 @pytest.mark.parametrize("page", ["applied-before-posting.html", "applied-before-form.html"])
