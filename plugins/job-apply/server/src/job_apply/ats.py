@@ -47,6 +47,8 @@ COMPANY_HOSTS = {
     "careers.aps.com": "successfactors", "careers.srpnet.com": "successfactors",
     "jobs.northropgrumman.com": "eightfold", "careers.insight.com": "eightfold",
     "myhiring.kforce.com": "taleo",
+    # data/lists/las-vegas.yaml
+    "jobs.igt.com": "successfactors",
 }
 
 

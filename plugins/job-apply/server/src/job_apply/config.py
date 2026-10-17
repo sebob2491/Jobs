@@ -6,6 +6,7 @@ the plugin directory, so updating or reinstalling the plugin can't lose it.
 
 from __future__ import annotations
 
+import contextlib
 import copy
 import difflib
 import json
@@ -595,6 +596,146 @@ def question_core(label: str) -> str:
     if len(asks) == 1 and CORE_WORDS[0] <= len(asks[0].split()) <= CORE_WORDS[1]:
         return asks[0]
     return whole
+
+
+_KEY_LINE = r"^(?P<indent>{indent}){key}:(?P<rest>.*)$"
+
+
+def _value_and_comment(rest: str) -> tuple[str, str]:
+    """A key line's value and its trailing comment ("  # e.g. ..."), the comment kept as written: the first " #"
+    outside quotes and brackets. A flow list left open (written over several lines) is a ValueError."""
+    quote, depth, escaped = "", 0, False
+    for i, ch in enumerate(rest):
+        if quote:  # (in double quotes a backslash escapes what follows, itself too: "Tech \\" ends at its quote)
+            if escaped:
+                escaped = False
+            elif quote == '"' and ch == "\\":
+                escaped = True
+            elif ch == quote:
+                quote = ""
+        elif ch in "\"'":
+            quote = ch
+        elif ch in "[{":
+            depth += 1
+        elif ch in "]}":
+            depth -= 1
+        elif ch == "#" and (i == 0 or rest[i - 1] in " \t") and not depth:
+            head = rest[:i]
+            return head.strip(), rest[len(head.rstrip()):].rstrip()
+    if depth > 0 or quote:
+        raise ValueError("a value written over several lines")
+    return rest.strip(), ""
+
+
+def set_yaml_value(text: str, keys: tuple[str, ...], value: Any) -> str:
+    """The YAML text with the value at `keys` (a top-level key, or one key under a top-level mapping:
+    ("preferences", "locations")) set, written on its one line in JSON's spelling (which YAML reads: a flow list
+    of quoted strings, true, false); every other line, comments too, stays as the person wrote it. A file laid
+    out so that can't be done safely (a flow mapping, a value over several lines, a key spelled another way, a
+    file that doesn't read) is a ValueError, and nothing is changed: the person edits it by hand."""
+    if not 1 <= len(keys) <= 2:
+        raise ValueError("one key, or a section and a key")
+    try:
+        before = yaml.safe_load(text) if text.strip() else {}
+    except yaml.YAMLError as e:
+        raise ValueError(f"it doesn't read as YAML ({str(e).splitlines()[0]})") from e
+    if before is None:
+        before = {}
+    if not isinstance(before, dict) or len(keys) == 2 and not isinstance(before.get(keys[0]) or {}, dict):
+        raise ValueError("it isn't laid out as sections of settings")
+    bom = "\ufeff" if text.startswith("\ufeff") else ""  # (PowerShell 5 writes one before the first key)
+    lines = text[len(bom):].splitlines(keepends=True)
+    if lines and not lines[-1].endswith("\n"):
+        lines[-1] += "\n"
+    written = json.dumps(value, ensure_ascii=False)
+    key = keys[-1]
+    start, stop, indent = 0, len(lines), ""
+    section = before
+    if len(keys) == 2:
+        top = next((i for i, line in enumerate(lines) if re.match(rf"^{re.escape(keys[0])}:\s*(#.*)?$", line)), None)
+        if top is None:
+            if keys[0] in before:
+                raise ValueError(f"its {keys[0]} section is written in a way this can't change")
+            lines.append(f"{keys[0]}:\n  {key}: {written}\n")
+            return _checked(text, bom + "".join(lines), keys, value, before)
+        section = before.get(keys[0]) or {}
+        start = top + 1
+        stop = next((i for i in range(start, len(lines)) if lines[i].strip() and not lines[i].startswith((" ", "\t", "#"))),
+                    len(lines))
+        child = next((ln for ln in lines[start:stop] if ln.strip() and not ln.lstrip().startswith("#")), "  x")
+        indent = child[:len(child) - len(child.lstrip())] or "  "
+    pattern = re.compile(_KEY_LINE.format(indent=re.escape(indent), key=re.escape(key)))
+    at = next((i for i in range(start, stop) if pattern.match(lines[i].rstrip("\r\n"))), None)
+    if at is None:
+        if key in section:  # (spelled another way: quoted, a space before its colon; a second one would win)
+            raise ValueError(f"its {key} is written in a way this can't change")
+        lines.insert(start if len(keys) == 2 else len(lines), f"{indent}{key}: {written}\n")
+        return _checked(text, bom + "".join(lines), keys, value, before)
+    m = pattern.match(lines[at].rstrip("\r\n"))
+    assert m is not None
+    old, comment = _value_and_comment(m.group("rest"))
+    end = at + 1
+    if not old:  # a block list (or nothing) under it: its "- " lines, deeper than the key or at its own indent
+        while end < stop and (not lines[end].strip() and end + 1 < stop and lines[end + 1].startswith(indent + " ")
+                              or lines[end].startswith(indent + " ") or lines[end].startswith(indent + "- ")):
+            end += 1
+    lines[at:end] = [f"{indent}{key}: {written}{comment}\n"]
+    return _checked(text, bom + "".join(lines), keys, value, before)
+
+
+def _checked(text: str, out: str, keys: tuple[str, ...], value: Any, before: dict[str, Any]) -> str:
+    """The new text, when it reads as the old one with only that value changed."""
+    try:
+        after = yaml.safe_load(out)
+    except yaml.YAMLError as e:
+        raise ValueError("it couldn't be changed safely") from e
+    want = copy.deepcopy(before)
+    section = want.setdefault(keys[0], {}) if len(keys) == 2 else want
+    if section is None:
+        section = want[keys[0]] = {}
+    section[keys[-1]] = value
+    if after != want:
+        raise ValueError("it couldn't be changed safely")
+    return out
+
+
+def listed(value: Any) -> list[Any]:
+    """A profile's list as a list, one written as a single value too ("titles: Help Desk Technician"), never its
+    letters."""
+    return [value] if isinstance(value, (str, int, float)) else list(value or [])
+
+
+def search_profile_text(places: list[str] | None = None, titles: list[str] | None = None) -> tuple[Path, str]:
+    """profile.yaml with these places as preferences.locations (where the person looks for work: "Phoenix, AZ",
+    "Las Vegas, NV"; Find jobs searches their states, a form asking where they'd like to work gets the first) and
+    these titles as preferences.titles (the jobs Find jobs looks for), worked out but not written: a ValueError when
+    it can't be."""
+    path = profile_path()
+    if not path.exists():
+        raise ValueError("Set up your profile first (ask Claude to set up job-apply)")
+    text = path.read_text(encoding="utf-8")
+    if places is not None:
+        text = set_yaml_value(text, ("preferences", "locations"), places)
+    if titles is not None:
+        text = set_yaml_value(text, ("preferences", "titles"), titles)
+    return path, text
+
+
+def write_text_atomic(path: Path, text: str) -> None:
+    """All or nothing (a crash mid-write can't leave half a file), into the file a link points at, through a
+    temporary file of its own (two writers never share one)."""
+    import tempfile
+
+    target = path.resolve()
+    fd, tmp = tempfile.mkstemp(dir=target.parent, prefix=target.name + ".", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:  # (on Windows its lines end as Windows writes them)
+            f.write(text)
+        os.replace(tmp, target)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+        raise
 
 
 QUESTION_BANK = PLUGIN_ROOT / "data" / "question_bank.yaml"

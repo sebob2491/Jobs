@@ -30,8 +30,9 @@ from .postings import FetchError, Posting, fetch_posting, finalize, parse_html
 from .render import KINDS, render_pdf, to_html
 from .search import (ICIMS_FRAME, companies_path, eightfold_page_url, employer_lists, every_employer,
                      icims_search, icims_state, infor_search, keep_listings, load_companies, location_terms,
-                     parse_eightfold, paycom_search, rmk_search, search_companies, sfclassic_search, sitecore_search,
-                     ukg_search, wordings_for)
+                     parse_eightfold, paycom_search, rmk_search, search_companies, set_search_area, sfclassic_search,
+                     sitecore_search, ukg_search, wordings_for)
+from .search import search_area as search_area_now
 from .tracker import Tracker
 
 INSTRUCTIONS = """\
@@ -259,6 +260,30 @@ def setup_status() -> dict[str, Any]:
         # the common questions the desk would stop to ask (common_questions lists them, and saves the answers)
         "common_questions_unanswered": sum(1 for q in bank_questions(prof) if q.get("answer") in (None, "")),
     }
+
+
+@tool()
+async def search_area(places: list[str] | None = None, lists: list[str] | None = None,
+                      titles: list[str] | None = None) -> dict[str, Any]:
+    """What and where Find jobs (and search_company_jobs) looks: the job titles the person wants (`titles`; the first
+    `searched_titles` are searched, and all of them count toward an opening's fit; none, `default_titles`), the places
+    they want work in (`places`, each a city and state: ["Phoenix, AZ", "Las Vegas, NV"]; their states are searched)
+    and the plugin's employer lists to search (`lists`; `choices` names them all, with what each covers and how many
+    employers). The Job Desk's What and where to search window changes the same. With no arguments it only says
+    what they are now.
+
+    titles: the job titles, replacing the ones there (kept in profile.yaml's preferences.titles), one title each.
+    places: the places, replacing the ones there (kept in profile.yaml's preferences.locations).
+    lists: the lists' names, replacing the ones there (kept in ~/.job-apply/companies.yaml's `lists:`, which is made
+    when the person has none; their own employers in it stay). Only what the person asked for."""
+    if places is None and lists is None and titles is None:
+        return search_area_now()
+    area = set_search_area(places=places, lists=lists, titles=titles)
+    from . import desk
+
+    if desk._desk is not None:  # (an open desk's openings were found elsewhere: Find jobs searches again)
+        desk._desk._forget_openings()
+    return area
 
 
 @tool()

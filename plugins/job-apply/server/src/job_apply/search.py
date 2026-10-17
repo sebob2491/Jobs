@@ -70,6 +70,8 @@ from .postings import USER_AGENT, csod_context, csod_place, html_to_text, place_
 
 WORKDAY_PAGE = 20  # Workday rejects larger pages
 MAX_ALTERNATIVES = 4
+# Semiconductor equipment roles, used when the profile names no target titles.
+DEFAULT_TITLES = ["field service", "customer service engineer", "customer engineer", "equipment technician"]
 FETCH_WHEN_FILTERING = 60  # results to scan per search when filtering by location ourselves
 EMPLOYERS_AT_ONCE = 8  # employers searched at the same time (each its own site; ~50 s for the Phoenix list, not ~100)
 EMPLOYER_SECONDS = 120  # one employer's searches, all its wordings, at most (the slowest take ~30 s); then they stop
@@ -222,6 +224,134 @@ def _with_lists(own: list[dict[str, Any]], paths: list[Path]) -> list[dict[str, 
     return out
 
 
+# The plugin's lists by what they cover, for the Job Desk's "What and where" (a list without one shows its name)
+LIST_LABELS = {"semiconductor-az": "Arizona chip makers and their suppliers",
+               "phoenix-metro": "Large Phoenix-area employers (health care, finance, government, staffing...)",
+               "las-vegas": "Las Vegas-area employers that hire IT people (casinos, gaming tech, data centers...)"}
+# What the desk's What and where to search window offers with one click (anything else is typed): the places the
+# plugin's lists cover, and job titles by the kind of work they're for
+PLACE_IDEAS = ["Phoenix, AZ", "Las Vegas, NV", "Remote"]
+TITLE_IDEAS = {
+    "IT": ["Help Desk Technician", "IT Support Specialist", "Desktop Support Technician", "Systems Administrator",
+           "Network Technician"],
+    "Equipment": ["Field Service Engineer", "Equipment Technician", "Customer Engineer", "Maintenance Technician"],
+    "HR": ["HR Generalist", "HR Coordinator", "Recruiter", "HR Assistant"],
+}
+
+
+def search_area() -> dict[str, Any]:
+    """What and where Find jobs searches: the profile's job titles (preferences.titles; the first MAX_ALTERNATIVES
+    are searched, and every one counts toward an opening's fit) and places (preferences.locations), the plugin's
+    lists the person's own companies.yaml names (the semiconductor list when they have none), each list's label and
+    size, and how many employers of their own they added."""
+    try:
+        prof = config.Profile.load()
+        places = [str(p) for p in config.listed(prof.get("preferences.locations")) if str(p).strip()]
+        titles = [str(t).strip() for t in config.listed(prof.get("preferences.titles")) if str(t).strip()]
+    except ValueError:  # (a profile that doesn't read: said elsewhere)
+        places, titles = [], []
+    own_path = own_companies_path()
+    own: list[dict[str, Any]] = []
+    names = [BUILTIN_LIST]
+    if own_path.exists():
+        try:
+            own, data = _companies_in(own_path)
+            names = _list_names(data, own_path)
+        except ValueError:
+            names = []
+    lists = employer_lists()
+    states = list(dict.fromkeys(s for p in places for s in _place_states(p)))
+    return {"titles": titles, "default_titles": DEFAULT_TITLES, "searched_titles": MAX_ALTERNATIVES,
+            "places": places, "states": states, "lists": [n for n in names if n in lists], "own": len(own),
+            "choices": [{"name": name, "label": LIST_LABELS.get(name, name), "count": _list_size(path)}
+                        for name, path in lists.items()],
+            "place_ideas": PLACE_IDEAS, "title_ideas": TITLE_IDEAS}
+
+
+_LIST_SIZES: dict[Path, tuple[float, int]] = {}  # (the desk asks every 1.5 s: each list read again only when it changes)
+
+
+def _list_size(path: Path) -> int:
+    try:
+        stamp = path.stat().st_mtime
+    except OSError:
+        return 0
+    if path not in _LIST_SIZES or _LIST_SIZES[path][0] != stamp:
+        try:
+            _LIST_SIZES[path] = (stamp, len(_companies_in(path)[0]))
+        except ValueError:
+            _LIST_SIZES[path] = (stamp, 0)
+    return _LIST_SIZES[path][1]
+
+
+_PLACE_STATE = re.compile(r",\s*([A-Za-z]{2})\b")
+
+
+def _place_states(place: str) -> list[str]:
+    """The US states a place names: "Phoenix, AZ" and "Phoenix, Arizona" one each, "Las Vegas" none."""
+    states = [m.group(1).upper() for m in _PLACE_STATE.finditer(place) if m.group(1).upper() in US_STATES]
+    padded = f" {norm(place)} "
+    return states + [code for code, name in US_STATES.items() if f" {norm(name)} " in padded and code not in states]
+
+
+def set_search_area(places: list[str] | None = None, lists: list[str] | None = None,
+                    titles: list[str] | None = None) -> dict[str, Any]:
+    """Change what and where Find jobs searches: the profile's job titles and places, and the plugin's lists in the
+    person's own companies.yaml (made for them, with nothing else in it, when they have none), each changed in
+    place. A place without its state, a title holding more than one, a list the plugin hasn't, nothing left to
+    search, or a file this can't change is a ValueError, and then neither file is written."""
+    writes: list[tuple[Path, str]] = []
+    kept: list[str] | None = None
+    named: list[str] | None = None
+    if titles is not None:
+        named = []
+        for title in (" ".join(str(t).split()) for t in titles):
+            if title and title.casefold() not in {t.casefold() for t in named}:
+                named.append(title)
+        if len(named) > 12 or any(len(t) > 80 for t in named):
+            raise ValueError("A few job titles, each a few words such as Help Desk Technician")
+        if any(re.search(r"\||\sOR\s", t) for t in named):  # (the search reads either as two titles)
+            raise ValueError("One job title each: add the others one at a time")
+    if places is not None:
+        kept = list(dict.fromkeys(" ".join(str(p).split()) for p in places if str(p).strip()))
+        if len(kept) > 12 or any(len(p) > 80 for p in kept):
+            raise ValueError("A few places, each a city and state such as Las Vegas, NV")
+        for place in kept:
+            states = _place_states(place)
+            if norm(place) == "remote":
+                continue
+            if not states:
+                raise ValueError(f"Add {place!r}'s state, such as Las Vegas, NV: Find jobs searches by state")
+            if len(states) > 1:
+                raise ValueError(f"{place!r} names {len(states)} states: one place each, separated with semicolons")
+    if kept is not None or named is not None:
+        writes.append(config.search_profile_text(places=kept, titles=named))
+    if lists is not None:
+        known = employer_lists()
+        names = list(dict.fromkeys(str(n) for n in lists))
+        unknown = [n for n in names if n not in known]
+        if unknown:
+            raise ValueError(f"No employer list named {', '.join(unknown)}; the lists are {', '.join(known)}")
+        own_path = own_companies_path()
+        own, data = _companies_in(own_path) if own_path.exists() else ([], {})
+        if not names and not own:
+            raise ValueError("Pick at least one employer list to search")
+        if own_path.exists():
+            text = config.set_yaml_value(own_path.read_text(encoding="utf-8"), ("lists",), names)
+            if data.get("include_builtin") is True and BUILTIN_LIST not in names:
+                text = config.set_yaml_value(text, ("include_builtin",), False)
+        else:
+            config.ensure_home()
+            text = ("# Your own employer list for Find jobs and the Job Desk (its What and where window made it).\n"
+                    "# lists: the plugin's employer lists to search. companies: employers of your own, in the shape\n"
+                    "# of the plugin's templates/companies.example.yaml.\n"
+                    f"lists: {json.dumps(names)}\ncompanies: []\n")
+        writes.append((own_path, text))
+    for path, text in writes:  # (both worked out first: neither is written unless both can be)
+        config.write_text_atomic(path, text)
+    return search_area()
+
+
 def every_employer() -> list[dict[str, Any]]:
     """The person's employers, then every plugin list's (the desk's troubleshooting searches them all)."""
     return _with_lists(load_companies(), list(employer_lists().values()))
@@ -297,6 +427,11 @@ STATE_CITIES = {
            "sierra vista", "lake havasu city", "kingman", "bullhead city", "sedona", "show low",
            "oro valley", "marana", "sahuarita", "green valley", "chino valley", "camp verde"],
            # (not Nogales: Avnet's Workday lists "Nogales, Sonora, Mexico"; its Arizona namesake says "Nogales, AZ")
+    # (the Las Vegas valley's towns and the state's other cities: a search there, Oct 2026)
+    # (not the valley's Paradise, Enterprise, Spring Valley, Whitney or Winchester, nor Jean or Minden: places abroad,
+    # or Arizona's Paradise Valley, share their names, and postings there say "Las Vegas")
+    "NV": ["las vegas", "north las vegas", "henderson", "summerlin", "boulder city", "mesquite", "pahrump", "laughlin",
+           "primm", "reno", "sparks", "carson city", "elko", "fernley", "fallon"],
 }
 
 
@@ -782,9 +917,8 @@ def parse_sitecore(data: Any) -> list[Listing]:
 def eightfold_page_url(cfg: dict[str, Any], query: str, location: str | None) -> str:
     """The careers page whose own search call the browser fallback listens for."""
     params = {"query": " ".join(alternatives(query)), "domain": cfg["domain"]}
-    if location:
-        first = location.split("|")[0].strip()
-        params["location"] = US_STATES.get(first.upper(), first)
+    if location and "|" not in location:  # (one place: the page's own filter; several: every place, kept here)
+        params["location"] = US_STATES.get(location.strip().upper(), location.strip())
     return f"https://{cfg['host']}/careers?{urlencode(params)}"
 
 

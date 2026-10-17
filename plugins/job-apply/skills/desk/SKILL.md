@@ -118,6 +118,18 @@ The desk is a local web page served by this plugin. It does what the `find-jobs`
   openings where the desk doesn't go all the way yet show, whatever their fit, every one is
   tried, and nothing is submitted while it's on (the header says so; the desk still makes
   accounts and fills each step, which the sites keep). Turned off, the desk applies for real.
+  In it, **Select recommended** ticks one opening per employer (the best fit): the others
+  there most likely stop at the same place.
+- **The bar over the openings** (once any job has been tried) shows them by where they
+  stand, each with its count: Not started, Working, Bot checks (with **Solve them**, the
+  round that brings each up for the user), Needs you, Stuck (the desk couldn't get past
+  something: its Notes, or each card's Report a problem, are for Claude to fix), Ready and
+  Done. A group picked hides the others, and nothing hidden is ticked or applied to.
+- **What and where** (the header's button, which shows the titles and places searched now)
+  opens a window with the job titles Find jobs looks for (typed, or picked from its ideas
+  for IT, equipment and HR work; the first four are searched), the places it looks in (a
+  city and state each) and the plugin's employer lists it searches. Saving it finds jobs
+  again; Claude's `search_area` tool changes the same.
 - **Common questions** (a card, while any are unanswered) asks the questions most
   applications ask that the profile doesn't answer (`data/question_bank.yaml`). Answered
   once, each goes to `answers.yaml` and fills that question at every employer from then on;

@@ -18,12 +18,11 @@ from typing import Any, Awaitable, Callable
 from urllib.parse import urlparse
 
 from .autofill import _PARTIAL_STUDY, degree_key, entry_dates, norm, school_under_way
-from .config import Profile
+from .config import Profile, listed
 from .postings import QUESTIONS_HEADING, Posting, fetch_posting
-from .search import MAX_ALTERNATIVES, US_STATES, location_matches, location_terms, title_matches, title_words
+from .search import (DEFAULT_TITLES, MAX_ALTERNATIVES, US_STATES, location_matches, location_terms, title_matches,
+                     title_words)
 
-# Semiconductor equipment roles, used when the profile names no target titles.
-DEFAULT_TITLES = ["field service", "customer service engineer", "customer engineer", "equipment technician"]
 RECOMMEND_AT = 60  # scores from here up are preselected in the Job Desk
 
 _LEVEL = {"high_school": 1, "associate": 2, "bachelor": 3, "master": 4, "doctorate": 5}
@@ -49,6 +48,9 @@ _METROS = [
      "san tan valley", "anthem", "casa grande", "ahwatukee", "sun city west", "sun lakes", "youngtown",
      "waddell", "new river", "gold canyon"},
     {"tucson", "oro valley", "marana", "sahuarita", "vail"},
+    {"las vegas", "north las vegas", "henderson", "paradise", "spring valley", "enterprise", "summerlin",
+     "sunrise manor", "whitney", "winchester", "boulder city"},
+    {"reno", "sparks", "carson city"},
 ]
 _CITY_STATE = re.compile(r"^\s*([a-z][a-z .'-]*?)\s*[,-]\s*([a-z]{2})\b")
 _COUNTRY_STATE_CITY = re.compile(r"^\s*(?:us|usa)\s*-\s*([a-z]{2})\s*-\s*([a-z][a-z .'-]*?)\s*$")  # iCIMS's US-AZ-Bagdad
@@ -60,9 +62,9 @@ def _far_place(location: str, cities: list[str]) -> str | None:
     area of the person's own places ("Bagdad, AZ" for Phoenix); None when any is near, remote,
     or not a city ("Arizona", "2 Locations", "+80 more"), or the person's places aren't in an
     area this knows."""
-    near = next((m for m in _METROS if any(c in m for c in cities)), None)
+    near: set[str] = set().union(*(m for m in _METROS if any(c in m for c in cities)))  # (every named place's metro)
     where = location.lower()
-    if near is None or not where.strip() or re.search(r"remote|\bmore\b", where):
+    if not near or not where.strip() or re.search(r"remote|\bmore\b", where):
         return None
     if any(re.search(rf"\b{re.escape(c)}\b", where) for c in near | set(cities)):
         return None
@@ -185,7 +187,7 @@ class Fit:
 
 
 def target_titles(prof: Profile) -> list[str]:
-    titles = [str(t).strip() for t in prof.get("preferences.titles") or [] if str(t).strip()]
+    titles = [str(t).strip() for t in listed(prof.get("preferences.titles")) if str(t).strip()]
     return titles or list(DEFAULT_TITLES)
 
 
@@ -197,7 +199,7 @@ def target_location(prof: Profile) -> str | None:
     """States named in preferences.locations ("Phoenix, AZ"), else the home state."""
     states = []
     names = sorted(US_STATES.items(), key=lambda x: -len(x[1]))  # "West Virginia" before "Virginia"
-    for loc in prof.get("preferences.locations") or []:
+    for loc in listed(prof.get("preferences.locations")):
         m = re.search(r",\s*([A-Za-z]{2})\b", str(loc))
         if m:
             states.append(m.group(1).upper())

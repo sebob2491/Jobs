@@ -1,0 +1,273 @@
+# Las Vegas-area (Clark County, Nevada) employers that hire IT people: help desk and desktop support,
+# systems and network administration, cloud, security and software. Casino resorts' corporate IT,
+# gaming technology makers, data centers, the airline headquartered here, public agencies and
+# schools, hospitals, IT staffing firms, and the federal contractors around Nellis AFB and the Nevada
+# National Security Site. A person's own ~/.job-apply/companies.yaml names this list
+# (`lists: [las-vegas]`) to search it; see templates/companies.example.yaml.
+# Same shape as data/companies.yaml. Each careers site and the system behind it was read off the
+# live pages in Oct 2026, and every `search` block was run through the plugin's own search from a
+# test machine and came back without an error; each entry's comment names Las Vegas-area IT openings
+# it found (or says there were none that day). Employers with no `search` block run a system the
+# plugin can't search (or turned automated reads away): Find jobs points the person to their careers
+# page instead. A bank, utility or hospital is here for its IT jobs in the valley, not its other work.
+
+companies:
+  # Casino resorts' corporate IT (checked Oct 2026).
+  - name: MGM Resorts
+    careers_url: https://careers.mgmresorts.com/
+    ats: workday              # careers.mgmresorts.com's "Applicant login" opens this Workday site
+    nv_sites: Las Vegas (corporate offices, the Strip resorts)
+    confidence: high          # live check, Oct 2026: Sr Firewall Engineer and Sr IAM Engineer at its Las Vegas
+                              # office, a Senior Network Engineer in Nevada
+    search: {workday: https://mgmresorts.wd5.myworkdayjobs.com/MGMCareers}
+  - name: Caesars Entertainment
+    careers_url: https://www.caesars.com/careers
+    ats: oracle_hcm           # caesars.com/careers links to this Oracle Recruiting site
+    nv_sites: Las Vegas (corporate offices, the Strip resorts), Laughlin
+    confidence: high          # live check, Oct 2026: Las Vegas corporate IT openings (Principal Cloud Security
+                              # Architect, Lead Systems Analyst, IT Auditor, an IAM business analyst)
+    search: {oracle: {host: edmn.fa.us2.oraclecloud.com, site: CX_1}}
+  - name: Wynn Resorts
+    careers_url: https://www.wynnresorts.com/careers/open-roles
+    ats: smartrecruiters      # jobs.wynnresorts.com redirects to wynnresorts.com/careers; its "View All Positions"
+                              # lists SmartRecruiters (WynnResorts) postings
+    nv_sites: Las Vegas (Wynn, Encore)
+    confidence: high          # live check, Oct 2026: Specialist - IT Support in Las Vegas
+    search: {smartrecruiters: WynnResorts}
+  - name: The Venetian Resort
+    careers_url: https://careers.venetianlasvegas.com/
+    ats: phenom               # venetianlasvegas.com/careers links to this Phenom site; it applies on its own pages,
+                              # with SuccessFactors behind them
+    nv_sites: Las Vegas (The Venetian, The Palazzo, Venetian Expo)
+    confidence: high          # live check, Oct 2026: Engineer II - Systems and Manager - Expo IT Services
+    search: {phenom: {host: careers.venetianlasvegas.com, country: us, lang: en_us}}
+  - name: Station Casinos (Red Rock Resorts)
+    careers_url: https://ejfh.fa.us6.oraclecloud.com/hcmUI/CandidateExperience/en/sites/StationCasinos/
+    ats: oracle_hcm           # stationcasinos.com's Careers link opens this Oracle Recruiting site
+    nv_sites: Las Vegas, Henderson, North Las Vegas
+    confidence: high          # live check, Oct 2026: a Support Technician and an Application Engineer II in Las Vegas
+    search: {oracle: {host: ejfh.fa.us6.oraclecloud.com, site: StationCasinos}}
+  - name: Boyd Gaming
+    careers_url: https://careers.smartrecruiters.com/BoydGaming
+    ats: smartrecruiters      # boydcareers.com (careers.boydgaming.com) answered with an Imperva bot check from here;
+                              # its openings are on SmartRecruiters (BoydGaming), whose public API answers
+    nv_sites: Las Vegas (HQ, its locals casinos and downtown properties), Henderson, North Las Vegas
+    confidence: high          # live check, Oct 2026: 225 Las Vegas-area openings, IT Software Engineer II, IT Field
+                              # Engineer II and IT Operations Center Shift Supervisor among them
+    search: {smartrecruiters: BoydGaming}
+  - name: Resorts World Las Vegas
+    careers_url: https://careers.rwlasvegas.com/
+    ats: workday              # rwlasvegas.com/careers redirects to careers.rwlasvegas.com, which links to this Workday site
+    nv_sites: Las Vegas (the Strip)
+    confidence: high          # live check, Oct 2026: Technician, Information Technology
+    search: {workday: https://rwlasvegas.wd501.myworkdayjobs.com/RWLV_External_Careers}
+  - name: Golden Entertainment
+    careers_url: https://goldenent.com/careers
+    ats: workday              # goldenent.com/careers links one Workday site per property group (Pahrump's, outside
+                              # Clark County, is left out)
+    nv_sites: Las Vegas (corporate office, The STRAT, Arizona Charlie's, PT's Taverns), Laughlin (Aquarius, Edgewater)
+    confidence: high          # live check, Oct 2026: 190 openings on these five sites, none of them IT that day
+    search:
+      workday: [https://goldenent.wd501.myworkdayjobs.com/GoldenEntCareers,
+                https://goldenent.wd501.myworkdayjobs.com/TheSTRATcareers,
+                https://goldenent.wd501.myworkdayjobs.com/ArizonaCharliesCareers,
+                https://goldenent.wd501.myworkdayjobs.com/PTsTavernsCareers,
+                https://goldenent.wd501.myworkdayjobs.com/LaughlinCasinoCareers]
+  - name: Las Vegas Sands
+    careers_url: https://sands.wd1.myworkdayjobs.com/sands_careers
+    ats: workday              # sands.com and careers.sands.com answered 403 from here; its openings are on this Workday site
+    nv_sites: Las Vegas (corporate HQ)
+    confidence: medium        # live check, Oct 2026: Sr Project Manager - IT in Las Vegas (its other IT openings in Dallas)
+    search: {workday: https://sands.wd1.myworkdayjobs.com/sands_careers}
+  # Gaming technology makers (checked Oct 2026).
+  - name: Light & Wonder
+    careers_url: https://www.lnw.com/careers
+    ats: workday              # lnw.com/careers links to this Workday site
+    nv_sites: Las Vegas (HQ)
+    confidence: high          # live check, Oct 2026: Advanced and Senior Advanced Software Engineers in Las Vegas
+    search: {workday: https://lnw.wd5.myworkdayjobs.com/LightWonderExternalCareers}
+  - name: Aristocrat
+    careers_url: https://careers.aristocrat.com/
+    ats: workday              # careers.aristocrat.com applies on this Workday site (aristocrat.com/careers answered 403)
+    nv_sites: Las Vegas (Aristocrat Gaming's US base)
+    confidence: high          # live check, Oct 2026: Network Engineer, Systems Engineer - IT Operations, Technical
+                              # Support Specialist and Platform Engineer in Las Vegas
+    search: {workday: https://aristocrat.wd3.myworkdayjobs.com/AristocratExternalCareersSite}
+  - name: IGT (Everi)
+    careers_url: https://career2.successfactors.eu/career?company=igtanevadaP2&career_ns=job_listing_summary&navBarLevel=JOB_SEARCH
+    ats: successfactors       # igt.com/careers links to jobs.igt.com, a SuccessFactors career site (company igtanevadaP2,
+                              # whose job list above opens jobs.igt.com/search); Everi's careers page
+                              # (everi.pinpointhq.com) says its openings moved there in its integration with IGT
+    nv_sites: Las Vegas, Reno
+    confidence: high          # live check, Oct 2026: Systems Engineer IV and Technical Support Engineer III in Las Vegas
+    search: {successfactors: https://jobs.igt.com}  # (its older career site's own list sends the browser here)
+  - name: Konami Gaming
+    careers_url: https://www.paycomonline.net/v4/ats/web.php/portal/01350CF494085F3FF60A45E3AB7A67DE/career-page
+    ats: paycom               # konamigaming.com/careers "Apply" buttons open this Paycom portal
+    nv_sites: Las Vegas (US HQ)
+    confidence: high          # live check, Oct 2026: Systems Engineer I, Software Engineer I (SDE/NOC) and Embedded
+                              # Software Engineer IV in Las Vegas
+    search: {paycom: 01350CF494085F3FF60A45E3AB7A67DE}
+  - name: AGS (PlayAGS)
+    careers_url: https://jobs.jobvite.com/agscareer
+    ats: jobvite              # playags.com links to this Jobvite board
+    nv_sites: Las Vegas (HQ)
+    confidence: medium        # page seen, Oct 2026: 19 openings, Las Vegas among their places
+    # No search block: its board lists openings as table rows opened by a script, with no link in
+    # their names, which the plugin's Jobvite reader doesn't read (its search came back empty, Oct 2026).
+  - name: PlayStudios
+    careers_url: https://jobs.dayforcehcm.com/en-US/playstudios/CANDIDATEPORTAL
+    ats: custom               # dayforce; playstudios.com/careers links to this Dayforce board
+    nv_sites: Las Vegas (HQ; mobile casino games)
+    confidence: medium        # page seen, Oct 2026
+    # No search block: Dayforce isn't a system the plugin searches.
+  # Data centers, tech, and the airline headquartered here (checked Oct 2026).
+  - name: Switch
+    careers_url: https://www.switch.com/careers/current-openings/
+    ats: greenhouse           # switch.com's openings page reads Greenhouse board switch-data-centers
+    nv_sites: Las Vegas (HQ, The Core campus), Reno
+    confidence: high          # live check, Oct 2026: 27 openings, 8 in Las Vegas (CORE Support Specialist, Telecom
+                              # NOC Technician, Incident Commander)
+    search: {greenhouse: switch-data-centers}
+  - name: Google (Henderson data center)
+    careers_url: https://www.google.com/about/careers/applications/jobs/results/?location=Henderson%2C%20NV%2C%20USA
+    ats: custom               # Google's own job site
+    nv_sites: Henderson (data center)
+    confidence: medium        # page seen, Oct 2026: Data Center Technician openings in Henderson
+    # No search block: Google's job site isn't a system the plugin searches.
+  - name: Allegiant Air
+    careers_url: https://www.allegiantair.jobs/
+    ats: lever                # allegiantair.com answered with a Cloudflare challenge; allegiantair.jobs lists its
+                              # Lever postings (allegiantair)
+    nv_sites: Las Vegas (HQ in Summerlin)
+    confidence: high          # live check, Oct 2026: IAM Engineer III, Information Security Analyst III, Principal
+                              # Engineer DevSecOps and Lead Engineer, Enterprise Systems Software in Las Vegas
+    search: {lever: allegiantair}
+  - name: Zappos
+    careers_url: https://jobs.zappos.com/
+    ats: custom               # jobs.zappos.com opens amazon.jobs' search for Zappos (an Amazon company)
+    nv_sites: Las Vegas (HQ downtown)
+    confidence: medium        # page seen, Oct 2026
+    # No search block: amazon.jobs' search, as the plugin runs it, can't be narrowed to Zappos.
+  # Utilities, public agencies and schools (checked Oct 2026).
+  - name: NV Energy
+    careers_url: https://careers.nvenergy.com/
+    ats: oracle_hcm           # nvenergy.com's "Begin your job search" goes to careers.nvenergy.com, which opens Berkshire
+                              # Hathaway Energy's job site (careers.brkenergy.com) on this Oracle Recruiting site
+    nv_sites: Las Vegas, Reno
+    confidence: high          # live check, Oct 2026: Network Engineer 3 and Network Operations Engineer 3 with Las
+                              # Vegas among their places (the site is all of BHE's)
+    search: {oracle: {host: fa-essf-saasfaprod1.fa.ocs.oraclecloud.com, site: CX_1}}
+  - name: Southwest Gas
+    careers_url: https://ebtw.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1
+    ats: oracle_hcm           # swgas.com/en/employment links here (the same search as phoenix-metro's entry)
+    nv_sites: Las Vegas (HQ)
+    confidence: high          # live check, Oct 2026: Senior Oracle Developer and an HR systems analyst in Las Vegas
+    search: {oracle: {host: ebtw.fa.us2.oraclecloud.com, site: CX_1}}
+  - name: Las Vegas Valley Water District
+    careers_url: https://www.lvvwd.com/jobs/jobs.html
+    ats: workday              # lvvwd.com/jobs links to this Workday site
+    nv_sites: Las Vegas (Molasky Corporate Center, Valley View Campus)
+    confidence: high          # live check, Oct 2026: Applications Administrator, Assoc Business Systems Analyst
+    search: {workday: https://lvvwd.wd1.myworkdayjobs.com/LVVWDWaterJobs}
+  - name: Clark County
+    careers_url: https://www.governmentjobs.com/careers/clarkcounty
+    ats: custom               # neogov; clarkcountynv.gov's Human Resources "Employment" page links here
+    nv_sites: Las Vegas (Government Center), county-wide
+    confidence: high          # live check, Oct 2026
+    # No search block: NEOGOV (governmentjobs.com) isn't a system the plugin searches.
+  - name: City of Las Vegas
+    careers_url: https://www.governmentjobs.com/careers/lasvegas
+    ats: custom               # neogov; lasvegasnevada.gov/Government/Employment links here
+    nv_sites: Las Vegas (City Hall)
+    confidence: high          # live check, Oct 2026
+    # No search block: NEOGOV isn't a system the plugin searches.
+  - name: City of Henderson
+    careers_url: https://www.governmentjobs.com/careers/henderson
+    ats: custom               # neogov; cityofhenderson.com answered 403 (Access Denied) from here; this NEOGOV page
+                              # carries the City's logo
+    nv_sites: Henderson
+    confidence: medium        # page seen, Oct 2026
+    # No search block: NEOGOV isn't a system the plugin searches.
+  - name: Clark County School District
+    careers_url: https://www.ccsd.net/about/careers
+    ats: taleo                # ccsd.net/about/careers links one Taleo career section per kind of job: 2 licensed
+                              # (teachers), 3 support professionals, 4 administrative, 5 substitutes
+    nv_sites: Las Vegas, county-wide
+    confidence: high          # live check, Oct 2026: the support professionals' section answers (16 openings, none
+                              # of them IT that day)
+    search: {taleo: {host: ccsd.taleo.net, section: "3", portal: "12100010147"}}
+  - name: UNLV
+    careers_url: https://www.unlv.edu/jobs
+    ats: workday              # unlv.edu/jobs links to the Nevada System of Higher Education's Workday site UNLV-External
+    nv_sites: Las Vegas (Maryland Parkway campus)
+    confidence: high          # live check, Oct 2026: Research Cyberinfrastructure Engineer
+    search: {workday: https://nshe.wd1.myworkdayjobs.com/UNLV-External}
+  - name: College of Southern Nevada
+    careers_url: https://www.csn.edu/about-us/careers
+    ats: workday              # csn.edu/about-us/careers links to NSHE's Workday site CSN-External
+    nv_sites: North Las Vegas, Las Vegas (Charleston), Henderson
+    confidence: high          # live check, Oct 2026: Lab and Back Office Tech for its Office of Technology Services
+    search: {workday: https://nshe.wd1.myworkdayjobs.com/CSN-External}
+  - name: Nevada State University
+    careers_url: https://nevadastate.edu/human-resources/careers/
+    ats: workday              # nevadastate.edu links to NSHE's Workday site NSU-external
+    nv_sites: Henderson
+    confidence: high          # live check, Oct 2026: Network & Systems Administrator
+    search: {workday: https://nshe.wd1.myworkdayjobs.com/NSU-external}
+  # Hospitals' IT (checked Oct 2026).
+  - name: Sunrise Health (HCA Healthcare)
+    careers_url: https://careers.hcahealthcare.com/pages/sunrise-hospital-and-medical-center
+    ats: unknown              # sunrisehospital.com/careers redirects to careers.hcahealthcare.com, which answered with
+                              # a Cloudflare challenge from here; system not seen
+    nv_sites: Las Vegas (Sunrise, MountainView and Southern Hills hospitals)
+    confidence: low           # careers page not seen (Cloudflare, Oct 2026)
+  - name: University Medical Center of Southern Nevada
+    careers_url: https://www.governmentjobs.com/careers/umcsn
+    ats: custom               # neogov; umcsn.com's "Careers at UMC" links to its NEOGOV page
+    nv_sites: Las Vegas (Medical District)
+    confidence: high          # live check, Oct 2026
+    # No search block: NEOGOV isn't a system the plugin searches.
+  - name: Valley Health System
+    careers_url: https://jobs.uhsinc.com/the-valley-health-system
+    ats: icims                # valleyhealthsystemlv.com/careers links to UHS's Jibe site over the careers-uhsinc iCIMS portal
+    nv_sites: Las Vegas (Valley, Desert Springs, Spring Valley, Centennial Hills, Summerlin), Henderson
+    confidence: high          # live check, Oct 2026: a Sr Clinical Systems Analyst in Las Vegas. The search is UHS's
+                              # whole Jibe site: Jibe's own state filter narrows it to Nevada (UHS's Reno hospitals too)
+    search: {jibe: jobs.uhsinc.com}
+  # IT staffing firms with Las Vegas offices: their consultant job boards, not their own staff's
+  # (phoenix-metro's TEKsystems and Insight Global entries search those). Checked Oct 2026.
+  - name: TEKsystems (consultant jobs)
+    careers_url: https://careers.teksystems.com/us/en
+    ats: custom               # careers.teksystems.com is a Phenom site; Apply goes to TEKsystems' own apply.teksystems.com
+    nv_sites: Las Vegas
+    confidence: high          # live check, Oct 2026: a Salesforce Administrator onsite in Las Vegas
+    search: {phenom: {host: careers.teksystems.com, country: us, lang: en_us}}
+  - name: Insight Global (contract jobs)
+    careers_url: https://insightglobal.com/jobs/
+    ats: custom               # insightglobal.com/jobs is its own job search; insightglobal.com/locations lists Las Vegas
+    nv_sites: Las Vegas, Henderson, North Las Vegas
+    confidence: medium        # page seen, Oct 2026
+    # No search block: its own job search isn't one the plugin reads (its iCIMS Jibe site lists only
+    # its own staff's jobs: recruiters and account managers).
+  # Federal and defense IT around Nellis AFB and the Nevada National Security Site (checked Oct 2026).
+  - name: Mission Support and Test Services (NNSS)
+    careers_url: https://nnss.gov/careers/
+    ats: oracle_hcm           # nnss.gov/careers ("Explore Job Opportunities with MSTS") links to this Oracle Recruiting site
+    nv_sites: North Las Vegas (HQ), Mercury (the site)
+    confidence: high          # live check, Oct 2026: IT Support Specialist I (Mercury), Senior Infrastructure Analyst
+                              # and an Oracle Fusion Cloud Administrator (North Las Vegas)
+    search: {oracle: {host: ewij.fa.us8.oraclecloud.com, site: CX_2}}
+  - name: Booz Allen Hamilton
+    careers_url: https://www.boozallen.com/careers.html
+    ats: workday              # careers.boozallen.com redirects to boozallen.com/careers.html, which links to this Workday site
+    nv_sites: Nellis AFB, North Las Vegas
+    confidence: high          # live check, Oct 2026: Computer Support Engineer and DevOps Infrastructure Engineer at
+                              # Nellis AFB, cybersecurity engineers in North Las Vegas
+    search: {workday: https://bah.wd1.myworkdayjobs.com/BAH_Jobs}
+  - name: Leidos
+    careers_url: https://leidos.wd5.myworkdayjobs.com/External
+    ats: workday              # careers.leidos.com answered with a Cloudflare challenge from here; its Workday site answers
+    nv_sites: Las Vegas, North Las Vegas (Nellis AFB work)
+    confidence: medium        # live check, Oct 2026: an All Source ISR Scenario Developer in Las Vegas and North Las Vegas
+    search: {workday: https://leidos.wd5.myworkdayjobs.com/External}

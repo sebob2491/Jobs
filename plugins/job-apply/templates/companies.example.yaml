@@ -6,6 +6,8 @@
 #                     they hire HR, finance, IT and operations people too
 #   phoenix-metro     large Phoenix-area employers: health care, education, finance,
 #                     utilities, aerospace, retail, staffing firms
+#   las-vegas         Las Vegas-area employers that hire IT people: casino resorts' corporate IT,
+#                     gaming technology, data centers, public agencies, IT staffing, defense contractors
 lists: [phoenix-metro, semiconductor-az]
 
 # companies: employers of your own, in the same shape as the plugin's
