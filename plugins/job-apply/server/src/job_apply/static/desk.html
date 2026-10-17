@@ -689,9 +689,18 @@ function wentPanel(r) {
 }
 
 const wentDrawn = new WeakMap();  // each panel, and what it was last drawn from
+// the jobs whose panel the person opened: still open once its card is drawn again (its reason changed, say)
+const wentOpen = new Set();
+document.addEventListener("toggle", (e) => {
+  const panel = e.target;
+  if (!(panel instanceof HTMLDetailsElement) || !panel.dataset.went) return;
+  if (panel.open) wentOpen.add(panel.dataset.went);
+  else wentOpen.delete(panel.dataset.went);
+}, true);  // (a toggle doesn't bubble: heard on its way down)
 function wentFill(runs) {
   const byJob = new Map(runs.map((r) => [String(r.job_id), r.went_in]));
   for (const panel of document.querySelectorAll("details[data-went]")) {
+    if (wentOpen.has(panel.dataset.went) && !panel.open) panel.open = true;
     const w = byJob.get(panel.dataset.went);
     const drawn = JSON.stringify(w || null);
     if (!w || wentDrawn.get(panel) === drawn) continue;

@@ -533,7 +533,7 @@ def test_what_went_in_names_the_files_cuts_a_long_answer_short_and_says_what_was
     answers = {a["label"]: a["value"] for a in went["answers"]}
     assert answers["First Name"] == "Sam" and answers["Email"] == "sam.rivera@example.com", answers
     long = answers["Tell us about your equipment experience"]
-    assert len(long) == pipeline.WENT_IN_CHARS and long.endswith("…") and story.startswith(long[:-1].rstrip()), long
+    assert long == " ".join(story.split())[:pipeline.WENT_IN_CHARS - 1].rstrip() + "…", long
     assert [(q["label"], q["why"]) for q in went["left"]] == [
         ("Cover Letter", "your profile doesn't answer it"),
         ("What do you like to do outside of work?", "your profile doesn't answer it")], went["left"]
@@ -541,54 +541,202 @@ def test_what_went_in_names_the_files_cuts_a_long_answer_short_and_says_what_was
 
 
 def test_what_went_in_keeps_no_password_code_or_security_answer_and_stays_small(monkeypatch):
-    """Never on the panel, nor anywhere in the desk page's state: anything typed into a password box, an emailed code,
-    a security question's answer (an account form's own boxes too), or a value holding one of the desk's saved
-    secrets, whatever box it went into. A box's last answer stands in its first place; boxes that share a label keep
-    their own (Workday's Month and Year are each a "Date"). Bounded: WENT_IN_ANSWERS answers a job, WENT_IN_CHARS of
-    each, and nothing of it logged."""
+    """Never on the panel, nor anywhere in the desk page's state: anything typed into a password box, an emailed code
+    (a bare "Code" box too), a security question's answer (named by its box, or only by the form's heading, as
+    BrassRing's "Security questions" over "Question 1 Answer"), "Create a secret", a challenge answer, or a value
+    that is one of the desk's saved secrets or holds one that's no ordinary word. A password "Arizona" doesn't take
+    every answer naming the state off it, and a ZIP code isn't a code's. A box's last answer stands in its first place;
+    boxes that share a label keep their own (Workday's Month and Year are each a "Date"). Bounded: WENT_IN_ANSWERS
+    answers a job, WENT_IN_CHARS of each, WENT_IN_LINES of a list, and nothing of it logged. A job queued or under way
+    sends none (no card shows it there)."""
     monkeypatch.setenv("JOB_APPLY_SECRET_WORKDAY_PASSWORD", "Hunter-22-secret")
-    r = Run(1, "Technician", "Example Fab")
-    page = {"title": "Apply", "headings": ["My Information"], "fields": [
-        {"id": "1", "kind": "text", "label": "First Name"},
-        {"id": "2", "kind": "password", "label": "Create a password"},
-        {"id": "3", "kind": "text", "label": "Enter the verification code we sent to your email"},
-        {"id": "4", "kind": "text", "label": "Question 1 Answer", "section": "Security questions"},
-        {"id": "5", "kind": "text", "label": "Answer", "account": True},
-        {"id": "6", "kind": "text", "label": "Referral note"},
-        {"id": "7", "kind": "textarea", "label": "Cover note"},
-        {"id": "8", "kind": "text", "label": "Date", "role": "spinbutton"},
-        {"id": "9", "kind": "text", "label": "Date", "role": "spinbutton"},
-        {"id": "10", "kind": "text", "label": "Middle Name"}]}
-    pipeline._went_in(r, [{"id": "1", "value": "Sam"}, {"id": "2", "value": "typed-in-a-password-box"},
-                          {"id": "3", "value": "481516"}, {"id": "4", "value": "Flagstaff Ridge 1987"},
-                          {"id": "5", "value": "Rex the dog"}, {"id": "6", "value": "see Hunter-22-secret"},
-                          {"id": "7", "value": "word " * 200}, {"id": "8", "value": "10"},
-                          {"id": "9", "value": "2026"}], page)
-    pipeline._went_in(r, [{"id": "1", "value": "Samuel"}], page)  # (a later round's answer to the same box)
-    pipeline._went_left(r, {"needs_input": [{"id": "10", "kind": "text", "label": "Middle Name", "required": False},
-                                            {"id": "2", "kind": "password", "label": "Password", "required": False}],
+    monkeypatch.setenv("JOB_APPLY_SECRET_ICIMS_PASSWORD", "Arizona")
+    r = Run(1, "Technician", "Example Fab", status="ready")
+    page = {"url": "https://example.com/apply", "title": "Apply", "headings": ["My Information"], "fields": [
+        {"id": "abc1", "kind": "text", "label": "First Name"},
+        {"id": "abc2", "kind": "password", "label": "Create a password"},
+        {"id": "abc3", "kind": "text", "label": "Enter the verification code we sent to your email"},
+        {"id": "abc4", "kind": "text", "label": "Question 1 Answer", "section": "Security questions"},
+        {"id": "abc5", "kind": "text", "label": "Code"},
+        {"id": "abc6", "kind": "text", "label": "Referral note"},
+        {"id": "abc7", "kind": "textarea", "label": "Cover note"},
+        {"id": "abc8", "kind": "text", "label": "Date", "role": "spinbutton"},
+        {"id": "abc9", "kind": "text", "label": "Date", "role": "spinbutton"},
+        {"id": "abc10", "kind": "text", "label": "Middle Name"},
+        {"id": "abc11", "kind": "text", "label": "Create a secret"},
+        {"id": "abc12", "kind": "text", "label": "Challenge answer"},
+        {"id": "abc13", "kind": "text", "label": "State"},
+        {"id": "abc14", "kind": "text", "label": "Zip Code"},
+        {"id": "abc15", "kind": "text", "label": "Where do you live?"}]}
+    pipeline._went_in(r, [{"id": "abc1", "value": "Sam"}, {"id": "abc2", "value": "typed-in-a-password-box"},
+                          {"id": "abc3", "value": "481516"}, {"id": "abc4", "value": "Flagstaff Ridge 1987"},
+                          {"id": "abc5", "value": "662607"}, {"id": "abc6", "value": "see Hunter-22-secret"},
+                          {"id": "abc7", "value": "word " * 200}, {"id": "abc8", "value": "10"},
+                          {"id": "abc9", "value": "2026"}, {"id": "abc11", "value": "Rex the dog"},
+                          {"id": "abc12", "value": "Blue Heron"}, {"id": "abc13", "value": "Arizona"},
+                          {"id": "abc14", "value": "85225"}, {"id": "abc15", "value": "Chandler, Arizona"}], page)
+    pipeline._went_in(r, [{"id": "abc1", "value": "Samuel"}], page)  # (a later round's answer to the same box)
+    pipeline._went_left(r, {"needs_input": [{"id": "abc10", "kind": "text", "label": "Middle Name", "required": False},
+                                            {"id": "abc2", "kind": "password", "label": "Password", "required": False}],
                             "failed": []}, page)
+    # a form whose security questions only its heading names (BrassRing's), never the boxes themselves
+    brassring = {"url": "https://example.com/register", "title": "Register", "headings": ["Security questions"],
+                 "fields": [{"id": "def1", "kind": "text", "label": "Question 1"},
+                            {"id": "def2", "kind": "text", "label": "Question 1 Answer"}]}
+    pipeline._went_in(r, [{"id": "def1", "value": "Name of your first pet"}, {"id": "def2", "value": "Biscuit"}],
+                      brassring)
     shown = json.dumps(r.public())  # (plain json.dumps: the page's state is written so)
-    for secret in ("typed-in-a-password-box", "481516", "Flagstaff Ridge 1987", "Rex the dog", "Hunter-22-secret"):
+    for secret in ("typed-in-a-password-box", "481516", "Flagstaff Ridge 1987", "662607", "Hunter-22-secret",
+                   "Rex the dog", "Blue Heron", "first pet", "Biscuit"):
         assert secret not in shown, secret
     went = r.public()["went_in"]
     assert [(a["label"], a["value"]) for a in went["answers"]] == [
         ("First Name", "Samuel"), ("Cover note", ("word " * 60)[:pipeline.WENT_IN_CHARS - 1].rstrip() + "…"),
-        ("Date", "10"), ("Date", "2026")], went["answers"]
+        ("Date", "10"), ("Date", "2026"), ("Zip Code", "85225"), ("Where do you live?", "Chandler, Arizona")], \
+        went["answers"]  # (a value that is the secret "Arizona" alone stays off)
     assert [q["label"] for q in went["left"]] == ["Middle Name"] and r.log == []
+    for status in ("queued", "running"):
+        r.status = status
+        assert r.public()["went_in"] is None, status
 
-    many = Run(2, "Technician", "Example Fab")
+    many = Run(2, "Technician", "Example Fab", status="ready")
     boxes = {"title": "Apply", "headings": ["Questions"],
-             "fields": [{"id": str(i), "kind": "text", "label": f"Question {i}"} for i in range(250)]}
-    pipeline._went_in(many, [{"id": str(i), "value": "x" * 1000} for i in range(250)], boxes)
+             "fields": [{"id": f"ghi{i}", "kind": "text", "label": f"Question {i}"} for i in range(250)]}
+    pipeline._went_in(many, [{"id": f"ghi{i}", "value": "x" * 1000} for i in range(250)], boxes)
     for line in [f"agreed to notice {i}" for i in range(100)]:
         many.went_in.agree(line)
     went = many.public()["went_in"]
     assert len(went["answers"]) == pipeline.WENT_IN_ANSWERS and went["full"] is True
     assert {len(a["value"]) for a in went["answers"]} == {pipeline.WENT_IN_CHARS}
     assert len(went["agreed"]) == pipeline.WENT_IN_LINES
-    assert len(json.dumps(many.public())) < 150_000  # (30 jobs of it, at most, on the page's state)
-    assert Run(3).public()["went_in"] is None  # (nothing yet: no panel)
+    assert len(json.dumps(many.public())) < 60_000  # (30 jobs of it, at most, on the page's state)
+    assert Run(3, status="ready").public()["went_in"] is None  # (nothing yet: no panel)
+
+
+def test_a_box_keeps_its_place_on_the_panel_while_the_page_around_it_changes():
+    """The review of the panel: answers were kept by the page's name, its last heading, which moves when the page
+    shows an error ("There is a problem with your answers") or draws a block ("Education 2"). The same box filled
+    before and after was listed twice (its old answer kept), an optional box left empty and then answered was listed as
+    both, and a deleted block's answers stayed. A box keeps its first place, by its id; a page is named without its
+    error headings or a heading its boxes are under (a one-page form's "Education"). Two boxes alike on one page load
+    (steps drawn in place at one address) keep their own; the same box on the page loaded again is one."""
+    from job_apply.pipeline import WentIn, _went_forget, _went_in, _went_left
+
+    r = Run(1, "Technician", "Example Fab", status="ready")
+    url = "https://example.com/apply"
+    before = {"url": url, "title": "Apply", "headings": ["Apply for Technician"],
+              "fields": [{"id": "abc1", "kind": "text", "label": "Phone"},
+                         {"id": "abc2", "kind": "text", "label": "Middle Name"}]}
+    wrong = {**before, "headings": ["Apply for Technician", "There is a problem with your answers"]}
+    _went_in(r, [{"id": "abc1", "value": "480-555-0000"}], before)
+    _went_left(r, {"needs_input": [{"id": "abc2", "kind": "text", "label": "Middle Name", "required": False}]}, before)
+    _went_in(r, [{"id": "abc1", "value": "480-555-0123"}, {"id": "abc2", "value": "J"}], wrong)
+    went = r.public()["went_in"]
+    assert [(a["page"], a["label"], a["value"]) for a in went["answers"]] == [
+        ("Apply for Technician", "Phone", "480-555-0123"), ("Apply for Technician", "Middle Name", "J")], went
+    assert went["left"] == [], went["left"]
+
+    # a block drawn since renames the page by its last heading: the block's boxes still go when it's deleted
+    school = {"url": url, "title": "Apply", "headings": ["My Experience", "Education 2"],
+              "fields": [{"id": "abc3", "kind": "text", "label": "School", "section": "Education 2"},
+                         {"id": "abc4", "kind": "text", "label": "Degree", "section": "Education 2"}]}
+    _went_in(r, [{"id": "abc3", "value": "Mesa Community College"}], school)
+    _went_left(r, {"needs_input": [{"id": "abc4", "kind": "text", "label": "Degree", "section": "Education 2",
+                                    "required": False}]}, school)
+    _went_forget(r, {**school, "headings": ["My Experience", "Education 2", "Work Experience 1"]}, "Education 2")
+    went = r.public()["went_in"]
+    assert "Mesa Community College" not in json.dumps(went) and went["left"] == [], went
+
+    # a one-page form's section heading isn't its page's name
+    one = Run(2, status="ready")
+    form = {"url": "https://example.com/one", "title": "Job Application for Technician at Example Fab",
+            "headings": ["Technician", "Apply for this Job", "Education"],
+            "fields": [{"id": "abc5", "kind": "text", "label": "First Name"},
+                       {"id": "abc6", "kind": "text", "label": "School", "section": "Education"}]}
+    _went_in(one, [{"id": "abc5", "value": "Sam"}, {"id": "abc6", "value": "ASU"}], form)
+    assert [(a["page"], a["section"], a["label"]) for a in one.public()["went_in"]["answers"]] == [
+        ("Apply for this Job", "", "First Name"), ("Apply for this Job", "Education", "School")]
+
+    # two steps drawn in place at one address (one page load): two boxes; the page loaded again: the same box
+    spa = Run(3, status="ready")
+    step1 = {"url": url, "title": "Apply", "headings": ["Questions"],
+             "fields": [{"id": "xyz1", "kind": "text", "label": "If yes, please explain"}]}
+    step2 = {**step1, "headings": ["Disclosures"], "fields": [{"id": "xyz9", "kind": "text", "label": "If yes, please explain"}]}
+    again = {**step1, "fields": [{"id": "qrs1", "kind": "text", "label": "If yes, please explain"}]}
+    _went_in(spa, [{"id": "xyz1", "value": "A cousin"}], step1)
+    _went_in(spa, [{"id": "xyz9", "value": "A patent"}], step2)
+    _went_in(spa, [{"id": "qrs1", "value": "A cousin in Tempe"}], again)
+    assert [a["value"] for a in spa.public()["went_in"]["answers"]] == ["A cousin in Tempe", "A patent"]
+
+    # the page as filled: the choice a list made of the profile's words, never a secret's "(set)" or an emptied box's
+    shown = Run(4, status="ready")
+    page = {"url": url, "title": "Apply", "headings": ["My Information"],
+            "fields": [{"id": "abc7", "kind": "select", "label": "State"}, {"id": "abc8", "kind": "text", "label": "City"},
+                       {"id": "abc9", "kind": "text", "label": "Phone"}]}
+    after = {**page, "fields": [{"id": "abc7", "kind": "select", "label": "State", "value": "Arizona"},
+                                {"id": "abc8", "kind": "text", "label": "City", "value": ""},
+                                {"id": "abc9", "kind": "text", "label": "Phone", "value": "(set)"}]}
+    _went_in(shown, [{"id": "abc7", "value": "AZ"}, {"id": "abc8", "value": "Chandler"},
+                     {"id": "abc9", "value": "480-555-0123"}], page, after, shown=after)
+    assert [a["value"] for a in shown.public()["went_in"]["answers"]] == ["Arizona", "Chandler", "480-555-0123"]
+    assert WentIn().public() is None
+
+
+def test_keeping_what_went_in_never_stops_a_job(monkeypatch):
+    """Whatever goes wrong keeping the panel's record (a secrets file it can't read, a page read it doesn't expect),
+    the job goes on as it would have: nothing raised, nothing logged."""
+    r = Run(1, "Technician", "Example Fab", status="ready")
+
+    def broken() -> set[str]:
+        raise OSError("unreadable")
+
+    monkeypatch.setattr(pipeline, "_secret_values", broken)
+    page = {"title": "Apply", "headings": ["My Information"], "fields": [{"id": "abc1", "kind": "text", "label": "City"}]}
+    pipeline._went_in(r, [{"id": "abc1", "value": "Chandler"}], page)
+    pipeline._went_left(r, {"needs_input": [{"id": "abc1", "kind": "text", "label": "City", "required": False}]}, page)
+    pipeline._went_forget(r, {"fields": None}, "Education 2")
+    r.went_in.agree(None)
+    assert r.log == [] and r.public()["went_in"] is None
+
+
+def test_the_secrets_file_is_read_again_only_once_it_changes(job_apply_home, monkeypatch):
+    """The panel's check for saved secrets reads secrets.yaml once, and again only once the file has changed (it ran
+    on every fill)."""
+    path = job_apply_home / "secrets.yaml"
+    path.write_text("workday_password: 'First-secret-1'\n", encoding="utf-8")
+    assert "First-secret-1" in pipeline._secret_values()
+    path.write_text("workday_password: 'A-longer-second-secret-2'\n", encoding="utf-8")
+    assert pipeline._secret_values() >= {"A-longer-second-secret-2"} and "First-secret-1" not in pipeline._secret_values()
+    read, real = [], config.read_secrets
+    monkeypatch.setattr(config, "read_secrets", lambda p: read.append(p) or real(p))
+    pipeline._secret_values()
+    pipeline._secret_values()
+    assert read == []  # (unchanged: not read again)
+
+
+def test_a_job_opened_again_in_a_new_tab_starts_its_panel_over(srv):
+    """The review of the panel: a job opened again in a new tab (its tab closed or crashed, Skip and Undo) starts its
+    application over, and its panel listed the answers of the form that was gone. It starts over too; an account made
+    there is still there, and stays listed."""
+    job = srv.add_job(url=fixture_url("site/step1.html"), title="Technician", company="Example Fab")["job"]
+    applier = Applier(srv)
+    r = Run(job["id"], "Technician", "Example Fab", status="running")
+    page = {"url": "https://example.com/apply", "title": "Apply", "headings": ["My Information"],
+            "fields": [{"id": "abc1", "kind": "text", "label": "First Name"}]}
+    pipeline._went_in(r, [{"id": "abc1", "value": "Sam"}], page)
+    r.went_in.agree("agreed to Example Fab's notice “AI in hiring”")
+    r.went_in.account("created your account on Example Fab's site with your saved password")
+
+    async def go():
+        try:
+            return await applier._open(r)
+        finally:
+            await applier.stop()
+
+    assert run(go()) and r.opened_fresh
+    r.status = "ready"
+    assert r.public()["went_in"] == {"answers": [], "files": [], "agreed": [], "left": [], "full": False,
+                                     "accounts": ["created your account on Example Fab's site with your saved password"]}
 
 
 def test_workday_style_dialog_is_followed(srv, monkeypatch):

@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import functools
 import hashlib
 import json
 import logging
@@ -109,10 +110,11 @@ ABOUT_LOOKS = 6  # and how many such boxes on one card are looked at (one gone s
 SHARED_LOOK_BACK = 30  # seconds looked back for a job's code while an earlier job waits on the same sender
 # A job's "What went in" panel on its desk card (the desk page alone): at most this many of its answers, each shown this
 # long at most (a long text area's start), and at most this many lines of what was agreed to, accounts made and
-# questions left empty, so the page's state stays small with 30 jobs on it
-WENT_IN_ANSWERS = 200
-WENT_IN_CHARS = 300
-WENT_IN_LINES = 40
+# questions left empty, so the page's state stays small with 30 jobs on it (a Workday application with four jobs and
+# two schools fills about 100 boxes)
+WENT_IN_ANSWERS = 150
+WENT_IN_CHARS = 200
+WENT_IN_LINES = 30
 # The codes the inbox gave, each with the job it went to: one is never another job's (Mayo Clinic's
 # Oracle site, run 49, was given onsemi's code, mailed from the same Oracle address a minute before and put in
 # there). For the whole process: the live check gives each employer a desk of its own.
@@ -565,39 +567,78 @@ def _terms_notice(heading: str, text: str) -> tuple[bool, bool]:
 _FILL_BROKE = re.compile(r"^(?:TimeoutError|Error|TargetClosedError|DialogOpen)\b")
 
 
+def _quietly(fn: Callable[..., None]) -> Callable[..., None]:
+    """For the "What went in" panel's record: whatever goes wrong keeping it, the job goes on as it would have (nothing
+    logged, that much of the record not kept)."""
+    @functools.wraps(fn)
+    def kept(*args: Any, **kwargs: Any) -> None:
+        with contextlib.suppress(Exception):
+            fn(*args, **kwargs)
+    return kept
+
+
 @dataclass
 class WentIn:
     """What went into one application, for its card's "What went in" panel on the desk page, so the person can check
     the answers at a glance instead of reading each review page again. Only there: never logged, noted, reported or
-    saved with a page. Each box's last answer (by its place: _went_keys), a file by its name, what was agreed to for
-    the person, the account made, and the optional questions left empty. Never a password, an emailed code or a
-    security question's answer (_kept_out), and bounded (WENT_IN_ANSWERS, WENT_IN_CHARS, WENT_IN_LINES). Plain text
-    alone, so Run.public() stays JSON's."""
+    saved with a page. Each box's last answer (by its place: key_for), a file by its name, what was agreed to for the
+    person, the account made, and the optional questions left empty. Never a password, an emailed code or a security
+    question's answer (_kept_out), and bounded (WENT_IN_ANSWERS, WENT_IN_CHARS, WENT_IN_LINES). Plain text alone, so
+    Run.public() stays JSON's."""
     answers: dict[str, dict[str, str]] = field(default_factory=dict)  # by place: page, section, label, value, kind
     left: dict[str, dict[str, str]] = field(default_factory=dict)  # optional questions left empty, by place
     agreed: list[str] = field(default_factory=list)  # notices, terms and attestations agreed to for the person
     accounts: list[str] = field(default_factory=list)  # accounts made
     full: bool = False  # answers past WENT_IN_ANSWERS went in too, not kept here
+    # Each box's place as first kept, by its id, and the box that took each place last: a box keeps its place while
+    # the page around it changes (an error heading drawn over it, a block added). Never in public()
+    places: dict[str, str] = field(default_factory=dict)
+    owners: dict[str, str] = field(default_factory=dict)
 
+    def key_for(self, box_id: str, base: str) -> str:
+        """The place a box is kept under: its first one. New, it's `base` (the page's address, the box's section, label
+        and sub-label, and which of the boxes so placed it is: _went_bases). Held already by a box of the same page load
+        (an id holds its load's own letters: formjs' __jaDoc), that's another box (a step drawn in place at one
+        address), so this one gets a place of its own; held by one of an earlier load, it's this box on the page loaded
+        again, whose last answer is this one's."""
+        if box_id in self.places:
+            return self.places[box_id]
+        owner = self.owners.get(base)
+        load, theirs = _page_load(box_id), _page_load(owner or "")
+        key = f"{base} | {box_id}" if owner is not None and (None in (load, theirs) or load == theirs) else base
+        if len(self.places) >= 4 * WENT_IN_ANSWERS:  # (the oldest go: boxes of pages long gone)
+            for old in list(self.places)[:WENT_IN_ANSWERS]:
+                del self.places[old]
+            self.owners = {k: v for k, v in self.owners.items() if v in self.places}
+        self.places[box_id], self.owners[key] = key, box_id
+        return key
+
+    @_quietly
     def put(self, key: str, entry: dict[str, str]) -> None:
-        """A box's answer: its last one stands, where its first one was."""
-        if key not in self.answers and len(self.answers) >= WENT_IN_ANSWERS:
+        """A box's answer: its last one stands, where (and under the page) its first one was."""
+        if key in self.answers:
+            entry = {**entry, "page": self.answers[key].get("page", entry.get("page", ""))}
+        elif len(self.answers) >= WENT_IN_ANSWERS:
             self.full = True
             return
         self.answers[key] = entry
         self.left.pop(key, None)
 
-    def leave(self, page: str, left: dict[str, dict[str, str]]) -> None:
-        """The optional questions on a page its latest fill left empty (those of an earlier fill there are gone)."""
-        self.left = {k: v for k, v in self.left.items() if v.get("page") != page}
+    @_quietly
+    def leave(self, here: set[str], left: dict[str, dict[str, str]]) -> None:
+        """The optional questions a fill left empty, `here` the places of the boxes on its page: what an earlier fill
+        left empty of those boxes is gone."""
+        self.left = {k: v for k, v in self.left.items() if k not in here}
         for key, entry in left.items():
             if key not in self.answers and len(self.left) < WENT_IN_LINES:
                 self.left[key] = entry
 
-    def forget(self, page: str, section: str) -> None:
-        """A block deleted from the page (a school's), with the answers that went into it."""
-        for key in [k for k, v in self.answers.items() if v.get("page") == page and v.get("section") == section]:
-            del self.answers[key]
+    @_quietly
+    def forget(self, places: set[str]) -> None:
+        """A block deleted from the page (a school's), with what went into it and what was left empty in it."""
+        for kept in (self.answers, self.left):
+            for key in places & set(kept):
+                del kept[key]
 
     @staticmethod
     def _say(lines: list[str], line: str) -> None:
@@ -606,9 +647,11 @@ class WentIn:
         if line and line not in lines and len(lines) < WENT_IN_LINES:
             lines.append(line)
 
+    @_quietly
     def agree(self, line: str) -> None:
         self._say(self.agreed, line)
 
+    @_quietly
     def account(self, line: str) -> None:
         # (without the log's hint of where to turn the setting off)
         self._say(self.accounts, re.sub(r"\s*\(manage_accounts: false[^)]*\)\s*$", "", line))
@@ -729,7 +772,9 @@ class Run:
                                                                         "entries_short", "entries_told", "entries_ok",
                                                                         "account_answers", "employer_mail", "others_mail",
                                                                         "went_in")},
-                "went_in": self.went_in.public()}
+                # (only for the cards that show it: a job queued or under way has none, and 30 of them made the
+                # page's state megabytes, every poll)
+                "went_in": None if self.status in ("queued", "running") else self.went_in.public()}
 
 
 def classify(data: dict[str, Any], text: str) -> str:
@@ -1823,6 +1868,8 @@ class Applier:
             if why == "crashed":
                 with contextlib.suppress(Exception):
                     await run.page.close()  # its "Aw, Snap!" page: the new tab takes its place
+        # a form begun afresh: what went into one before is gone with it (an account made there is still there)
+        run.went_in = WentIn(accounts=run.went_in.accounts)
         run.page = await srv.browser.new_tab()
         srv.forget_presets(run.job_id)  # (a fresh form: the country lists it presets are the site's again)
         opened = await srv.open_application(job_id=run.job_id)
@@ -2335,7 +2382,7 @@ class Applier:
                 before, page_key = data, (_steady_url(data.get("url")), tuple(data.get("headings") or []))
                 data, text = await self._look()  # filling can add or enable things (State after Country, Submit)
                 run.page_info = _page_info(data)  # what the person sees on the desk: the page as filled
-                _went_in(run, result["filled"], before, data)  # (and on the job's "What went in" panel)
+                _went_in(run, result["filled"], before, data, shown=data)  # (and on the job's "What went in" panel)
                 _went_left(run, result, before, data)
                 if back_from is not None and (result["filled"] or attested or _values(before) != _values(data)):
                     # something went in on the way back (the profile's, the person's own answers put back, an agreement):
@@ -3223,7 +3270,7 @@ class Applier:
                 await asyncio.sleep(ONCE_SETTLE)  # long enough for an answer that won't stick to be gone
                 data, _ = await self._look(text=False)
         filled -= set(failed)
-        _went_in(run, [{"id": fid, "value": run.once[key]} for fid, key in sent.items() if key in filled], first, data)
+        _went_in(run, [{"id": fid, "value": run.once.get(key)} for fid, key in sent.items() if key in filled], first, data)
         if filled:
             self._log(run, f"filled {len(filled)} answer(s) you gave for this application")
         if failed:
@@ -3282,7 +3329,7 @@ class Applier:
         if any(f.get("section") == last for f in now.get("fields") or []):
             return False  # still there (a "Are you sure?" over it, say): the person's
         run.schools_dropped.append(last)  # gone: one block fewer of the profile's schools from here on
-        run.went_in.forget(_page_name(data), _short(last))  # (and what went into it, off the "What went in" panel)
+        _went_forget(run, data, last)  # (and what went into it, off the "What went in" panel)
         found = next((entry_of(q, prof) for q in pending if q.get("section") == last and entry_of(q, prof)), None)
         school = found[0] if found else last
         self._log(run, f"deleted {last} ({school}): its Degree list has no choice for classes without a degree, and "
@@ -4628,7 +4675,7 @@ class Applier:
         before = data
         data, _ = await self._look(text=False)
         run.page_info = _page_info(data)  # the page as filled
-        _went_in(run, result["filled"], before, data)  # (and on the job's "What went in" panel)
+        _went_in(run, result["filled"], before, data, shown=data)  # (and on the job's "What went in" panel)
         _went_left(run, result, before, data)
         gaps, pending = self._entry_gaps(run, data, pending)
         pending = await self._said_above(pending)
@@ -5874,50 +5921,100 @@ def _another_employers_mail(company: str, own: frozenset[str]) -> Callable[[str,
     return others
 
 
-# A box whose answer never goes on the "What went in" panel, by its words: a password's, an emailed code's, a security
-# question's or its answer's (their boxes are marked too: _kept_out), as none is ever logged, saved or reported either
+# A box whose answer never goes on the "What went in" panel, by its words (each of its label, section, sub-label and
+# name): a password's, an emailed code's (a bare "Code" too, never a ZIP or area code), a security question's or its
+# answer's (_SECURITY_QUESTION's too), as none is ever logged, saved or reported either
 _KEPT_OUT = re.compile(r"\bpass ?(?:word|code|phrase)|\bpin\b|security (?:question|answer)|secret (?:question|answer|word)|"
-                       r"verification code|one[- ]time (?:pass|code)|\botp\b|captcha|memorable (?:word|answer)", re.I)
+                       r"\bcreate (?:a |your )?secret\b|^\W*secret\W*$|mother'?s maiden name|verification code|"
+                       r"one[- ]time (?:pass|code)|\botp\b|captcha|memorable (?:word|answer)|"
+                       r"^\W*(?:enter (?:the |your )?)?(?:(?:access|auth(?:entication)?|confirmation|e-?mail|security|sms|"
+                       r"text|verification) )?code\W*$", re.I)
+_SECRETS_READ: dict[str, Any] = {}  # secrets.yaml's values, as last read, and when it was written then
 
 
 def _secret_values() -> set[str]:
     """The secrets the desk keeps (each job system's password, the inbox's app password), from where get_secret reads
-    them: the panel never shows one, whatever box it went into."""
+    them: the panel never shows one, whatever box it went into. The file is read again only once it has changed."""
     found = {v for k, v in os.environ.items() if k.startswith("JOB_APPLY_SECRET_") and v.strip()}
     with contextlib.suppress(Exception):  # (a file it can't read holds none it could show)
         if (path := config.secrets_path()).exists():
-            found |= {v for v in config.read_secrets(path).values() if v.strip()}
+            stat = path.stat()
+            stamp = (str(path), stat.st_mtime_ns, stat.st_size)
+            if _SECRETS_READ.get("stamp") != stamp:
+                _SECRETS_READ.update(stamp=stamp, values=frozenset(v for v in config.read_secrets(path).values()
+                                                                   if v.strip()))
+            found |= _SECRETS_READ["values"]
     return found
+
+
+def _holds_secret(said: str, secrets: set[str]) -> bool:
+    """A value that is one of the desk's secrets, or holds one that is no ordinary word (8 characters or more, not
+    letters alone): a password "Arizona" doesn't take every answer naming the state off the panel."""
+    said = said.strip()
+    return any(s.strip() == said or len(s) >= 8 and not s.isalpha() and s in said for s in secrets)
 
 
 def _kept_out(box: dict[str, Any], value: Any, secrets: set[str]) -> bool:
     """Never on the panel: a password box's value (anything typed into one), an emailed code's, a security question's
-    or its answer's (an account form's own boxes, the person's for that form alone), or a value that is (or holds) one
-    of the desk's secrets."""
+    or its answer's (by its words; _guarded's by the form's heading too), or a value that is (or holds) one of the
+    desk's secrets."""
     if box.get("kind") == "password" or box.get("account") or _code_box(box):
         return True
-    if _KEPT_OUT.search(" ".join(str(box.get(k) or "") for k in ("label", "section", "sublabel", "name"))):
+    words = [str(box.get(k) or "") for k in ("label", "section", "sublabel", "name")]
+    if any(_KEPT_OUT.search(w) or _SECURITY_QUESTION.search(w) for w in words):
         return True
-    said = " ".join(str(v) for v in value) if isinstance(value, (list, tuple)) else str(value)
-    return any(s.strip() == said.strip() or len(s) >= 6 and s in said for s in secrets)
+    return _holds_secret(", ".join(str(v) for v in value) if isinstance(value, (list, tuple)) else str(value), secrets)
+
+
+def _guarded(pages: tuple[dict[str, Any], ...]) -> set[str]:
+    """The boxes (by id) of a page's security questions and their answers, named so by the boxes or by the form's
+    heading alone (BrassRing's "Security questions" over "Question 1 Answer"): never on the panel."""
+    out: set[str] = set()
+    for data in pages:
+        fields = [f for f in data.get("fields") or [] if isinstance(f, dict)]
+        out |= {str(f.get("id")) for f in _security_boxes(fields, data.get("headings"))}
+    return out
 
 
 def _page_name(data: dict[str, Any]) -> str:
-    """A page as the panel names it: _where's, without its quotes."""
-    return _where(data).strip("“”")
+    """A page as the panel names it: _where's, without its quotes, from its headings less those saying what's wrong
+    (drawn over the same step once it's pressed: "Errors Found", "There is a problem with your answers") and those its
+    boxes are under (a one-page form's "Education" isn't the page its First Name is on)."""
+    sections = {norm(f.get("section")) for f in data.get("fields") or [] if isinstance(f, dict) and f.get("section")}
+    headings = [h for h in data.get("headings") or [] if isinstance(h, str) and not _ERRORS_HEADING.match(h.strip())
+                and not _errorish(h) and norm(h) not in sections]
+    return _where({**data, "headings": headings}).strip("“”")
 
 
-def _went_keys(page: str, fields: list[dict[str, Any]]) -> dict[str, str]:
-    """Each box's place on the "What went in" panel, by its id: its page, its section, label and sub-label (placed_key),
-    and which of the boxes so placed it is (Workday's Month, Day and Year boxes are each a "Date"). A box keeps its
-    place from fill to fill and round to round, so its last answer is the one shown."""
+def _page_load(box_id: str) -> str | None:
+    """The page load a box's id was given on: its letters (formjs' __jaDoc), after any frame's "f2-"."""
+    m = re.match(r"(?:f\d+-)?([a-z]{3})\d", box_id or "")
+    return m.group(1) if m else None
+
+
+def _went_bases(data: dict[str, Any], boxes: list[dict[str, Any]]) -> dict[str, str]:
+    """Each box's place on the "What went in" panel when it's new (WentIn.key_for keeps its first), by its id: its
+    page's address (never its headings, which an error or a block drawn since changes), its section, label and
+    sub-label (placed_key), and which of the boxes so placed it is (Workday's Month, Day and Year boxes are each a
+    "Date")."""
+    url = _steady_url(data.get("url"))
     seen: dict[str, int] = {}
     out: dict[str, str] = {}
-    for f in fields:
+    for f in boxes:
         placed = placed_key(f)
         seen[placed] = seen.get(placed, 0) + 1
-        out.setdefault(str(f.get("id")), f"{question_key(page)} | {placed} | {seen[placed]}")
+        out.setdefault(str(f.get("id")), f"{url} | {placed} | {seen[placed]}")
     return out
+
+
+@_quietly
+def _went_forget(run: Run, data: dict[str, Any], section: str) -> None:
+    """A block deleted from the page (a school's): what went into its boxes, and what was left empty in them, off the
+    panel (by their places as kept, and as an earlier load of the page would have kept them)."""
+    boxes = [f for f in data.get("fields") or [] if isinstance(f, dict)]
+    bases = _went_bases(data, boxes)
+    ids = [str(f.get("id")) for f in boxes if f.get("section") == section]
+    run.went_in.forget({run.went_in.places[i] for i in ids if i in run.went_in.places} | {bases[i] for i in ids})
 
 
 def _page_boxes(pages: tuple[dict[str, Any], ...]) -> list[dict[str, Any]]:
@@ -5956,52 +6053,75 @@ def _box_said(box: dict[str, Any]) -> dict[str, str]:
 _DOCUMENTS = {"documents.resume": "Resume", "documents.cover_letter": "Cover letter"}  # the profile's, by autofill's rule
 
 
-def _went_in(run: Run, filled: list[dict[str, Any]], *pages: dict[str, Any]) -> None:
+def _read_back(box: dict[str, Any] | None, secrets: set[str]) -> Any:
+    """What a box shows once filled, where that says more than what was sent (the choice a list made of the profile's
+    words, a phone as the site writes it): None for nothing there, a site's placeholder, a secret's "(set)", a file
+    (its name is the desk's own), and anything kept off the panel."""
+    if box is None or box.get("kind") in ("file", "password"):
+        return None
+    value = box.get("value")
+    if is_empty_value(value) or unset_choice(box) or str(value).strip() in ("(set)", "(unconfirmed)", "uploaded") \
+            or _kept_out(box, value, secrets):
+        return None
+    return value
+
+
+@_quietly
+def _went_in(run: Run, filled: list[dict[str, Any]], *pages: dict[str, Any], shown: dict[str, Any] | None = None) -> None:
     """What a fill put into the page (autofill's `filled`, or the person's answers that went in), kept for the job's
     "What went in" panel: each box's answer by its place (the page is the first of `pages`, read before the fill; any
-    later read adds the boxes drawn since, such as blocks added), its last one standing. Never a password, a code or a
-    security answer (_kept_out). Nothing here goes into the log."""
+    later read adds the boxes drawn since, such as blocks added), its last one standing, as the page shows it after the
+    fill where `shown` (that read) has it. Never a password, a code or a security answer (_kept_out, _guarded).
+    Nothing here goes into the log, and nothing going wrong here stops the job."""
     if not filled or not pages:
         return
     page = _page_name(pages[0])
     boxes = _page_boxes(pages)
-    by_id, keys, secrets = {str(f["id"]): f for f in boxes}, _went_keys(page, boxes), _secret_values()
+    by_id, bases, secrets, guarded = {str(f["id"]): f for f in boxes}, _went_bases(pages[0], boxes), _secret_values(), \
+        _guarded(pages)
+    after = {str(f.get("id")): f for f in (shown or {}).get("fields") or [] if isinstance(f, dict)}
     for f in filled:
         fid, value = str(f.get("id")), f.get("value")
         box = by_id.get(fid) or {"id": fid, "label": f.get("label") or ""}
-        if value is None or value == "" or _kept_out(box, value, secrets):
+        if value is None or value == "" or fid in guarded or _kept_out(box, value, secrets):
             continue
         rule = str(f.get("from") or f.get("rule") or "")
         kind, said = _went_value(box, value, rule)
+        if kind != "file" and (back := _read_back(after.get(fid), secrets)) is not None:
+            kind, said = _went_value(after[fid], back, "")
         if not said:
             continue
         named = _box_said(box)
         if kind == "file":  # (said as the document it is: an upload's own words can be "Accepted file format: .pdf")
             named["label"] = _DOCUMENTS.get(rule) or named["label"]
-        run.went_in.put(keys.get(fid) or f"{question_key(page)} | {placed_key(box)} | 1",
-                        {"page": page, **named, "value": said, "kind": kind})
+        key = run.went_in.key_for(fid, bases.get(fid) or f"{_steady_url(pages[0].get('url'))} | {placed_key(box)} | 1")
+        run.went_in.put(key, {"page": page, **named, "value": said, "kind": kind})
 
 
+@_quietly
 def _went_left(run: Run, result: dict[str, Any], *pages: dict[str, Any]) -> None:
     """The optional questions autofill left empty on its page (the profile doesn't answer them, none of their choices is
     its answer, or the box wouldn't take it), for the panel's "Left empty": the page's as its latest fill left them."""
     if not pages:
         return
     page = _page_name(pages[0])
-    keys, secrets, left = _went_keys(page, _page_boxes(pages)), _secret_values(), {}
+    secrets, guarded, left = _secret_values(), _guarded(pages), {}
+    bases = _went_bases(pages[0], _page_boxes(pages))
     now = {str(f.get("id")): f for f in pages[-1].get("fields") or [] if isinstance(f, dict)}
     for q in [*(result.get("needs_input") or []), *(result.get("failed") or [])]:
-        if q.get("required", True) or _kept_out(q, "", secrets):
+        qid = str(q.get("id"))
+        if q.get("required", True) or qid in guarded or _kept_out(q, "", secrets):
             continue
-        shown = now.get(str(q.get("id")))
+        shown = now.get(qid)
         if shown is not None and not is_empty_value(shown.get("value")) and not unset_choice(shown):
             continue  # (the site has answered it since: Oracle's County from the ZIP)
         why = (f"your profile's answer “{q['unmatched']}” isn't one of its choices" if q.get("unmatched")
                else "it wouldn't take your profile's answer" if q.get("error") else "your profile doesn't answer it")
         _, why = _went_value({}, why, "")
-        left[keys.get(str(q.get("id"))) or f"{question_key(page)} | {placed_key(q)} | 1"] = \
-            {"page": page, **_box_said(q), "why": why}
-    run.went_in.leave(page, left)
+        key = run.went_in.key_for(qid, bases.get(qid) or f"{_steady_url(pages[0].get('url'))} | {placed_key(q)} | 1")
+        left[key] = {"page": page, **_box_said(q), "why": why}
+    places = run.went_in.places
+    run.went_in.leave({places[i] for i in bases if i in places}, left)
 
 
 def question_key(label: str) -> str:

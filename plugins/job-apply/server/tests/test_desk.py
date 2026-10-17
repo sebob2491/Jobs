@@ -2121,6 +2121,10 @@ def test_a_cards_what_went_in_shows_the_answers_as_text_and_nothing_secret(srv, 
                 tags = await panel.evaluate("(el) => el.querySelectorAll('b, img').length")
                 await tab.wait_for_timeout(1200)  # (a refresh or two: the panel stays open, as drawn)
                 still = await panel.evaluate("(el) => el.open")
+                # its card drawn again (its reason changed): the panel the person opened is open still
+                ready.reason = "Filled and waiting on the review page. Check it before you press Submit."
+                await tab.wait_for_function("() => document.querySelector('#done').innerText.includes('Check it before')")
+                still = still and await panel.evaluate("(el) => el.open")
                 other = await tab.locator(f'#needs details[data-went="{jobs[1]["id"]}"] summary').inner_text()
                 html, title = await tab.content(), await tab.title()
                 sizes = await tab.evaluate("() => [document.documentElement.scrollWidth, "
