@@ -173,9 +173,12 @@ opens a page on your computer (served by the plugin on `127.0.0.1`):
    degree you don't have (unless it says "or equivalent experience"), and ones the
    desk couldn't open to check, or whose posting puts the job in another state.
    They're under **All**, with the reason, so you can still tick them yourself.
-   The desk works through them one at a time in the browser window. It
+   The desk works through them in the browser window, two at a time, each in its own
+   tab (**Jobs at once**, beside Submit for me, sets 1, 2 or 3). It
    clicks into each application, fills every page, adds Workday's work and
-   education blocks, and stops at each review page.
+   education blocks, and stops at each review page. It never works on two jobs at
+   one employer's site at once, and only one job at a time signs in, makes an account or
+   waits on an emailed code. **Working on** shows each job under way.
 3. **Needs you** lists what it can't do alone:
    - Questions your profile doesn't answer. You answer them on the page, and they're
      remembered for later applications unless you untick that. A remembered answer
@@ -198,7 +201,8 @@ opens a page on your computer (served by the plugin on `127.0.0.1`):
      codes itself). A link a site emails you to
      confirm your address opens in your usual browser, so reload that job's tab in the
      desk's window once you've opened it. The other jobs wait while you work in that
-     tab. If nothing happens in it for 5 minutes, they go ahead without it, so you can
+     tab: none starts (those already under way go on in their own tabs), and no other tab
+     comes to the front. If nothing happens in it for 5 minutes, they go ahead without it, so you can
      leave a batch running and come back. Finish each waiting job in its tab later, and
      the desk picks it up again by itself.
    - Press **Alert me** in the desk's header to get a desktop notification whenever a
@@ -305,7 +309,7 @@ Everything personal stays on your machine in `~/.job-apply/`. Set
 | `tracker.db` | Application tracker (SQLite). `export_jobs_csv` writes a spreadsheet. |
 | `answers.yaml` | Answers you gave in the Job Desk, reused on later applications. Edit or delete entries freely. |
 | `companies.yaml` | Optional: which of the plugin's employer lists to search (`lists:`) and employers of your own, in place of the default list. |
-| `recommendations.json`, `desk.json` | The Job Desk's last search, and whether "Submit for me" is on |
+| `recommendations.json`, `desk.json` | The Job Desk's last search, and its switches ("Submit for me", "Jobs at once") |
 | `browser/` | The automation browser's profile, which keeps your sign-ins |
 | `applications/<id>-<company>-<title>/` | Tailored resume and cover letter, screenshots, submission record, `debug/` snapshots |
 
@@ -319,6 +323,7 @@ Settings in `profile.yaml`:
 | `accept_notices` | `true` | The Job Desk agrees for you to an employer's notice about AI screening of your application and to its privacy notice and terms of use (never a newsletter, job alerts or a talent community, texts or automated calls, a legal waiver, or the terms of your employment), and picks an application's attestation that its information is true (or your consent to its background check), noting each in the job's log. Never in practice mode. `false` leaves them to you. |
 | `accept_cookies` | `false` | The Job Desk declines cookie banners. One with no way to decline (TI's "Agree and Proceed") waits for you, unless this is `true`: then the desk accepts it for you. |
 | `manage_accounts` | `true` | The Job Desk creates your account at a job system with the password you saved on the desk for it (ticking the site's terms, never a newsletter), resets a password the site refuses through its "Forgot password" email, and presses "Resend Account Verification" for an account never verified. A form's security questions are asked on the desk's card and never remembered; a picture code stays yours. Never in practice mode. `false`: the desk fills in Create Account for you to finish. |
+| `jobs_at_once` | `2` | How many applications the Job Desk fills at the same time (1 to 3), each in its own tab of its browser window. Never two at one employer's site or job-system tenant; one at a time signs in, makes an account, resets a password or waits on an emailed code; while a sign-in or code needs you, no other job starts and no other tab comes to the front. `1` fills them one after another. The desk's **Jobs at once** buttons change it there (kept in `desk.json` until this setting changes). |
 | `auto_submit_ats` | `[]` | With `submit_mode: auto`, the job systems Claude may submit on without asking (`workday`, `greenhouse`, `lever`, `eightfold`, `successfactors`). The Job Desk has its own switch, **Submit for me**. |
 | `browser_channel` | `chrome` | The browser the desk drives: `chrome`, `msedge`, or `chromium` (Playwright's bundled browser). `headless: true` hides its window. |
 

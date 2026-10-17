@@ -91,6 +91,8 @@ class Desk:
         # list's employers, for the profile's titles and HR ones, and the page shows only the openings where the desk
         # doesn't go all the way yet, whatever their fit. Nothing is sent meanwhile (Applier.hold_submits)
         self.troubleshoot = False
+        # profile.yaml's settings.jobs_at_once as written when "Jobs at once" was chosen on the desk (_load)
+        self._at_once_profile: Any = None
         # Find jobs searches when the person presses it. With this on (off unless they turn it on: issue #112, note
         # 44), the page also searches by itself once the openings are 12 hours old, but not while the queue is paused
         self.auto_search = False
@@ -125,6 +127,13 @@ class Desk:
             self.auto_search = saved.get("auto_search") is True
             self.troubleshoot = saved.get("troubleshoot") is True and not self.handled_only
             self.applier.hold_submits = self.troubleshoot
+            # "Jobs at once" as chosen on the desk, while profile.yaml's settings.jobs_at_once is still as it was
+            # written then (changed there since, that's the newer choice; a profile that doesn't read just now keeps it)
+            chosen, written = saved.get("jobs_at_once"), _profile_jobs_at_once()
+            if type(chosen) is int and 1 <= chosen <= config.JOBS_AT_ONCE_MAX and (
+                    written is _UNREAD or saved.get("jobs_at_once_profile") == written):
+                self.applier.jobs_at_once = chosen
+                self._at_once_profile = saved.get("jobs_at_once_profile")
         except (OSError, ValueError, AttributeError):
             pass
 
@@ -134,7 +143,9 @@ class Desk:
                                                 "tailor_resumes": self.applier.tailor,
                                                 "handled_only": self.handled_only,
                                                 "troubleshoot": self.troubleshoot,
-                                                "auto_search": self.auto_search}), encoding="utf-8")
+                                                "auto_search": self.auto_search,
+                                                "jobs_at_once": self.applier.jobs_at_once,
+                                                "jobs_at_once_profile": self._at_once_profile}), encoding="utf-8")
 
     # ------------------------------------------------------------- serving
     @property
@@ -398,6 +409,14 @@ class Desk:
             body = await self._body(request)
         except ValueError as e:
             return self._bad(e)
+        at_once = body.get("jobs_at_once")
+        if "jobs_at_once" in body and not (type(at_once) is int and 1 <= at_once <= config.JOBS_AT_ONCE_MAX):
+            return self._bad(ValueError(f"jobs_at_once should be a number from 1 to {config.JOBS_AT_ONCE_MAX}"))
+        if "jobs_at_once" in body:
+            self.applier.jobs_at_once = at_once
+            written = _profile_jobs_at_once()  # (as profile.yaml has it now: a later change there is the newer choice)
+            self._at_once_profile = self._at_once_profile if written is _UNREAD else written
+            self.applier.wake()  # (more at once: the next job begins now)
         if "auto_submit" in body:
             self.applier.auto_submit = body["auto_submit"] is True  # not "false", which bool() calls true
         if "tailor_resumes" in body:
@@ -416,11 +435,12 @@ class Desk:
                 # cleared, for Find jobs to search again, so none is applied to by mistake
                 self._forget_openings()
         self.applier.hold_submits = self.troubleshoot
-        if any(k in body for k in ("auto_submit", "tailor_resumes", "handled_only", "troubleshoot", "auto_search")):
+        if any(k in body for k in ("auto_submit", "tailor_resumes", "handled_only", "troubleshoot", "auto_search",
+                                   "jobs_at_once")):
             self._save_settings()
         return JSONResponse({"auto_submit": self.applier.auto_submit, "tailor_resumes": self.applier.tailor,
                              "handled_only": self.handled_only, "troubleshoot": self.troubleshoot,
-                             "auto_search": self.auto_search})
+                             "auto_search": self.auto_search, "jobs_at_once": self.applier.at_once()})
 
     def _forget_openings(self) -> None:
         """The openings found so far cleared, for Find jobs to search again (where or how it searches changed). A
@@ -751,7 +771,7 @@ class Desk:
                          "manage_accounts_chosen": settings.manage_accounts_chosen,
                          "auto_submit": self.applier.auto_submit, "tailor_resumes": self.applier.tailor,
                          "handled_only": self.handled_only, "troubleshoot": self.troubleshoot,
-                         "auto_search": self.auto_search},
+                         "auto_search": self.auto_search, "jobs_at_once": self.applier.at_once()},
             "tailoring": len(self.applier.tailoring()),
             # saved or not, never the value
             "passwords": {name.removesuffix("_password"): saved for name, saved in
@@ -783,6 +803,20 @@ MAILS_CODES = {"oracle_hcm"}
 
 # a job the person sent in (or is about to): listed under My applications with where it stands
 APPLICATION_STATUSES = ("ready_to_submit", "applied", "interviewing", "offer", "rejected", "withdrawn")
+
+
+_UNREAD = object()  # (a profile.yaml that doesn't read just now)
+
+
+def _profile_jobs_at_once() -> Any:
+    """profile.yaml's settings.jobs_at_once as written there (None where it doesn't say), or _UNREAD while the profile
+    doesn't read: what the desk's own choice was made over, so a later change there is seen (never the code's default,
+    which may change)."""
+    try:
+        settings = config.Profile.load().get("settings")
+    except Exception:
+        return _UNREAD
+    return settings.get("jobs_at_once") if isinstance(settings, dict) else None
 
 
 def _first_line(e: BaseException) -> str:

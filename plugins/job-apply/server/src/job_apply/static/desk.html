@@ -82,6 +82,9 @@ section.card { background: var(--surface); border: 1px solid var(--line); border
 .applybar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; padding: 10px 14px; border-bottom: 1px solid var(--line); background: var(--info-bg); }
 .applybar label { display: flex; align-items: center; gap: 6px; font-size: 14px; }
 .applybar .hint { color: var(--muted); font-size: 13px; }
+.at-once { display: inline-flex; align-items: center; gap: 4px; font-size: 14px; }
+.at-once button { padding: 2px 9px; font-size: 13px; }
+.at-once button[aria-pressed="true"] { background: var(--chip); border-color: var(--muted); font-weight: 600; }
 ul.rows { list-style: none; margin: 0; padding: 0; }
 .row { display: grid; grid-template-columns: auto auto minmax(0, 1fr) auto; gap: 10px; padding: 12px 14px; border-top: 1px solid var(--line); align-items: start; }
 .row:first-child { border-top: 0; }
@@ -206,6 +209,8 @@ footer { max-width: 1240px; margin: 0 auto; padding: 0 16px 24px; color: var(--m
       <span class="hint" id="apply-hint"></span>
       <label><input type="checkbox" id="auto"> Submit for me when nothing needs me</label>
       <span class="hint" id="auto-hint"></span>
+      <span class="at-once" role="group" aria-label="Jobs at once" title="How many applications the desk fills at the same time, each in its own tab of the browser window. Never two at one employer's site, and one at a time signs in, makes an account or waits on an emailed code. While a sign-in or code needs you, no other job starts and no other tab comes to the front.">Jobs at once
+        <button data-at-once="1" aria-pressed="false">1</button><button data-at-once="2" aria-pressed="false">2</button><button data-at-once="3" aria-pressed="false">3</button></span>
       <label><input type="checkbox" id="tailor"> Tailor my resume for each job</label>
       <span class="hint" id="tailor-hint"></span>
     </div>
@@ -865,6 +870,7 @@ function renderHeader() {
   if (document.activeElement !== auto) auto.checked = !!s.auto_submit;
   auto.disabled = s.dry_run;
   $("auto-hint").textContent = s.dry_run ? "Off in practice mode (settings.submit_mode: dry_run)." : s.auto_submit ? "On: complete applications are submitted without asking." : "Off: you press Submit for each one.";
+  document.querySelectorAll("[data-at-once]").forEach((b) => b.setAttribute("aria-pressed", String(Number(b.dataset.atOnce) === s.jobs_at_once)));
   const tailor = $("tailor");
   if (document.activeElement !== tailor) tailor.checked = !!s.tailor_resumes;
   const handledOnly = $("handled-only");
@@ -1242,7 +1248,12 @@ document.addEventListener("click", (e) => {
     return;
   }
   const a = t.dataset.act, job = t.dataset.job, jobAct = t.dataset.jobAct;
-  if (!state && (a || jobAct)) return;  // the page hasn't loaded yet
+  if (!state && (a || jobAct || t.dataset.atOnce)) return;  // the page hasn't loaded yet
+  if (t.dataset.atOnce) {
+    document.querySelectorAll("[data-at-once]").forEach((b) => b.setAttribute("aria-pressed", String(b === t)));
+    act(() => api("/api/settings", {jobs_at_once: Number(t.dataset.atOnce)}));
+    return;
+  }
   if (a === "find") act(() => api("/api/search", {}));
   if (a === "stop-search") act(() => api("/api/search/stop", {}));
   if (a === "area") openArea();

@@ -43,8 +43,10 @@ PROFILE = {
          "gpa": 3.4, "start": 2016, "end": 2020},
     ],
     # (account handling off: the tests of the desk leaving Create Account to the person; the
-    # manage_accounts tests turn it on)
-    "settings": {"submit_mode": "review", "browser_channel": "chromium", "headless": True, "manage_accounts": False},
+    # manage_accounts tests turn it on. One job at a time: the desk as it was before jobs_at_once, whose tests
+    # take jobs in order; the tests of jobs at once set their own)
+    "settings": {"submit_mode": "review", "browser_channel": "chromium", "headless": True, "manage_accounts": False,
+                 "jobs_at_once": 1},
 }
 
 
@@ -147,8 +149,11 @@ WORKER = _Worker()
 
 
 def worker_launch() -> dict:
-    """What the worker's browser is launched with: the tests' Chromium, headless."""
-    return {"headless": True, **launch_options()}
+    """What the worker's browser is launched with: the tests' Chromium, headless, with the desk's own switches (its
+    tabs behind the one in front never throttled: BACKGROUND_TABS_RUN)."""
+    from job_apply.browser import BACKGROUND_TABS_RUN
+
+    return {"headless": True, "args": list(BACKGROUND_TABS_RUN), **launch_options()}
 
 
 async def worker_playwright():

@@ -68,6 +68,23 @@ def test_accepting_notices_is_on_unless_turned_off_and_never_in_practice_mode(mo
     assert template["settings"]["accept_notices"] is True  # the template says so, and how to turn it off
 
 
+def test_jobs_at_once_is_two_unless_the_profile_says_and_never_past_three():
+    """settings.jobs_at_once: how many jobs the Job Desk fills at once (the owner's ask, Oct 16: a queue of 76 took
+    hours one at a time). Two where the profile doesn't say; 1 to 3 as written; anything else is said, and the
+    nearest it can be (or two)."""
+    def at_once(raw):
+        s = config.Settings.from_dict({} if raw is None else {"jobs_at_once": raw})
+        return s.jobs_at_once, s.warnings
+
+    assert at_once(None) == (2, [])
+    assert at_once(1) == (1, []) and at_once(3) == (3, []) and at_once("3") == (3, []) and at_once(" 1 ") == (1, [])
+    for raw, n in ((0, 1), (5, 3), (-2, 1), ("many", 2), (True, 2), (2.5, 2), ([2], 2)):
+        got, warnings = at_once(raw)
+        assert got == n and len(warnings) == 1 and "jobs_at_once" in warnings[0], (raw, got, warnings)
+    template = yaml.safe_load(config.TEMPLATE_PROFILE.read_text(encoding="utf-8"))
+    assert template["settings"]["jobs_at_once"] == 2  # the template says so, and what it does
+
+
 IDENTITY_EMAIL = "jobdesk.test@example.com"
 PRACTICE = {"submit_mode": "dry_run", "manage_accounts": True, "accept_notices": True}
 

@@ -132,6 +132,13 @@ through its `missing` and `profile_gaps` together.
      Any other dialog over a form waits for them, and practice mode never agrees. Ask whether
      that's all right, and write `settings.accept_notices: true` or `false` as they say
      (`false`: the desk stops at the notice, and asks the attestation as a question).
+   - Jobs at once: tell them the Job Desk fills two applications at the same time, each in its
+     own tab of its browser window (`settings.jobs_at_once`, 1 to 3, default 2), which takes a
+     long queue in about half the time. Never two at one employer's site; one at a time signs
+     in, makes an account or waits on an emailed code; and while a sign-in or code needs them,
+     or they're in one of the desk's rounds, no new job starts and none comes to the front. Ask
+     whether they'd like 1 (one after another), 2 or 3, and write it; the desk's **Jobs at
+     once** buttons change it later.
    - Email, only if the Gmail connector is connected: may Claude read the
      verification codes and links career sites email them (`settings.email_codes`)?
      May it check their email for replies to applications (`settings.email_tracking`)?

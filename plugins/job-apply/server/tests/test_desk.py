@@ -709,7 +709,7 @@ def test_the_tailoring_switch_is_kept_and_its_waiting_jobs_listed(srv, job_apply
             async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{desk.port}", timeout=20, trust_env=False) as c:
                 r = await c.post("/api/settings", headers=h, json={"tailor_resumes": True})
                 assert r.json() == {"auto_submit": False, "tailor_resumes": True, "handled_only": False, "troubleshoot": False,
-                                    "auto_search": False}
+                                    "auto_search": False, "jobs_at_once": 1}  # (the tests' profile: one at a time)
                 await desk.applier.stop()  # hold the queue still while the waiting job is set up
                 desk.applier.runs[job["id"]] = Run(job["id"], "FSE", "Example Fab", status="needs_you", need="tailor")
                 state = (await c.get("/api/state", headers=h)).json()
@@ -782,6 +782,126 @@ def test_the_pause_button_pauses_and_resumes_the_queue(srv):
                 assert not desk.applier.paused
                 assert "Paused" not in await page.locator("#work").inner_text()
                 await browser.close()
+        finally:
+            await desk.stop()
+
+    run(go())
+
+
+def test_jobs_at_once_is_set_on_the_desk_kept_and_given_way_to_a_newer_profile_setting(srv, job_apply_home):
+    """The desk's Jobs at once (1 to 3) is profile.yaml's settings.jobs_at_once until it's pressed: then it's kept in
+    desk.json as the other switches are, and the queue takes it at once. A later change to profile.yaml is the newer
+    choice. Anything but 1, 2 or 3 is turned away and changes nothing."""
+    import yaml
+
+    desk = Desk(srv)
+    desk.applier.start = lambda: None
+    woken = []
+    desk.applier.wake = lambda: woken.append(True)
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            h = {"x-desk-token": desk.token}
+            async with _client(desk) as c:
+                assert (await c.get("/api/state", headers=h)).json()["settings"]["jobs_at_once"] == 1  # the profile's
+                for bad in (0, 4, "2", True, None, 2.0):
+                    r = await c.post("/api/settings", headers=h, json={"jobs_at_once": bad})
+                    assert r.status_code == 400, (bad, r.text)
+                assert desk.applier.at_once() == 1 and not woken
+                r = await c.post("/api/settings", headers=h, json={"jobs_at_once": 3})
+                assert r.json()["jobs_at_once"] == 3 and desk.applier.at_once() == 3 and woken
+                assert (await c.get("/api/state", headers=h)).json()["settings"]["jobs_at_once"] == 3
+        finally:
+            await desk.stop()
+
+    run(go())
+    assert json.loads((job_apply_home / "desk.json").read_text(encoding="utf-8"))["jobs_at_once"] == 3
+    assert Desk(srv).applier.at_once() == 3  # still so next time the desk opens
+    profile = yaml.safe_load((job_apply_home / "profile.yaml").read_text(encoding="utf-8"))
+    profile["settings"]["jobs_at_once"] = 2  # changed in profile.yaml since (by Claude, say)
+    (job_apply_home / "profile.yaml").write_text(yaml.safe_dump(profile), encoding="utf-8")
+    assert Desk(srv).applier.at_once() == 2
+
+
+def test_jobs_at_once_chosen_on_the_desk_outlasts_a_profile_that_doesnt_read_and_the_codes_default(srv, job_apply_home):
+    """The review of jobs at once (LOW): the desk kept profile.yaml's setting as it read then, the code's default where
+    the profile didn't say (so a new default would have dropped every desk's choice); a profile.yaml that didn't read
+    as the desk opened dropped the choice, and the next switch saved wrote nothing over it. The profile's own words are
+    kept with the choice (none where it doesn't say), a profile that doesn't read keeps it, and with no choice the
+    queue goes one job at a time until profile.yaml reads again."""
+    import yaml
+
+    profile = yaml.safe_load((job_apply_home / "profile.yaml").read_text(encoding="utf-8"))
+    del profile["settings"]["jobs_at_once"]  # (as most profiles have it: the default)
+    (job_apply_home / "profile.yaml").write_text(yaml.safe_dump(profile), encoding="utf-8")
+    desk = Desk(srv)
+    desk.applier.start = lambda: None
+
+    async def settings(d, body):
+        await d.start(port=0, open_browser=False)
+        try:
+            async with _client(d) as c:
+                r = await c.post("/api/settings", headers={"x-desk-token": d.token}, json=body)
+                assert r.status_code == 200, r.text
+        finally:
+            await d.stop()
+
+    run(settings(desk, {"jobs_at_once": 3}))
+    saved = json.loads((job_apply_home / "desk.json").read_text(encoding="utf-8"))
+    assert (saved["jobs_at_once"], saved["jobs_at_once_profile"]) == (3, None), saved
+    good = (job_apply_home / "profile.yaml").read_text(encoding="utf-8")
+    (job_apply_home / "profile.yaml").write_text("personal:\n  email: sam@example.com\n   phone: [oops\n",
+                                                 encoding="utf-8")
+    broken = Desk(srv)
+    broken.applier.start = lambda: None
+    assert broken.applier.at_once() == 3  # (kept: whether it changed can't be told)
+    run(settings(broken, {"tailor_resumes": True}))  # another switch saved meanwhile
+    saved = json.loads((job_apply_home / "desk.json").read_text(encoding="utf-8"))
+    assert (saved["jobs_at_once"], saved["jobs_at_once_profile"]) == (3, None), saved
+    from job_apply.pipeline import Applier
+    assert Applier(srv).at_once() == 1  # (no desk choice, no profile to read: one at a time)
+    (job_apply_home / "profile.yaml").write_text(good, encoding="utf-8")
+    assert Desk(srv).applier.at_once() == 3
+
+
+def test_the_working_on_card_shows_every_job_under_way_and_the_jobs_at_once_buttons_set_it(srv):
+    """With jobs filled at once, Working on lists each one under way, and how many more are queued; the Jobs at once
+    buttons beside Submit for me show the setting and change it."""
+    from job_apply.pipeline import Run
+
+    ids = [srv.add_job(url=f"https://careers.employer{n}.example/job/{n}", title=f"Technician {n}",
+                       company=f"Employer {n}")["job"]["id"] for n in range(3)]
+    desk = Desk(srv)
+    desk.applier.start = lambda: None  # the queue isn't worked in this test
+    desk.search.update(status="done", at=time.time())  # recent, so opening the page doesn't search the real sites
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with person_browser() as browser:
+                page = await browser.new_page()
+                await page.goto(desk.url)
+                await page.wait_for_selector("#plugin-version:not(:empty)")  # the page has its state
+                await page.wait_for_selector("[data-at-once='1'][aria-pressed='true']")  # (the tests' profile)
+                for n, job_id in enumerate(ids):
+                    run_ = desk.applier.runs[job_id] = Run(job_id, f"Technician {n}", f"Employer {n}",
+                                                           status="running" if n < 2 else "queued")
+                    run_.log.append(f"opened https://careers.employer{n}.example/job/{n}")
+                desk.applier.tasks.append(("apply", ids[2]))
+                await page.wait_for_selector("#work :text('1 more queued.')")
+                work = await page.locator("#work").inner_text()
+                assert "Technician 0" in work and "Technician 1" in work and "Technician 2" not in work, work
+                await page.click("[data-at-once='3']")
+                await page.wait_for_selector("[data-at-once='3'][aria-pressed='true']")
+                for _ in range(50):
+                    if desk.applier.jobs_at_once == 3:
+                        break
+                    await asyncio.sleep(0.1)
+                assert desk.applier.jobs_at_once == 3
+                await page.reload()
+                await page.wait_for_selector("[data-at-once='3'][aria-pressed='true']")
+                assert await page.locator("[data-at-once][aria-pressed='true']").count() == 1
         finally:
             await desk.stop()
 
