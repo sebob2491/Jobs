@@ -2931,6 +2931,23 @@ def test_a_job_site_down_for_maintenance_is_said_so(down):
         asyncio.run(go())
 
 
+@pytest.mark.parametrize("body", ["", "<html><body>Workday is currently unavailable.</body></html>"])
+def test_a_job_site_answering_its_search_with_a_page_is_said_to_be_down(body):
+    """Workday's weekend maintenance (the live check's run 125, Oct 17): all 41 Workday employers' searches were
+    answered at the search's own address, with no redirect, by an empty or HTML page, and each was said as
+    "JSONDecodeError: Expecting value: line 1 column 1 (char 0)". It's said as the site not giving its job list."""
+    def answer(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text=body, headers={"Content-Type": "text/html"})
+
+    async def go():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(answer), follow_redirects=True) as client:
+            return await search_module._workday(client, "https://adco.wd1.myworkdayjobs.com/External", "field service",
+                                                20, [])
+    with pytest.raises(search_module.SearchError,
+                       match=r"adco.wd1.myworkdayjobs.com answered its job search with a page, not its list"):
+        asyncio.run(go())
+
+
 @pytest.mark.parametrize("to", ["https://adco.wd1.myworkdayjobs.com/External/search/maintenance",
                                 "https://jobs.example.com/job/Maintenance-Technician",
                                 "https://jobs.example.com/careers/maintenance-planner"])

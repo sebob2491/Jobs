@@ -668,7 +668,7 @@ async def _workday(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, 
         body = {"appliedFacets": facets, "limit": WORKDAY_PAGE, "offset": offset, "searchText": query}
         r = await _send(client, "POST", api, json=body, headers={"Accept": "application/json"})
         _raise_for(r, api)
-        return r.json()
+        return _json(r, api)
 
     first = await page(0, {})
     applied: dict[str, list[str]] = {}
@@ -2640,6 +2640,18 @@ def _raise_for(r: httpx.Response, url: str) -> None:
         wait = _retry_after(r) if r.status_code in RETRY_STATUS else None
         raise SearchError(f"HTTP {r.status_code} from {url.split('?')[0]}"
                           + (f" (it asks to be left {round(wait)} s before the next try)" if wait else ""))
+
+
+def _json(r: httpx.Response, url: str) -> Any:
+    """A search's answer read as JSON. One that isn't (Workday's weekend maintenance, the live check's run 125, Oct 17:
+    every search answered at its own address, with no redirect, by an empty or HTML page) is said as the site not
+    giving its job list, not as a JSONDecodeError."""
+    try:
+        return r.json()
+    except ValueError:
+        kind = (r.headers.get("content-type") or "").split(";")[0].strip() or "nothing"
+        raise SearchError(f"{httpx.URL(url).host} answered its job search with a page, not its list (HTTP "
+                          f"{r.status_code}, {kind}): most likely down for maintenance; try again in a few hours") from None
 
 
 # --------------------------------------------------------------------- entry point
