@@ -147,6 +147,15 @@ button.idea { font-size: 12px; padding: 2px 8px; border-radius: 999px; }
 .pw-row input { flex: 1; min-width: 0; font: inherit; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--text); }
 details { padding: 10px 14px; border-top: 1px solid var(--line); font-size: 13px; color: var(--muted); }
 details a { color: var(--accent); }
+/* a card's "What went in": what the desk put into the application, to check at a glance */
+details.went { padding: 2px 0 8px; border-top: 0; }
+details.went summary { cursor: pointer; color: var(--accent); }
+.went-body h4 { font-size: 12px; margin: 10px 0 4px; color: var(--text); }
+.went-body dl { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); gap: 3px 10px; margin: 0; }
+.went-body dt { overflow-wrap: anywhere; }
+.went-body dd { margin: 0; color: var(--text); overflow-wrap: anywhere; }
+.went-body ul { margin: 0; padding-left: 16px; overflow-wrap: anywhere; }
+.went-body li { margin: 2px 0; }
 footer { max-width: 1240px; margin: 0 auto; padding: 0 16px 24px; color: var(--muted); font-size: 12px; }
 .spin { display: inline-block; width: 12px; height: 12px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin .8s linear infinite; vertical-align: -1px; }
 @keyframes spin { to { transform: rotate(360deg); } }
@@ -665,6 +674,74 @@ function jobButtons(r, which) {
   return `<div class="actions">${out.join("")}</div>`;
 }
 
+// What went into an application (its answers by page, the files put up, what was agreed to for the person, an account
+// made, the optional questions left empty), in a panel on its card that starts closed. The card's own markup holds
+// only the panel and its counts; what's in it is the page's and the profile's words, so it's drawn as text alone
+// (wentFill), never as HTML.
+const WENT_PARTS = [["answers", "answer", "answers"], ["files", "file", "files"], ["agreed", "agreement", "agreements"],
+  ["accounts", "account made", "accounts made"], ["left", "left empty", "left empty"]];
+function wentPanel(r) {
+  const w = r.went_in;
+  if (!w) return "";
+  const said = WENT_PARTS.map(([k, one, more]) => [(w[k] || []).length, one, more]).filter(([n]) => n)
+    .map(([n, one, more]) => `${Number(n)} ${n === 1 ? one : more}`).join(", ");
+  return `<details class="went" data-went="${Number(r.job_id)}"><summary>What went in${said ? ` (${said})` : ""}</summary></details>`;
+}
+
+const wentDrawn = new WeakMap();  // each panel, and what it was last drawn from
+// the jobs whose panel the person opened: still open once its card is drawn again (its reason changed, say)
+const wentOpen = new Set();
+document.addEventListener("toggle", (e) => {
+  const panel = e.target;
+  if (!(panel instanceof HTMLDetailsElement) || !panel.dataset.went) return;
+  if (panel.open) wentOpen.add(panel.dataset.went);
+  else wentOpen.delete(panel.dataset.went);
+}, true);  // (a toggle doesn't bubble: heard on its way down)
+function wentFill(runs) {
+  const byJob = new Map(runs.map((r) => [String(r.job_id), r.went_in]));
+  for (const panel of document.querySelectorAll("details[data-went]")) {
+    if (wentOpen.has(panel.dataset.went) && !panel.open) panel.open = true;
+    const w = byJob.get(panel.dataset.went);
+    const drawn = JSON.stringify(w || null);
+    if (!w || wentDrawn.get(panel) === drawn) continue;
+    wentDrawn.set(panel, drawn);
+    const body = document.createElement("div");
+    body.className = "went-body";
+    const add = (parent, tag, text) => {
+      const el = document.createElement(tag);
+      if (text !== undefined) el.textContent = String(text);
+      parent.appendChild(el);
+      return el;
+    };
+    const pages = new Map();  // the answers by page, the pages in the order they were filled
+    for (const a of w.answers || []) {
+      if (!pages.has(a.page)) pages.set(a.page, []);
+      pages.get(a.page).push(a);
+    }
+    for (const [page, answers] of pages) {
+      add(body, "h4", page);
+      const dl = add(body, "dl");
+      for (const a of answers) {
+        add(dl, "dt", a.section && a.section !== a.page ? `${a.section}: ${a.label}` : a.label);
+        add(dl, "dd", a.value);
+      }
+    }
+    const list = (title, lines) => {
+      if (!lines.length) return;
+      add(body, "h4", title);
+      const ul = add(body, "ul");
+      for (const line of lines) add(ul, "li", line);
+    };
+    list("Files put up", (w.files || []).map((f) => `${f.label}: ${f.name}`));
+    list("Agreed to for you", w.agreed || []);
+    list("Account", w.accounts || []);
+    list("Left empty (optional)", (w.left || []).map((q) => `${q.section ? `${q.section}: ` : ""}${q.label} (${q.why})`));
+    if (w.full) add(body, "p", "Only the first answers are listed: the review page has them all.");
+    panel.querySelector(".went-body")?.remove();
+    panel.appendChild(body);
+  }
+}
+
 function allRuns() {
   const rows = [...(state.listings || []), ...(state.others || [])].filter((r) => r.run);
   const once = new Map();  // two listings can lead to one job (the same posting, linked two ways)
@@ -699,7 +776,7 @@ function renderSide() {
     else if (r.need === "tailor") body = jobButtons(r, ["usual_resume", "skip"]);
     else body = jobButtons(r, ["show", "resume", "skip", "already"]);
     const key = `${r.job_id}:${r.need}:${(r.questions || []).map((q) => q.label).join("|")}`;
-    return {key, html: `<div class="task ${r.blocking ? "hands" : ""}">${head}${body}</div>`};
+    return {key, html: `<div class="task ${r.blocking ? "hands" : ""}">${head}${wentPanel(r)}${body}</div>`};
   });
   if (!needEntries.length) needEntries.push({key: "none", html: `<div class="empty">Nothing right now.</div>`});
   patch($("needs"), needEntries);
@@ -720,10 +797,11 @@ function renderSide() {
       : r.status === "skipped" ? jobButtons(r, ["unskip"]) : jobButtons(r, []);  // submitted: Report only
     const [text, cls] = RUN[r.status];
     return {key: "d" + r.job_id + r.status, html: `<div class="task"><h3>${esc(r.title)} <span class="small">· ${esc(r.company)}</span>
-      <span class="pill ${cls}">${esc(text)}</span></h3><p>${esc(r.reason)}</p>${buttons}</div>`};
+      <span class="pill ${cls}">${esc(text)}</span></h3><p>${esc(r.reason)}</p>${wentPanel(r)}${buttons}</div>`};
   });
   if (!doneEntries.length) doneEntries.push({key: "none", html: `<div class="empty">Nothing yet.</div>`});
   patch($("done"), doneEntries);
+  wentFill(runs);
   const c = state.counts || {};
   const counts = ["applied", "ready_to_submit", "interviewing", "offer"].filter((k) => c[k])
     .map((k) => `<span class="pill ${STATUS[k][1]}">${esc(STATUS[k][0])}: ${c[k]}</span>`).join("") || `<span class="small">No applications tracked yet.</span>`;

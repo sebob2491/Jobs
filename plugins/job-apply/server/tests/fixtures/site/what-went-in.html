@@ -1,0 +1,25 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Apply for this job</title></head>
+<body>
+<!-- a one-page application for the Job Desk's "What went in" panel: the profile's answers (a long one, which the panel
+     shows cut short), the resume put up, an optional cover letter and an optional question the profile doesn't answer
+     left empty, and the form's own Submit -->
+<h1>Apply for this job</h1>
+<form id="app" novalidate>
+  <label for="fn">First Name *</label><input id="fn" required>
+  <label for="em">Email *</label><input id="em" type="email" required>
+  <label for="cv">Resume/CV *</label><input id="cv" type="file" required>
+  <label for="cl">Cover Letter</label><input id="cl" type="file">
+  <label for="about">Tell us about your equipment experience *</label><textarea id="about" required></textarea>
+  <label for="hobby">What do you like to do outside of work?</label><input id="hobby">
+  <button type="submit">Submit application</button>
+</form>
+<script>
+  document.getElementById('app').addEventListener('submit', (e) => {
+    e.preventDefault();
+    document.body.innerHTML = '<h1>Thank you for applying!</h1>';
+  });
+</script>
+</body>
+</html>

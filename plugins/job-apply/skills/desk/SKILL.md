@@ -99,6 +99,13 @@ The desk is a local web page served by this plugin. It does what the `find-jobs`
 - **Submit** sends one application. **Submit for me** sends every application that
   needs nothing, and stays off until the user turns it on. LinkedIn and Indeed are
   always submitted by the user.
+- **What went in** (a panel on each Ready card, and on a stopped job's card, closed until
+  opened) lists what the desk put into that application: each question's answer by page
+  (a long one cut short), the files put up by name, the notices, terms and attestations it
+  agreed to, an account it made, and the optional questions it left empty. The user checks
+  the answers there instead of reading every review page again. It never shows a password,
+  an emailed code or a security answer, and it's on the desk page only (never in the job's
+  log, a note or a problem report).
 - **Skip job** takes a job out of the queue and closes its tab; it's never applied to until
   **Undo** (on its card under Ready and done, or by its row in the list) puts it back where it
   was, with the tracker's status from before: back in the queue (opened again from the start), or
