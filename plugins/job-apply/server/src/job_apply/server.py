@@ -1146,6 +1146,10 @@ def _submit_policy(ats: str) -> str:
     return "auto" if s.may_auto_submit(ats) else "after_user_confirms"
 
 
+# Tracker statuses that mean the application is no longer the desk's to send (pipeline.FINISHED, and a Skip)
+_SUBMIT_GONE = frozenset({"applied", "interviewing", "offer", "rejected", "withdrawn", "skipped"})
+
+
 @tool(drives=True)
 async def submit_application(job_id: int | None = None, user_confirmed: bool = False) -> dict[str, Any]:
     """Click the final Submit button on the current page and record the result.
@@ -1159,6 +1163,7 @@ async def submit_application(job_id: int | None = None, user_confirmed: bool = F
         return {"submitted": False, "reason": "The Job Desk's Troubleshooting is on, so nothing is submitted. Turn it "
                 "off on the desk first."}
     job = _job_here(job_id)
+    was = job.get("status")  # (what the tracker said as this began: see before the press)
     page = await browser.inspect(include_dropdown_options=False)
     ats = await browser.human_submit_ats() or detect_ats(page["url"])  # Indeed's form inside an employer's page
     policy = _submit_policy(ats)
@@ -1194,6 +1199,13 @@ async def submit_application(job_id: int | None = None, user_confirmed: bool = F
     # as it sends) the application may still have gone, and the Job Desk reads this, after a
     # restart too, so as never to press Submit again by itself
     record = folder / "submission.json"
+    # Marked applied (the desk's "I submitted it") or skipped while the page was looked over just now: the application
+    # is the person's, so nothing is pressed (a second one can't be taken back). Only a change since this began: a call
+    # on a job the tracker said was applied already goes on as before
+    now = (tracker().get(job["id"], with_description=False) or {}).get("status")
+    if now != was and now in _SUBMIT_GONE:
+        return {"submitted": False, "already": True,
+                "reason": "Not pressed: the job was marked as applied (or skipped) while its page was checked."}
     try:
         earlier: str | None = record.read_text(encoding="utf-8")
     except OSError:

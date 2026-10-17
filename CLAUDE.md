@@ -22,6 +22,7 @@ the scrubber (`python -m job_apply.fixtures`) before they become test fixtures.
   - `mailbox.py`: emailed codes;
   - `tracker.py`: the SQLite tracker;
   - `report.py`: problem reports;
+  - `history.py`: the desk's run history (`runs.jsonl`, the This week window);
   - `fixtures.py`: the scrubber.
 - `data/companies.yaml` is the default employer list (`semiconductor-az`), and
   `data/lists/*.yaml` holds the others (`phoenix-metro`). A person's own

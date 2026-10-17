@@ -14041,3 +14041,46 @@ def test_i_submitted_it_while_submit_for_me_checks_the_page_sends_nothing(srv, m
     assert held["marked"] and posts == [], (held, posts, r.log)
     assert (r.status, r.reason) == ("submitted", "Marked as applied."), (r.status, r.reason)
     assert [e["outcome"] for e in _history_lines()] == ["marked_applied"]
+
+
+def test_i_submitted_it_while_the_submit_tool_looks_the_page_over_sends_nothing(srv, monkeypatch):
+    """The last re-check of the history (a window from before it): the Submit tool itself reads the page, its job
+    system and its buttons, and keeps a picture of it, before it presses (a second or more). "I submitted it" pressed on
+    the desk in that moment was passed over there, and the application the person says is in already was sent again. It
+    presses nothing, and the job stays marked as applied."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    url = "https://careers.acme-fab.example/apply/1"
+    posts: list[str] = []
+    job = srv.add_job(url=url, title="FSE", company="Acme Fab")["job"]["id"]
+    applier = Applier(srv)
+    real_shot = srv.browser.screenshot
+    held = {"marked": False}
+
+    async def screenshot(*args, **kwargs):
+        save_to = kwargs.get("save_to")
+        if save_to is not None and Path(save_to).name == "before-submit.jpg" and not held["marked"]:
+            held["marked"] = True  # the person's "I submitted it", as the tool keeps its picture of the page
+            srv.tracker().update(job, status="applied", note="marked applied in the Job Desk")
+            applier.mark_applied(job)
+        return await real_shot(*args, **kwargs)
+
+    monkeypatch.setattr(srv.browser, "screenshot", screenshot)
+
+    async def go():
+        await _serve(srv, {url: _form("Acme Fab")}, posts)
+        applier.start()
+        try:
+            r = applier.enqueue(job)
+            await until(lambda: r.status == "ready" and job not in applier._slots, about=state(r))
+            applier.submit_now(job)
+            await until(lambda: held["marked"] and job not in applier._slots, about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert held["marked"] and posts == [], (held, posts, r.log)
+    assert (r.status, r.reason) == ("submitted", "Marked as applied."), (r.status, r.reason, r.log)
+    assert not r.pressed_before
+    assert srv.tracker().get(job)["status"] == "applied"
+    assert pipeline.FINISHED | {"skipped"} == set(srv._SUBMIT_GONE)  # (the tool's own list, kept as the desk's)

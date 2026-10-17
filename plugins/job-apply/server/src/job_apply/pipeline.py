@@ -5926,6 +5926,8 @@ class Applier:
             run.sending = False
             raise
         run.sending = False
+        if not result.get("submitted") and run.status in ("skipped", "submitted"):  # (and so not pressed: see there)
+            return
         if result.get("submitted") and not result.get("confirmed"):
             run.pressed_before = True  # it may have gone: Submit for me never presses it again
         if result.get("submitted") and result.get("confirmed"):
