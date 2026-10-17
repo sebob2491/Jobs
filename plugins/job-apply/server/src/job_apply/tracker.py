@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import builtins
+import contextlib
 import csv
 import functools
 import re
 import sqlite3
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
@@ -76,6 +78,11 @@ EMAIL_CATEGORIES = {
 }
 _PIPELINE = ["saved", "in_progress", "ready_to_submit", "applied", "interviewing", "offer"]
 _DONE = {"applied", "interviewing", "offer", "rejected", "withdrawn"}
+# a job the person sent in (or is about to): listed under the desk's My applications with where it stands
+APPLICATION_STATUSES = ("ready_to_submit", "applied", "interviewing", "offer", "rejected", "withdrawn")
+# My applications' groups, in the page's order (standing): sent with nothing heard yet, an email came and it's no further
+# on, interviewing or an offer, rejected or withdrawn
+GROUPS = ("waiting", "heard", "interviews", "closed")
 
 
 def _progress(status: str) -> int:
@@ -91,8 +98,54 @@ _JOB_FIELDS = [
 _TRACKING_PARAMS = {"trk", "trackingid", "refid", "src", "source", "gh_src", "lever-source", "from", "ref"}
 
 
+def _clock() -> datetime:
+    """Now, for what's worked out from the time (standing's follow-up): a test pins it."""
+    return datetime.now(timezone.utc)
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def _moment(said: Any) -> datetime | None:
+    """A time as the tracker or Claude wrote it: ISO (a date alone, or a time with its offset: the tracker's own), or an
+    email's Date header ("Wed, 01 Oct 2026 09:30:00 -0700"); one without an offset is taken as UTC, as the tracker
+    keeps its own. None for words it can't read."""
+    said = str(said or "").strip()
+    if not said:
+        return None
+    try:
+        t = datetime.fromisoformat(said[:-1] + "+00:00" if said.endswith("Z") else said)
+    except ValueError:
+        try:
+            t = parsedate_to_datetime(said)
+        except (TypeError, ValueError, IndexError, OverflowError):  # (3.10 says TypeError for words that aren't one)
+            return None
+    return t if t.tzinfo else t.replace(tzinfo=timezone.utc)
+
+
+def standing(job: dict[str, Any], heard: dict[str, Any] | None, follow_up_days: int,
+             now: datetime | None = None) -> dict[str, Any]:
+    """Where an application stands since it was sent in (the desk's My applications, and list_jobs), from the job and
+    its newest email (`heard`: Tracker.last_heard's, None for none):
+    - `last_heard`: that email (its category, when it came, the day it came, and its one-line summary), or None;
+    - `emails`: how many are logged for the job;
+    - `follow_up_due`: for one applied to `follow_up_days` days ago or more with no email logged for it (a "we received
+      it" counts as heard, and so does one logged before it was marked applied: logging it is what marked it), the day
+      it became due; None otherwise, and always for one interviewing, with an offer, or closed;
+    - `group`: one of GROUPS: closed (rejected or withdrawn), interviews (interviewing or an offer), heard (an email
+      came, and it's no further on), or waiting (sent in, or ready to be, with nothing heard)."""
+    status = job.get("status")
+    group = ("closed" if status in ("rejected", "withdrawn") else "interviews" if status in ("interviewing", "offer")
+             else "heard" if heard else "waiting")
+    due = None
+    applied = _moment(job.get("applied_at")) if status == "applied" and not heard else None
+    with contextlib.suppress(OverflowError):  # (a date changed by hand, past the calendar's end, is never due)
+        when = applied + timedelta(days=follow_up_days) if applied is not None else None
+        if when is not None and (now or _clock()) >= when:
+            due = when.date().isoformat()
+    return {"last_heard": {k: heard[k] for k in ("category", "received_at", "day", "summary")} if heard else None,
+            "emails": heard["emails"] if heard else 0, "follow_up_due": due, "group": group}
 
 
 def normalize_url(url: str) -> str:
@@ -357,6 +410,29 @@ class Tracker:
             q += " WHERE logged_at >= datetime('now', ?)"
             args.append(f"-{int(since_days)} days")
         return [dict(r) for r in self.conn.execute(q + " ORDER BY logged_at DESC", args)]
+
+    @_locked
+    def last_heard(self) -> dict[int, dict[str, Any]]:
+        """Each job's newest logged email, by job: its `category`, `received_at` (when it came; when it was logged, where
+        that wasn't given), the `day` it came as YYYY-MM-DD (in the time's own offset; the day it was logged, where
+        received_at doesn't read as a time), its one-line `summary`, and how many `emails` are logged for the job. One
+        query for every job. Newest is by when it came, not when it was logged: a confirmation logged late isn't news
+        after the interview. (Picked here, not in SQL: received_at is as Claude wrote it, a date, an ISO time or an
+        email's Date header, which don't sort as words.)"""
+        rows = self.conn.execute("SELECT rowid AS n, job_id, category, summary, received_at, logged_at FROM emails")
+        oldest = datetime.min.replace(tzinfo=timezone.utc)
+        newest: dict[int, tuple[Any, sqlite3.Row, datetime | None]] = {}
+        counts: dict[int, int] = {}
+        for r in rows:
+            came = _moment(r["received_at"]) or _moment(r["logged_at"])
+            key = (came or oldest, _moment(r["logged_at"]) or oldest, r["n"])
+            counts[r["job_id"]] = counts.get(r["job_id"], 0) + 1
+            if r["job_id"] not in newest or key > newest[r["job_id"]][0]:
+                newest[r["job_id"]] = (key, r, came)
+        return {jid: {"category": r["category"], "received_at": r["received_at"] or r["logged_at"],
+                      "day": came.date().isoformat() if came else "", "summary": r["summary"] or "",
+                      "emails": counts[jid]}
+                for jid, (_, r, came) in newest.items()}
 
     @_locked
     def events(self, job_id: int) -> builtins.list[dict[str, Any]]:

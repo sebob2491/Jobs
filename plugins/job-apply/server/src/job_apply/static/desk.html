@@ -69,6 +69,13 @@ section.card { background: var(--surface); border: 1px solid var(--line); border
 .stops button { padding: 3px 10px; font-size: 13px; border-radius: 999px; }
 .stops button[aria-pressed="true"] { background: var(--chip); border-color: var(--muted); font-weight: 600; }
 .stop-hint { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 0 14px 10px; font-size: 13px; color: var(--muted); }
+/* My applications' groups: the openings bar's look, in a bar of its own (padding: under the card's head) */
+#app-groups { padding-top: 10px; }
+.row.app .state button { padding: 3px 10px; font-size: 13px; }
+/* a word that something happened (Prep me copied): at the foot of the window, gone after a few seconds */
+.toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 20; max-width: calc(100vw - 32px);
+  padding: 8px 14px; border-radius: 8px; background: var(--text); color: var(--bg); font-size: 14px; box-shadow: 0 2px 8px rgba(0,0,0,.25); }
+.toast:empty { display: none; }
 .notice { margin: 0 0 16px; padding: 10px 14px; border-radius: 10px; background: var(--warn-bg); color: var(--text); grid-column: 1 / -1; }
 .notice code { font-size: 13px; }
 .notice.tip { display: flex; align-items: flex-start; gap: 12px; }
@@ -207,6 +214,7 @@ footer { max-width: 1240px; margin: 0 auto; padding: 0 16px 24px; color: var(--m
     </div>
     <div class="stops openings-only" id="stops" role="group" aria-label="Show the jobs by where they stand" hidden></div>
     <div class="stop-hint openings-only" id="stop-hint" hidden></div>
+    <div class="stops" id="app-groups" role="group" aria-label="Show my applications by where they stand" hidden></div>
     <form class="addbar openings-only" id="add-form">
       <input type="text" id="add-links" placeholder="Paste job links: LinkedIn, Indeed or a company site" aria-label="Job links to add" autocomplete="off">
       <button type="submit" id="add-btn">Add</button>
@@ -358,6 +366,7 @@ footer { max-width: 1240px; margin: 0 auto; padding: 0 16px 24px; color: var(--m
   Answers you give here are saved in <code>~/.job-apply/answers.yaml</code> unless you untick "remember".
   <span id="plugin-version"></span>
 </footer>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
 <script>
 "use strict";
 const params = new URLSearchParams(location.search);
@@ -370,6 +379,10 @@ let filter = "recommended";
 const STOP_KEY = "desk-stop-filter";
 let stopFilter = "any";
 try { stopFilter = localStorage.getItem(STOP_KEY) || "any"; } catch (e) {}
+// And My applications' group picked (kept in this browser only): every application, or one group
+const APP_GROUP_KEY = "desk-app-group";
+let appGroup = "all";
+try { appGroup = localStorage.getItem(APP_GROUP_KEY) || "all"; } catch (e) {}
 let state = null;
 let busy = false;
 let reporting = false;  // a problem report being written
@@ -640,17 +653,92 @@ function renderStops(rows) {
   if (hint.dataset.html !== html) { hint.innerHTML = html; hint.dataset.html = html; }
 }
 
-// My applications: each job sent in (or filled and waiting on its review page), newest first, with where it stands
+// My applications' groups (tracker.GROUPS, each application in one, worked out by the desk), in the bar's order
+const APP_GROUPS = [
+  ["all", "All", "Every application"],
+  ["waiting", "Waiting", "Sent in (or ready to send) with no reply yet. Follow up? marks the ones that have waited long enough to ask"],
+  ["heard", "Heard back", "A reply came (a confirmation, an assessment or another email), and nothing further yet"],
+  ["interviews", "Interviews", "Interviewing, or an offer"],
+  ["closed", "Closed", "Rejected or withdrawn"],
+];
+const HEARD_WORDS = {confirmation: "confirmation", assessment: "assessment", interview: "interview", offer: "offer",
+  rejection: "rejection", other: "other email"};
+// Prep me: on an interview's row, and on one whose newest email is an assessment
+const prepFor = (j) => j.group === "interviews" || (j.group === "heard" && (j.last_heard || {}).category === "assessment");
+const prepWhat = (j) => (j.last_heard || {}).category === "assessment" ? "assessment" : "interview";
+
+// The bar over My applications: each group with how many it holds, Waiting with how many are due a follow-up
+function renderAppGroups(apps) {
+  if (!APP_GROUPS.some(([key]) => key === appGroup)) appGroup = "all";
+  const count = {all: apps.length};
+  for (const j of apps) count[j.group] = (count[j.group] || 0) + 1;
+  const due = apps.filter((j) => j.follow_up_due).length;
+  const bar = $("app-groups");
+  bar.hidden = !apps.length;
+  const html = bar.hidden ? "" : APP_GROUPS.map(([key, label, tip]) => `<button data-app-group="${key}" aria-pressed="${key === appGroup}" title="${esc(tip)}">${esc(label)}
+    ${count[key] || 0}${key === "waiting" && due ? `, ${due} to follow up` : ""}</button>`).join("");
+  if (bar.dataset.html !== html) { bar.innerHTML = html; bar.dataset.html = html; }  // (focus kept)
+}
+
+// My applications: each job sent in (or filled and waiting on its review page), newest first, with where it stands,
+// when the employer last wrote (the email's summary in its tooltip), and whether it's time to follow up
 function renderApps() {
-  const entries = (state.applications || []).map((j) => {
+  const apps = state.applications || [];
+  renderAppGroups(apps);
+  const days = (state.settings || {}).follow_up_days;
+  const entries = apps.filter((j) => appGroup === "all" || j.group === appGroup).map((j) => {
     const [text, cls] = STATUS[j.status] || [j.status, ""];
     const when = j.applied_at ? `applied ${esc(shownDay(j.applied_at))}` : `updated ${esc(shownDay(j.updated_at))}`;
+    const h = j.last_heard;
+    const heard = h ? `<span class="nowrap heard" title="${esc((h.summary || "") + (j.emails > 1 ? ` (${j.emails} emails logged)` : ""))}">Heard
+      ${esc(h.day || shownDay(h.received_at))}: ${esc(HEARD_WORDS[h.category] || h.category)}</span>` : `<span class="nowrap heard">No reply yet</span>`;
+    const dueTip = `No reply${days ? ` ${days} days` : ""} after you applied. Ask Claude to draft a polite follow-up email: `
+      + "it's saved as a Gmail draft, for you to send.";
+    const due = j.follow_up_due ? `<span class="pill warn" title="${esc(dueTip)}">Follow up? Due ${esc(j.follow_up_due)}</span>` : "";
+    const prepTip = `Copies a request for Claude to prep you for this ${prepWhat(j)}: paste it to Claude. Nothing is sent anywhere.`;
+    const prep = prepFor(j) ? `<button data-act="prep" data-job="${j.id}" title="${esc(prepTip)}">Prep me</button>` : "";
     return {key: "app" + j.id, html: `<li class="row app">
-      <div>${link(j.url, esc(j.title || "Untitled job"), "title")}<div class="meta">${esc(j.company || "")} · <span class="nowrap">${when}</span></div></div>
-      <div class="state"><span class="pill ${cls}">${esc(text)}</span></div></li>`};
+      <div>${link(j.url, esc(j.title || "Untitled job"), "title")}<div class="meta">${esc(j.company || "")} · <span class="nowrap">${when}</span> · ${heard}</div></div>
+      <div class="state">${due}<span class="pill ${cls}">${esc(text)}</span>${prep}</div></li>`};
   });
-  if (!entries.length) entries.push({key: "empty", html: `<li class="empty">No applications yet. Each one you send in shows up here with where it stands.</li>`});
+  if (!entries.length) entries.push({key: "empty", html: apps.length
+    ? `<li class="empty">None here right now. Press All to see them all.</li>`
+    : `<li class="empty">No applications yet. Each one you send in shows up here with where it stands.</li>`});
   patch($("rows"), entries);
+}
+
+// A word at the foot of the window for a few seconds
+let toastTimer = null;
+function toast(text) {
+  $("toast").textContent = text;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { $("toast").textContent = ""; }, 4000);
+}
+
+// Text onto the clipboard: true once it's there (the clipboard, or where it isn't allowed, a copy of a box's text)
+async function copyText(text) {
+  try { await navigator.clipboard.writeText(text); return true; } catch (e) { /* the older way, below */ }
+  const box = document.createElement("textarea");
+  box.value = text;
+  box.setAttribute("readonly", "");
+  box.style.position = "fixed";
+  box.style.opacity = "0";
+  document.body.appendChild(box);
+  box.select();
+  let copied = false;
+  try { copied = document.execCommand("copy"); } catch (e) { /* not copied */ }
+  box.remove();
+  return copied;
+}
+
+// Prep me: the page can't call Claude, so it copies a request for the person to paste to Claude (as Copy all copies the
+// notes for them to file). Nothing is sent anywhere
+async function prepMe(jobId) {
+  const j = (state.applications || []).find((x) => x.id === jobId);
+  if (!j) return;
+  const text = `Prep me for my ${prepWhat(j)}: job ${j.id}, ${j.title || "Untitled job"} at ${j.company || "the employer"} (use interview-prep)`;
+  if (await copyText(text)) toast("Copied: paste it to Claude");
+  else prompt("Couldn't copy it. Copy this, and paste it to Claude:", text);
 }
 
 function renderRows() {
@@ -659,6 +747,7 @@ function renderRows() {
   document.querySelectorAll(".openings-only").forEach((el) => { el.hidden = mine; });
   $("mine-count").textContent = (state.applications || []).length ? `(${state.applications.length})` : "";
   if (mine) { renderApps(); return; }
+  $("app-groups").hidden = true;
   // links the person added (here, or through Claude) always show: they picked those themselves
   const onlyHandled = !!(state.settings && state.settings.handled_only);
   const troubleshooting = !!(state.settings && state.settings.troubleshoot);
@@ -1329,6 +1418,12 @@ document.addEventListener("click", (e) => {
     renderRows();
     return;
   }
+  if (t.dataset.appGroup) {
+    appGroup = t.dataset.appGroup;
+    try { localStorage.setItem(APP_GROUP_KEY, appGroup); } catch (err) {}
+    renderRows();
+    return;
+  }
   if (t.dataset.filter) {
     filter = t.dataset.filter;
     document.querySelectorAll("[data-filter]").forEach((b) => b.setAttribute("aria-pressed", String(b === t)));
@@ -1377,6 +1472,7 @@ document.addEventListener("click", (e) => {
     }, false);
   }
   if (a === "notes-copy") copyNotes();
+  if (a === "prep") prepMe(Number(job));
   if (a === "notes-close") $("notes").close();
   if (a === "notes-clear" && confirm("Clear these notes? Do this once they're filed: they can't be brought back.")) {
     act(async () => { await api("/api/notes/clear", {ids: notesShown}); $("notes").close(); });

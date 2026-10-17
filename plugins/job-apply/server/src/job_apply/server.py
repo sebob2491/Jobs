@@ -33,7 +33,7 @@ from .search import (ICIMS_FRAME, companies_path, eightfold_page_url, employer_l
                      parse_eightfold, paycom_search, rmk_search, search_companies, set_search_area, sfclassic_search,
                      sitecore_search, ukg_search, wordings_for)
 from .search import search_area as search_area_now
-from .tracker import Tracker
+from .tracker import APPLICATION_STATUSES, Tracker, standing
 
 INSTRUCTIONS = """\
 Job application assistant. Typical flow for one posting:
@@ -535,12 +535,39 @@ def add_job(
     return {"created": created, "job": _brief(job)}
 
 
+def _follow_up_days() -> int:
+    """settings.follow_up_days, or its default while the profile doesn't read."""
+    try:
+        return config.Profile.load().settings.follow_up_days
+    except Exception:
+        return config.FOLLOW_UP_DAYS_DEFAULT
+
+
 @tool()
 def list_jobs(status: str | None = None, company: str | None = None, limit: int = 50) -> dict[str, Any]:
     """List tracked jobs, newest activity first. status is one of:
-    saved, in_progress, ready_to_submit, applied, interviewing, offer, rejected, withdrawn, skipped."""
-    jobs = tracker().list(status=status, company=company, limit=limit)
-    return {"count": len(jobs), "jobs": [_brief(j) for j in jobs], "by_status": tracker().counts()}
+    saved, in_progress, ready_to_submit, applied, interviewing, offer, rejected, withdrawn, skipped.
+
+    A job sent in (ready_to_submit and after) also has `last_heard`, the newest employer
+    email logged for it with log_email (category, day, one-line summary; null for none
+    yet), and `follow_up_due`: the day a follow-up became due, for one applied to
+    settings.follow_up_days days ago (10 unless the profile says) or more with no email
+    logged, not even a confirmation; null otherwise. The Job Desk's My applications
+    marks those "Follow up?"."""
+    t = tracker()
+    jobs = t.list(status=status, company=company, limit=limit)
+    sent = any(j["status"] in APPLICATION_STATUSES for j in jobs)  # (none sent: neither the emails nor the profile read)
+    heard, days = (t.last_heard(), _follow_up_days()) if sent else ({}, config.FOLLOW_UP_DAYS_DEFAULT)
+    out = []
+    for j in jobs:
+        brief = _brief(j)
+        if j["status"] in APPLICATION_STATUSES:
+            stands = standing(j, heard.get(j["id"]), days)
+            last = stands["last_heard"]
+            brief["last_heard"] = {k: last[k] for k in ("category", "day", "summary")} if last else None
+            brief["follow_up_due"] = stands["follow_up_due"]
+        out.append(brief)
+    return {"count": len(jobs), "jobs": out, "by_status": t.counts()}
 
 
 @tool()

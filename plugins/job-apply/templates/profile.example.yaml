@@ -191,3 +191,6 @@ settings:
   # other tab comes to the front. 1 fills them one after another. The desk's "Jobs at once"
   # buttons change it there.
   jobs_at_once: 2
+  # The days an application you sent in waits with no reply (not even a "we received it" email)
+  # before the desk's My applications marks it "Follow up?" (1 to 90).
+  follow_up_days: 10

@@ -85,6 +85,27 @@ def test_jobs_at_once_is_two_unless_the_profile_says_and_never_past_three():
     assert template["settings"]["jobs_at_once"] == 2  # the template says so, and what it does
 
 
+def test_follow_up_days_is_ten_unless_the_profile_says_and_from_one_to_ninety():
+    """settings.follow_up_days: how many days an application sent in waits with no reply before the desk's My
+    applications marks it "Follow up?" (the code review's worth building 7). Ten where the profile doesn't say; 1 to 90
+    as written; anything else is said, and the nearest it can be (or ten). A key a letter short of it is said too, and
+    the template has it, with nothing said of it."""
+    def days(raw):
+        s = config.Settings.from_dict({} if raw is None else {"follow_up_days": raw})
+        return s.follow_up_days, s.warnings
+
+    assert days(None) == (10, []) and days("") == (10, [])
+    assert days(1) == (1, []) and days(90) == (90, []) and days(14) == (14, []) and days(" 7 ") == (7, [])
+    for raw, n in ((0, 1), (365, 90), (-3, 1), ("soon", 10), (True, 10), (7.5, 10), ([7], 10)):
+        got, warnings = days(raw)
+        assert got == n and len(warnings) == 1 and "settings.follow_up_days should be a number from 1 to 90" in warnings[0], \
+            (raw, got, warnings)
+    assert config.Settings.from_dict({"follow_up_day": 7}).warnings == [
+        "Unknown settings key 'follow_up_day' (it has no effect); did you mean 'follow_up_days'?"]
+    template = yaml.safe_load(config.TEMPLATE_PROFILE.read_text(encoding="utf-8"))
+    assert template["settings"]["follow_up_days"] == 10 and config.Profile(template).settings.warnings == []
+
+
 IDENTITY_EMAIL = "jobdesk.test@example.com"
 PRACTICE = {"submit_mode": "dry_run", "manage_accounts": True, "accept_notices": True}
 

@@ -11,7 +11,8 @@ interview, grounded in their real experience and in this specific posting.
 ## Gather
 
 1. Find the job with `list_jobs` / `get_job(job_id)`. That gives you the description,
-   company and status. Run `update_job(job_id, status="interviewing")` only when its
+   company and status. A request copied by the Job Desk's **Prep me** ("Prep me for my
+   interview: job 12, ...") names the job's number. Run `update_job(job_id, status="interviewing")` only when its
    status is earlier than that (saved, in progress, ready to submit, applied): never
    for a job at `offer`, `rejected` or `withdrawn`, which a prep for one more conversation
    doesn't take back. A `skipped` one: ask the user first (they may have applied another way).

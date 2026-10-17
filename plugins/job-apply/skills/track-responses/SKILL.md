@@ -21,8 +21,11 @@ stop.
 ## Steps
 
 1. `list_jobs` with no filter. Keep jobs whose status is `applied`,
-   `ready_to_submit`, `interviewing` or `offer`. Then run `logged_emails` to get the
-   thread ids you've already recorded.
+   `ready_to_submit`, `interviewing` or `offer`. Each has `last_heard` (the newest
+   email logged for it) and `follow_up_due` (the day a follow-up became due: applied
+   `settings.follow_up_days` days ago, 10 unless the profile says, with no email logged,
+   not even a confirmation). Then run `logged_emails` to get the thread ids you've
+   already recorded.
 
 2. **Search.** Use one query per company, over the period since the earliest applied
    date (at least the last 30 days):
@@ -48,23 +51,44 @@ stop.
 
 4. **Record** each one with `log_email(job_id, thread_id, category, summary, received_at)`.
    `summary` is one line, e.g. "Phone screen request from recruiter, reply with availability".
+   `received_at` is the message's date (`YYYY-MM-DD`, or its ISO time). The Job Desk's
+   My applications shows it as "Heard <date>: <category>", with the summary as its tooltip.
    For a thread with several messages, classify and record its newest one. The tool
    never moves a status backwards and ignores a message it has already seen.
 
 5. **Report** in a short table: company, role, what arrived, new status. Then list
    the action items: interviews to schedule, assessments with deadlines, emails
-   that need a reply. Offer to:
+   that need a reply. Then list the applications still due a follow-up (`list_jobs`
+   again: `follow_up_due` set, marked "Follow up?" on the desk): applied that long ago
+   with no reply at all. Offer to:
    - draft replies, saved as Gmail **drafts** only. Never send email for the user;
+   - draft a short, polite follow-up email for each one due (asking where the
+     application stands and restating interest in the role), as a Gmail **draft** only,
+     to the address the employer wrote from or the recruiter's (ask the user when there's
+     none). The user sends it;
    - add confirmed interview times to Google Calendar, if that connector is available,
      after the user says yes.
+
+6. **Offer a schedule, once.** Unless the user already has one, offer once to repeat this
+   check on a schedule (daily, for example), using the scheduled tasks or Routines of
+   their Claude app if it has them (within a Claude Code session, `/loop` with
+   `/job-apply:track-responses` works too). Say plainly that:
+   - it runs on the Gmail connector, with `settings.email_tracking` on: a scheduled run
+     with it off stops and says so, without asking;
+   - it never uses the Job Desk's email app password, which only reads sign-up codes
+     and a site's reset email;
+   - each run only logs what arrived and reports it. It drafts replies only when the
+     user asks, as Gmail drafts, and never sends anything.
+
+   If they say yes, set it up with a prompt like "Run /job-apply:track-responses: log
+   the replies to my applications and report them. Don't draft anything unless I ask."
+   If they say no, don't offer again in this conversation.
 
 ## Rules
 
 - Read only threads that match the searches above. Don't browse the inbox.
 - Don't send, archive, label, delete or forward anything.
 - Quote at most a sentence of an email back to the user. Summarize instead.
-
-## Running it regularly
-
-To run this check on a schedule, the user can use Claude Code's `/loop` command with
-`/job-apply:track-responses`, or set up a scheduled Routine with the same prompt.
+- Read replies only through the Gmail connector. The Job Desk's email app password
+  (`email_password`) is never used for them: it only reads sign-up codes and a site's
+  reset email.

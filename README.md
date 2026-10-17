@@ -306,6 +306,19 @@ sent by the desk and marked as applied, its stops for you by kind, failed and sk
 time with the desk (waits included, and jobs filled at once overlap), and the employers it
 stopped at most, with the latest lines. Or ask Claude how the week went.
 
+**My applications** (beside Recommended and All) lists each application you sent in,
+newest first, with where it stands and when the employer last wrote: "Heard 2026-10-03:
+confirmation" (point at it for the email's one-line summary), or "No reply yet". The bar
+over it groups them: **Waiting**, **Heard back**, **Interviews** (interviewing or an offer)
+and **Closed** (rejected or withdrawn). One you applied to 10 days ago or more
+(`follow_up_days`) with no email at all, not even a "we received your application", is
+marked **Follow up?** with the day it became due: Claude can draft a polite follow-up as
+a Gmail draft, for you to send. An interview's row has **Prep me**, which copies a request
+("Prep me for my interview: job 12, ...") for you to paste to Claude, which then prepares
+you for it. The replies come from `/job-apply:track-responses`, which reads them through
+the Gmail connector with `email_tracking` on, never with the desk's email app password, and
+can offer to run that check every day as a scheduled task.
+
 To add jobs from anywhere else, paste their links (LinkedIn, Indeed or any company
 site) into the box above the list. The desk reads each posting, scores it and ticks it
 for Apply. Jobs Claude saves from Indeed or LinkedIn show up in the same list. Without
@@ -348,6 +361,7 @@ Settings in `profile.yaml`:
 | `accept_cookies` | `false` | The Job Desk declines cookie banners. One with no way to decline (TI's "Agree and Proceed") waits for you, unless this is `true`: then the desk accepts it for you. |
 | `manage_accounts` | `true` | The Job Desk creates your account at a job system with the password you saved on the desk for it (ticking the site's terms, never a newsletter), resets a password the site refuses through its "Forgot password" email, and presses "Resend Account Verification" for an account never verified. A form's security questions are asked on the desk's card and never remembered; a picture code stays yours. Never in practice mode. `false`: the desk fills in Create Account for you to finish. |
 | `jobs_at_once` | `2` | How many applications the Job Desk fills at the same time (1 to 3), each in its own tab of its browser window. Never two at one employer's site or job-system tenant; one at a time signs in, makes an account, resets a password or waits on an emailed code; while a sign-in or code needs you, no other job starts and no other tab comes to the front. `1` fills them one after another. The desk's **Jobs at once** buttons change it there (kept in `desk.json` until this setting changes). |
+| `follow_up_days` | `10` | The days an application you sent in waits with no reply (not even a "we received it" email) before the Job Desk's My applications marks it **Follow up?** (1 to 90). |
 | `auto_submit_ats` | `[]` | With `submit_mode: auto`, the job systems Claude may submit on without asking (`workday`, `greenhouse`, `lever`, `eightfold`, `successfactors`). The Job Desk has its own switch, **Submit for me**. |
 | `browser_channel` | `chrome` | The browser the desk drives: `chrome`, `msedge`, or `chromium` (Playwright's bundled browser). `headless: true` hides its window. |
 
