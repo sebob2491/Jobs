@@ -563,6 +563,12 @@ EXTRACT_JS = r"""
       f.value = unchosen ? '' : el.getAttribute('data-ja-secret') === 'in' && !moved ? '(set)' : '(unconfirmed)';
     }
     if (tagName === 'input' && type && type !== 'text') f.input_type = type;
+    // a box that takes a date: its own type, or a date picker's, by its hint or by the calendar it opens as a dialog
+    // (Eightfold's "Preferred Start Date": a combobox hinted "Select date", issue #112, note 41; "MM/DD/YYYY")
+    const DATE_HINT = /^(?:(?:select|choose|pick|enter) (?:a )?date|[md]{1,2}([\/.\-])[md]{1,2}\1y{2,4}|y{4}([\/.\-])m{1,2}\2d{1,2})$/i;
+    if (tagName === 'input' && (type === 'date' || [el.getAttribute('placeholder'), el.getAttribute('aria-label')]
+        .some((h) => DATE_HINT.test(clean(h || '')))
+        || (el.getAttribute('aria-haspopup') === 'dialog' && /\bdate\b/i.test(label)))) f.date = true;
     // a box the site marks as a phone's (iCIMS's "Number" beside its Phone Country Code: tel-national)
     const autocomplete = (el.getAttribute('autocomplete') || '').trim().toLowerCase().split(/\s+/).pop();
     if (tagName === 'input' && /^tel(-national|-local)?$/.test(autocomplete)) f.autocomplete = autocomplete;
@@ -1547,6 +1553,100 @@ OPEN_MENU_JS = r"""
     // a grid is a menu only as a field's list (Oracle's lookups), not as a table on the page
     ? !!(m.id && document.querySelector(`[aria-controls~="${CSS.escape(m.id)}"]`)) && !!m.querySelector('[role="gridcell"]')
     : !!m.querySelector('[role="option"], [role="menuitem"]')))
+"""
+
+
+# A box's own pop-up drawn as a dialog over the page, the kind OPEN_DIALOGS_JS leaves out of the notices: shown,
+# holding a calendar's grid or a list, and no boxes of its own. Eightfold's date picker opens its calendar as one,
+# modal: it keeps the focus and swallows the next box's click and keys (issue #112, note 41). How many are open; and
+# first, with `mode` "blur", the focus taken off whatever has it; "inside", the focus moved into the last one, unless
+# it's in one already; "opener", the focus put on the box that opened it (one that names it, or says it has opened a
+# dialog), and none counted without one
+OPEN_PICKERS_JS = r"""
+(mode) => {
+  const shown = (n) => n.getClientRects().length > 0 && getComputedStyle(n).visibility !== 'hidden';
+  const BOX = 'input:not([type="hidden"]), select, textarea';
+  const all = [...document.querySelectorAll('[role="dialog"], [aria-modal="true"], dialog[open]')]
+    .filter((d) => shown(d) && d.querySelector('[role="grid"], [role="listbox"]') && ![...d.querySelectorAll(BOX)].some(shown));
+  const open = all.filter((d) => !all.some((o) => o !== d && o.contains(d)));
+  if (!open.length) return 0;
+  const a = document.activeElement, d = open[open.length - 1];
+  if (mode === 'blur' && a && a !== document.body) a.blur();
+  if (mode === 'inside' && !(a && open.some((o) => o.contains(a)))) {
+    const target = d.querySelector('[tabindex="0"], [aria-selected="true"] [tabindex], button:not([disabled])') || d;
+    if (target === d && !d.hasAttribute('tabindex')) d.setAttribute('tabindex', '-1');
+    target.focus();
+  }
+  if (mode === 'opener') {
+    const opener = [...document.querySelectorAll('input, button, [role="combobox"]')].find((b) => shown(b)
+      && !open.some((o) => o.contains(b)) && ((d.id && (b.getAttribute('aria-controls') || '').split(/\s+/).includes(d.id))
+        || (b.getAttribute('aria-expanded') === 'true' && /^(dialog|grid|true)$/.test(b.getAttribute('aria-haspopup') || ''))));
+    if (!opener) return 0;
+    opener.focus();
+  }
+  return open.length;
+}
+"""
+
+
+# A date picker's calendar, for the day `iso` ("2026-11-02"): the dialog or grid its box names (aria-controls), else
+# the last calendar shown in a dialog. Its days are read from their title or data attribute (rc-picker's, as
+# Eightfold's has them: "2026-11-02") or from their words ("Monday 2 November 2026", "November 2, 2026"). The day
+# shown is marked data-ja-day (its button, where it has one) and "day" returned; else, past the days shown, the
+# calendar's next month's button is marked data-ja-day-nav and "next" returned ("back" for the month before); "none"
+# without a calendar, "unread" with no day it can read, "stuck" with no button to move on.
+DAY_CELL_JS = r"""
+([id, iso]) => {
+  for (const n of document.querySelectorAll('[data-ja-day], [data-ja-day-nav]')) {
+    n.removeAttribute('data-ja-day'); n.removeAttribute('data-ja-day-nav');
+  }
+  const shown = (n) => n.getClientRects().length > 0 && getComputedStyle(n).visibility !== 'hidden';
+  const box = document.querySelector(`[data-ja-id="${CSS.escape(id)}"]`);
+  const ref = box && (box.getAttribute('aria-controls') || box.getAttribute('aria-owns'));
+  let cal = ref ? document.getElementById(ref.split(/\s+/)[0]) : null;
+  if (!cal || !shown(cal) || !cal.querySelector('[role="grid"], table')) {
+    cal = [...document.querySelectorAll('[role="dialog"], [aria-modal="true"], dialog[open]')]
+      .filter((d) => shown(d) && d.querySelector('[role="grid"], table')).pop() || null;
+  }
+  if (!cal) return 'none';
+  const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+  const fromWords = (words) => {
+    const w = (words || '').toLowerCase();
+    const month = MONTHS.findIndex((m) => new RegExp(`\\b${m}[a-z]*\\b`).test(w));
+    const year = /\b(\d{4})\b/.exec(w);
+    const day = /(?:^|[^\d])(\d{1,2})(?![\d])/.exec(w.replace(/\b\d{4}\b/g, ' '));
+    return month >= 0 && year && day ? `${year[1]}-${String(month + 1).padStart(2, '0')}-${day[1].padStart(2, '0')}` : '';
+  };
+  const dayOf = (c) => {
+    for (const v of ['title', 'data-date', 'data-value', 'data-day', 'datetime']) {
+      const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(c.getAttribute(v) || '');
+      if (m) return m[0];
+    }
+    const named = [c, ...c.querySelectorAll('[aria-label], [title]')].map((n) => n.getAttribute('aria-label') || '');
+    return named.map(fromWords).find(Boolean) || '';
+  };
+  const cells = [...cal.querySelectorAll('[role="gridcell"], td')].filter(shown);
+  const days = cells.map((c) => [c, dayOf(c)]).filter(([, d]) => d);
+  if (!days.length) return 'unread';
+  const off = (c) => c.getAttribute('aria-disabled') === 'true' || /\bdisabled\b/i.test(c.className || '')
+    || !!c.querySelector('[aria-disabled="true"], [disabled]');
+  const hit = days.find(([c, d]) => d === iso && !off(c));
+  if (hit) {
+    const [c] = hit;
+    (c.querySelector('[role="button"], button') || c).setAttribute('data-ja-day', iso);
+    return 'day';
+  }
+  const later = days.every(([, d]) => d < iso), earlier = days.every(([, d]) => d > iso);
+  if (!later && !earlier) return 'stuck';  // (the day shown, but not to be picked: one the calendar keeps out)
+  const words = (b) => `${b.getAttribute('aria-label') || ''} ${b.getAttribute('title') || ''} ${b.getAttribute('data-testid') || ''}`;
+  const buttons = [...cal.querySelectorAll('button, [role="button"]')].filter((b) => shown(b) && !b.closest('[role="gridcell"], td'));
+  const way = later ? /\bnext\b/i : /\bprev(ious)?\b/i;
+  const nav = buttons.find((b) => way.test(words(b)) && /\bmonth\b/i.test(words(b)))
+    || buttons.find((b) => way.test(words(b)) && !/\b(year|decade|super)\b/i.test(words(b)));
+  if (!nav) return 'stuck';
+  nav.setAttribute('data-ja-day-nav', '1');
+  return later ? 'next' : 'back';
+}
 """
 
 

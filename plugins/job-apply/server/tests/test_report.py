@@ -343,6 +343,74 @@ def test_an_employers_one_word_forms_are_taken_out_as_written_and_never_inside_a
         "Example Fab", "Example"]  # an employer's own address names no tenant
 
 
+def test_an_anonymous_report_leaves_out_the_parent_group_the_jobs_place_and_never_says_the_the(job_apply_home,
+                                                                                               tmp_path):
+    """Issue #112, note 42 (adds to note 35): an anonymous report took the employer's own name out, but its parent
+    group's stayed in the page title and a heading ("Job Details | Acme Group", "Jobs at Acme Group": the employer as
+    surely, on SuccessFactors); the job's place stayed in a button ("Remove Springfield, IL", Eightfold's location
+    chip: an employer and a city are one job); and "the Example Fab" became "the the employer". Each goes, from the
+    issue and the saved pages; the page's own words stay."""
+    folder = tmp_path / "0031-example-fab-equipment-technician"
+    snap = folder / "debug" / "20261016-100000-000-stop"
+    snap.mkdir(parents=True)
+    posting = "https://career5.successfactors.com/career?company=exfabP&career_job_req_id=4321"
+    (snap / "page.html").write_text(
+        "<html><head><title>Job Details | Acme Group</title></head><body><h1>Jobs at Acme Group</h1>"
+        "<h2>Additional Personal Information</h2><p>Acme Group companies: Example Fab</p>"
+        "<button>Remove Springfield, IL</button><label for=a>Country of Residence</label><input id=a></body></html>",
+        encoding="utf-8")
+    (snap / "snapshot.json").write_text(json.dumps({
+        "url": posting, "title": "Job Details | Acme Group", "note": "stopped: stuck",
+        "frames": [{"file": "page.html", "url": posting}],
+        "fields": [{"label": "Country of Residence", "kind": "combobox", "required": True, "value": ""}]}),
+        encoding="utf-8")
+    job = {"id": 31, "title": "Equipment Technician", "company": "Example Fab", "ats": "successfactors",
+           "location": "Springfield, IL", "url": posting, "folder": str(folder)}
+    r = Run(31, "Equipment Technician", "Example Fab", status="needs_you", need="stuck", url=posting,
+            reason="I couldn't find the button that moves this application on.",
+            log=["agreed to the employer's notice “Privacy Policy of the Example Fab” for you (settings.accept_notices)"],
+            page_info={"url": posting, "title": "Equipment Technician Job Details | Acme Group",
+                       "headings": ["Jobs at Acme Group", "Additional Personal Information"],
+                       "actions": ["Remove Springfield, IL", "Remove Springfield, Illinois", "Next"],
+                       "fields": [{"label": "Country of Residence", "kind": "combobox", "required": True,
+                                   "empty": True}]})
+    out = report.build(job, r, PERSON, anonymous=True)
+    text = out["preview"]
+    assert "(the job Job Details | the employer)" in text, text
+    assert "Headings: Jobs at the employer | Additional Personal Information" in text
+    assert "Buttons: Remove the job's location | Remove the job's location | Next" in text
+    assert "### Page saved 20261016-100000-000-stop: Job Details | the employer" in text
+    assert "notice “Privacy Policy of the employer”" in text and "the the" not in text
+    with zipfile.ZipFile(out["zip"]) as z:
+        everything = "".join(z.read(n).decode("utf-8") for n in z.namelist())
+    assert "Country of Residence" in everything and "Additional Personal Information" in everything
+    for named in ("Acme", "Example", "Springfield", "exfab"):
+        assert named not in everything and named not in out["issue_url"], named
+    plain = report.build(job, r, PERSON)["preview"]
+    assert "Acme Group" in plain and "Springfield" in plain  # unless asked, the report says which job
+    # a note (filed many together) never says "the the" either
+    assert "Privacy Policy of the employer”" in report.note(job, r, PERSON)
+
+
+def test_the_names_a_page_gives_an_employer_are_found_and_its_own_words_are_not():
+    """What an anonymous report takes for another name of the employer (note 42): a title's part beside the job's or
+    the site's words, one before a careers site's words, and what follows "Jobs at" or "Careers at"; never a page's
+    own words, a step's name or a job system's."""
+    found = report._names_given(
+        ["the job Job Details | Acme Group", "Careers | Northwind", "Contoso Careers", "My Information | Workday",
+         "Careers | SAP SuccessFactors", "Voluntary Self-Identification | Equal Opportunity Employer", "Apply"],
+        ["Your Career at Fabrikam Holdings", "Life at Tailspin.", "Additional Personal Information", "Remove the job's location",
+         "Careers at the employer", "Join our talent community"])
+    assert found == {"Acme Group", "Northwind", "Contoso", "Fabrikam Holdings", "Tailspin"}, found
+    # its own domain's name too, never a frame's (a CAPTCHA's)
+    say, _ = report._anonymous({"company": "Example Fab", "url": "https://jobs.exfabgroup.example/x"}, None,
+                               ["https://jobs.exfabgroup.example/x", "https://www.puzzlecheck.example/frame"], [])
+    assert say("Welcome to exfabgroup and EXFABGROUP, checked by Puzzlecheck") == \
+        "Welcome to the employer and the employer, checked by Puzzlecheck"
+    assert set(report._place_forms("Springfield, IL; Shelbyville, Illinois, United States; Remote")) == {
+        "Springfield, IL", "Springfield", "Shelbyville, Illinois, United States", "Shelbyville, Illinois", "Shelbyville"}
+
+
 def test_claude_can_make_the_report_anonymous_too(srv):
     job = srv.add_job(url="https://acme.wd1.myworkdayjobs.com/External/job/x", title="Technician",
                       company="Example Litho")["job"]

@@ -14,8 +14,9 @@ employer by its job system ("a Workday employer"), not its name, and every addre
 way ("a Workday address"): a job's address shows its employer, its title and its requisition
 number, a password reset's its one-time token.
 
-A report made anonymous says the job that way too, and leaves out its title, its addresses and
-its requisition number, from the issue and from the saved pages.
+A report made anonymous says the job that way too, and leaves out its title, its addresses, its
+requisition number and its place, from the issue and from the saved pages; and the employer by any name a
+page gives it besides the job's (its parent group's in a page title), as well as by its own.
 """
 
 from __future__ import annotations
@@ -31,7 +32,7 @@ from urllib.parse import quote, urlparse
 
 from . import config
 from .ats import ATS_NAMES, detect_ats, shared_system
-from .autofill import is_empty_value
+from .autofill import US_STATES, is_empty_value
 from .fixtures import REDACTED, _pattern, _spellings, _without_query, convert, personal_strings, redact
 from .mailbox import site_domain
 
@@ -55,6 +56,44 @@ _COMMON_WORDS = {"american", "national", "global", "united", "general", "first",
 # A job system's host labels that are the system's own, not an employer's tenant
 _SYSTEM_LABELS = {"www", "jobs", "job-boards", "boards", "careers", "career", "external", "apply", "hire",
                   "recruiting", "talent", "careersite"}
+# A name a page gives its employer besides the job's (its parent group's, which says it as well: "Job Details | Example
+# Group", "Jobs at Example Group", issue #112, note 42): capitalised words, with "of", "and" or "&" between, six at most
+_NAME = r"[A-Z][\w&'.-]*(?: (?:of|and|de|&|[A-Z0-9][\w&'.-]*)){0,5}"
+# ... after "Jobs at", "Careers at", "Your Career at", "Life at", "Working at"
+_AT_NAME = re.compile(r"(?i:\b(?:jobs?|careers?|opportunit(?:y|ies)|openings?|work(?:ing|ed)?|life|employment)) at "
+                      rf"({_NAME})")
+# ... in a page title, a part beside the job's or the site's own words ("the job Job Details | Example Group",
+# "Careers | Example Group"), or before a careers site's words ("Example Group Careers")
+_TITLE_PARTS = re.compile(r"\s+[|\u2013\u2014\u00b7-]\s+|\s*\|\s*")
+_SITE_TAIL = re.compile(r"\s+(?:careers?|jobs|career (?:site|portal|center|centre|home)|careers (?:site|home|portal)|"
+                        r"job (?:search|board|portal)|talent (?:community|network))$", re.I)
+# A site's own words, never a name: its sections and steps, and the job systems'
+_PAGE_WORDS = {
+    "job", "jobs", "career", "careers", "site", "portal", "details", "detail", "description", "apply", "application",
+    "applications", "home", "search", "results", "sign", "in", "up", "on", "login", "log", "account", "create",
+    "candidate", "candidates", "profile", "my", "information", "info", "experience", "questions", "question", "review",
+    "submit", "opportunities", "opportunity", "openings", "opening", "center", "centre", "page", "external",
+    "internal", "talent", "community", "network", "welcome", "current", "employees", "employee", "employer",
+    "employment", "position", "positions", "view", "all", "find", "work", "recruiting", "recruitment", "hiring", "now",
+    "us", "join", "and", "of", "the", "for", "to", "your", "our", "a", "an", "at", "with", "step", "steps",
+    "voluntary", "disclosures", "disclosure", "self", "identify", "identification", "personal", "contact", "resume",
+    "cv", "upload", "documents", "document", "attachments", "thank", "thanks", "you", "submitted", "error", "not",
+    "found", "loading", "eeo", "equal", "disability", "veteran", "status", "summary", "education", "skills",
+    "references", "questionnaire", "assessment", "background", "consent", "privacy", "policy", "terms", "conditions",
+    "notice", "agreement", "cookie", "cookies", "settings", "preferences", "location", "locations", "additional",
+    "general", "screening", "cover", "letter", "new", "listing", "listings", "postings", "posting", "dashboard", "help",
+    "faq", "benefits", "about", "inc", "llc", "workday", "sap", "successfactors", "icims", "oracle", "taleo", "cloud",
+    "eightfold", "greenhouse", "lever", "smartrecruiters", "ashby", "avature", "brassring", "jobvite", "phenom",
+    "applicantstack", "paycom", "ukg", "pro", "infor", "cornerstone", "linkedin", "indeed", "company", "redacted"}
+# A job's place that names no place ("Remote", "Multiple Locations")
+_ANYWHERE = {"remote", "hybrid", "on site", "onsite", "virtual", "multiple locations", "various locations",
+             "united states", "united states of america", "usa", "us", "anywhere", "nationwide", "work from home"}
+_STATES = {s.lower() for pair in US_STATES.items() for s in pair}
+# What follows a place said as "the job's location" that was its state or country ("Springfield, IL")
+_PLACE_TAIL = re.compile(r"(the job's location)((?:,\s*(?:[A-Z]{2}|" + "|".join(sorted(US_STATES.values(), key=len,
+                         reverse=True)) + r"|United States(?: of America)?|USA|US)\b)+)")
+# "the the employer", from "the Example Group" ("Privacy Policy of the the employer": issue #112, note 42)
+_THE_THE = re.compile(r"\b([Tt]he) the (employer|job)\b")
 # "the employer Group", once an employer's short form has been said ("Apply I Acme Group")
 _EMPLOYER_TAIL = re.compile(r"(the employer)(?:[\s,]+(?:" + "|".join(sorted(_COMPANY_WORDS, key=len, reverse=True))
                             + r")\b\.?)+", re.I)
@@ -80,8 +119,51 @@ def report_strings(prof: config.Profile) -> list[str]:
                        prof.get("experience.current_company"), *(prof.get("history.previous_employers") or [])]
     for key, field in (("work_history", "company"), ("education_history", "school")):
         more += [e.get(field) for e in prof.get(key) or [] if isinstance(e, dict)]
+    # (and the cities of the places they'd like to work, which the desk puts in a form's "Preferred location")
+    more += [_city(place) for place in config.listed(prof.get("preferences.locations"))]
     extra = {str(v).strip() for v in more if v and not isinstance(v, (dict, list)) and len(str(v).strip()) >= 3}
     return sorted(set(personal_strings(prof)) | extra, key=len, reverse=True)
+
+
+def _city(place: Any) -> str:
+    """A place's city ("Springfield" in "Springfield, IL"): never a state, nor one that names no place ("Remote")."""
+    city = re.sub(r"\([^)]*\)", " ", place.split(",")[0]).strip() if isinstance(place, str) else ""
+    return "" if city.lower() in _ANYWHERE | _STATES else city
+
+
+def _place_forms(location: Any) -> list[str]:
+    """How a page may name a job's place ("Springfield, IL; Shelbyville, IL"): each place as given, its city and
+    state, and its city alone ("Remove Springfield, Illinois" on Eightfold's location chip: issue #112, note 42)."""
+    forms: set[str] = set()
+    for place in re.split(r"[;|]", str(location or "")):
+        parts = [p.strip() for p in place.split(",") if p.strip()]
+        forms |= {", ".join(parts), ", ".join(parts[:2]), _city(", ".join(parts))} if parts else set()
+    return [f for f in forms if len(f) >= 3 and f.lower() not in _ANYWHERE | _STATES]
+
+
+def _named(words: str) -> str:
+    """Words that are a name ("Example Group"), not a site's own ("Job Details") nor a stand-in: else ""."""
+    words = re.sub(r"'s$|[.,:;!?]+$", "", words.strip())
+    if len(words) < 3 or not re.fullmatch(_NAME, words) or REDACTED in words:
+        return ""
+    return words if any(w not in _PAGE_WORDS for w in re.findall(r"[a-z0-9&']+", words.lower())) else ""
+
+
+def _names_given(titles: list[str], texts: list[str]) -> set[str]:
+    """The names pages give an employer besides those the job has (_NAME), from text the job's own names are said in
+    already: after "Jobs at" or "Careers at" anywhere; in a page title, a first or last part beside the job's or the
+    site's own words, and one before a careers site's words."""
+    found = {_named(m.group(1)) for text in [*texts, *titles] for m in _AT_NAME.finditer(text)}
+    for title in titles:
+        parts = [p.strip() for p in _TITLE_PARTS.split(title) if p.strip()]
+        for i, part in enumerate(parts):
+            if (bare := _SITE_TAIL.sub("", part)) != part:
+                found.add(_named(bare))
+            elif len(parts) > 1 and i in (0, len(parts) - 1) and all(
+                    "the job" in other or "the employer" in other or not _named(other)
+                    for other in parts[:i] + parts[i + 1:]):
+                found.add(_named(part))
+    return found - {""}
 
 
 def _snapshots(folder: Path) -> list[Path]:
@@ -162,13 +244,15 @@ def _as_written(form: str, company: str) -> bool:
 _NOT_IN_EMAIL = r"(?<![\w@])(?:{})(?!\w)(?![\w.+-]*@)"
 
 
-def _anonymous(job: dict[str, Any], run: Any, urls: list[Any],
-               secrets: list[str]) -> tuple[Callable[[Any], str], list[str]]:
+def _anonymous(job: dict[str, Any], run: Any, urls: list[Any], secrets: list[str],
+               pages: list[dict[str, Any]] | None = None) -> tuple[Callable[[Any], str], list[str]]:
     """For a report that doesn't say which job it was: a scrubber for its text that also says every
     address by its job system alone, the employer as "the employer" and the job's title as "the
     job", and takes out its requisition number and its sites; and what its saved pages lose
     besides the person's details: those names, and the sites of the job's addresses (each host,
-    and the employer's own domain beside it, never a job system's)."""
+    and the employer's own domain beside it, never a job system's). The employer by its own domain's name
+    too, and by any other name the run's page and the saved `pages` give it (_names_given: its parent group's,
+    issue #112, note 42); and the job's place as "the job's location"."""
     said: dict[str, str] = {}
     for value, stand_in in ((job.get("external_id"), REDACTED), (job.get("title"), "the job"),
                             (getattr(run, "title", ""), "the job"), (job.get("company"), "the employer"),
@@ -187,20 +271,51 @@ def _anonymous(job: dict[str, Any], run: Any, urls: list[Any],
         if host:
             own = shared_system(f"https://{host}/") is None and re.search(r"[a-z]", host)
             sites |= {host, site_domain(host)} if own else {host}
-    secrets = sorted({*secrets, *(s for name in [*said, *sites] for s in _spellings(name) if len(s) >= 2)},
-                     key=len, reverse=True)
-    scrub, names = _scrubber(secrets), sorted(said, key=len, reverse=True)
+    info = getattr(run, "page_info", None) or {}
+    for url in (job.get("url"), job.get("apply_url"), getattr(run, "url", ""), info.get("url")):
+        # the employer's own domain's name, as a page may write it ("examplegroup", "EXAMPLEGROUP"): the job's own
+        # addresses only, never a frame's (a CAPTCHA's, a video's)
+        host = (urlparse(str(url or "")).hostname or "").lower()
+        label = site_domain(host).split(".")[0] if host and not shared_system(f"https://{host}/") else ""
+        if len(label) >= 4 and re.search(r"[a-z]", label) and label not in _SYSTEM_LABELS | _COMMON_WORDS | _COMPANY_WORDS:
+            for form in {label, label.upper(), label.capitalize(), *([label.replace("-", " ")] if "-" in label else [])}:
+                said.setdefault(form, "the employer")
+                exact |= {form} if " " not in form else set()
 
-    def say(text: Any) -> str:
+    def unnamed(text: Any) -> str:
         text = _URL.sub(lambda m: _address_said(m.group(0)), str(text or ""))
-        for name in names:
+        for name in sorted(said, key=len, reverse=True):
             if said[name] == "the employer":
                 text = re.sub(_NOT_IN_EMAIL.format(_pattern(name)), said[name], text,
                               flags=0 if name in exact or len(name) < 3 else re.I)
+            elif said[name] == "the job's location":  # (as written, and never a longer word's start: "IL" of "Illinois")
+                text = re.sub(_pattern(name) + r"(?![^\W\d_])", said[name], text)
             else:
                 text = re.sub(_pattern(name), said[name], text, flags=re.I if len(name) >= 3 else 0)
-        return scrub(_EMPLOYER_TAIL.sub(r"\1", text))
-    return say, secrets
+        text = _PLACE_TAIL.sub(r"\1", text)
+        return _THE_THE.sub(r"\1 \2", _EMPLOYER_TAIL.sub(r"\1", text))
+
+    titles = [str(t) for t in [info.get("title"), *(p.get("title") for p in pages or [])] if t]
+    texts = [str(t) for t in [*(info.get("headings") or []), *(info.get("actions") or []), getattr(run, "reason", ""),
+                              *(getattr(run, "log", None) or [])] if t]
+    for name in _names_given([unnamed(t) for t in titles], [unnamed(t) for t in texts]):
+        words = name.split()  # (and the name less its last words that aren't its name: "Example Group" -> "Example")
+        while words:
+            form = " ".join(words)
+            if len(form) >= 4 or len(form) >= 3 and form.isupper():
+                said.setdefault(form, "the employer")
+                exact |= {form} if _as_written(form, name) else set()
+            if len(words) < 2 or words[-1].strip(".,").lower() not in _COMPANY_WORDS:
+                break
+            words = words[:-1]
+    for form in _place_forms(job.get("location")):
+        said.setdefault(form, "the job's location")
+    # (a saved page loses a place's city alone, wherever it's written: "Springfield, IL" would leave "linois" of
+    # "Springfield, Illinois")
+    kept = [name for name in [*said, *sites] if said.get(name) != "the job's location" or "," not in name]
+    secrets = sorted({*secrets, *(s for name in kept for s in _spellings(name) if len(s) >= 2)}, key=len, reverse=True)
+    scrub = _scrubber(secrets)
+    return (lambda text: scrub(unnamed(text))), secrets
 
 
 def _without_answers(error: Any) -> str:
@@ -295,7 +410,7 @@ def build(job: dict[str, Any], run: Any = None, profile: config.Profile | None =
                 (getattr(run, "page_info", None) or {}).get("url")]
         for _, meta in saved:
             urls += [meta.get("url"), *(f.get("url") for f in meta.get("frames") or [] if isinstance(f, dict))]
-        scrub, secrets = _anonymous(job, run, urls, secrets)
+        scrub, secrets = _anonymous(job, run, urls, secrets, [meta for _, meta in saved])
     out_dir = _folder(int(job["id"]))
     pages_dir = out_dir / "pages"
     pages_dir.mkdir()
@@ -322,7 +437,8 @@ def build(job: dict[str, Any], run: Any = None, profile: config.Profile | None =
         lines += ["", f"### Page saved {snap.name}: {scrub(meta.get('title'))}",
                   scrub(meta.get("url") or "") + (f" ({scrub(meta.get('note'))})" if meta.get("note") else ""),
                   *map(scrub, _fields(meta))]
-    left_out = "The employer, the job's title, its addresses and its requisition number are left out. "
+    left_out = ("The employer, the job's title, its addresses and its requisition number are left out, and so are the "
+                "job's place and any other name a page gives the employer. ")
     text = "\n".join(lines) + f"\n\n_Personal details found in the profile are shown as {REDACTED}. " \
                               f"{left_out if anonymous else ''}No screenshots or saved pages are included._\n"
     (out_dir / "report.md").write_text(text, encoding="utf-8")
@@ -377,7 +493,7 @@ def _note_scrubber(job: dict[str, Any], run: Any, prof: config.Profile) -> Calla
         text = _URL.sub(lambda m: _address_said(m.group(0)), text)
         for p in employer:
             text = p.sub("the employer", text)
-        return _EMPLOYER_TAIL.sub(r"\1", text)
+        return _THE_THE.sub(r"\1 \2", _EMPLOYER_TAIL.sub(r"\1", text))
 
     return lambda text: scrub(unnamed(str(text or "")))
 

@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable
 
@@ -904,15 +904,74 @@ _UNDER_18, _OVER_18 = _age(True), _age(False)
 _SIGNED_DATE = re.compile(r"^date$|today s date|date signed|signature date|date of signature")
 
 
-def _today_for(field: dict) -> str:
-    """Today as the date box takes it: one part (Workday's Month / Day / Year boxes), or whole."""
-    today = date.today()
+def _date_for(field: dict, day: date) -> str:
+    """A day as the date box takes it: one part (Workday's Month / Day / Year boxes), or whole."""
     sub = norm(field.get("sublabel"))
     if sub in ("month", "day", "year"):
-        return {"month": f"{today.month:02d}", "day": f"{today.day:02d}", "year": str(today.year)}[sub]
+        return {"month": f"{day.month:02d}", "day": f"{day.day:02d}", "year": str(day.year)}[sub]
     if field.get("input_type") == "date":
-        return today.isoformat()
-    return today.strftime("%m/%d/%Y")
+        return day.isoformat()
+    return day.strftime("%m/%d/%Y")
+
+
+def _today_for(field: dict) -> str:
+    """Today as the date box takes it."""
+    return _date_for(field, date.today())
+
+
+def _takes_date(field: dict) -> bool:
+    """A box that takes a date, not words: a date input, a date picker (the form reader's `date`: Eightfold's
+    "Select date"), or a date's part (Workday's Month / Day / Year)."""
+    return bool(field.get("date")) or field.get("input_type") == "date" \
+        or norm(field.get("sublabel")) in ("month", "day", "year")
+
+
+# A date box asking the day the person can start ("Preferred Start Date", "Date available to start"): never another
+# date's ("Start Date" alone is a past job's as often)
+_START_DAY = re.compile(
+    r"\b(preferred|available|availability|earliest|desired|possible|potential|anticipated|proposed|requested|target|"
+    r"ideal)( possible| available)? (start|starting) date\b|\bavailable to (start|begin)\b|\bearliest (date|start)\b|"
+    r"\bwhen (can|could|would|will) you (start|begin)\b|\bwhen (would|could|will) you be available\b|"
+    r"\bsoonest\b.{0,30}\b(start|begin)\b|\bstart date availability\b")
+# A wait that runs from something besides an offer ("2 weeks after graduation"): no day the profile says
+_OTHER_START = re.compile(r"\b(graduat\w*|semester|term|school|class(es)?|course\w*|program|internship|contract|lease|"
+                          r"move|moving|relocat\w*|visa|permit|clearance|summer|fall|spring|winter)\b")
+# The forms a profile writes a date in
+_DATE_FORMS = ("%Y-%m-%d", "%m/%d/%Y", "%B %d, %Y", "%b %d, %Y", "%B %d %Y", "%b %d %Y", "%d %B %Y", "%d %b %Y")
+
+
+def _start_on(value: Any) -> date | None:
+    """The day the profile's earliest start (preferences.earliest_start, or the person's own answer) makes, for a
+    box that takes a date: a date, as itself ("2026-11-01", "11/01/2026", "November 1, 2026"); "Immediately" today;
+    a wait from an offer ("2 weeks after offer", "30 days notice", "1 month") today and the wait. None for anything
+    else ("after graduation", "2-4 weeks", "December"): never a day the profile doesn't say."""
+    text = re.sub(r"\s+", " ", str(value or "")).strip().rstrip(".")
+    for form in _DATE_FORMS:
+        try:
+            return datetime.strptime(text, form).date()
+        except ValueError:
+            continue
+    words = norm(text)
+    if re.search(r"\d{4}", words) or _OTHER_START.search(words):
+        return None  # (a date in another form, or a wait from something else)
+    if re.fullmatch(r"(available )?(now|today|any ?time)|(available )?immediately( available)?", words):
+        return date.today()
+    days = _days(text)
+    return date.today() + timedelta(days=days) if days is not None else None
+
+
+def _dated(field: dict, ans: Answer | None) -> Answer | None:
+    """An answer for a box that takes a date: to when the person can start, the day it makes (Eightfold's "Preferred
+    Start Date" picker took none of "2 weeks after offer", and was skipped: issue #112, note 41), or none where it
+    makes none; and no answer of the start rule's for another date's box. Any other answer as it is."""
+    if ans is None or ans.value == SKIP or not _takes_date(field):
+        return ans
+    label = norm(clean_label(_without_notes(field.get("label") or field.get("name") or "")))
+    start = bool(_START_DAY.search(label)) and not _PAST_BLOCK.search(norm(field.get("section")))
+    if ans.rule != "start_date" and not start:
+        return ans
+    day = _start_on(ans.value) if start else None
+    return Answer(_date_for(field, day), ans.rule) if day else None
 
 
 def _relocate(prof: Profile, job: dict) -> Any:
@@ -1999,7 +2058,7 @@ def resolve_field(field: dict, prof: Profile, job: dict | None = None, file_inpu
     field's choices don't have is added to `unmatched`, so it can be said rather than skipped.
     The common questions' answers (the question bank's, in answers.yaml) come last: only where nothing
     else answers, and never in a block about a past job or a school."""
-    ans = _resolve_field(field, prof, job, file_inputs_on_page, unmatched)
+    ans = _dated(field, _resolve_field(field, prof, job, file_inputs_on_page, unmatched))
     kind = field.get("kind", "text")
     label = field.get("label") or field.get("name") or ""
     # (never a box asking for an explanation: "If you were ever terminated from a job, please explain" is no place for
@@ -2008,7 +2067,7 @@ def resolve_field(field: dict, prof: Profile, job: dict | None = None, file_inpu
     if ans is None and kind not in ("checkbox", "file", "password") \
             and not _PAST_BLOCK.search(norm(field.get("section"))) \
             and not (kind in ("text", "textarea") and _EXPLAIN.search(norm(label))) and not _left_on_purpose(label):
-        ans = _answer_bank(prof, _without_notes(label), job, common=True)
+        ans = _dated(field, _answer_bank(prof, _without_notes(label), job, common=True))
         if ans is not None and kind == "textarea" and polarity(str(ans.value)) is not None:
             ans = None  # (a bare yes or no in a text area: a free answer, "Two weeks after an offer", goes in)
     return ans

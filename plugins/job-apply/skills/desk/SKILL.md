@@ -62,8 +62,8 @@ The desk is a local web page served by this plugin. It does what the `find-jobs`
   card stays for one job: a fuller report, with the employer and the pages the desk saved
   (the page the job stopped on among them). Its box **Don't say which job it was** (for
   Claude, `report_problem(job_id, anonymous=True)`) makes it again with only the job system
-  and where it stopped: no employer, job title, address or requisition number in the issue
-  or the saved pages. Offer it when the user would rather not show which job they applied for.
+  and where it stopped: no employer (by any name a page gives it, its parent group's too), job
+  title, place, address or requisition number in the issue or the saved pages. Offer it when the user would rather not show which job they applied for.
 - **Site passwords** stores one password per job system: Workday, SuccessFactors, iCIMS,
   ApplicantStack, UKG Pro, Infor or Taleo (Kforce's; where Taleo asks for a user name, the desk
   uses the profile email as it). The page names, by each system, the employers on the

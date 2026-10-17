@@ -2019,3 +2019,91 @@ def test_a_lists_groups_are_remembered_per_tenant_on_a_shared_workday_host():
     two = _groups_key("https://wd1.myworkdaysite.com/en-US/recruiting/other/External/job/Y_R2/apply", field)
     assert one != two and one is not None and one[0] == "wd1.myworkdaysite.com/acme/External"
     assert _groups_key("https://acme.wd1.myworkdayjobs.com/en-US/External/job/X_R1/apply", {"label": ""}) is None
+
+
+def _earliest_start(when: str) -> None:
+    import yaml
+
+    path = config.profile_path()
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    path.write_text(yaml.safe_dump({**data, "preferences": {**data["preferences"], "earliest_start": when}}),
+                    encoding="utf-8")
+
+
+def _shown(day) -> str:  # (as the fixture's calendar writes a day it was given: "Oct 31, 2026")
+    return f"{day:%b} {day.day}, {day.year}"
+
+
+def test_a_date_pickers_calendar_is_never_left_open_and_the_start_date_is_the_profiles(srv):
+    """Eightfold's one-page application (issue #112, note 41): its Preferred Start Date opens a calendar as a modal
+    dialog that keeps the focus and swallows every click elsewhere. Opened to read its choices, it was left open, and
+    Country of Residence took nothing typed and timed out; the start date itself was skipped, the profile's "2 weeks
+    after offer" being no date. The calendar is never left open over the next box, and the start date is the day the
+    profile's notice makes, picked in it."""
+    from datetime import date, timedelta
+
+    _earliest_start("2 weeks after offer")
+    run(srv.open_application(url=fixture_url("site/eightfold-start-date.html")))
+    page = run(srv.browser.page())
+    out = run(srv.autofill())
+    assert not out["failed"], out["failed"]
+    day = date.today() + timedelta(days=14)
+    filled = {f["label"]: f["value"] for f in out["filled"]}
+    assert filled["Country of Residence"] == "United States", filled
+    assert filled["Preferred Start Date"] == day.strftime("%m/%d/%Y") and filled["How did you hear about us?"] == "LinkedIn"
+    assert run(page.input_value("#start")) == _shown(day)
+    assert run(page.input_value("#country")) == "United States" and run(page.input_value("#heard")) == "LinkedIn"
+    assert run(page.evaluate("() => document.getElementById('picker').hidden"))
+
+
+def test_a_picker_open_over_the_form_is_closed_before_the_next_box_is_filled(srv):
+    """The same calendar (issue #112, note 41), opened by a box that didn't take its answer (the profile's words, as
+    before), open already, or left open by a day picked in it: closed with Escape before the next box, which then
+    takes its answer, the exact country picked from its list. Reading the form's lists never opens it, nor leaves it
+    open; and a day months away is reached by moving the calendar on."""
+    from datetime import date, timedelta
+
+    run(srv.open_application(url=fixture_url("site/eightfold-start-date.html") + "?stays=1"))
+    page = run(srv.browser.page())
+    fields = {f["label"]: f for f in run(srv.inspect_form())["fields"]}
+    assert run(page.evaluate("() => document.getElementById('picker').hidden && window.pickerOpened === 0"))
+    start, country, heard = (fields[k] for k in ("Preferred Start Date", "Country of Residence",
+                                                 "How did you hear about us?"))
+    assert start["kind"] == "combobox" and start.get("date") and not country.get("date")
+    out = run(srv.fill_form([{"id": start["id"], "value": "2 weeks after offer"},
+                             {"id": country["id"], "value": "United States"}]))
+    results = {r["id"]: r for r in out["results"]}
+    assert not results[start["id"]]["ok"] and results[country["id"]]["ok"], out["results"]
+    assert run(page.evaluate("() => window.pickerOpened")) == 1 and run(page.input_value("#start")) == ""
+    assert run(page.input_value("#country")) == "United States"
+    assert run(page.evaluate("() => document.getElementById('picker').hidden"))
+    run(page.click("#start"))  # open already (the focus in it)
+    out = run(srv.fill_form([{"id": heard["id"], "value": "LinkedIn"}]))
+    assert out["ok"] and run(page.input_value("#heard")) == "LinkedIn", out
+    later = date.today() + timedelta(days=75)
+    out = run(srv.fill_form([{"id": start["id"], "value": later.strftime("%m/%d/%Y")},
+                             {"id": fields["Language of Application"]["id"], "value": "English"}]))
+    assert out["ok"] and run(page.input_value("#start")) == _shown(later), out
+    assert run(page.input_value("#language")) == "English"
+    assert run(page.evaluate("() => document.getElementById('picker').hidden"))
+
+
+def test_a_picker_that_takes_escape_on_its_box_alone_is_closed_there(srv):
+    """rc-picker's calendar (Eightfold's is one) answers Escape on its own box, not inside it: a calendar left open
+    over the form is closed there before the next box is filled."""
+    run(srv.open_application(url=fixture_url("site/eightfold-start-date.html") + "?escape=box"))
+    page = run(srv.browser.page())
+    fields = {f["label"]: f for f in run(srv.inspect_form(include_dropdown_options=False))["fields"]}
+    run(page.click("#start"))
+    out = run(srv.fill_form([{"id": fields["Country of Residence"]["id"], "value": "United States"}]))
+    assert out["ok"] and run(page.input_value("#country")) == "United States", out
+    assert run(page.evaluate("() => document.getElementById('picker').hidden"))
+
+
+def test_a_date_pickers_box_is_read_as_one_that_takes_a_date(srv):
+    """Infineon's Eightfold page (captured live): its Preferred Start Date is a combobox hinted "Select date", whose
+    calendar opens as a dialog; the reader says it takes a date, and no list beside it does."""
+    run(srv.browser.goto((Path(__file__).parent / "fixtures" / "live" / "pipeline-infineon.html").resolve().as_uri()))
+    fields = run(srv.browser.inspect(include_dropdown_options=False))["fields"]
+    dated = [f["label"] for f in fields if f.get("date")]
+    assert dated == ["Preferred Start Date"], dated

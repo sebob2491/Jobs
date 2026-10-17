@@ -99,7 +99,8 @@ preferences:
   willing_to_travel: ~        # true/false, or text like "Yes, up to 75%"
   flexible_schedule: ~        # true/false — shifts, nights, weekends, on-call
   desired_salary: ~           # e.g. "$85,000" — leave empty to be asked each time
-  earliest_start: ~           # e.g. "2 weeks after offer"
+  earliest_start: ~           # e.g. "2 weeks after offer", "Immediately" or "2026-11-01"; a form's date box
+                              # ("Preferred Start Date") gets the day it makes: today and the wait, or that date
   how_did_you_hear: ~         # e.g. LinkedIn, Indeed or Company website; empty, the desk asks you once
   locations: []               # e.g. ["Phoenix, AZ", "Las Vegas, NV"]: Find jobs searches their states
   titles: []                  # e.g. ["Field Service Engineer", "Equipment Engineer"], ["HR Generalist",
