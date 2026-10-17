@@ -13823,11 +13823,14 @@ def test_i_submitted_it_on_a_job_at_its_review_page_is_one_marked_applied_line(s
 
 
 @pytest.mark.parametrize("ending", ["returns", "raises"])
-def test_i_submitted_it_mid_pass_is_one_line_and_stands(srv, monkeypatch, ending):
+def test_i_submitted_it_mid_pass_is_one_line_and_stands(srv, monkeypatch, caplog, ending):
     """The review of 0.3.204: "I submitted it" pressed while the job's pass is under way writes no line of its own; the
     pass, ending, writes the one line (marked_applied, with its minutes). And should the pass then fail ("raises": the
     site going away under it), the job stays marked applied, as a skipped one stays skipped: it was "failed", and a
-    Resume offered to fill it again."""
+    Resume offered to fill it again. The error is still said in the log (the re-check of 4a17a0e)."""
+    import logging
+
+    caplog.set_level(logging.WARNING, logger="job_apply.pipeline")
     url = "https://careers.acme-fab.example/apply/1"
     held = _hanging_open(monkeypatch, srv, url, ending)
     job = srv.add_job(url=url, title="FSE", company="Acme Fab")["job"]["id"]
@@ -13851,6 +13854,8 @@ def test_i_submitted_it_mid_pass_is_one_line_and_stands(srv, monkeypatch, ending
     assert (r.status, r.reason) == ("submitted", "Marked as applied."), (r.status, r.reason, r.log)
     lines = _history_lines()
     assert [e["outcome"] for e in lines] == ["marked_applied"] and "minutes" in lines[0], lines
+    said = [rec.getMessage() for rec in caplog.records if rec.name == "job_apply.pipeline"]
+    assert (f"job {job} stopped on an error" in said) == (ending == "raises"), said
 
 
 def test_a_stop_queued_again_as_its_page_is_saved_is_still_a_line(srv, monkeypatch):
@@ -13943,3 +13948,96 @@ def test_a_history_reason_hides_whole_words_and_the_profiles_own(srv, monkeypatc
     for hidden in ("Rivera", "Chandler", "555-0199", "I maintained the etch tools"):
         assert hidden not in said, (hidden, said)
     assert len(said) <= history.REASON_CHARS
+
+
+def test_i_submitted_it_after_the_desks_press_showed_no_confirmation_is_the_desks_send(srv, monkeypatch):
+    """The re-check of 4a17a0e: Submit for me pressed Submit and no confirmation showed (check_submit); the person then
+    says it went in. The desk's own press sent it: its line is "submitted", not "marked_applied"."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    url = "https://careers.acme-fab.example/apply/1"
+    pages = {url: _form("Acme Fab"),
+             ("POST", "https://careers.acme-fab.example/posted"): "<h1>All set!</h1><p>Our team will be in touch.</p>"}
+    posts: list[str] = []
+    job = srv.add_job(url=url, title="FSE", company="Acme Fab")["job"]["id"]
+    applier = Applier(srv)
+    applier.auto_submit = True
+
+    async def go():
+        await _serve(srv, pages, posts)
+        applier.start()
+        try:
+            r = applier.enqueue(job, submit=True)
+            await until(lambda: r.status not in ("queued", "running") and job not in applier._slots, about=state(r))
+            assert (r.status, r.need) == ("needs_you", "check_submit"), (r.status, r.reason)
+            srv.tracker().update(job, status="applied", note="marked applied in the Job Desk")
+            applier.mark_applied(job)
+            return r
+        finally:
+            await applier.stop()
+
+    run(go())
+    assert len(posts) == 1, posts
+    lines = _history_lines()
+    assert [(e["outcome"], e.get("need")) for e in lines] == [("needs_you", "check_submit"), ("submitted", None)], lines
+
+
+def test_a_history_reason_keeps_a_saved_answers_question_and_employer(srv):
+    """The re-check of 4a17a0e: a saved answer's question and the employer it was given at (answers.yaml's question,
+    core and from) were hidden from a line's reason as if they were the person's answer: they're not. The answer is."""
+    config.save_answer("Do you hold an active TS/SCI clearance?", "Not at this time", "Other Litho")
+    applier = Applier(srv)
+    r = Run(11, "FSE", "Other Litho", status="needs_you", need="stuck", url="https://careers.other-litho.example/apply",
+            reason="Other Litho asks “Do you hold an active TS/SCI clearance?” again, and says “Not at "
+                   "this time” isn't one of its choices.")
+    applier._note_history(r, "needs_you", time.time() - 30, "apply", 1)
+    said = _history_lines()[0]["reason"]
+    assert said.startswith("Other Litho asks “Do you hold an active TS/SCI clearance?” again"), said
+    assert "Not at this time" not in said, said
+
+
+def test_i_submitted_it_while_submit_for_me_checks_the_page_sends_nothing(srv, monkeypatch):
+    """The re-check of 4a17a0e (a bug from before the history): with Submit for me on, the desk reads the review page for
+    required fields still empty before it presses Submit, and then looked only for a Skip. "I submitted it" pressed in
+    that moment was passed over, and the desk pressed Submit on an application the person says is in already. It
+    presses nothing."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    url = "https://careers.acme-fab.example/apply/1"
+    posts: list[str] = []
+    job = srv.add_job(url=url, title="FSE", company="Acme Fab")["job"]["id"]
+    applier = Applier(srv)
+    applier.auto_submit = True
+    real_submit, real_inspect = Applier._submit, srv.inspect_form
+    held = {"checking": False, "marked": False}
+
+    async def submit(self, run_, by_person=True):
+        held["checking"] = not by_person  # (Submit for me's: the page read for empty fields first)
+        try:
+            return await real_submit(self, run_, by_person)
+        finally:
+            held["checking"] = False
+
+    async def inspect(**kwargs):
+        data = await real_inspect(**kwargs)
+        if held["checking"] and not held["marked"]:  # the person's "I submitted it", as the page is being read
+            held["marked"] = True
+            srv.tracker().update(job, status="applied", note="marked applied in the Job Desk")
+            applier.mark_applied(job)
+        return data
+
+    monkeypatch.setattr(Applier, "_submit", submit)
+    monkeypatch.setattr(srv, "inspect_form", inspect)
+
+    async def go():
+        await _serve(srv, {url: _form("Acme Fab")}, posts)
+        applier.start()
+        try:
+            r = applier.enqueue(job, submit=True)
+            await until(lambda: r.status not in ("queued", "running") and job not in applier._slots, about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert held["marked"] and posts == [], (held, posts, r.log)
+    assert (r.status, r.reason) == ("submitted", "Marked as applied."), (r.status, r.reason)
+    assert [e["outcome"] for e in _history_lines()] == ["marked_applied"]

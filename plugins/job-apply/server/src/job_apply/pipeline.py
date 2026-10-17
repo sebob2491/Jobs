@@ -1442,9 +1442,10 @@ class Applier:
             was = run.status
             run.status, run.need, run.blocking, run.reason = "submitted", "", False, "Marked as applied."
             run.left = run.submit_unsent = run.left_at_restart = False
-            run.marked = run.marked or was != "submitted"  # (one the desk sent stays its own)
+            # (one the desk sent stays its own, as does one its press may have sent: no confirmation came)
+            run.marked = run.marked or was != "submitted" and not run.pressed_before
             if was != "submitted" and job_id not in self._slots:  # (one under way: its pass's line says it)
-                self._note_history(run, "marked_applied")
+                self._note_history(run, "marked_applied" if run.marked else "submitted")
             self._wake.set()
         self._save_queue()
 
@@ -1763,14 +1764,17 @@ class Applier:
         """What a line of the history keeps out, should a reason quote a page that shows it: the desk's secrets (each job
         system's password, the inbox's), the codes the inbox gave for this job, the digest of the password it signed in
         with, every answer it has (the person's for this application alone, an account form's security answers, what
-        went into the form) and the profile's own words (but its settings and its files' paths). Not the desk's own
+        went into the form) and the profile's own words (but its settings, its files' paths, and a saved answer's
+        question and where it was given). Not the desk's own
         words for a box ("ticked", "Yes"): history.short_reason takes them out as whole words, 4 characters or more."""
         hidden = set(_secret_values()) | {mail[1] for mail, job_id in list(_MAIL_TAKEN.items()) if job_id == run.job_id}
         hidden |= _texts(run.once) | _texts(run.account_answers) | {run.sign_in_key}
         hidden |= {str(e.get("value") or "") for e in list(run.went_in.answers.values())}
         try:
             data = config.Profile.load().data
-            hidden |= _texts({k: v for k, v in data.items() if k not in ("settings", "documents")}, skip=("match",))
+            # (a saved answer's question, its core and the employer it was given at are no answer of the person's)
+            hidden |= _texts({k: v for k, v in data.items() if k not in ("settings", "documents")},
+                             skip=("match", "question", "core", "from"))
         except Exception:  # (a profile that won't load: nothing more is hidden)
             pass
         return {v for v in hidden if " ".join(v.split()).casefold() not in _DESK_WORDS}
@@ -2001,7 +2005,8 @@ class Applier:
                             run.reason = "The automation browser was closed. Press Resume to start this application again."
                             run.cut_short = True
                         self._log(run, run.reason)
-                        logging.getLogger(__name__).warning("job %s stopped on an error", run.job_id, exc_info=True)
+                    # (said in the log either way: a skipped or marked applied job's status stands, the error's still one)
+                    logging.getLogger(__name__).warning("job %s stopped on an error", run.job_id, exc_info=True)
                 finally:
                     self._give_back_tools(held)
                     run.inbox = False  # (a code it waits on now holds the others as the person's pause does)
@@ -2804,7 +2809,7 @@ class Applier:
         job = self.srv.tracker().get(run.job_id, with_description=False) or {}
         if job.get("status") not in FINISHED:
             return False
-        run.status, run.need, run.blocking, run.marked = "submitted", "", False, True
+        run.status, run.need, run.blocking, run.marked = "submitted", "", False, not run.pressed_before
         self._forget_draft_changes(run)  # (gone in: its draft's changes are no longer kept)
         run.reason = f"Already marked {job['status']}, so it isn't applied to again."
         self._log(run, run.reason)
@@ -2892,7 +2897,8 @@ class Applier:
                 # It went, so it's marked applied and never filled in again. (Not a step of the form that
                 # thanks them: "Thank you for your application. Please complete the below questions.")
                 srv.tracker().update(run.job_id, status="applied", note="submitted on the site")
-                run.status, run.need, run.blocking, run.left, run.marked = "submitted", "", False, False, True
+                run.status, run.need, run.blocking, run.left = "submitted", "", False, False
+                run.marked = not run.pressed_before  # (sent by the person, unless the desk's own press may have)
                 self._forget_draft_changes(run)  # (gone in: its draft's changes are no longer kept)
                 run.reason = f"Submitted: {_site(run, data)} says \u201c{gone[0]}\u201d."
                 self._log(run, run.reason)
@@ -2900,7 +2906,8 @@ class Applier:
             if applied := _applied_before(data, text):
                 # applied to already (by hand, or before the tracker knew): never filled, or sent, again
                 srv.tracker().update(run.job_id, status="applied", note="the site says it was applied to already")
-                run.status, run.need, run.blocking, run.left, run.marked = "submitted", "", False, False, True
+                run.status, run.need, run.blocking, run.left = "submitted", "", False, False
+                run.marked = not run.pressed_before  # (sent by the person, unless the desk's own press may have)
                 self._forget_draft_changes(run)  # (gone in: its draft's changes are no longer kept)
                 run.reason = f"Applied to already: {_site(run, data)} says \u201c{applied}\u201d It isn't filled in again."
                 self._log(run, run.reason)
@@ -5900,7 +5907,7 @@ class Applier:
             if empty:
                 return self._pause(run, "stuck", "Not submitted: required fields are still empty (" + ", ".join(empty[:5])
                                    + "). Fill them in the browser, then press Resume.")
-        if run.status == "skipped":  # skipped while the page was being checked
+        if run.status in ("skipped", "submitted"):  # skipped, or "I submitted it" pressed, while the page was checked
             return
         review = run.url  # (the page it waited on for this Submit)
         # kept as being pressed while it is: a restart meanwhile (the program ended mid-press) never queues it again, as
@@ -5922,7 +5929,7 @@ class Applier:
         if result.get("submitted") and not result.get("confirmed"):
             run.pressed_before = True  # it may have gone: Submit for me never presses it again
         if result.get("submitted") and result.get("confirmed"):
-            run.status, run.need, run.reason = "submitted", "", "Submitted."
+            run.status, run.need, run.reason, run.marked = "submitted", "", "Submitted.", False  # (the desk's own send)
             self._forget_draft_changes(run)  # (gone in: its draft's changes are no longer kept)
         elif result.get("submitted"):
             try:
@@ -5947,7 +5954,8 @@ class Applier:
             moved = _bare(data.get("url") or "") not in {_bare(u) for u in (review, job.get("url"), job.get("apply_url")) if u}
             if gone := _sent_already(data, text, moved):
                 srv.tracker().update(run.job_id, status="applied", note="submitted on the site")
-                run.status, run.need, run.blocking, run.left, run.marked = "submitted", "", False, False, True
+                run.status, run.need, run.blocking, run.left = "submitted", "", False, False
+                run.marked = not run.pressed_before  # (sent by the person, unless the desk's own press may have)
                 self._forget_draft_changes(run)  # (gone in: its draft's changes are no longer kept)
                 run.reason = f"Submitted: {_site(run, data)} says \u201c{gone}\u201d."
             else:

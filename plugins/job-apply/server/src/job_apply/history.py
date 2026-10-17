@@ -96,8 +96,10 @@ def short_reason(text: Any, hide: Iterable[str] = ()) -> str:
     said = " ".join(str(text or "").split())
     values = {" ".join(v.split()) for v in hide if isinstance(v, str)}
     for value in sorted((v for v in values if len(v) >= 4), key=len, reverse=True):
-        said = _whole(value).sub("…", said)
-        if len(value) > REASON_CHARS:
+        # (looked for as plain words first: a pattern for each of a big profile's values, every line, took ~70 ms)
+        if value in said:
+            said = _whole(value).sub("…", said)
+        if len(value) > REASON_CHARS and value[:HIDE_PREFIX] in said:
             said = _whole(value[:HIDE_PREFIX], ends=False).sub("…", said)
     said = _URL_REST.sub(r"\1", said)
     said = _DIGITS.sub("…", _PHONE.sub("…", _EMAIL.sub("…", said)))
