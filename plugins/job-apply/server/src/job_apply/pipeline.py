@@ -4,7 +4,8 @@ The pipeline drives the same tools Claude uses (open_application, autofill, clic
 add_entries, submit_application), so every guard still holds: final submit buttons are
 only pressed through submit_application, LinkedIn and Indeed are left for the person to
 submit, and nothing is answered that the profile or the person's saved answers don't
-cover. Each job gets its own browser tab.
+cover. Each job gets its own browser tab, and up to settings.jobs_at_once are filled at
+once (Applier says what stays one at a time).
 
 Whatever needs the person pauses that job with a plain reason. Questions wait in the
 Job Desk while other jobs carry on. A bot check, a sign-in or an emailed code needs
@@ -29,7 +30,7 @@ from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlparse, urlsplit, urlunsplit
 
@@ -98,6 +99,7 @@ MAIL_POLL_SECONDS = 20
 MAIL_WINDOW = 15 * 60
 # seconds with nothing done in a tab holding the queue before the person's press on another job lets that one go
 RELEASE_IDLE = 60
+DESK_SETTLE = 30  # seconds a paused tab may go on changing after the desk typed its emailed code or opened its link
 # A password reset asked for with the inbox watched: when no email has come by then, the email most
 # likely has no account there (most sites won't say), so the desk makes one instead
 RESET_MAIL_WAIT = 3 * 60
@@ -775,6 +777,8 @@ class Run:
     active_at: float = 0.0  # when its paused tab last changed: someone at work in it
     captcha: bool = False  # paused on a bot check or CAPTCHA (the person's to solve): marked so on the desk
     tab_mark: int = 0  # what its paused tab looked like then (address and box values)
+    desk_at: float = 0.0  # when the desk last typed or opened a link in its paused tab itself (its emailed code's)
+    desk_code: int = 0  # and the code it typed then, as _code_mark has it (never the code itself, nor in public())
     left: bool = False  # paused for the person, and the queue went on without it
     moved_since: float = 0.0  # since when every look has found its paused tab past the pause
     pause_sig: tuple | None = None  # how the paused page looked: the same page is never past itself
@@ -788,6 +792,11 @@ class Run:
     # what the desk's looks in the inbox came to, for the live check's LIVE_INBOX line (not the person's)
     mail_looks: int = 0
     mail_last: str = ""
+    # when its mail was last looked for (found or not); and how long its looks were held off meanwhile (another job
+    # under way in a step that may email), and since when they are now: its waits don't run on while they are
+    mail_looked: float = 0.0
+    mail_held: float = 0.0
+    mail_held_at: float = 0.0
     # This pause waits for the verification email of the account the desk just made (_await_verify_email):
     # a Resume after it, or its link opened from the inbox, means the account is verified: signed in to once
     verifying: bool = False
@@ -808,11 +817,19 @@ class Run:
     page_info: dict[str, Any] = field(default_factory=dict)  # what the page looked like when it paused
     # what went into the application, for its card's "What went in" panel on the desk page alone (WentIn)
     went_in: WentIn = field(default_factory=WentIn)
+    # Filled at once with other jobs (settings.jobs_at_once): in a step that may email the person now (a sign-in, an
+    # account, a password reset, an emailed code), which one job under way at a time is; the site its tab is on (a
+    # job system's host, or an employer's own domain) and since when; and its place in the order the jobs began
+    inbox: bool = False
+    inbox_since: float = 0.0  # when its step that may email began, on the way to this pause: others' mail ends there
+    site: str = ""
+    site_since: float = 0.0
+    began: int = 0
     page: Any = None  # its browser tab
     updated: float = field(default_factory=time.time)
 
     def public(self) -> dict[str, Any]:
-        return {**{k: v for k, v in self.__dict__.items() if k not in ("page", "tab_mark", "cookies_asked", "resetting",
+        return {**{k: v for k, v in self.__dict__.items() if k not in ("page", "tab_mark", "desk_at", "desk_code", "cookies_asked", "resetting",
                                                                         "reset_asked", "reset_from", "reset_waited",
                                                                         "reset_no_mail", "reopened_elsewhere", "reopened", "sign_in_tries", "sign_in_key",
                                                                         "accounts_tried", "account_made", "account_in", "account_page",
@@ -985,7 +1002,14 @@ def _page_info(data: dict[str, Any]) -> dict[str, Any]:
 
 
 class Applier:
-    """Works through queued jobs one at a time in the background."""
+    """Works through queued jobs in the background: up to settings.jobs_at_once at a time (the desk's "Jobs at once"),
+    each in a task and a browser tab of its own.
+
+    What runs at once: the jobs' passes (_run_task), each held to its own tab (BrowserSession.desk_view). What stays
+    one at a time: the jobs on one site (a job system's host, or an employer's own: _site_free, _site_holder), the
+    steps that may email the person (a sign-in, an account, a password reset, an emailed code: _take_inbox), and the
+    person's own attention: while a pause needs their hands (Run.blocking) or they're in one of the desk's rounds, no
+    job starts, and no other tab comes to the front (_bring_forward, keep_front); the jobs under way go on in theirs."""
 
     def __init__(self, srv: Any):
         self.srv = srv  # the server module: its tools, tracker() and browser
@@ -998,7 +1022,21 @@ class Applier:
         # but those they pressed Resume on, or answered on their card (pressed)
         self.paused = False
         self.pressed: set[int] = set()
-        self.current: int | None = None
+        self.jobs_at_once: int | None = None  # the desk's own "Jobs at once" (desk.json); None: the profile's setting
+        # the jobs under way, each in a task of its own (_run_task), and how many have begun (their order: Run.began)
+        self._slots: dict[int, asyncio.Task] = {}
+        self._began = 0
+        # the jobs whose steps hold the browser's tools now (Claude's acting tools wait meanwhile: current)
+        self._driving: list[int] = []
+        # jobs that paused for the person's hands while they were at another job's: theirs next, its tab brought up then
+        self._behind: set[int] = set()
+        # the jobs under way waiting between their steps (_hold_for_site, _take_inbox)
+        self._waiting: set[int] = set()
+        # how many times a job has taken the inbox: a look in it begun before another did isn't used (_check_mail)
+        self._inbox_gen = 0
+        # jobs that may go beside as many as go at once (jobs_at_once of 2 or more): the one whose check the person
+        # just solved in the desk's round, as a Submit they pressed may
+        self._first: set[int] = set()
         # The bot check the person is solving in the desk's round (Bot checks: "Solve them"), and since when: while
         # it waits, no other job is started (nothing opens over the tab they're at), and the solved one is noticed
         # at once. Not the person's otherwise: bot checks wait in their tabs while the queue goes on.
@@ -1015,20 +1053,47 @@ class Applier:
     def start(self) -> None:
         if self._worker_task is None or self._worker_task.done():
             self._worker_task = asyncio.get_running_loop().create_task(self._worker())
+        # (a tab a job filled meanwhile opens never stays over the one the person is at for another)
+        with contextlib.suppress(AttributeError):
+            self.srv.browser.keep_front = self._front_tab
 
     async def stop(self) -> None:
-        task = self._worker_task
-        if task is not None:
-            # (cancelled until it has ended: a cancellation dropped on the way (Python 3.10's wait_for drops one that
-            # comes as what it waits on ends) left the worker going on for ever, and this waiting on it, CI's 3.10
-            # run of 0.3.188)
+        # (cancelled until it has ended: a cancellation dropped on the way (Python 3.10's wait_for drops one that
+        # comes as what it waits on ends) left the worker going on for ever, and this waiting on it, CI's 3.10
+        # run of 0.3.188). The worker first, so it starts no job meanwhile, then the jobs under way
+        for task in [self._worker_task, *self._slots.values()]:
+            if task is None:
+                continue
             while not task.done():
                 task.cancel()
                 await asyncio.wait({task}, timeout=1)
             if not task.cancelled():
                 with contextlib.suppress(Exception):
                     task.result()
-            self._worker_task = None
+        self._worker_task = None
+        self._slots.clear()
+        with contextlib.suppress(AttributeError):
+            if self.srv.browser.keep_front == self._front_tab:
+                self.srv.browser.keep_front = None
+
+    @property
+    def current(self) -> int | None:
+        """A job whose step holds the browser's tools now (the last to take them), if any: Claude's tools that act in
+        the browser wait meanwhile (server._desk_driving)."""
+        return self._driving[-1] if self._driving else None
+
+    @current.setter
+    def current(self, job_id: int | None) -> None:
+        self._driving = [] if job_id is None else [job_id]
+
+    def at_once(self) -> int:
+        """How many jobs are filled at once: the desk's own choice, else settings.jobs_at_once (1 to 3)."""
+        if self.jobs_at_once is not None:
+            return min(max(self.jobs_at_once, 1), config.JOBS_AT_ONCE_MAX)
+        try:
+            return config.Profile.load().settings.jobs_at_once
+        except Exception:  # (a typo in profile.yaml: said on the desk; the queue goes on, a job at a time meanwhile)
+            return 1
 
     def enqueue(self, job_id: int, submit: bool = False, front: bool = False) -> Run:
         job = self.srv.tracker().get(job_id)
@@ -1042,10 +1107,11 @@ class Applier:
             raise ValueError(f"{job.get('title') or 'That job'} is skipped. Press Undo on it first.")
         run = run or Run(job_id, job.get("title", ""), job.get("company", ""))
         self.runs[job_id] = run
-        if run.status == "running" and self.current == job_id:
+        if run.status == "running" and (job_id in self._slots or job_id in self._driving):
             return run
         run.status, run.need, run.reason, run.blocking, run.questions = "queued", "", "", False, []
         run.left = False
+        self._behind.discard(job_id)  # (its pause, waiting to be brought up, is over)
         # a Submit pressed earlier with no confirmation (in this run of the desk or before it was
         # restarted) may have sent the application: Submit for me doesn't press it again
         run.pressed_before = run.pressed_before or _pressed_before(job) or any(
@@ -1087,7 +1153,7 @@ class Applier:
         reviews of Oct 15 and 0.3.189)."""
         for other in [r for r in self.runs.values() if r.blocking and r.job_id != run.job_id]:
             reading = (other.need == "email_code" and not other.mail_done and self.mail_login() is not None
-                       and time.time() - other.paused_at < MAIL_WINDOW)
+                       and _mail_waited(other) < MAIL_WINDOW)
             # (a tab still a minute is looked at every SLOW_POLL_SECONDS: work begun in it since may not be seen yet)
             if reading or time.time() - other.active_at < RELEASE_IDLE + SLOW_POLL_SECONDS:
                 what = "its emailed code, which the desk is reading from your inbox" if reading else \
@@ -1215,7 +1281,7 @@ class Applier:
         # Skipped while the worker was still on it (saving the page it paused on, or mid-step): its
         # step ends first, or it would carry on in the tab Skip closed
         deadline = time.monotonic() + UNSKIP_WAIT
-        while run is not None and run.status == "skipped" and self.current == job_id:
+        while run is not None and run.status == "skipped" and (job_id in self._driving or job_id in self._slots):
             if time.monotonic() > deadline:
                 raise ValueError("That job is still stopping after its Skip. Press Undo again in a moment.")
             await asyncio.sleep(0.1)
@@ -1251,6 +1317,7 @@ class Applier:
     def _cancel(self, job_id: int) -> None:
         self.tasks = deque(t for t in self.tasks if t[1] != job_id)
         self.pressed.discard(job_id)  # (a press for a task that's gone isn't one for the next: the re-check of 0.3.196)
+        self._first.discard(job_id)  # (and a solved check's place beside the others is that task's alone)
 
     def _go_on_without(self, run: Run, why: str) -> None:
         """Stop holding the queue for a job that waits on the person; it's still watched."""
@@ -1265,6 +1332,8 @@ class Applier:
         for run in [r for r in self.runs.values() if r.left and r.status == "needs_you" and not r.blocking]:
             if run.page is None or self.srv.browser.lost(run.page):
                 continue
+            if run.job_id in self._slots:  # (its pass isn't over: the page it stopped on is being saved in its tab)
+                continue
             if run.need == "email_code":
                 await self._check_mail_safely(run)  # the code or link came after the queue went on
             if self._reset_overdue(run):
@@ -1278,9 +1347,12 @@ class Applier:
             if moved and run.left and run.status == "needs_you":
                 # (carried on by itself: the person may have changed later pages of a saved draft by hand in its tab)
                 self._draft_off(run)
+                solved = run.job_id == self.round_job  # (its check solved in the desk's round, the person at its tab)
                 try:
                     self.enqueue(run.job_id, submit=run.submit, front=True)
                     self.pressed.add(run.job_id)  # (it was under way: it carries on, Pause queue or not, as in _tick)
+                    if solved:
+                        self._first.add(run.job_id)
                 except (KeyError, ValueError):  # gone, or marked applied meanwhile: nothing to watch for
                     run.left = False
 
@@ -1324,7 +1396,15 @@ class Applier:
         return True
 
     async def _tick(self) -> None:
+        if self._full() and not (self._slots.keys() <= self._waiting) and not self._may_go_beside():
+            # as many jobs under way as go at once: nothing else is begun or looked at until one is done (with one at
+            # once, between jobs, as ever). Unless each of them waits on the person's pause (Jobs at once lowered
+            # meanwhile, say): that's looked at still, or they'd wait for ever; or the person pressed Submit, or solved
+            # a check in the round, which goes beside them (two or more at once)
+            await self._until_one_is_done()
+            return
         self._resume_tailored()
+        await self._front_next()
         # the person at a job in a round (a bot check, a review page): nothing else started over it, a solved check
         # noticed; a Submit they pressed (the round's own "Submit this one") still goes
         if self._in_round() and not any(t[0] == "submit" for t in self.tasks):
@@ -1334,8 +1414,20 @@ class Applier:
             return
         # A Submit the person pressed goes first, even while the queue holds for a sign-in.
         submit = next((t for t in self.tasks if t[0] == "submit"), None)
-        blocker = next((r for r in self.runs.values() if r.blocking), None)
+        blocker = self._blocker()
         if blocker is not None and submit is None:
+            if blocker.job_id in self._slots:
+                # its pass isn't over (the page it stopped on is being saved in its tab): looked at once it is, so a
+                # code is never typed there meanwhile
+                self._wake.clear()
+                await self._sleep(POLL_SECONDS / 3)
+                return
+            if blocker.job_id in self._behind:
+                # paused for the person while they were at another job's tab: theirs now, its tab brought up (once
+                # they're done there), and the wait for them in it begins then
+                await self._bring_forward(blocker)
+                if blocker.job_id not in self._behind:
+                    blocker.active_at = time.time()
             if blocker.need == "email_code":
                 await self._check_mail_safely(blocker)
             try:
@@ -1359,7 +1451,10 @@ class Applier:
                     self.pressed.add(blocker.job_id)
                 except ValueError:  # marked applied meanwhile
                     pass
-            elif time.time() - blocker.active_at > HANDS_ON_IDLE:
+            elif (time.time() - max(blocker.active_at, blocker.desk_at) > HANDS_ON_IDLE
+                  and blocker.job_id not in self._behind):
+                # (its idle wait begins as its tab is brought up: never while it waits its turn behind another's; and
+                # again as the desk put its emailed code in, as ever: the person may be putting the right one in after)
                 self._go_on_without(blocker, f"nothing happened in its tab for {HANDS_ON_IDLE // 60} minutes, "
                                     "so the other jobs went ahead")
             else:
@@ -1381,37 +1476,289 @@ class Applier:
             return
         if submit is None and self._in_round():
             return  # a round begun meanwhile (the desk's Solve them): nothing started over the tab the person is at
-        task = submit or pressed or self.tasks[0]
+        # the first of those whose site no job under way is on (one at a time there: its sign-ins, accounts and codes
+        # are the site's own); a Submit the person pressed first, and only that while the queue holds for them
+        held = self._blocker() is not None or self._in_round()
+        order = [t for t in self.tasks if t[0] == "submit"] + (
+            [] if held else [t for t in self.tasks if t[1] in self.pressed] if self.paused else list(self.tasks))
+        task = next((t for t in order if (self._submit_free(t[1]) if t[0] == "submit" else self._site_free(t[1]))),
+                    None)
+        if self._full() and not (task is not None and self._goes_beside(task)):
+            # (each under way waiting on the person: none begun beside them, but the person's own Submit or solved check)
+            await self._until_one_is_done()
+            return
+        if task is None:  # each waits for a job under way on its site
+            self._wake.clear()
+            await self._sleep(POLL_SECONDS)
+            return
         self.pressed.discard(task[1])
+        self._first.discard(task[1])
         self.tasks.remove(task)
         kind, job_id = task
         run = self.runs[job_id]
-        held = self._hold_tools(job_id)
+        self._began += 1
+        run.began, run.site, run.site_since = self._began, "", 0.0
+        self._slots[job_id] = asyncio.get_running_loop().create_task(self._run_task(kind, run))
+        if self._full():
+            await self._until_one_is_done()  # (one at once: the job's whole pass, as ever)
+
+    def _full(self) -> bool:
+        """As many jobs under way as go at once."""
+        return len(self._slots) >= self.at_once()
+
+    def _goes_beside(self, task: tuple[str, int]) -> bool:
+        """May this task begin beside as many jobs as go at once: a Submit the person pressed, or the job whose check
+        they just solved in the desk's round (it carries on as they watch)? One more at most, and only with two or more
+        at once: with one, each waits for the job under way's pass, as ever (the review of jobs at once)."""
+        n = self.at_once()
+        return n > 1 and len(self._slots) < n + 1 and (task[0] == "submit" or task[1] in self._first)
+
+    def _may_go_beside(self) -> bool:
+        return any(self._goes_beside(t) for t in self.tasks)
+
+    async def _front_next(self) -> None:
+        """A job whose tab wasn't brought to the front as it paused (the person was at another's: _bring_forward) is
+        brought up once they're done there: the first to pause."""
+        for job_id in [j for j in self._behind if j not in self.runs or self.runs[j].status != "needs_you"]:
+            self._behind.discard(job_id)  # (resumed, skipped or sent meanwhile)
+        waiting = [self.runs[j] for j in self._behind if j not in self._slots and not self.runs[j].blocking]
+        if not waiting or self._person_at(None) is not None:
+            return
+        for r in waiting:  # (one brought up: the rest are on the desk's cards, never brought over it one by one)
+            self._behind.discard(r.job_id)
+        await self._bring_forward(min(waiting, key=lambda r: r.paused_at))
+
+    async def _until_one_is_done(self) -> None:
+        """Wait until a job under way is done (or the queue is woken: a setting changed, say)."""
+        self._wake.clear()
+        waiter = asyncio.ensure_future(self._wake.wait())
         try:
-            await self._strict(self._submit(run) if kind == "submit" else self._drive_again_if_redrawn(run))
-            await self._strict(self._save_stop(run))
-        except TabClosed:
-            if run.status != "skipped":
-                run.status, run.need, run.blocking = "failed", "", False
-                run.reason = "Its tab was closed. Press Resume to start this application again."
-                self._log(run, run.reason)
-        except Exception as e:
-            if run.status != "skipped":
-                run.status, run.need = "failed", ""
-                run.reason = f"Something went wrong: {type(e).__name__}: {str(e).splitlines()[0][:200] if str(e) else ''}"
-                lost = self.srv.browser.lost(run.page) if run.page is not None else ""
-                if lost == "crashed":  # (Playwright: "Page crashed")
-                    run.reason = "Its tab crashed. Press Resume to start this application again."
-                elif lost == "browser":  # (Playwright: "Target page, context or browser has been closed", issue #112, note 36)
-                    run.reason = "The automation browser was closed. Press Resume to start this application again."
-                self._log(run, run.reason)
-                logging.getLogger(__name__).warning("job %s stopped on an error", run.job_id, exc_info=True)
+            await asyncio.wait({waiter, *self._slots.values()}, timeout=30, return_when=asyncio.FIRST_COMPLETED)
         finally:
-            self._give_back_tools(held)
-            if run.status == "running":  # the desk was stopped part-way
-                run.status, run.reason = "failed", "Stopped before it finished. Press Resume to carry on."
-            run.updated = time.time()
-        await self._close_done_tabs()
+            waiter.cancel()
+
+    async def _run_task(self, kind: str, run: Run) -> None:
+        """One job's pass (or the Submit the person pressed), in a task and a browser view of its own: up to
+        settings.jobs_at_once go at once, each in its own tab."""
+        try:
+            with self.srv.browser.desk_view(run.job_id):
+                held = self._hold_tools(run.job_id)
+                try:
+                    if kind != "submit":
+                        run.inbox_since = 0.0  # (a new pass: its mail, if it waits on any, begins in this one)
+                        await self._hold_for_site(run)
+                        if self._mails(run):
+                            # a job system that emails codes and links: any step before the application's first form may
+                            # send one (Workday's sign-in drawn without its buttons, Oracle's email step): the inbox is
+                            # this job's from its start until then (the review of jobs at once)
+                            await self._take_inbox(run, step=False)
+                    await self._strict(self._submit(run) if kind == "submit" else self._drive_again_if_redrawn(run))
+                    await self._strict(self._save_stop(run))
+                except TabClosed:
+                    if run.status != "skipped":
+                        run.status, run.need, run.blocking = "failed", "", False
+                        run.reason = "Its tab was closed. Press Resume to start this application again."
+                        self._log(run, run.reason)
+                except Exception as e:
+                    if run.status != "skipped":
+                        run.status, run.need = "failed", ""
+                        run.reason = (f"Something went wrong: {type(e).__name__}: "
+                                      f"{str(e).splitlines()[0][:200] if str(e) else ''}")
+                        lost = self.srv.browser.lost(run.page) if run.page is not None else ""
+                        if lost == "crashed":  # (Playwright: "Page crashed")
+                            run.reason = "Its tab crashed. Press Resume to start this application again."
+                        elif lost == "browser":
+                            # (Playwright: "Target page, context or browser has been closed", issue #112, note 36)
+                            run.reason = "The automation browser was closed. Press Resume to start this application again."
+                        self._log(run, run.reason)
+                        logging.getLogger(__name__).warning("job %s stopped on an error", run.job_id, exc_info=True)
+                finally:
+                    self._give_back_tools(held)
+                    run.inbox = False  # (a code it waits on now holds the others as the person's pause does)
+                    if run.status == "running":  # the desk was stopped part-way
+                        run.status, run.reason = "failed", "Stopped before it finished. Press Resume to carry on."
+                    run.updated = time.time()
+            with contextlib.suppress(Exception):  # (a tab that won't close: never the job's surprise)
+                await self._close_done_tabs()
+        finally:
+            if self._slots.get(run.job_id) is asyncio.current_task():
+                del self._slots[run.job_id]
+            self._wake.set()
+
+    # ------------------------------------------------------------- jobs at once
+    def _blocker(self) -> Run | None:
+        """The job holding the queue for the person's hands (the first to pause, of those that do): one whose tab is up
+        before those waiting their turn to be brought up (_behind), whose turn comes once it's done."""
+        return min((r for r in self.runs.values() if r.blocking), key=lambda r: (r.job_id in self._behind, r.paused_at),
+                   default=None)
+
+    def _person_at(self, run: Run | None) -> Run | None:
+        """The job whose tab the person is at for the desk, other than `run`: a round's, a pause holding the queue for
+        their hands, or a sign-in or code the queue went on without that they're still at work in (anything done in its
+        tab in the last RELEASE_IDLE seconds). No other job's tab is brought over it (_bring_forward, keep_front)."""
+        return next((r for r in self._persons_tabs(run) if r is not run), None)
+
+    def _persons_tabs(self, run: Run | None = None) -> Iterator[Run]:
+        """The jobs whose tab the person may be at for the desk, the likeliest first: a round's, the pauses holding the
+        queue for their hands (the first to pause first), then sign-ins and codes the queue went on without that they've
+        been at work in since (_at_work_in). For `run`, a pause already holding the queue that waits its turn to be
+        brought up (_behind) counts only when it paused before `run` did: the first of those comes up first, the next
+        once it's done (the final check of jobs at once: two waiting so, each kept the other down for 45 minutes)."""
+        if self._in_round() and (r := self.runs.get(self.round_job) if self.round_job is not None else None):
+            yield r
+        mine = run.paused_at if run is not None and run.status == "needs_you" and run.blocking else float("inf")
+        yield from sorted((r for r in self.runs.values() if r.blocking
+                           and (r.job_id not in self._behind or r.paused_at < mine)), key=lambda r: r.paused_at)
+        yield from sorted((r for r in self.runs.values() if self._at_work_in(r)), key=lambda r: r.paused_at)
+
+    @staticmethod
+    def _at_work_in(run: Run) -> bool:
+        """Is the person at work in a job's tab the queue went on without: a sign-in or code that's theirs, changed since
+        it paused by something the desk didn't do (Run.active_at, _note_activity) in the last RELEASE_IDLE seconds?
+        Never a wait that's the desk's own (a reset or verification email it reads from the inbox itself: the re-check of
+        jobs at once, its tab was taken for the person's for a minute after every new Workday account)."""
+        if not (run.left and run.status == "needs_you" and run.need in HANDS_ON):
+            return False
+        desks_own = run.need == "email_code" and (run.resetting and run.reset_waited or run.verifying)
+        return (not desks_own and run.active_at > run.paused_at
+                and time.time() - run.active_at < RELEASE_IDLE + SLOW_POLL_SECONDS)
+
+    def _front_tab(self) -> Any:
+        """The tab the person is at for the desk (BrowserSession.keep_front), if any: never one waiting its turn to be
+        brought up (_behind), but the one they're at instead."""
+        for r in self._persons_tabs():
+            page = r.page if r.job_id not in self._behind else None
+            if page is not None and not page.is_closed():
+                return page
+        return None
+
+    def _mails(self, run: Run) -> bool:
+        """Is the job on a job system that emails codes or links (an account's, a sign-in's)?"""
+        job = self.srv.tracker().get(run.job_id, with_description=False) or {}
+        return any(detect_ats(u) in mailbox.ATS_MAIL_DOMAINS for u in (run.url, job.get("url"), job.get("apply_url"))
+                   if u)
+
+    def _under_way(self) -> list[Run]:
+        return [self.runs[j] for j in list(self._slots) if j in self.runs]
+
+    def _site_key(self, url: str) -> str:
+        """A page's site, as jobs at once keep to one each: a job system's host (one employer's Workday, not
+        another's), or an employer's own domain ("acme.com" for careers.acme.com and jobs.acme.com)."""
+        host = (urlparse(url or "").hostname or "").lower()
+        if not host:
+            return ""
+        return host if shared_system(url) is not None else mailbox.site_domain(host)
+
+    def _sites(self, run: Run) -> set[str]:
+        """Where a job is, or may go: its employer, its posting's and application's sites, where it paused, and its
+        tab's now."""
+        job = self.srv.tracker().get(run.job_id, with_description=False) or {}
+        urls = [run.url, job.get("url"), job.get("apply_url"), f"https://{run.paused_host}/" if run.paused_host else ""]
+        if run.page is not None and not run.page.is_closed():
+            urls.append(run.page.url)
+        sites = {self._site_key(u) for u in urls if u} - {""}
+        company = norm(str(run.company or job.get("company") or ""))
+        return sites | ({f"employer:{company}"} if company else set())
+
+    def _site_free(self, job_id: int) -> bool:
+        """May this job begin now: no job under way is at its employer or on its sites (one at a time on a site: its
+        sign-ins, accounts, password resets and emailed codes are the site's own)?"""
+        run = self.runs.get(job_id)
+        if run is None or job_id in self._slots:
+            return run is None
+        under_way = self._under_way()
+        if not under_way:
+            return True
+        mine = self._sites(run)
+        return not any(mine & self._sites(other) for other in under_way)
+
+    def _submit_free(self, job_id: int) -> bool:
+        """May the Submit the person pressed go now? It presses Submit in its own tab alone: never while another job
+        under way is in a step that may email the person on the very host its tab is on (a sign-in there, say), but
+        beside any other job at its site (the review of jobs at once)."""
+        run = self.runs.get(job_id)
+        if run is None or job_id in self._slots:
+            return run is None
+        page = run.page if run.page is not None and not run.page.is_closed() else None
+        host = (urlparse(page.url if page is not None else run.url).hostname or "").lower()
+        return not any(o.inbox and host and (urlparse(o.page.url if o.page is not None and not o.page.is_closed()
+                                                      else o.url).hostname or "").lower() == host
+                       for o in self._under_way() if o is not run)
+
+    def _site_holder(self, run: Run) -> Run | None:
+        """Another job under way that got to the site this job's tab is on first (two employers' applications can lead
+        to one job system's host): this one waits for it there. Never one in a step that may email the person: the
+        other may be waiting for that."""
+        page = run.page if run.page is not None and not run.page.is_closed() else None
+        site = self._site_key(page.url if page is not None else run.url)
+        if site != run.site:
+            run.site, run.site_since = site, time.monotonic()
+        if not site or run.inbox:
+            return None
+        return next((o for o in self._under_way() if o is not run and o.site == site
+                     and (o.site_since, o.began) < (run.site_since, run.began)), None)
+
+    async def _hold_for_site(self, run: Run) -> float:
+        """Before each step of a job under way: wait while another job got to this one's site first (never one in a
+        step that may email the person: _site_holder). The person's pauses and rounds hold no job under way: those go
+        on in their tabs, never brought to the front over the person's (_bring_forward, keep_front), and only new jobs
+        wait (the review of jobs at once: a job held for a round kept its place, and the person's Submit waited for
+        the whole round). Returns the seconds waited (a pass's own time doesn't count them), 0 for none."""
+        began, said = time.monotonic(), ""
+        try:
+            while run.status not in ("skipped", "submitted"):
+                o = self._site_holder(run)
+                if o is None:
+                    break
+                why = f"{o.company or 'another job'} is on the same site"
+                if why != said:
+                    said = why
+                    self._log(run, f"waiting: {why}; this one carries on after that")
+                self._waiting.add(run.job_id)
+                await asyncio.sleep(max(POLL_SECONDS / 3, 0.05))
+        finally:
+            self._waiting.discard(run.job_id)
+        return time.monotonic() - began if said else 0.0
+
+    def _inbox_holder(self, run: Run) -> Run | None:
+        """Another job under way in a step that may email the person (Run.inbox), if any."""
+        return next((o for o in self._under_way() if o is not run and o.inbox and o.status == "running"), None)
+
+    def _hands_on(self, run: Run) -> Run | None:
+        """Another job holding the queue for the person's sign-in or emailed code (an email step of theirs, in its
+        tab), if any."""
+        return min((r for r in self.runs.values() if r is not run and r.blocking and r.need in HANDS_ON),
+                   key=lambda r: r.paused_at, default=None)
+
+    async def _take_inbox(self, run: Run, step: bool = True) -> float:
+        """Before a step that may email the person (a sign-in, making an account, a password reset, an emailed code):
+        one job at a time is in such steps, one under way until it's into its application (or its pass ends), or one
+        holding the queue for the person's sign-in or code. The inbox is one: a code meant for one job is never
+        another's. Returns the seconds waited, 0 for none."""
+        began, waited, said = time.monotonic(), False, ""
+        try:
+            while run.status not in ("skipped", "submitted"):
+                other = self._inbox_holder(run) or self._hands_on(run)
+                if other is None:
+                    break
+                why = f"{other.company or 'another job'} is signing in or waiting on an email"
+                if why != said:
+                    said = why
+                    self._log(run, f"waiting: {why}; this one carries on after that")
+                waited = True
+                self._waiting.add(run.job_id)
+                await asyncio.sleep(max(POLL_SECONDS / 3, 0.05))
+        finally:
+            self._waiting.discard(run.job_id)
+        if not run.inbox:
+            run.inbox = True
+            self._inbox_gen += 1
+        if step and not run.inbox_since:
+            # (a step that may email: its code is sent from here on, the job's own mail. Never as a pass begins on a
+            # system that emails (step False): mail from before its step then is no more its own than on its own: the
+            # re-check of jobs at once, an earlier job's code found as this one's)
+            run.inbox_since = time.time()
+        return time.monotonic() - began if waited else 0.0
 
     async def _close_done_tabs(self) -> None:
         """Close the tabs of jobs that went in, but the newest DONE_TABS_KEPT. With one tab per
@@ -1466,14 +1813,16 @@ class Applier:
         """Take the browser tools for one of this job's steps: Claude's calls that act in the
         browser wait meanwhile (server._desk_driving). Returns what to give back."""
         browser = self.srv.browser
-        held = (self.current, browser.current_tab, browser.current_job_id)
-        self.current = job_id
+        held = (job_id, browser.current_tab, browser.current_job_id)
+        self._driving.append(job_id)
         return held
 
     def _give_back_tools(self, held: tuple[Any, Any, Any]) -> None:
         """Hand the tools back on the tab, and with the job, they had before: Claude may be at
         work in a tab of its own, and its next fill or click mustn't land in this job's tab."""
-        self.current, tab, job_id = held
+        mine, tab, job_id = held
+        with contextlib.suppress(ValueError):  # (set straight by hand meanwhile: current)
+            self._driving.remove(mine)
         browser = self.srv.browser
         if tab is not None and browser.use_tab(tab):
             browser.current_job_id = job_id
@@ -1510,9 +1859,16 @@ class Applier:
     @staticmethod
     def _note_activity(run: Run, data: dict[str, Any]) -> None:
         """The address and what's in the boxes of a paused tab, as looked at: a change is the person at work in it (a
-        bot check that reloads itself with a new token in its address isn't)."""
+        bot check that reloads itself with a new token in its address isn't, nor the desk's own code typed there or
+        link opened, while its page settles: the re-check of jobs at once, the person taken to be at that tab). Its code
+        box holding another code than the desk's is the person's, settled or not (one the site turned down, the right
+        one put in by them: the final check of jobs at once)."""
         mark = hash((_bare(data.get("url") or ""), tuple((f.get("id"), str(f.get("value"))) for f in data.get("fields") or [])))
-        if run.tab_mark and mark != run.tab_mark:
+        settling = time.time() - run.desk_at <= DESK_SETTLE
+        if settling and run.desk_code:
+            typed = "".join(str(f.get("value") or "") for f in data.get("fields") or [] if _code_box(f))
+            settling = not typed.strip() or _code_mark(typed) == run.desk_code  # (emptied by the site: not theirs)
+        if run.tab_mark and mark != run.tab_mark and not settling:
             run.active_at = time.time()
         run.tab_mark = mark
 
@@ -1586,9 +1942,10 @@ class Applier:
     @staticmethod
     def _poll_for(runs: list[Run]) -> float:
         """How soon to look at tabs waiting on the person again: every POLL_SECONDS while one of them changed or
-        paused within STILL_SECONDS, else every SLOW_POLL_SECONDS."""
+        paused within STILL_SECONDS (or the desk typed its code there, or opened its link: _note_activity), else every
+        SLOW_POLL_SECONDS."""
         now = time.time()
-        return (POLL_SECONDS if any(now - max(r.active_at, r.paused_at) < STILL_SECONDS for r in runs)
+        return (POLL_SECONDS if any(now - max(r.active_at, r.paused_at, r.desk_at) < STILL_SECONDS for r in runs)
                 else SLOW_POLL_SECONDS)
 
     @staticmethod
@@ -1654,17 +2011,29 @@ class Applier:
     async def _check_mail(self, run: Run) -> None:
         """Look in the inbox for the code or link a waiting job's site emailed, and put it in."""
         now = time.time()
-        if run.mail_done or now - run.mail_checked < MAIL_POLL_SECONDS or now - run.paused_at > MAIL_WINDOW:
+        if run.mail_done or now - run.mail_checked < MAIL_POLL_SECONDS or _mail_waited(run) > MAIL_WINDOW:
             return
+        if self._inbox_holder(run) is not None:
+            # another job under way may be bringing on an email of its own this moment, before its pause says from when
+            # its email is its own (_check_mail's partition): looked at once that job is past it. Its waits (a reset's,
+            # the inbox's own window) don't run on meanwhile: nothing was looked at
+            run.mail_last = "not looked: another job is signing in or waiting on an email"
+            run.mail_held_at = run.mail_held_at or now
+            return
+        if run.mail_held_at:
+            run.mail_held += now - run.mail_held_at
+            run.mail_held_at = 0.0
         login = self.mail_login()
         if login is None or run.page is None or run.page.is_closed():
             run.mail_last = "no inbox login" if login is None else "its tab is closed"
             return
         run.mail_checked = now
+        gen = self._inbox_gen  # (a job taking the inbox while this look is under way: what it finds isn't used)
         try:
             data, _ = await self.srv.browser.peek(run.page)
         except Exception as e:  # a tab mid-way through loading: looked at again next time
             run.mail_last = f"couldn't read its tab: {type(e).__name__}"
+            run.mail_looked = time.time()  # (a look that failed is one tried: a reset's wait runs on, as on its own)
             return
         boxes = [f for f in data.get("fields") or [] if _code_box(f)]
         senders = self._mail_senders(run)
@@ -1682,15 +2051,21 @@ class Applier:
                 return False
             return host == run.paused_host or host in own or bool(host) and mailbox.site_domain(host) in own_sites
 
-        # Another job waiting on mail from the same job system owns what came after it paused (Workday's
-        # codes come from one address for every employer): a later one's wait ends this one's mail, and
-        # with an earlier one waiting, mail from before this job paused is that one's
-        others = [r.paused_at for r in self.runs.values() if r is not run and r.status == "needs_you"
+        # Another job waiting on mail from the same job system owns what came after its mail began (Workday's
+        # codes come from one address for every employer): a later one's start ends this one's mail, and
+        # with an earlier one waiting, mail from before this job's began is that one's. A job's mail begins
+        # as it pauses, or as its step that may email began on the way there (_mail_from: the code is sent then)
+        since = _mail_from(run)
+        others = [_mail_from(r) for r in self.runs.values() if r is not run and r.status == "needs_you"
                   and r.need == "email_code" and self._mail_senders(r) & senders]
-        later = [t for t in others if t > run.paused_at]
+        later = [t for t in others if t > since]
         # (a few seconds back still: the site sends the code as the button is pressed, a moment before
         # the desk notices and pauses)
-        look_back = SHARED_LOOK_BACK if any(t <= run.paused_at for t in others) else mailbox.LOOK_BACK
+        look_back = SHARED_LOOK_BACK if any(t <= since for t in others) else mailbox.LOOK_BACK
+        # Its own looked for from that far back before its pause, as on its own: never further, even where its step
+        # began earlier. With an earlier job waiting on the same sender, mail between its step's start and that is
+        # either job's (the other's Resend, pressed in its tab meanwhile): neither's, left for the person (the
+        # re-checks of jobs at once)
         try:
             want = "code" if boxes else "reset" if run.resetting else "link"
             if run.others_mail is False:  # (the lists read once a job, off the event loop)
@@ -1707,12 +2082,23 @@ class Applier:
                                      "in the Site passwords card to try again.")
             else:
                 self.mail_problem = f"The desk couldn't read your email: {e}. It tries again shortly."
+            # (tried: a reset's wait runs on through the inbox's own errors, never for ever. Only looks held off for
+            # another job's email step stop it: the re-check of jobs at once)
+            run.mail_looked = time.time()
             return
         except Exception as e:  # a mail service's odd answer: tried again next time, not sinking the queue
             self.mail_problem = f"The desk couldn't read your email ({type(e).__name__}). It tries again shortly."
+            run.mail_looked = time.time()
             return
         self.mail_problem = None
+        if gen != self._inbox_gen or self._inbox_holder(run) is not None:
+            # (the peek, the lists and the login take seconds: a job that took the inbox meanwhile may have had a code
+            # sent that this look found as this one's. Looked at again once that job is past it)
+            run.mail_last = "not used: another job began signing in or making an account while the inbox was read"
+            run.mail_held_at = run.mail_held_at or time.time()
+            return
         run.mail_looks += 1
+        run.mail_looked = time.time()
         run.mail_last = (f"looked for a {want}: " + ("none" if found is None else f"found one from {found.sender}")
                          + f" ({len(boxes)} code box(es) on the page)")
         if found is None or run.status != "needs_you" or run.need != "email_code":
@@ -1750,6 +2136,9 @@ class Applier:
             run.mail_done = True
             self._log(run, f"couldn't use the {found.kind} from your email ({type(e).__name__}); "
                       "it's in your inbox for you")
+        finally:
+            run.desk_at = time.time()  # (what changes in its tab now is the desk's doing, not the person's: _note_activity)
+            run.desk_code = _code_mark(found.value) if found.kind == "code" else 0
         if mail and run.mail_done:
             _take_code(mail, run.job_id)
 
@@ -1855,12 +2244,17 @@ class Applier:
         run.questions = questions or []
         if not any(q.get("account") for q in run.questions):
             run.account_answers = {}  # (answers from an account form's card go into that form alone, on the way back)
+        # (paused for their hands while they're at another job's tab, filled at once with it: its turn comes next, its
+        # tab brought up then; one brought up as it paused, before this, isn't behind)
+        if need in HANDS_ON and self._person_at(run) is not None:
+            self._behind.add(run.job_id)
         run.blocking = need in HANDS_ON
         # a sign-in's or Create Account's own picture check (Edwards', live) counts too: the page it paused on shows it
         run.captcha = need in ("bot_check", "captcha") or bool(seen and (seen.get("captcha") or seen.get("challenge")))
         run.paused_at = run.active_at = time.time()
-        run.tab_mark, run.left, run.moved_since = 0, need == "bot_check", 0.0  # (a bot check: watched, the queue on)
+        run.tab_mark, run.left, run.moved_since, run.desk_at = 0, need == "bot_check", 0.0, 0.0  # (a bot check: watched)
         run.mail_checked, run.mail_done, run.verifying = 0.0, False, False
+        run.mail_looked, run.mail_held, run.mail_held_at = 0.0, 0.0, 0.0
         run.paused_host = urlparse(run.url).hostname or ""
         run.hold_host = ""
         self._log(run, reason)
@@ -2028,6 +2422,9 @@ class Applier:
         began = time.monotonic()
         while steps < MAX_STEPS + more:
             steps += 1
+            # (filled at once with others: while the person is at another job's tab for the desk, or another job got to
+            # this one's site first, nothing is done here; a wait that's no part of the pass's own time)
+            began += await self._hold_for_site(run)
             if run.status in ("skipped", "submitted"):  # Skip, or "I submitted it", pressed while it ran
                 return
             data, text = await self._look()
@@ -2171,6 +2568,14 @@ class Applier:
             if kind == "bot_check":
                 await self._bring_forward(run)
                 return self._pause(run, "bot_check", _BOT_CHECK_SAYS, seen=data)
+            if _may_email(run, data, kind, view, finish):
+                # one job under way at a time in the steps that may email the person (the inbox is one)
+                if inbox_wait := await self._take_inbox(run):
+                    began += inbox_wait
+                    steps -= 1  # (a wait's no step: the page is looked at again, as it is after it)
+                    continue
+            elif kind == "form":
+                run.inbox, run.inbox_since = False, 0.0  # into its application: another job's sign-in may go ahead
             if view in ("consent", "email", "options"):
                 # the desk's to take on only where it began making the account (settings.manage_accounts);
                 # the code step is an emailed code's, below (with its Submit pressed: _account_code_button)
@@ -4449,9 +4854,12 @@ class Applier:
 
     def _reset_overdue(self, run: Run) -> bool:
         """Waiting on a reset email, with the inbox watched, that hasn't come in RESET_MAIL_WAIT."""
+        # (the wait's own time: not while another job's email step kept its mail from being read; and only once a look
+        # made after it has found none, never in the pass that couldn't look: the review of jobs at once)
         return (run.resetting and run.reset_waited and run.status == "needs_you" and run.need == "email_code"
                 and not run.mail_done and not run.reset_no_mail and self.mail_login() is not None
-                and time.time() - run.paused_at > RESET_MAIL_WAIT)
+                and _mail_waited(run) > RESET_MAIL_WAIT and not run.mail_held_at
+                and run.mail_looked - run.paused_at - run.mail_held > RESET_MAIL_WAIT)
 
     @staticmethod
     def _reset_form_showing(data: dict[str, Any], text: str, button: str) -> bool:
@@ -4927,6 +5335,13 @@ class Applier:
                            "application. Then press \u201cI submitted it\u201d here.")
 
     async def _bring_forward(self, run: Run) -> None:
+        """Bring the job's tab to the front for the person: never over another job's tab they're at for the desk (a
+        round, a pause that needs their hands, or a sign-in they're still at work in after the queue went on): this one
+        is brought up after that (_front_next, or as it holds the queue in turn)."""
+        if self._person_at(run) is not None:
+            self._behind.add(run.job_id)
+            return
+        self._behind.discard(run.job_id)
         if run.page is not None and not run.page.is_closed():
             try:
                 await run.page.bring_to_front()
@@ -5431,6 +5846,43 @@ def _email_first_account(data: dict[str, Any]) -> bool:
     headings = " ".join(data.get("headings") or [])
     return (bool(emails) and all(f in emails or _PICTURE_CODE.search(f.get("label") or "") for f in fields)
             and bool(re.search(r"\baccount\b", headings, re.I)) and not _NOT_TERMS.search(headings))
+
+
+def _mail_from(run: Run) -> float:
+    """When a job's emailed code or link may have been sent: as its step that may email began on the way to its pause
+    (_take_inbox), but never more than LOOK_BACK before its pause (as on its own); else as it paused."""
+    if 0 < run.inbox_since <= run.paused_at:
+        return max(run.inbox_since, run.paused_at - mailbox.LOOK_BACK)
+    return run.paused_at
+
+
+def _code_mark(code: str) -> int:
+    """An emailed code as Run.desk_code keeps it: its letters and digits alone, in any case, hashed."""
+    return hash(re.sub(r"[^0-9A-Za-z]", "", code).upper())
+
+
+def _mail_waited(run: Run) -> float:
+    """How long a job has waited on its email, but for the time its looks in the inbox were held off."""
+    now = time.time()
+    return now - run.paused_at - run.mail_held - (now - run.mail_held_at if run.mail_held_at else 0.0)
+
+
+def _email_step(data: dict[str, Any]) -> bool:
+    """A step that asks for the email alone (with its ticks): what's pressed on it may email a code there (Oracle
+    Recruiting's "email to start the application", whose Next emails one)."""
+    fields = [f for f in data.get("fields") or [] if not f.get("disabled") and not f.get("aside")
+              and f.get("kind") not in ("checkbox", "radio", "radio_group", "checkbox_group")]
+    return (len(fields) == 1 and fields[0].get("kind") in ("text", "email")
+            and re.search(r"e-?mail", fields[0].get("label") or "", re.I) is not None)
+
+
+def _may_email(run: Run, data: dict[str, Any], kind: str, view: str | None, finish: dict[str, Any] | None) -> bool:
+    """A step that may email the person, or waits on an email: a sign-in (a site may email a code for one), making an
+    account, a password reset, a verification, an emailed code, or a step asking for the email alone. Jobs filled at
+    once take these one at a time (Applier._take_inbox)."""
+    return (kind in ("sign_in", "email_code") or view is not None or finish is not None or run.resetting
+            or run.verifying or bool(run.account_page) or _account_step(data) or _email_first_account(data)
+            or kind == "form" and _email_step(data))  # (never a posting's job alerts box: a "page")
 
 
 # A posting page's own boxes, never an application's: Phenom's "Save Job" ticks and its chatbot's box

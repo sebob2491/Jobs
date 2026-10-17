@@ -225,14 +225,16 @@ def test_one_button_apply_walks_the_whole_flow(srv, monkeypatch):
     assert "Thank you for applying" in run(srv.page_text())
 
 
-def test_a_bot_check_waits_in_its_tab_while_the_other_jobs_go_ahead(srv, monkeypatch):
+@pytest.mark.parametrize("at_once", [1, 2])
+def test_a_bot_check_waits_in_its_tab_while_the_other_jobs_go_ahead(srv, monkeypatch, at_once):
     """A bot check never holds the queue (the owner's call, Oct 11): its job waits in its tab, watched, and the
     other jobs go ahead at once. When the person passes the check (the desk's Bot checks round takes them to
-    it), the desk carries on with it by itself. The desk never solves one."""
+    it), the desk carries on with it by itself. The desk never solves one. So too with jobs filled at once."""
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
     checked = srv.add_job(url=fixture_url("site/botcheck.html"), title="FSE", company="Example Fab")["job"]
     other = srv.add_job(url=fixture_url("generic_form.html"), title="Technician", company="Example Litho")["job"]
     applier = Applier(srv)
+    applier.jobs_at_once = at_once
 
     async def go():
         applier.start()
@@ -252,16 +254,18 @@ def test_a_bot_check_waits_in_its_tab_while_the_other_jobs_go_ahead(srv, monkeyp
     run(go())
 
 
-def test_in_the_desks_bot_check_round_no_other_job_starts_and_a_solved_one_goes_on_at_once(srv, monkeypatch):
+@pytest.mark.parametrize("at_once", [1, 2])
+def test_in_the_desks_bot_check_round_no_other_job_starts_and_a_solved_one_goes_on_at_once(srv, monkeypatch, at_once):
     """The review of 0.3.119: while the person is at a bot check in the desk's round, starting another job would
     open its tab over the one they're solving; and a solved one waited for the job being worked on. In a round the
     queue holds, and the solved check is noticed straight away; once it's past, the other jobs go on (here once
-    its sign-in, which holds the queue as ever, is left a moment)."""
+    its sign-in, which holds the queue as ever, is left a moment). So too with jobs filled at once."""
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
     monkeypatch.setattr(pipeline, "HANDS_ON_IDLE", 1)
     checked = srv.add_job(url=fixture_url("site/botcheck.html"), title="FSE", company="Example Fab")["job"]
     other = srv.add_job(url=fixture_url("generic_form.html"), title="Technician", company="Example Litho")["job"]
     applier = Applier(srv)
+    applier.jobs_at_once = at_once
 
     async def go():
         applier.start()
@@ -1851,20 +1855,28 @@ def manage_accounts(job_apply_home, submit_mode="review"):
     path.write_text(yaml.safe_dump(profile), encoding="utf-8")
 
 
-def test_with_manage_accounts_the_desk_creates_the_account(srv, monkeypatch, job_apply_home):
+@pytest.mark.parametrize("at_once", [1, 2])
+def test_with_manage_accounts_the_desk_creates_the_account(srv, monkeypatch, job_apply_home, at_once):
     """The person turned on settings.manage_accounts: the desk ticks the Create Account form's
-    terms box and presses its button itself, with the saved password, and carries on."""
+    terms box and presses its button itself, with the saved password, and carries on. With two
+    at once, another job is filled alongside meanwhile, and makes no account."""
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
     saved_password(monkeypatch)
     manage_accounts(job_apply_home)
     job = srv.add_job(url=fixture_url("site/create-account.html"), title="FSE", company="Example Fab")["job"]
+    other = srv.add_job(url=fixture_url("generic_form.html"), title="Technician", company="Example Litho")["job"]
     applier = Applier(srv)
+    applier.jobs_at_once = at_once
 
     async def go():
         applier.start()
         try:
             r = applier.enqueue(job["id"])
+            o = applier.enqueue(other["id"]) if at_once > 1 else None
             await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            if o is not None:
+                await until(lambda: o.status not in ("queued", "running"), about=state(o))
+                assert not any("account" in line for line in o.log), o.log
             return r
         finally:
             await applier.stop()
@@ -3378,18 +3390,23 @@ def test_a_reset_the_site_has_no_account_for_makes_one_instead(srv, monkeypatch,
     assert "created your account" in log and r.seen_form, (r.reason, r.log)
 
 
-def test_no_reset_email_in_a_few_minutes_makes_an_account_and_the_queue_goes_on(srv, monkeypatch, job_apply_home):
+@pytest.mark.parametrize("at_once", [1, 2])
+def test_no_reset_email_in_a_few_minutes_makes_an_account_and_the_queue_goes_on(srv, monkeypatch, job_apply_home,
+                                                                               at_once):
     """The site says it emailed a reset (most say so whether or not the email has an account),
     and nothing comes: the other jobs go ahead meanwhile, and after RESET_MAIL_WAIT the desk goes
-    back to the sign-in page and makes an account."""
+    back to the sign-in page and makes an account. With two at once, the other job signs in with
+    the saved password alongside the wait."""
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
     monkeypatch.setattr(pipeline, "RESET_MAIL_WAIT", 4)
     saved_password(monkeypatch)
     manage_accounts(job_apply_home)
     watched_inbox(monkeypatch)
     job = srv.add_job(url=fixture_url("site/signin-submit.html"), title="FSE", company="Example Fab")["job"]
-    other = srv.add_job(url=fixture_url("generic_form.html"), title="Tech", company="Example Litho")["job"]
+    other = srv.add_job(url=fixture_url("generic_form.html" if at_once == 1 else "site/posting.html"), title="Tech",
+                        company="Example Litho")["job"]
     applier = Applier(srv)
+    applier.jobs_at_once = at_once
 
     async def go():
         applier.start()
@@ -8395,6 +8412,65 @@ def test_a_code_put_in_for_one_job_is_never_put_in_for_another(srv, monkeypatch,
     assert run(second.page.input_value("#code")) == "551234"
 
 
+@pytest.mark.parametrize("at_once", [1, 2])
+def test_two_jobs_whose_codes_come_from_one_sender_each_get_their_own(srv, monkeypatch, at_once):
+    """Two jobs whose sites email their codes from one address (two Oracle sites), filled one at a time or two at once:
+    each code from the inbox goes into its own job's form, never the other's. Filled at once, the second job's code
+    step waits until the first's code is in."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "MAIL_POLL_SECONDS", 0)
+    monkeypatch.setattr(pipeline, "HANDS_ON_IDLE", 600)
+    monkeypatch.setenv("JOB_APPLY_SECRET_EMAIL_PASSWORD", "an-app-password")
+    monkeypatch.setattr(pipeline.mailbox, "imap_host", lambda address: "imap.example.com")
+    monkeypatch.setattr(pipeline, "_another_employers_mail", lambda *a, **k: None)
+    inbox: list = []
+    sent: dict = {}
+    real_pause = Applier._pause
+
+    def pause(self, r, need, reason, questions=None, seen=None):
+        if need == "email_code" and r.job_id not in sent:  # (the site emails its code as the step is pressed)
+            sent[r.job_id] = time.time() - 1
+            inbox.append(pipeline.mailbox.Found("code", "123456", "oraclecloud.com", sent[r.job_id]))
+        return real_pause(self, r, need, reason, questions, seen)
+
+    def search(address, password, since, senders, want, allowed_link, before=None, look_back=120, others=None):
+        got = [m for m in inbox if m.received >= since - look_back and (before is None or m.received < before)]
+        return max(got, key=lambda m: m.received) if got else None
+
+    took: dict = {}
+    real_take = pipeline._take_code
+
+    def take_code(mail, job_id):
+        took[job_id] = time.time()
+        real_take(mail, job_id)
+
+    monkeypatch.setattr(Applier, "_pause", pause)
+    monkeypatch.setattr(pipeline.mailbox, "search", search)
+    monkeypatch.setattr(pipeline, "_take_code", take_code)
+    jobs = [srv.add_job(url=fixture_url("site/verify-email.html") + f"?code&job={n}", title="FSE",
+                        company=company)["job"]["id"] for n, company in enumerate(("Example Fab", "Example Litho"))]
+    applier = Applier(srv)
+    applier.jobs_at_once = at_once
+
+    async def go():
+        applier.start()
+        try:
+            runs = [applier.enqueue(j) for j in jobs]
+            for r in runs:
+                await until(lambda r=r: r.job_id in took, timeout=60, about=state(r))  # (its code put in, and noted)
+                assert "entered the code from your email (sent from oraclecloud.com)" in r.log, r.log
+            return runs
+        finally:
+            await applier.stop()
+
+    runs = run(go())
+    for r in runs:
+        assert pipeline._MAIL_TAKEN.get(("oraclecloud.com", "123456", sent[r.job_id])) == r.job_id, \
+            (pipeline._MAIL_TAKEN, sent)
+    first, second = sorted(runs, key=lambda r: sent[r.job_id])
+    assert sent[second.job_id] + 1 >= took[first.job_id], (sent, took)  # (its code step once the first's code was in)
+
+
 def test_a_job_that_never_paused_goes_on_only_at_its_own_addresses(srv):
     """Only from where a job paused on its employer's own site does it go on into a job system
     many employers share; not a job that never paused (any Workday page would count as its
@@ -11860,3 +11936,1416 @@ def test_the_codes_given_out_are_kept_a_day(monkeypatch):
                                                   ("a@x.example", "222222", time.time() - 600): 2})
     pipeline._take_code(("a@x.example", "333333", time.time()), 3)
     assert sorted(pipeline._MAIL_TAKEN.values()) == [2, 3]
+
+
+# ------------------------------------------------------------------ jobs at once (settings.jobs_at_once)
+# The owner's ask (Oct 16): a queue of 76 jobs took hours, one at a time. Up to three go at once, each in a tab of its
+# own; one at a time on a site, one at a time in a step that may email the person, and none while the person is at
+# another job's tab for the desk.
+
+_SIGN_IN = ('<html><head><title>{0} sign in</title></head><body><h1>Sign In</h1><form><label for="em">Email Address'
+            '</label><input id="em" type="email"><label for="pw">Password</label><input id="pw" type="password">'
+            '<button type="submit">Sign In</button></form></body></html>')
+
+
+async def _serve_slowly(srv, pages: dict, posts: list, slow: float, holds: dict | None = None) -> None:
+    """_serve's employer sites (any https:// address here), each page `slow` seconds in coming, so the passes of two
+    jobs filled at once overlap; one in `holds` not before its condition is met."""
+    async def handler(route):
+        req = route.request
+        url = req.url.split("?")[0]
+        await asyncio.sleep(slow)
+        while holds and url in holds and not holds[url]():
+            await asyncio.sleep(0.1)
+        if req.method == "POST":
+            posts.append(url)
+            body = pages.get(("POST", url), "<html><body><h1>Thank you for applying</h1></body></html>")
+        else:
+            body = pages.get(url, "<html><body>not found</body></html>")
+        with contextlib.suppress(Exception):  # (a tab closed as the test ends)
+            await route.fulfill(status=200, content_type="text/html", body=body)
+
+    await srv.browser.page()
+    await srv.browser._ctx.route(lambda url: url.startswith("https://"), handler)
+
+
+def _passes(monkeypatch) -> list:
+    """Each job's passes over its pages, as (job, when it began, when it ended)."""
+    passes: list = []
+    real = Applier._drive
+
+    async def drive(self, r):
+        began = time.monotonic()
+        try:
+            await real(self, r)
+        finally:
+            passes.append((r.job_id, began, time.monotonic()))
+
+    monkeypatch.setattr(Applier, "_drive", drive)
+    return passes
+
+
+def _overlap(passes: list, a: int, b: int) -> bool:
+    return any(x[1] < y[2] and y[1] < x[2] for x in passes if x[0] == a for y in passes if y[0] == b)
+
+
+@pytest.mark.parametrize("at_once", [1, 2])
+def test_jobs_at_different_employers_are_filled_at_once_each_in_its_own_tab(srv, monkeypatch, at_once):
+    """With jobs_at_once at 2, two jobs at different employers are filled at the same time, each in its own tab and with
+    its own log, and neither is sent: each waits on its review page, and the Submit the person presses sends that one
+    alone. With 1, one after the other, in order, as the desk always did."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    passes = _passes(monkeypatch)
+    a_url, b_url = "https://careers.acme-fab.example/apply/1", "https://careers.other-litho.example/apply/2"
+    pages = {a_url: _form("Acme Fab"), b_url: _form("Other Litho")}
+    posts: list = []
+    a = srv.add_job(url=a_url, title="Field Service Engineer", company="Acme Fab")["job"]
+    b = srv.add_job(url=b_url, title="Litho Technician", company="Other Litho")["job"]
+    applier = Applier(srv)
+    applier.jobs_at_once = at_once
+
+    async def go():
+        await _serve_slowly(srv, pages, posts, 1.0)
+        applier.start()
+        try:
+            first, second = applier.enqueue(a["id"]), applier.enqueue(b["id"])
+            both = False
+            deadline = time.monotonic() + 60
+            while not first.status == second.status == "ready":
+                both = both or first.status == second.status == "running"
+                assert time.monotonic() < deadline, (state(first)(), state(second)())
+                await asyncio.sleep(0.05)
+            sent_before = list(posts)
+            applier.submit_now(a["id"])
+            await until(lambda: first.status == "submitted", about=state(first))
+            return first, second, both, sent_before
+        finally:
+            await applier.stop()
+
+    first, second, both, sent_before = run(go())
+    assert sent_before == [] and posts == ["https://careers.acme-fab.example/posted"], posts
+    assert second.status == "ready"
+    assert both == (at_once == 2) and _overlap(passes, a["id"], b["id"]) == (at_once == 2), passes
+    if at_once == 1:
+        assert [p[0] for p in passes] == [a["id"], b["id"]]
+    assert first.page is not second.page
+    assert first.log[0] == f"opened {a_url}" and second.log[0] == f"opened {b_url}", (first.log, second.log)
+    assert not any("other-litho" in line for line in first.log) and not any("acme-fab" in line for line in second.log)
+    assert first.url.startswith("https://careers.acme-fab.example/") and second.url.startswith(b_url)
+
+
+def test_two_jobs_on_one_site_are_never_filled_at_once(srv, monkeypatch):
+    """Sign-ins, accounts, password resets and emailed codes are a site's own, and two jobs at once on one site would
+    collide. With three at once, two jobs at one employer, and two of different employers on one host, are each filled
+    one after the other, while a job elsewhere goes alongside them: the queue isn't held up behind the one waiting."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    passes = _passes(monkeypatch)
+    urls = {"a1": ("https://careers.acme-fab.example/apply/1", "Acme Fab"),
+            "a2": ("https://careers.acme-fab.example/apply/2", "Acme Fab"),
+            "b1": ("https://jobs.shared-board.example/litho/3", "Other Litho"),
+            "b2": ("https://jobs.shared-board.example/etch/4", "Example Etch"),
+            "c": ("https://careers.example-metrology.example/apply/5", "Example Metrology")}
+    pages = {url: _form(company) for url, company in urls.values()}
+    jobs = {k: srv.add_job(url=url, title="Technician", company=company)["job"]["id"] for k, (url, company) in urls.items()}
+    applier = Applier(srv)
+    applier.jobs_at_once = 3
+
+    async def go():
+        await _serve_slowly(srv, pages, [], 1.0)
+        applier.start()
+        try:
+            runs = [applier.enqueue(jobs[k]) for k in ("a1", "a2", "b1", "b2", "c")]
+            await until(lambda: all(r.status == "ready" for r in runs), timeout=90,
+                        about=lambda: [state(r)() for r in runs])
+        finally:
+            await applier.stop()
+
+    run(go())
+    assert not _overlap(passes, jobs["a1"], jobs["a2"]) and not _overlap(passes, jobs["b1"], jobs["b2"]), passes
+    assert _overlap(passes, jobs["a1"], jobs["b1"]) and _overlap(passes, jobs["a1"], jobs["c"]), passes
+
+
+def test_a_job_systems_tenant_and_an_employers_own_site_each_take_one_job_at_a_time(srv):
+    """Two jobs on one Workday tenant (intel.wd1) never go at once, whoever's jobs they are; another tenant (amkor.wd5)
+    may. An employer's own site is one whatever its host (careers. and jobs.). And a job that comes to a site another
+    job under way got to first waits for it there, unless it's in a step that may email the person (the other may be
+    waiting on that)."""
+    from types import SimpleNamespace
+
+    def add(url, company):
+        return srv.add_job(url=url, title="Technician", company=company)["job"]["id"]
+
+    intel = add("https://intel.wd1.myworkdayjobs.com/External/job/Chandler/Technician_1", "Intel")
+    altera = add("https://intel.wd1.myworkdayjobs.com/Altera/job/San-Jose/Technician_2", "Altera")
+    amkor = add("https://amkor.wd5.myworkdayjobs.com/Amkor/job/Tempe/Technician_3", "Amkor")
+    own = add("https://careers.acme-fab.example/job/4", "Acme Fab")
+    own_too = add("https://jobs.acme-fab.example/job/5", "Acme Wafer")
+    applier = Applier(srv)
+    for job_id in (intel, altera, amkor, own, own_too):
+        job = srv.tracker().get(job_id)
+        applier.runs[job_id] = Run(job_id, "Technician", job["company"], status="queued")
+    applier._slots = {intel: object(), own: object()}  # under way
+    assert not applier._site_free(altera) and not applier._site_free(own_too)
+    assert applier._site_free(amkor)
+    applier._slots = {amkor: object()}
+    assert applier._site_free(intel) and applier._site_free(altera) and applier._site_free(own)
+
+    # come to one tenant in the middle of their passes: the first there goes on, the other waits for it
+    first, second = applier.runs[amkor], applier.runs[own]
+    applier._slots = {amkor: object(), own: object()}
+    first.began, second.began = 1, 2
+    first.page = SimpleNamespace(url="https://intel.wd1.myworkdayjobs.com/External/login", is_closed=lambda: False)
+    assert applier._site_holder(first) is None
+    second.page = SimpleNamespace(url="https://intel.wd1.myworkdayjobs.com/Altera/login", is_closed=lambda: False)
+    assert applier._site_holder(second) is first and applier._site_holder(first) is None
+    second.inbox = True  # (signing in: never held there, as the other may be waiting for it)
+    assert applier._site_holder(second) is None
+
+
+def test_a_wait_on_an_emailed_code_holds_another_jobs_sign_in_until_its_code_is_in(srv, monkeypatch):
+    """The inbox is one: a code meant for one job is never another's. While one job waits on its emailed code, a job
+    filled alongside it comes to its sign-in and waits there (nothing pressed, nothing emailed), and goes on once the
+    code from the inbox is in."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "MAIL_POLL_SECONDS", 0)
+    monkeypatch.setenv("JOB_APPLY_SECRET_EMAIL_PASSWORD", "an-app-password")
+    monkeypatch.setattr(pipeline.mailbox, "imap_host", lambda address: "imap.example.com")
+    sent = {"yet": False}
+
+    def inbox(address, password, since, senders, want, allowed_link, before=None, look_back=None, others=None):
+        return pipeline.mailbox.Found("code", "123456", "careers.example.com", time.time()) if sent["yet"] else None
+
+    monkeypatch.setattr(pipeline.mailbox, "search", inbox)
+    b_url = "https://careers.other-litho.example/apply/2"
+    waiting = srv.add_job(url=fixture_url("site/verify-email.html") + "?code", title="FSE", company="Example Fab")["job"]
+    signing_in = srv.add_job(url=b_url, title="Litho Technician", company="Other Litho")["job"]
+    applier = Applier(srv)
+    applier.jobs_at_once = 2
+    paused: list = []
+    real_pause = Applier._pause
+
+    def pause(self, r, need, reason, questions=None, seen=None):
+        other = self.runs.get(waiting["id"])
+        code_in = other is not None and any(line.startswith("entered the code from your email") for line in other.log)
+        paused.append((r.job_id, need, code_in))
+        return real_pause(self, r, need, reason, questions, seen)
+
+    monkeypatch.setattr(Applier, "_pause", pause)
+
+    async def go():
+        # (its sign-in page comes once the other job is waiting on its code)
+        holds = {b_url: lambda: waiting["id"] in applier.runs and applier.runs[waiting["id"]].need == "email_code"}
+        await _serve_slowly(srv, {b_url: _SIGN_IN.format("Other Litho")}, [], 0.5, holds)
+        applier.start()
+        try:
+            a, b = applier.enqueue(waiting["id"]), applier.enqueue(signing_in["id"])
+            await until(lambda: a.status == "needs_you" and a.need == "email_code", about=state(a))
+            await until(lambda: any(line.startswith("waiting: ") for line in b.log), about=state(b))
+            await asyncio.sleep(1.5)
+            held = (b.status, b.need)
+            sent["yet"] = True  # the code comes
+            await until(lambda: b.status == "needs_you", timeout=30, about=state(b))
+            return a, b, held
+        finally:
+            await applier.stop()
+
+    a, b, held = run(go())
+    assert held == ("running", ""), held
+    assert "entered the code from your email (sent from careers.example.com)" in a.log, a.log
+    assert b.need == "sign_in" and ("waiting: Example Fab is signing in or waiting on an email; this one carries on "
+                                    "after that") in b.log, b.log
+    b_paused = [p for p in paused if p[0] == signing_in["id"]]
+    assert b_paused and all(code_in for _, _, code_in in b_paused), paused
+
+
+def test_only_one_job_under_way_is_in_a_step_that_may_email_the_person(srv, monkeypatch):
+    """A job under way signing in, making an account or waiting on an email holds the inbox: another job coming to its
+    own sign-in waits (and says so) until that one is into its application, then goes on."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    holder_job = srv.add_job(url="https://careers.acme-fab.example/apply/1", title="FSE", company="Acme Fab")["job"]
+    job = srv.add_job(url=fixture_url("site/posting.html"), title="Technician", company="Example Fab")["job"]
+    applier = Applier(srv)
+    applier.jobs_at_once = 2
+
+    async def go():
+        holder = applier.runs[holder_job["id"]] = Run(holder_job["id"], "FSE", "Acme Fab", status="running")
+        holder.inbox = True  # signing in, in its own tab
+        holder_task = asyncio.ensure_future(asyncio.sleep(3600))
+        applier._slots[holder.job_id] = holder_task
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: any(line.startswith("waiting: ") for line in r.log), about=state(r))
+            await asyncio.sleep(1.5)
+            held = (r.status, r.need, r.page.url.rsplit("/", 1)[-1])
+            holder.inbox, holder.status = False, "ready"  # into its application, and on to its review page
+            await until(lambda: r.status == "needs_you", timeout=30, about=state(r))
+            return r, held
+        finally:
+            holder_task.cancel()
+            await applier.stop()
+
+    r, held = run(go())
+    assert held == ("running", "", "signin.html"), held
+    assert "waiting: Acme Fab is signing in or waiting on an email; this one carries on after that" in r.log, r.log
+    assert r.need == "sign_in" and r.blocking, (r.need, r.reason)
+
+
+def test_the_inbox_isnt_read_for_a_job_left_waiting_while_another_job_is_signing_in(srv, monkeypatch):
+    """A job left waiting on its emailed code is looked for in the inbox between steps; while another job under way is
+    signing in (or making an account), its site may be emailing a code this moment, before that job's pause says from
+    when its mail is its own: the waiting job's look waits till it's past that."""
+    monkeypatch.setattr(pipeline, "MAIL_POLL_SECONDS", 0)
+    monkeypatch.setenv("JOB_APPLY_SECRET_EMAIL_PASSWORD", "an-app-password")
+    monkeypatch.setattr(pipeline.mailbox, "imap_host", lambda address: "imap.example.com")
+    looked: list = []
+
+    def inbox(address, password, since, senders, want, allowed_link, before=None, look_back=None, others=None):
+        looked.append(want)
+        return None
+
+    monkeypatch.setattr(pipeline.mailbox, "search", inbox)
+    left_job = srv.add_job(url=fixture_url("site/verify-email.html") + "?code", title="FSE", company="Example Fab")["job"]
+    signing_job = srv.add_job(url="https://careers.acme-fab.example/apply/1", title="FSE", company="Acme Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        left = applier.runs[left_job["id"]] = Run(left_job["id"], "FSE", "Example Fab", status="needs_you",
+                                                  need="email_code", left=True, paused_at=time.time())
+        await srv.browser.new_tab()
+        await srv.browser.goto(fixture_url("site/verify-email.html") + "?code")
+        left.page = srv.browser.current_tab
+        signing = applier.runs[signing_job["id"]] = Run(signing_job["id"], "FSE", "Acme Fab", status="running")
+        signing.inbox = True
+        applier._slots[signing.job_id] = object()
+        await applier._check_mail(left)
+        held = (list(looked), left.mail_last)
+        signing.inbox = False  # into its application
+        await applier._check_mail(left)
+        return held
+
+    held = run(go())
+    assert held == ([], "not looked: another job is signing in or waiting on an email"), held
+    assert looked == ["code"]
+
+
+def test_in_one_of_the_desks_rounds_the_jobs_under_way_go_on_and_none_comes_to_the_front(srv):
+    """The person at a job's tab in one of the desk's rounds (a bot check, a review page): a job under way goes on in its
+    own tab (the review of jobs at once: held at its next step, it kept its place, and one in a step that may email the
+    person could miss its code), and its tab is never brought up over the round's, which is the one kept in front;
+    once the round is over, a stop of its that waited is brought up."""
+    from types import SimpleNamespace
+
+    fronted: list = []
+
+    def tab(name):
+        async def front():
+            fronted.append(name)
+        return SimpleNamespace(is_closed=lambda: False, bring_to_front=front, url=f"https://{name}.example/apply")
+
+    jobs = [srv.add_job(url=f"https://{n}.example/job", title="FSE", company=n.title())["job"]["id"]
+            for n in ("acme", "litho")]
+    applier = Applier(srv)
+    in_round = applier.runs[jobs[0]] = Run(jobs[0], "FSE", "Acme", status="ready", page=tab("acme"))
+    under_way = applier.runs[jobs[1]] = Run(jobs[1], "FSE", "Litho", status="running", page=tab("litho"))
+    applier._slots[under_way.job_id] = object()
+    under_way.inbox = True  # (its site may have just emailed it a code)
+    applier.start_round(in_round.job_id)
+
+    async def go():
+        waited = await asyncio.wait_for(applier._hold_for_site(under_way), 2)
+        under_way.inbox = False
+        return waited, await asyncio.wait_for(applier._hold_for_site(under_way), 2)
+
+    assert run(go()) == (0.0, 0.0) and not any(line.startswith("waiting") for line in under_way.log), under_way.log
+    assert applier._front_tab() is in_round.page
+    run(applier._bring_forward(under_way))  # (it stops for the person meanwhile)
+    applier._pause(under_way, "stuck", "The page didn't move on.")
+    applier._slots.clear()  # (its pass over)
+    assert fronted == [] and under_way.job_id in applier._behind
+    applier.end_round()
+    assert applier._front_tab() is None
+    run(applier._front_next())
+    assert fronted == ["litho"] and not applier._behind
+
+
+def test_a_pause_is_still_watched_when_every_job_under_way_waits_on_it(srv):
+    """Jobs at once lowered (3 to 1, say) while jobs under way wait on the person's sign-in in another tab: the queue is
+    as full as it may be, but the sign-in is watched still (or they'd wait on it for ever), and the job it held goes on
+    once the person's past it; nothing else begins beside the ones under way."""
+    jobs = [srv.add_job(url=f"https://careers.employer{n}.example/job/{n}", title="FSE", company=f"Employer {n}")["job"]["id"]
+            for n in range(2)]
+    applier = Applier(srv)
+    applier.jobs_at_once = 1
+    waited: list = []
+
+    async def moved_on(r):
+        return True
+
+    async def until_one_is_done():
+        waited.append(True)
+
+    applier._moved_on, applier._until_one_is_done = moved_on, until_one_is_done
+
+    async def go():
+        busy = asyncio.ensure_future(asyncio.sleep(3600))
+        applier.runs[jobs[0]] = Run(jobs[0], "FSE", "Employer 0", status="running")
+        applier._slots[jobs[0]] = busy
+        applier._waiting.add(jobs[0])  # under way, waiting on the sign-in below
+        holder = applier.runs[jobs[1]] = Run(jobs[1], "FSE", "Employer 1", status="running")
+        applier._pause(holder, "sign_in", "Sign in there.")
+        try:
+            await applier._tick()
+            return holder
+        finally:
+            busy.cancel()
+
+    holder = run(go())
+    assert not holder.blocking and holder.status == "queued" and list(applier.tasks) == [("apply", jobs[1])]
+    assert list(applier._slots) == [jobs[0]] and waited  # (nothing begun beside it)
+    applier._waiting.clear()  # working again: the queue waits on it, as ever
+    waited.clear()
+    run(applier._tick())
+    assert waited and list(applier.tasks) == [("apply", jobs[1])]
+
+
+def test_a_submit_the_person_pressed_goes_before_the_jobs_queued_ahead_of_it(srv, monkeypatch):
+    """Filled at once, a Submit the person presses still goes first: the next free place is its, before any job queued
+    ahead of it."""
+    started: list = []
+
+    async def submit(self, r, by_person=True):
+        started.append(("submit", r.job_id))
+
+    async def drive(self, r):
+        started.append(("apply", r.job_id))
+        r.status = "ready"
+
+    monkeypatch.setattr(Applier, "_submit", submit)
+    monkeypatch.setattr(Applier, "_drive", drive)
+    ids = [srv.add_job(url=f"https://careers.employer{n}.example/job/{n}", title="FSE", company=f"Employer {n}")["job"]["id"]
+           for n in range(3)]
+    applier = Applier(srv)
+    applier.jobs_at_once = 2
+
+    async def go():
+        busy = asyncio.ensure_future(asyncio.sleep(3600))
+        applier.runs[ids[0]] = Run(ids[0], "FSE", "Employer 0", status="running")
+        applier._slots[ids[0]] = busy  # one place taken
+        applier.enqueue(ids[1])
+        applier.runs[ids[2]] = Run(ids[2], "FSE", "Employer 2", status="ready")
+        applier.submit_now(ids[2])
+        applier.tasks.rotate(-1)  # (the Submit behind the queued job)
+        assert [t[0] for t in applier.tasks] == ["apply", "submit"]
+        await applier._tick()
+        busy.cancel()
+        await asyncio.sleep(0.1)
+
+    run(go())
+    assert started[0] == ("submit", ids[2]), started
+
+
+def test_a_pause_that_needs_the_person_holds_new_jobs_and_brings_no_other_tab_over_it(srv, monkeypatch):
+    """A sign-in that needs the person holds the queue, as ever: no job starts while they're at it. A job already under
+    way in another tab goes on in it (the review of jobs at once: held, it kept its place), and when it stops for the
+    person too, its tab isn't brought over the sign-in they're at: it comes up once they're done there."""
+    from playwright.async_api import Page
+
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "HANDS_ON_IDLE", 600)
+    fronted: list = []
+    real_front = Page.bring_to_front
+
+    async def bring_to_front(self):
+        fronted.append(self.url.rsplit("/", 1)[-1])
+        await real_front(self)
+
+    monkeypatch.setattr(Page, "bring_to_front", bring_to_front)
+    c_url = "https://careers.example-metrology.example/apply/3"
+    gateway = "<html><head><title>502 Bad Gateway</title></head><body><h1>502 Bad Gateway</h1><hr>nginx</body></html>"
+    signing_in = srv.add_job(url=fixture_url("site/posting.html"), title="FSE", company="Example Fab")["job"]
+    under_way = srv.add_job(url=c_url, title="Metrology Technician", company="Example Metrology")["job"]
+    later = srv.add_job(url=fixture_url("generic_form.html"), title="Technician", company="Example Litho")["job"]
+    applier = Applier(srv)
+    applier.jobs_at_once = 3
+    # (its page comes once the other job holds for the person: its own stop comes as they're at that sign-in)
+    holds = {c_url: lambda: signing_in["id"] in applier.runs and applier.runs[signing_in["id"]].blocking}
+
+    async def go():
+        await _serve_slowly(srv, {c_url: gateway}, [], 0.3, holds)
+        applier.start()
+        try:
+            a, c = applier.enqueue(signing_in["id"]), applier.enqueue(under_way["id"])
+            await until(lambda: a.status == "needs_you" and a.blocking, about=state(a))
+            b = applier.enqueue(later["id"])
+            await until(lambda: c.status == "needs_you", timeout=30, about=state(c))
+            await asyncio.sleep(1.5)
+            held = (b.status, c.need, list(fronted))
+            a.active_at -= 3600  # (no one at work in its tab any more)
+            applier.later(a.job_id)
+            await until(lambda: b.status not in ("queued", "running") and "3" in fronted, timeout=60,
+                        about=lambda: (state(b)(), fronted))
+            return held
+        finally:
+            await applier.stop()
+
+    held = run(go())
+    assert held == ("queued", "stuck", ["signin.html"]), held
+    assert fronted.index("3") > 0, fronted  # (brought up once the person was done at the sign-in)
+
+
+def test_jobs_under_way_finish_their_pass_when_the_queue_is_paused(srv, monkeypatch):
+    """Pause queue with two jobs under way: both finish their pass, as the one did before, and no other starts until
+    Resume queue."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    urls = {"https://careers.acme-fab.example/apply/1": "Acme Fab",
+            "https://careers.other-litho.example/apply/2": "Other Litho",
+            "https://careers.example-metrology.example/apply/3": "Example Metrology"}
+    pages = {url: _form(company) for url, company in urls.items()}
+    jobs = [srv.add_job(url=url, title="Technician", company=company)["job"]["id"] for url, company in urls.items()]
+    applier = Applier(srv)
+    applier.jobs_at_once = 2
+
+    async def go():
+        await _serve_slowly(srv, pages, [], 1.0)
+        applier.start()
+        try:
+            runs = [applier.enqueue(j) for j in jobs]
+            await until(lambda: runs[0].status == runs[1].status == "running", about=lambda: [state(r)() for r in runs])
+            applier.pause_queue()
+            await until(lambda: runs[0].status == runs[1].status == "ready", timeout=60,
+                        about=lambda: [state(r)() for r in runs])
+            await asyncio.sleep(1.5)
+            held = runs[2].status
+            applier.resume_queue()
+            await until(lambda: runs[2].status == "ready", timeout=60, about=state(runs[2]))
+            return held
+        finally:
+            await applier.stop()
+
+    assert run(go()) == "queued"
+
+
+def test_a_job_that_pauses_for_the_persons_hands_behind_another_is_brought_up_after_it(srv):
+    """Filled at once, two jobs can come to a pause that needs the person's hands: the first's tab is brought to the
+    front, the second's isn't (it would come up over the tab they're at), and its turn comes once the first is done:
+    its tab is brought up then, and its wait for them begins then."""
+    from types import SimpleNamespace
+
+    applier = Applier(srv)
+    fronted: list = []
+
+    def tab(name):
+        async def front():
+            fronted.append(name)
+        return SimpleNamespace(is_closed=lambda: False, bring_to_front=front, url=f"https://{name}.example/signin")
+
+    jobs = [srv.add_job(url=f"https://{n}.example/job", title="FSE", company=n.title())["job"]["id"]
+            for n in ("acme", "litho")]
+    a, b = (Run(j, "FSE", c, status="running") for j, c in zip(jobs, ("Acme", "Litho")))
+    applier.runs = {a.job_id: a, b.job_id: b}
+    a.page, b.page = tab("acme"), tab("litho")
+
+    async def not_moved(r):
+        return False
+
+    async def sleep(seconds):
+        pass
+
+    async def go():
+        await applier._bring_forward(a)
+        applier._pause(a, "sign_in", "Sign in there.")
+        await applier._bring_forward(b)  # (b comes to its own sign-in meanwhile)
+        applier._pause(b, "sign_in", "Sign in there.")
+        assert applier._front_tab() is a.page and b.job_id in applier._behind
+        b.active_at -= 3600  # (long before a was done)
+        a.active_at -= 3600
+        applier.later(a.job_id)  # the person is done with a's
+        applier._moved_on, applier._sleep = not_moved, sleep
+        await applier._tick()
+
+    run(go())
+    assert fronted == ["acme", "litho"], fronted
+    assert b.blocking and not b.left and time.time() - b.active_at < 60 and not applier._behind
+
+
+def test_a_new_tab_a_job_opens_never_stays_over_the_tab_the_person_is_at():
+    """A job filled in a tab of its own while the person is at another job's sign-in: a new tab its click opens comes
+    to the front of the browser window, and the desk brings the one the person is at back up over it at once. A tab
+    Claude's tools (or the person) open doesn't."""
+    from job_apply.browser import BrowserSession
+
+    fronted: list = []
+
+    class Tab:
+        context = None
+
+        def __init__(self, name):
+            self.name = name
+
+        def on(self, event, handler):
+            pass
+
+        def is_closed(self):
+            return False
+
+        async def bring_to_front(self):
+            fronted.append(self.name)
+
+    async def go():
+        session = BrowserSession()
+        keep, opener, mine = Tab(name="sign-in"), Tab(name="job"), Tab(name="claude")
+        session._own.page = mine
+        with session.desk_view(7) as view:
+            view.page = opener
+            session.keep_front = lambda: keep
+            session._on_popup(mine, Tab(name="claude's popup"))  # (Claude's tab: left as it is)
+            await asyncio.sleep(0.05)
+            assert fronted == []
+            session._on_popup(opener, Tab(name="the job's popup"))
+            await asyncio.sleep(0.05)
+            assert fronted == ["sign-in"]
+            session.keep_front = lambda: None  # (no one at a job's tab)
+            session._on_popup(opener, Tab(name="another popup"))
+            await asyncio.sleep(0.05)
+        return fronted
+
+    assert asyncio.run(go()) == ["sign-in"]
+
+
+def test_each_job_filled_at_once_has_its_own_view_of_the_browser(srv):
+    """Two jobs filled at once each act in their own tab: what one reads (its boxes, by id) and the tab it's on are its
+    own, never the other's, however their steps interleave; and Claude's tools keep their own tab meanwhile."""
+    async def go():
+        claude = await srv.browser.new_tab()
+        await srv.browser.goto(fixture_url("site/step1.html"))
+
+        async def job(job_id, page_name, before, after):
+            with srv.browser.desk_view(job_id):
+                await srv.browser.new_tab()
+                srv.browser.current_job_id = job_id
+                await srv.browser.goto(fixture_url(page_name))
+                await asyncio.sleep(before)
+                data = await srv.browser.inspect(include_dropdown_options=False)
+                await asyncio.sleep(after)  # (the other job reads its own page meanwhile)
+                kept = [f["label"] for f in srv.browser._fields.values()]
+                return srv.browser.current_tab, data["url"], kept == [f["label"] for f in data["fields"]], \
+                    srv.browser.current_job_id
+
+        one, two = await asyncio.gather(job(1, "generic_form.html", 0.1, 1.0), job(2, "site/signin.html", 0.5, 0.1))
+        return claude, one, two, srv.browser.current_tab
+
+    claude, one, two, after = run(go())
+    assert one[0] is not two[0] and claude not in (one[0], two[0])
+    assert one[1].endswith("generic_form.html") and two[1].endswith("signin.html")
+    assert one[2] and two[2] and (one[3], two[3]) == (1, 2)
+    assert after is claude  # Claude's tools are on their own tab still
+
+
+def test_background_tabs_are_launched_never_to_be_throttled(srv, monkeypatch):
+    """Jobs filled at once work in tabs behind the one in front: the browser is launched so those run as the one in
+    front does (Playwright's own defaults have these too, and its focus emulation keeps each page counted as shown: a
+    headed window, a tab behind another, ran its timers and animation frames on, and a click, typing, a file chooser
+    and a screenshot all worked there). Never a --disable-features of its own, which would drop Playwright's."""
+    from job_apply import browser as browser_module
+
+    launched: list = []
+
+    class Chromium:
+        async def launch_persistent_context(self, **kw):
+            launched.append(kw)
+            raise browser_module.PlaywrightError("BrowserType.launch_persistent_context: Executable doesn't exist")
+
+    class Playwright:
+        chromium = Chromium()
+
+        async def stop(self):
+            pass
+
+    class Starter:
+        async def start(self):
+            return Playwright()
+
+    monkeypatch.setattr(browser_module, "async_playwright", lambda: Starter())
+    with pytest.raises(browser_module.BrowserUnavailable):
+        run(browser_module.BrowserSession()._launch())
+    assert launched and all(set(browser_module.BACKGROUND_TABS_RUN) <= set(kw["args"]) for kw in launched)
+    assert not any(a.startswith("--disable-features") for kw in launched for a in kw["args"])
+    assert all("ignore_default_args" not in kw for kw in launched)
+
+
+# ------------------------------------------------------------------ jobs at once: the review of f14a004
+
+def _steps(company: str, base: str) -> dict:
+    """A three-step application at `base` (each step's Next a POST to the next), its review page last."""
+    return {base: _form(company, action=f"{urlparse(base).path}/2", button="Next"),
+            ("POST", f"{base}/2"): _form(company, action=f"{urlparse(base).path}/3", button="Next"),
+            ("POST", f"{base}/3"): _form(company)}
+
+
+@pytest.mark.parametrize("at_once", [1, 2])
+def test_a_submit_pressed_in_a_review_round_goes_while_jobs_are_under_way(srv, monkeypatch, at_once):
+    """The review of jobs at once (HIGH): the person presses "Submit this one" on a review page in the desk's round, and
+    the page brings up the next one at once, so the round goes on. Jobs under way were held at their next step for the
+    whole round, keeping their places, and the Submit waited for one until the round ended. Now they go on in their
+    own tabs; with two or more at once the Submit goes beside them at once, and with one, as soon as the pass under way
+    is over, as it always did."""
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    started: dict = {}
+    under_urls = [f"https://careers.employer{n}.example/apply/{n}" for n in range(at_once)]
+
+    async def submit(self, r, by_person=True):
+        started[r.job_id] = (time.monotonic(), [self.runs[j].status for j in under])
+        r.status = "submitted"
+
+    monkeypatch.setattr(Applier, "_submit", submit)
+    pages: dict = {}
+    for n, url in enumerate(under_urls):
+        pages.update(_steps(f"Employer {n}", url))
+    under = [srv.add_job(url=url, title="Technician", company=f"Employer {n}")["job"]["id"]
+             for n, url in enumerate(under_urls)]
+    reviewed = [srv.add_job(url=f"https://careers.reviewed{n}.example/job/{n}", title="FSE",
+                            company=f"Reviewed {n}")["job"]["id"] for n in range(2)]
+    applier = Applier(srv)
+    applier.jobs_at_once = at_once
+
+    async def go():
+        await _serve_slowly(srv, pages, [], 1.0)
+        tab = SimpleNamespace(is_closed=lambda: True, url="")
+        r1, r2 = (applier.runs.setdefault(j, Run(j, "FSE", f"Reviewed {n}", status="ready", page=tab))
+                  for n, j in enumerate(reviewed))
+        applier.start()
+        try:
+            runs = [applier.enqueue(j) for j in under]
+            await until(lambda: all(r.status == "running" for r in runs), about=lambda: [state(r)() for r in runs])
+            applier.start_round(r1.job_id)  # the person reviews the first
+            t0 = time.monotonic()
+            applier.submit_now(r1.job_id)  # "Submit this one"
+            await asyncio.sleep(0.3)
+            applier.start_round(r2.job_id)  # the page brings the next one up at once: the round goes on
+            await until(lambda: r1.job_id in started, timeout=25, about=lambda: [state(r)() for r in runs])
+            in_round = applier._in_round()
+            await until(lambda: all(r.status == "ready" for r in runs), timeout=40,
+                        about=lambda: [state(r)() for r in runs])
+            return t0, in_round, runs
+        finally:
+            await applier.stop()
+
+    t0, in_round, runs = run(go())
+    when, statuses = started[reviewed[0]]
+    assert in_round, "the round ended before the Submit went"
+    if at_once > 1:
+        assert when - t0 < 3 and all(s == "running" for s in statuses), (when - t0, statuses)  # beside them, at once
+    else:
+        assert statuses == ["ready"], statuses  # as soon as the pass under way was over
+    assert not any(line.startswith("waiting") for r in runs for line in r.log), [r.log for r in runs]
+
+
+def test_a_code_sent_as_a_job_took_the_inbox_is_its_own_not_an_earlier_jobs(srv, monkeypatch):
+    """The review of jobs at once (HIGH): job B took the inbox and pressed Next (two Oracle tenants mail their codes
+    from one address), and paused on its code a while later. Its own look went back only from its pause, so it missed
+    its code, and an earlier job waiting on the same sender took it as its own: a code typed into another job's form.
+    A job's mail begins as its step that may email did: the earlier job's mail ends there. Its own is looked for from
+    shortly before its pause still, as on its own: what came between is either job's (the other's Resend, pressed in
+    its tab meanwhile), and left for the person (the final check of jobs at once)."""
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(pipeline, "MAIL_POLL_SECONDS", 0)
+    monkeypatch.setenv("JOB_APPLY_SECRET_EMAIL_PASSWORD", "an-app-password")
+    monkeypatch.setattr(pipeline.mailbox, "imap_host", lambda address: "imap.example.com")
+    now = time.time()
+    inbox = [("oracle.com", "111111", now - 290), ("oracle.com", "222222", now - 100)]  # the earlier job's, B's
+
+    def search(address, password, since, senders, want, allowed_link, before=None, look_back=120, others=None):
+        got = [m for m in inbox if m[2] >= since - look_back and (before is None or m[2] < before)]
+        m = max(got, key=lambda m: m[2]) if got else None
+        return pipeline.mailbox.Found("code", m[1], m[0], m[2]) if m else None
+
+    monkeypatch.setattr(pipeline.mailbox, "search", search)
+    monkeypatch.setattr(pipeline, "_another_employers_mail", lambda *a, **k: None)
+    typed: list = []
+
+    async def enter(self, r, found):
+        typed.append((r.company, found.value))
+        return True
+
+    monkeypatch.setattr(Applier, "_enter_code", enter)
+    page = SimpleNamespace(is_closed=lambda: False, url="https://x.example/")
+
+    async def peek(tab, max_chars=4000):
+        return {"url": tab.url, "fields": [{"kind": "text", "label": "Verification code", "id": "c"}]}, ""
+
+    monkeypatch.setattr(srv.browser, "peek", peek)
+    earlier_job = srv.add_job(url="https://eaaa.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/A/job/1",
+                              title="FSE", company="Alpha")["job"]["id"]
+    later_job = srv.add_job(url="https://ebbb.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/B/job/2",
+                            title="FSE", company="Beta")["job"]["id"]
+    applier = Applier(srv)
+    earlier = applier.runs[earlier_job] = Run(earlier_job, "FSE", "Alpha", status="needs_you", need="email_code",
+                                              left=True, paused_at=now - 300, page=page)
+    earlier.url = "https://eaaa.fa.us2.oraclecloud.com/x"
+    b = applier.runs[later_job] = Run(later_job, "FSE", "Beta", status="needs_you", need="email_code", blocking=True,
+                                      paused_at=now - 10, page=page)
+    b.url = "https://ebbb.fa.us2.oraclecloud.com/x"
+    b.inbox_since = now - 120  # it took the inbox, and its Next sent the code; it paused well after
+    pipeline._take_code(("oracle.com", "111111", now - 290), 999)  # (the earlier job's own code, used up already)
+    run(applier._check_mail(b))
+    run(applier._check_mail(earlier))
+    assert typed == [], (typed, b.mail_last, earlier.mail_last)  # (in neither job's form)
+    inbox.append(("oracle.com", "333333", now - 5))  # B's code sent again (its Resend), as it waits on it
+    run(applier._check_mail(earlier))
+    run(applier._check_mail(b))
+    assert typed == [("Beta", "333333")], (typed, b.mail_last, earlier.mail_last)
+
+
+def test_a_password_reset_isnt_called_overdue_while_its_mail_couldnt_be_read(srv, monkeypatch):
+    """The review of jobs at once (MEDIUM): a job waiting on its password reset email, with the inbox watched, wasn't
+    looked for while another job under way was signing in; yet in the same pass its wait was called out ("no reset
+    email: most likely no account there") and it went off to make one. Its wait is over only once a look made after it
+    has found nothing, and the time its looks were held off doesn't count; nor does it for the inbox's own window."""
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(pipeline, "MAIL_POLL_SECONDS", 0)
+    monkeypatch.setenv("JOB_APPLY_SECRET_EMAIL_PASSWORD", "an-app-password")
+    monkeypatch.setattr(pipeline.mailbox, "imap_host", lambda address: "imap.example.com")
+    looked: list = []
+    monkeypatch.setattr(pipeline.mailbox, "search", lambda *a, **k: looked.append(1))
+    monkeypatch.setattr(pipeline, "_another_employers_mail", lambda *a, **k: None)
+
+    async def peek(tab, max_chars=4000):
+        return {"url": tab.url, "fields": []}, ""
+
+    monkeypatch.setattr(srv.browser, "peek", peek)
+    monkeypatch.setattr(srv.browser, "lost", lambda tab: "")
+    tab = SimpleNamespace(is_closed=lambda: False, url="https://c.example/reset")
+    jobs = [srv.add_job(url=f"https://{n}.example/job", title="FSE", company=n.title())["job"]["id"] for n in ("c", "b")]
+    applier = Applier(srv)
+
+    async def not_past(r):
+        return False
+
+    applier._past_pause = not_past
+    c = applier.runs[jobs[0]] = Run(jobs[0], "FSE", "C", status="needs_you", need="email_code", left=True, page=tab,
+                                    paused_at=time.time() - pipeline.RESET_MAIL_WAIT - 5)
+    c.resetting, c.reset_waited = True, True
+    b = applier.runs[jobs[1]] = Run(jobs[1], "FSE", "B", status="running", page=tab)
+    b.inbox = True  # signing in, in its own tab
+    applier._slots[b.job_id] = object()
+    run(applier._pick_up_left())
+    assert looked == [] and not c.reset_no_mail and c.status == "needs_you", (c.mail_last, c.reset_no_mail)
+    c.mail_held_at -= 600  # (ten minutes of it)
+    assert pipeline._mail_waited(c) < pipeline.RESET_MAIL_WAIT
+    b.inbox = False  # into its application: C's mail is read again, its wait goes on from where it was
+    run(applier._pick_up_left())
+    assert looked == [1] and not c.reset_no_mail and c.mail_held >= 600
+    c.paused_at -= pipeline.RESET_MAIL_WAIT + 600  # (the wait's own time up: the next look that finds nothing ends it)
+    run(applier._pick_up_left())
+    assert looked == [1, 1] and c.reset_no_mail and c.status == "queued", (c.status, c.log[-2:])
+
+
+def test_a_look_in_the_inbox_begun_before_another_job_took_it_isnt_used(srv, monkeypatch):
+    """The review of jobs at once (MEDIUM): between the check that no other job is in an email step and the search
+    itself come a look at the tab, the employer lists and the login, seconds in all; a job that took the inbox meanwhile
+    may have had a code sent that this look finds. What it found isn't used: it's looked for again later."""
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(pipeline, "MAIL_POLL_SECONDS", 0)
+    monkeypatch.setenv("JOB_APPLY_SECRET_EMAIL_PASSWORD", "an-app-password")
+    monkeypatch.setattr(pipeline.mailbox, "imap_host", lambda address: "imap.example.com")
+    monkeypatch.setattr(pipeline, "_another_employers_mail", lambda *a, **k: None)
+    applier = Applier(srv)
+
+    def search(*args, **kwargs):
+        applier._inbox_gen += 1  # (another job takes the inbox as the inbox is read)
+        return pipeline.mailbox.Found("code", "333333", "oracle.com", time.time())
+
+    monkeypatch.setattr(pipeline.mailbox, "search", search)
+    typed: list = []
+
+    async def enter(self, r, found):
+        typed.append(found.value)
+        return True
+
+    monkeypatch.setattr(Applier, "_enter_code", enter)
+
+    async def peek(tab, max_chars=4000):
+        return {"url": tab.url, "fields": [{"kind": "text", "label": "Verification code", "id": "c"}]}, ""
+
+    monkeypatch.setattr(srv.browser, "peek", peek)
+    job = srv.add_job(url="https://eaaa.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/A/job/1",
+                      title="FSE", company="Alpha")["job"]["id"]
+    r = applier.runs[job] = Run(job, "FSE", "Alpha", status="needs_you", need="email_code", blocking=True,
+                                paused_at=time.time(), page=SimpleNamespace(is_closed=lambda: False, url="https://x/"))
+    run(applier._check_mail(r))
+    assert typed == [] and not r.mail_done and r.mail_last.startswith("not used"), r.mail_last
+
+
+def test_a_job_on_a_system_that_emails_codes_holds_the_inbox_from_its_start(srv, monkeypatch):
+    """The review of jobs at once (MEDIUM): "one email step at a time" rested on the desk knowing each step that may
+    send mail, and some do unlooked for (Workday's sign-in step drawn without its buttons, Oracle's email step with a
+    second box). A job on a job system that emails codes holds the inbox from the start of its pass until its
+    application's first form: it doesn't begin while another job is in an email step. Others go as before."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    began: dict = {}
+
+    async def drive(self, r):
+        began[r.job_id] = (r.inbox, time.monotonic())
+        r.status = "ready"
+
+    monkeypatch.setattr(Applier, "_drive", drive)
+    workday = srv.add_job(url="https://acme.wd1.myworkdayjobs.com/External/job/Chandler/Technician_1",
+                          title="Technician", company="Acme")["job"]["id"]
+    own_site = srv.add_job(url="https://careers.example-litho.example/job/2", title="Technician",
+                           company="Example Litho")["job"]["id"]
+    holder_job = srv.add_job(url="https://careers.acme-fab.example/apply/1", title="FSE", company="Acme Fab")["job"]["id"]
+    applier = Applier(srv)
+    applier.jobs_at_once = 3
+
+    async def go():
+        holder = applier.runs[holder_job] = Run(holder_job, "FSE", "Acme Fab", status="running")
+        holder.inbox = True  # signing in, in its own tab
+        busy = asyncio.ensure_future(asyncio.sleep(3600))
+        applier._slots[holder_job] = busy
+        applier.start()
+        try:
+            w = applier.enqueue(workday)
+            applier.enqueue(own_site)
+            await until(lambda: own_site in began)
+            await asyncio.sleep(1)
+            held = (workday in began, list(w.log))
+            holder.inbox = False  # into its application
+            await until(lambda: workday in began)
+            return held
+        finally:
+            busy.cancel()
+            await applier.stop()
+
+    held = run(go())
+    assert held[0] is False and "waiting: Acme Fab is signing in or waiting on an email; this one carries on after " \
+        "that" in held[1], held
+    assert began[workday][0] is True and began[own_site][0] is False, began
+
+
+def test_a_submit_the_person_pressed_goes_beside_another_job_at_its_site(srv):
+    """The review of jobs at once (LOW): a Submit the person pressed waited for any job under way at its employer's
+    site, for that job's whole pass, though it only presses Submit in its own tab. It goes, unless the job there is
+    in an email step on the very host its tab is on."""
+    from types import SimpleNamespace
+
+    def tab(url):
+        return SimpleNamespace(is_closed=lambda: False, url=url)
+
+    jobs = [srv.add_job(url=f"https://acme.wd1.myworkdayjobs.com/External/job/{n}", title="FSE",
+                        company="Acme")["job"]["id"] for n in range(2)]
+    applier = Applier(srv)
+    ready = applier.runs[jobs[0]] = Run(jobs[0], "FSE", "Acme", status="ready",
+                                        page=tab("https://acme.wd1.myworkdayjobs.com/External/review"))
+    other = applier.runs[jobs[1]] = Run(jobs[1], "FSE", "Acme", status="running",
+                                        page=tab("https://acme.wd1.myworkdayjobs.com/External/job/1/apply"))
+    applier._slots[other.job_id] = object()
+    assert not applier._site_free(ready.job_id)  # (a new pass of it would wait, as ever)
+    assert applier._submit_free(ready.job_id)
+    other.inbox = True  # signing in there
+    assert not applier._submit_free(ready.job_id)
+    other.page = tab("https://login.example-idp.example/signin")  # (elsewhere)
+    assert applier._submit_free(ready.job_id)
+
+
+def test_the_queue_never_looks_at_a_tab_whose_pass_is_still_saving_its_stop(srv, monkeypatch):
+    """The review of jobs at once (LOW): a job paused for its code is still in its pass while the page it stopped on is
+    saved in its tab; the queue looked at that tab meanwhile, and could have typed the code from the inbox into it as
+    it was saved. A job's tab is looked at once its pass is over."""
+    from types import SimpleNamespace
+
+    applier = Applier(srv)
+    looked: list = []
+
+    async def moved_on(r):
+        looked.append(("moved", r.job_id))
+        return False
+
+    async def check_mail(r):
+        looked.append(("mail", r.job_id))
+
+    async def sleep(seconds):
+        pass
+
+    applier._moved_on, applier._check_mail_safely, applier._sleep = moved_on, check_mail, sleep
+    monkeypatch.setattr(srv.browser, "lost", lambda tab: "")
+    jobs = [srv.add_job(url=f"https://{n}.example/job", title="FSE", company=n.title())["job"]["id"] for n in ("a", "b")]
+    tab = SimpleNamespace(is_closed=lambda: False, url="https://a.example/code")
+    holder = applier.runs[jobs[0]] = Run(jobs[0], "FSE", "A", status="running", page=tab)
+    applier._pause(holder, "email_code", "The site emailed you a code.")
+    left = applier.runs[jobs[1]] = Run(jobs[1], "FSE", "B", status="running", page=tab)
+    applier._pause(left, "email_code", "The site emailed you a code.")
+    left.blocking, left.left = False, True
+    applier._slots = {holder.job_id: object(), left.job_id: object()}  # (both still saving their stops)
+    applier.jobs_at_once = 3
+    run(applier._tick())
+    assert looked == [], looked
+    applier._slots.clear()
+    run(applier._tick())
+    assert ("mail", holder.job_id) in looked and ("moved", holder.job_id) in looked, looked
+
+
+def test_a_stop_isnt_brought_over_a_sign_in_the_person_is_still_at_after_the_queue_went_on(srv):
+    """The review of jobs at once (LOW): a sign-in the queue went on without (Later, or five idle minutes), that the
+    person is at work in again: another job's stop (a bot check, a stuck page) brought its tab over it as they typed.
+    It comes up once they've left that tab be."""
+    from types import SimpleNamespace
+
+    fronted: list = []
+
+    def tab(name):
+        async def front():
+            fronted.append(name)
+        return SimpleNamespace(is_closed=lambda: False, bring_to_front=front, url=f"https://{name}.example/signin")
+
+    jobs = [srv.add_job(url=f"https://{n}.example/job", title="FSE", company=n.title())["job"]["id"] for n in ("a", "b")]
+    applier = Applier(srv)
+    signing = applier.runs[jobs[0]] = Run(jobs[0], "FSE", "A", status="running", page=tab("a"))
+    applier._pause(signing, "sign_in", "Sign in there.")
+    applier.later(signing.job_id)  # the queue went on without it; the person is at it still
+    signing.paused_at -= 30
+    applier._note_activity(signing, {"url": signing.page.url, "fields": [{"id": "email", "value": ""}]})
+    applier._note_activity(signing, {"url": signing.page.url, "fields": [{"id": "email", "value": "a@"}]})  # typing
+    other = applier.runs[jobs[1]] = Run(jobs[1], "FSE", "B", status="running", page=tab("b"))
+    run(applier._bring_forward(other))
+    applier._pause(other, "bot_check", "A bot check.")
+    assert fronted == [] and applier._front_tab() is signing.page
+    signing.active_at -= 3600  # nothing done in its tab for an hour
+    run(applier._front_next())
+    assert fronted == ["b"]
+
+
+def test_a_saved_drafts_changes_stay_its_own_with_another_job_filled_alongside(srv, monkeypatch):
+    """Two at once, one of them a saved draft (Workday's "Continue Application") whose answers the desk set right: what
+    it changed (its card's lines, its hold on Submit for me, the record kept in its folder) is that job's alone; the
+    job filled alongside it has none of it."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 1)
+    draft = srv.add_job(url=fixture_url("site/workday-continue-posting.html"), title="Equipment Technician",
+                        company="Example Fab")["job"]
+    other = srv.add_job(url=fixture_url("generic_form.html"), title="Technician", company="Example Litho")["job"]
+    applier = Applier(srv)
+    applier.jobs_at_once = 2
+    passes = _passes(monkeypatch)
+
+    async def go():
+        applier.start()
+        try:
+            d, o = applier.enqueue(draft["id"]), applier.enqueue(other["id"])
+            await until(lambda: d.status not in ("queued", "running") and o.status not in ("queued", "running"),
+                        about=lambda: (state(d)(), state(o)()))
+            return d, o
+        finally:
+            await applier.stop()
+
+    d, o = run(go())
+    assert _overlap(passes, draft["id"], other["id"]), passes
+    assert d.draft and d.draft_changed and d.public()["went_in"]["changed"], (d.reason, d.log)
+    assert not o.draft and not o.draft_changed and not (o.went_in.changed if o.went_in else []), o.log
+    assert not any("draft" in line for line in o.log), o.log
+    folder = Path(srv.tracker().get(draft["id"])["folder"])
+    assert (folder / pipeline.DRAFT_FILE).is_file()
+    assert not (Path(srv.tracker().get(other["id"])["folder"]) / pipeline.DRAFT_FILE).exists()
+
+
+# ------------------------------------------------------------------ jobs at once: the re-check of 3df60ad
+def _fake_inbox(monkeypatch, inbox):
+    """The inbox as a list of (sender, code, received): search's newest in its window, as mailbox.search."""
+    monkeypatch.setattr(pipeline, "MAIL_POLL_SECONDS", 0)
+    monkeypatch.setenv("JOB_APPLY_SECRET_EMAIL_PASSWORD", "an-app-password")
+    monkeypatch.setattr(pipeline.mailbox, "imap_host", lambda address: "imap.example.com")
+    monkeypatch.setattr(pipeline, "_another_employers_mail", lambda *a, **k: None)
+
+    def search(address, password, since, senders, want, allowed_link, before=None, look_back=120, others=None):
+        got = [m for m in inbox if m[2] >= since - look_back and (before is None or m[2] < before)]
+        m = max(got, key=lambda m: m[2]) if got else None
+        return pipeline.mailbox.Found("code", m[1], m[0], m[2]) if m else None
+
+    monkeypatch.setattr(pipeline.mailbox, "search", search)
+    typed: list = []
+
+    async def enter(self, r, found):
+        typed.append((r.company, found.value))
+        return True
+
+    monkeypatch.setattr(Applier, "_enter_code", enter)
+    return typed
+
+
+def _code_page(monkeypatch, srv, box=None):
+    """A paused tab on an emailed code's page (its box's value in `box`, when given)."""
+    from types import SimpleNamespace
+
+    async def peek(tab, max_chars=4000):
+        field = {"kind": "text", "label": "Verification code", "id": "c", "value": (box or {}).get("value", "")}
+        return {"url": tab.url, "fields": [field]}, ""
+
+    monkeypatch.setattr(srv.browser, "peek", peek)
+
+    async def front():
+        pass
+
+    return SimpleNamespace(is_closed=lambda: False, url="https://x.example/verify", bring_to_front=front)
+
+
+def _oracle_job(srv, name):
+    return srv.add_job(url=f"https://e{name.lower()}.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/A/job/1",
+                       title="FSE", company=name)["job"]["id"]
+
+
+def test_a_pass_on_a_system_that_emails_holds_the_inbox_but_its_mail_begins_at_its_email_step(srv, monkeypatch):
+    """The re-check of jobs at once (MEDIUM): a job on a job system that emails codes holds the inbox from the start of
+    its pass, and its mail was taken to begin there too, minutes before any step of it that may email. Its mail begins
+    as such a step does (_take_inbox from _drive), as its code is sent no earlier."""
+    seen: list = []
+
+    async def drive(self, r):
+        seen.append((r.inbox, r.inbox_since))
+        await self._take_inbox(r)  # (its sign-in step)
+        seen.append((r.inbox, r.inbox_since > 0))
+        r.status = "ready"
+
+    monkeypatch.setattr(Applier, "_drive", drive)
+    monkeypatch.setattr(Applier, "_save_stop", lambda self, r: asyncio.sleep(0))
+    job = srv.add_job(url="https://acme.wd1.myworkdayjobs.com/External/job/Chandler/Technician_1",
+                      title="Technician", company="Acme")["job"]["id"]
+    applier = Applier(srv)
+    r = applier.runs[job] = Run(job, "Technician", "Acme", status="running")
+    run(applier._run_task("apply", r))
+    assert seen == [(True, 0.0), (True, True)], seen
+
+
+def test_an_untaken_code_from_before_a_jobs_email_step_isnt_its_own(srv, monkeypatch):
+    """The re-check of jobs at once (MEDIUM): one at a time, a job whose step that may email began minutes before its
+    code step had its mail looked for from there: the code of the job filled before it, from the same address, put in
+    there by the person by hand (so never marked as used), was typed into its form. Its mail is looked for no further
+    back than on its own (LOOK_BACK before its pause), however early that step began."""
+    now = time.time()
+    inbox = [("oracle.com", "999999", now - 350)]  # the job before's, put in by the person
+    typed = _fake_inbox(monkeypatch, inbox)
+    page = _code_page(monkeypatch, srv)
+    job = _oracle_job(srv, "Beta")
+    applier = Applier(srv)
+    b = applier.runs[job] = Run(job, "FSE", "Beta", status="needs_you", need="email_code", blocking=True,
+                                paused_at=now - 3, page=page)
+    b.inbox_since = now - 300  # (its sign-in began five minutes before its code step)
+    run(applier._check_mail(b))
+    assert typed == [], (typed, b.mail_last)
+    inbox.append(("oracle.com", "424242", now - 10))  # its own, sent as it came to its code step
+    run(applier._check_mail(b))
+    assert typed == [("Beta", "424242")], (typed, b.mail_last)
+
+
+@pytest.mark.parametrize("step_began", [100, 12])
+def test_another_jobs_resent_code_is_never_typed_into_a_job_waiting_on_the_same_sender(srv, monkeypatch, step_began):
+    """The re-check and final check of jobs at once (MEDIUM, LOW): a job left waiting on an Oracle code, and another
+    job's step that may email under way (begun 100 s, or 12 s, before it paused on its own code). The person pressed the
+    left job's Resend meanwhile; the new code came 60 s before the other paused, before that one's own. It was typed
+    into the other's form: its mail was looked for back to its step's start. While another job waits on the same
+    sender, a job's own is looked for from shortly before its pause alone (as on its own); the Resend's code is the
+    person's to put in, and its own is typed as it comes."""
+    now = time.time()
+    inbox = [("oracle.com", "777777", now - 60)]  # the left job's Resend's
+    typed = _fake_inbox(monkeypatch, inbox)
+    page = _code_page(monkeypatch, srv)
+    earlier, later_job = _oracle_job(srv, "Alpha"), _oracle_job(srv, "Beta")
+    applier = Applier(srv)
+    left = applier.runs[earlier] = Run(earlier, "FSE", "Alpha", status="needs_you", need="email_code", left=True,
+                                       paused_at=now - 500, page=page)
+    b = applier.runs[later_job] = Run(later_job, "FSE", "Beta", status="needs_you", need="email_code", blocking=True,
+                                      paused_at=now - 2, page=page)
+    b.inbox_since = now - step_began
+    run(applier._check_mail(b))
+    run(applier._check_mail(left))
+    assert ("Beta", "777777") not in typed, (typed, b.mail_last, left.mail_last)
+    # (the left job's own: its mail ends where the other's step began, before the Resend's came in when that began
+    # long before; or after it, and it's typed there, as on its own)
+    assert typed == ([] if step_began == 100 else [("Alpha", "777777")]), (typed, left.mail_last)
+    inbox.append(("oracle.com", "222222", now - 1))  # its own, come in now
+    run(applier._check_mail(b))
+    assert typed[-1:] == [("Beta", "222222")], (typed, b.mail_last)
+
+
+@pytest.mark.parametrize("wait", ["reset", "verify"])
+def test_a_wait_on_an_email_the_desk_reads_itself_isnt_the_person_at_its_tab(srv, wait):
+    """The re-check of jobs at once (MEDIUM): a job left waiting on a password reset's (or a new account's
+    verification) email that the desk reads from the inbox itself has nothing for the person in its tab; yet for a
+    minute after it paused it was taken for the tab they're at: another job's sign-in wasn't brought up, and stayed
+    behind it."""
+    from types import SimpleNamespace
+
+    fronted: list = []
+
+    def tab(name):
+        async def front():
+            fronted.append(name)
+        return SimpleNamespace(is_closed=lambda: False, bring_to_front=front, url=f"https://{name}.example/apply")
+
+    jobs = [srv.add_job(url=f"https://{n}.example/job", title="FSE", company=n.title())["job"]["id"] for n in ("a", "b")]
+    applier = Applier(srv)
+    a = applier.runs[jobs[0]] = Run(jobs[0], "FSE", "A", status="running", page=tab("a"))
+    applier._pause(a, "email_code", "Waiting on the email.")
+    a.blocking, a.left = False, True  # (as _await_reset_email and _await_verify_email leave it, the inbox watched)
+    if wait == "reset":
+        a.resetting = a.reset_waited = True
+    else:
+        a.verifying = True
+    b = applier.runs[jobs[1]] = Run(jobs[1], "FSE", "B", status="running", page=tab("b"))
+    run(applier._bring_forward(b))
+    applier._pause(b, "sign_in", "Sign in there.")
+    assert applier._person_at(b) is None and fronted == ["b"] and not applier._behind, (fronted, applier._behind)
+    assert applier._front_tab() is b.page
+
+
+def test_the_desk_typing_a_left_jobs_emailed_code_isnt_the_person_at_its_tab(srv, monkeypatch):
+    """The re-check of jobs at once (MEDIUM): a code the queue went on without, typed into its tab from the inbox by the
+    desk itself: the tab changed, and that was taken for the person at work in it for a minute (no other job's tab
+    brought up meanwhile). What the desk does there isn't the person's; what changes there once it has settled is."""
+    now = time.time()
+    typed = _fake_inbox(monkeypatch, [("oracle.com", "123456", now - 20)])
+    box = {"value": ""}
+
+    async def enter(self, r, found):
+        typed.append((r.company, found.value))
+        box["value"] = found.value
+        return True
+
+    monkeypatch.setattr(Applier, "_enter_code", enter)
+    page = _code_page(monkeypatch, srv, box)
+    job = _oracle_job(srv, "Alpha")
+    applier = Applier(srv)
+    left = applier.runs[job] = Run(job, "FSE", "Alpha", status="running", page=page)
+    applier._pause(left, "email_code", "Enter the code we emailed you.")
+    applier.later(job)  # the queue went on without it
+    left.paused_at = left.active_at = time.time() - 300  # (nothing done in its tab since)
+    left.inbox_since = 0.0
+
+    def look():
+        applier._note_activity(left, run(srv.browser.peek(page))[0])
+
+    look()
+    run(applier._check_mail(left))
+    look()
+    assert typed == [("Alpha", "123456")] and applier._person_at(None) is None, (typed, left.mail_last)
+    assert applier._poll_for([left]) == pipeline.POLL_SECONDS  # (looked at soon still: past its code, it carries on)
+    left.desk_at -= pipeline.DESK_SETTLE + 1  # (its page settled long since)
+    box["value"] = "12345"  # the person at work in it
+    look()
+    assert applier._person_at(None) is left
+
+
+def test_a_password_resets_wait_runs_on_through_the_inboxs_own_errors(srv, monkeypatch):
+    """The re-check of jobs at once (LOW): a reset's wait was called over only once a look in the inbox made after it
+    found nothing: an inbox that kept failing to be read (a mail service down) held it for ever. A look that fails is a
+    look tried; only looks held off for another job's email step stop its wait."""
+    monkeypatch.setattr(pipeline, "MAIL_POLL_SECONDS", 0)
+    monkeypatch.setenv("JOB_APPLY_SECRET_EMAIL_PASSWORD", "an-app-password")
+    monkeypatch.setattr(pipeline.mailbox, "imap_host", lambda address: "imap.example.com")
+    monkeypatch.setattr(pipeline, "_another_employers_mail", lambda *a, **k: None)
+
+    def search(*args, **kwargs):
+        raise pipeline.mailbox.MailboxError("reading imap.example.com failed: timed out")
+
+    monkeypatch.setattr(pipeline.mailbox, "search", search)
+    page = _code_page(monkeypatch, srv)
+    job = srv.add_job(url="https://c.example/job", title="FSE", company="C")["job"]["id"]
+    applier = Applier(srv)
+    c = applier.runs[job] = Run(job, "FSE", "C", status="needs_you", need="email_code", left=True, page=page,
+                                paused_at=time.time() - 60)
+    c.resetting = c.reset_waited = True
+    run(applier._check_mail(c))
+    assert not applier._reset_overdue(c) and applier.mail_problem
+    c.paused_at -= pipeline.RESET_MAIL_WAIT
+    run(applier._check_mail(c))
+    assert applier._reset_overdue(c), (c.mail_looked, c.paused_at, applier.mail_problem)
+
+
+def _person_at_a_left_sign_in(srv, fronted):
+    """A sign-in the queue went on without, the person at work in its tab; and another job's sign-in come up meanwhile,
+    waiting its turn to be brought up (_behind)."""
+    from types import SimpleNamespace
+
+    def tab(name):
+        async def front():
+            fronted.append(name)
+        return SimpleNamespace(is_closed=lambda: False, bring_to_front=front, url=f"https://{name}.example/signin")
+
+    jobs = [srv.add_job(url=f"https://{n}.example/job", title="FSE", company=n.title())["job"]["id"] for n in ("a", "b")]
+    applier = Applier(srv)
+    signing = applier.runs[jobs[0]] = Run(jobs[0], "FSE", "A", status="running", page=tab("a"))
+    applier._pause(signing, "sign_in", "Sign in there.")
+    applier.later(signing.job_id)
+    signing.paused_at -= 30
+    applier._note_activity(signing, {"url": signing.page.url, "fields": [{"id": "email", "value": ""}]})
+    applier._note_activity(signing, {"url": signing.page.url, "fields": [{"id": "email", "value": "a@"}]})
+    b = applier.runs[jobs[1]] = Run(jobs[1], "FSE", "B", status="running", page=tab("b"))
+    run(applier._bring_forward(b))
+    applier._pause(b, "sign_in", "Sign in there.")
+    assert b.blocking and b.job_id in applier._behind and fronted == []
+    return applier, signing, b
+
+
+def test_a_pause_waiting_its_turn_behind_the_persons_tab_isnt_let_go_as_idle(srv, monkeypatch):
+    """The re-check of jobs at once (LOW): a sign-in that came up while the person was at another job's tab waits its
+    turn to be brought up; its five idle minutes were counted from its pause, so a long turn let the queue go on
+    without it before its tab was ever brought up. Its idle wait begins as its tab is brought up."""
+    fronted: list = []
+    applier, signing, b = _person_at_a_left_sign_in(srv, fronted)
+    b.paused_at = b.active_at = time.time() - pipeline.HANDS_ON_IDLE - 10  # (the person at the other for a while)
+
+    async def not_moved(r):
+        return False
+
+    async def sleep(seconds):
+        pass
+
+    monkeypatch.setattr(srv.browser, "lost", lambda tab: "")
+    applier._moved_on, applier._past_pause, applier._sleep = not_moved, not_moved, sleep
+    run(applier._tick())
+    assert b.blocking and not b.left and b.job_id in applier._behind and fronted == [], (b.log[-1:], fronted)
+    signing.active_at -= 3600  # (they've left that tab be)
+    run(applier._tick())
+    assert fronted == ["b"] and b.blocking and not applier._behind and time.time() - b.active_at < 60
+
+
+def test_the_tab_kept_in_front_is_the_one_the_person_is_at_past_a_pause_waiting_its_turn(srv):
+    """The re-check of jobs at once (LOW): with a pause waiting its turn to be brought up (_behind) the first that holds
+    the queue, no tab was kept in front: a new tab another job opened stayed over the sign-in the person was at."""
+    fronted: list = []
+    applier, signing, b = _person_at_a_left_sign_in(srv, fronted)
+    assert applier._front_tab() is signing.page
+
+
+def test_a_solved_checks_place_beside_the_others_goes_with_its_task(srv):
+    """The re-check of jobs at once (LOW): a job whose check was solved in the round may begin beside as many jobs as
+    go at once (Applier._first); a Skip of it, or its task put in again, kept that place for its next task."""
+    jobs = [srv.add_job(url=f"https://{n}.example/job", title="FSE", company=n.title())["job"]["id"] for n in ("a", "b")]
+    applier = Applier(srv)
+    applier._first.add(jobs[0])
+    run(applier.skip(jobs[0]))
+    assert jobs[0] not in applier._first
+    applier._first.add(jobs[1])
+    applier.enqueue(jobs[1])
+    assert jobs[1] not in applier._first
+
+
+# ------------------------------------------------------------------ jobs at once: the final check of 046c2fa
+def test_two_pauses_waiting_their_turn_come_up_one_after_the_other(srv, monkeypatch):
+    """The final check of jobs at once (LOW): two jobs paused for a sign-in while the person was at a third's, each
+    waiting its turn to be brought up. Once that one was done each kept the other down (a pause holding the queue
+    counted as the tab the person is at even while it waited its turn), and neither came up for 45 minutes. The first
+    to pause comes up first and the next once it's done; one that pauses meanwhile waits its turn behind them."""
+    from types import SimpleNamespace
+
+    fronted: list = []
+
+    def tab(name):
+        async def front():
+            fronted.append(name)
+        return SimpleNamespace(is_closed=lambda: False, bring_to_front=front, url=f"https://{name}.example/signin")
+
+    ids = [srv.add_job(url=f"https://{n}.example/job", title="FSE", company=n.title())["job"]["id"] for n in "abcd"]
+    applier = Applier(srv)
+    a, b, c, d = (Run(j, "FSE", n.upper(), status="running", page=tab(n)) for j, n in zip(ids, "abcd"))
+    applier.runs = {r.job_id: r for r in (a, b, c, d)}
+    applier._pause(a, "sign_in", "Sign in there.")  # the person's
+    for r in (b, c):
+        run(applier._bring_forward(r))
+        applier._pause(r, "sign_in", "Sign in there.")
+    assert {b.job_id, c.job_id} <= applier._behind and fronted == []
+    a.blocking, a.status = False, "queued"  # the person got past its sign-in
+    b.paused_at -= 1  # (b paused first)
+    b.active_at = c.active_at = time.time() - pipeline.HANDS_ON_IDLE - 10
+
+    async def not_moved(r):
+        return False
+
+    async def sleep(seconds):
+        pass
+
+    monkeypatch.setattr(srv.browser, "lost", lambda tab: "")
+    applier._moved_on, applier._past_pause, applier._sleep = not_moved, not_moved, sleep
+    for _ in range(3):
+        run(applier._tick())
+    assert fronted == ["b"] and c.job_id in applier._behind and b.job_id not in applier._behind, (fronted,
+                                                                                                    applier._behind)
+    assert b.blocking and c.blocking and not b.left and not c.left
+    run(applier._bring_forward(d))  # (another pauses meanwhile: its turn comes after theirs)
+    applier._pause(d, "sign_in", "Sign in there.")
+    assert d.job_id in applier._behind and fronted == ["b"]
+    b.blocking, b.status = False, "queued"  # the person got past b's
+    run(applier._tick())
+    assert fronted == ["b", "c"] and d.job_id in applier._behind and c.job_id not in applier._behind, fronted
+
+
+def test_a_pause_isnt_let_go_as_idle_just_after_the_desk_put_its_code_in(srv, monkeypatch):
+    """The final check of jobs at once (LOW): at five idle minutes, a sign-in's emailed code the desk put in from the
+    inbox, turned down by the site; the person puts the right one in. The desk's typing no longer counted as anything
+    done in its tab, so the queue went on without it then, and the next job's tab came up over the one they were
+    typing in. As before jobs at once, its idle wait begins again as the desk puts a code in."""
+    from types import SimpleNamespace
+
+    job = srv.add_job(url="https://b.example/job", title="FSE", company="B")["job"]["id"]
+    applier = Applier(srv)
+    b = applier.runs[job] = Run(job, "FSE", "B", status="running",
+                                page=SimpleNamespace(is_closed=lambda: False, url="https://b.example/verify"))
+    applier._pause(b, "email_code", "Enter the code we emailed you.")
+    b.paused_at = b.active_at = time.time() - pipeline.HANDS_ON_IDLE - 10
+    b.desk_at = time.time() - 5  # the desk put its code in five seconds ago
+
+    async def not_moved(r):
+        return False
+
+    async def sleep(seconds):
+        pass
+
+    monkeypatch.setattr(srv.browser, "lost", lambda tab: "")
+    applier._moved_on, applier._past_pause, applier._sleep = not_moved, not_moved, sleep
+    run(applier._tick())
+    assert b.blocking and not b.left, b.log[-1:]
+    b.desk_at -= pipeline.HANDS_ON_IDLE  # (as long ago as its pause: nothing since)
+    run(applier._tick())
+    assert b.left and not b.blocking
+
+
+def test_the_right_code_the_person_puts_in_after_the_desks_is_them_at_its_tab(srv, monkeypatch):
+    """The final check of jobs at once (LOW): changes in a tab for DESK_SETTLE seconds after the desk typed its
+    emailed code were all taken for the desk's own, the person's too: the site turned the code down, they put the
+    right one in, and another job's tab could come up over the one they were typing in. Its code box holding another
+    code than the desk's is the person's; one the site emptied isn't."""
+    now = time.time()
+    typed = _fake_inbox(monkeypatch, [("oracle.com", "123456", now - 20)])
+    box = {"value": ""}
+
+    async def enter(self, r, found):
+        typed.append((r.company, found.value))
+        box["value"] = found.value
+        return True
+
+    monkeypatch.setattr(Applier, "_enter_code", enter)
+    page = _code_page(monkeypatch, srv, box)
+    job = _oracle_job(srv, "Alpha")
+    applier = Applier(srv)
+    left = applier.runs[job] = Run(job, "FSE", "Alpha", status="running", page=page)
+    applier._pause(left, "email_code", "Enter the code we emailed you.")
+    applier.later(job)
+    left.paused_at = left.active_at = time.time() - 300
+
+    def look():
+        applier._note_activity(left, run(srv.browser.peek(page))[0])
+
+    look()
+    run(applier._check_mail(left))
+    look()
+    assert typed == [("Alpha", "123456")] and applier._person_at(None) is None
+    box["value"] = ""  # the site turned it down and emptied its box
+    look()
+    assert applier._person_at(None) is None
+    box["value"] = "65"  # the person putting the right one in
+    look()
+    assert applier._person_at(None) is left

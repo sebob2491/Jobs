@@ -17,9 +17,9 @@ The desk is a local web page served by this plugin. It does what the `find-jobs`
   over 12 hours old, but not while the queue is paused. While a search runs, the header
   says so (by itself, or pressed) with **Stop search** beside it: the search ends and the
   openings found before it stay.
-- **Apply to selected** works through the picked jobs one at a time in the automation
-  browser. It clicks through Apply, autofills every page, adds Workday's work and
-  education blocks, and stops at each review page. Before they go, it says what will stop
+- **Apply to selected** works through the picked jobs in the automation browser, two at a
+  time by default, each in its own tab. It clicks through Apply, autofills every page, adds
+  Workday's work and education blocks, and stops at each review page. Before they go, it says what will stop
   them: a job system with no saved password, no email app password for sites that email a
   code, common questions not answered yet. The person can go ahead or see to those first.
   A posting the site says has closed or been filled is skipped by itself (its card quotes
@@ -118,11 +118,19 @@ The desk is a local web page served by this plugin. It does what the `find-jobs`
   the answers there instead of reading every review page again. It never shows a password,
   an emailed code or a security answer, and it's on the desk page only (never in the job's
   log, a note or a problem report).
+- **Jobs at once** (1, 2 or 3, beside Submit for me; `settings.jobs_at_once` in profile.yaml,
+  default 2) is how many applications the desk fills at the same time, each in its own tab.
+  Never two at one employer's site or job-system tenant; one at a time signs in, makes an
+  account, resets a password or waits on an emailed code (the inbox is one); while a sign-in
+  or code needs the user, or they're in one of the desk's rounds, no new job starts (those under
+  way go on in their own tabs) and no other tab comes to the front; a Submit they press goes
+  beside the jobs under way. **Working on** shows each job under way. 1 fills them one after another, as before. The desk's choice is kept in
+  `desk.json` until profile.yaml's setting is changed.
 - **Skip job** takes a job out of the queue and closes its tab; it's never applied to until
   **Undo** (on its card under Ready and done, or by its row in the list) puts it back where it
   was, with the tracker's status from before: back in the queue (opened again from the start), or
   in the list unticked if the desk hadn't begun it. Undo sends nothing: the job stops at its review page.
-- **Pause queue** (in the header, while jobs are queued or running) lets the job under way finish its pass and
+- **Pause queue** (in the header, while jobs are queued or running) lets the jobs under way finish their pass and
   starts no other until **Resume queue**. A Submit the user presses still goes, and jobs waiting on them are still
   watched. A restarted desk starts with the queue going. To stop the queue, never close the automation browser: that
   breaks the job in progress (it says so, and its **Resume** opens the application again).

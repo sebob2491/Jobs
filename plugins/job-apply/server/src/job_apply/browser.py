@@ -9,12 +9,15 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import contextvars
 import hashlib
 import json
 import os
 import re
 import sys
 import time
+from collections.abc import Iterator
+from dataclasses import dataclass, field
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Callable
@@ -375,6 +378,15 @@ class BrowserUnavailable(Exception):
     pass
 
 
+# The Job Desk fills jobs side by side, each in its own tab, while the person may be at another: a tab behind the one
+# in front must run as one in front does (its timers, its page's own drawing, its renderer's share of the computer),
+# or its waits run out. Playwright's own launch has these too (and its focus emulation keeps each page counted as
+# shown); named here so they hold whatever its defaults become. (Never a --disable-features: Chromium takes only the
+# last one, and Playwright's own would be lost.)
+BACKGROUND_TABS_RUN = ("--disable-background-timer-throttling", "--disable-backgrounding-occluded-windows",
+                       "--disable-renderer-backgrounding")
+
+
 UNAVAILABLE_HELP = (
     "Could not start a browser. Install Google Chrome, or run "
     "`uv run --project <plugin>/server playwright install chromium`. Details: "
@@ -605,42 +617,175 @@ _BARS_BACK_JS = r"""
 """
 
 
+@dataclass(eq=False)
+class _View:
+    """What the tools act on, for one user of the browser: its tab, what was last read there (its boxes and buttons,
+    by the ids given out), a click's new tab still to follow, the job, and its own lock (one step at a time in the
+    tab). Claude's tools, and the Job Desk's queue between jobs, share the session's own view; each job the desk fills
+    has a view of its own (BrowserSession.desk_view), so jobs filled side by side, each in its own tab, never read or
+    click in each other's."""
+    page: Page | None = None
+    fields: dict[str, dict] = field(default_factory=dict)
+    actions: dict[str, dict] = field(default_factory=dict)
+    follow_until: float = 0.0  # a new tab opened before then, by this view's tab, is followed
+    date_typed: set[str] = field(default_factory=set)  # a date's parts typed in the fill under way
+    # While the Job Desk works on a job, the tools stay on that job's tab (and the tabs it opens): a closed one
+    # raises TabClosed instead of moving on to another tab
+    strict: bool = False
+    job_id: int | None = None
+    desk: bool = False  # a job the desk is filling
+    locks: dict[asyncio.AbstractEventLoop, asyncio.Lock] = field(default_factory=dict)
+    owner: Any = field(default=None, repr=False)  # the BrowserSession it's a view of
+
+
+# The view of the task running now (a job the desk fills), or None: the session's own
+_VIEW: contextvars.ContextVar[_View | None] = contextvars.ContextVar("job_apply_view", default=None)
+
+
+def _per_loop(locks: dict[asyncio.AbstractEventLoop, asyncio.Lock]) -> asyncio.Lock:
+    """The lock for the running event loop. A lock belongs to the event loop it first waited in, and the session
+    outlives a loop (each test has its own; the MCP server one): a loop that's gone takes its lock with it."""
+    loop = asyncio.get_running_loop()
+    lock = locks.get(loop)
+    if lock is None:
+        for gone in [lp for lp in locks if lp.is_closed()]:
+            del locks[gone]
+        lock = locks[loop] = asyncio.Lock()
+    return lock
+
+
 class BrowserSession:
     def __init__(self) -> None:
-        self._date_typed: set[str] = set()  # a date's parts typed in the fill under way
+        self._own = _View()  # Claude's tools' (and the desk's queue between jobs): _View
+        self._desk_views: set[_View] = set()  # the views of the jobs the desk is filling now
         self._pw: Playwright | None = None
         self._ctx: BrowserContext | None = None
-        self._page: Page | None = None
-        self._locks: dict[asyncio.AbstractEventLoop, asyncio.Lock] = {}
+        self._launch_locks: dict[asyncio.AbstractEventLoop, asyncio.Lock] = {}
         self._openers: dict[Page, Page] = {}  # tab -> the tab that opened it
-        self._follow_until = 0.0  # a new tab opened before then, by the current tab, is followed
-        # While the Job Desk works on a job, the tools stay on that job's tab (and the tabs
-        # it opens): a closed one raises TabClosed instead of moving on to another tab.
-        self.strict_tabs = False
         self._frame_ids: dict[Frame, str] = {}
-        self._fields: dict[str, dict] = {}
         # what the desk typed on a page (by address), and how often each box was typed again
         self._typed: dict[str, set[str]] = {}
         self._retyped: dict[tuple[str, str, str], int] = {}
         # the entries a list's group opened (by the site and the list's label: entry -> group), so an entry the
         # person picked from them is picked inside its group (_type_and_pick)
         self._groups: dict[tuple[str, str], dict[str, str]] = {}  # (_groups_key's: the site, its list's label)
-        self._actions: dict[str, dict] = {}
-        self.current_job_id: int | None = None
         self.tab_jobs: dict[Page, int] = {}  # the job each tab was opened for
         self._crashed: set[Page] = set()  # tabs whose page crashed (Chrome's "Aw, Snap!")
+        # The tab the person is at for the Job Desk (a sign-in or code that needs their hands, or one of its rounds),
+        # if any: a new tab opened by a job filled meanwhile in another tab never stays in front of it
+        self.keep_front: Callable[[], Page | None] | None = None
+        self._fronting: set[asyncio.Future] = set()
+
+    # ------------------------------------------------------------- views
+    @property
+    def _view(self) -> _View:
+        view = _VIEW.get()
+        return view if view is not None and view.owner is self else self._own
+
+    @contextlib.contextmanager
+    def desk_view(self, job_id: int | None = None) -> Iterator[_View]:
+        """A view of its own for a job the Job Desk fills, for the task running it: its tab, its reads and its
+        lock are its own, and two jobs filled at once, each in its own tab, never act in each other's. Afterwards
+        the tools' own view (Claude's) is left on the job's tab when it has no live tab of its own, as when the two
+        shared one."""
+        view = _View(job_id=job_id, desk=True, owner=self)
+        token = _VIEW.set(view)
+        self._desk_views.add(view)
+        try:
+            yield view
+        finally:
+            self._desk_views.discard(view)
+            _VIEW.reset(token)
+            own = self._own
+            if (view.page is not None and not view.page.is_closed() and view.page.context is self._ctx
+                    and (own.page is None or own.page.is_closed())):
+                own.page, own.job_id = view.page, view.job_id
+
+    def _views(self) -> list[_View]:
+        return [self._own, *self._desk_views]
+
+    @property
+    def _page(self) -> Page | None:
+        return self._view.page
+
+    @_page.setter
+    def _page(self, page: Page | None) -> None:
+        self._view.page = page
+
+    @property
+    def _fields(self) -> dict[str, dict]:
+        return self._view.fields
+
+    @_fields.setter
+    def _fields(self, fields: dict[str, dict]) -> None:
+        self._view.fields = fields
+
+    @property
+    def _actions(self) -> dict[str, dict]:
+        return self._view.actions
+
+    @_actions.setter
+    def _actions(self, actions: dict[str, dict]) -> None:
+        self._view.actions = actions
+
+    @property
+    def _follow_until(self) -> float:
+        return self._view.follow_until
+
+    @_follow_until.setter
+    def _follow_until(self, until: float) -> None:
+        self._view.follow_until = until
+
+    @property
+    def _date_typed(self) -> set[str]:
+        return self._view.date_typed
+
+    @_date_typed.setter
+    def _date_typed(self, typed: set[str]) -> None:
+        self._view.date_typed = typed
+
+    @property
+    def strict_tabs(self) -> bool:
+        return self._view.strict
+
+    @strict_tabs.setter
+    def strict_tabs(self, strict: bool) -> None:
+        self._view.strict = strict
+
+    @property
+    def current_job_id(self) -> int | None:
+        return self._view.job_id
+
+    @current_job_id.setter
+    def current_job_id(self, job_id: int | None) -> None:
+        self._view.job_id = job_id
 
     @property
     def _lock(self) -> asyncio.Lock:
-        """One step at a time in the browser. A lock belongs to the event loop it first waited
-        in, and the session outlives a loop (each test has its own; the MCP server one): a
-        loop that's gone takes its lock with it."""
-        loop = asyncio.get_running_loop()
-        lock = self._locks.get(loop)
-        if lock is None:
-            self._locks = {lp: lk for lp, lk in self._locks.items() if not lp.is_closed()}
-            lock = self._locks[loop] = asyncio.Lock()
-        return lock
+        """One step at a time in the view's tab (each job the desk fills at once has its own)."""
+        return _per_loop(self._view.locks)
+
+    async def _ensure_ctx(self) -> None:
+        """The browser, started once however many views ask for it at the same moment."""
+        if self._ctx is not None:
+            return
+        async with _per_loop(self._launch_locks):
+            if self._ctx is None:
+                await self._launch()
+
+    def _refront(self) -> None:
+        """Bring the tab the person is at for the desk (keep_front) back in front: a tab a job filled meanwhile
+        opened came up over it (a click's new tab, or a job's own)."""
+        keep = self.keep_front() if self.keep_front is not None else None
+        if keep is None or keep.is_closed():
+            return
+
+        async def front() -> None:
+            with contextlib.suppress(Exception):
+                await keep.bring_to_front()
+        task = asyncio.ensure_future(front())
+        self._fronting.add(task)
+        task.add_done_callback(self._fronting.discard)
 
     # ---------------------------------------------------------------- lifecycle
     async def _launch(self) -> None:
@@ -654,6 +799,7 @@ class BrowserSession:
             "headless": settings.headless,
             "accept_downloads": True,
             "no_viewport": not settings.headless,
+            "args": list(BACKGROUND_TABS_RUN),
         }
         if settings.headless:
             kwargs["viewport"] = {"width": 1280, "height": 900}
@@ -687,6 +833,7 @@ class BrowserSession:
         ctx.on("close", lambda _: self._forget(ctx))
         for tab in ctx.pages:
             self._watch(tab)
+        # (the view that started it: a job's own leaves the tools' to follow the job's tab, desk_view, as one shared did)
         self._page = ctx.pages[0] if ctx.pages else await ctx.new_page()
 
     def _watch(self, tab: Page) -> None:
@@ -699,8 +846,9 @@ class BrowserSession:
     def _closed(self, tab: Page) -> None:
         opener = self._openers.pop(tab, None)
         self.tab_jobs.pop(tab, None)
-        if tab is self._page and opener is not None and not opener.is_closed():
-            self._page = opener  # a popup that closed itself (a sign-in window): back to its tab
+        for view in self._views():
+            if tab is view.page and opener is not None and not opener.is_closed():
+                view.page = opener  # a popup that closed itself (a sign-in window): back to its tab
 
     def _on_popup(self, opener: Page, popup: Page) -> None:
         # "Apply" buttons often open the application in a new tab: follow it, but only from
@@ -709,21 +857,28 @@ class BrowserSession:
         self._openers[popup] = opener
         # only while a click of ours may still be opening it (asml.com's Apply Now opens its tab
         # a few seconds on): a link the person opens (a privacy policy) doesn't take the tab over
-        if opener is self._page and time.monotonic() <= self._follow_until:
-            self._page = popup
+        now, driven = time.monotonic(), False
+        for view in self._views():  # (each view whose tab opened it: a job's own, filled at once with others)
+            if opener is view.page:
+                driven = driven or view.desk
+                if now <= view.follow_until:
+                    view.page = popup
+        if driven:  # opened by a job the desk fills, over the tab the person may be at for another
+            self._refront()
 
     def _forget(self, ctx: BrowserContext) -> None:
         """The person closed the browser window: open a fresh one next time it's needed."""
         if self._ctx is ctx:
-            self._ctx = self._page = None
+            self._ctx = None
+            for view in self._views():
+                view.page = None
+                view.fields.clear()
+                view.actions.clear()
             self._openers.clear()
-            self._fields.clear()
-            self._actions.clear()
             self._frame_ids.clear()
 
     async def page(self) -> Page:
-        if self._ctx is None:
-            await self._launch()
+        await self._ensure_ctx()
         assert self._ctx is not None
         if self._page is None or self._page.is_closed():  # (a popup that closed itself is already back on its tab)
             if self.strict_tabs:
@@ -736,10 +891,11 @@ class BrowserSession:
     async def new_tab(self) -> Page:
         """Open a tab and make it the one the tools act on (the Job Desk gives each job its own)."""
         async with self._lock:
-            if self._ctx is None:
-                await self._launch()
+            await self._ensure_ctx()
             assert self._ctx is not None
             self._page = await self._ctx.new_page()
+            if self._view.desk:  # (a job's own tab, over the one the person may be at for another)
+                self._refront()
             return self._page
 
     def use_tab(self, page: Page | None) -> bool:
@@ -782,11 +938,13 @@ class BrowserSession:
                 pass
         if self._pw is not None:
             await self._pw.stop()
-        self._ctx = self._pw = self._page = None
-        self._fields.clear()
-        self._actions.clear()
+        self._ctx = self._pw = None
+        for view in self._views():
+            view.page = None
+            view.fields.clear()
+            view.actions.clear()
+            view.follow_until = 0.0  # a click in the window just closed isn't one in the next
         self._frame_ids.clear()
-        self._follow_until = 0.0  # a click in the window just closed isn't one in the next
 
     # ---------------------------------------------------------------- navigation
     async def goto(self, url: str) -> dict[str, Any]:
@@ -1125,8 +1283,7 @@ class BrowserSession:
                 return None
 
         async with self._lock:
-            if self._ctx is None:
-                await self._launch()
+            await self._ensure_ctx()
             assert self._ctx is not None
             tab = await self._ctx.new_page()  # not a popup of the job's tab, so it never becomes current
             try:
@@ -1153,8 +1310,7 @@ class BrowserSession:
         """The HTML of `url`, read in a background tab so the tab an application is in
         stays where it is (the Job Desk adds pasted links while it applies)."""
         async with self._lock:
-            if self._ctx is None:
-                await self._launch()
+            await self._ensure_ctx()
             assert self._ctx is not None
             tab = await self._ctx.new_page()
             try:
@@ -1277,8 +1433,7 @@ class BrowserSession:
         tools act on: a confirmation link from the person's email, opened in this browser so
         the site knows the address is confirmed. Returns the address it ended on."""
         async with self._lock:
-            if self._ctx is None:
-                await self._launch()
+            await self._ensure_ctx()
             assert self._ctx is not None
             tab = await self._ctx.new_page()
             try:
@@ -1307,8 +1462,7 @@ class BrowserSession:
         in: iCIMS portals go on loading trackers for seconds after their openings are drawn,
         and the browser is held meanwhile."""
         async with self._lock:
-            if self._ctx is None:
-                await self._launch()
+            await self._ensure_ctx()
             assert self._ctx is not None
             tab = await self._ctx.new_page()
             try:
@@ -1355,8 +1509,7 @@ class BrowserSession:
         size where it offers one (`per_page`: the select and the option), then press
         `next_button` until it's gone or `max_pages` are read."""
         async with self._lock:
-            if self._ctx is None:
-                await self._launch()
+            await self._ensure_ctx()
             assert self._ctx is not None
             tab = await self._ctx.new_page()
             try:
