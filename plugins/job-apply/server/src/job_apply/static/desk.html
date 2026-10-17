@@ -775,7 +775,10 @@ function renderSide() {
     const form = qs.length ? `<form data-answer="${r.job_id}">${qs.map((q, i) => question(r.job_id, q, i, repeated.has(q.label))).join("")}</form>` : "";
     // questions (with Resume, for answers typed into the page itself), or a missing file plus questions
     // (and Later on a sign-in holding the queue: an account form's security questions, put on its card)
-    if (form || r.need === "questions") body = form + jobButtons(r, ["fill", "show", "resume",
+    // left by a restart of the desk, with no tab to show: Resume fills it again up to its review page (never sending
+    // it); one whose Submit may have gone in says so, with I submitted it first, and one begun has I submitted it already
+    if (r.left_at_restart) body = jobButtons(r, r.need === "check_submit" ? ["applied", "resume", "skip"] : ["resume", "skip", "already"]);
+    else if (form || r.need === "questions") body = form + jobButtons(r, ["fill", "show", "resume",
       ...(r.blocking && r.need === "sign_in" ? ["later"] : []), "skip", "already"]);
     // a sign-in holding the queue keeps Resume beside Later: its card may ask for Resume after a
     // password reset by hand (the desk then presses its sign-in once more)
@@ -924,6 +927,11 @@ function renderHeader() {
     <span>Find jobs searches every list's employers, and only the openings where the desk doesn't go all the way yet show. The desk still makes accounts and fills each step, which the sites keep. Turn it off (under Openings) to apply for real.</span>`});
   const needing = allRuns().filter((r) => r.status === "needs_you").length;
   document.title = needing ? `(${needing}) Needs you · Job Desk` : "Job Desk";
+  // the jobs back in the queue after a restart of the desk wait for the person's Resume queue; and why the queue isn't
+  // kept here, if it isn't (another desk keeps it, or the folder allows no lock)
+  if (state.restored) notes.push({cls: "waiting", html: `<strong>${esc(state.restored)}</strong>
+    <button class="primary" data-act="resume">Resume queue</button>`});
+  if (state.queue_note) notes.push({cls: "notice", html: esc(state.queue_note)});
   if (state.tailoring) notes.push({cls: "waiting", html: `<strong>${state.tailoring} job${state.tailoring === 1 ? "" : "s"} waiting for a tailored resume.</strong>
     <span>In Claude Code, say \u201ctailor my resumes\u201d. Each job carries on as soon as its resume is ready.</span>`});
   if (p.missing && p.missing.length) notes.push({cls: "notice", html: `Your profile still needs: ${esc(inWords(p.missing.map(profileField)))}. Run <code>/job-apply:setup</code> in Claude Code, or edit <code>${esc(p.path)}</code>.`});

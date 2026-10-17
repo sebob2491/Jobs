@@ -4,6 +4,7 @@ import asyncio
 import json
 import os
 import time
+from pathlib import Path
 
 import httpx
 import pytest
@@ -727,7 +728,7 @@ def test_the_tailoring_switch_is_kept_and_its_waiting_jobs_listed(srv, job_apply
 
 def test_the_queue_is_paused_and_resumed_through_the_api(srv):
     """Pause queue and Resume queue (issue #112, note 36): behind the page's key like the rest, an unknown action is
-    no action, and the state says whether the queue is paused. Not one of the settings: kept in memory only."""
+    no action, and the state says whether the queue is paused. Not one of the settings: kept with the queue."""
     desk = Desk(srv)
     desk.applier.start = lambda: None
 
@@ -749,7 +750,7 @@ def test_the_queue_is_paused_and_resumed_through_the_api(srv):
             await desk.stop()
 
     run(go())
-    assert Desk(srv).applier.paused is False  # (a new desk starts with the queue going)
+    assert Desk(srv).applier.paused is False  # (resumed: a new desk starts with the queue going)
 
 
 def test_the_pause_button_pauses_and_resumes_the_queue(srv):
@@ -2563,5 +2564,511 @@ def test_select_recommended_where_the_desk_goes_all_the_way_ticks_only_those_emp
                 assert ticked == ["https://example.com/handled"], ticked
         finally:
             await desk.stop()
+
+    run(go())
+
+
+# ---------------------------------------------------------------- the desk survives a restart
+# (the review of Oct 15, worth building 4: the queue lived in memory, so a restart of the desk (a Claude app restart, a
+# crash, a plugin update) lost every queued job)
+
+
+async def _until(check, timeout=30, about=None):
+    start = time.monotonic()
+    while not check():
+        if time.monotonic() - start > timeout:
+            raise AssertionError("timed out waiting" + (f": {about()!r}" if about else ""))
+        await asyncio.sleep(0.1)
+
+
+def _jobs(srv, n: int) -> list[int]:
+    """n jobs at as many employers (each its own site: none waits for another's)."""
+    return [srv.add_job(url=f"https://careers.employer{i}.example/apply/{i}", title=f"Technician {i}",
+                        company=f"Employer {i}")["job"]["id"] for i in range(n)]
+
+
+def _passes_reach_review(monkeypatch) -> list[int]:
+    """Each pass (by job) as it begins; a pass ends on its review page at once."""
+    passes: list[int] = []
+
+    async def drive(self, r):
+        r.status, r.started = "running", True  # (its application begun, as a real pass's is once its tab opens)
+        passes.append(r.job_id)
+        r.status, r.reason = "ready", "Filled and waiting on the review page."
+
+    monkeypatch.setattr(pipeline.Applier, "_drive", drive)
+    return passes
+
+
+def _kept_queue() -> dict:
+    return json.loads((config.home() / "desk-queue.json").read_text(encoding="utf-8"))
+
+
+def _keep_queue(job_ids: list[int], submit: bool = False, paused: bool = False) -> None:
+    """The queue as a desk before a restart kept it: these jobs, never begun, in this order."""
+    jobs = [{"id": j, "state": "queued", **({"submit": True} if submit else {})} for j in job_ids]
+    (config.home() / "desk-queue.json").write_text(json.dumps({"paused": paused, "jobs": jobs}), encoding="utf-8")
+
+
+@pytest.mark.parametrize("how", ["stopped", "ended"])
+def test_after_a_restart_the_jobs_never_begun_are_queued_again_paused_and_the_begun_ones_are_cards(srv, monkeypatch,
+                                                                                                  how):
+    """The queue is kept in the person's folder as it changes. The desk starting again queues the jobs it never began
+    again, in their order, with Submit for me where they had it and it's still on; and the queue comes back paused, said
+    at the top of the page, so none starts without the person's Resume queue. A job begun before the restart isn't
+    queued again (the review of the restart, HIGH: one stopped on its review page's errors, the person may have fixed
+    them and pressed the site's own Submit; a fresh pass with Submit for me would send a second application): it's a
+    card, which says to check where it is, and its Resume fills it again up to its review page, never sending it, as
+    does one the browser's closing (or the desk's stopping) cut short. A job applied to or skipped since is left out.
+    Whether the desk was stopped, or the program ended with its tasks cancelled (and the queue written again after, as
+    another job's end would)."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    a, b, c, d, e, f = _jobs(srv, 6)
+    passes: list[int] = []
+    restarted = False
+
+    async def drive(self, r):
+        r.status, r.started = "running", True  # (its application begun, as a real pass's is once its tab opens)
+        passes.append(r.job_id)
+        if not restarted and r.job_id == a:
+            return self._pause(r, "stuck", "The review page shows errors: Phone is invalid. Fix them in the browser, "
+                               "then press Submit.")
+        if not restarted and r.job_id == b:
+            await asyncio.Event().wait()  # under way as the desk restarts
+        r.status, r.reason = "ready", "Filled and waiting on the review page."
+
+    monkeypatch.setattr(pipeline.Applier, "_drive", drive)
+
+    async def go():
+        nonlocal restarted
+        before = Desk(srv)
+        before.applier.auto_submit = True  # Submit for me on (desk.json), as the jobs are queued
+        before._save_settings()
+        assert before.apply(urls=[], job_ids=[a, b, c, d, e, f], submit=True)[0] == [a, b, c, d, e, f]
+        before.applier.start()
+        await _until(lambda: b in before.applier._slots and before.applier.runs[b].status == "running",
+                     about=lambda: passes)
+        assert before.applier.runs[a].need == "stuck"
+        if how == "stopped":
+            await before.applier.stop()
+        else:
+            tasks = [before.applier._worker_task, *before.applier._slots.values()]
+            for task in tasks:
+                task.cancel()
+            await asyncio.wait(tasks)
+            before.applier._save_queue()
+        assert before.applier.runs[b].status == "failed"  # (cut short)
+        # meanwhile one was marked applied (Claude's update_job, or a confirmation email), and one skipped
+        srv.update_job(d, status="applied")
+        srv.update_job(e, status="skipped")
+        restarted = True
+
+        after = Desk(srv)
+        after.search.update(status="done", at=time.time())  # (no search of the real sites)
+        await after.start(port=0, open_browser=False)
+        try:
+            q = after.applier
+            assert [j for _, j in q.tasks] == [c, f] and q.runs[c].submit and q.runs[f].submit
+            assert q.paused and after.state()["queued"] == [c, f]
+            assert q.runs[c].log[-1] == "picked up again after the desk restarted"
+            for job_id in (a, b):  # begun: cards, never queued by themselves, Submit for me off
+                r = q.runs[job_id]
+                assert (r.status, r.need, r.left_at_restart, r.submit) == ("needs_you", "restarted", True, False)
+                # (its tab is gone with the restart: nothing to look at there, and the case it's for, said)
+                assert r.reason == ("The desk restarted before this application was finished. If you sent it yourself "
+                                    "on the site, press I submitted it already. Otherwise Resume fills it again up to "
+                                    "its review page (nothing is sent), or Skip job."), r.reason
+            assert after.state()["restored"] == (
+                "2 jobs from before the desk restarted are back in the queue, paused. Press Resume queue to go on. 2 of "
+                "them go in by Submit for me once they're filled; turn Submit for me off first if you'd rather check each.")
+            assert d not in q.runs and e not in q.runs
+            async with person_browser() as browser:
+                page = await browser.new_page()
+                await page.goto(after.url)
+                card = page.locator("#needs .task", has_text="Technician 0")
+                await card.wait_for()
+                said = await card.inner_text()  # (its tab is gone with the restart: nothing to look at there)
+                assert ("The desk restarted before this application was finished. If you sent it yourself on the site, "
+                        "press I submitted it already. Otherwise Resume fills it again up to its review page (nothing "
+                        "is sent), or Skip job.") in said, said
+                buttons = await card.locator("button").all_inner_texts()
+                assert buttons == ["Resume", "Skip job", "I submitted it already", "Report a problem"], buttons
+                await asyncio.sleep(1)
+                assert passes == [a, b]  # (paused: nothing restored has started)
+                notice = page.locator("#notices", has_text="back in the queue, paused")
+                await notice.locator("button", has_text="Resume queue").click()  # the person's Resume queue
+                await _until(lambda: q.runs[c].status == q.runs[f].status == "ready", about=lambda: passes)
+                await notice.wait_for(state="detached")
+                assert passes[2:] == [c, f] and q.runs[a].status == q.runs[b].status == "needs_you"
+                await card.locator("button", has_text="Resume").click()  # filled again, never sent
+                await _until(lambda: q.runs[a].status == "ready")
+            assert passes[2:] == [c, f, a] and not q.runs[a].submit
+        finally:
+            await after.stop()
+
+    run(go())
+
+
+def test_a_job_whose_submit_may_have_gone_in_isnt_queued_again_after_a_restart(srv, monkeypatch):
+    """A job with a Submit pressed for it and no confirmation (its folder's submission.json, written as Submit is
+    pressed, or the tracker's note) may have gone in: after a restart it isn't queued again at all, even with Submit
+    for me on. Its card says to check, with I submitted it, and Resume, which fills it again up to its review page and
+    never sends it."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    passes = _passes_reach_review(monkeypatch)
+    recorded, noted, fine = _jobs(srv, 3)
+    before = Desk(srv)
+    before.applier.auto_submit = True
+    before.applier.restore()  # (the desk keeps its queue from its start)
+    before.apply(urls=[], job_ids=[recorded, noted, fine], submit=True)
+    folder = Path(srv.tracker().get(recorded)["folder"])
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / "submission.json").write_text(json.dumps({"confirmed": False, "state": "pressing"}), encoding="utf-8")
+    srv.tracker().update(noted, note="pressed Submit; no confirmation showed")
+
+    async def go():
+        after = Desk(srv)
+        after.applier.auto_submit = True
+        after.search.update(status="done", at=time.time())  # (no search of the real sites)
+        await after.start(port=0, open_browser=False)
+        try:
+            q = after.applier
+            assert [j for _, j in q.tasks] == [fine] and q.paused
+            for job_id in (recorded, noted):
+                r = q.runs[job_id]
+                assert (r.status, r.need, r.left_at_restart) == ("needs_you", "check_submit", True)
+                assert r.reason == pipeline.RESTART_CHECK and "may have gone in" in r.reason
+            q.resume_queue()
+            await _until(lambda: q.runs[fine].status == "ready")
+            await asyncio.sleep(0.5)
+            assert passes == [fine]
+            async with person_browser() as browser:  # its card on the page: no tab to show, Resume to fill it again
+                page = await browser.new_page()
+                await page.goto(after.url)
+                card = page.locator("#needs .task", has_text="Technician 0")
+                await card.wait_for()
+                assert "may have gone in" in await card.inner_text()
+                buttons = await card.locator("button").all_inner_texts()
+                assert buttons == ["I submitted it", "Resume", "Skip job", "Report a problem"], buttons
+                await card.locator("button", has_text="Resume").click()  # filled again, never sent
+                await _until(lambda: q.runs[recorded].status == "ready")
+            assert not q.runs[recorded].submit and q.runs[recorded].pressed_before
+            assert passes == [fine, recorded]
+        finally:
+            await after.stop()
+
+    run(go())
+
+
+def test_submit_for_me_goes_on_after_a_restart_only_while_it_is_still_on(srv):
+    """Submit for me applies to a job never begun, queued again after a restart, only while it's still on (desk.json),
+    as it does to any job queued now; a job queued before it was turned on stays without it. The notice that they're
+    back says how many Submit for me sends once they're filled (the re-check: Resume queue sends those too)."""
+    with_it, without = _jobs(srv, 2)
+    before = Desk(srv)
+    before.applier.restore()
+    before.applier.auto_submit = True
+    before._save_settings()
+    before.apply(urls=[], job_ids=[with_it], submit=True)
+    before.apply(urls=[], job_ids=[without], submit=False)  # (queued before it was turned on)
+
+    async def go():
+        again = Desk(srv)
+        again.applier.start()
+        assert again.applier.auto_submit and again.applier.paused  # (back paused: nothing is filled here)
+        assert again.applier.runs[with_it].submit and not again.applier.runs[without].submit
+        assert again.state()["restored"] == (
+            "2 jobs from before the desk restarted are back in the queue, paused. Press Resume queue to go on. 1 of "
+            "them goes in by Submit for me once it's filled; turn Submit for me off first if you'd rather check each.")
+        again.applier.auto_submit = False  # turned off, then another restart
+        again._save_settings()
+        await again.applier.stop()
+        third = Desk(srv)
+        third.applier.start()
+        assert not third.applier.auto_submit
+        assert not third.applier.runs[with_it].submit and not third.applier.runs[without].submit
+        await third.applier.stop()
+
+    run(go())
+
+
+def test_a_queue_kept_long_ago_comes_back_paused_and_says_how_old_it_is(srv, monkeypatch):
+    """The review of the restart (MEDIUM): a kept queue had no age, and opening the desk weeks later (setup's
+    open_job_desk, for the passwords card) started filling at once, Submit for me sending. One over a week old comes
+    back as any does, paused, said with its age, and never starts by itself. Its age outlasts the restarts (the
+    re-check: it was the file's, new as the queue was written again)."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    passes = _passes_reach_review(monkeypatch)
+    (job,) = _jobs(srv, 1)
+    _keep_queue([job])
+    path = config.home() / "desk-queue.json"
+    old = time.time() - 30 * 86400
+    os.utime(path, (old, old))
+
+    async def go():
+        for _ in range(2):  # (and again after another restart)
+            later = Desk(srv)
+            later.applier.start()
+            try:
+                assert later.applier.paused and [j for _, j in later.applier.tasks] == [job]
+                assert later.state()["restored"] == ("1 job from before the desk restarted (kept 30 days ago) is back "
+                                                     "in the queue, paused. Press Resume queue to go on.")
+                await asyncio.sleep(1)
+                assert passes == []
+            finally:
+                await later.applier.stop()
+
+    run(go())
+    assert _kept_queue()["since"] < time.time() - 29 * 86400
+
+
+def test_a_call_before_the_desk_has_its_queue_back_doesnt_write_over_it(srv):
+    """The review of the restart (L3): the desk served its page before it read its queue back, and a call from a page
+    left open in that moment (Pause queue, say) wrote the empty queue over the kept one. Nothing is written before the
+    queue is back, and the desk reads it back before it serves the page."""
+    from job_apply import desk as desk_module
+
+    ids = _jobs(srv, 3)
+    _keep_queue(ids)  # (kept before the restart)
+    after = Desk(srv)
+    after.applier.pause_queue()  # (a page's POST /api/queue/pause, before the desk has its queue back)
+    assert [e["id"] for e in _kept_queue()["jobs"]] == ids
+    seen: list[list[int]] = []
+
+    class Server(desk_module._QuietServer):  # (what the desk has back as it begins serving its page)
+        async def serve(self, *args, **kwargs):
+            seen.append([j for _, j in after.applier.tasks])
+            return await super().serve(*args, **kwargs)
+
+    async def go():
+        await after.start(port=0, open_browser=False)
+        await after.stop()
+
+    real = desk_module._QuietServer
+    desk_module._QuietServer = Server
+    try:
+        run(go())
+    finally:
+        desk_module._QuietServer = real
+    assert seen == [ids] and [j for _, j in after.applier.tasks] == ids
+
+
+def test_one_desk_keeps_the_queue_and_another_sessions_desk_leaves_it_alone(srv, job_apply_home):
+    """The review of the restart (L2): two Claude sessions share the person's folder, and the second's desk took up the
+    first's queue (every job it was working on) and wrote its own over it. One desk keeps the queue at a time (a lock
+    the operating system lets go of with its process); another says so on its page, picks nothing up and keeps nothing.
+    Once the first has ended, the next desk picks its queue up."""
+    import subprocess
+    import sys
+
+    ids = _jobs(srv, 2)
+    _keep_queue(ids)  # (the first desk's, kept before a restart)
+    # the first desk, started again in another Claude session (a process of its own): its queue paused, not worked here
+    other = ("import asyncio, sys\n"
+             "from job_apply import server\n"
+             "from job_apply.desk import Desk\n"
+             "async def main():\n"
+             "    desk = Desk(server)\n"
+             "    desk.applier.paused = True\n"
+             "    desk.applier.start()\n"
+             "    print('started', len(desk.applier.tasks), flush=True)\n"
+             "    await asyncio.get_running_loop().run_in_executor(None, sys.stdin.read)\n"
+             "    await desk.applier.stop()\n"
+             "asyncio.run(main())\n")
+    proc = subprocess.Popen([sys.executable, "-c", other], env={**os.environ, "JOB_APPLY_HOME": str(job_apply_home)},
+                            stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, encoding="utf-8")
+
+    async def go():
+        try:
+            assert proc.stdout.readline().split() == ["started", "2"]
+            kept = _kept_queue()
+            second = Desk(srv)  # (this session's)
+            second.applier.paused = True  # (nothing is worked here)
+            second.applier.start()
+            try:
+                assert not second.applier.tasks and not second.applier.runs  # nothing picked up
+                assert second.state()["queue_note"] == pipeline.QUEUE_ELSEWHERE
+                mine = srv.add_job(url="https://careers.mine.example/apply/9", title="Technician 9",
+                                   company="Mine")["job"]["id"]
+                second.apply(urls=[], job_ids=[mine], submit=False)
+                second.applier.pause_queue()
+                assert _kept_queue() == kept  # (the first's, as it kept it)
+            finally:
+                await second.applier.stop()
+        finally:
+            proc.stdin.close()
+            proc.wait(timeout=60)
+        third = Desk(srv)  # (the first has ended: the next desk picks its queue up)
+        third.applier.paused = True
+        third.applier.start()
+        try:
+            assert [j for _, j in third.applier.tasks] == ids and not third.applier.queue_elsewhere
+        finally:
+            await third.applier.stop()
+
+    run(go())
+
+
+def test_the_kept_queue_holds_job_numbers_and_where_they_were_and_nothing_else(srv, job_apply_home):
+    """The queue kept for a restart holds each job's number, where it was in the queue, and its Submit flags: never an
+    answer, a security answer, an emailed code, a password, a question, a page's address or words, or the page's key."""
+    password = "Hunter2-Example!"
+    config.save_site_password("workday_password", password)
+    asked, answered = _jobs(srv, 2)
+    desk = Desk(srv)
+    desk.applier.restore()
+    desk.apply(urls=[], job_ids=[asked, answered], submit=True)
+    r = desk.applier.runs[asked]
+    r.status, r.need, r.reason = "needs_you", "questions", "1 question: what clearance do you hold?"
+    r.questions = [{"label": "What clearance do you hold?", "value": "Clearance-Example-Answer"}]
+    r.once = {"why do you want to work here": "Because-Example-Reason"}
+    r.account_answers = {"mothers maiden name": "Maiden-Example-Answer"}
+    r.url = "https://careers.employer0.example/apply/0?session=Session-Example-Token"
+    r.desk_code = 314159
+    r.log.append("typed the emailed code 271828 in")
+    desk.applier.runs[answered].once = {"salary": f"{password} 90000"}
+    desk.applier.pause_queue()  # (written as the queue changes)
+    text = (job_apply_home / "desk-queue.json").read_text(encoding="utf-8")
+    kept = json.loads(text)
+    assert set(kept) == {"paused", "jobs", "since"} and kept["paused"] is True
+    assert [e["id"] for e in kept["jobs"]] == [asked, answered]
+    assert all(set(e) <= {"id", "state", "submit", "pressed", "may_have_gone"} for e in kept["jobs"]), kept
+    for said in (password, "Clearance", "clearance", "Because-Example", "Maiden", "Session-Example", "employer0",
+                 "314159", "271828", "Technician", "Employer", "question", desk.token):
+        assert said not in text, said
+
+
+def test_the_page_key_is_new_at_each_start_and_kept_nowhere(srv, job_apply_home):
+    """The review of the restart (MEDIUM 2): a page key kept across restarts was sent by a desk page left open to
+    127.0.0.1:8765 while the desk was down, where another account on the computer could listen for it and then use the
+    restarted desk's API (press Submit, turn on Submit for me, save passwords). The key is new at each start, as before,
+    and kept nowhere: a page left open says its key is out of date, and the person opens the desk again."""
+    first, second = Desk(srv), Desk(srv)
+    assert first.token != second.token
+    assert not any("key" in p.name for p in job_apply_home.iterdir()), list(job_apply_home.iterdir())
+
+
+def test_the_desks_port_is_never_one_another_program_holds():
+    """The review of the restart (MEDIUM 2, L1): the desk's port check bound with SO_REUSEADDR, so a port another
+    desk (or uvicorn) had bound that way and not yet listened on read as free. It never picks a port another socket
+    holds, listening or not."""
+    import socket
+
+    from job_apply.desk import _free_port
+
+    held = [("127.0.0.1", False, True), ("127.0.0.1", True, True), ("127.0.0.1", True, False), ("127.0.0.1", False, False)]
+    if os.name != "nt":  # (Windows lets a specific address share a port with the wildcard's: not the desk's to judge)
+        held += [("0.0.0.0", False, True), ("0.0.0.0", True, True)]
+    for address, reuse, listening in held:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            if reuse:
+                s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            s.bind((address, 0))
+            if listening:
+                s.listen()
+            port = s.getsockname()[1]
+            assert _free_port(port) != port, (address, reuse, listening)
+
+
+def test_a_folder_that_allows_no_lock_keeps_no_queue_and_says_so(srv, monkeypatch, job_apply_home):
+    """The re-check of the restart: any error taking the queue's lock was read as another desk keeping the queue. Only
+    a lock held elsewhere is that; one the folder doesn't allow (ENOLCK, ENOTSUP: a network drive, say) means no queue
+    is kept here, and the page says so."""
+    import errno
+    import sys
+
+    def no_locks(*args):
+        raise OSError(errno.ENOLCK, "No locks available")
+
+    if sys.platform == "win32":
+        import msvcrt
+        monkeypatch.setattr(msvcrt, "locking", no_locks)
+    else:
+        import fcntl
+        monkeypatch.setattr(fcntl, "flock", no_locks)
+    (job,) = _jobs(srv, 1)
+    desk = Desk(srv)
+    desk.applier.restore()
+    assert not desk.applier.queue_elsewhere
+    assert desk.state().get("queue_note") == pipeline.QUEUE_NO_LOCK
+    desk.apply(urls=[], job_ids=[job], submit=False)
+    assert not (job_apply_home / "desk-queue.json").exists()
+
+
+def test_a_desk_takes_the_queue_up_once_the_other_has_ended_and_holds_only_what_it_adds(srv, monkeypatch,
+                                                                                       job_apply_home):
+    """The re-check of the restart: a desk that found another keeping the queue only tried again as it was opened, and
+    then paused its whole queue for what it picked up. It looks again about every minute while the other runs; once
+    that one has ended, the note goes, and the jobs it had kept are back, held for the person's Resume queue (said so),
+    while this desk's own queue goes on."""
+    import subprocess
+    import sys
+
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "QUEUE_LOCK_RETRY", 0.5, raising=False)
+    passes = _passes_reach_review(monkeypatch)
+    theirs, mine, later = _jobs(srv, 3)
+    _keep_queue([theirs])  # (the other desk's)
+    holder = ("import sys\n"
+              "from job_apply import pipeline\n"
+              "print('held' if pipeline._take_queue_lock() in (True, 'mine') else 'not', flush=True)\n"
+              "sys.stdin.read()\n")
+    proc = subprocess.Popen([sys.executable, "-c", holder], env={**os.environ, "JOB_APPLY_HOME": str(job_apply_home)},
+                            stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, encoding="utf-8")
+
+    async def go():
+        desk = Desk(srv)
+        try:
+            assert proc.stdout.readline().strip() == "held"
+            desk.applier.start()
+            assert desk.applier.queue_elsewhere and theirs not in desk.applier.runs
+            desk.apply(urls=[], job_ids=[mine], submit=False)  # (this desk's own, going on)
+            await _until(lambda: desk.applier.runs[mine].status == "ready")
+        finally:
+            proc.stdin.close()
+            proc.wait(timeout=60)
+        try:
+            await _until(lambda: theirs in desk.applier.runs, timeout=15)  # (looked at again by itself)
+            q = desk.applier
+            assert not q.queue_elsewhere and desk.state()["queue_note"] is None and not q.paused
+            assert [j for _, j in q.tasks] == [theirs]
+            assert desk.state()["restored"] == ("1 job the Job Desk before this one kept (it has ended) is back in the "
+                                                "queue, held. Press Resume queue to go on.")
+            desk.apply(urls=[], job_ids=[later], submit=False)
+            await _until(lambda: q.runs[later].status == "ready")
+            await asyncio.sleep(1)
+            assert passes == [mine, later]  # (theirs held, this desk's own gone on)
+            q.resume_queue()
+            await _until(lambda: q.runs[theirs].status == "ready")
+            assert passes == [mine, later, theirs] and desk.state()["restored"] is None
+        finally:
+            await desk.applier.stop()
+
+    run(go())
+
+
+def test_a_job_waiting_for_its_tailored_resume_comes_back_waiting_for_it(srv, monkeypatch):
+    """The re-check of the restart: a job waiting for a tailored resume (its tab never opened) came back as a card for
+    a job begun. It was never begun: it waits for its resume again, listed for Claude to write it, with Submit for me
+    under the usual rule."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    (job,) = _jobs(srv, 1)
+    before = Desk(srv)
+    before.applier.auto_submit = before.applier.tailor = True  # (Submit for me on, and resumes tailored: desk.json)
+    before._save_settings()
+
+    async def go():
+        before.applier.start()
+        before.apply(urls=[], job_ids=[job], submit=True)
+        await _until(lambda: before.applier.runs[job].need == "tailor")
+        await before.applier.stop()
+        after = Desk(srv)
+        after.applier.start()
+        try:
+            r = after.applier.runs[job]
+            assert (r.status, r.need, r.submit, r.left_at_restart) == ("needs_you", "tailor", True, False), r.reason
+            assert after.applier.tailoring() == [r]
+        finally:
+            await after.applier.stop()
 
     run(go())
