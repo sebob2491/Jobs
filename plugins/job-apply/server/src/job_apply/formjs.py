@@ -1549,21 +1549,43 @@ OUTSIDE_CLICK_JS = r"""
 """
 
 
-# Is a dropdown menu open (one with options showing)?
+# Is a dropdown menu open (one with options showing)? Never a list that's part of a dialog over the page unless a
+# box names it (aria-controls or aria-owns: an input, a combobox, or a button that opens a list), nor one in a notice
+# OPEN_DIALOGS_JS reads: a notice's list of languages, or a cookie center's list of vendors, is no menu to close with
+# an Escape (the review of the fix for issue #112, note 41)
 OPEN_MENU_JS = r"""
-() => [...document.querySelectorAll('[role="listbox"], [role="menu"], [role="grid"]')].some((m) =>
-  m.tagName !== 'SELECT' && m.getClientRects().length > 0 && getComputedStyle(m).visibility !== 'hidden'
-  && (m.getAttribute('role') === 'grid'
-    // a grid is a menu only as a field's list (Oracle's lookups), not as a table on the page
-    ? !!(m.id && document.querySelector(`[aria-controls~="${CSS.escape(m.id)}"]`)) && !!m.querySelector('[role="gridcell"]')
-    : !!m.querySelector('[role="option"], [role="menuitem"]')))
-"""
+() => {
+  /*OPEN_DIALOGS*/
+  const OPENS = 'input, [role="combobox"], button[aria-haspopup], [role="button"][aria-haspopup]';
+  // (the dialog itself only by an input or a combobox whose pop-up it is: a cookie center's own button names it too)
+  const named = (n, d) => !!n.id && [...document.querySelectorAll(
+    `[aria-controls~="${CSS.escape(n.id)}"], [aria-owns~="${CSS.escape(n.id)}"]`)]
+    .some((b) => !n.contains(b) && b.matches(n === d ? 'input, [role="combobox"]' : OPENS));
+  let notices = null;
+  const owned = (m) => {
+    const d = m.closest('[aria-modal="true"], [role="dialog"], [role="alertdialog"], dialog');
+    if (!d) return true;
+    if (notices === null) notices = openDialogs().map((o) => o.el);
+    if (notices.some((o) => o.contains(m))) return false;
+    for (let n = m; n && n !== d.parentElement; n = n.parentElement) if (named(n, d)) return true;
+    return false;
+  };
+  return [...document.querySelectorAll('[role="listbox"], [role="menu"], [role="grid"]')].some((m) =>
+    m.tagName !== 'SELECT' && m.getClientRects().length > 0 && getComputedStyle(m).visibility !== 'hidden'
+    && (m.getAttribute('role') === 'grid'
+      // a grid is a menu only as a field's list (Oracle's lookups), not as a table on the page
+      ? !!(m.id && document.querySelector(`[aria-controls~="${CSS.escape(m.id)}"]`)) && !!m.querySelector('[role="gridcell"]')
+      : !!m.querySelector('[role="option"], [role="menuitem"]'))
+    && owned(m));
+}
+""".replace("/*OPEN_DIALOGS*/", OPEN_DIALOGS_JS)
 
 
 # A box's own pop-up drawn as a dialog over the page, the kind OPEN_DIALOGS_JS leaves out of the notices: shown, its
-# calendar's days or its list's choices on show, no boxes of its own, and opened by a box outside it (one that names
-# it or something in it, aria-controls or aria-owns; or one that says it has opened a pop-up, aria-expanded with
-# aria-haspopup; or, given its id, the box being filled, where it opens one). Eightfold's date picker opens its
+# calendar's days or its list's choices on show, no boxes or switches of its own, no cookie center's, and opened by a
+# box outside it (one that names it or something in it, aria-controls or aria-owns; or one that says it has opened a
+# dialog or a grid, aria-expanded with aria-haspopup; or, given its id, the box being filled, where its pop-up is a
+# dialog or a grid: a combobox's list is no picker, the review's). Eightfold's date picker opens its
 # calendar as one, modal: it keeps the focus and swallows the next box's click and keys (issue #112, note 41). None
 # while a notice (or a cookie banner) is open over the page: that's answered, never closed here (the review's: a
 # notice holding a hidden list of languages was closed by an Escape). How many are open; and first, with `mode`
@@ -1574,13 +1596,17 @@ OPEN_PICKERS_JS = r"""
   /*OPEN_DIALOGS*/
   const [mode, id] = Array.isArray(arg) ? arg : [arg, ''];
   const shown = (n) => n.getClientRects().length > 0 && getComputedStyle(n).visibility !== 'hidden';
-  const BOX = 'input:not([type="hidden"]), select, textarea';
+  const BOX = 'input:not([type="hidden"]), select, textarea, [role="switch"], [role="checkbox"], [role="radio"], '
+    + '[role="textbox"], [role="combobox"]';
+  const COOKIE = /cookie|onetrust|cybot|truste|gdpr|consent|privacy/i;
   const drawn = [...document.querySelectorAll('[role="dialog"], [aria-modal="true"], dialog[open]')].filter((d) => shown(d)
     && [...d.querySelectorAll('[role="grid"] [role="gridcell"], [role="listbox"] [role="option"]')].some(shown)
-    && ![...d.querySelectorAll(BOX)].some(shown));
+    && ![...d.querySelectorAll(BOX)].some(shown)
+    && !COOKIE.test(`${d.id} ${typeof d.className === 'string' ? d.className : ''} ${d.getAttribute('aria-label') || ''}`));
   if (!drawn.length || openDialogs().length) return 0;
   const own = id ? document.querySelector(`[data-ja-id="${CSS.escape(id)}"]`) : null;
-  const pops = (b) => /^(dialog|grid|listbox|true)$/.test(b.getAttribute('aria-haspopup') || '');
+  // (a pop-up that's a dialog or a grid: a combobox's list is a menu, _close_menus')
+  const pops = (b) => /^(dialog|grid)$/.test(b.getAttribute('aria-haspopup') || '');
   const opens = (b, d) => {
     if (!b || d.contains(b) || !shown(b)) return false;
     const refs = `${b.getAttribute('aria-controls') || ''} ${b.getAttribute('aria-owns') || ''}`.split(/\s+/).filter(Boolean);

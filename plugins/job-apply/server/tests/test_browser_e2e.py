@@ -2130,6 +2130,38 @@ def test_a_notice_or_a_calendar_no_box_opened_is_never_closed_as_a_picker(srv):
         assert run(page.evaluate("() => window.escapes")) == 0, page_html
 
 
+def test_a_list_in_a_notice_or_a_cookie_center_is_no_menu_to_close(srv):
+    """The re-review's: a shown list counted as an open menu wherever it was, so a notice's list of languages, or a
+    cookie center's list of vendors beside its switches, got an Escape between boxes (the Escape that closes a menu);
+    and a combobox being filled (aria-haspopup="listbox") tied any dialog with a list to itself, as a picker. A list in a
+    dialog is a menu only where a box names it; a picker opens as a dialog or a grid."""
+    run(srv.open_application(url=fixture_url("jsonld_posting.html")))
+    page = run(srv.browser.page())
+    notice = ("<form><label for=a>First Name</label><input id=a><label id=cl for=c>Country</label>"
+              "<input id=c role=combobox aria-haspopup=listbox aria-expanded=false aria-controls=clist autocomplete=off>"
+              "<ul id=clist role=listbox hidden><li role=option>Canada</li><li role=option>United States</li></ul></form>"
+              "<div role=dialog aria-modal=true aria-labelledby=h style='position:fixed;top:10px;right:10px;width:300px;"
+              "height:250px;background:#fff'><h2 id=h>Notice about AI screening</h2><p>Read it in:</p>"
+              "<ul role=listbox><li role=option>English</li><li role=option>Español</li></ul><button>I Accept</button>"
+              "</div><script>const c = document.getElementById('c'), l = document.getElementById('clist');"
+              "c.addEventListener('click', () => { l.hidden = false; c.setAttribute('aria-expanded', 'true'); });"
+              "l.addEventListener('click', (e) => { c.value = e.target.textContent; l.hidden = true; "
+              "c.setAttribute('aria-expanded', 'false'); });</script>")
+    cookies = ("<form><label for=a>First Name</label><input id=a></form><button aria-haspopup=dialog aria-expanded=true "
+               "aria-controls=onetrust-pc-sdk>Cookie Settings</button><div id=onetrust-pc-sdk role=dialog aria-modal=true "
+               "aria-label='Privacy Preference Center' style='position:fixed;top:10px;right:10px;width:320px;height:320px;"
+               "background:#fff'><div role=switch aria-checked=false tabindex=0>Performance cookies</div>"
+               "<ul role=listbox aria-label=Vendors><li role=option>Vendor A</li></ul><button>Confirm my choices</button>"
+               "</div>")
+    for html, fills in ((notice, {"First Name": "Sam", "Country": "United States"}), (cookies, {"First Name": "Sam"})):
+        run(page.set_content(html + _ESCAPES))
+        fields = {f["label"]: f for f in run(srv.inspect_form(include_dropdown_options=False))["fields"]}
+        for label, value in fills.items():
+            out = run(srv.fill_form([{"id": fields[label]["id"], "value": value}]))
+            assert out["ok"] and run(page.evaluate("() => window.escapes")) == 0, (label, out)
+    assert run(page.input_value("#a")) == "Sam"
+
+
 def test_a_calendar_that_wont_move_on_says_so_and_a_forms_next_is_never_pressed(srv):
     """The review's: a calendar whose Next month is disabled at its last month was pressed anyway, and waited out a
     click's timeout; and one whose arrows don't say they move a month had its form's own "Next" pressed instead. Each
