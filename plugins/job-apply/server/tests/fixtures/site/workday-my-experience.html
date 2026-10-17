@@ -165,7 +165,9 @@
     place();
     document.body.appendChild(note);
     setInterval(place, 50);
-    if (query.has('toast')) setTimeout(() => note.remove(), 6000);
+    // (8 s: in the desk's wait between presses, never at a press's own timeout, where a click can both time out and
+    // land: CI, Oct 17, a press that gave up at 6 s drew its block, counted as none)
+    if (query.has('toast')) setTimeout(() => note.remove(), 8000);
   }
 </script>
 </body>

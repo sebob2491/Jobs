@@ -2832,3 +2832,65 @@ def test_a_degree_had_is_still_the_highest_when_a_later_one_is_under_way():
         {"school": "Example State University", "degree": "BS Electrical Engineering", "start": 2012, "end": 2016}])
     assert _answer("Highest level of education completed", p, kind="select",
                    options=["High School", "Associate's", "Bachelor's", "Master's"]) == "Bachelor's"
+
+
+def test_a_date_box_asking_when_you_can_start_gets_the_day_the_profile_makes():
+    """Eightfold's "Preferred Start Date" is a date picker (issue #112, note 41): the profile's "2 weeks after offer"
+    typed into it found nothing, and it was skipped. A box that takes a date gets the day the profile's earliest start
+    makes (today and its notice; a date as itself; today for "Immediately"), and nothing where it makes none; never a
+    day for another date's box; and a box that takes words keeps the profile's words."""
+    from datetime import date, timedelta
+
+    today = date.today()
+    in_two_weeks = (today + timedelta(days=14)).strftime("%m/%d/%Y")
+
+    def answer(earliest, label="Preferred Start Date", profile=None, **kw):
+        field = {"id": "1", "label": label, "kind": "combobox", "value": "", "date": True, **kw}
+        a = resolve_field(field, profile or Profile({"preferences": {"earliest_start": earliest}}))
+        return a and a.value
+
+    assert answer("2 weeks after offer") == answer("Two weeks' notice") == in_two_weeks
+    assert answer("1 month") == (today + timedelta(days=30)).strftime("%m/%d/%Y")
+    assert answer("Immediately") == answer("ASAP") == today.strftime("%m/%d/%Y")
+    assert answer("2026-11-01") == answer("11/01/2026") == answer("November 1, 2026") == "11/01/2026"
+    for unread in ("After graduation", "2 weeks after graduation", "2-4 weeks", "December 2026", "Negotiable"):
+        assert answer(unread) is None, unread  # (left, as before: never a day the profile doesn't say)
+    for label in ("Available Start Date", "Earliest Start Date*", "Date available to start", "When can you start?"):
+        assert answer("2 weeks after offer", label) == in_two_weeks, label
+    # a date input takes the ISO form, a date's part its own
+    assert answer("2 weeks after offer", kind="text", input_type="date", date=None) == \
+        (today + timedelta(days=14)).isoformat()
+    assert answer("2026-11-01", kind="text", sublabel="Month", date=None) == "11"
+    # the common question's answer (the question bank's, in answers.yaml) too
+    bank = Profile({"answers": [{"match": "(?:desired|earliest|preferred) start", "answer": "Two weeks after an offer",
+                                 "bank": True}]})
+    assert answer(None, profile=bank) == in_two_weeks
+    # never another date's box: "Start Date" alone, a start date in a past job's block
+    assert answer("2 weeks after offer", "Start Date") is None
+    assert answer("2 weeks after offer", section="Work Experience 1") != in_two_weeks
+    # a box that takes words keeps the profile's
+    assert answer("2 weeks after offer", date=None, kind="text") == "2 weeks after offer"
+
+
+def test_a_date_box_for_another_day_or_an_unclear_start_gets_no_day():
+    """The review of the fix for note 41: "Earliest date available for an interview" took the start date (an answer the
+    profile doesn't give), and so did "Anticipated start date of degree"; "Immediately after 2 weeks notice" and
+    "ASAP, 2 weeks notice required" made today (sooner than the person said), and a date gone by was given as itself.
+    None of them gets a day. And a box hinted day first ("DD/MM/YYYY") gets the day in that order."""
+    from datetime import date, timedelta
+
+    def answer(earliest, label="Preferred Start Date", **kw):
+        field = {"id": "1", "label": label, "kind": "combobox", "value": "", "date": True, **kw}
+        a = resolve_field(field, Profile({"preferences": {"earliest_start": earliest}}))
+        return a and a.value
+
+    for label in ("Earliest date available for an interview", "What is the earliest date you could interview?",
+                  "Anticipated start date of degree", "Earliest start date for orientation"):
+        assert answer("2 weeks after offer", label) is None, label
+    for unclear in ("Immediately after 2 weeks notice", "ASAP, 2 weeks notice required",
+                    "Available immediately; prefer 2 weeks", "2025-06-01", "2 weeks after background check"):
+        assert answer(unclear) is None, unclear
+    day = date.today() + timedelta(days=14)
+    assert answer("2 weeks after offer", kind="text", date="dd/mm/yyyy") == day.strftime("%d/%m/%Y")
+    assert answer("2 weeks after offer", kind="text", date="yyyy-mm-dd") == day.isoformat()
+    assert answer("2 weeks after offer", kind="text", date="dd.mm.yy") == day.strftime("%d.%m.%y")

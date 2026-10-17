@@ -563,6 +563,16 @@ EXTRACT_JS = r"""
       f.value = unchosen ? '' : el.getAttribute('data-ja-secret') === 'in' && !moved ? '(set)' : '(unconfirmed)';
     }
     if (tagName === 'input' && type && type !== 'text') f.input_type = type;
+    // a box that takes a date: its own type, or a date picker's, by its hint or by the calendar it opens as a dialog
+    // (Eightfold's "Preferred Start Date": a combobox hinted "Select date", issue #112, note 41); a hint that's a date's
+    // form ("DD/MM/YYYY") as it is, for the order its parts go in
+    const DATE_HINT = /^(?:(?:select|choose|pick|enter) (?:a )?date|[md]{1,2}([\/.\-])[md]{1,2}\1y{2,4}|y{4}([\/.\-])m{1,2}\2d{1,2})$/i;
+    const dateHint = [el.getAttribute('placeholder'), el.getAttribute('aria-label')].map((h) => clean(h || ''))
+      .find((h) => DATE_HINT.test(h));
+    if (tagName === 'input' && (type === 'date' || dateHint
+        || (el.getAttribute('aria-haspopup') === 'dialog' && /\bdate\b/i.test(label)))) {
+      f.date = dateHint && !/date/i.test(dateHint) ? dateHint.toLowerCase() : true;
+    }
     // a box the site marks as a phone's (iCIMS's "Number" beside its Phone Country Code: tel-national)
     const autocomplete = (el.getAttribute('autocomplete') || '').trim().toLowerCase().split(/\s+/).pop();
     if (tagName === 'input' && /^tel(-national|-local)?$/.test(autocomplete)) f.autocomplete = autocomplete;
@@ -1539,14 +1549,153 @@ OUTSIDE_CLICK_JS = r"""
 """
 
 
-# Is a dropdown menu open (one with options showing)?
+# Is a dropdown menu open (one with options showing)? Never a list that's part of a dialog over the page unless a
+# box names it (aria-controls or aria-owns: an input, a combobox, or a button that opens a list), nor one in a notice
+# OPEN_DIALOGS_JS reads: a notice's list of languages, or a cookie center's list of vendors, is no menu to close with
+# an Escape (the review of the fix for issue #112, note 41)
 OPEN_MENU_JS = r"""
-() => [...document.querySelectorAll('[role="listbox"], [role="menu"], [role="grid"]')].some((m) =>
-  m.tagName !== 'SELECT' && m.getClientRects().length > 0 && getComputedStyle(m).visibility !== 'hidden'
-  && (m.getAttribute('role') === 'grid'
-    // a grid is a menu only as a field's list (Oracle's lookups), not as a table on the page
-    ? !!(m.id && document.querySelector(`[aria-controls~="${CSS.escape(m.id)}"]`)) && !!m.querySelector('[role="gridcell"]')
-    : !!m.querySelector('[role="option"], [role="menuitem"]')))
+() => {
+  /*OPEN_DIALOGS*/
+  const OPENS = 'input, [role="combobox"], button[aria-haspopup], [role="button"][aria-haspopup]';
+  // (the dialog itself only by an input or a combobox whose pop-up it is: a cookie center's own button names it too)
+  const named = (n, d) => !!n.id && [...document.querySelectorAll(
+    `[aria-controls~="${CSS.escape(n.id)}"], [aria-owns~="${CSS.escape(n.id)}"]`)]
+    .some((b) => !n.contains(b) && b.matches(n === d ? 'input, [role="combobox"]' : OPENS));
+  let notices = null;
+  const owned = (m) => {
+    const d = m.closest('[aria-modal="true"], [role="dialog"], [role="alertdialog"], dialog');
+    if (!d) return true;
+    if (notices === null) notices = openDialogs().map((o) => o.el);
+    if (notices.some((o) => o.contains(m))) return false;
+    for (let n = m; n && n !== d.parentElement; n = n.parentElement) if (named(n, d)) return true;
+    return false;
+  };
+  return [...document.querySelectorAll('[role="listbox"], [role="menu"], [role="grid"]')].some((m) =>
+    m.tagName !== 'SELECT' && m.getClientRects().length > 0 && getComputedStyle(m).visibility !== 'hidden'
+    && (m.getAttribute('role') === 'grid'
+      // a grid is a menu only as a field's list (Oracle's lookups), not as a table on the page
+      ? !!(m.id && document.querySelector(`[aria-controls~="${CSS.escape(m.id)}"]`)) && !!m.querySelector('[role="gridcell"]')
+      : !!m.querySelector('[role="option"], [role="menuitem"]'))
+    && owned(m));
+}
+""".replace("/*OPEN_DIALOGS*/", OPEN_DIALOGS_JS)
+
+
+# A box's own pop-up drawn as a dialog over the page, the kind OPEN_DIALOGS_JS leaves out of the notices: shown, its
+# calendar's days or its list's choices on show, no boxes or switches of its own, no cookie center's, and opened by a
+# box outside it (one that names it or something in it, aria-controls or aria-owns; or one that says it has opened a
+# dialog or a grid, aria-expanded with aria-haspopup; or, given its id, the box being filled, where its pop-up is a
+# dialog or a grid: a combobox's list is no picker, the review's). Eightfold's date picker opens its
+# calendar as one, modal: it keeps the focus and swallows the next box's click and keys (issue #112, note 41). None
+# while a notice (or a cookie banner) is open over the page: that's answered, never closed here (the review's: a
+# notice holding a hidden list of languages was closed by an Escape). How many are open; and first, with `mode`
+# "blur", the focus taken off whatever has it; "inside", the focus moved into the last one, unless it's in one
+# already; "opener", the focus put on the box that opened it
+OPEN_PICKERS_JS = r"""
+(arg) => {
+  /*OPEN_DIALOGS*/
+  const [mode, id] = Array.isArray(arg) ? arg : [arg, ''];
+  const shown = (n) => n.getClientRects().length > 0 && getComputedStyle(n).visibility !== 'hidden';
+  const BOX = 'input:not([type="hidden"]), select, textarea, [role="switch"], [role="checkbox"], [role="radio"], '
+    + '[role="textbox"], [role="combobox"]';
+  const COOKIE = /cookie|onetrust|cybot|truste|gdpr|consent|privacy/i;
+  const drawn = [...document.querySelectorAll('[role="dialog"], [aria-modal="true"], dialog[open]')].filter((d) => shown(d)
+    && [...d.querySelectorAll('[role="grid"] [role="gridcell"], [role="listbox"] [role="option"]')].some(shown)
+    && ![...d.querySelectorAll(BOX)].some(shown)
+    && !COOKIE.test(`${d.id} ${typeof d.className === 'string' ? d.className : ''} ${d.getAttribute('aria-label') || ''}`));
+  if (!drawn.length || openDialogs().length) return 0;
+  const own = id ? document.querySelector(`[data-ja-id="${CSS.escape(id)}"]`) : null;
+  // (a pop-up that's a dialog or a grid: a combobox's list is a menu, _close_menus')
+  const pops = (b) => /^(dialog|grid)$/.test(b.getAttribute('aria-haspopup') || '');
+  const opens = (b, d) => {
+    if (!b || d.contains(b) || !shown(b)) return false;
+    const refs = `${b.getAttribute('aria-controls') || ''} ${b.getAttribute('aria-owns') || ''}`.split(/\s+/).filter(Boolean);
+    if (refs.some((r) => { const t = document.getElementById(r); return !!t && (t === d || d.contains(t)); })) return true;
+    return pops(b) && (b.getAttribute('aria-expanded') === 'true' || b === own);
+  };
+  const boxes = [...document.querySelectorAll('input, button, [role="combobox"]')];
+  const openerOf = (d) => (opens(own, d) ? own : boxes.find((b) => opens(b, d)));
+  const tied = drawn.filter((d) => !!openerOf(d));
+  const open = tied.filter((d) => !tied.some((o) => o !== d && o.contains(d)));
+  if (!open.length) return 0;
+  const a = document.activeElement, d = open[open.length - 1];
+  if (mode === 'blur' && a && a !== document.body) a.blur();
+  if (mode === 'inside' && !(a && open.some((o) => o.contains(a)))) {
+    const target = d.querySelector('[tabindex="0"], [aria-selected="true"] [tabindex], button:not([disabled])') || d;
+    if (target === d && !d.hasAttribute('tabindex')) d.setAttribute('tabindex', '-1');
+    target.focus();
+  }
+  if (mode === 'opener') openerOf(d).focus();
+  return open.length;
+}
+""".replace("/*OPEN_DIALOGS*/", OPEN_DIALOGS_JS)
+
+
+# A date picker's calendar, for the day `iso` ("2026-11-02"): the dialog or grid its box names (aria-controls), else
+# the last calendar shown in a dialog that wasn't before the box was pressed (`mark`: the dialogs shown now marked as
+# before, data-ja-cal-before, and nothing else done). Its days are read from their title or data attribute (rc-picker's, as
+# Eightfold's has them: "2026-11-02") or from their words ("Monday 2 November 2026", "November 2, 2026"). The day
+# shown is marked data-ja-day (its button, where it has one) and "day" returned; else, past the days shown, the
+# calendar's next month's button (one its words say moves a month, never a form's "Next") is marked data-ja-day-nav and
+# "next" returned ("back" for the month before); "none" without a calendar, "unread" with no day it can read,
+# "stuck" with no button to move on, or only one that's disabled (the calendar's last month).
+DAY_CELL_JS = r"""
+([id, iso, mark]) => {
+  for (const n of document.querySelectorAll('[data-ja-day], [data-ja-day-nav]')) {
+    n.removeAttribute('data-ja-day'); n.removeAttribute('data-ja-day-nav');
+  }
+  const shown = (n) => n.getClientRects().length > 0 && getComputedStyle(n).visibility !== 'hidden';
+  const DIALOGS = '[role="dialog"], [aria-modal="true"], dialog[open]';
+  if (mark) {
+    for (const d of document.querySelectorAll(DIALOGS)) d.toggleAttribute('data-ja-cal-before', shown(d));
+    return '';
+  }
+  const box = document.querySelector(`[data-ja-id="${CSS.escape(id)}"]`);
+  const ref = box && (box.getAttribute('aria-controls') || box.getAttribute('aria-owns'));
+  let cal = ref ? document.getElementById(ref.split(/\s+/)[0]) : null;
+  if (!cal || !shown(cal) || !cal.querySelector('[role="grid"], table')) {
+    cal = [...document.querySelectorAll(DIALOGS)]
+      .filter((d) => shown(d) && !d.hasAttribute('data-ja-cal-before') && d.querySelector('[role="grid"], table')).pop() || null;
+  }
+  if (!cal) return 'none';
+  const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+  const fromWords = (words) => {
+    const w = (words || '').toLowerCase();
+    const month = MONTHS.findIndex((m) => new RegExp(`\\b${m}[a-z]*\\b`).test(w));
+    const year = /\b(\d{4})\b/.exec(w);
+    const day = /(?:^|[^\d])(\d{1,2})(?![\d])/.exec(w.replace(/\b\d{4}\b/g, ' '));
+    return month >= 0 && year && day ? `${year[1]}-${String(month + 1).padStart(2, '0')}-${day[1].padStart(2, '0')}` : '';
+  };
+  const dayOf = (c) => {
+    for (const v of ['title', 'data-date', 'data-value', 'data-day', 'datetime']) {
+      const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(c.getAttribute(v) || '');
+      if (m) return m[0];
+    }
+    const named = [c, ...c.querySelectorAll('[aria-label], [title]')].map((n) => n.getAttribute('aria-label') || '');
+    return named.map(fromWords).find(Boolean) || '';
+  };
+  const cells = [...cal.querySelectorAll('[role="gridcell"], td')].filter(shown);
+  const days = cells.map((c) => [c, dayOf(c)]).filter(([, d]) => d);
+  if (!days.length) return 'unread';
+  const off = (c) => c.getAttribute('aria-disabled') === 'true' || /\bdisabled\b/i.test(c.className || '')
+    || !!c.querySelector('[aria-disabled="true"], [disabled]');
+  const hit = days.find(([c, d]) => d === iso && !off(c));
+  if (hit) {
+    const [c] = hit;
+    (c.querySelector('[role="button"], button') || c).setAttribute('data-ja-day', iso);
+    return 'day';
+  }
+  const later = days.every(([, d]) => d < iso), earlier = days.every(([, d]) => d > iso);
+  if (!later && !earlier) return 'stuck';  // (the day shown, but not to be picked: one the calendar keeps out)
+  const words = (b) => `${b.getAttribute('aria-label') || ''} ${b.getAttribute('title') || ''} ${b.getAttribute('data-testid') || ''} `
+    + (typeof b.className === 'string' ? b.className.replace(/[-_]/g, ' ') : '');
+  const buttons = [...cal.querySelectorAll('button, [role="button"]')].filter((b) => shown(b) && !b.closest('[role="gridcell"], td'));
+  const way = later ? /\bnext\b/i : /\bprev(ious)?\b/i;
+  const nav = buttons.find((b) => way.test(words(b)) && /\bmonth\b/i.test(words(b)));
+  if (!nav || nav.disabled || nav.getAttribute('aria-disabled') === 'true') return 'stuck';
+  nav.setAttribute('data-ja-day-nav', '1');
+  return later ? 'next' : 'back';
+}
 """
 
 

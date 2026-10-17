@@ -1,0 +1,217 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Apply - Example Fab</title>
+<style>
+  [hidden] { display: none !important; }
+  .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  .field { margin: 12px 0; }
+  .backdrop { position: fixed; inset: 0; z-index: 10; }
+  .picker { position: absolute; z-index: 11; background: #fff; border: 1px solid #888; padding: 8px; }
+  .picker td div { width: 28px; text-align: center; cursor: pointer; }
+</style>
+</head>
+<body>
+<!-- like Eightfold's one-page application, "Additional Personal Information" (issue #112, note 41, Oct 2026).
+     Preferred Start Date is a combobox hinted "Select date" (Octuple's date picker, as Infineon's captured page has
+     it): a click opens its calendar as a modal dialog (aria-modal, data-testid="picker-dialog") with a grid of days
+     titled "2026-10-31", and a Next month button. While it's open it keeps the focus (any other box that takes it
+     gives it back to the calendar), and a layer over the page swallows every click elsewhere: it closes only on
+     Escape (in it, or on its box) or on a day picked, which the box then shows as "Oct 31, 2026". Its box drops
+     typed words that aren't a date when it loses the focus. Country of Residence, Language of Application and How did
+     you hear about us? are Eightfold's search lists: open on a click, narrow as typed, take a click on a choice, and
+     close on Escape or a click beside them. ?stays=1: the calendar stays open once a day is picked (as one with an OK
+     button does), until Escape. ?escape=box: it takes Escape on its box alone (as rc-picker's does), and says on its
+     box that it's open (aria-expanded). ?last=N: its Next month is disabled N months on. ?plain=1: its arrows don't
+     say what they move, and it has a form's own Next button (window.wizardNext counts its presses). -->
+<h2>Additional Personal Information</h2>
+<div id="app">
+  <div class="field">
+    <label id="country_label" for="country"><span>Country of Residence</span></label>
+    <div data-test-id="Additional_Personal_Information_country">
+      <div aria-live="polite" role="status" class="sr-only" id="country-status"></div>
+      <input aria-controls="country-list" aria-expanded="false" aria-labelledby="country_label" aria-required="true"
+             id="country" placeholder="Select" role="combobox" type="text" autocomplete="off">
+      <ul id="country-list" role="listbox" hidden></ul>
+    </div>
+  </div>
+  <div class="field">
+    <label id="language_label" for="language"><span>Language of Application</span></label>
+    <div>
+      <div aria-live="polite" role="status" class="sr-only" id="language-status"></div>
+      <input aria-controls="language-list" aria-expanded="false" aria-labelledby="language_label" aria-required="true"
+             id="language" placeholder="Select" role="combobox" type="text" autocomplete="off">
+      <ul id="language-list" role="listbox" hidden></ul>
+    </div>
+  </div>
+  <div class="field">
+    <label id="start_label" for="start"><span>Preferred Start Date</span></label>
+    <div>
+      <label for="start" class="sr-only">Select date</label>
+      <input aria-expanded="false" aria-haspopup="dialog" aria-label="Select date" aria-labelledby="start_label"
+             autocomplete="off" id="start" placeholder="Select date" role="combobox" size="13">
+    </div>
+  </div>
+  <div class="field">
+    <label id="heard_label" for="heard"><span>How did you hear about us?</span></label>
+    <div>
+      <div aria-live="polite" role="status" class="sr-only" id="heard-status"></div>
+      <input aria-controls="heard-list" aria-expanded="false" aria-labelledby="heard_label" id="heard"
+             placeholder="Select" role="combobox" type="text" autocomplete="off">
+      <ul id="heard-list" role="listbox" hidden></ul>
+    </div>
+  </div>
+</div>
+<div class="backdrop" id="backdrop" hidden></div>
+<div aria-labelledby="dp-dialog-1-label" aria-modal="true" class="picker" data-testid="picker-dialog" id="picker"
+     role="dialog" hidden>
+  <div tabindex="-1" id="partial">
+    <span id="dp-dialog-1-label" class="sr-only">Choose a date</span>
+    <div>
+      <button type="button" aria-label="Previous year (Control + left)" data-testid="picker-header-super-prev-btn"
+              data-step="-12">&laquo;</button>
+      <button type="button" aria-label="Previous month (PageUp)" data-testid="picker-header-prev-btn" data-step="-1">&lsaquo;</button>
+      <button type="button" id="month-name"></button>
+      <button type="button" aria-label="Next month (PageDown)" data-testid="picker-header-next-btn" data-step="1"
+              id="next-month">&rsaquo;</button>
+      <button type="button" aria-label="Next year (Control + right)" data-testid="picker-header-super-next-btn"
+              data-step="12">&raquo;</button>
+    </div>
+    <table role="grid">
+      <thead><tr role="row"><th>Su</th><th>Mo</th><th>Tu</th><th>We</th><th>Th</th><th>Fr</th><th>Sa</th></tr></thead>
+      <tbody id="days"></tbody>
+    </table>
+    <button type="button" aria-label="Next" id="wizard-next" hidden>Next</button>
+  </div>
+</div>
+<script>
+  const COUNTRIES = ['Afghanistan', 'Albania', 'Algeria', 'Andorra', 'Angola', 'Argentina', 'Armenia', 'Australia',
+    'Austria', 'Azerbaijan', 'Bahamas', 'Bahrain', 'Bangladesh', 'Barbados', 'Belarus', 'Belgium', 'Belize', 'Benin',
+    'Bhutan', 'Bolivia', 'Botswana', 'Brazil', 'Brunei', 'Bulgaria', 'Burundi', 'Cambodia', 'Cameroon', 'Canada',
+    'Chad', 'Chile', 'China', 'Colombia', 'Comoros', 'Congo', 'Costa Rica', 'Croatia', 'Cuba', 'Cyprus', 'Czechia',
+    'Denmark', 'Djibouti', 'Dominica', 'Ecuador', 'Egypt', 'El Salvador', 'Eritrea', 'Estonia', 'Ethiopia', 'Fiji',
+    'Finland', 'France', 'Gabon', 'Gambia', 'Georgia', 'Germany', 'Ghana', 'Greece', 'Grenada', 'Guatemala', 'Guinea',
+    'Guyana', 'Haiti', 'Honduras', 'Hungary', 'Iceland', 'India', 'Indonesia', 'Iraq', 'Ireland', 'Israel', 'Italy',
+    'Jamaica', 'Japan', 'Jordan', 'Kazakhstan', 'Kenya', 'Kiribati', 'Kuwait', 'Laos', 'Latvia', 'Lebanon', 'Lesotho',
+    'Liberia', 'Libya', 'Lithuania', 'Luxembourg', 'Madagascar', 'Malawi', 'Malaysia', 'Maldives', 'Mali', 'Malta',
+    'Mexico', 'Moldova', 'Monaco', 'Mongolia', 'Morocco', 'Mozambique', 'Myanmar', 'Namibia', 'Nepal', 'Netherlands',
+    'New Zealand', 'Nicaragua', 'Niger', 'Nigeria', 'Norway', 'Oman', 'Pakistan', 'Panama', 'Paraguay', 'Peru',
+    'Philippines', 'Poland', 'Portugal', 'Qatar', 'Romania', 'Rwanda', 'Samoa', 'Senegal', 'Serbia', 'Singapore',
+    'Slovakia', 'Slovenia', 'Somalia', 'South Africa', 'Spain', 'Sri Lanka', 'Sudan', 'Sweden', 'Switzerland', 'Syria',
+    'Taiwan', 'Tanzania', 'Thailand', 'Togo', 'Tonga', 'Tunisia', 'Turkey', 'Uganda', 'Ukraine',
+    'United Arab Emirates', 'United Kingdom', 'United States', 'United States Minor Outlying Islands', 'Uruguay',
+    'Uzbekistan', 'Vanuatu', 'Venezuela', 'Vietnam', 'Yemen', 'Zambia', 'Zimbabwe'];
+  const SOURCES = ['Company Website', 'Indeed', 'LinkedIn', 'Job Fair', 'Referral', 'Other'];
+
+  // Eightfold's search lists
+  for (const [id, choices] of [['country', COUNTRIES], ['language', ['English', 'German']], ['heard', SOURCES]]) {
+    const box = document.getElementById(id), list = document.getElementById(`${id}-list`);
+    const status = document.getElementById(`${id}-status`);
+    let chosen = '';
+    const show = (words) => {
+      const hits = choices.filter((c) => c.toLowerCase().includes(words.toLowerCase()));
+      list.innerHTML = hits.map((c) => `<li role="option">${c}</li>`).join('');
+      status.textContent = `${hits.length} matches found.`;
+    };
+    const open = () => { show(box.value === chosen ? '' : box.value); list.hidden = false; box.setAttribute('aria-expanded', 'true'); };
+    const close = () => { list.hidden = true; box.setAttribute('aria-expanded', 'false'); box.value = chosen; };
+    box.addEventListener('click', open);
+    box.addEventListener('keydown', (e) => {
+      if (e.key === 'ArrowDown') open();
+      if (e.key === 'Escape') close();
+    });
+    box.addEventListener('input', () => { show(box.value); list.hidden = false; box.setAttribute('aria-expanded', 'true'); });
+    list.addEventListener('click', (e) => { if (e.target.matches('[role="option"]')) { chosen = e.target.textContent; close(); } });
+    document.addEventListener('mousedown', (e) => { if (!list.hidden && !list.contains(e.target) && e.target !== box) close(); });
+    show('');
+  }
+
+  // Octuple's date picker, modal
+  const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October',
+                  'November', 'December'];
+  const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  const start = document.getElementById('start'), picker = document.getElementById('picker');
+  const partial = document.getElementById('partial'), backdrop = document.getElementById('backdrop');
+  const pad = (n) => String(n).padStart(2, '0');
+  const iso = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  let picked = null, view = new Date(), committed = '';
+  window.pickerOpened = 0;
+  window.wizardNext = 0;
+  const params = new URLSearchParams(location.search);
+  const today = new Date(), last = params.get('last');
+  if (params.get('plain')) {
+    for (const b of picker.querySelectorAll('[data-step]')) { b.removeAttribute('aria-label'); b.removeAttribute('data-testid'); }
+    document.getElementById('wizard-next').hidden = false;
+    document.getElementById('wizard-next').addEventListener('click', () => { window.wizardNext += 1; });
+  }
+  const draw = () => {
+    document.getElementById('month-name').textContent = `${MONTHS[view.getMonth()].slice(0, 3)} ${view.getFullYear()}`;
+    const first = new Date(view.getFullYear(), view.getMonth(), 1);
+    const day = new Date(first);
+    day.setDate(1 - first.getDay());
+    let rows = '';
+    for (let w = 0; w < 6; w++) {
+      rows += '<tr role="row">';
+      for (let i = 0; i < 7; i++) {
+        const label = `${WEEKDAYS[day.getDay()]} ${day.getDate()} ${MONTHS[day.getMonth()]} ${day.getFullYear()}`;
+        rows += `<td role="gridcell" aria-selected="${picked && iso(picked) === iso(day)}" title="${iso(day)}">`
+          + `<div role="button" tabindex="-1" aria-label="${label}">${day.getDate()}</div></td>`;
+        day.setDate(day.getDate() + 1);
+      }
+      rows += '</tr>';
+    }
+    document.getElementById('days').innerHTML = rows;
+    const end = last && (view.getFullYear() - today.getFullYear()) * 12 + view.getMonth() - today.getMonth() >= Number(last);
+    document.getElementById('next-month').disabled = !!end;
+    document.getElementById('next-month').setAttribute('aria-disabled', String(!!end));
+  };
+  const open = () => {
+    if (!picker.hidden) return;
+    window.pickerOpened += 1;
+    view = picked ? new Date(picked) : new Date();
+    draw();
+    const r = start.getBoundingClientRect();
+    picker.style.left = `${r.left + scrollX}px`;
+    picker.style.top = `${r.bottom + scrollY + 4}px`;
+    backdrop.hidden = false;
+    picker.hidden = false;
+    start.setAttribute('aria-expanded', 'true');
+    partial.focus();
+  };
+  const close = () => {
+    picker.hidden = true;
+    backdrop.hidden = true;
+    start.setAttribute('aria-expanded', 'false');
+    start.focus();
+  };
+  start.addEventListener('click', open);
+  // the calendar keeps the focus: any box but its own gives it back
+  document.addEventListener('focusin', (e) => {
+    if (!picker.hidden && !picker.contains(e.target) && e.target !== start) partial.focus();
+  });
+  // and swallows every click elsewhere
+  for (const type of ['mousedown', 'mouseup', 'click']) {
+    backdrop.addEventListener(type, (e) => { e.preventDefault(); e.stopPropagation(); });
+  }
+  for (const el of params.get('escape') === 'box' ? [start] : [picker, start]) {
+    el.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !picker.hidden) { e.stopPropagation(); close(); } });
+  }
+  start.addEventListener('blur', () => { if (start.value !== committed) start.value = committed; });
+  picker.addEventListener('click', (e) => {
+    const nav = e.target.closest('button[data-step]');
+    if (nav) {
+      view = new Date(view.getFullYear(), view.getMonth() + Number(nav.getAttribute('data-step')), 1);
+      draw();
+      return;
+    }
+    const cell = e.target.closest('td[role="gridcell"]');
+    if (!cell) return;
+    const [y, m, d] = cell.title.split('-').map(Number);
+    picked = new Date(y, m - 1, d);
+    committed = `${MONTHS[m - 1].slice(0, 3)} ${d}, ${y}`;
+    start.value = committed;
+    if (params.get('stays')) draw();
+    else close();
+  });
+</script>
+</body>
+</html>

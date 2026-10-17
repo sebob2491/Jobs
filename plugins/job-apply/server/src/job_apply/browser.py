@@ -15,6 +15,7 @@ import os
 import re
 import sys
 import time
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import urlparse
@@ -32,10 +33,11 @@ from playwright.async_api import (
 
 from . import config
 from .ats import detect_ats
-from .autofill import choose_option, choose_place, is_empty_value, norm, polarity
+from .autofill import choose_option, choose_place, date_form, is_empty_value, norm, polarity
 from .formjs import (ADD_UNWATCH_JS, ADD_WATCH_JS, ADDED_BLOCKS_JS, CHALLENGE_JS, CLICK_CHOICE_JS, COVERED_JS,
-                     ELEMENT_INFO_JS, ENTRIES_JS, EXTRACT_JS, FIELD_OPTIONS_JS, PEEK_JS,
-                     LOST_BOXES_JS, MARK_OPTIONS_JS, NOTICE_OVER_JS, OPEN_MENU_JS, OUTSIDE_CLICK_JS, QUIET_JS, SHOWN_VALUE_JS,
+                     DAY_CELL_JS, ELEMENT_INFO_JS, ENTRIES_JS, EXTRACT_JS, FIELD_OPTIONS_JS, PEEK_JS,
+                     LOST_BOXES_JS, MARK_OPTIONS_JS, NOTICE_OVER_JS, OPEN_MENU_JS, OPEN_PICKERS_JS, OUTSIDE_CLICK_JS,
+                     QUIET_JS, SHOWN_VALUE_JS,
                      UNKEPT_DELETE_JS, UNKEPT_FORGET_JS, UNKEPT_PRESSED_SHOWN_JS, UNKEPT_SHOWN_JS, UPLOAD_NOT_KEPT_JS,
                      UPLOAD_STATE_JS,
                      TWIN_TICKED_JS, VISIBLE_TEXT_JS, WORKDAY_CHOSEN_JS, WORKDAY_PROMPT_JS)
@@ -93,6 +95,8 @@ _SECRET_BOX = re.compile(r'\sdata-ja-secret\b', re.I)
 PICK_LIST_WAIT = 10000
 # s a frame's form read (EXTRACT_JS) is waited on: a page whose script has hung answers never
 READ_TIMEOUT = 20
+# Months a date picker's calendar is moved on (or back) at most to reach the day to pick: two years
+DATE_PICKER_MONTHS = 24
 # Is this box's list open with nothing in it yet: the box (or a wrapper up to 4 above it, as FIELD_OPTIONS_JS looks)
 # saying it's expanded, or its named menu shown without a choice?
 _LIST_LOADING_JS = """el => {
@@ -543,6 +547,33 @@ def _search_words(text: str) -> str:
     return re.sub(r"\s+", " ", words).strip() or text
 
 
+# How a date box may show its day once picked: the desk's own form first (the US month/day/year), then the others
+_DAY_FORMATS = ("%m/%d/%Y", "%Y-%m-%d", "%m-%d-%Y", "%Y/%m/%d", "%d/%m/%Y", "%d.%m.%Y", "%m/%d/%y", "%b %d, %Y", "%B %d, %Y",
+                "%b %d %Y", "%B %d %Y", "%d %b %Y", "%d %B %Y", "%a, %b %d, %Y", "%A, %B %d, %Y")
+# Months longer than three letters as some pickers shorten them ("Sept 2, 2026")
+_SEPT = re.compile(r"\bSept\b", re.I)
+
+
+def _as_date(value: Any, field: dict) -> date | None:
+    """A date answer for a date box, in the form autofill gives the box one (date_form: "11/02/2026", "02/11/2026" for
+    one hinted "DD/MM/YYYY") or the ISO form: None for anything else (the profile's own words, "2 weeks after offer")."""
+    text = str(value or "").strip()
+    for form in (date_form(field), "%Y-%m-%d"):
+        with contextlib.suppress(ValueError):
+            return datetime.strptime(text, form).date()
+    return None
+
+
+def _shows_day(shown: str, day: date) -> bool:
+    """Does a date box show this day, in whatever form it writes dates ("11/02/2026", "2026-11-02", "Nov 2, 2026")?"""
+    text = _SEPT.sub("Sep", re.sub(r"\s+", " ", str(shown or "")).strip())
+    for form in _DAY_FORMATS:
+        with contextlib.suppress(ValueError):
+            if datetime.strptime(text, form).date() == day:
+                return True
+    return False
+
+
 # A bar fixed to the window (Workday's "Save and Continue" footer) over a menu entry: the menu
 # of a dropdown at the end of the page opens under it, where no scrolling can bring it out. The
 # bar lets clicks through while the entry is clicked (a real click: Workday ignores a script's).
@@ -974,11 +1005,9 @@ class BrowserSession:
         follows only if a menu is still open, since it can also close a dialog such as
         Easy Apply; a menu that ignores both (Eightfold's country lists) closes on a click
         on the page itself. A framed form's too (iCIMS's Phone Country Code, whose open list
-        shows its search box, which reads as another field)."""
-        for frame in page.frames:
-            if frame is not page.main_frame and (frame.is_detached() or not frame.url or frame.url == "about:blank"
-                                                 or _CAPTCHA_FRAME.match(frame.url)):
-                continue
+        shows its search box, which reads as another field). A picker's dialog first (_close_pickers)."""
+        await self._close_pickers(page)
+        for frame in self._menu_frames(page):
             try:
                 if not await frame.evaluate(OPEN_MENU_JS):
                     continue
@@ -991,6 +1020,51 @@ class BrowserSession:
                 if await frame.evaluate(OPEN_MENU_JS):
                     await frame.evaluate(OUTSIDE_CLICK_JS)
             except PlaywrightError:
+                continue
+
+    def _own_frames(self, page: Page, element_id: str) -> list[Frame]:
+        """The frame a box is in, and the page itself (where a framed form's pop-ups may be drawn)."""
+        try:
+            frame = self._frame_for(page, element_id)
+        except Exception:  # (its frame gone: the page's alone)
+            return [page.main_frame]
+        return [frame] if frame is page.main_frame else [frame, page.main_frame]
+
+    @staticmethod
+    def _menu_frames(page: Page) -> list[Frame]:
+        """The page and its frames a form may be in: never a blank or detached one, nor a CAPTCHA's own."""
+        return [frame for frame in page.frames
+                if frame is page.main_frame or not (frame.is_detached() or not frame.url or frame.url == "about:blank"
+                                                    or _CAPTCHA_FRAME.match(frame.url))]
+
+    async def _close_pickers(self, page: Page, frames: list[Frame] | None = None, field_id: str = "") -> None:
+        """Close a box's own pop-up left open as a dialog over the page (OPEN_PICKERS_JS; `field_id`: the box being
+        filled, which may have opened it): Eightfold's date picker opens its calendar as a modal dialog that keeps the
+        focus, and swallows the next box's click and keys, so its Country of Residence took nothing typed and timed
+        out (issue #112, note 41). As a menu is: the focus taken off first (on some boxes an Escape clears them too);
+        then Escape, with the focus moved into it; then on the box that opened it; each time a look that it's gone;
+        and a click beside it last. Nothing while a notice is open over the page. Never raises: a box that can't be
+        filled after says so itself."""
+        for frame in frames or self._menu_frames(page):
+            try:
+                if not await frame.evaluate(OPEN_PICKERS_JS, ["", field_id]):
+                    continue
+                for attempt in ("blur", "inside", "opener", "beside"):
+                    # (each only while it's still open and no notice is: looked at again first)
+                    if not await frame.evaluate(OPEN_PICKERS_JS, ["" if attempt == "beside" else attempt, field_id]):
+                        break
+                    if attempt == "beside":
+                        await frame.evaluate(OUTSIDE_CLICK_JS)
+                    elif attempt != "blur":
+                        await page.keyboard.press("Escape")
+                    gone = False
+                    for _ in range(2 if attempt == "blur" else 4):
+                        await page.wait_for_timeout(100)
+                        if gone := not await frame.evaluate(OPEN_PICKERS_JS, ["", field_id]):
+                            break
+                    if gone:
+                        break
+            except (PlaywrightError, PlaywrightTimeout):
                 continue
 
     async def inspect(self, include_dropdown_options: bool = True) -> dict[str, Any]:
@@ -1007,8 +1081,10 @@ class BrowserSession:
                     # Only empty ones: opening a dropdown that has its answer (and pressing
                     # Escape after) can clear it, as Micron's did, so the same question
                     # came back after every fill.
+                    # (nor a date picker's: its calendar has days, not choices, and on Eightfold it opens as a
+                    # dialog that holds the focus, issue #112, note 41)
                     if (f["kind"] in ("listbox", "combobox") and not f.get("options") and not f.get("disabled")
-                            and is_empty_value(f.get("value"))):
+                            and not f.get("date") and is_empty_value(f.get("value"))):
                         f["options"] = await self._read_listbox_options(page, f)
                         self._fields[f["id"]] = f
             return {"url": page.url, "title": await _page_title(page), **data}
@@ -1457,6 +1533,11 @@ class BrowserSession:
                         results.append({"id": fid, "ok": False,
                                         "error": f"{type(e).__name__}: {str(e).splitlines()[0][:300]}",
                                         **({"options": e.entries} if isinstance(e, (PickedAGroup, NoMatch)) else {})})
+                    finally:
+                        # a picker this box opened (a date's calendar) closed before the next box: on Eightfold one
+                        # left open kept the focus, and Country of Residence took nothing typed (issue #112, note 41)
+                        with contextlib.suppress(Exception):
+                            await self._close_pickers(page, self._own_frames(page, fid), fid)
                 if self._typed.get(page.url) and any(r["ok"] and r["result"] != "already set" for r in results):
                     await self._fill_lost(page)
             finally:
@@ -1632,6 +1713,8 @@ class BrowserSession:
                 return False
         except (PlaywrightError, PlaywrightTimeout):
             return False
+        if field.get("date") and (day := _as_date(value, field)) is not None and _shows_day(current, day):
+            return True  # (a date picker shows its day in its own form: "Nov 2, 2026" for "11/02/2026")
         return norm(current) == norm(str(value)) or choose_option(str(value), [current], exact_only=True) is not None
 
     async def _fill_one(self, page: Page, field: dict, value: Any, given: dict[str, Any] | None = None) -> str:
@@ -1693,6 +1776,8 @@ class BrowserSession:
         if kind == "listbox":
             return await self._pick_from_listbox(page, loc, field, value)
         if kind == "combobox":
+            if field.get("date") and (day := _as_date(value, field)) is not None:  # a date picker's: its day picked
+                return await self._pick_date(page, loc, field, day)
             if field.get("readonly"):  # pick-only: open the menu and choose, nothing to type into
                 return await self._pick_from_listbox(page, loc, field, value)
             if await loc.evaluate(TWIN_TICKED_JS) is not None:  # BrassRing's search box for several choices (run 88)
@@ -1964,6 +2049,42 @@ class BrowserSession:
             shown = "/".join(str(r) or "?" for r in read)
             raise ValueError(f"typed {digits}, but the date reads {shown}; check it in the browser")
         return "typed"
+
+    async def _pick_date(self, page: Page, loc: Locator, field: dict, day: date) -> str:
+        """A day in a date picker that opens a calendar (Eightfold's "Preferred Start Date", a combobox hinted "Select
+        date" whose calendar is a modal dialog: the profile's words typed into it found nothing, and it was skipped,
+        issue #112, note 41): the calendar opened, moved on a month at a time to the day's month (DATE_PICKER_MONTHS
+        at most), and the day pressed, as a person picks one. The box must then show that day. A box that opens no
+        calendar has the day typed, as any other search box has its answer."""
+        frame = self._frame_for(page, field["id"])
+        await frame.evaluate(DAY_CELL_JS, [field["id"], "", True])  # (a dialog open already is no calendar it opens)
+        await self._activate(loc)
+        found = "none"
+        for _ in range(DATE_PICKER_MONTHS + 1):
+            found = "none"
+            for _ in range(10):  # (a calendar drawn a moment after the click)
+                found = await frame.evaluate(DAY_CELL_JS, [field["id"], day.isoformat()])
+                if found != "none":
+                    break
+                await page.wait_for_timeout(150)
+            if found not in ("next", "back"):
+                break
+            await frame.locator("[data-ja-day-nav]").first.click(timeout=3000)
+            await page.wait_for_timeout(150)
+        if found == "none":
+            return await self._type_and_pick(page, loc, field, day.strftime(date_form(field)))
+        if found != "day":
+            await self._close_pickers(page, self._own_frames(page, field["id"]), field["id"])
+            raise ValueError(f"its calendar didn't offer {day:%m/%d/%Y} to pick"
+                             + (" (its days have no dates to read)" if found == "unread" else ""))
+        await frame.locator("[data-ja-day]").first.click(timeout=3000)
+        shown = ""
+        for _ in range(10):  # (the box showing the day a moment after the press)
+            await page.wait_for_timeout(150)
+            shown = (await loc.input_value(timeout=FOCUS_TIMEOUT)).strip()
+            if _shows_day(shown, day):
+                return f"picked {shown}"
+        raise ValueError(f"picked {day:%m/%d/%Y} in its calendar, but the box shows {shown[:40]!r}")
 
     async def _set_checked(self, loc: Locator, want: bool) -> None:
         try:
