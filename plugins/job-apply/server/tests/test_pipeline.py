@@ -13485,3 +13485,602 @@ def test_the_right_code_the_person_puts_in_after_the_desks_is_them_at_its_tab(sr
     box["value"] = "65"  # the person putting the right one in
     look()
     assert applier._person_at(None) is left
+
+
+# ------------------------------------------------------------- the desk's history (runs.jsonl)
+def _history_lines() -> list[dict]:
+    from job_apply import history
+
+    return [json.loads(line) for line in history.history_path().read_text(encoding="utf-8").splitlines()]
+
+
+_STAMP = r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d[+-]\d\d:\d\d"
+
+
+def test_a_pass_that_reaches_its_review_page_is_a_line_in_the_history(srv, monkeypatch):
+    """The review of Oct 15 (worth building 5): the desk kept 40 untimed lines of a job's log and nothing after it. Each
+    line of the log has its time beside it now (Run.log_at, in the desk's JSON), and a pass that ends (here at the
+    review page, after one step) is a line in ~/.job-apply/runs.jsonl: the job, its site, when it began and ended and
+    its minutes, how it ended and why, the steps it went through, its rounds and Resumes, and Jobs at once."""
+    import re
+
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    base = "https://careers.acme-fab.example"
+    step, review = f"{base}/apply/1", f"{base}/apply/2"
+    pages = {step: '<html><head><title>Apply</title></head><body><h2>Your Details</h2><form method="post" '
+                   'action="/apply/2"><label for="fn">First Name</label><input id="fn" name="fn" required>'
+                   '<button type="submit">Next</button></form></body></html>',
+             ("POST", review): _form("Acme Fab")}
+    job = srv.add_job(url=step, title="FSE", company="Acme Fab")["job"]["id"]
+    applier = Applier(srv)
+    began = time.time()
+
+    async def go():
+        await _serve(srv, pages, [])
+        applier.start()
+        try:
+            r = applier.enqueue(job)
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            await until(lambda: job not in applier._slots)
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert r.status == "ready", (r.status, r.reason, r.log)
+    # (each to a tenth of a second)
+    assert len(r.log_at) == len(r.log) and all(began - 1 <= t <= time.time() + 1 for t in r.log_at), (r.log, r.log_at)
+    assert r.log_at == sorted(r.log_at), r.log_at
+    assert r.public()["log_at"] == r.log_at and r.public()["log"] == r.log
+    lines = _history_lines()
+    assert len(lines) == 1, lines
+    line = lines[0]
+    assert {k: line[k] for k in ("job_id", "company", "title", "host", "outcome", "pages", "rounds", "resumes",
+                                 "jobs_at_once")} == {
+        "job_id": job, "company": "Acme Fab", "title": "FSE", "host": "careers.acme-fab.example", "outcome": "ready",
+        "pages": 1, "rounds": 0, "resumes": 0, "jobs_at_once": 1}, line
+    assert re.fullmatch(_STAMP, line["started"]) and re.fullmatch(_STAMP, line["ended"]), line
+    assert line["started"] <= line["ended"] and isinstance(line["minutes"], float) and line["minutes"] >= 0, line
+    assert "need" not in line and line["reason"] and len(line["reason"]) <= 200, line
+
+
+def test_a_pause_a_resume_a_round_and_a_skip_are_lines_in_the_history(srv, monkeypatch):
+    """A pass that stops for the person is a line with its kind of stop (needs_you, questions); their Resume, once
+    answered, is another pass and another line (at its review page, one Resume); and their Skip of the job waiting
+    there is a line of its own (no pass: no minutes), with the desk's round that took them to it counted once."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    url = "https://careers.acme-fab.example/apply/1"
+    pages = {url: _form("Acme Fab", "Do you hold an active TS/SCI clearance?")}
+    job = srv.add_job(url=url, title="FSE", company="Acme Fab")["job"]["id"]
+    applier = Applier(srv)
+
+    async def go():
+        await _serve(srv, pages, [])
+        applier.start()
+        try:
+            r = applier.enqueue(job)
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            assert (r.status, r.need) == ("needs_you", "questions"), (r.status, r.reason)
+            await until(lambda: job not in applier._slots)
+            first = _history_lines()
+            r.once[question_key(r.questions[0]["label"])] = "No"
+            applier.resume(job)
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            assert r.status == "ready", (r.status, r.reason)
+            await until(lambda: job not in applier._slots)
+            applier.start_round(job)
+            applier.start_round(job)  # (the same job still: one round)
+            applier.end_round()
+            await applier.skip(job)
+            return first
+        finally:
+            await applier.stop()
+
+    first = run(go())
+    assert [(e["outcome"], e.get("need")) for e in first] == [("needs_you", "questions")], first
+    assert "question" in first[0]["reason"] and first[0]["resumes"] == 0, first
+    lines = _history_lines()
+    assert [(e["outcome"], e.get("need"), e["resumes"], e["rounds"]) for e in lines] == [
+        ("needs_you", "questions", 0, 0), ("ready", None, 1, 0), ("skipped", None, 1, 1)], lines
+    skipped = lines[-1]
+    assert "minutes" not in skipped and "started" not in skipped and "pages" not in skipped and skipped["ended"], skipped
+    assert skipped["reason"] == "Skipped. Undo puts it back." and skipped["host"] == "careers.acme-fab.example", skipped
+
+
+def test_a_pass_the_desk_stopping_cuts_short_is_a_stopped_line(srv, monkeypatch):
+    """The desk stopping (the Claude app closing, say) mid-pass: the pass's line says it was cut short ("stopped"),
+    not that the job failed."""
+    opening: list[int] = []
+
+    async def hang(**kwargs):  # (a site that never answers: the pass under way as the desk stops)
+        opening.append(kwargs.get("job_id"))
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(srv, "open_application", hang)
+    job = srv.add_job(url="https://careers.acme-fab.example/apply/1", title="FSE", company="Acme Fab")["job"]["id"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        r = applier.enqueue(job)
+        try:
+            await until(lambda: opening == [job], about=state(r))
+        finally:
+            await applier.stop()
+        return r
+
+    r = run(go())
+    assert r.status == "failed" and r.cut_short, (r.status, r.reason)
+    lines = _history_lines()
+    assert [(e["outcome"], e["job_id"]) for e in lines] == [("stopped", job)], lines
+    assert lines[0]["minutes"] >= 0 and lines[0]["reason"].startswith("Stopped before it finished"), lines
+
+
+def test_the_history_is_cut_back_past_its_bound():
+    """Appended a line at a time; past HISTORY_MAX lines, the file is written again with the newest HISTORY_KEEP."""
+    from job_apply import history
+
+    path = history.history_path()
+    old = [json.dumps({"job_id": i, "company": "Acme Fab", "outcome": "ready", "ended": "2026-10-01T09:00:00-07:00"})
+           for i in range(history.HISTORY_MAX)]
+    path.write_text("".join(line + "\n" for line in old), encoding="utf-8")
+    assert history.append({"job_id": 99999, "company": "Acme Fab", "outcome": "skipped",
+                           "ended": "2026-10-02T09:00:00-07:00"})
+    kept = _history_lines()
+    assert len(kept) == history.HISTORY_KEEP and kept[-1]["job_id"] == 99999, len(kept)
+    assert kept[0]["job_id"] == history.HISTORY_MAX + 1 - history.HISTORY_KEEP, kept[0]
+    assert not list(path.parent.glob(f"{history.HISTORY_FILE}.*.tmp"))  # (written whole, through a file of its own)
+
+
+def test_a_history_that_cant_be_written_never_stops_a_job(srv, monkeypatch, caplog):
+    """A folder where the history can't be written (read-only, a full disk): the jobs go on all the same, and it's
+    said once in the log, not at every line."""
+    import logging
+
+    from job_apply import history
+
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(history, "_said", set())
+    history.history_path().mkdir()  # (nothing can be written there now, as in a read-only folder)
+    urls = [f"https://careers.{s}.example/apply/1" for s in ("acme-fab", "other-litho")]
+    pages = {u: _form("Acme Fab") for u in urls}
+    jobs = [srv.add_job(url=u, title="FSE", company="Acme Fab")["job"]["id"] for u in urls]
+    applier = Applier(srv)
+
+    async def go():
+        await _serve(srv, pages, [])
+        applier.start()
+        try:
+            runs = [applier.enqueue(j) for j in jobs]
+            await until(lambda: all(r.status not in ("queued", "running") for r in runs) and not applier._slots,
+                        about=lambda: [state(r)() for r in runs])
+            return runs
+        finally:
+            await applier.stop()
+
+    with caplog.at_level(logging.WARNING, logger="job_apply.history"):
+        runs = run(go())
+    assert [r.status for r in runs] == ["ready", "ready"], [(r.status, r.reason) for r in runs]
+    said = [rec for rec in caplog.records if rec.name == "job_apply.history"]
+    assert len(said) == 1 and "couldn't write" in said[0].getMessage(), [rec.getMessage() for rec in said]
+    assert history.read() == []  # (and a history that can't be read is none)
+
+
+def test_a_history_line_that_wont_read_is_passed_over():
+    """A line cut short (the program ended mid-write), changed by hand, or not text at all is passed over; the others
+    are read, in their order."""
+    from job_apply import history
+
+    good = [{"job_id": 1, "outcome": "ready", "ended": "2026-10-16T09:00:00-07:00"},
+            {"job_id": 2, "outcome": "failed", "ended": "2026-10-16T10:00:00-07:00"}]
+    history.history_path().write_bytes(b"".join([
+        json.dumps(good[0]).encode() + b"\n", b'{"job_id": 3, "outcome": "rea\n', b"\xff\xfe\x00 not text\n",
+        b"[1, 2, 3]\n", b"\n", b"null\n", json.dumps(good[1]).encode() + b"\r\n", b'{"job_id": 4']))
+    assert history.read() == good
+
+
+def test_a_history_line_holds_no_answer_code_or_password(srv, monkeypatch):
+    """Whatever the reason a pass stopped for quotes (a page's words), its line never holds an answer (the person's
+    for this application, an account form's security answers, what went into the form), a code the inbox gave, a
+    saved password or its digest, an email address, or an address's tokens: the desk's own words, cut short."""
+    from job_apply import history
+
+    monkeypatch.setenv("JOB_APPLY_SECRET_ACME_PASSWORD", "Not-A-Real-Pass1")
+    applier = Applier(srv)
+    r = Run(7, "FSE", "Acme Fab", status="needs_you", need="stuck", url="https://careers.acme-fab.example/apply",
+            once={"q1": "Mesa Verde Answer", "q2": ["Night shift only"]},
+            account_answers={"Security | Answer": "Flagstaff Ridge 1987"}, sign_in_key="d1g3stofthepassword")
+    r.went_in.put("fn", {"label": "Phone", "value": "480-555-0123", "page": "Details"})
+    pipeline._MAIL_TAKEN[("careers.example.com", "Q7XK2P", time.time())] = 7
+    try:
+        r.reason = ("The page says \u201cFlagstaff Ridge 1987\u201d, \u201cMesa Verde Answer\u201d and \u201cNight "
+                    "shift only\u201d are wrong; it sent Q7XK2P and 482913 to sam.rivera@example.com; Not-A-Real-Pass1 "
+                    "d1g3stofthepassword 480-555-0123 at https://careers.acme-fab.example/reset?token=abc123def. "
+                    + "Fix them in the browser, then press Resume. " * 10)
+        applier._note_history(r, "needs_you", time.time() - 90, "apply", 2)
+    finally:
+        pipeline._MAIL_TAKEN.clear()
+    text = history.history_path().read_text(encoding="utf-8")
+    for secret in ("Flagstaff Ridge 1987", "Mesa Verde Answer", "Night shift only", "Q7XK2P", "482913",
+                   "sam.rivera@example.com", "Not-A-Real-Pass1", "d1g3stofthepassword", "480-555-0123", "abc123def"):
+        assert secret not in text, (secret, text)
+    line = json.loads(text)
+    assert line["reason"].startswith("The page says") and len(line["reason"]) <= history.REASON_CHARS, line
+    assert "https://careers.acme-fab.example/reset" in line["reason"] and line["need"] == "stuck", line
+    assert line["minutes"] == 1.5 and line["jobs_at_once"] == 2 and line["pages"] == 0, line
+
+
+def test_the_history_of_an_account_and_security_question_flow_holds_no_secret(srv, monkeypatch, job_apply_home):
+    """An account made with the saved password and the emailed code, its security question answered on the card: the
+    lines its passes wrote hold none of the answers, the code, the passwords or the password's digest."""
+    from job_apply.desk import Desk
+
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    saved_password(monkeypatch)
+    as_test_identity(monkeypatch, job_apply_home)
+    inbox_with_code(monkeypatch)
+    job = srv.add_job(url=fixture_url("site/brassring-signin.html") + "?selectmenu", title="Senior Analyst",
+                      company="Example Corp")["job"]
+    desk = Desk(srv)
+    applier = desk.applier
+    secret = "Flagstaff Ridge 1987"
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.need not in ("", "email_code") and r.status not in ("queued", "running")
+                        and r.questions, timeout=90, about=state(r))
+            keys = [f"{q.get('section') or ''} | {q['label']} | {q.get('sublabel') or ''}" for q in r.questions]
+            desk.answer(job["id"], [{"label": k, "value": "In what city were you born?" if q.get("options") else secret}
+                                    for k, q in zip(keys, r.questions)])
+            await until(lambda: any(line.startswith("filled in your answers") for line in r.log), about=state(r))
+            await until(lambda: r.status not in ("queued", "running") and job["id"] not in applier._slots,
+                        timeout=90, about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    lines = _history_lines()
+    # (its emailed code's stop, its security questions', and how the pass after their answers ended)
+    assert len(lines) >= 2 and ("needs_you", "sign_in") in [(e["outcome"], e.get("need")) for e in lines], lines
+    text = json.dumps(lines)
+    for kept_out in (secret, "In what city were you born?", "not-a-real-password", "an-app-password", "123456"):
+        assert kept_out not in text, (kept_out, text)
+    assert not r.sign_in_key or r.sign_in_key not in text
+
+
+def _hanging_open(monkeypatch, srv, url: str, ending: str = "returns"):
+    """open_application held until the test lets it go (`go_on`, an event made on the test's loop), then answering as
+    the site opened (or, `ending` "raises", failing): a pass under way, for as long as the test wants."""
+    held: dict = {"opening": []}
+
+    async def hang(**kwargs):
+        held["opening"].append(kwargs.get("job_id"))
+        await held["go_on"].wait()
+        if ending == "raises":
+            raise RuntimeError("the site went away")
+        return {"url": url}
+
+    monkeypatch.setattr(srv, "open_application", hang)
+    return held
+
+
+def test_a_skip_mid_pass_is_one_line_with_its_minutes(srv, monkeypatch):
+    """The review of 0.3.204: Skip pressed while the job's pass is under way writes no line of its own; the pass, ending
+    skipped, writes the one line, with its minutes."""
+    url = "https://careers.acme-fab.example/apply/1"
+    held = _hanging_open(monkeypatch, srv, url)
+    job = srv.add_job(url=url, title="FSE", company="Acme Fab")["job"]["id"]
+    applier = Applier(srv)
+
+    async def go():
+        held["go_on"] = asyncio.Event()
+        applier.start()
+        r = applier.enqueue(job)
+        try:
+            await until(lambda: held["opening"] == [job], about=state(r))
+            await applier.skip(job)
+            held["go_on"].set()
+            await until(lambda: job not in applier._slots, about=state(r))
+        finally:
+            await applier.stop()
+        return r
+
+    r = run(go())
+    assert r.status == "skipped", (r.status, r.reason)
+    lines = _history_lines()
+    assert [e["outcome"] for e in lines] == ["skipped"] and "minutes" in lines[0] and "started" in lines[0], lines
+
+
+def test_i_submitted_it_on_a_job_at_its_review_page_is_one_marked_applied_line(srv, monkeypatch):
+    """The review of 0.3.204: the person's "I submitted it" on a job waiting at its review page (not under way) is a
+    line of its own, with no minutes, and it's "marked_applied", never "submitted": that's the desk's own send."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    url = "https://careers.acme-fab.example/apply/1"
+    job = srv.add_job(url=url, title="FSE", company="Acme Fab")["job"]["id"]
+    applier = Applier(srv)
+
+    async def go():
+        await _serve(srv, {url: _form("Acme Fab")}, [])
+        applier.start()
+        try:
+            r = applier.enqueue(job)
+            await until(lambda: r.status not in ("queued", "running") and job not in applier._slots, about=state(r))
+            assert r.status == "ready", (r.status, r.reason)
+            srv.tracker().update(job, status="applied", note="marked applied in the Job Desk")  # (as the desk's does)
+            applier.mark_applied(job)
+            applier.mark_applied(job)  # (twice: one line)
+            return r
+        finally:
+            await applier.stop()
+
+    run(go())
+    lines = _history_lines()
+    assert [e["outcome"] for e in lines] == ["ready", "marked_applied"], lines
+    assert "minutes" not in lines[1] and "started" not in lines[1] and lines[1]["reason"] == "Marked as applied.", lines
+
+
+@pytest.mark.parametrize("ending", ["returns", "raises"])
+def test_i_submitted_it_mid_pass_is_one_line_and_stands(srv, monkeypatch, caplog, ending):
+    """The review of 0.3.204: "I submitted it" pressed while the job's pass is under way writes no line of its own; the
+    pass, ending, writes the one line (marked_applied, with its minutes). And should the pass then fail ("raises": the
+    site going away under it), the job stays marked applied, as a skipped one stays skipped: it was "failed", and a
+    Resume offered to fill it again. The error is still said in the log (the re-check of 4a17a0e)."""
+    import logging
+
+    caplog.set_level(logging.WARNING, logger="job_apply.pipeline")
+    url = "https://careers.acme-fab.example/apply/1"
+    held = _hanging_open(monkeypatch, srv, url, ending)
+    job = srv.add_job(url=url, title="FSE", company="Acme Fab")["job"]["id"]
+    applier = Applier(srv)
+
+    async def go():
+        held["go_on"] = asyncio.Event()
+        applier.start()
+        r = applier.enqueue(job)
+        try:
+            await until(lambda: held["opening"] == [job], about=state(r))
+            srv.tracker().update(job, status="applied", note="marked applied in the Job Desk")
+            applier.mark_applied(job)
+            held["go_on"].set()
+            await until(lambda: job not in applier._slots, about=state(r))
+        finally:
+            await applier.stop()
+        return r
+
+    r = run(go())
+    assert (r.status, r.reason) == ("submitted", "Marked as applied."), (r.status, r.reason, r.log)
+    lines = _history_lines()
+    assert [e["outcome"] for e in lines] == ["marked_applied"] and "minutes" in lines[0], lines
+    said = [rec.getMessage() for rec in caplog.records if rec.name == "job_apply.pipeline"]
+    assert (f"job {job} stopped on an error" in said) == (ending == "raises"), said
+
+
+def test_a_stop_queued_again_as_its_page_is_saved_is_still_a_line(srv, monkeypatch):
+    """The review of 0.3.204: Resume pressed while the pass that paused is still saving the page it stopped on (its last
+    step) put the job back in the queue before the pass ended, so the pause had no line. The pass's line says how its
+    pages ended (needs_you, questions), and the pass the Resume began has its own."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    url = "https://careers.acme-fab.example/apply/1"
+    pages = {url: _form("Acme Fab", "Do you hold an active TS/SCI clearance?")}
+    job = srv.add_job(url=url, title="FSE", company="Acme Fab")["job"]["id"]
+    applier = Applier(srv)
+    real_save = Applier._save_stop
+    held: dict = {"saves": 0}
+
+    async def slow_save(self, run_):
+        held["saves"] += 1
+        if held["saves"] == 1:  # (the first pass's: held until the Resume is pressed)
+            held["entered"].set()
+            await held["go_on"].wait()
+        await real_save(self, run_)
+
+    monkeypatch.setattr(Applier, "_save_stop", slow_save)
+
+    async def go():
+        held["entered"], held["go_on"] = asyncio.Event(), asyncio.Event()
+        await _serve(srv, pages, [])
+        applier.start()
+        try:
+            r = applier.enqueue(job)
+            await held["entered"].wait()
+            assert (r.status, r.need) == ("needs_you", "questions"), (r.status, r.reason)
+            applier.resume(job)  # (as its stop's page is being saved)
+            held["go_on"].set()
+            await until(lambda: held["saves"] == 2 and job not in applier._slots and r.status == "needs_you",
+                        about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    run(go())
+    lines = _history_lines()
+    assert [(e["outcome"], e.get("need")) for e in lines] == [("needs_you", "questions")] * 2, lines
+    assert all("question" in e["reason"] for e in lines), lines
+
+
+def test_the_history_is_counted_once_not_read_at_every_line(monkeypatch):
+    """The review of 0.3.204: past about 250 KB (a real line is about 550 bytes), every line written read the whole
+    file again to count its lines. They're counted once, then kept count of: the file is read again only to cut it
+    back."""
+    from job_apply import history
+
+    monkeypatch.setattr(history, "_COUNTS", {}, raising=False)
+    path = history.history_path()
+    line = json.dumps({"job_id": 1, "company": "Acme Fab", "outcome": "ready", "reason": "x" * 400,
+                       "ended": "2026-10-16T09:00:00-07:00"})
+    path.write_text((line + "\n") * 1000, encoding="utf-8")
+    reads: list[Path] = []
+    real_read = Path.read_text
+
+    def read_text(self, *args, **kwargs):
+        if self == path:
+            reads.append(self)
+        return real_read(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", read_text)
+    for i in range(5):
+        assert history.append({"job_id": i, "company": "Acme Fab", "outcome": "ready", "reason": "y" * 400,
+                               "ended": "2026-10-17T09:00:00-07:00"})
+    assert len(reads) == 1, len(reads)
+    assert len(path.read_bytes().splitlines()) == 1005
+
+
+def test_a_history_reason_hides_whole_words_and_the_profiles_own(srv, monkeypatch):
+    """The review of 0.3.204. Answers are hidden from a line's reason as whole words or phrases, and never the desk's
+    own words for a box ("ticked", "Yes"): a reason kept its sense. And beyond the run's own answers: the profile's own
+    words (its last name, its city), a phone number however it's written, and a long answer by its start."""
+    from job_apply import history
+
+    applier = Applier(srv)
+    long_answer = "I maintained the etch tools across three fabs and trained the night shift on " + "x" * 200
+    r = Run(9, "FSE", "Acme Fab", status="needs_you", need="stuck", url="https://careers.acme-fab.example/apply",
+            once={"q1": "Mesa", "q2": long_answer})
+    r.went_in.put("t", {"label": "I agree", "value": "ticked", "page": "Details"})
+    r.went_in.put("y", {"label": "Relocate?", "value": "Yes", "page": "Details"})
+    r.reason = ("The box I ticked says Yes; the Mesas office and Mesa are closed to Rivera of Chandler at (602) 555-0199: "
+                + long_answer[:60])
+    applier._note_history(r, "needs_you", time.time() - 60, "apply", 1)
+    said = _history_lines()[0]["reason"]
+    assert said.startswith("The box I ticked says Yes; the Mesas office and … are closed"), said
+    for hidden in ("Rivera", "Chandler", "555-0199", "I maintained the etch tools"):
+        assert hidden not in said, (hidden, said)
+    assert len(said) <= history.REASON_CHARS
+
+
+def test_i_submitted_it_after_the_desks_press_showed_no_confirmation_is_the_desks_send(srv, monkeypatch):
+    """The re-check of 4a17a0e: Submit for me pressed Submit and no confirmation showed (check_submit); the person then
+    says it went in. The desk's own press sent it: its line is "submitted", not "marked_applied"."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    url = "https://careers.acme-fab.example/apply/1"
+    pages = {url: _form("Acme Fab"),
+             ("POST", "https://careers.acme-fab.example/posted"): "<h1>All set!</h1><p>Our team will be in touch.</p>"}
+    posts: list[str] = []
+    job = srv.add_job(url=url, title="FSE", company="Acme Fab")["job"]["id"]
+    applier = Applier(srv)
+    applier.auto_submit = True
+
+    async def go():
+        await _serve(srv, pages, posts)
+        applier.start()
+        try:
+            r = applier.enqueue(job, submit=True)
+            await until(lambda: r.status not in ("queued", "running") and job not in applier._slots, about=state(r))
+            assert (r.status, r.need) == ("needs_you", "check_submit"), (r.status, r.reason)
+            srv.tracker().update(job, status="applied", note="marked applied in the Job Desk")
+            applier.mark_applied(job)
+            return r
+        finally:
+            await applier.stop()
+
+    run(go())
+    assert len(posts) == 1, posts
+    lines = _history_lines()
+    assert [(e["outcome"], e.get("need")) for e in lines] == [("needs_you", "check_submit"), ("submitted", None)], lines
+
+
+def test_a_history_reason_keeps_a_saved_answers_question_and_employer(srv):
+    """The re-check of 4a17a0e: a saved answer's question and the employer it was given at (answers.yaml's question,
+    core and from) were hidden from a line's reason as if they were the person's answer: they're not. The answer is."""
+    config.save_answer("Do you hold an active TS/SCI clearance?", "Not at this time", "Other Litho")
+    applier = Applier(srv)
+    r = Run(11, "FSE", "Other Litho", status="needs_you", need="stuck", url="https://careers.other-litho.example/apply",
+            reason="Other Litho asks “Do you hold an active TS/SCI clearance?” again, and says “Not at "
+                   "this time” isn't one of its choices.")
+    applier._note_history(r, "needs_you", time.time() - 30, "apply", 1)
+    said = _history_lines()[0]["reason"]
+    assert said.startswith("Other Litho asks “Do you hold an active TS/SCI clearance?” again"), said
+    assert "Not at this time" not in said, said
+
+
+def test_i_submitted_it_while_submit_for_me_checks_the_page_sends_nothing(srv, monkeypatch):
+    """The re-check of 4a17a0e (a bug from before the history): with Submit for me on, the desk reads the review page for
+    required fields still empty before it presses Submit, and then looked only for a Skip. "I submitted it" pressed in
+    that moment was passed over, and the desk pressed Submit on an application the person says is in already. It
+    presses nothing."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    url = "https://careers.acme-fab.example/apply/1"
+    posts: list[str] = []
+    job = srv.add_job(url=url, title="FSE", company="Acme Fab")["job"]["id"]
+    applier = Applier(srv)
+    applier.auto_submit = True
+    real_submit, real_inspect = Applier._submit, srv.inspect_form
+    held = {"checking": False, "marked": False}
+
+    async def submit(self, run_, by_person=True):
+        held["checking"] = not by_person  # (Submit for me's: the page read for empty fields first)
+        try:
+            return await real_submit(self, run_, by_person)
+        finally:
+            held["checking"] = False
+
+    async def inspect(**kwargs):
+        data = await real_inspect(**kwargs)
+        if held["checking"] and not held["marked"]:  # the person's "I submitted it", as the page is being read
+            held["marked"] = True
+            srv.tracker().update(job, status="applied", note="marked applied in the Job Desk")
+            applier.mark_applied(job)
+        return data
+
+    monkeypatch.setattr(Applier, "_submit", submit)
+    monkeypatch.setattr(srv, "inspect_form", inspect)
+
+    async def go():
+        await _serve(srv, {url: _form("Acme Fab")}, posts)
+        applier.start()
+        try:
+            r = applier.enqueue(job, submit=True)
+            await until(lambda: r.status not in ("queued", "running") and job not in applier._slots, about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert held["marked"] and posts == [], (held, posts, r.log)
+    assert (r.status, r.reason) == ("submitted", "Marked as applied."), (r.status, r.reason)
+    assert [e["outcome"] for e in _history_lines()] == ["marked_applied"]
+
+
+def test_i_submitted_it_while_the_submit_tool_looks_the_page_over_sends_nothing(srv, monkeypatch):
+    """The last re-check of the history (a window from before it): the Submit tool itself reads the page, its job
+    system and its buttons, and keeps a picture of it, before it presses (a second or more). "I submitted it" pressed on
+    the desk in that moment was passed over there, and the application the person says is in already was sent again. It
+    presses nothing, and the job stays marked as applied."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    url = "https://careers.acme-fab.example/apply/1"
+    posts: list[str] = []
+    job = srv.add_job(url=url, title="FSE", company="Acme Fab")["job"]["id"]
+    applier = Applier(srv)
+    real_shot = srv.browser.screenshot
+    held = {"marked": False}
+
+    async def screenshot(*args, **kwargs):
+        save_to = kwargs.get("save_to")
+        if save_to is not None and Path(save_to).name == "before-submit.jpg" and not held["marked"]:
+            held["marked"] = True  # the person's "I submitted it", as the tool keeps its picture of the page
+            srv.tracker().update(job, status="applied", note="marked applied in the Job Desk")
+            applier.mark_applied(job)
+        return await real_shot(*args, **kwargs)
+
+    monkeypatch.setattr(srv.browser, "screenshot", screenshot)
+
+    async def go():
+        await _serve(srv, {url: _form("Acme Fab")}, posts)
+        applier.start()
+        try:
+            r = applier.enqueue(job)
+            await until(lambda: r.status == "ready" and job not in applier._slots, about=state(r))
+            applier.submit_now(job)
+            await until(lambda: held["marked"] and job not in applier._slots, about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert held["marked"] and posts == [], (held, posts, r.log)
+    assert (r.status, r.reason) == ("submitted", "Marked as applied."), (r.status, r.reason, r.log)
+    assert not r.pressed_before
+    assert srv.tracker().get(job)["status"] == "applied"
+    assert pipeline.FINISHED | {"skipped"} == set(srv._SUBMIT_GONE)  # (the tool's own list, kept as the desk's)

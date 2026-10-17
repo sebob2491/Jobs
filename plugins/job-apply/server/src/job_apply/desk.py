@@ -30,7 +30,7 @@ from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, Response
 from starlette.routing import Route
 
-from . import autofill, config, report
+from . import autofill, config, history, report
 from .pipeline import DESK_PASSWORDS, Applier, placed_key, question_key
 from .ats import detect_ats
 from .postings import FetchError, Posting, fetch_posting, finalize, parse_html
@@ -41,6 +41,8 @@ from .updates import UpdateCheck
 
 PAGE = Path(__file__).resolve().parent / "static" / "desk.html"
 DEFAULT_PORT = 8765
+HISTORY_DAYS_MAX = 366  # the most days This week (/api/history) looks back over
+HISTORY_RECENT_MAX = 200  # and the most of its newest lines it lists
 
 
 def _recommendations_path() -> Path:
@@ -49,6 +51,16 @@ def _recommendations_path() -> Path:
 
 def _settings_path() -> Path:
     return config.home() / "desk.json"
+
+
+def _count_param(request: Request, name: str, default: int, most: int) -> int:
+    """A whole number from 1 to `most` in the request's address (?days=7), or `default` without one."""
+    said = request.query_params.get(name)
+    if said is None:
+        return default
+    if not re.fullmatch(r"[0-9]{1,6}", said.strip()) or not 1 <= int(said) <= most:
+        raise ValueError(f"{name} should be a whole number from 1 to {most}")
+    return int(said)
 
 
 class _QuietServer(uvicorn.Server):
@@ -159,6 +171,7 @@ class Desk:
         return Starlette(routes=[
             r("/", self.page_view),
             r("/api/state", self.state_view),
+            r("/api/history", self.history_view),
             r("/api/search", self.search_view, methods=["POST"]),
             r("/api/search/stop", self.search_stop_view, methods=["POST"]),
             r("/api/apply", self.apply_view, methods=["POST"]),
@@ -257,6 +270,19 @@ class Desk:
         if not self._allowed(request, api=True):
             return self._forbidden()
         return JSONResponse(self.state(), headers={"Cache-Control": "no-store"})
+
+    async def history_view(self, request: Request) -> Response:
+        """The page's This week: what the last `days` days of the desk's history (history.HISTORY_FILE) come to, with its
+        newest `recent` lines."""
+        if not self._allowed(request, api=True):
+            return self._forbidden()
+        try:
+            days = _count_param(request, "days", 7, HISTORY_DAYS_MAX)
+            recent = _count_param(request, "recent", 20, HISTORY_RECENT_MAX)
+        except ValueError as e:
+            return self._bad(e)
+        return JSONResponse(await asyncio.to_thread(history.summary, days, recent),
+                            headers={"Cache-Control": "no-store"})
 
     async def search_view(self, request: Request) -> Response:
         if not self._allowed(request, api=True):

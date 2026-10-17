@@ -124,6 +124,12 @@ ul.rows { list-style: none; margin: 0; padding: 0; }
 .q input[type=text], .q select { font: inherit; width: 100%; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--text); }
 .q .remember { font-size: 12px; color: var(--muted); display: flex; gap: 6px; align-items: center; }
 .log { font-size: 12px; color: var(--muted); margin: 6px 0 0; padding-left: 16px; }
+.log .when, #week .when { font-variant-numeric: tabular-nums; margin-right: 4px; }
+/* This week: what the desk's history says of the last 7 days */
+#week h3 { font-size: 14px; margin: 16px 0 4px; }
+#week ul { margin: 0; padding-left: 18px; }
+#week li { margin: 2px 0; overflow-wrap: anywhere; }
+#week-recent li { font-size: 13px; }
 .small { font-size: 13px; color: var(--muted); }
 .counts { display: flex; flex-wrap: wrap; gap: 6px; padding: 12px 14px; }
 .pw { padding: 2px 14px 14px; }
@@ -176,6 +182,7 @@ footer { max-width: 1240px; margin: 0 auto; padding: 0 16px 24px; color: var(--m
     <button class="link" id="notes-btn" data-act="notes" title="Notes the desk took where it stopped on something it most likely got wrong, for you to file" hidden>Notes</button>
     <button class="link" id="alerts" data-act="alerts" hidden>Alert me</button>
     <button id="pause-btn" data-act="pause" title="The job under way finishes what it is doing; no other job starts until you press Resume queue" hidden>Pause queue</button>
+    <button class="link" id="week-btn" data-act="week" title="What the desk did in the last 7 days: jobs filled and sent, where it stopped for you, and how long each job took">This week</button>
     <button id="area-btn" data-act="area" title="What and where Find jobs searches: the job titles, places and employer lists">What and where</button>
     <button id="find" data-act="find">Find jobs</button>
     <button id="stop-search" data-act="stop-search" title="The search ends; the openings found before it stay" hidden>Stop search</button>
@@ -307,6 +314,14 @@ footer { max-width: 1240px; margin: 0 auto; padding: 0 16px 24px; color: var(--m
       <button type="button" data-act="area-close">Cancel</button>
     </div>
   </form>
+</dialog>
+<!-- this week: what the desk's history (~/.job-apply/runs.jsonl) says of the last 7 days -->
+<dialog id="week" aria-labelledby="week-h">
+  <h2 id="week-h">This week</h2>
+  <div id="week-body"></div>
+  <div class="actions" style="margin-top: 16px">
+    <button data-act="week-close">Close</button>
+  </div>
 </dialog>
 <dialog id="report" aria-labelledby="report-h">
   <h2 id="report-h">Report a problem</h2>
@@ -456,6 +471,71 @@ function ago(t) {
   if (s < 3600) return Math.round(s / 60) + " min ago";
   if (s < 86400) return Math.round(s / 3600) + " h ago";
   return Math.round(s / 86400) + " days ago";
+}
+
+// A time as this computer's clock shows it, HH:MM. Each line of a job's log carries the time it was logged (log_at,
+// beside it): the last n lines, each with its time (none for a line logged without one)
+function hhmm(t) {
+  const d = new Date(t * 1000);
+  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+}
+function logLines(r, n) {
+  const lines = r.log || [], times = r.log_at || [];
+  return lines.map((l, i) => ({l, t: times.length === lines.length && times[i] ? hhmm(times[i]) : ""})).slice(-n)
+    .map(({l, t}) => `<li>${t ? `<span class="when">${t}</span>` : ""}${esc(l)}</li>`).join("");
+}
+
+// This week: what the desk's history says of the last 7 days (/api/history), in words
+const STOP_WORDS = {questions: ["question card", "question cards"], sign_in: ["sign-in", "sign-ins"],
+  bot_check: ["bot check", "bot checks"], captcha: ["CAPTCHA", "CAPTCHAs"], email_code: ["emailed code", "emailed codes"],
+  your_submit: ["Submit of your own", "Submits of your own"], check_submit: ["Submit to check", "Submits to check"],
+  submit_failed: ["Submit that didn't go", "Submits that didn't go"], stuck: ["stuck page", "stuck pages"],
+  tailor: ["tailored resume", "tailored resumes"], restarted: ["restart", "restarts"], failed: ["failure", "failures"],
+  other: ["other stop", "other stops"]};
+const stopWords = (kind, n) => (STOP_WORDS[kind] || [String(kind).replace(/_/g, " "), String(kind).replace(/_/g, " ")])[n === 1 ? 0 : 1];
+const ENDED_WORDS = {ready: "at its review page", submitted: "sent by the desk", failed: "failed", skipped: "skipped",
+  stopped: "cut short when the desk stopped", marked_applied: "marked as applied"};
+const jobsSaid = (n) => `${n} job${n === 1 ? "" : "s"}`;
+function whenSaid(iso) {
+  const d = new Date(iso);
+  return isNaN(d.getTime()) ? "" : `${d.toLocaleDateString([], {weekday: "short"})} ${hhmm(d.getTime() / 1000)}`;
+}
+function renderWeek(h) {
+  const body = $("week-body");
+  if (!h.any) {
+    body.innerHTML = `<p>No history yet. Each time the desk is done with a job for now (at its review page, sent,
+      stopped for you, failed, skipped or marked as applied), it writes it down, and this window sums up the last 7
+      days.</p>`;
+    return;
+  }
+  if (!h.lines) {
+    body.innerHTML = `<p>Nothing in the last ${h.days} days: the desk hasn't worked on a job since.</p>`;
+    return;
+  }
+  const pauses = Object.entries(h.pauses || {});
+  const said = [
+    `Filled up to their review page: ${jobsSaid(h.reviewed)}. Sent by the desk: ${jobsSaid(h.submitted)}.`
+      + (h.marked ? ` Marked as applied: ${jobsSaid(h.marked)}.` : ""),
+    pauses.length ? `Stopped for you: ${inWords(pauses.map(([k, n]) => `${n} ${stopWords(k, n)}`))}.` : "It never stopped for you.",
+    `Failed: ${jobsSaid(h.failed)}. Skipped: ${jobsSaid(h.skipped)}.`
+      + (h.stopped ? ` Cut short when the desk stopped: ${jobsSaid(h.stopped)}.` : ""),
+    h.timed_jobs ? `Time with the desk (waits included; jobs at once overlap): ${h.minutes} minutes in all; a job took `
+      + `${h.median_minutes} minutes (the median of ${jobsSaid(h.timed_jobs)}).` : "",
+  ].filter(Boolean);
+  const stops = (h.stops || []).map((s) => `<li>${esc(s.company)}: ${s.times} time${s.times === 1 ? "" : "s"}, most often
+    ${esc(stopWords(s.kind, 1))}</li>`).join("");
+  const recent = (h.recent || []).map((e) => {
+    const ended = e.outcome === "needs_you" ? `stopped for you: ${stopWords(e.need || "other", 1)}`
+      : ENDED_WORDS[e.outcome] || String(e.outcome || "");
+    const took = typeof e.minutes === "number" ? ` (${e.minutes} min)` : "";
+    const why = ["needs_you", "failed"].includes(e.outcome) && e.reason ? `<br><span class="small">${esc(e.reason)}</span>` : "";
+    return `<li><span class="when">${esc(whenSaid(e.ended))}</span>${esc(e.company || "")}${e.title ? ` · ${esc(e.title)}` : ""}:
+      ${esc(ended)}${took}${why}</li>`;
+  }).join("");
+  body.innerHTML = `<p class="small">The last ${h.days} days, from the desk's history (~/.job-apply/runs.jsonl).</p>
+    <ul>${said.map((s) => `<li>${esc(s)}</li>`).join("")}</ul>
+    ${stops ? `<h3>Where it stopped most</h3><ul>${stops}</ul>` : ""}
+    <h3>Latest</h3><ul id="week-recent">${recent}</ul>`;
 }
 
 // Replace only the children whose markup changed, so typing and focus survive the refresh.
@@ -799,7 +879,7 @@ function renderSide() {
   const working = runs.filter((r) => r.status === "running");
   const queued = runs.filter((r) => r.status === "queued").length;
   const workEntries = working.map((r) => ({key: "w" + r.job_id, html: `<div class="task"><h3><span class="spin"></span> ${esc(r.title)} <span class="small">· ${esc(r.company)}</span></h3>
-    <ul class="log">${(r.log || []).slice(-4).map((l) => `<li>${esc(l)}</li>`).join("")}</ul>${jobButtons(r, [])}</div>`}));
+    <ul class="log">${logLines(r, 4)}</ul>${jobButtons(r, [])}</div>`}));
   if (state.paused) workEntries.push({key: "p", html: `<div class="task small">Paused: ${queued} waiting. Press Resume queue to carry on.</div>`});
   else if (queued) workEntries.push({key: "q", html: `<div class="task small">${queued} more queued.</div>`});
   if (!workEntries.length) workEntries.push({key: "idle", html: `<div class="empty">Idle.</div>`});
@@ -1284,6 +1364,8 @@ document.addEventListener("click", (e) => {
   if ((a === "review-submit" || a === "review-applied") && !asShown) renderHeader();
   if (a === "dismiss") { dismiss(t.dataset.tip); renderHeader(); }
   if (a === "report-close") $("report").close();
+  if (a === "week") act(async () => { renderWeek(await api("/api/history?days=7")); if (!$("week").open) $("week").showModal(); }, false);
+  if (a === "week-close") $("week").close();
   if (a === "notes") {
     act(async () => {
       const out = await api("/api/notes/show", {});
