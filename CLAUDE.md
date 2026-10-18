@@ -16,6 +16,7 @@ the scrubber (`python -m job_apply.fixtures`) before they become test fixtures.
   - `pipeline.py`: the Job Desk's application driver;
   - `desk.py` and `static/desk.html`: the Job Desk page;
   - `autofill.py`: answers from the profile;
+  - `never.py`: what the desk never agrees to, ticks or presses for the person (one list, every path);
   - `browser.py` and `formjs.py`: the browser and the form reader;
   - `search.py`: employer job searches;
   - `recommend.py`: ranking;
