@@ -61,7 +61,10 @@ the page URL. Use this file for the parts of each flow that `autofill` can't do.
   company, location, "I currently work here", From/To month and year, description,
   school, degree, field of study, GPA. If "Autofill with Resume" already created
   blocks, check them against the profile and fix them with `fill_form`, rather than
-  adding duplicates. Dates are separate Month and Year inputs (`sublabel` in
+  adding duplicates. An account that applied before keeps its last resume in the
+  "Resume/CV" upload, and `autofill` leaves a box that shows a file. If the job has a
+  tailored resume, press that old file's Delete first, then `autofill` uploads the
+  tailored one (the Job Desk does this by itself). Never upload it beside the old one. Dates are separate Month and Year inputs (`sublabel` in
   `inspect_form`). To fill one by hand, pass `"03"` and `"2022"`.
 - Voluntary Disclosures includes a terms-and-conditions consent checkbox. The
   user has to agree to it, so ask.

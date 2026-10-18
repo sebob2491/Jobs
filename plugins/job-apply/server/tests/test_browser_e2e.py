@@ -787,6 +787,43 @@ def test_only_the_resumes_own_delete_is_pressed_for_it_to_go_up_again(srv, tmp_p
         assert run(srv.browser.upload_state("resume.pdf")) == "kept"
 
 
+@pytest.mark.parametrize("query,said", [("", "deleted"), ("unnamed", "deleted"), ("cover", "deleted"),
+                                        ("stuck", "pressed"), ("submit", "")])
+def test_only_the_kept_files_own_delete_is_pressed_for_the_tailored_one(srv, tmp_path, query, said):
+    """NXP's Workday (the weekly probe): an account's last resume kept in My Experience's "Resume/CV" upload, read as
+    the file's name, makes way for the one tailored for the job. Only that file's own Delete is pressed: in its row
+    (?cover: never the cover letter's beside it), or with no name shown (?unnamed) the one Delete of the box's own part
+    of the page; never one that sends the form (?submit); a Delete that asks first is turned down by the browser
+    (?stuck), and said as pressed with the file still there. The box the desk then sends a file into is its own, and
+    the tailored file's name inside the kept one's ("2024-resume.pdf" holds "resume.pdf") isn't that file there."""
+    run(srv.browser.goto(fixture_url("site/workday-kept-resume.html") + f"?{query}"))
+    box = next(f for f in run(srv.inspect_form(include_dropdown_options=False))["fields"] if f["kind"] == "file")
+    name = "" if query == "unnamed" else "2024-resume.pdf"
+    shown = "uploaded" if query == "unnamed" else "2024-resume.pdf, 2024-cover-letter.pdf" if query == "cover" else name
+    assert (box["value"], box.get("section")) == (shown, "Resume/CV"), box
+    for tailored_name in ("Sam_Rivera_Resume.pdf", "resume.pdf"):
+        names = shown.split(", ") if name else []
+        assert run(srv.browser.kept_upload_state(box["id"], tailored_name, names)) == "", tailored_name
+    if name:  # (the page's words alone, with the box's own names not said: the kept name holds it)
+        assert run(srv.browser.kept_upload_state(box["id"], "resume.pdf")) == "there"
+    assert run(srv.browser.delete_kept_upload(box["id"], name)) == said
+    page = run(srv.browser.page())
+    deletes, cover, sent = run(page.evaluate("() => [sessionStorage.getItem('deletes'), "
+                                             "sessionStorage.getItem('coverDeletes'), window.sent]"))
+    assert (deletes, cover, sent) == ("1" if said == "deleted" else None, None, False)
+    body = run(page.inner_text("body"))
+    assert ("2024-cover-letter.pdf" in body) is (query == "cover"), body
+    assert (name in body and "Successfully Uploaded!" in body) is (said != "deleted"), body
+    if query:
+        return
+    tailored = tmp_path / "Sam_Rivera_Resume.pdf"
+    tailored.write_bytes(b"%PDF-1.4 test")
+    box = next(f for f in run(srv.inspect_form(include_dropdown_options=False))["fields"] if f["kind"] == "file")
+    assert not box.get("value"), box
+    run(srv.fill_form([{"id": box["id"], "value": str(tailored)}]))
+    assert run(srv.browser.kept_upload_state(box["id"], tailored.name)) == "mine"
+
+
 def test_a_dialog_that_isnt_an_uploads_alone_is_never_pressed(srv, tmp_path):
     """The review of the open upload dialog's press: an application drawn as a dialog, its resume box beside a name
     box and a "Save" that sends it, would have been sent (around the guard every press goes through). Only a dialog

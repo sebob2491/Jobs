@@ -40,7 +40,7 @@ from . import config, history, mailbox, report
 from .search import every_employer
 from .ats import ATS_NAMES, JOB_BOARDS, detect_ats, shared_system
 from .autofill import (classes_only, clean_label, degree_kinds_listed, degree_not_listed, entry_list_unloaded, entry_of,
-                       _CHOICE_KINDS, is_empty_value, no_choice_for_no_degree, norm,
+                       _CHOICE_KINDS, is_empty_value, kept_documents, no_choice_for_no_degree, norm,
                        plan_autofill, profile_entries, site_default, unset_choice,
                        polarity, tailored_document, works_there_now)
 from .browser import (_SENDS_TOO, CONFIRMATION_RE, SubmitBlocked, TabClosed, _accepts_cookies, _cookie_setting,
@@ -829,6 +829,10 @@ class Run:
     refreshed: bool = False  # reloaded once for a page that asked for it ("Please refresh the page")
     start_reloaded: bool = False  # reloaded once for a posting page with no way on (the State of Arizona's, run 63)
     reuploaded: bool = False  # a resume the page showed but never kept: its Delete tried, to upload it again (EMD's, once a job)
+    # the documents ("resume", "cover_letter") settled for this job: a file kept from before replaced with the one
+    # tailored for the job, or tried, or the desk's own put in (_replace_kept). Once a job, so a page that draws the old
+    # file's name again isn't deleted from again and again
+    kept_replaced: set[str] = field(default_factory=set)
     opened_fresh: bool = False  # this pass opened the job in a new tab (its page the posting's own, by its address)
     account_in: bool = False  # an account made for this job, and signed in to (Run.account_made said)
     load_reloaded: bool = False  # reloaded once for a step still loading after its wait (Workday's placeholders, run 57)
@@ -960,7 +964,7 @@ class Run:
                                                                         "went_in", "draft_pages", "submit_pressed",
                                                                         "sending", "cut_short", "started",
                                                                         "pass_steps", "rounds", "resumes", "marked",
-                                                                        "maybe_shown")},
+                                                                        "maybe_shown", "kept_replaced")},
                 # (only for the cards that show it: a job queued or under way has none, and 30 of them made the
                 # page's state megabytes, every poll)
                 "went_in": None if self.status in ("queued", "running") else self.went_in.public()}
@@ -3431,11 +3435,16 @@ class Applier:
                             self._log(run, f"couldn't press the {section} section's Add button: something on the page "
                                       "covers it, so its blocks are left as they are")
                         self._note_short_entries(run, section, added, data)
+                # a resume kept from before in its box (Workday's), where this job has one tailored for it: deleted, for
+                # the fill to put the tailored one in its place; or, once the page is filled, the person's (paused)
+                replacing = await self._replace_kept(run, data)
                 result = await self._autofill(run, data, filled_ids)
                 if result["filled"]:
                     self._log(run, f"filled {len(result['filled'])} field(s) on {_where(data)}")
                 filled_ids |= {str(f["id"]) for f in result["filled"] if f.get("id")}
                 filled_values |= {norm(f["value"]) for f in result["filled"] if f.get("value") not in (None, "")}
+                if not await self._replaced_in(run, data, replacing, result):
+                    return
                 _required_by_errors(result, data)
                 pending, missing_files = _pending(result, once_failed)
                 self._note_skipped(run, result)
@@ -4247,6 +4256,85 @@ class Applier:
         await self._bring_forward(run)
         self._pause(run, "stuck", said)
         return "paused"
+
+    async def _replace_kept(self, run: Run, data: dict[str, Any]) -> tuple[list[dict[str, Any]], str]:
+        """A resume (or cover letter) box that shows a file kept from before, where this job has one tailored for it
+        (autofill.kept_documents: Workday keeps an account's last resume in My Experience's "Resume/CV" upload, and the
+        desk left it there, so the employer got the old resume: NXP's, the weekly probe of Oct 2026). The kept file is
+        deleted with the page's own Delete for it (browser.delete_kept_upload), and the fill that follows puts the
+        tailored one in the box it emptied (_replaced_in says so). Once a job for each document (Run.kept_replaced), so
+        a page that draws the old name again is never deleted from again and again. A file that won't delete, or a box
+        where which file is the old one isn't sure, keeps what it shows, so the fill never uploads beside it (the
+        employer would get two): the person's, said on a card once the page is filled. Returns the boxes emptied for
+        their tailored file, and that card's words ("" for none)."""
+        job = self.srv.tracker().get(run.job_id, with_description=False) or {}
+        emptied: list[dict[str, Any]] = []
+        stuck = ""
+        for box in kept_documents(data.get("fields") or [], config.Profile.load(), job):
+            if box["kind"] in run.kept_replaced:
+                continue
+            tailored = Path(box["tailored"]).name
+            if await self.srv.browser.kept_upload_state(box["id"], tailored, box["shown"]):
+                continue  # (the desk's own upload, or the tailored file on the page already: nothing kept to replace)
+            run.kept_replaced.add(box["kind"])
+            # A box that shows only that a file is there ("uploaded": a "Successfully uploaded" with no name) can't say
+            # what it holds. It's replaced all the same, once a job: the desk's own upload of the tailored file would
+            # show its name, or was settled when it went in (_replaced_in), so what's there is another file; at worst
+            # it's the tailored one sent again. Never where which file is the old one isn't sure (several, or a box
+            # for a resume and a cover letter both): the person's
+            name = box["shown"][0] if box["shown"] else ""
+            deleted = "" if box["unsure"] else await self.srv.browser.delete_kept_upload(box["id"], name)
+            if deleted in ("deleted", "gone"):  # ("gone": its name still on the page; the fill reads the box again)
+                emptied.append(box)
+                continue
+            if stuck:
+                continue  # (one card at a time: another box's is said once the person is past this one)
+            what = _DOCUMENT_SAID[box["kind"]]
+            upload = f"The “{_short(box['where'])}” upload on {_site(run, data)}"
+            old = ", ".join(box["shown"])
+            put = f"upload {tailored} (in this job's folder), then press Resume."
+            if box["unsure"]:
+                held = (f"files kept from before ({old})" if len(box["shown"]) > 1 else
+                        f"a file kept from before ({old})" if old else "a file kept from before")
+                stuck = (f"{upload} still has {held}, and I can't tell "
+                         + ("which is" if len(box["shown"]) > 1 else "whether it's") + f" your old {what}, to put the "
+                         f"one tailored for this job in its place. In the browser window, delete your old {what} there "
+                         f"with its Delete, {put}")
+            else:
+                stuck = (f"{upload} still has the {what} kept from before" + (f" ({old})" if old else "") + ", and I "
+                         f"couldn't delete it to put in the one tailored for this job ({tailored}): uploaded beside it, "
+                         f"the employer would get two {what}s. In the browser window, delete the old file with its "
+                         f"Delete, {put}")
+        return emptied, stuck
+
+    async def _replaced_in(self, run: Run, data: dict[str, Any], kept: tuple[list[dict[str, Any]], str],
+                           result: dict[str, Any]) -> bool:
+        """After the fill: a document the desk put in itself is settled for the job (a box showing it later is the
+        desk's own, whatever name the site gives it: never deleted as one kept from before). Each box emptied of a file
+        kept from before (_replace_kept) is said once its tailored file went in; where it didn't, the box is the
+        person's to put it in, said on a card, as is a kept file that wouldn't go (False: paused)."""
+        emptied, stuck = kept
+        for f in result.get("filled") or []:
+            if (kind := _DOCUMENT_KINDS.get(str(f.get("from") or ""))) is not None:
+                run.kept_replaced.add(kind)
+        for box in emptied:
+            what, tailored = _DOCUMENT_SAID[box["kind"]], Path(box["tailored"]).name
+            if any(f.get("from") == f"documents.{box['kind']}"
+                   and Path(str(f.get("value") or "")).name.lower() == tailored.lower()
+                   for f in result.get("filled") or []):
+                self._log(run, f"replaced the {what} kept from before with the one tailored for this job")
+            elif not stuck:
+                old = ", ".join(box["shown"])
+                stuck = (f"I deleted the {what} {_site(run, data)} kept from before" + (f" ({old})" if old else "")
+                         + f" to put in the one tailored for this job, and it didn't go in. In the browser window, "
+                         f"upload {tailored} (in this job's folder) into its “{_short(box['where'])}” "
+                         "upload, then press Resume.")
+        if not stuck:
+            return True
+        _went_in(run, result.get("filled") or [], data)  # (what this fill put in, on the job's "What went in" panel)
+        await self._bring_forward(run)
+        self._pause(run, "stuck", stuck)
+        return False
 
     async def _new_tab_soon(self, run: Run, seconds: float) -> bool:
         """Follow a tab that opens a little after a click (the browser makes it current)."""
@@ -7496,6 +7584,8 @@ def _box_said(box: dict[str, Any]) -> dict[str, str]:
 
 
 _DOCUMENTS = {"documents.resume": "Resume", "documents.cover_letter": "Cover letter"}  # the profile's, by autofill's rule
+_DOCUMENT_KINDS = {"documents.resume": "resume", "documents.cover_letter": "cover_letter"}  # (Run.kept_replaced's)
+_DOCUMENT_SAID = {"resume": "resume", "cover_letter": "cover letter"}
 
 
 def _read_back(box: dict[str, Any] | None, secrets: set[str]) -> Any:

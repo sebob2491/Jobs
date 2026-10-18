@@ -641,6 +641,48 @@ def test_a_box_that_imports_the_resume_is_left_beside_the_one_that_attaches_it()
     assert [f["id"] for f in alone["to_fill"]] == ["1"]
 
 
+def test_a_file_kept_from_before_gives_way_only_to_one_tailored_for_the_job(tmp_path):
+    """NXP's Workday (the weekly probe, Oct 2026): an account's last resume kept in My Experience's "Resume/CV" upload
+    was read as the box's value, so it was left there and the employer got the old resume, not the one tailored for
+    the job. A resume or cover letter box showing a file of another name than the job's tailored one is said kept from
+    before (for the desk to replace); with no tailored file, none is (a kept file stays, the profile's resume too)."""
+    from job_apply import autofill
+
+    folder = tmp_path / "job"
+    folder.mkdir()
+    job = {"folder": str(folder)}
+    box = {"id": "r", "kind": "file", "label": "Upload a file (5MB max)", "section": "Resume/CV",
+           "value": "resume-2025.pdf"}
+    cover = {"id": "c", "kind": "file", "label": "Cover Letter", "value": "cover-letter-2025.pdf"}
+    assert autofill.kept_documents([box, cover], prof(), job) == []
+    (folder / "Sam_Rivera_Resume.pdf").write_bytes(b"%PDF-1.4\n")
+    resume = str(folder / "Sam_Rivera_Resume.pdf")
+    assert autofill.kept_documents([box, cover], prof(), job) == [
+        {"id": "r", "kind": "resume", "where": "Resume/CV", "shown": ["resume-2025.pdf"], "tailored": resume,
+         "unsure": False}]  # (no cover letter tailored: the kept one stays)
+    (folder / "Sam_Rivera_Cover_Letter.pdf").write_bytes(b"%PDF-1.4\n")
+    assert [(k["id"], k["kind"], k["tailored"]) for k in autofill.kept_documents([box, cover], prof(), job)] == [
+        ("r", "resume", resume), ("c", "cover_letter", str(folder / "Sam_Rivera_Cover_Letter.pdf"))]
+    # the tailored file there already (as the site writes its name), or nothing there: nothing to replace
+    for shown in ("sam_rivera_resume.pdf", "resume-2025.pdf, Sam_Rivera_Resume.pdf", "", None):
+        assert autofill.kept_documents([{**box, "value": shown}], prof(), job) == [], shown
+    # a box that shows only that a file is there: replaced; several files, or a box for a resume and a cover letter
+    # both: which is the old resume isn't sure
+    [kept] = autofill.kept_documents([{**box, "value": "uploaded"}], prof(), job)
+    assert (kept["shown"], kept["unsure"]) == ([], False)
+    [kept] = autofill.kept_documents([{**box, "value": "resume-2025.pdf, cover-letter-2025.pdf"}], prof(), job)
+    assert (kept["shown"], kept["unsure"]) == (["resume-2025.pdf", "cover-letter-2025.pdf"], True)
+    [kept] = autofill.kept_documents([{**box, "section": "Resume/CV and Cover Letter"}], prof(), job)
+    assert (kept["kind"], kept["unsure"]) == ("resume", True)
+    # never a box for another document (a transcript, a certificate), nor a page's one unnamed upload, nor one that
+    # reads the resume to fill the form in
+    for other in ({"label": "Transcripts", "section": ""}, {"label": "Upload", "section": "Certifications"},
+                  {"label": "Resume and transcripts", "section": ""}, {"label": "Attachments", "section": ""}):
+        assert autofill.kept_documents([{**box, **other}], prof(), job) == [], other
+    assert [k["id"] for k in autofill.kept_documents(
+        [{**box, "id": "i", "label": "Import your profile from resume", "section": ""}, box], prof(), job)] == ["r"]
+
+
 def test_a_signed_forms_date_is_today_in_the_boxes_it_asks_for(job_apply_home):
     """Workday's disability self-identification (CC-305) is signed with a Name and a Date in
     Month / Day / Year boxes."""

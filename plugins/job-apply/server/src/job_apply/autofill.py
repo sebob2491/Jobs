@@ -2889,6 +2889,51 @@ def _differs(f: dict, prof: Profile, job: dict | None, file_inputs: int, blocks:
     return ans
 
 
+_DOCUMENT_RULES = {"documents.resume": "resume", "documents.cover_letter": "cover_letter"}
+
+
+def kept_documents(fields: list[dict], prof: Profile, job: dict | None) -> list[dict]:
+    """The resume and cover letter boxes that show a file kept from before, where this job's folder has one tailored
+    for it of another name (tailored_document). Workday keeps an account's last resume in My Experience's "Resume/CV"
+    upload (NXP's, the weekly probe of Oct 2026), and the form reader reads that box as the kept file's name (or as
+    "uploaded"), so plan_autofill left it as it was and the employer got the old resume, not the one made for the job.
+    Each {"id", "kind" ("resume" or "cover_letter"), "where" (the box's own name, for the person), "shown" (the names of
+    the files it shows, none where it shows only that a file is there), "tailored" (the file's path), "unsure"}: unsure
+    where which file is the old one there isn't sure (it shows several, or the box is for a resume and a cover letter
+    both). Only a box whose own words (its label, else its section) name that document, and that resolve_field fills
+    with it: never one for another document as well (a transcript, a certificate), an unnamed page's one upload, nor
+    one that reads the resume to fill the form in. With no tailored file for the job, none: a kept file stays as it is
+    (the profile's resume too)."""
+    fields = _with_context([f for f in fields if not f.get("aside")])
+    file_inputs = sum(1 for f in fields if f.get("kind") == "file")
+    out: list[dict] = []
+    for f in fields:
+        if f.get("kind") != "file" or f.get("disabled") or is_empty_value(f.get("value")):
+            continue
+        ans = resolve_field(f, prof, job, file_inputs)
+        kind = _DOCUMENT_RULES.get(ans.rule) if ans is not None and ans.value != SKIP else None
+        tailored = tailored_document(job or {}, kind) if kind else None
+        if kind is None or not tailored:
+            continue
+        label, section = clean_label(f.get("label") or ""), clean_label(f.get("section") or "")
+        if _OTHER_DOCUMENT.search(norm(f"{label} {section}")):
+            continue
+        # (the words that name a document: the box's label, else its section, as Workday's "Upload a file" under
+        # "Resume/CV")
+        own = next((w for w in (label, section) if re.search(r"resume|cv|curriculum|cover", norm(w))), "")
+        resume, cover = bool(re.search(r"resume|cv|curriculum", norm(own))), "cover" in norm(own)
+        if not (cover if kind == "cover_letter" else resume):
+            continue
+        said = str(f.get("value")).strip()
+        # (what the form reader read: the files' names, joined, or "uploaded" where the page names none)
+        shown = [] if said.lower() == "uploaded" else [s.strip() for s in said.split(", ") if s.strip()]
+        if any(s.lower() == Path(tailored).name.lower() for s in shown):
+            continue  # (the tailored file is there)
+        out.append({"id": f["id"], "kind": kind, "where": own, "shown": shown, "tailored": tailored,
+                    "unsure": len(shown) > 1 or (resume and cover)})
+    return out
+
+
 def plan_autofill(fields: list[dict], prof: Profile, job: dict | None = None, overwrite: bool = False,
                   redo: set[str] | None = None, presets_done: set[str] | None = None, refresh: bool = False,
                   keep: set[str] | None = None) -> dict[str, Any]:

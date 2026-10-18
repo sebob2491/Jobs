@@ -1,0 +1,91 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Workday-style My Experience (a resume kept from before)</title></head>
+<body>
+<!-- like NXP's Workday (the weekly probe, Oct 2026): an account that applied there before finds its last resume kept in
+     My Experience's "Resume/CV" upload, listed below the box as Workday lists each file (its name, its size,
+     "Successfully Uploaded!" and a Delete). The desk read the box as filled and left it, so the employer got the old
+     resume, not the one tailored for the job. A file sent into the box is listed the same way (the box empties after
+     each upload, as Workday's does). Counted in sessionStorage: the files sent (uploads, their names) and the kept
+     file's Deletes that went (deletes). Save and Continue goes on to the review page once the list has a file.
+     ?stuck: the kept file's Delete asks first (a confirm() the browser turns down: the file stays).
+     ?redraw: the page lists the kept file on every load, whatever was deleted (a site that draws the account's file
+     again), and its first Save and Continue saves and draws the page again; the second goes on.
+     ?unnamed: the kept file's row has no name, only "Successfully Uploaded!" and its Delete.
+     ?cover: a cover letter kept beside it (2024-cover-letter.pdf), with a Delete of its own (counted: coverDeletes).
+     ?submit: the kept file's Delete is a button with no type, in a form, so it sends the form (window.sent). -->
+<div data-automation-id="progressBarActiveStep">My Experience</div>
+<h2>My Experience</h2>
+
+<div id="holder">
+<div data-automation-id="resumeSection" role="group" aria-labelledby="rs-title">
+  <h3 id="rs-title">Resume/CV</h3>
+  <div data-automation-id="formField-resume">
+    <label id="rs-label">Upload a file (5MB max)<abbr title="required">*</abbr></label>
+    <div data-automation-id="file-upload-drop-zone">Drop files here or
+      <button type="button" data-automation-id="select-files">Select files</button>
+      <input type="file" data-automation-id="file-upload-input-ref" id="rs-input" aria-labelledby="rs-label">
+    </div>
+    <div id="rs-files"></div>
+  </div>
+</div>
+</div>
+
+<button type="button" data-automation-id="pageFooterNextButton" id="next">Save and Continue</button>
+
+<script>
+  const q = new URLSearchParams(location.search);
+  window.sent = false;
+  const count = (key) => sessionStorage.setItem(key, String(Number(sessionStorage.getItem(key) || 0) + 1));
+  const files = document.getElementById('rs-files');
+  if (q.has('submit')) {  // (the upload inside a form, its Delete a button with no type)
+    const form = document.createElement('form');
+    form.addEventListener('submit', (e) => { e.preventDefault(); window.sent = true; });
+    const holder = document.getElementById('holder');
+    form.appendChild(holder.firstElementChild);
+    holder.appendChild(form);
+  }
+
+  // one file in the list, as Workday's: its name, its size, "Successfully Uploaded!" and a Delete (an icon)
+  function item(name, size, onDelete) {
+    const row = document.createElement('div');
+    row.setAttribute('data-automation-id', 'file-upload-item');
+    row.innerHTML = (name ? `<div data-automation-id="file-upload-item-name">${name}</div>` : '')
+      + `<div>${size}</div><div data-automation-id="file-upload-successful">Successfully Uploaded!</div>`
+      + '<button type="button" data-automation-id="delete-file" aria-label="Delete file">'
+      + '<svg width="12" height="12" aria-hidden="true"><rect width="12" height="12"></rect></svg></button>';
+    row.querySelector('button').addEventListener('click', () => onDelete(row));
+    files.appendChild(row);
+    return row;
+  }
+
+  // the resume kept from the account's last application
+  const kept = sessionStorage.getItem('deletes') && !q.has('redraw') ? null
+    : item(q.has('unnamed') ? '' : '2024-resume.pdf', '84.12 KB', (row) => {
+      if (q.has('stuck') && !confirm('Delete this file?')) return;
+      row.remove();
+      count('deletes');
+    });
+  if (kept && q.has('submit')) kept.querySelector('button').removeAttribute('type');
+  if (q.has('cover')) item('2024-cover-letter.pdf', '41.50 KB', (row) => { row.remove(); count('coverDeletes'); });
+
+  document.getElementById('rs-input').addEventListener('change', (e) => {
+    for (const f of e.target.files) {
+      item(f.name, `${(f.size / 1024).toFixed(2)} KB`, (row) => row.remove());
+      const sent = JSON.parse(sessionStorage.getItem('uploads') || '[]');
+      sessionStorage.setItem('uploads', JSON.stringify([...sent, f.name]));
+    }
+    e.target.value = '';
+  });
+
+  document.getElementById('next').addEventListener('click', () => {
+    if (q.has('redraw') && !sessionStorage.getItem('saved')) {  // (saved, and the page drawn again)
+      sessionStorage.setItem('saved', '1');
+      location.reload();
+      return;
+    }
+    if (files.children.length) location.href = 'review.html';
+  });
+</script>
+</body>
+</html>
