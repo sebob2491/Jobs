@@ -439,8 +439,8 @@ def test_a_tailored_probe_that_never_got_to_the_review_page_couldnt_check(rec, s
         f"NXP Semiconductors, tailored resume: {result['detail']}"]
 
 
-def test_nxp_waits_for_the_desk_fix_and_asm_stays():
-    assert [e["name"] for e in lp.TAILORED_EMPLOYERS] == ["ASM (ASM America)"]
+def test_the_tailored_probe_runs_at_asm_and_at_nxp_whose_account_keeps_its_last_resume():
+    assert [e["name"] for e in lp.TAILORED_EMPLOYERS] == ["ASM (ASM America)", "NXP Semiconductors"]
 
 
 def test_live_smoke_drops_the_tailored_resume_into_the_jobs_folder(tmp_path):
@@ -576,7 +576,8 @@ def test_the_probes_run_one_at_a_time_and_pass_two_only_where_it_may_be_needed(t
     monkeypatch.setattr(lp, "run_one", stand_in)
     assert lp.main(["--out", str(out)]) == 1  # (Hitachi's pass 1: refused, and no reset asked for)
     assert calls == [("reset-kla-1", True, False), ("reset-kla-2", False, False),
-                     ("reset-hitachi-high-tech-america-1", True, False), ("tailored-asm-asm-america", False, True)]
+                     ("reset-hitachi-high-tech-america-1", True, False), ("tailored-asm-asm-america", False, True),
+                     ("tailored-nxp-semiconductors", False, True)]
     printed = capsys.readouterr().out
     assert "pass 2 not needed (the site's password was never changed)" in printed
     assert "Weekly probes (reset, tailored) as the test identity (<test-email>)" in printed
@@ -641,8 +642,8 @@ def _run(out: Path, folder: str, rec, page: str = "") -> None:
 @pytest.fixture
 def probes_out(tmp_path):
     """A probes run's folder: KLA's two passes whole; Hitachi's pass 1 refused with no way to a reset (no pass 2: the
-    desk's failure); the tailored resume on ASM's review page; and NXP's showing the resume its account kept (read
-    only where a test puts NXP back among the tailored employers: with_nxp)."""
+    desk's failure); the tailored resume on ASM's review page; and NXP's showing the resume its account kept (the desk's
+    failure)."""
     out = tmp_path / "live-probes"
     whole = SIGN_IN + RESET + APPLICATION
     _run(out, "reset-kla-1", _rec(whole))
@@ -658,13 +659,7 @@ def probes_out(tmp_path):
     return out
 
 
-@pytest.fixture
-def with_nxp(monkeypatch):
-    """NXP back among the tailored employers (as it will be with the desk fix), its kept resume on its review page."""
-    monkeypatch.setattr(lp, "TAILORED_EMPLOYERS", (*lp.TAILORED_EMPLOYERS, NXP))
-
-
-def test_the_report_is_written_from_the_runs_there(probes_out, capsys, with_nxp):
+def test_the_report_is_written_from_the_runs_there(probes_out, capsys):
     assert lp.main(["--out", str(probes_out), "--report-only"]) == 1  # (Hitachi's and NXP's: the desk's)
     printed = capsys.readouterr().out
     results = json.loads((probes_out / "probes.json").read_text(encoding="utf-8"))
@@ -690,7 +685,7 @@ def test_the_report_is_written_from_the_runs_there(probes_out, capsys, with_nxp)
 
 def test_what_couldnt_be_checked_is_said_under_its_own_heading_and_the_run_stays_green(tmp_path, capsys):
     """A week where the sites stopped every probe (a bot check before KLA's sign-in, both passes; Workday's "Something
-    went wrong" after Hitachi refused; no posting at ASM): each said in the live check's words, under its own heading
+    went wrong" after Hitachi refused; no posting at ASM or NXP): each said in the live check's words, under its own heading
     in the summary and the artifact, and the run passes (exit 0)."""
     out = tmp_path / "live-probes"
     _run(out, "reset-kla-1", BOT_CHECK)
@@ -699,21 +694,24 @@ def test_what_couldnt_be_checked_is_said_under_its_own_heading_and_the_run_stays
          company="Hitachi High-Tech America", reason="Workday said “Something went wrong” again and asked for "
                                                      "the page to be refreshed. That's the site's own trouble"))
     _run(out, "tailored-asm-asm-america", {"company": "ASM (ASM America)", "note": "no postings found"})
+    _run(out, "tailored-nxp-semiconductors", {"company": "NXP Semiconductors", "note": "no postings found"})
     assert lp.main(["--out", str(out), "--report-only"]) == 0
     results = json.loads((out / "probes.json").read_text(encoding="utf-8"))
     assert results["failed"] == [] and [r["status"] for r in [*results["reset"], *results["tailored"]]] == [
-        "unchecked"] * 3
+        "unchecked"] * 4
     assert results["unchecked"] == [
         "KLA, pass 1: " + lp.outcome_words(BOT_CHECK), "KLA, pass 2: " + lp.outcome_words(BOT_CHECK),
         "Hitachi High-Tech America, pass 1: needs_you stuck · Workday said “Something went wrong” again and "
         "asked for the page to be refreshed. That's the site's own trouble",
         "ASM (ASM America), tailored resume: no tailored resume in the job's folder (the run never got to make it: no "
-        "postings · no postings found)"]
+        "postings · no postings found)",
+        "NXP Semiconductors, tailored resume: no tailored resume in the job's folder (the run never got to make it: "
+        "no postings · no postings found)"]
     report = (out / "report.md").read_text(encoding="utf-8")
-    assert f"### {lp.FAILED_HEADING}: 0" in report and f"### {lp.UNCHECKED_HEADING}: 4" in report
+    assert f"### {lp.FAILED_HEADING}: 0" in report and f"### {lp.UNCHECKED_HEADING}: 5" in report
     assert "- KLA, pass 1: needs_you bot_check · The site is checking" in report
     printed = capsys.readouterr().out
-    assert f"{lp.UNCHECKED_HEADING}: 4" in printed and "reset KLA: couldn't check this week (site left on as it was" \
+    assert f"{lp.UNCHECKED_HEADING}: 5" in printed and "reset KLA: couldn't check this week (site left on as it was" \
                                                        in printed
     assert "WARNING" not in printed  # (pass 1 never sent the derived password: nothing to restore)
 
@@ -741,7 +739,7 @@ def test_a_run_stopped_at_its_time_is_said(tmp_path):
     assert results["reset"][0]["left_on"] == "derived?"  # (pass 2 never ran: said, plainly)
 
 
-def test_nightly_summary_reads_the_probes_from_a_folder_or_a_zip(probes_out, tmp_path, capsys, with_nxp):
+def test_nightly_summary_reads_the_probes_from_a_folder_or_a_zip(probes_out, tmp_path, capsys):
     lp.main(["--out", str(probes_out), "--report-only"])
     capsys.readouterr()
     assert ns.main(["--probes", str(probes_out)]) == 0

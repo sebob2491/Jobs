@@ -70,13 +70,14 @@ RESET_TENANTS: tuple[dict[str, str], ...] = (
                                                  "try every night, its mail from Workday's own senders"},
 )
 # Employers whose review page shows the file the application took: Greenhouse's (the form itself, a fresh upload
-# every application). NXP Semiconductors' Workday (nxp.wd3, the test identity's account: "Resume/CV <file>
-# successfully uploaded") comes back with the desk fix it waits on: a resume a Workday account kept from its last
-# application is replaced when the job has a tailored one (the form reader reads the kept file as the box's value,
-# and autofill leaves a filled box alone, so the review page shows the profile's resume there)
+# every application), and NXP Semiconductors' Workday (nxp.wd3, the test identity's account: "Resume/CV <file>
+# successfully uploaded"), whose account keeps the resume of its last application: the desk replaces it with the one
+# tailored for the job (0.3.209), so the review page must show the tailored file there too
 TAILORED_EMPLOYERS: tuple[dict[str, str], ...] = (
     {"name": "ASM (ASM America)", "why": "Greenhouse: no account, a fresh upload every application, and its review "
                                          "page is the filled form, the attached file's name on it"},
+    {"name": "NXP Semiconductors", "why": "Workday: its account keeps the resume of its last application, which "
+                                          "the desk replaces with the tailored one (0.3.209)"},
 )
 PROBES = ("reset", "tailored")
 
