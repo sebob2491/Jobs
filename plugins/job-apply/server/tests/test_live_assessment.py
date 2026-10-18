@@ -173,7 +173,8 @@ def test_the_test_identity_makes_a_create_account_choice_the_desk_leaves_to_the_
 
 
 @pytest.mark.skipif(not browser_available(), reason="needs Chromium")
-@pytest.mark.parametrize("mode", ["tiles", "tiles=fixed", "bestworst", "tiles=dead", "words", "words=many"])
+@pytest.mark.parametrize("mode", ["tiles", "tiles=fixed", pytest.param("bestworst", marks=pytest.mark.slow), "tiles=dead",
+                                  "words", "words=many"])
 def test_an_assessments_answer_tiles_are_clicked_and_a_word_list_that_wants_more_gets_more(mode):
     """Circle K's (run 62): its statements' answers are tiles to click under "Answers" (nothing read as a box but its
     Auto Advance switch), and the taker found no way on. One is clicked at random, and the page goes on by itself.
