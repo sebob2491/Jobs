@@ -110,6 +110,20 @@ def test_a_fake_server_that_answers_right_passes(tmp_path):
     assert hs.main(["--mcp-json", str(path), "--timeout", "10"]) == 0
 
 
+def test_save_tools_writes_the_tools_as_listed_by_name_for_the_evals_mocks(tmp_path):
+    """--save-tools writes the tools/list answer the skills evals' stand-in shows Claude (evals/mocks/job-apply/
+    _tools.json): {"tools": [{name, description, inputSchema}]}, by name, nothing else of the server's."""
+    fake = tmp_path / "fake_server.py"
+    fake.write_text(FAKE_SERVER, encoding="utf-8")
+    names = sorted(hs.expected_tools(SERVER_PY), reverse=True)  # (listed out of order: written by name)
+    path = mcp_json(tmp_path, sys.executable, [str(fake), "right", json.dumps(names), VERSION])
+    saved = tmp_path / "evals" / "_tools.json"
+    assert hs.main(["--mcp-json", str(path), "--timeout", "10", "--save-tools", str(saved)]) == 0
+    tools = json.loads(saved.read_text(encoding="utf-8"))["tools"]
+    assert [t["name"] for t in tools] == sorted(names)
+    assert all(set(t) == {"name", "inputSchema"} for t in tools)  # (the fake gives no descriptions)
+
+
 def test_what_the_claude_cli_says_is_shown_on_a_console_that_cant_show_it(tmp_path):
     """Windows' CI console is cp1252, and `claude plugin marketplace add` says "✔ Successfully added…": printing it
     stopped the check with a UnicodeEncodeError before the plugin was installed (the first Windows run). Shown with
