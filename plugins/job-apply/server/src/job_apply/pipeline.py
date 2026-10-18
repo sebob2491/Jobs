@@ -938,6 +938,9 @@ class Run:
     # gone in, but not sent by the desk: the person's "I submitted it", the tracker saying so already, or the site saying
     # it went in (its lines' outcome is "marked_applied", not "submitted")
     marked: bool = False
+    # the jobs its "may be one already begun or applied to" card named (_held_for_maybe_same): the ones its Apply anyway
+    # clears, never another (a restart asks again, the card worked out anew as it goes)
+    maybe_shown: list[int] = field(default_factory=list)
     page: Any = None  # its browser tab
     updated: float = field(default_factory=time.time)
 
@@ -951,7 +954,8 @@ class Run:
                                                                         "account_answers", "employer_mail", "others_mail",
                                                                         "went_in", "draft_pages", "submit_pressed",
                                                                         "sending", "cut_short", "started",
-                                                                        "pass_steps", "rounds", "resumes", "marked")},
+                                                                        "pass_steps", "rounds", "resumes", "marked",
+                                                                        "maybe_shown")},
                 # (only for the cards that show it: a job queued or under way has none, and 30 of them made the
                 # page's state megabytes, every poll)
                 "went_in": None if self.status in ("queued", "running") else self.went_in.public()}
@@ -1418,7 +1422,8 @@ class Applier:
         run = self.runs.get(job_id)
         if run is None or run.status != "needs_you" or run.need != "maybe_duplicate":
             raise ValueError("That job isn't waiting on that question any more.")
-        self.srv.tracker().clear_maybe_same(job_id)
+        # (only the jobs its card named: one begun since, which the card didn't name, is asked about on its own card)
+        self.srv.tracker().clear_maybe_same(job_id, run.maybe_shown)
         self._log(run, "Apply anyway: you said it isn't the job begun or applied to on the other site")
         run = self.enqueue(job_id, submit=run.submit, front=True)
         self.go_on_for(run)
@@ -2875,30 +2880,57 @@ class Applier:
             self._log(run, "the page changed as I clicked one of its buttons, so I looked at it again")
             await self._drive(run)
 
-    def _maybe_done_elsewhere(self, run: Run) -> str | None:
-        """The card's words when this job may be the same posting as one begun or applied to on another site (the
-        tracker kept them apart, as it couldn't be sure: Tracker.maybe_same), until the person's Apply anyway; else None.
+    def _maybe_done_elsewhere(self, run: Run) -> tuple[str, list[int]] | None:
+        """The card's words when this job may be the same posting as jobs begun or applied to on another site (the
+        tracker kept them apart, as it couldn't be sure: Tracker.maybe_same), each of them named, with their ids (the
+        ones its Apply anyway clears: apply_anyway); None when there's none, or the person said Apply anyway for each.
         Begun is the tracker's word for it, or this desk's: under way, waiting on the person (but on this card of its
         own), at its review page, sent, or its application begun at all (the tracker says "in progress" only once its
-        page is opened: two starting together each read the other as saved, the review of 0.3.206). Never for one only
-        saved."""
+        page is opened: two starting together each read the other as saved, the review of 0.3.206), unless it was
+        skipped or failed since. Never for one only saved."""
         def begun_here(job_id: int) -> bool:
             other = self.runs.get(job_id)
+            if other is not None and other.status in ("skipped", "failed"):
+                return False  # (begun, and then not: the tracker's status says what it came to)
             return job_id in self._slots or other is not None and (
                 other.started or other.status in ("running", "ready", "submitted")
                 or other.status == "needs_you" and other.need != "maybe_duplicate")
 
-        others = [o for o in self.srv.tracker().maybe_same(run.job_id)
-                  if o.get("status") in FINISHED | BEGUN or begun_here(o["id"])]
+        others = sorted((o for o in self.srv.tracker().maybe_same(run.job_id)
+                         if o.get("status") in FINISHED | BEGUN or begun_here(o["id"])),
+                        key=lambda o: (o["status"] not in FINISHED, o["id"]))
         if not others:
             return None
-        other = max(others, key=lambda o: (o["status"] in FINISHED, -o["id"]))
-        done = other["status"] in FINISHED
-        when = str((other.get("applied_at") if done else "") or other.get("updated_at") or "")[:10]
-        where = JOB_BOARDS.get(other.get("board") or "", "the employer's site")
-        return (f"This may be the job you already {'applied to' if done else 'started'} on {where}"
-                f"{f' on {when}' if when else ''} (job {other['id']}: {other.get('title') or 'a job'} at "
-                f"{other.get('company') or 'the same employer'}). Apply anyway, or Skip?")
+
+        def said(o: dict[str, Any]) -> tuple[str, str, str]:
+            done = o["status"] in FINISHED
+            when = str((o.get("applied_at") if done else "") or o.get("updated_at") or "")[:10]
+            return ("applied to" if done else "started", JOB_BOARDS.get(o.get("board") or "", "the employer's site"),
+                    when)
+
+        ids = [o["id"] for o in others]
+        if len(others) == 1:
+            other = others[0]
+            verb, where, when = said(other)
+            return (f"This may be the job you already {verb} on {where}{f' on {when}' if when else ''} (job "
+                    f"{other['id']}: {other.get('title') or 'a job'} at {other.get('company') or 'the same employer'}). "
+                    "Apply anyway, or Skip?"), ids
+        named = "; ".join(
+            f"job {o['id']}, {o.get('title') or 'a job'} at {o.get('company') or 'the same employer'} "
+            f"({o['status'] if o['status'] in FINISHED else 'started'} on {where}{f', {when}' if when else ''})"
+            for o in others for _, where, when in [said(o)])
+        return f"This may be one of the jobs you already started or applied to: {named}. Apply anyway, or Skip?", ids
+
+    def _held_for_maybe_same(self, run: Run) -> bool:
+        """Stop this job on the card that asks whether it's a job begun or applied to on another site
+        (_maybe_done_elsewhere), keeping which jobs it named (the ones its Apply anyway clears); False when there's
+        nothing to ask."""
+        found = self._maybe_done_elsewhere(run)
+        if found is None:
+            return False
+        run.maybe_shown = found[1]
+        self._pause(run, "maybe_duplicate", found[0])
+        return True
 
     async def _drive(self, run: Run) -> None:
         srv = self.srv
@@ -2906,9 +2938,8 @@ class Applier:
             return
         # one that may be a job begun or applied to on another site: the person's say first, before any page opens
         # (Submit for me included: it never goes past this)
-        held = self._maybe_done_elsewhere(run)
-        if held:
-            return self._pause(run, "maybe_duplicate", held)
+        if self._held_for_maybe_same(run):
+            return
         if not run.draft_changed:  # (a draft the desk changed before it was restarted: still held, its card's lines back)
             _restore_draft_changes(srv, run)
         run.status, run.need, run.reason = "running", "", "Working on it"
@@ -5967,12 +5998,10 @@ class Applier:
                           "off and press Submit to send it.")
             self._log(run, run.reason)
             return
-        if not by_person:
-            # Submit for me: once more, as the job that may be this one could have been begun since it was filled (a
-            # Submit the person pressed is theirs to send)
-            held = self._maybe_done_elsewhere(run)
-            if held:
-                return self._pause(run, "maybe_duplicate", held)
+        # Submit for me: once more, as the job that may be this one could have been begun since it was filled (a Submit the
+        # person pressed is theirs to send)
+        if not by_person and self._held_for_maybe_same(run):
+            return
         if run.page is not None and not run.page.is_closed() and not self._own_place(run, run.page.url):
             # its tab was taken on to another posting: Submit there would send that one as this job
             return self._pause(run, "stuck", "Its tab has gone on to another page, so I didn't press Submit there. "

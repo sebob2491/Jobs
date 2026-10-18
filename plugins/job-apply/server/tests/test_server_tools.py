@@ -106,7 +106,7 @@ def test_claudes_tools_say_a_job_may_be_one_applied_to_on_indeed_and_ask_first(s
     assert out["submitted"] is False and words in out["reason"] and sent == [], out
     assert out["maybe_same"] == opened["maybe_same"]["jobs"]
     assert run(srv.open_application(url="https://careers.example.com/a"))["maybe_same"]["jobs"][0]["job_id"] == indeed["id"]
-    srv.tracker().clear_maybe_same(own["id"])  # (the desk's Apply anyway)
+    srv.tracker().clear_maybe_same(own["id"], [indeed["id"]])  # (the desk's Apply anyway, on a card naming it)
     assert "maybe_same" not in run(srv.open_application(job_id=own["id"]))
     assert words not in run(srv.submit_application(job_id=own["id"])).get("reason", "")
 

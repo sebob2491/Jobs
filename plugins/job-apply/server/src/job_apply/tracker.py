@@ -804,14 +804,21 @@ class Tracker:
                 for r in rows.fetchall()]
 
     @_locked
-    def clear_maybe_same(self, job_id: int) -> None:
-        """The person's Apply anyway: this job isn't the one it may be the same as (for this job only: the other is
-        still asked about, should it be started). Said in its history."""
-        others = [r[0] for r in self.conn.execute("SELECT other_id FROM maybe_same WHERE job_id = ? AND NOT cleared",
-                                                   (job_id,))]
+    def clear_maybe_same(self, job_id: int, others: builtins.list[int]) -> None:
+        """The person's Apply anyway: this job isn't one of these it may be the same as (the ones its card named: for
+        this job only, and for those alone; another begun later is asked about again, and they're asked about still,
+        should one of them be started). Said in its history."""
+        wanted = [int(o) for o in others]
+        if not wanted:
+            return
+        marks = ", ".join("?" for _ in wanted)
+        others = [r[0] for r in self.conn.execute(
+            f"SELECT other_id FROM maybe_same WHERE job_id = ? AND NOT cleared AND other_id IN ({marks})",
+            (job_id, *wanted))]
         if not others:
             return
-        self.conn.execute("UPDATE maybe_same SET cleared = 1 WHERE job_id = ?", (job_id,))
+        self.conn.execute(f"UPDATE maybe_same SET cleared = 1 WHERE job_id = ? AND other_id IN ({marks})",
+                          (job_id, *wanted))
         self.conn.execute("INSERT INTO events (job_id, at, status, note) VALUES (?, ?, '', ?)",
                           (job_id, _now(), f"Apply anyway: not the same as job{'s' if len(others) > 1 else ''} "
                                            f"{', '.join(map(str, others))}, as the person said"))
