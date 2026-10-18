@@ -76,6 +76,7 @@ section.card { background: var(--surface); border: 1px solid var(--line); border
 .toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 20; max-width: calc(100vw - 32px);
   padding: 8px 14px; border-radius: 8px; background: var(--text); color: var(--bg); font-size: 14px; box-shadow: 0 2px 8px rgba(0,0,0,.25); }
 .toast:empty { display: none; }
+.toast button.link { color: inherit; font-weight: 600; text-decoration: underline; margin-left: 8px; }
 .notice { margin: 0 0 16px; padding: 10px 14px; border-radius: 10px; background: var(--warn-bg); color: var(--text); grid-column: 1 / -1; }
 .notice code { font-size: 13px; }
 .notice.tip { display: flex; align-items: flex-start; gap: 12px; }
@@ -102,6 +103,19 @@ ul.rows { list-style: none; margin: 0; padding: 0; }
 .row input[type=checkbox] { margin-top: 4px; width: 17px; height: 17px; }
 .row .state { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
 .score { min-width: 38px; text-align: center; font-weight: 700; font-size: 14px; padding: 3px 0; border-radius: 8px; background: var(--chip); }
+/* a score that can show how it adds up: pressed, its parts come up under the opening's tags */
+button.score { border: 0; cursor: pointer; }
+button.score:hover { outline: 1px solid var(--muted); }
+.parts { font-size: 13px; color: var(--muted); margin-top: 6px; overflow-wrap: anywhere; }
+/* (the words wrap, so a long one, an employer's name, never widens the page; only the number stays whole) */
+.parts .n { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.state button.link { font-size: 13px; }
+/* the Safety window: each setting, its value, and what it means now */
+#safety-body ul { list-style: none; margin: 0; padding: 0; }
+#safety-body li { padding: 8px 0; border-top: 1px solid var(--line); overflow-wrap: anywhere; }
+#safety-body li:first-child { border-top: 0; }
+#safety-body .where { display: block; font-size: 12px; color: var(--muted); margin-top: 2px; }
+#ni .actions { margin-top: 12px; }
 .score.s4 { background: var(--good-bg); color: var(--good); }
 .score.s3 { background: var(--info-bg); color: var(--accent); }
 .score.s2 { background: var(--warn-bg); color: var(--warn); }
@@ -190,6 +204,7 @@ footer { max-width: 1240px; margin: 0 auto; padding: 0 16px 24px; color: var(--m
     <button class="link" id="alerts" data-act="alerts" hidden>Alert me</button>
     <button id="pause-btn" data-act="pause" title="The job under way finishes what it is doing; no other job starts until you press Resume queue" hidden>Pause queue</button>
     <button class="link" id="week-btn" data-act="week" title="What the desk did in the last 7 days: jobs filled and sent, where it stopped for you, and how long each job took">This week</button>
+    <button class="link" id="safety-btn" data-act="safety" title="What the desk does in your name, and what it never does: each setting as it is now, and where to change it">Safety</button>
     <button id="area-btn" data-act="area" title="What and where Find jobs searches: the job titles, places and employer lists">What and where</button>
     <button id="find" data-act="find">Find jobs</button>
     <button id="stop-search" data-act="stop-search" title="The search ends; the openings found before it stay" hidden>Stop search</button>
@@ -331,6 +346,29 @@ footer { max-width: 1240px; margin: 0 auto; padding: 0 16px 24px; color: var(--m
     <button data-act="week-close">Close</button>
   </div>
 </dialog>
+<!-- safety: each setting that decides what the desk does in the person's name, as it is now (/api/safety) -->
+<dialog id="safety" aria-labelledby="safety-h">
+  <h2 id="safety-h">Safety</h2>
+  <p class="small">What the desk does in your name, and what it never does, as your settings stand now. Nothing here
+    changes a setting: each line says where you change it.</p>
+  <div id="safety-body"></div>
+  <div class="actions" style="margin-top: 16px">
+    <button data-act="safety-close">Close</button>
+  </div>
+</dialog>
+<!-- not interested: the opening is hidden (its Undo, or the Not interested group, brings it back), with a reason or none -->
+<dialog id="ni" aria-labelledby="ni-h">
+  <h2 id="ni-h">Not interested</h2>
+  <p id="ni-what"></p>
+  <p class="small">It's hidden from the openings and never applied to. Why? (optional: Company also lowers that
+    employer's other openings a little)</p>
+  <div class="actions">
+    <button data-ni-reason="title">Title</button><button data-ni-reason="company">Company</button>
+    <button data-ni-reason="location">Location</button><button data-ni-reason="pay">Pay</button>
+    <button data-ni-reason="other">Other</button><button data-ni-reason="" class="primary">Just hide it</button>
+    <button data-act="ni-close">Cancel</button>
+  </div>
+</dialog>
 <dialog id="report" aria-labelledby="report-h">
   <h2 id="report-h">Report a problem</h2>
   <p>This is everything the issue will hold, with your details taken out. GitHub issues are public:
@@ -393,26 +431,19 @@ let preflightSeen = "";  // what Apply last said would stop the ticked jobs, and
 // this are searched again, also on a desk left open; never while the queue is paused
 const STALE_SEARCH = 12 * 3600;
 
-// Openings shown on earlier visits, kept in this browser only: the others are tagged New
-// for the whole of this visit. The first visit tags nothing.
-const SEEN_KEY = "desk-seen";
-let seenBefore = null, firstVisit = false, seenSaved = -1;
-function loadSeen() {
-  if (seenBefore) return;
-  try {
-    const raw = localStorage.getItem(SEEN_KEY);
-    firstVisit = raw === null;
-    seenBefore = new Set(JSON.parse(raw || "[]"));
-  } catch (e) { seenBefore = new Set(); firstVisit = true; }
+// The person looking at the openings (the page loading, or coming to the front, and now and then while it's in front),
+// told to the desk (/api/seen), which keeps the time (desk.json's last_seen): an opening first saved after the visit
+// before this one is New (each row's `new`), all visit long. At most once a minute, so not at every refresh
+const SEEN_EVERY = 60, SEEN_STAYING = 300;  // seconds: between two looks told, and while the page stays in front
+let seenSent = 0;
+async function sawOpenings(every = SEEN_EVERY) {
+  const now = Date.now() / 1000;
+  if (!token || now - seenSent < every) return;
+  seenSent = now;
+  try { await api("/api/seen", {}); } catch (e) { seenSent = 0; }
 }
-function rememberSeen(urls) {
-  try {
-    const all = new Set([...JSON.parse(localStorage.getItem(SEEN_KEY) || "[]"), ...urls]);
-    if (all.size === seenSaved) return;
-    seenSaved = all.size;
-    localStorage.setItem(SEEN_KEY, JSON.stringify([...all].slice(-3000)));
-  } catch (e) {}
-}
+window.addEventListener("focus", () => { sawOpenings().then(refresh); });
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") sawOpenings().then(refresh); });
 // Tips the person closed, kept in this browser only: a tip comes back once what it says changes
 const DISMISSED_KEY = "desk-dismissed";
 function dismissed() {
@@ -422,7 +453,8 @@ function dismiss(key) {
   try { localStorage.setItem(DISMISSED_KEY, JSON.stringify([...dismissed(), key].slice(-50))); } catch (e) {}
 }
 
-const isNew = (r) => !firstVisit && seenBefore && !seenBefore.has(r.url) && !r.run && !DONE.has(r.status);
+// (first saved since the visit before this one, and not taken up since: the desk works it out)
+const isNew = (r) => !!r.new && !r.run && !DONE.has(r.status);
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
 // A posting in many places ("Phoenix, AZ; Austin, TX; ..."): the first three (the ones in the
@@ -592,9 +624,11 @@ const DONE = new Set(["applied", "interviewing", "offer", "rejected", "withdrawn
 // A job stopped on a bot check or CAPTCHA (the person's to solve: the desk never does) says so, in its row and its card
 const stopMark = (r) => r.status !== "needs_you" ? "" : r.need === "bot_check" ? "Bot check" : r.captcha || r.need === "captcha" ? "CAPTCHA" : "";
 
-// The bar's groups, in its order: where each opening stands
+// The bar's groups, in its order: where each opening stands; and two more, New (first saved since your last visit, of
+// any of the others) and Not interested (the ones you hid: in no other group, Any's either)
 const STOPS = [
   ["any", "Any", "Every opening in the list"],
+  ["fresh", "New", "First saved since your last visit, and not taken up yet"],
   ["new", "Not started", "Not being filled: not tried yet, or started before the desk restarted"],
   ["working", "Working", "Being filled now, or waiting in the queue"],
   ["bot", "Bot checks", "Stopped at a bot check: yours to solve (the desk never does)"],
@@ -602,7 +636,9 @@ const STOPS = [
   ["stuck", "Stuck", "The desk couldn't get past something: these are the ones to tell Claude about"],
   ["ready", "Ready", "Filled to the review page"],
   ["done", "Done", "Submitted, applied, skipped or closed"],
+  ["unwanted", "Not interested", "The openings you said you're not interested in: never applied to. Undo by one brings it back"],
 ];
+const NI_WORDS = {title: "Title", company: "Company", location: "Location", pay: "Pay", other: "Other"};
 const STUCK_NEEDS = new Set(["stuck", "submit_failed"]);
 function stopOf(row) {
   const r = row.run;
@@ -617,7 +653,8 @@ function stopOf(row) {
   }
   return "done";  // submitted, skipped
 }
-const inStop = (r) => stopFilter === "any" || stopOf(r) === stopFilter;
+const inStop = (r) => stopFilter === "unwanted" ? !!r.not_interested : !r.not_interested
+  && (stopFilter === "any" || (stopFilter === "fresh" ? isNew(r) : stopOf(r) === stopFilter));
 
 function statusPill(row) {
   const r = row.run;
@@ -627,17 +664,23 @@ function statusPill(row) {
 
 const RECOMMEND_AT = 60;  // recommend.RECOMMEND_AT
 function scoreClass(s) { return s >= 75 ? "s4" : s >= 60 ? "s3" : s >= 40 ? "s2" : "s1"; }
+// A part of a score, as its breakdown says it: "+25", "−10" (the start as it is: "50")
+const points = (n, start = false) => start ? String(n) : n < 0 ? `−${-n}` : `+${n}`;
+const partsOpen = new Set();  // the openings whose score's parts are shown (by address)
+// a job sent in, or waiting on its review page (desk.SENT): no opening to turn down
+const SENT = new Set(["ready_to_submit", "applied", "interviewing", "offer", "rejected", "withdrawn"]);
 
 const shownDay = (t) => String(t || "").slice(0, 10);
 
 // The bar over the list: each group with how many it holds (shown once any job has been tried), and under it what
 // to do with the group picked: bot checks are solved in one round, the stuck ones go to Claude in the Notes
-function renderStops(rows) {
-  const count = {any: rows.length};
+function renderStops(all) {
+  const rows = all.filter((r) => !r.not_interested);
+  const count = {any: rows.length, fresh: rows.filter(isNew).length, unwanted: all.length - rows.length};
   for (const r of rows) count[stopOf(r)] = (count[stopOf(r)] || 0) + 1;
   const bar = $("stops"), hint = $("stop-hint");
   const tried = rows.some((r) => stopOf(r) !== "new");
-  bar.hidden = !tried && stopFilter === "any";
+  bar.hidden = !tried && !count.fresh && !count.unwanted && stopFilter === "any";
   const buttons = bar.hidden ? "" : STOPS.filter(([key]) => key === "any" || key === stopFilter || count[key])
     .map(([key, label, tip]) => `<button data-stop="${key}" aria-pressed="${key === stopFilter}" title="${esc(tip)}">${esc(label)}
       ${count[key] || 0}</button>`).join("");
@@ -708,12 +751,45 @@ function renderApps() {
   patch($("rows"), entries);
 }
 
-// A word at the foot of the window for a few seconds
+// A word at the foot of the window for a few seconds; with `undo` (an opening's address), an Undo for its Not interested
 let toastTimer = null;
-function toast(text) {
-  $("toast").textContent = text;
+function toast(text, undo = "") {
+  $("toast").innerHTML = esc(text) + (undo ? `<button class="link" data-ni-undo="${esc(undo)}">Undo</button>` : "");
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { $("toast").textContent = ""; }, 4000);
+  toastTimer = setTimeout(() => { $("toast").textContent = ""; }, undo ? 8000 : 4000);
+}
+
+// The Safety window: each setting that decides what the desk does in your name, its value, what it means now, and
+// where to change it (/api/safety). Drawn as text: nothing in it is markup
+function renderSafety(s) {
+  const body = $("safety-body");
+  body.replaceChildren();
+  const add = (parent, tag, text, cls = "") => {
+    const el = document.createElement(tag);
+    if (cls) el.className = cls;
+    if (text !== undefined) el.textContent = String(text);
+    parent.appendChild(el);
+    return el;
+  };
+  if (s.problem) add(body, "p", `Your profile can't be read (${s.problem}): the desk fills no application until it's fixed. These are the settings' defaults.`, "notice");
+  const ul = add(body, "ul");
+  for (const l of s.lines || []) {
+    const li = add(ul, "li");
+    li.dataset.safety = l.key;
+    add(li, "strong", `${l.name}: ${l.value}.`);
+    li.appendChild(document.createTextNode(" " + l.said));
+    add(li, "span", `Where: ${l.where}.`, "where");
+  }
+}
+
+// Not interested: the opening picked, and its window asking why (optional)
+let niUrl = null;
+function askNotInterested(url) {
+  const r = (state.listings || []).find((x) => x.url === url);
+  if (!r) return;
+  niUrl = url;
+  $("ni-what").textContent = `${r.title || "This opening"}${r.company ? ` at ${r.company}` : ""}`;
+  $("ni").showModal();
 }
 
 // Text onto the clipboard: true once it's there (the clipboard, or where it isn't allowed, a copy of a box's text)
@@ -752,15 +828,18 @@ function renderRows() {
   // links the person added (here, or through Claude) always show: they picked those themselves
   const onlyHandled = !!(state.settings && state.settings.handled_only);
   const troubleshooting = !!(state.settings && state.settings.troubleshoot);
-  // (troubleshooting: every opening tried, whatever its fit)
-  const listed = (state.listings || []).filter((r) => filter === "all" || troubleshooting || r.added || (r.fit && r.fit.recommended) || r.run);
+  // (troubleshooting: every opening tried, whatever its fit; and the ones hidden as Not interested, for their group)
+  const listed = (state.listings || []).filter((r) => filter === "all" || troubleshooting || r.added || (r.fit && r.fit.recommended) || r.run
+    || r.not_interested);
   renderStops(listed.filter(shown));
   const rows = listed.filter(shown).filter(inStop);
   const entries = rows.map((r) => {
     const fit = r.fit || {score: 0, reasons: [], concerns: []};
-    const done = DONE.has(r.status) || (r.run && UNDER_WAY.has(r.run.status));
+    const done = DONE.has(r.status) || (r.run && UNDER_WAY.has(r.run.status)) || !!r.not_interested;
+    const unwanted = r.not_interested;
     const chips = [
       ...(isNew(r) ? [`<span class="chip new">New</span>`] : []),
+      ...(unwanted ? [`<span class="chip stop">Not interested${NI_WORDS[unwanted.reason] ? `: ${esc(NI_WORDS[unwanted.reason])}` : ""}</span>`] : []),
       ...(r.handled ? [`<span class="chip handled" title="In the plugin's live check, the desk took a test applicant at this employer all the way to the review page.">Desk goes all the way</span>`] : []),
       ...fit.reasons.map((x) => `<span class="chip plus">${esc(x)}</span>`),
       ...fit.concerns.map((x) => `<span class="chip ${fit.blocked ? "stop" : "minus"}">${esc(x)}</span>`),
@@ -769,17 +848,32 @@ function renderRows() {
     // skipped (here or before the desk restarted): Undo puts it back
     const undo = r.job_id != null && (r.status === "skipped" || (r.run && r.run.status === "skipped"))
       ? `<button class="link" data-job="${r.job_id}" data-job-act="unskip" title="Put this job back where it was before you skipped it">Undo</button>` : "";
+    // Not interested: on an opening the desk hasn't a card for (begun or skipped there: Skip job is for those) and that
+    // isn't sent in; hidden, it has Undo
+    const ni = unwanted ? `<button class="link" data-ni-undo="${esc(r.url)}" title="Show this opening again">Undo</button>`
+      : !r.run && !SENT.has(r.status) ? `<button class="link" data-ni="${esc(r.url)}" title="Hide this opening: it's never applied to, and Undo brings it back">Not interested</button>` : "";
     // the same posting saved from a job board too: one row, applied for on the employer's site; the board's link here
     const also = (r.also_on || []).map((a) => link(a.url, `Also on ${esc(a.site)}`, "also")).join(" · ");
-    return {key: r.url, html: `<li class="row ${DONE.has(r.status) ? "done" : ""}">
+    // how the score adds up (recommend.py's own parts, which sum to it): on the score's tooltip, and under the tags
+    // once the score is pressed. A score saved before scores had parts has none
+    const parts = (fit.parts || []).map((p) => `${p.why} ${points(p.points, p.why === "start")}`);
+    const tip = `How well it fits your profile, out of 100 (${RECOMMEND_AT} or more is recommended).`
+      + (parts.length ? ` ${parts.join(", ")} = ${fit.score}. Press to see it under the tags.` : " The tags below say why.");
+    const score = parts.length
+      ? `<button class="score ${scoreClass(fit.score)}" data-parts="${esc(r.url)}" aria-expanded="${partsOpen.has(r.url)}" title="${esc(tip)}">${esc(fit.score)}</button>`
+      : `<span class="score ${scoreClass(fit.score)}" title="${esc(tip)}">${esc(fit.score)}</span>`;
+    const sum = parts.length && partsOpen.has(r.url) ? `<div class="parts">${(fit.parts || []).map((p) =>
+      `<span class="pt">${esc(p.why)} <span class="n">${esc(points(p.points, p.why === "start"))}</span></span>`).join(" · ")}
+      = <span class="n">${esc(fit.score)}</span></div>` : "";
+    return {key: r.url, html: `<li class="row ${DONE.has(r.status) || unwanted ? "done" : ""}">
       <input type="checkbox" data-pick="${esc(r.url)}" ${checked} ${done ? "disabled" : ""} aria-label="Select ${esc(r.title)}">
-      <span class="score ${scoreClass(fit.score)}" title="How well it fits your profile, out of 100 (${RECOMMEND_AT} or more is recommended). The tags below say why.">${esc(fit.score)}</span>
+      ${score}
       <div>${link(r.url, esc(r.title), "title")}
         <div class="meta">${[esc(r.company), r.location ? `<span title="${esc(r.location)}">${esc(places(r.location))}</span>` : "",
           r.posted ? `<span class="nowrap">${esc(shownDate(r.posted))}</span>` : ""].filter(Boolean).join(" · ")}</div>
         ${also ? `<div class="meta also-on" title="The same posting, saved from a job board too. It's applied for on the employer's site.">${also}</div>` : ""}
-        <div class="chips">${chips}</div></div>
-      <div class="state">${statusPill(r)}${undo}</div></li>`};
+        <div class="chips">${chips}</div>${sum}</div>
+      <div class="state">${statusPill(r)}${undo}${ni}</div></li>`};
   });
   if (!entries.length) {
     const msg = stopFilter !== "any" && listed.some(shown) ? "None here right now. Press Any to see them all."
@@ -1329,10 +1423,11 @@ function refresh() {
 
 async function load() {
   try {
+    // (the first look told before the first state, whose New marks go from it; then now and then while in front)
+    if (!seenSent) await sawOpenings();
+    else if (document.visibilityState === "visible" && document.hasFocus()) sawOpenings(SEEN_STAYING);
     state = await api("/api/state");
-    loadSeen();
     render();
-    rememberSeen((state.listings || []).map((r) => r.url));
     const sr = state.search;
     const now = Date.now() / 1000;
     if (state.settings.auto_search && !state.paused && sr.status !== "running"
@@ -1358,7 +1453,7 @@ async function act(fn, hold = true) {
 const UNDER_WAY = new Set(["submitted", "running", "queued", "ready", "needs_you"]);
 function selectable(url) {
   const r = (state.listings || []).find((x) => x.url === url);
-  return !!r && shown(r) && inStop(r) && !DONE.has(r.status) && !(r.run && UNDER_WAY.has(r.run.status));
+  return !!r && shown(r) && inStop(r) && !DONE.has(r.status) && !(r.run && UNDER_WAY.has(r.run.status)) && !r.not_interested;
 }
 
 // What "Only where the desk goes all the way" leaves showing: those employers' openings, and what the person has
@@ -1425,6 +1520,32 @@ document.addEventListener("click", (e) => {
     renderRows();
     return;
   }
+  if (t.dataset.parts !== undefined) {  // a score pressed: how it adds up, under the opening's tags (pressed again: gone)
+    const url = t.dataset.parts;
+    partsOpen.has(url) ? partsOpen.delete(url) : partsOpen.add(url);
+    renderRows();
+    return;
+  }
+  if (t.dataset.ni !== undefined) { if (state) askNotInterested(t.dataset.ni); return; }
+  if (t.dataset.niReason !== undefined) {  // why, in the Not interested window ("": no reason)
+    const url = niUrl, reason = t.dataset.niReason;
+    niUrl = null;
+    $("ni").close();
+    if (!url) return;
+    const r = (state.listings || []).find((x) => x.url === url);
+    selected.delete(url);  // (never applied to, ticked before or not)
+    act(async () => {
+      await api("/api/not_interested/mark", {url, reason});
+      toast(`Not interested: ${(r && r.title) || "the opening"} is hidden.`, url);
+    });
+    return;
+  }
+  if (t.dataset.niUndo !== undefined) {  // shown again (unticked)
+    const url = t.dataset.niUndo;
+    if (t.closest("#toast")) $("toast").textContent = "";
+    act(() => api("/api/not_interested/undo", {url}));
+    return;
+  }
   if (t.dataset.appGroup) {
     appGroup = t.dataset.appGroup;
     try { localStorage.setItem(APP_GROUP_KEY, appGroup); } catch (err) {}
@@ -1468,6 +1589,9 @@ document.addEventListener("click", (e) => {
   if (a === "report-close") $("report").close();
   if (a === "week") act(async () => { renderWeek(await api("/api/history?days=7")); if (!$("week").open) $("week").showModal(); }, false);
   if (a === "week-close") $("week").close();
+  if (a === "safety") act(async () => { renderSafety(await api("/api/safety")); if (!$("safety").open) $("safety").showModal(); }, false);
+  if (a === "safety-close") $("safety").close();
+  if (a === "ni-close") { niUrl = null; $("ni").close(); }
   if (a === "notes") {
     act(async () => {
       const out = await api("/api/notes/show", {});
@@ -1531,8 +1655,12 @@ document.addEventListener("click", (e) => {
       }
       const out = await api("/api/apply", {urls, submit: auto});
       selected.clear();
+      // (two or more queued together go the likeliest to go all the way first: said once, here)
+      if (out.ordered) toast(`Queued ${out.queued.length}, the ones likely to go all the way first.`);
       if ((out.already_applied || []).length) alert("Already applied or skipped, so not queued: " + out.already_applied.join(", ")
         + ". Undo on a skipped job puts it back.");
+      if ((out.not_interested || []).length) alert("You said you're not interested, so not queued: "
+        + out.not_interested.join(", ") + ". Undo on it (under Not interested) brings it back.");
     });
   }
   if (jobAct === "fill") {

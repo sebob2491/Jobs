@@ -1154,6 +1154,9 @@ class Applier:
         self.tasks: deque[tuple[str, int]] = deque()
         self.auto_submit = False
         self.hold_submits = False  # the desk's troubleshooting is on: nothing is sent, by the person's Submit or for them
+        # the openings the desk lists (set by the desk): one marked Not interested before its job was saved is that job's
+        # only when nothing listed makes it ambiguous (Tracker.not_interested_marks)
+        self.listed: Callable[[], list[dict[str, Any]]] = lambda: []
         self.tailor = False  # hold each job until Claude has written a resume for it
         # The person pressed Pause queue: no new job starts until Resume queue (in memory, like the queue it holds),
         # but those they pressed Resume on, or answered on their card (pressed)
@@ -1279,6 +1282,11 @@ class Applier:
             raise ValueError(f"{job.get('title') or 'That job'} is already marked {job.get('status') or 'submitted'}")
         if job.get("status") == "skipped":  # never applied to until the person's Undo
             raise ValueError(f"{job.get('title') or 'That job'} is skipped. Press Undo on it first.")
+        # nor one the person said Not interested in on the desk (by its number or any of its addresses), however it
+        # comes: Apply, a Resume, a queue picked up from another desk
+        if self.srv.tracker().marked_not_interested(job_id=job_id, listed=self.listed()) is not None:
+            raise ValueError(f"{job.get('title') or 'That job'} is marked Not interested. Press Undo on it (under Not "
+                             "interested) first.")
         run = run or Run(job_id, job.get("title", ""), job.get("company", ""))
         self.runs[job_id] = run
         if run.status == "running" and (job_id in self._slots or job_id in self._driving):
@@ -1753,6 +1761,8 @@ class Applier:
             card = RESTART_BEGUN + (" Your Submit from before the restart wasn't sent." if pressed else "")
             said = "the desk restarted before it was finished, so it wasn't queued again: it's on its card for you"
         else:
+            if t.marked_not_interested(job_id=job_id, listed=self.listed()) is not None:  # (said Not interested since)
+                return
             # (never begun: queued again, Submit for me only if it had it and it's still on; held for Resume queue)
             submit = entry.get("submit") is True and self.auto_submit and not self.hold_submits
             self._restored_ids.add(job_id)

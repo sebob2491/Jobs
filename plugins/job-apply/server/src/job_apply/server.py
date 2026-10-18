@@ -11,6 +11,7 @@ import os
 import re
 import shutil
 import threading
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
@@ -553,14 +554,22 @@ def list_jobs(status: str | None = None, company: str | None = None, limit: int 
     yet), and `follow_up_due`: the day a follow-up became due, for one applied to
     settings.follow_up_days days ago (10 unless the profile says) or more with no email
     logged, not even a confirmation; null otherwise. The Job Desk's My applications
-    marks those "Follow up?"."""
+    marks those "Follow up?".
+
+    A job the user marked Not interested on the Job Desk has `not_interested: true` and
+    `not_interested_reason` (title, company, location, pay, other, or "" for none): ask
+    before applying to it."""
     t = tracker()
     jobs = t.list(status=status, company=company, limit=limit)
     sent = any(j["status"] in APPLICATION_STATUSES for j in jobs)  # (none sent: neither the emails nor the profile read)
     heard, days = (t.last_heard(), _follow_up_days()) if sent else ({}, config.FOLLOW_UP_DAYS_DEFAULT)
+    marks = t.not_interested_marks(_listed())
+    also = t.aliases() if marks else {}
     out = []
     for j in jobs:
         brief = _brief(j)
+        if marks and (mark := marks.mark(job=j, aliases=also.get(j["id"], []))) is not None:
+            brief.update(not_interested=True, not_interested_reason=mark["reason"])
         if j["status"] in APPLICATION_STATUSES:
             stands = standing(j, heard.get(j["id"]), days)
             last = stands["last_heard"]
@@ -572,8 +581,12 @@ def list_jobs(status: str | None = None, company: str | None = None, limit: int 
 
 @tool()
 def get_job(job_id: int) -> dict[str, Any]:
-    """Full record for one job, including description and status history."""
+    """Full record for one job, including description and status history. One the user
+    marked Not interested on the Job Desk has `not_interested: true` and
+    `not_interested_reason`: ask before applying to it."""
     job = _job(job_id)
+    if (mark := _not_interested(job["id"])) is not None:
+        job = {**job, "not_interested": True, "not_interested_reason": mark["reason"]}
     return {"job": job, "history": tracker().events(job_id)}
 
 
@@ -765,7 +778,8 @@ async def open_application(job_id: int | None = None, url: str | None = None) ->
     Next steps are usually click("Apply") / click("Easy Apply"), then autofill().
     `maybe_same`, when present: this job may be one already started or applied to on
     another site (an Indeed job and the employer's posting kept apart). Ask the person
-    before applying."""
+    before applying. `not_interested`, when present: the person marked this job Not
+    interested on the Job Desk. Ask before applying."""
     if job_id is None and not url:
         raise ValueError("Pass job_id or url")
     target, job = url or "", None
@@ -803,6 +817,8 @@ async def open_application(job_id: int | None = None, url: str | None = None) ->
     summary["submit_policy"] = _submit_policy(await browser.human_submit_ats() or summary["ats"])
     if maybe := _maybe_same(job_id):
         summary["maybe_same"] = {"jobs": maybe, "warning": MAYBE_SAME_SAYS}
+    if (mark := _not_interested(job_id, url)) is not None:
+        summary["not_interested"] = {"reason": mark["reason"], "warning": NOT_INTERESTED_SAYS}
     return summary
 
 
@@ -1155,6 +1171,75 @@ async def desk_history(days: int = 7, recent: int = 20) -> dict[str, Any]:
     return {**await asyncio.to_thread(history.summary, days, recent), "file": str(history.history_path())}
 
 
+WHATS_NEW_FIRST = 24 * 3600  # what the first call of whats_new looks back over, with no call before it to go from
+
+
+def _since_time(said: str, now: float) -> float:
+    """whats_new's `since`: a date or a time ("2026-10-17", "2026-10-17T08:00", this computer's time unless it says its
+    offset), or how long ago ("12h", "3d")."""
+    text = said.strip()
+    ago = re.fullmatch(r"(\d{1,4})\s*([hd])", text.lower())
+    if ago:
+        return now - int(ago.group(1)) * (3600 if ago.group(2) == "h" else 86400)
+    try:
+        t = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        return (t if t.tzinfo else t.astimezone()).timestamp()
+    except (ValueError, OverflowError, OSError):  # (OSError: a time this computer's clock can't say, year 1 on Windows)
+        raise ValueError(f"since should be a date or time like 2026-10-17 or 2026-10-17T08:00, or 12h or 3d, "
+                         f"not {said!r}") from None
+
+
+@tool()
+def whats_new(since: str | None = None) -> dict[str, Any]:
+    """A morning check: the openings first saved since `since` (a date or time like "2026-10-17" or
+    "2026-10-17T08:00", or "12h", "3d"), or since this tool's last call (kept in ~/.job-apply;
+    the last 24 hours at the first call). From the Job Desk's openings (each by when a search
+    first found it) and the jobs saved to the tracker another way (ingest_job, add_job), none
+    begun, sent or skipped, and none the user said Not interested in on the desk; best score
+    first, each with its title, company, location, score (out of 100; `recommended` from 60),
+    address and job number once saved. `summary` lists them in a few lines, and
+    `searched_at` says when the desk last searched. It never searches by itself: for fresh
+    openings, search first (the desk's Find jobs, or search_company_jobs with the find-jobs
+    skill), then call this. Each morning: search, then whats_new."""
+    from . import desk as job_desk
+    from .history import stamp
+
+    now = time.time()
+    path = job_desk._whats_new_path()
+    if since is not None:
+        start, first = _since_time(since, now), False
+    else:
+        try:
+            kept = json.loads(path.read_text(encoding="utf-8")).get("at")
+        except (OSError, ValueError, AttributeError):
+            kept = None
+        last = job_desk._seconds(kept)
+        start, first = (now - WHATS_NEW_FIRST, True) if last is None else (last, False)
+    found = job_desk.whats_new(tracker(), start)
+    config.ensure_home()
+    # (the next call without `since` starts here: to the second, as the tracker keeps its times, so a job saved in the
+    # second of this call is in the next one too, never in neither)
+    config.write_text_atomic(path, json.dumps({"at": int(now)}))
+    try:
+        searched = json.loads(job_desk._recommendations_path().read_text(encoding="utf-8")).get("at")
+    except (OSError, ValueError, AttributeError):
+        searched = None
+    searched_at = stamp(s) if (s := job_desk._seconds(searched)) is not None else None
+    shown = found[:job_desk.WHATS_NEW_MOST]
+    when = stamp(start)[:16].replace("T", " ")
+    if found:
+        summary = "\n".join([f"{len(found)} new opening{'s' if len(found) != 1 else ''} since {when}, best first:"]
+                            + [f"- {o['score']} · {o['title']} · {o['company']}" + (f" · {o['location']}" if o['location']
+                                                                                     else "") for o in shown[:10]]
+                            + ([f"and {len(found) - 10} more"] if len(found) > 10 else []))
+    else:
+        summary = f"Nothing new since {when}."
+    if searched_at is None:
+        summary += " The Job Desk hasn't searched yet: press Find jobs there, or search with the find-jobs skill."
+    return {"since": stamp(start), "until": stamp(now), "first_call": first, "count": len(found), "openings": shown,
+            "summary": summary, "searched_at": searched_at}
+
+
 def _mark_ready(job: dict[str, Any], note: str) -> None:
     """ready_to_submit only for jobs not yet past that point (a practice run on an
     application that's already in must not move it backwards)."""
@@ -1186,6 +1271,26 @@ MAYBE_SAME_SAYS = "may be the job already started or applied to: ask the person 
 _BEGUN_OR_DONE = frozenset({"in_progress", "ready_to_submit", "applied", "interviewing", "offer", "rejected", "withdrawn"})
 
 
+# A job the person marked Not interested on the Job Desk: what Claude's tools say of it, and submit_application presses
+# nothing for it without user_confirmed (the review of 0.3.207)
+NOT_INTERESTED_SAYS = "the person marked this job Not interested: ask before applying"
+
+
+def _not_interested(job_id: int | None, url: str | None = None) -> dict[str, Any] | None:
+    """The person's Not interested mark on this job (by its number or any of its addresses), or on an opening at this
+    address not saved as a job; None for none."""
+    if job_id is None and not url:
+        return None
+    return tracker().marked_not_interested(url=url if job_id is None else None, job_id=job_id, listed=_listed())
+
+
+def _listed() -> list[dict[str, Any]]:
+    """The openings the Job Desk lists (a mark made before its job was saved is ambiguous among them)."""
+    from . import desk as job_desk  # (the desk's own module imports this one)
+
+    return job_desk.listed_openings()
+
+
 def _maybe_same(job_id: int | None) -> list[dict[str, Any]]:
     """The jobs begun or applied to that this one may be the same posting as (Tracker.maybe_same: until the person
     said Apply anyway on the desk), each by its id, title, company and status."""
@@ -1204,7 +1309,8 @@ async def submit_application(job_id: int | None = None, user_confirmed: bool = F
     On LinkedIn and Indeed this never clicks: it marks the job ready_to_submit and
     the user clicks Submit in the browser; then call update_job(status="applied").
     A job that may be one already started or applied to on another site (`maybe_same`
-    from open_application) is never pressed without user_confirmed=true."""
+    from open_application), or one the user marked Not interested on the Job Desk
+    (`not_interested`), is never pressed without user_confirmed=true."""
     from . import desk as job_desk  # (the desk's own module imports this one)
     if job_desk._desk is not None and job_desk._desk.applier.hold_submits:
         return {"submitted": False, "reason": "The Job Desk's Troubleshooting is on, so nothing is submitted. Turn it "
@@ -1225,6 +1331,9 @@ async def submit_application(job_id: int | None = None, user_confirmed: bool = F
             "reason": f"{ATS_NAMES.get(ats, ats)} prohibits automated submission. Ask the user to review the "
                       "browser window and click Submit themselves, then call update_job(status='applied').",
         }
+    if (unwanted := _not_interested(job["id"])) is not None and not user_confirmed:
+        return {"submitted": False, "reason": f"Not pressed: {NOT_INTERESTED_SAYS}.",
+                "not_interested": {"reason": unwanted["reason"]}}
     if (maybe := _maybe_same(job["id"])) and not user_confirmed:
         said = "; ".join(f"job {o['job_id']} ({o['title']} at {o['company']}, {o['status'].replace('_', ' ')})"
                          for o in maybe)

@@ -577,3 +577,58 @@ def test_a_title_written_short_is_near_its_whole_word_and_only_that():
     # (a manager's title written short is a senior one too: "Engr Mgr" as "Engineering Manager", the review's)
     assert score_listing({**fresh, "title": "Engr Mgr"}, p).score == \
         score_listing({**fresh, "title": "Engineering Manager"}, p).score
+
+
+NEEDS_MUCH = """Requirements
+- Bachelor's degree in Electrical Engineering required.
+- 8+ years of experience with semiconductor equipment.
+- Active Secret clearance required.
+- U.S. persons only (ITAR).
+- Up to 90% travel.
+- Rotating 12-hour night shifts and weekends.
+- A valid driver's license is required."""
+
+
+@pytest.mark.parametrize("title, place, posted, text, who", [
+    ("Field Service Engineer", "Phoenix, AZ", "Posted Today", LAM_EARLY, {}),  # a title match, near, fresh
+    ("Field Engineer", "Chandler, AZ", "Posted 20 Days Ago", "", {}),  # near a target title, posted this month
+    ("Accountant", "Austin, TX", "2026-06-01", "", {}),  # not a target, away, old
+    ("Senior Field Service Engineer III", "Phoenix, AZ", "", "", {}),  # senior
+    ("Equipment Technician 3", "Bagdad, AZ", "", "", {}),  # a level 3 role, far from the places named
+    ("Equipment Technician Intern", "Bagdad, AZ", "2026-01-02", NEEDS_MUCH,  # down to 0: kept within 0 to 100
+     {"preferences": {"titles": ["Equipment Technician"], "locations": ["Phoenix, AZ"], "willing_to_relocate": False,
+                      "willing_to_travel": False, "flexible_schedule": False},
+      "work_authorization": {"us_person": False}, "personal": {"drivers_license": False}}),
+    ("Junior Equipment Technician", "Phoenix, AZ", "Posted Today", "Requirements\n- Bachelor's degree required.\n"
+     "- 1+ years of experience in a fab.", {"experience": {"total_years": 1}, "education": {"highest_degree": "BS"}}),
+])
+def test_a_scores_parts_add_up_to_it(title, place, posted, text, who):
+    """Code review, worth building 9: the desk shows how each opening's score adds up ("title matches +25, in Phoenix
+    +5, ..."), from score_listing's own parts, never worked out again in the page: the start, each point added or taken
+    off with what for, and, where the score had to be kept within 0 to 100, that too. They sum to the score. The
+    desk's Not interested in an employer takes 10 off its other openings, said as a part as well."""
+    from job_apply.recommend import NOT_INTERESTED_COMPANY, START, not_interested_in
+
+    fit = score_listing({"title": title, "location": place, "posted": posted}, tech(**who), text, today=TODAY)
+    assert fit.parts[0] == {"why": "start", "points": START}
+    assert sum(p["points"] for p in fit.parts) == fit.score, fit.parts
+    assert len(fit.parts) > 2 and all(p["points"] for p in fit.parts[1:]), fit.parts
+    said = fit.to_dict()
+    assert said["parts"] == fit.parts
+    lower = not_interested_in(said, "Example Fab")
+    assert lower["parts"][-1] == {"why": "you said not interested in Example Fab",
+                                  "points": max(0, fit.score - NOT_INTERESTED_COMPANY) - fit.score}
+    assert sum(p["points"] for p in lower["parts"]) == lower["score"] == max(0, fit.score - NOT_INTERESTED_COMPANY)
+    assert lower["recommended"] == (fit.recommended and lower["score"] >= 60)
+    assert said["score"] == fit.score  # (the fit it was given is as it was)
+
+
+def test_a_score_kept_within_0_to_100_says_so_among_its_parts():
+    capped = score_listing({"title": "Junior Equipment Technician", "location": "Phoenix, AZ", "posted": "Posted Today"},
+                           tech(experience={"total_years": 1}, education={"highest_degree": "BS"}),
+                           "Requirements\n- Bachelor's degree required.\n- 1+ years of experience in a fab.", today=TODAY)
+    assert capped.score == 100 and capped.parts[-1]["why"] == "kept within 0 to 100" and capped.parts[-1]["points"] < 0
+    floored = score_listing({"title": "Equipment Technician Intern", "location": "Bagdad, AZ", "posted": "2026-01-02"},
+                            tech(work_authorization={"us_person": False}), NEEDS_MUCH, today=TODAY)
+    assert floored.score == 0 and floored.parts[-1] == {"why": "kept within 0 to 100",
+                                                         "points": -sum(p["points"] for p in floored.parts[:-1])}

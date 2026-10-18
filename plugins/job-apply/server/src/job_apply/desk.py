@@ -15,12 +15,15 @@ import argparse
 import asyncio
 import contextlib
 import json
+import math
 import os
 import re
 import secrets
 import socket
 import time
 import webbrowser
+from collections import Counter
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -31,19 +34,29 @@ from starlette.responses import HTMLResponse, JSONResponse, Response
 from starlette.routing import Route
 
 from . import autofill, config, history, report
-from .pipeline import DESK_PASSWORDS, Applier, placed_key, question_key
+from .browser import _cookie_setting
+from .pipeline import (DESK_PASSWORDS, Applier, _may_accept_notices, _may_manage_accounts, _test_identity,
+                       placed_key, question_key)
 from .ats import JOB_BOARDS, detect_ats, job_board
 from .postings import FetchError, Posting, fetch_posting, finalize, parse_html
-from .recommend import recommend, score_listing
-from .search import (MAX_ALTERNATIVES, alternatives, load_companies, own_companies_path, search_area,
+from .recommend import not_interested_in, recommend, score_listing
+from .search import (MAX_ALTERNATIVES, alternatives, every_employer, load_companies, own_companies_path, search_area,
                      set_search_area)
-from .tracker import APPLICATION_STATUSES, standing
+from .tracker import APPLICATION_STATUSES, NotInterested, company_key, normalize_url, standing
 from .updates import UpdateCheck
 
 PAGE = Path(__file__).resolve().parent / "static" / "desk.html"
 DEFAULT_PORT = 8765
 HISTORY_DAYS_MAX = 366  # the most days This week (/api/history) looks back over
 HISTORY_RECENT_MAX = 200  # and the most of its newest lines it lists
+VISIT_GAP = 30 * 60  # a look at the openings this long (seconds) after the one before begins a new visit
+SEEN_WRITE = 60  # the time of the last look is written to desk.json at most this often (the page looks again and again)
+FOUND_KEEP = 5000  # the openings whose first-found time is kept (openings_found.json): the newest
+WHATS_NEW_MOST = 50  # the openings whats_new lists (it counts them all)
+# a job's statuses once it's sent in, or waiting on its review page (APPLICATION_STATUSES): no opening to turn down
+SENT = frozenset(APPLICATION_STATUSES)
+# and once it's done with on the desk (the page's DONE): sent in, closed, or skipped. An opening in one is no news
+DONE = frozenset({"applied", "interviewing", "offer", "rejected", "withdrawn", "skipped"})
 
 
 def _recommendations_path() -> Path:
@@ -52,6 +65,45 @@ def _recommendations_path() -> Path:
 
 def _settings_path() -> Path:
     return config.home() / "desk.json"
+
+
+def _found_path() -> Path:
+    """When each opening was first found by a search, by its address (seconds): what's New is what came after the
+    person's last visit, and whats_new lists what came after its last call. Kept apart from recommendations.json, which
+    a change of what and where to search clears."""
+    return config.home() / "openings_found.json"
+
+
+def _whats_new_path() -> Path:
+    """When Claude's whats_new was last called: the next call without `since` lists what came after it."""
+    return config.home() / "whats_new.json"
+
+
+def _seconds(value: Any) -> float | None:
+    """A time kept as seconds, or None for anything else (a file changed by hand)."""
+    if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value):
+        return float(value)
+    return None
+
+
+def _iso_seconds(said: Any) -> float | None:
+    """The tracker's time ("2026-10-17T08:00:00+00:00") as seconds, or None for one that doesn't read."""
+    try:
+        t = datetime.fromisoformat(str(said or "").strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return (t if t.tzinfo else t.astimezone()).timestamp()
+
+
+def read_found() -> dict[str, float]:
+    try:
+        data = json.loads(_found_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    found = data.get("found") if isinstance(data, dict) else None
+    if not isinstance(found, dict):
+        return {}
+    return {u: t for u, at in found.items() if isinstance(u, str) and (t := _seconds(at)) is not None}
 
 
 def _count_param(request: Request, name: str, default: int, most: int) -> int:
@@ -97,6 +149,7 @@ class Desk:
         self.srv = srv
         # (its queue kept as it changes, and picked up again as the desk starts after a restart: pipeline.QUEUE_FILE)
         self.applier = Applier(srv, keep_queue=True)
+        self.applier.listed = lambda: self.listings  # (the openings listed here: for its Not interested check)
         self.fetch = fetch_posting  # reads each recommended posting's requirements
         self.token = secrets.token_urlsafe(18)
         self.port: int | None = None
@@ -120,6 +173,12 @@ class Desk:
         self.updates = UpdateCheck()  # a newer published version, said on the page
         self._update_task: asyncio.Task | None = None
         self._server: uvicorn.Server | None = None
+        # when the person last looked at the openings (the page loaded, or came to the front: saw), and the last look
+        # before this visit began: an opening first saved after that one is New, all visit long (both in desk.json)
+        self.last_seen: float | None = None
+        self.seen_since: float | None = None
+        self._seen_written = 0.0
+        self.found: dict[str, float] = read_found()  # when each opening was first found (openings_found.json)
         self._load()
 
     # ------------------------------------------------------------- persistence
@@ -132,10 +191,15 @@ class Desk:
                 if isinstance(results, list) else []
             self.search.update({k: saved.get(k) for k in ("query", "location", "errors", "browser_only")
                                 if k in saved}, status="done", at=saved.get("at"))
+            # (openings found before their times were kept: found by the search that saved them, none of them news)
+            if (at := _seconds(saved.get("at"))) is not None:
+                for item in self.listings:
+                    self.found.setdefault(item["url"], at)
         except (OSError, ValueError, AttributeError):
             pass
         try:
             saved = json.loads(_settings_path().read_text(encoding="utf-8"))
+            self.last_seen, self.seen_since = _seconds(saved.get("last_seen")), _seconds(saved.get("seen_since"))
             self.applier.auto_submit = saved.get("auto_submit") is True
             self.applier.tailor = saved.get("tailor_resumes") is True
             self.handled_only = saved.get("handled_only") is True
@@ -153,14 +217,41 @@ class Desk:
             pass
 
     def _save_settings(self) -> None:
+        """desk.json, all or nothing (it's written at each look at the page too): a write cut short (a full disk, the
+        program ending) leaves it as it was, never torn, which would turn every switch back to its default, Troubleshooting's
+        hold on sending among them."""
         config.ensure_home()
-        _settings_path().write_text(json.dumps({"auto_submit": self.applier.auto_submit,
+        config.write_text_atomic(_settings_path(), json.dumps({"auto_submit": self.applier.auto_submit,
                                                 "tailor_resumes": self.applier.tailor,
                                                 "handled_only": self.handled_only,
                                                 "troubleshoot": self.troubleshoot,
                                                 "auto_search": self.auto_search,
                                                 "jobs_at_once": self.applier.jobs_at_once,
-                                                "jobs_at_once_profile": self._at_once_profile}), encoding="utf-8")
+                                                "jobs_at_once_profile": self._at_once_profile,
+                                                "last_seen": self.last_seen, "seen_since": self.seen_since}))
+
+    def saw(self, now: float | None = None) -> None:
+        """The person looked at the openings (the page loaded, or came to the front). A look VISIT_GAP or more after the
+        last one begins a new visit: the openings first saved after that last look are New, and stay so all visit long
+        (a reload, or the page coming to the front again, doesn't take their mark away). Written to desk.json at most
+        every SEEN_WRITE seconds, and at each new visit."""
+        now = time.time() if now is None else now
+        last = self.last_seen
+        visit = last is None or now - last >= VISIT_GAP
+        if visit:
+            self.seen_since = last  # (None at the very first look: nothing is news to someone who hasn't looked before)
+        self.last_seen = now
+        if visit or now - self._seen_written >= SEEN_WRITE:
+            self._seen_written = now
+            with contextlib.suppress(OSError):
+                self._save_settings()
+
+    def _save_found(self) -> None:
+        """The openings' first-found times, the newest FOUND_KEEP."""
+        if len(self.found) > FOUND_KEEP:
+            self.found = dict(sorted(self.found.items(), key=lambda kv: kv[1])[-FOUND_KEEP:])
+        config.ensure_home()
+        config.write_text_atomic(_found_path(), json.dumps({"found": self.found}))
 
     # ------------------------------------------------------------- serving
     @property
@@ -173,6 +264,9 @@ class Desk:
             r("/", self.page_view),
             r("/api/state", self.state_view),
             r("/api/history", self.history_view),
+            r("/api/safety", self.safety_view),
+            r("/api/seen", self.seen_view, methods=["POST"]),
+            r("/api/not_interested/{action}", self.not_interested_view, methods=["POST"]),
             r("/api/search", self.search_view, methods=["POST"]),
             r("/api/search/stop", self.search_stop_view, methods=["POST"]),
             r("/api/apply", self.apply_view, methods=["POST"]),
@@ -285,6 +379,44 @@ class Desk:
         return JSONResponse(await asyncio.to_thread(history.summary, days, recent),
                             headers={"Cache-Control": "no-store"})
 
+    async def safety_view(self, request: Request) -> Response:
+        """The page's Safety window: each setting that decides what the desk does in the person's name, as it is now."""
+        if not self._allowed(request, api=True):
+            return self._forbidden()
+        return JSONResponse(self.safety(), headers={"Cache-Control": "no-store"})
+
+    async def seen_view(self, request: Request) -> Response:
+        """The page loaded, or came to the front: the person looked at the openings (saw)."""
+        if not self._allowed(request, api=True):
+            return self._forbidden()
+        self.saw()
+        return JSONResponse({"since": self.seen_since, "last": self.last_seen})
+
+    async def not_interested_view(self, request: Request) -> Response:
+        """Not interested on an opening (with its reason, or none: tracker.NOT_INTERESTED_REASONS), and its Undo."""
+        if not self._allowed(request, api=True):
+            return self._forbidden()
+        action = request.path_params["action"]
+        if action not in ("mark", "undo"):
+            return JSONResponse({"error": f"unknown action {action!r}"}, status_code=404)
+        try:
+            body = await self._body(request)
+            url, reason = body.get("url"), body.get("reason") or ""
+            if not isinstance(url, str) or not url.strip():
+                raise ValueError("url should be an opening's address")
+            if not isinstance(reason, str):
+                raise ValueError("reason should be a word")
+            if action == "undo":
+                if not self.interested_again(url):  # (said, never silent: the page shows it)
+                    return JSONResponse({"undone": False, "error": "There was nothing to undo: this opening isn't "
+                                         "marked Not interested (any more). The list shows it as it is now."},
+                                        status_code=409)
+                return JSONResponse({"undone": True})
+            self.not_interested(url, reason.strip().lower())
+        except (KeyError, ValueError) as e:
+            return self._bad(e)
+        return JSONResponse({"ok": True})
+
     async def search_view(self, request: Request) -> Response:
         if not self._allowed(request, api=True):
             return self._forbidden()
@@ -330,8 +462,12 @@ class Desk:
         except ValueError as e:
             return self._bad(e)
         # (never Submit for me while troubleshooting: a job queued now could go once it's off)
-        queued, refused = self.apply(urls=urls, job_ids=job_ids, submit=body.get("submit") is True and not self.troubleshoot)
-        return JSONResponse({"queued": queued, "already_applied": refused})
+        notes: dict[str, Any] = {}
+        queued, refused = self.apply(urls=urls, job_ids=job_ids, submit=body.get("submit") is True and not self.troubleshoot,
+                                     notes=notes)
+        return JSONResponse({"queued": queued, "already_applied": refused,
+                             **({"not_interested": notes["not_interested"]} if notes.get("not_interested") else {}),
+                             **({"ordered": True} if notes.get("ordered") else {})})
 
     async def preflight_view(self, request: Request) -> Response:
         if not self._allowed(request, api=True):
@@ -585,6 +721,10 @@ class Desk:
                 return
             self.listings = out["results"]
             at = time.time()
+            for item in self.listings:  # (first found now, unless an earlier search found it)
+                self.found.setdefault(item["url"], at)
+            with contextlib.suppress(OSError):
+                self._save_found()
             self.search.update(status="done", at=at, query=out["query"], location=out["location"],
                                errors=out["errors"], browser_only=out["browser_only"])
             config.ensure_home()
@@ -632,15 +772,80 @@ class Desk:
     def _listing(self, url: str) -> dict[str, Any] | None:
         return next((item for item in self.listings if item.get("url") == url), None)
 
-    def apply(self, urls: list[str], job_ids: list[int], submit: bool) -> tuple[list[int], list[str]]:
+    def not_interested(self, url: str, reason: str = "") -> None:
+        """The person's Not interested on an opening, with its reason or none (tracker.NOT_INTERESTED_REASONS): hidden
+        from the openings, but for their Not interested group, and never queued until their Undo (kept in the tracker).
+        Not one the desk has a card for (begun, or skipped from its card, whose Undo would queue it again: Skip job is
+        for those), nor one sent in already."""
+        t = self.srv.tracker()
+        item, job = self._listing(url), self._job_of(url)
+        if item is None and job is None:
+            raise KeyError("That opening isn't in the list any more.")
+        if job is not None and job["id"] in self.applier.runs:
+            raise ValueError("The desk has a card for this job (under Needs you, Working on, or Ready and done): "
+                             "Skip job there takes it out.")
+        if job is not None and job.get("status") in SENT:
+            raise ValueError("This job is already sent in, or waiting on its review page.")
+        said = item or job or {}
+        posting = (item or {}).get("posting") or {}
+        # (with the requisition numbers it gives, for a job saved since that is surely this posting: never another's)
+        t.set_not_interested(url, company=str(said.get("company") or ""), title=str(said.get("title") or ""),
+                             reason=reason, job_id=job["id"] if job is not None else None,
+                             location=str(said.get("location") or ""),
+                             external_id=str((item or {}).get("external_id") or posting.get("external_id") or ""),
+                             description=str(posting.get("description") or ""))
+
+    def interested_again(self, url: str) -> bool:
+        """Undo on an opening's Not interested: the opening, and the job its row is (_job_of: the job saved from a job
+        board that an employer's posting not saved yet is), shown again. Whether anything was marked."""
+        job = self._job_of(url)
+        return self.srv.tracker().undo_not_interested(url, job_id=job["id"] if job is not None else None,
+                                                      listed=self.listings)
+
+    def unwanted(self, url: str, rows: dict[str, Any] | None = None) -> dict[str, Any] | None:
+        """The person's Not interested mark on an opening, if any: on its address, or on the job its row is (_job_of),
+        by that job's number or any of its addresses, or a mark made before that job was saved that is surely its
+        posting (Tracker.marked_not_interested, with the openings listed here: JR1 marked is never JR2's)."""
+        t = self.srv.tracker()
+        mark = t.marked_not_interested(url=url, listed=self.listings)
+        if mark is None and (job := self._job_of(url, rows)) is not None:
+            mark = t.marked_not_interested(job_id=job["id"], listed=self.listings)
+        return mark
+
+    def _row_jobs(self) -> dict[str, Any]:
+        """The job each opening's row is, by its address, as state() lists them: the one at its address (or with it
+        among its other addresses), or, for an opening on the employer's site not saved yet, the job saved from a job
+        board that it surely is, unless another opening is alike that job too (Tracker.same_posting, all at once)."""
+        t = self.srv.tracker()
+        tracked = [t.find_by_url(item["url"]) for item in self.listings]
+        copies = iter(t.same_posting([item for item, job in zip(self.listings, tracked) if job is None]))
+        return {item["url"]: job if job is not None else next(copies) for item, job in zip(self.listings, tracked)}
+
+    def _job_of(self, url: str, rows: dict[str, Any] | None = None) -> dict[str, Any] | None:
+        """The job an opening's row is (_row_jobs: `rows`, worked out once for many), or the job at an address not
+        listed."""
+        if self._listing(url) is not None:
+            return (rows if rows is not None else self._row_jobs()).get(url)
+        return self.srv.tracker().find_by_url(url)
+
+    def apply(self, urls: list[str], job_ids: list[int], submit: bool,
+              notes: dict[str, Any] | None = None) -> tuple[list[int], list[str]]:
         """Queue these jobs. Returns the ids queued, and the titles of any already applied to,
         which are never queued again (with "Submit for me" on, that would apply twice), or
-        skipped (queued once the person's Undo puts them back)."""
+        skipped (queued once the person's Undo puts them back). Never one the person said Not interested in (until its
+        Undo): their titles go in `notes["not_interested"]`. Two or more queued together go the likeliest to go all the
+        way first (likely_order; `notes["ordered"]` when that changed their order); one alone keeps its place, after
+        those queued before it."""
         t = self.srv.tracker()
+        left_out: list[str] = []
         ids = [int(j) for j in job_ids]
+        rows = self._row_jobs() if any(self._listing(str(url)) is not None for url in urls) else {}
         for url in urls:
             if not re.match(r"(?i)^(https?|file)://", str(url)) or config.own_file(str(url)):
                 continue  # a listing whose link isn't a web address ("javascript:…"), or is one of the desk's own files
+            if self.unwanted(url, rows):  # (never saved for Apply either: by its address, or the job its row is)
+                left_out.append(str((self._listing(url) or self._job_of(url, rows) or {}).get("title") or "a job"))
+                continue
             tracked = t.find_by_url(url)
             if tracked is not None and self._listing(url) is None:
                 ids.append(tracked["id"])  # added by Claude or by hand
@@ -656,8 +861,24 @@ class Desk:
                 "posted_at": posting.get("posted_at") or item.get("posted"), "description": posting.get("description"),
             })
             ids.append(job["id"])
+        # and by the job each is (by its number, or any of its addresses: one made one with a job marked on another
+        # site is that job)
+        kept = []
+        for j in dict.fromkeys(ids):
+            if t.marked_not_interested(job_id=j, listed=self.listings) is None:
+                kept.append(j)
+            else:
+                left_out.append(str((t.get(j, with_description=False) or {}).get("title") or f"job {j}"))
+        ids = kept
+        if len(ids) > 1:  # (queued together: the likeliest to go all the way first, each tier in the person's order)
+            jobs = {j: t.get(j, with_description=False) or {"id": j} for j in ids}
+            mine, ids = ids, [job["id"] for job in likely_order([jobs[j] for j in ids])]
+            if notes is not None and ids != mine:
+                notes["ordered"] = True
+        if notes is not None and left_out:
+            notes["not_interested"] = left_out
         queued, refused = [], []
-        for job_id in dict.fromkeys(ids):
+        for job_id in ids:
             try:
                 self.applier.enqueue(job_id, submit=submit)
                 queued.append(job_id)
@@ -767,18 +988,38 @@ class Desk:
         # row (Apply makes them one job, applied for on the employer's site: Tracker.upsert)
         copies = iter(t.same_posting([item for item, job in zip(self.listings, tracked_at) if job is None]))
         also = t.aliases()
+        # the openings the person said Not interested in (shown only in that group of the bar), and the employers they
+        # said it of for reason Company, whose other openings score lower
+        marks = t.not_interested_marks(self.listings)  # (by the job each row is too: NotInterested)
+        employers = unwanted_employers(marks)
+        since = self.seen_since
+
+        def news(url: str, job: dict[str, Any] | None, run: Any) -> tuple[float | None, bool]:
+            """When an opening was first saved (found by a search, or saved to the tracker), and whether it's New: first
+            saved since the visit before this one, and not taken up (begun, sent or skipped) since."""
+            at = [s for s in (self.found.get(url), _iso_seconds(job.get("created_at")) if job else None) if s is not None]
+            first = min(at) if at else None
+            return first, (since is not None and first is not None and first > since and run is None
+                           and (job is None or job.get("status") not in DONE))
+
         for item, job in zip(self.listings, tracked_at):
             copy = next(copies) if job is None else None
             job = job or copy
             jid = job["id"] if job else None
             seen.add(jid)
+            run = runs.get(jid) if jid is not None else None
+            said = marks.mark(item["url"], job, also.get(jid, []) if jid is not None else ()) if marks else None
+            first, new = news(item["url"], job, run)
             rows.append({
                 "url": item["url"], "title": item.get("title"), "company": item.get("company"),
-                "location": item.get("location"), "posted": item.get("posted"), "fit": item.get("fit"),
+                "location": item.get("location"), "posted": item.get("posted"),
+                "fit": item.get("fit") if said else fit_for(item.get("fit"), item.get("company"), employers),
                 "notes": item.get("notes") or [], "job_id": jid, "status": job["status"] if job else None,
-                "run": runs.get(jid) if jid is not None else None,
+                "run": run,
                 "handled": str(item.get("company") or "").strip().casefold() in handled,
                 "also_on": _also_on(([copy["url"]] if copy else []) + (also.get(jid, []) if jid is not None else [])),
+                "saved_at": first, "new": new and not said,
+                "not_interested": {"reason": said["reason"], "at": said["at"]} if said else None,
             })
         tracked = t.list(limit=300)
         # what the person applied to, and where each stands (the page's My applications): the newest email logged for
@@ -794,13 +1035,18 @@ class Desk:
             job = t.get(brief["id"]) or brief
             seen.add(job["id"])
             listing = {"title": job.get("title"), "location": job.get("location"), "posted": job.get("posted_at")}
+            said = marks.mark(job["url"], job, also.get(job["id"], [])) if marks else None
+            fit = score_listing(listing, prof, job.get("description") or "").to_dict()
+            first, new = news(job["url"], job, runs.get(job["id"]))
             rows.append({
                 "url": job["url"], "title": job.get("title"), "company": job.get("company"),
                 "location": job.get("location"), "posted": job.get("posted_at"),
-                "fit": score_listing(listing, prof, job.get("description") or "").to_dict(), "notes": [],
+                "fit": fit if said else fit_for(fit, job.get("company"), employers), "notes": [],
                 "job_id": job["id"], "status": job["status"], "run": runs.get(job["id"]), "added": True,
                 "handled": str(job.get("company") or "").strip().casefold() in handled,
                 "also_on": _also_on(also.get(job["id"], [])),
+                "saved_at": first, "new": new and not said,
+                "not_interested": {"reason": said["reason"], "at": said["at"]} if said else None,
             })
         others = []
         for jid, run in runs.items():
@@ -829,6 +1075,8 @@ class Desk:
             "update": self.updates.notice(),
             "answers_problem": config.answers_problem(),
             "search": self.search,
+            # the person's last look at the openings, and the one before this visit (New is what came after that)
+            "seen": {"since": self.seen_since, "last": self.last_seen},
             "listings": rows,
             "others": others,
             "applications": applications,
@@ -844,6 +1092,204 @@ class Desk:
             "counts": t.counts(),
             "notes": report.notes_count(),  # notes on the desk's stops, waiting to be filed
         }
+
+    def safety(self) -> dict[str, Any]:
+        """The Safety window: each setting that decides what the desk does in the person's name, with its value now,
+        what that means for them in plain words, and where to change it; and the rules no setting changes. Read-only.
+        Each value is the one the desk acts on, from its own functions (the pipeline's _may_accept_notices,
+        _may_manage_accounts and _test_identity, the browser's _cookie_setting, the Applier's Submit for me, hold on
+        sending, Jobs at once and inbox), so the window can't say otherwise: a profile.yaml that can't be read turns
+        what it allows off until it's fixed, as the desk does. One of those that fails to answer (a file another program
+        has locked) makes its own line "can't tell right now", never the window fail."""
+        try:
+            prof, problem = config.Profile.load(), None
+        except Exception as e:  # said at the top: the desk can't fill an application until it's fixed
+            prof, problem = config.Profile({}), _first_line(e)
+        s, a = prof.settings, self.applier
+        unread = problem is not None
+        fix = "off until profile.yaml is fixed"
+        unknown = "can't tell right now"
+        busy = ("The desk couldn't read this setting just now (is profile.yaml open in another program?). Open Safety "
+                "again in a moment.")
+        profile = "profile.yaml, under settings:"
+
+        def tell(ask: Any) -> bool | None:
+            """What one of the desk's own functions says, or None when it fails to answer."""
+            try:
+                return bool(ask())
+            except Exception:
+                return None
+
+        # practice mode, as submit_application's policy has it (the environment's hard switch whatever the profile says)
+        dry = config.never_submit() or (not unread and s.dry_run)
+        identity = tell(_test_identity)  # (the live check's test identity: accounts and notices in practice mode too)
+        notices, accounts, cookies = tell(_may_accept_notices), tell(_may_manage_accounts), tell(_cookie_setting)
+        lines: list[dict[str, str]] = []
+
+        def line(key: str, name: str, value: str, said: str, where: str) -> None:
+            lines.append({"key": key, "name": name, "value": value, "said": said, "where": where})
+
+        if dry:
+            # what practice mode still does for the person, by the same functions as the lines below
+            if notices is None or accounts is None or cookies is None:
+                does = " Whether it makes accounts or agrees to anything for you can't be told right now."
+            else:
+                agrees = "agrees to notices for you" if notices else "agrees to nothing for you"
+                if cookies:
+                    agrees += (", and accepts" if notices else " but") + " a cookie banner with no way to decline " \
+                                                                         "(Accept cookies is on)"
+                does = f" It {'makes accounts' if accounts else 'makes no accounts'} and {agrees}."
+            line("practice", "Practice mode", "on",
+                 "Nothing is sent: the desk fills each application up to its review page and never submits it." + does
+                 + (" (The live check's test identity: Submit stays refused.)" if identity else ""),
+                 "JOB_APPLY_NEVER_SUBMIT=1 in the environment, which comes before profile.yaml" if config.never_submit()
+                 else f"{profile} submit_mode (dry_run is practice mode; review applies for real)")
+        elif unread:
+            line("practice", "Practice mode", "can't tell until profile.yaml is fixed",
+                 "Your profile can't be read, so the desk fills and sends nothing until it's fixed.",
+                 f"{profile} submit_mode")
+        else:
+            auto = ", ".join(s.auto_submit_ats) or "none listed under auto_submit_ats, so it asks you everywhere"
+            line("practice", "Practice mode", "off",
+                 "Applications can be sent: when you press Submit on the desk, by Submit for me when it's on, or when "
+                 "you tell Claude to submit one in the chat."
+                 + (f" submit_mode is auto: when Claude fills an application with you in the chat, it submits one that's "
+                    f"complete without asking on these job systems: {auto}. Never LinkedIn or Indeed, and the desk itself "
+                    "still waits for your Submit or Submit for me." if s.submit_mode == "auto" else ""),
+                 f"{profile} submit_mode (dry_run is practice mode: nothing is sent)")
+        submit_box = "The Submit for me box under Openings (kept in desk.json)"
+        if dry:
+            line("auto_submit", "Submit for me", "off in practice mode",
+                 "Practice mode sends nothing: the desk stops at each review page.", submit_box)
+        elif unread:
+            line("auto_submit", "Submit for me", fix, "Nothing is sent while your profile can't be read.", submit_box)
+        elif a.hold_submits:
+            line("auto_submit", "Submit for me", "off while Troubleshooting is on",
+                 "Troubleshooting is on, so nothing is submitted: not by your Submit, nor for you.", submit_box)
+        elif a.auto_submit:
+            line("auto_submit", "Submit for me", "on",
+                 "A job you apply to while it's on is submitted for you once the desk has filled it to its review page "
+                 "and nothing needs you. One that still needs something (a CAPTCHA, errors on its review page, answers "
+                 "it changed from a saved draft) waits there for your Submit. LinkedIn and Indeed are always yours.",
+                 submit_box)
+        else:
+            line("auto_submit", "Submit for me", "off",
+                 "The desk stops at each review page; you press Submit.", submit_box)
+        line("boards", "LinkedIn and Indeed", "always yours",
+             "The desk fills LinkedIn and Indeed applications but never presses their Submit, whatever the settings: you "
+             "do, in the browser window.", "Not a setting: always so")
+        where = f"{profile} accept_notices (on unless set to false)"
+        if notices is None:
+            line("accept_notices", "Agree to notices", unknown, busy, where)
+        elif notices:
+            line("accept_notices", "Agree to notices", "on",
+                 "The desk agrees for you to an employer's notice about AI screening, its privacy notice and its terms "
+                 "of use, and picks an application's attestation that its information is true (or consent to the "
+                 "background check that comes with applying), and logs each. Never a newsletter, job alerts, a talent "
+                 "community or marketing; cookie banners have their own setting. Any other dialog over the form stops "
+                 "the desk for you.", where)
+        elif unread:
+            line("accept_notices", "Agree to notices", fix,
+                 "Notices, terms and attestations wait for you until it's fixed.", where)
+        elif s.accept_notices:  # (on, but not in practice mode)
+            line("accept_notices", "Agree to notices", "off in practice mode",
+                 "Practice mode agrees to nothing: notices, terms and attestations wait for you.", where)
+        else:
+            line("accept_notices", "Agree to notices", "off",
+                 "Notices, terms and attestations are yours: the desk stops for you at each one.", where)
+        where = f"{profile} manage_accounts (on unless set to false)"
+        if accounts is None:
+            line("manage_accounts", "Make accounts", unknown, busy, where)
+        elif accounts:
+            line("manage_accounts", "Make accounts", "on" if s.manage_accounts_chosen else
+                 "on (your profile doesn't say, so it's on by default)",
+                 "Where an employer's site needs an account, the desk creates yours there: with the job system's "
+                 "password saved under Site passwords, or with the code the site emails where it asks for no password "
+                 "(Eightfold's), ticking only the site's terms (never a newsletter). It resets a saved password a site "
+                 "refuses through the site's own \"Forgot password\" email. A consent to be considered for other "
+                 "positions is given only where the site won't make the account without it, never when it also signs "
+                 "you up for job alerts, a newsletter, a talent community or marketing. A CAPTCHA or security question "
+                 "on the way stays yours.", where)
+        elif unread:
+            line("manage_accounts", "Make accounts", fix,
+                 "The desk makes no account and resets no password until it's fixed.", where)
+        elif s.manage_accounts:  # (on, but not in practice mode)
+            line("manage_accounts", "Make accounts", "off in practice mode",
+                 "Practice mode makes no accounts: Create Account is left to you.", where)
+        else:
+            line("manage_accounts", "Make accounts", "off",
+                 "The desk never creates an account or resets a password: it fills in Create Account and leaves the "
+                 "rest to you.", where)
+        line("accept_cookies", "Accept cookies",
+             unknown if cookies is None else "on" if cookies else fix if unread else "off",
+             busy if cookies is None else
+             "Cookie banners are declined; one with no way to decline is accepted for you." if cookies else
+             "Cookie banners are declined, or left to you when there's no way to decline: never accepted.",
+             f"{profile} accept_cookies (off unless set to true)")
+        where = f"{profile} email_codes (off unless set to true)"
+        if s.email_codes and not unread:
+            line("email_codes", "Emailed codes (Claude)", "on",
+                 "When you apply with Claude in the chat, Claude may read a sign-up or verification code, or a "
+                 "verification link, that a career site emails you, through the Gmail connector: only the newest "
+                 "message from that job's site or its job system, a link only when it goes back to that site, and no "
+                 "other mail.", where)
+        else:
+            line("email_codes", "Emailed codes (Claude)", fix if unread else "off",
+                 "When you apply with Claude in the chat, Claude asks you for a code or link a career site emails you.",
+                 where)
+        saved = _saved(["email_password"])["email_password"]
+        before = a.mail_problem
+        try:  # (the desk's own way into its inbox; what it would say of one it can't use isn't put on the page from here)
+            usable, why = a.mail_login() is not None, a.mail_problem
+        except Exception:  # (a file it reads, locked just now)
+            usable, why = False, "The desk couldn't look just now (a file it reads may be open in another program)."
+        finally:
+            a.mail_problem = before
+        where = "The Site passwords card (Your email)"
+        if saved and usable:
+            line("email_password", "Email app password (the desk)", "saved",
+                 "The desk reads only the sign-up codes and links a job's own site emails you"
+                 + (", and the password-reset email it just asked that site for" if accounts else "")
+                 + ", opened read-only. Nothing else in your inbox, and Claude never sees the password.", where)
+        elif saved:
+            line("email_password", "Email app password (the desk)", "saved, but the desk can't use it now",
+                 (why or "Your profile has no email address it can read mail for, or your mail service turned the "
+                  "password down.") + " Until then, a site that emails a sign-up code or link waits for you to enter it.",
+                 where)
+        else:
+            line("email_password", "Email app password (the desk)", "not saved",
+                 "A site that emails a sign-up code or link waits for you to enter it.", where)
+        line("email_tracking", "Replies to your applications",
+             "on" if s.email_tracking and not unread else fix if unread else "off",
+             "Claude may read your email through the Gmail connector for employers' replies to your applications, "
+             "and logs them under My applications. Never with the desk's email app password; a follow-up is only "
+             "ever a draft for you to send." if s.email_tracking and not unread else
+             "Claude doesn't read your email for replies.", f"{profile} email_tracking (off unless set to true)")
+        n = a.at_once()
+        line("jobs_at_once", "Jobs at once", str(n),
+             ("The desk fills one application at a time." if n == 1 else
+              f"The desk fills up to {n} applications at the same time, each in its own tab.")
+             + " Never two at one employer's site, and only one at a time signs in, makes an account or waits on an "
+               "emailed code.",
+             "The Jobs at once buttons under Openings" + (" (your choice there is in force)" if a.jobs_at_once is not None
+                                                          else f", or {profile} jobs_at_once"))
+        if a.hold_submits:
+            said = ("Nothing is submitted, by your Submit or for you. Find jobs searches every list's employers and shows "
+                    "only the openings where the desk doesn't go all the way yet; "
+                    + ("nothing is filled until profile.yaml is fixed." if unread else "the desk still fills each step"
+                       + (" and makes accounts" if accounts else "") + ", which the sites keep."))
+        else:
+            said = ("Practice mode sends nothing either way." if dry else
+                    "Nothing is sent while your profile can't be read." if unread else "The desk applies for real.")
+        line("troubleshoot", "Troubleshooting", "on" if a.hold_submits else "off", said,
+             "The Troubleshooting box under Openings")
+        line("bot_checks", "Bot checks and CAPTCHAs", "always yours",
+             "The desk never gets around a bot check and never solves a CAPTCHA: it pauses the job and brings its tab "
+             "up for you.", "Not a setting: always so")
+        line("passwords", "Passwords", "always kept to their own sites",
+             "A password saved on the desk is typed only into its own job system's sites, stays on this computer, and "
+             "Claude never sees it. Never type one into the chat.", "Not a setting: always so")
+        return {"lines": lines, "problem": problem}
 
 
 # job systems with no saved password of their own that email a sign-up code or link (Oracle Recruiting's codes), beside
@@ -872,6 +1318,140 @@ def _first_line(e: BaseException) -> str:
 def _also_on(urls: list[str]) -> list[dict[str, str]]:
     """A job's other addresses, for its row's "Also on Indeed": each with the job board it's on."""
     return [{"site": JOB_BOARDS.get(job_board(u) or "", "another site"), "url": u} for u in dict.fromkeys(urls)]
+
+
+def unwanted_employers(marks: NotInterested) -> dict[str, str]:
+    """The employers the person said Not interested in for reason Company (Tracker.not_interested_marks), by
+    company_key, each with its name as the opening gave it."""
+    return {company_key(said["company"]): said["company"] for said in marks.by_url.values()
+            if said.get("reason") == "company" and company_key(said.get("company") or "")}
+
+
+def fit_for(fit: Any, company: Any, employers: dict[str, str]) -> Any:
+    """An opening's fit, lower at an employer the person said Not interested in (recommend.not_interested_in)."""
+    name = employers.get(company_key(str(company or "")))
+    return not_interested_in(fit, name) if name and isinstance(fit, dict) else fit
+
+
+# job systems no employer is listed as using: not one the desk can be said to go through
+_NO_SYSTEM = frozenset({"", "unknown", "custom", "company_site"})
+
+
+def usual_systems() -> set[str]:
+    """The job systems the desk usually goes all the way on: more than half of their employers on the plugin's lists (two
+    or more of them) are ones where the live check took a test applicant to the review page (desk_handled.yaml)."""
+    handled = config.handled_employers()
+    try:
+        employers = every_employer()
+    except (OSError, ValueError):  # (a companies.yaml with a mistake: no system said to be usual)
+        return set()
+    total: Counter[str] = Counter()
+    through: Counter[str] = Counter()
+    for c in employers:
+        ats = str(c.get("ats") or "")
+        if ats in _NO_SYSTEM:
+            continue
+        total[ats] += 1
+        through[ats] += str(c.get("name") or "").strip().casefold() in handled
+    return {ats for ats, n in total.items() if n >= 2 and through[ats] * 2 > n}
+
+
+def bot_check_employers() -> set[str]:
+    """The employers (in lower case) where, in the desk's history (runs.jsonl), passes stopped at a bot check more often
+    than they reached the review page: the person's to get through there, most likely."""
+    stops: Counter[str] = Counter()
+    through: Counter[str] = Counter()
+    for e in history.read():
+        who = str(e.get("company") or "").strip().casefold()
+        if who and e.get("outcome") == "needs_you" and e.get("need") == "bot_check":
+            stops[who] += 1
+        elif who and e.get("outcome") in ("ready", "submitted"):
+            through[who] += 1
+    return {who for who, n in stops.items() if n > through[who]}
+
+
+def likely_order(jobs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Jobs queued together (Apply to selected), the ones most likely to go all the way first: at employers where the
+    live check went all the way (desk_handled.yaml); then on job systems the desk usually goes all the way on
+    (usual_systems); then the rest; and last, the ones that need the person anyway: LinkedIn's and Indeed's (whose
+    Submit is always theirs), and employers where the desk's own history met bot checks more often than not
+    (bot_check_employers). Each tier keeps the person's order."""
+    handled, systems, bots = config.handled_employers(), usual_systems(), bot_check_employers()
+
+    def tier(job: dict[str, Any]) -> int:
+        who = str(job.get("company") or "").strip().casefold()
+        urls = [str(job.get(k) or "") for k in ("url", "apply_url") if job.get(k)]
+        systems_of = {str(job.get("ats") or "")} | {detect_ats(u) for u in urls}
+        if systems_of & config.HUMAN_SUBMIT_ONLY or who in bots:
+            return 3
+        if who in handled:
+            return 0
+        return 1 if systems_of & systems else 2
+
+    return sorted(jobs, key=tier)  # (sorted keeps the order of the ones alike)
+
+
+def whats_new(tracker: Any, since: float) -> list[dict[str, Any]]:
+    """The openings first saved at `since` (seconds) or after, best score first: the desk's (its last search's,
+    recommendations.json, each by when a search first found it: openings_found.json) and the jobs saved to the tracker
+    another way (by Claude, from Indeed or a link), none of them begun, sent or skipped since, and none the person said
+    Not interested in. Each with its title, company, location, score (lower at an employer they said Not interested in),
+    whether it's recommended, its address, its job number once saved, and when it was first saved."""
+    try:
+        saved = json.loads(_recommendations_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        saved = {}
+    results = saved.get("results") if isinstance(saved, dict) else None
+    listings = [r for r in results if isinstance(r, dict) and isinstance(r.get("url"), str)] \
+        if isinstance(results, list) else []
+    searched, found = _seconds(saved.get("at")) if isinstance(saved, dict) else None, read_found()
+    marks = tracker.not_interested_marks(listings)  # (by the job each is too: NotInterested)
+    employers = unwanted_employers(marks)
+    also = tracker.aliases()
+    out: list[dict[str, Any]] = []
+    taken: set[Any] = set()
+
+    def add(url: str, job: dict[str, Any] | None, title: Any, company: Any, location: Any, fit: Any,
+            first: float | None) -> None:
+        key = normalize_url(url)
+        if key in taken or (job is not None and job["id"] in taken):
+            return
+        taken.update({key, *([job["id"]] if job is not None else [])})
+        if job is not None:  # (and its other addresses: one posting, one line)
+            taken.update(normalize_url(u) for u in also.get(job["id"], []))
+        unwanted = marks.mark(url, job, also.get(job["id"], []) if job is not None else ()) if marks else None
+        if first is None or first < since or unwanted or (job is not None and job.get("status") != "saved"):
+            return
+        fit = fit_for(fit if isinstance(fit, dict) else {}, company, employers)
+        out.append({"title": title or "", "company": company or "", "location": location or "",
+                    "score": fit.get("score"), "recommended": bool(fit.get("recommended")), "url": url,
+                    "job_id": job["id"] if job is not None else None,
+                    "saved_at": history.stamp(first)})
+
+    tracked = [tracker.find_by_url(item["url"]) for item in listings]
+    # (an opening on the employer's site not saved yet is the job saved from a job board that it surely is, as the desk
+    # lists them: Tracker.same_posting)
+    copies = iter(tracker.same_posting([item for item, job in zip(listings, tracked) if job is None]))
+    for item, job in zip(listings, tracked):
+        job = job or next(copies)
+        at = [s for s in (found.get(item["url"], searched), _iso_seconds(job.get("created_at")) if job else None)
+              if s is not None]
+        add(item["url"], job, item.get("title"), item.get("company"), item.get("location"), item.get("fit"),
+            min(at) if at else None)
+    try:
+        prof = config.Profile.load()
+    except Exception:  # (a profile with a typo: scored as for no one, as the desk's page does)
+        prof = config.Profile({})
+    for brief in tracker.list(status="saved", limit=500):
+        first = _iso_seconds(brief.get("created_at"))
+        if first is None or first < since or brief["id"] in taken or normalize_url(brief["url"]) in taken:
+            continue
+        job = tracker.get(brief["id"]) or brief
+        listing = {"title": job.get("title"), "location": job.get("location"), "posted": job.get("posted_at")}
+        add(job["url"], job, job.get("title"), job.get("company"), job.get("location"),
+            score_listing(listing, prof, job.get("description") or "").to_dict(), first)
+    out.sort(key=lambda o: -(o["score"] or 0))  # (sorted keeps the search's order among equals)
+    return out
 
 
 def _saved(names: list[str]) -> dict[str, bool]:
@@ -930,6 +1510,20 @@ def troubleshoot_query(query: str) -> str:
 
 
 _desk: Desk | None = None
+
+
+def listed_openings() -> list[dict[str, Any]]:
+    """The openings the desk lists: the running desk's, or its last search's (recommendations.json): what makes a Not
+    interested mark made before its job was saved ambiguous (Tracker.not_interested_marks)."""
+    if _desk is not None:
+        return list(getattr(_desk, "listings", None) or [])  # (a desk still starting has none yet)
+    try:
+        saved = json.loads(_recommendations_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    results = saved.get("results") if isinstance(saved, dict) else None
+    return [r for r in results if isinstance(r, dict) and isinstance(r.get("url"), str)] \
+        if isinstance(results, list) else []
 
 
 def get_desk(srv: Any) -> Desk:
