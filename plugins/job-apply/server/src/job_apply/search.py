@@ -52,6 +52,7 @@ import json
 import math
 import re
 import time
+import unicodedata
 from collections.abc import AsyncIterator
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
@@ -319,6 +320,37 @@ def _place_states(place: str) -> list[str]:
     return states + [code for code, name in US_STATES.items() if f" {norm(name)} " in padded and code not in states]
 
 
+# a title to leave out of one letter would leave out nearly everything; a level's ("Technician I", "V") is one
+_LEVEL_LETTER = {"i", "v", "x"}
+
+
+def _avoid_checked(avoid_titles: list[str], titles: list[str] | None) -> list[str]:
+    """Titles to leave out as the person gave them (config.avoid_list: "Senior, Call Center" is two), refused in
+    plain words when one would leave out what they look for (it's in one of their job titles, `titles` or the
+    profile's, or the plugin's own when they have none) or nearly everything (one letter), or when there are too many
+    or one is too long."""
+    avoid = config.avoid_list(avoid_titles)
+    if len(avoid) > 20 or any(len(a) > 60 for a in avoid):
+        raise ValueError("A few words or titles to leave out, each a few words such as Senior or Call Center")
+    if titles is None:
+        try:
+            titles = [str(t).strip() for t in config.listed(config.Profile.load().get("preferences.titles"))]
+        except ValueError:
+            titles = []
+    targets = [t for t in titles if t] or DEFAULT_TITLES
+    for word in avoid:
+        words = _title_words(word)
+        if not words:  # (only signs: no word a title could have)
+            raise ValueError(f"“{word}” has no word to leave out: a word or a few, such as Senior or Call Center")
+        if len(words) == 1 and not words.isdigit() and words not in _LEVEL_LETTER:
+            raise ValueError(f"“{word}” is a single letter, in nearly every job title: leave out a word or a few, "
+                             "such as Senior or Call Center")
+        if mine := next((t for t in targets if avoided_title(t, [word])), None):
+            raise ValueError(f"“{word}” is in “{mine}”, a job title you look for: every one of those jobs would be "
+                             "left out. Leave out a word that isn't in your job titles, such as Senior")
+    return avoid
+
+
 def set_search_area(places: list[str] | None = None, lists: list[str] | None = None,
                     titles: list[str] | None = None, avoid_titles: list[str] | None = None) -> dict[str, Any]:
     """Change what and where Find jobs searches: the profile's job titles, the titles to leave out and places, and the
@@ -329,15 +361,6 @@ def set_search_area(places: list[str] | None = None, lists: list[str] | None = N
     kept: list[str] | None = None
     named: list[str] | None = None
     avoid: list[str] | None = None
-    if avoid_titles is not None:
-        avoid = []
-        for word in (" ".join(str(t).split()) for t in avoid_titles):
-            if word and word.casefold() not in {a.casefold() for a in avoid}:
-                avoid.append(word)
-        if len(avoid) > 20 or any(len(a) > 60 for a in avoid):
-            raise ValueError("A few words or titles to leave out, each a few words such as Senior or Call Center")
-        if any(not norm(a) for a in avoid):  # (only signs: no word a title could have)
-            raise ValueError("A title to leave out is a word or a few, such as Senior or Call Center")
     if titles is not None:
         named = []
         for title in (" ".join(str(t).split()) for t in titles):
@@ -347,6 +370,8 @@ def set_search_area(places: list[str] | None = None, lists: list[str] | None = N
             raise ValueError("A few job titles, each a few words such as Help Desk Technician")
         if any(re.search(r"\||\sOR\s", t) for t in named):  # (the search reads either as two titles)
             raise ValueError("One job title each: add the others one at a time")
+    if avoid_titles is not None:
+        avoid = _avoid_checked(avoid_titles, named)
     if places is not None:
         kept = list(dict.fromkeys(" ".join(str(p).split()) for p in places if str(p).strip()))
         if len(kept) > 12 or any(len(p) > 80 for p in kept):
@@ -432,6 +457,25 @@ def title_words(title: str) -> str:
                                                        for m in _TECHNICIAN_TECH.finditer(str(title or "")))):
             text += "".join(f" {full}" for full in fulls)
     return text
+
+
+# a title's short ways of writing a word, the same word as the whole one, both ways ("Sr" for "Senior")
+_SAME_WORD = {"sr": "senior", "jr": "junior", "mgr": "manager"}
+
+
+def _title_words(text: str) -> str:
+    """A title's words as avoided_title compares them: accents folded ("Técnico" is "Tecnico"), then norm()'s, each
+    short way of writing a word as the word (_SAME_WORD). Only here: the answer rules keep norm() as it is."""
+    folded = "".join(c for c in unicodedata.normalize("NFKD", str(text or "")) if not unicodedata.combining(c))
+    return " ".join(_SAME_WORD.get(w, w) for w in norm(folded).split())
+
+
+def avoided_title(title: str, avoid: list[str]) -> str | None:
+    """The first of `avoid` (preferences.avoid_titles, the person's words) that the title has as whole words, any
+    case or accent: "Senior" in "Senior Technician" and "Sr. Technician", "call center" in "Call Center Agent"; never
+    inside a word ("Senior" isn't in "Seniority Clerk")."""
+    words = f" {_title_words(title)} "
+    return next((a for a in avoid if _title_words(a) and f" {_title_words(a)} " in words), None)
 
 
 def title_matches(title: str, query: str) -> bool:

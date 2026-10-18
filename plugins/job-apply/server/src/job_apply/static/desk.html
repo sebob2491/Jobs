@@ -1022,7 +1022,7 @@ function renderRows() {
       ...(unwanted ? [`<span class="chip stop">Not interested${NI_WORDS[unwanted.reason] ? `: ${esc(NI_WORDS[unwanted.reason])}` : ""}</span>`] : []),
       ...(r.handled ? [`<span class="chip handled" title="In the plugin's live check, the desk took a test applicant at this employer all the way to the review page.">Desk goes all the way</span>`] : []),
       ...fit.reasons.map((x) => `<span class="chip plus">${esc(x)}</span>`),
-      ...fit.concerns.map((x) => `<span class="chip ${fit.blocked ? "stop" : "minus"}">${esc(x)}</span>`),
+      ...fit.concerns.map((x) => `<span class="chip ${fit.blocked || fit.avoided ? "stop" : "minus"}">${esc(x)}</span>`),
       // a clearance read from the posting's words, not said surely: shown, never hidden by No clearance needed
       ...(maybeClearance(fit) ? [`<span class="chip" title="Read from the posting's text: No clearance needed never hides this job for it">may need a security clearance</span>`] : []),
       // and a degree read so: "asks a Bachelor's, read from the text" (the degree chip never hides it for that)
@@ -1605,6 +1605,7 @@ async function copyNotes() {
 // What and where to search: the button in the header says it (the job titles searched, the places), and its window
 // changes it. The window works on a copy (areaDraft), saved only by Save and find jobs
 let areaDraft = null;
+let areaWas = null;  // (the window's values as it opened: only what changed is saved)
 const areaTitles = (area) => (area.titles || []).length ? area.titles : (area.default_titles || []);
 function renderArea() {
   const area = state.area;
@@ -1625,6 +1626,7 @@ function openArea() {
   const area = state.area || {};
   areaDraft = {titles: [...(area.titles || [])], places: [...(area.places || [])], lists: [...(area.lists || [])],
                avoid_titles: [...(area.avoid_titles || [])]};
+  areaWas = JSON.parse(JSON.stringify(areaDraft));
   $("area-error").hidden = true;
   $("area-title-new").value = $("area-place-new").value = $("area-avoid-new").value = "";
   renderAreaDraft();
@@ -1663,9 +1665,12 @@ function renderAreaDraft() {
   own.textContent = area.own ? `And ${area.own} employer${area.own === 1 ? "" : "s"} of your own (companies.yaml).` : "";
 }
 function areaAdd(kind, value) {
-  const v = String(value || "").replace(/\s+/g, " ").trim();
-  if (!v || areaDraft[kind].some((x) => x.toLowerCase() === v.toLowerCase())) return;
-  areaDraft[kind].push(v);
+  // (a title to leave out typed as several, "Senior, Call Center", is each of them)
+  for (const part of kind === "avoid_titles" ? String(value || "").split(/[,;|]/) : [value]) {
+    const v = String(part || "").replace(/\s+/g, " ").trim();
+    if (!v || areaDraft[kind].some((x) => x.toLowerCase() === v.toLowerCase())) continue;
+    areaDraft[kind].push(v);
+  }
   renderAreaDraft();
 }
 
@@ -1791,8 +1796,10 @@ const fitsChips = (r, s) => Object.keys(CHIP_TESTS).every((name) => {
   if (!chosen.length) return true;
   return typeof test === "function" ? test(r, chosen) : chosen.every((v) => !test[v] || test[v](chipFacts[name](r)));
 });
-// The System chips: the job systems of the openings listed (most first), and any pressed that none is on now (to let
-// go of). Drawn again only when they change; shown when there are two or more to choose from, or one is pressed
+// The System chips: the job systems of the openings listed, by name, and any pressed that none is on now (to let go
+// of). A steady row while a search fills it: drawn again only when the systems change (their counts are said in place,
+// in each chip's title), and not while the focus is in it; shown when there are two or more to choose from, or one is
+// pressed
 let systemsDrawn = "";
 function renderSystems() {
   const counts = new Map(), names = {};
@@ -1802,19 +1809,20 @@ function renderSystems() {
     names[r.system.key] = r.system.name;
   }
   const pressed = (state.settings || {}).systems || [];
-  const keys = [...counts.keys()].sort((a, b) => counts.get(b) - counts.get(a) || names[a].localeCompare(names[b]));
-  keys.push(...pressed.filter((k) => !counts.has(k)));
+  const keys = [...counts.keys(), ...pressed.filter((k) => !counts.has(k))]
+    .sort((a, b) => (names[a] || a).localeCompare(names[b] || b) || a.localeCompare(b));
   const box = $("system-chips");
-  const drawn = JSON.stringify(keys.map((k) => [k, names[k] || k, counts.get(k) || 0]));
-  if (drawn !== systemsDrawn) {
+  const drawn = JSON.stringify(keys.map((k) => [k, names[k] || k]));
+  if (drawn !== systemsDrawn && !box.contains(document.activeElement)) {
     systemsDrawn = drawn;
-    box.innerHTML = "System" + keys.map((k) => {
-      const n = counts.get(k) || 0;
-      return `<button data-chip="systems" data-value="${esc(k)}" aria-pressed="false" title="${n} opening${n === 1 ? "" : "s"} listed on ${esc(names[k] || k)}">${esc(names[k] || k)}</button>`;
-    }).join("");
+    box.innerHTML = "System" + keys.map((k) => `<button data-chip="systems" data-value="${esc(k)}" aria-pressed="false">${esc(names[k] || k)}</button>`).join("");
   }
-  box.hidden = keys.length < 2 && !pressed.length;
-  box.querySelectorAll("[data-chip]").forEach((b) => b.setAttribute("aria-pressed", String(pressed.includes(b.dataset.value))));
+  box.hidden = keys.length < 2 && !pressed.length && !box.contains(document.activeElement);
+  box.querySelectorAll("[data-chip]").forEach((b) => {
+    const n = counts.get(b.dataset.value) || 0, name = names[b.dataset.value] || b.dataset.value;
+    b.title = `${n} opening${n === 1 ? "" : "s"} listed on ${name}`;
+    b.setAttribute("aria-pressed", String(pressed.includes(b.dataset.value)));
+  });
 }
 const chipsOn = () => Object.keys(CHIP_TESTS).some((name) => ((state.settings || {})[name] || []).length > 0);
 // (only a pay said on its pay line, or in the posting's own data, is "sure": one read from the text never hides a job)
@@ -2104,20 +2112,25 @@ $("area-form").addEventListener("submit", (e) => {
   areaAdd("places", $("area-place-new").value);
   areaAdd("avoid_titles", $("area-avoid-new").value);
   $("area-title-new").value = $("area-place-new").value = $("area-avoid-new").value = "";
-  const {titles, places, lists, avoid_titles} = areaDraft;
+  // only what changed: an unchanged list isn't written to the profile (an empty one not added to it), and the titles
+  // to leave out alone score the openings found again (the desk keeps them) rather than searching again
+  const changed = Object.fromEntries(Object.entries(areaDraft).filter(([k, v]) =>
+    JSON.stringify(v) !== JSON.stringify((areaWas || {})[k])));
+  const onlyAvoid = Object.keys(changed).length > 0 && Object.keys(changed).every((k) => k === "avoid_titles");
   const said = $("area-error");
   act(async () => {
     try {
-      await api("/api/area", {titles, places, lists, avoid_titles});  // (the openings found for others are cleared)
+      // (the openings found for others are cleared)
+      if (Object.keys(changed).length) await api("/api/area", changed);
     } catch (err) {  // said in the window, which stays open with what the person picked (closed meanwhile: said)
       if (!$("area").open) { alert(err.message); return; }
       said.textContent = err.message;
       said.hidden = false;
       return;
     }
-    areaDraft = null;
+    areaDraft = areaWas = null;
     $("area").close();
-    await api("/api/search", {});
+    if (!onlyAvoid) await api("/api/search", {});
   });
 });
 

@@ -775,7 +775,7 @@ def test_a_read_postings_requirements_are_its_facts_and_an_unread_one_says_none(
 
 
 def test_a_title_to_leave_out_is_matched_as_whole_words_and_never_recommended():
-    """preferences.avoid_titles: an opening whose title has one of them as whole words, any case, is blocked with a
+    """preferences.avoid_titles: an opening whose title has one of them as whole words, any case, is left out with a
     concern (shown under All, never recommended); "Senior" is never found inside "Seniority", nor "Lead" in "Leader"."""
     from job_apply.recommend import avoided_title
 
@@ -793,14 +793,73 @@ def test_a_title_to_leave_out_is_matched_as_whole_words_and_never_recommended():
     wants = tech(preferences={**tech().get("preferences"), "avoid_titles": ["Senior", " senior ", "Call  Center", ""]})
     assert wants.avoid_titles == ["Senior", "Call Center"]  # (each once, as written)
     assert tech(preferences={"avoid_titles": "Senior"}).avoid_titles == ["Senior"]  # (one written bare)
+    # (the review of F4) several written as one, by hand: each of them
+    assert tech(preferences={"avoid_titles": "Senior, Call Center; Night | senior"}).avoid_titles == \
+        ["Senior", "Call Center", "Night"]
+    assert tech(preferences={"avoid_titles": ["Lead, Principal"]}).avoid_titles == ["Lead", "Principal"]
     listing = {"title": "Senior Equipment Technician", "location": "Phoenix, AZ", "posted": "2026-10-01"}
     plain = score_listing(listing, tech(), today=TODAY)
     left = score_listing(listing, wants, today=TODAY)
-    assert left.blocked and not left.recommended and left.score == plain.score - 25
+    assert left.avoided == "Senior" and not left.recommended and left.score == plain.score - 25
+    assert not left.blocked and left.to_dict()["avoided"] == "Senior"  # (no requirement unmet: a title left out)
     assert "title has “Senior”, which you leave out" in left.concerns
     assert {"why": "title has “Senior”, which you leave out", "points": -25} in left.parts
     fine = score_listing({**listing, "title": "Seniority Equipment Technician"}, wants, today=TODAY)
-    assert not fine.blocked and not any("leave out" in c for c in fine.concerns)
+    assert not fine.avoided and not any("leave out" in c for c in fine.concerns)
+
+
+def test_a_title_to_leave_out_folds_accents_and_reads_a_short_word_as_the_whole():
+    """The review of F4: accents folded on both sides ("Técnico" is "Tecnico"), and "Sr", "Jr" and "Mgr" the same
+    words as "Senior", "Junior" and "Manager", both ways; never inside a word still. Only for titles to leave out: the
+    answer rules' norm() is as it was."""
+    from job_apply.autofill import norm
+    from job_apply.recommend import avoided_title
+
+    assert avoided_title("Técnico de Campo", ["Tecnico"]) == "Tecnico"
+    assert avoided_title("Tecnico de Campo", ["Técnico"]) == "Técnico"
+    assert avoided_title("Café Attendant", ["cafe"]) == "cafe"
+    assert avoided_title("Sr. Field Service Technician", ["Senior"]) == "Senior"
+    assert avoided_title("Senior Field Service Technician", ["Sr"]) == "Sr"
+    assert avoided_title("Sr Technician", ["Sr."]) == "Sr."
+    assert avoided_title("Jr. Accountant", ["Junior"]) == "Junior"
+    assert avoided_title("Junior Accountant", ["jr"]) == "jr"
+    assert avoided_title("Operations Mgr", ["Manager"]) == "Manager"
+    assert avoided_title("Manager, Operations", ["Mgr"]) == "Mgr"
+    for kept, avoid in (("Seniority Clerk", "Sr"), ("Srinivasan Fellowship Technician", "Senior"),
+                        ("Mgrs Assistant", "Manager"), ("Técnico de Campo", "Tec")):
+        assert avoided_title(kept, [avoid]) is None, (kept, avoid)
+    assert norm("Técnico") == "t cnico"  # (unchanged for the answer rules)
+
+
+def test_titles_to_leave_out_changed_alone_score_the_openings_again_and_keep_the_rest():
+    """The review of F4: a change to only the titles to leave out scores the openings found again (avoid_again)
+    rather than forgetting them: the old concern and points out, the new in, held and blocked as they were, the parts
+    still summing to the score, and `recommended` said anew."""
+    from job_apply.recommend import avoid_again
+
+    listing = {"title": "Senior Equipment Technician", "location": "Phoenix, AZ", "posted": "2026-10-01"}
+    before = score_listing(listing, tech(), today=TODAY).to_dict()
+    assert before["recommended"] and not before["avoided"]
+    left = avoid_again(before, listing["title"], ["Call Center", "senior"])
+    assert left["avoided"] == "senior" and not left["recommended"] and left["score"] == before["score"] - 25
+    assert left["concerns"][-1] == "title has “senior”, which you leave out"
+    assert sum(p["points"] for p in left["parts"]) == left["score"]
+    assert left == score_listing(listing, tech(preferences={**tech().get("preferences"),
+                                                             "avoid_titles": ["Call Center", "senior"]}),
+                                 today=TODAY).to_dict() | {"parts": left["parts"], "concerns": left["concerns"]}
+    back = avoid_again(left, listing["title"], ["Lead"])
+    assert back == before | {"avoided": ""}  # (as it was)
+    held = avoid_again({**before, "held": True, "recommended": False}, listing["title"], [])
+    assert held["held"] and not held["recommended"]
+    # a fit kept within 0 to 100 is kept so again, its parts summing to it
+    low = avoid_again({"score": 10, "reasons": [], "concerns": [], "blocked": False, "held": False,
+                       "parts": [{"why": "start", "points": 50}, {"why": "internship", "points": -40}]},
+                      "Senior Intern", ["Senior"])
+    assert low["score"] == 0 and sum(p["points"] for p in low["parts"]) == 0
+    assert avoid_again(low, "Senior Intern", [])["score"] == 10
+    # a fit saved before scores had parts: its score alone
+    old = avoid_again({"score": 70, "reasons": [], "concerns": [], "blocked": False}, "Senior Tech", ["Senior"])
+    assert old["score"] == 45 and not old["recommended"] and "parts" not in old
 
 
 # ------------------------------------------------------------------ sponsorship offered (the design of Oct 18, F7)

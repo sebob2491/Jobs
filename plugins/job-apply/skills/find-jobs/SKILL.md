@@ -8,8 +8,12 @@ description: Find job openings that match the user's profile, using Indeed (thro
 The goal is a short, deduplicated list of real openings saved to the tracker
 (status `saved`). The `apply` skill then works through it.
 
-1. **Criteria.** Run `get_profile` and read `preferences.titles` and
-   `preferences.locations`. Fill gaps from the request, or ask one question.
+1. **Criteria.** Run `get_profile` and read `preferences.titles`,
+   `preferences.locations` and `preferences.avoid_titles` (words or titles the person leaves
+   out, such as "Senior"). Fill gaps from the request, or ask one question. Leave out the
+   avoided titles everywhere by default: pass them as `exclude=` below, and skip an Indeed
+   result whose title has one as whole words, any case. Say in chat how many were left out
+   (`excluded_titles`, plus the Indeed ones), unless the user asks to include them.
    Default to the last 30 days (`posted_within_days=30` below). A pay floor the user names
    ("at least $60k", "$25 an hour or more") is `min_pay`, in dollars a year (an hourly rate
    × 2,080).
@@ -65,9 +69,10 @@ The goal is a short, deduplicated list of real openings saved to the tracker
      say carry `employment_type` (the site's words) and `employment_types`.
    - `exclude=["Senior", "Call Center"]` leaves out an opening whose title has one of them as
      whole words, any case ("Senior" never leaves out a "Seniority Clerk"; `excluded_titles`
-     counts them). The profile's `preferences.avoid_titles` (the desk's What and where window,
-     or `search_area(avoid_titles=[...])`) are the person's own: pass them when they ask to
-     leave those out here. The Job Desk shows such jobs under All, never recommended.
+     counts them). Pass the profile's `preferences.avoid_titles` here by default (step 1);
+     the person changes them in the desk's What and where window or with
+     `search_area(avoid_titles=[...])`. The Job Desk shows such jobs under All, never
+     recommended.
    - Results already in the tracker carry `tracked`. Skip those.
    - Eightfold sites (Lam Research, Micron, Infineon) refuse direct API calls, and
      ASML's, Daifuku's (iCIMS), Ebara's (Paycom), Nikon Precision's (UKG Pro), Edwards' and

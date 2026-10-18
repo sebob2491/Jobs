@@ -163,13 +163,67 @@ def test_titles_to_leave_out_are_saved_in_the_profile_and_count_toward_fit(job_a
     assert "first_name: Pat   # what they go by" in text and yaml.safe_load(text)["preferences"]["titles"] == \
         ["Field Service Engineer"]
     fit = score_listing({"title": "Senior Field Service Engineer"}, config.Profile.load())
-    assert fit.blocked and "title has “Senior”, which you leave out" in fit.concerns
+    assert fit.avoided and not fit.recommended and "title has “Senior”, which you leave out" in fit.concerns
     for bad in ([f"Word {n}" for n in range(21)], ["x" * 61], ["!!"]):
         with pytest.raises(ValueError):
             search.set_search_area(avoid_titles=bad)
     assert search.search_area()["avoid_titles"] == ["Senior", "call center"]
     search.set_search_area(avoid_titles=[])
     assert search.search_area()["avoid_titles"] == []
+
+
+def test_titles_to_leave_out_written_as_one_are_each_of_them(job_apply_home):
+    """The review of F4: "Senior, Call Center" (a comma, a semicolon or a bar between) is two titles to leave out,
+    given to set_search_area or written by hand in the profile."""
+    config.profile_path().write_text(PROFILE, encoding="utf-8")
+    search.set_search_area(avoid_titles=["Senior, Call Center", "Night; Lead | senior"])
+    assert search.search_area()["avoid_titles"] == ["Senior", "Call Center", "Night", "Lead"]
+    config.profile_path().write_text(PROFILE.replace("  willing_to_relocate: false\n",
+                                                     "  willing_to_relocate: false\n  avoid_titles: Senior, Call Center\n"),
+                                     encoding="utf-8")
+    assert search.search_area()["avoid_titles"] == ["Senior", "Call Center"]
+
+
+def test_a_title_to_leave_out_that_would_leave_out_what_you_look_for_is_refused(job_apply_home):
+    """The review of F4: a title to leave out that is in one of the person's job titles (theirs, or the ones given with
+    it, or the plugin's own when they have none) would leave out every job they look for, and one that is a single
+    letter nearly every job: each refused in plain words, nothing written. A level's ("I", "2") is a title's word."""
+    config.profile_path().write_text(PROFILE.replace("[Field Service Engineer]", "[Field Service Technician]"),
+                                     encoding="utf-8")
+    with pytest.raises(ValueError, match="“Technician” is in “Field Service Technician”, a job title you look for"):
+        search.set_search_area(avoid_titles=["Senior", "Technician"])
+    with pytest.raises(ValueError, match="a job title you look for"):
+        search.set_search_area(avoid_titles=["field service"])
+    # (the titles given with it are the ones that count)
+    with pytest.raises(ValueError, match="“recruiter” is in “Recruiter”"):
+        search.set_search_area(titles=["Recruiter"], avoid_titles=["recruiter"])
+    search.set_search_area(titles=["Recruiter"], avoid_titles=["Technician"])
+    assert search.search_area()["avoid_titles"] == ["Technician"]
+    for letter in (["a"], ["C#"], ["Senior", "x."]):
+        if letter == ["Senior", "x."]:
+            search.set_search_area(avoid_titles=letter)  # (a level's letter, "X", is a title's word)
+            continue
+        with pytest.raises(ValueError, match="is a single letter"):
+            search.set_search_area(avoid_titles=letter)
+    search.set_search_area(avoid_titles=["I", "2", "Senior"])
+    assert search.search_area()["avoid_titles"] == ["I", "2", "Senior"]
+    # no titles of their own: the plugin's are what Find jobs looks for
+    config.profile_path().write_text(PROFILE.replace("[Field Service Engineer]", "[]"), encoding="utf-8")
+    with pytest.raises(ValueError, match="“Customer” is in “customer service engineer”"):
+        search.set_search_area(avoid_titles=["Customer"])
+    assert "avoid_titles" not in config.profile_path().read_text(encoding="utf-8")
+
+
+def test_no_titles_to_leave_out_are_never_written_into_a_profile_without_them(job_apply_home):
+    """The review of F4: saving none (the window's Save, set_search_area(avoid_titles=[])) adds no
+    `avoid_titles: []` to a profile that hasn't the key; one that has it is emptied."""
+    config.profile_path().write_text(PROFILE, encoding="utf-8")
+    search.set_search_area(titles=["Recruiter"], avoid_titles=[])
+    text = config.profile_path().read_text(encoding="utf-8")
+    assert "avoid_titles" not in text and yaml.safe_load(text)["preferences"]["titles"] == ["Recruiter"]
+    search.set_search_area(avoid_titles=["Senior"])
+    search.set_search_area(avoid_titles=[])
+    assert yaml.safe_load(config.profile_path().read_text(encoding="utf-8"))["preferences"]["avoid_titles"] == []
 
 
 def test_claude_changes_the_titles_to_leave_out_too(srv):
@@ -264,12 +318,16 @@ def test_the_desks_what_and_where_window_saves_and_finds_jobs_again(srv):
     assert area["places"] == ["Phoenix, AZ", "Las Vegas, NV"]
     assert set(area["lists"]) == {search.BUILTIN_LIST, "phoenix-metro"}
     assert desk.listings == []
+    # (the review of F4) the titles to leave out, unchanged, weren't sent: none written into a profile without them
+    assert "avoid_titles" not in config.profile_path().read_text(encoding="utf-8")
 
 
 def test_the_what_and_where_window_saves_the_titles_to_leave_out(srv):
-    """The design of Oct 18, F4: the What and where window's "Titles to leave out" pills: one typed and added with Add,
-    one with Enter, one typed and left in the box when saved, one taken out with its ×. Saved to the profile with the
-    window's other values (Save and find jobs), and the window opens on them next time."""
+    """The design of Oct 18, F4, and its review: the What and where window's "Titles to leave out" pills: several typed
+    as one ("Senior, Call Center") are each of them, one with Enter, one already there not twice, one typed and left in
+    the box saved too, one taken out with its ×; one in a job title the person looks for is refused in the window.
+    Save sends only what changed (the titles to leave out), and with only those changed the openings found stay,
+    scored again (no new search): the Senior one is never recommended now. The window opens on them next time."""
     import asyncio
     import time
 
@@ -279,11 +337,18 @@ def test_the_what_and_where_window_saves_the_titles_to_leave_out(srv):
     from playwright.async_api import async_playwright
 
     from job_apply.desk import Desk
+    from job_apply.recommend import score_listing
 
     search.set_search_area(places=["Phoenix, AZ"], titles=["Field Service Engineer"], avoid_titles=["Intern"])
     desk = Desk(srv)
     desk.applier.start = lambda: None
     desk.search.update(status="done", at=time.time())
+    prof = config.Profile.load()
+    desk.listings = [{"url": f"https://careers.example.com/job/{i}", "title": title, "company": "Example Fab",
+                      "location": "Phoenix, AZ", "fit": score_listing({"title": title, "location": "Phoenix, AZ"},
+                                                                      prof).to_dict()}
+                     for i, title in enumerate(["Senior Field Service Engineer", "Field Service Engineer"])]
+    assert desk.listings[0]["fit"]["recommended"]
     searched: list[float] = []
 
     async def find_jobs(auto=False):
@@ -306,24 +371,32 @@ def test_the_what_and_where_window_saves_the_titles_to_leave_out(srv):
                 await page.wait_for_selector("#area[open]")
                 assert await pills(page) == ["Intern"]
                 assert "never recommended" in await page.inner_text("#area-avoid-note")
-                await page.fill("#area-avoid-new", "Senior")
+                await page.fill("#area-avoid-new", "Senior, Call Center")
                 await page.click("[data-act=area-avoid-add]")
-                await page.fill("#area-avoid-new", "Call Center")
-                await page.press("#area-avoid-new", "Enter")
                 await page.fill("#area-avoid-new", "senior")  # (one there already: not twice)
                 await page.press("#area-avoid-new", "Enter")
                 assert await pills(page) == ["Intern", "Senior", "Call Center"]
+                # one in a job title the person looks for: refused, said in the window, nothing saved
+                await page.fill("#area-avoid-new", "Engineer")
+                await page.press("#area-avoid-new", "Enter")
+                await page.click("#area-form button[type=submit]")
+                await page.wait_for_selector("#area-error:not([hidden])")
+                assert "a job title you look for" in await page.inner_text("#area-error")
+                assert await page.is_visible("#area") and search.search_area()["avoid_titles"] == ["Intern"]
+                await page.click("[data-area-drop='avoid_titles'][data-i='3']")  # Engineer out
                 await page.click("[data-area-drop='avoid_titles'][data-i='0']")  # Intern out
                 await page.fill("#area-avoid-new", "Night Shift")  # (typed, not added: saved too)
                 await asyncio.sleep(2)  # (the page refreshes every 1.5 s: what's being changed stays put)
                 assert await pills(page) == ["Senior", "Call Center"]
-                await page.click("#area-form button[type=submit]")
-                for _ in range(50):
-                    if searched:
-                        break
-                    await asyncio.sleep(0.1)
-                assert not await page.is_visible("#area")
+                async with page.expect_request("**/api/area") as sent:
+                    await page.click("#area-form button[type=submit]")
+                assert (await sent.value).post_data_json == {"avoid_titles": ["Senior", "Call Center", "Night Shift"]}
+                await page.wait_for_selector("#area[open]", state="detached")
                 await page.wait_for_function("document.getElementById('area-btn').title.includes('Night Shift')")
+                # the openings found stay, scored again: the Senior one is left out now
+                await page.click("[data-filter='all']")
+                row = page.locator("li.row", has_text="Senior Field Service Engineer")
+                await row.locator(".chip.stop", has_text="which you leave out").wait_for()
                 await page.click("#area-btn")
                 await page.wait_for_selector("#area[open]")
                 assert await pills(page) == ["Senior", "Call Center", "Night Shift"]
@@ -332,10 +405,35 @@ def test_the_what_and_where_window_saves_the_titles_to_leave_out(srv):
             await desk.stop()
 
     run(go())
-    assert searched, "Find jobs wasn't started again"
+    assert not searched, "Find jobs searched again for a change to the titles to leave out alone"
     area = search.search_area()
     assert area["avoid_titles"] == ["Senior", "Call Center", "Night Shift"]
     assert area["titles"] == ["Field Service Engineer"] and area["places"] == ["Phoenix, AZ"]
+    fits = [o["fit"] for o in desk.listings]
+    assert len(fits) == 2 and fits[0]["avoided"] == "Senior" and not fits[0]["recommended"]
+    assert fits[1]["recommended"] and not fits[1]["avoided"]
+
+
+def test_claude_changing_only_the_titles_to_leave_out_keeps_the_desks_openings(srv):
+    """search_area(avoid_titles=) alone scores an open desk's openings again; titles or places clear them."""
+    from conftest import run
+
+    from job_apply import desk as desk_module
+    from job_apply.desk import Desk
+
+    search.set_search_area(places=["Phoenix, AZ"], titles=["Field Service Engineer"])
+    desk = Desk(srv)
+    desk.listings = [{"url": "https://careers.example.com/job/1", "title": "Senior Field Service Engineer",
+                      "company": "Example Fab", "fit": {"score": 80, "reasons": [], "concerns": [], "blocked": False,
+                                                        "held": False, "recommended": True}}]
+    was, desk_module._desk = desk_module._desk, desk
+    try:
+        run(srv.search_area(avoid_titles=["Senior"]))
+        assert desk.listings[0]["fit"]["avoided"] == "Senior" and desk.listings[0]["fit"]["score"] == 55
+        run(srv.search_area(titles=["Recruiter"]))
+        assert desk.listings == []
+    finally:
+        desk_module._desk = was
 
 
 # ---------------------------------------------------------------- the review of 0.3.195's findings

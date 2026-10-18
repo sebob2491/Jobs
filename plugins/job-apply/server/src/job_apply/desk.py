@@ -40,7 +40,7 @@ from .pipeline import (DESK_PASSWORDS, QUEUE_NO_LOCK, Applier, _may_accept_notic
                        _test_identity, placed_key, question_key)
 from .ats import ATS_NAMES, JOB_BOARDS, detect_ats, job_board
 from .postings import FetchError, Posting, fetch_posting, finalize, parse_html
-from .recommend import applicant_degree, days_since, not_interested_in, recommend, score_listing
+from .recommend import applicant_degree, avoid_again, days_since, not_interested_in, recommend, score_listing
 from .search import (MAX_ALTERNATIVES, alternatives, every_employer, load_companies, own_companies_path, search_area,
                      set_search_area)
 from .tracker import APPLICATION_STATUSES, NotInterested, company_key, damaged, normalize_url, standing
@@ -647,6 +647,23 @@ class Desk:
                              "min_pay": self.min_pay, "posted_within": self.posted_within, **self.chips,
                              "auto_search": self.auto_search, "jobs_at_once": self.applier.at_once()})
 
+    def avoid_again(self) -> None:
+        """The openings found, scored again for the titles to leave out as the profile has them now (recommend.
+        avoid_again), and kept so (recommendations.json): nothing else in their fit changes, and none is forgotten."""
+        try:
+            avoid = config.Profile.load().avoid_titles
+        except ValueError:
+            return
+        for item in self.listings:
+            if isinstance(item.get("fit"), dict):
+                item["fit"] = avoid_again(item["fit"], str(item.get("title") or ""), avoid)
+        with contextlib.suppress(OSError, ValueError):
+            path = _recommendations_path()
+            saved = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(saved, dict):
+                saved["results"] = self.listings
+                config.write_text_atomic(path, json.dumps(saved, default=str))
+
     def _forget_openings(self) -> None:
         """The openings found so far cleared, for Find jobs to search again (where or how it searches changed). A
         search under way keeps none of what it finds, and the next Find jobs starts a new one."""
@@ -676,7 +693,10 @@ class Desk:
             area = set_search_area(places=places, lists=lists, titles=titles, avoid_titles=avoid)
         except ValueError as e:
             return self._bad(e)
-        self._forget_openings()
+        if (places, lists, titles) == (None, None, None):
+            self.avoid_again()  # (only the titles to leave out changed: the openings found stay, scored again)
+        else:
+            self._forget_openings()
         return JSONResponse(area)
 
     async def bank_view(self, request: Request) -> Response:

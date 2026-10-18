@@ -315,7 +315,9 @@ async def search_area(places: list[str] | None = None, lists: list[str] | None =
     area = set_search_area(places=places, lists=lists, titles=titles, avoid_titles=avoid_titles)
     from . import desk
 
-    if desk._desk is not None:  # (an open desk's openings were found elsewhere: Find jobs searches again)
+    if desk._desk is not None and (places, lists, titles) == (None, None, None):
+        desk._desk.avoid_again()  # (only the titles to leave out: the openings found stay, scored again)
+    elif desk._desk is not None:  # (an open desk's openings were found elsewhere: Find jobs searches again)
         desk._desk._forget_openings()
     return area
 
@@ -532,8 +534,8 @@ async def search_company_jobs(
     `employment_types` (these names); `other_employment_type` counts what it left out.
     exclude: words or titles to leave out (["Senior", "Call Center"]): an opening whose title has one as whole words,
     any case, is left out ("Senior" leaves out a Senior Technician, never a Seniority Clerk); `excluded_titles` counts
-    them. The person's own (`search_area`'s `avoid_titles`) only when they ask: the Job Desk shows those openings
-    under All, never recommended."""
+    them (say how many). Pass the profile's preferences.avoid_titles (`search_area`'s `avoid_titles`) by default,
+    unless the person asks to see those too; the Job Desk shows them under All, never recommended."""
     _check_min_pay(min_pay)
     places = _check_workplace(workplace)
     kinds = employment.parse_choice(employment_type)
@@ -593,7 +595,7 @@ async def search_company_jobs(
                 f" ({len(failures)} of {len(wordings)} searches failed)" if found else "")
         out["results"].extend(keep_listings(name, found, location_terms(location), limit_per_company, query,
                                             posted_within_days))
-    avoid = [w for w in (" ".join(str(x).split()) for x in exclude or []) if norm(w)]
+    avoid = [w for w in config.avoid_list(exclude or []) if norm(w)]  # ("Senior, Call Center": two)
     t = tracker()
     kept, below, elsewhere, other_types, avoided = [], 0, 0, 0, 0
     for r in out["results"]:

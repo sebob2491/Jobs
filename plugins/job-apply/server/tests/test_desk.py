@@ -1627,9 +1627,34 @@ def test_the_system_chips_show_only_the_jobs_on_the_systems_pressed(srv, job_app
                 await page.wait_for_selector("text=Unnamed Technician")
                 assert await page.is_visible("#system-chips")
                 chips = await page.locator("[data-chip='systems']").all_inner_texts()
-                assert chips == ["Workday", "Employer's own site", "Oracle"], chips  # (most openings first)
+                assert chips == ["Employer's own site", "Oracle", "Workday"], chips  # (by name: a steady row)
                 assert await page.get_attribute("[data-chip='systems'][data-value='workday']", "title") == \
                     "2 openings listed on Workday"
+                # (the review of F9) while a search fills the list, the row stays put: more openings on a system it
+                # shows are said in place, the chips neither redrawn nor moved; a new system waits while the focus is
+                # in the row, and comes in its place by name after
+                steady = await page.evaluate("""() => {
+                  const marked = [...document.querySelectorAll("[data-chip='systems']")];
+                  marked.forEach((b) => { b.dataset.old = "1"; });
+                  const more = (key, name, n) => Array.from({length: n}, (_, i) => ({...state.listings[0],
+                    url: `https://example.com/${key}/${i}`, title: `More ${i}`, system: {key, name}}));
+                  state.listings = [...state.listings, ...more("oracle_hcm", "Oracle", 3)];
+                  renderRows();
+                  const same = [...document.querySelectorAll("[data-chip='systems']")].every((b) => b.dataset.old === "1");
+                  const oracle = document.querySelector("[data-chip='systems'][data-value='oracle_hcm']");
+                  oracle.focus();
+                  state.listings = [...state.listings, ...more("icims", "iCIMS", 1)];
+                  renderRows();
+                  const kept = document.querySelectorAll("[data-chip='systems']").length === 3 && document.activeElement === oracle;
+                  oracle.blur();
+                  renderRows();
+                  return {same, title: oracle.title, kept,
+                          after: [...document.querySelectorAll("[data-chip='systems']")].map((b) => b.textContent)};
+                }""")
+                assert steady == {"same": True, "title": "4 openings listed on Oracle", "kept": True,
+                                  "after": ["Employer's own site", "iCIMS", "Oracle", "Workday"]}, steady
+                await page.reload()
+                await page.wait_for_selector("text=Unnamed Technician")
                 await _chip(page, "systems", "workday", ["Workday Technician", "Unnamed Technician"])
                 await _chip(page, "systems", "company_site", ["Workday Technician", "Own Site Technician",
                                                               "Unnamed Technician"])
@@ -1647,7 +1672,8 @@ def test_the_system_chips_show_only_the_jobs_on_the_systems_pressed(srv, job_app
                 assert await page.get_attribute("[data-value='oracle_hcm']", "aria-pressed") == "true"
                 await _chip(page, "systems", "oracle_hcm", every)
                 # openings on one system only: nothing to choose
-                hidden = await page.evaluate("""() => { state.listings = state.listings.filter((r) => r.system.key === 'workday');
+                hidden = await page.evaluate("""() => { document.activeElement.blur();
+                  state.listings = state.listings.filter((r) => r.system.key === 'workday');
                   renderRows(); return document.getElementById('system-chips').hidden; }""")
                 assert hidden is True
                 await browser.close()
