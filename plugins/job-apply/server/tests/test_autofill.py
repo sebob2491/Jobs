@@ -4033,6 +4033,40 @@ def test_a_us_person_wording_the_check_doesnt_know_is_left_and_a_list_without_re
     assert [_answer("Are you currently a U.S. citizen?", p, **yes_no) for p in (citizen, pr)] == ["Yes", "No"]
 
 
+def test_a_bare_citizen_question_and_a_us_person_heading_are_read_as_the_question_they_head():
+    """The tenth review of Oct 18 (on main too): a bare "U.S. Citizen?" after "Work Authorization:" took the work
+    authorization rule's Yes, claiming citizenship for a permanent resident or a visa holder; and a "U.S. Person"
+    heading made a list without the permanent residents look like one that names them, so they got Yes. Now the bare
+    citizen question is the citizen rules' (left where they can't read it), and the persons named are read from the
+    question on. Its persons or its definition after its "?", and "This position requires access to export-controlled
+    information.", say no more."""
+    pr = _work(authorized_to_work=True, requires_sponsorship=False, us_citizen=False, us_person=True,
+               citizenship="Mexico")
+    visa = _work(authorized_to_work=True, requires_sponsorship=True, us_citizen=False, us_person=False,
+                 citizenship="India")
+    citizen = _work(authorized_to_work=True, requires_sponsorship=False, us_citizen=True, us_person=True,
+                    citizenship="United States")
+    yes_no = {"kind": "radio_group", "options": ["Yes", "No"]}
+    for label in ("Work Authorization: U.S. Citizen?", "Work Authorization: US Citizen (Y/N)",
+                  "Work Authorization Status: U.S. Citizen?", "Employment Eligibility - US Citizen?",
+                  "Authorized to work in the US: U.S. citizen?", "Legally authorized to work? U.S. citizen?"):
+        for p in (pr, visa):
+            assert _answer(label, p, **yes_no) != "Yes", label
+    for label in ("U.S. Person: Are you a U.S. citizen, refugee or asylee?",
+                  "U.S. Person Status - Are you a US citizen or refugee?"):
+        assert [_answer(label, p, **yes_no) for p in (citizen, pr, visa)] == ["Yes", None, "No"], label
+    for label in ("Are you a U.S. Person? (U.S. citizen, lawful permanent resident, refugee or asylee)",
+                  "Are you a U.S. citizen or permanent resident? (Green card holder)",
+                  "Are you a U.S. person? This position requires access to export-controlled technology.",
+                  "Are you a U.S. person as that term is defined in the EAR?"):
+        a = resolve_field(f(label, **yes_no), pr, {"company": "Acme"})
+        assert a is not None and (a.value, a.rule) == ("Yes", "us_person"), (label, a)
+        assert [_answer(label, p, **yes_no) for p in (citizen, visa)] == ["Yes", "No"], label
+    assert _answer("Are you a US citizen? This position requires access to export-controlled information.", pr,
+                   **yes_no) == "No"
+    assert _answer("Are you a US citizen? (Green card holders: answer Yes)", pr, **yes_no) is None
+
+
 def test_a_sponsorship_question_about_a_partner_company_is_still_the_persons():
     """"...for a partner company" names a company, not the person's partner: the person's own need, the profile's
     answer. Their partner's need stays left."""

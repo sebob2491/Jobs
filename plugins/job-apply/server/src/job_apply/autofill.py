@@ -553,7 +553,8 @@ _YES_NO_TAIL = re.compile(r"\s*[:,\-\u2013]?\s*\(?\s*yes\s*(?:/|or)\s*no\b\)?", 
 _NUMBERING = r"(?:\(?\s*(?:q\s*)?\d+[a-z]?\s*[.):\]]|[a-z][.)]|#\s*\d+[.):]?)"
 _OWN_HEADING = re.compile(rf"^\s*{_NUMBERING}?\s*(?:(?:(?:u\.?\s?s\.?\s*|united states\s+)?citizenship(?:\s+status)?|"
                           r"(?:u\.?\s?s\.?\s*|united states\s+)person(?:\s+status)?|export\s+controls?|"
-                          r"required|eligibility|work eligibility|work authori[sz]ation(?:\s+status)?)\s*"
+                          r"required|eligibility|(?:work|employment)\s+eligibility|work authori[sz]ation(?:\s+status)?|"
+                          rf"(?:legally\s+)?authori[sz]ed\s+to\s+work(?:\s+in\s+the\s+{_US_WRITTEN})?)\s*"
                           r"(?::|\s[-\u2013\u2014]))?\s*$", re.I)
 _US_SAID = r"(?:u\.?\s?s\.?(?:\s?a\.?)?\s+|united states\s+)?"
 # (and the employer's word that it won't sponsor, alone in its sentence: "Note: this position is not eligible for visa
@@ -576,7 +577,9 @@ _SAYS_NO_MORE = re.compile(
     rf"{_US_SAID}citizenship\s+is\s+required(?:\s+for\s+this\s+(?:position|role|job))?|"
     rf"proof\s+of\s+{_US_SAID}citizenship\s+(?:will\s+be|is|may\s+be)\s+required(?:\s+(?:at|upon)\s+hire)?|"
     r"(?:please\s+)?(?:select|choose|answer|check|mark)\s+(?:one|yes\s+or\s+no|yes\s*/\s*no)|"
-    rf"\(?\s*(?:yes\s*/\s*no|y\s*/\s*n)\s*\)?|\[\s*yes\s*/\s*no\s*\]|{_NO_SPONSORSHIP_SAID})\W*$", re.I)
+    rf"\(?\s*(?:yes\s*/\s*no|y\s*/\s*n)\s*\)?|\[\s*yes\s*/\s*no\s*\]|{_NO_SPONSORSHIP_SAID}|"
+    r"(?:this|the)\s+(?:position|role|job)\s+requires\s+access\s+to\s+export[-\s]controlled\s+(?:information|"
+    r"technology|technical\s+data|data|items))\W*$", re.I)
 # (as the normalized rules read it: "or ..." or "by ..." after "citizen", but "or not" and "or (a U.S.) national")
 _CITIZEN_GOES_ON = r"(?! (?:by\b|or\b(?! (?:not|(?:an? )?(?:u ?s )?national)\b)))"
 
@@ -615,6 +618,8 @@ def _asks_more_than_citizenship(raw_label: str, persons: bool = False) -> bool:
     rest = rest[told.end():] if told else rest
     rest = re.sub(r"^\s*[?!.;]", "", rest)
     rest = _undotted(rest)
+    if persons and (said := _PERSON_DEFINED.match(rest)):
+        rest = rest[said.end():]  # (its persons or its definition after its "?": "Are you a U.S. Person? (U.S. citizen, ...)")
     # (a sentence in brackets is read as itself: "(This position requires U.S. citizenship.)")
     return any(not _SAYS_NO_MORE.match(said.strip().lstrip("([").strip())
                for said in re.findall(r"[^.?!;]+[.?!;]*", rest) if re.search(r"\w", said))
@@ -645,7 +650,7 @@ _CITE = (r"(?:8\s+usc\s*(?:\u00a7\s*)?1324b(?:\s*\(\w+\))*|22\s+cfr\s*(?:\u00a7\
 _RULES_NAMED = (r"(?:(?:the\s+)?(?:itar|ear)(?:\s*/\s*(?:itar|ear))?|(?:the\s+)?(?:us\s+)?(?:export\s+control|export\s+"
                 r"administration|international\s+traffic\s+in\s+arms)\s+(?:laws?(?:\s+and\s+regulations?)?|"
                 rf"regulations?)(?:\s*\((?:ear|itar)\))?|{_CITE})")
-_DEFINITION = (rf"(?:as\s+defined\s+(?:by|in|under)|under)\s+{_RULES_NAMED}(?:\s*(?:and|or|/)\s*{_RULES_NAMED})?"
+_DEFINITION = (rf"(?:as\s+(?:that\s+term\s+is\s+)?defined\s+(?:by|in|under)|under)\s+{_RULES_NAMED}(?:\s*(?:and|or|/)\s*{_RULES_NAMED})?"
                rf"(?:\s*\(\s*{_CITE}\s*\))?")
 _PERSON_ITEM = rf"{_PERSON_NAMED}(?:\s*,?\s*{_DEFINITION})?"
 _JOINED = r"(?:\s*,\s*(?:or\s+|and/or\s+)?|\s*/\s*|\s+(?:or|and/or)\s+)"
@@ -656,7 +661,7 @@ _QUOTED = "[\"'\u201c\u201d\u2018\u2019]?"
 _US_PERSON_ASKED = re.compile(rf"{_ARE_YOU}{_QUOTED}{_US_WRITTEN}[\s-]*person\b{_QUOTED}(?P<rest>.*)$", re.I | re.S)
 # ...and either as a bare label, alone or after its own heading or numbering ("U.S. Citizen or Permanent Resident",
 # "Export Control: U.S. Person"; the ninth review: one the check didn't know was answered with nothing checked around it)
-_BARE_ASKED = re.compile(rf"(?:^|(?<=[:.)\]])|(?<=\s[-\u2013\u2014]))\s*(?:(?:{_US_WRITTEN}\s+)?(?P<citizen>citizen)\b|"
+_BARE_ASKED = re.compile(rf"(?:^|(?<=[:.)\]?])|(?<=\s[-\u2013\u2014]))\s*(?:(?:{_US_WRITTEN}\s+)?(?P<citizen>citizen)\b|"
                          rf"{_QUOTED}{_US_WRITTEN}[\s-]*person\b{_QUOTED})(?P<rest>.*)$", re.I | re.S)
 # A list of the persons that names those a permanent resident is among, or the U.S. person by name: otherwise ("Are you a
 # U.S. citizen or refugee/asylee?") the profile's us_person says nothing of them (_among_the_named)
@@ -678,10 +683,27 @@ def _citizen_question(raw_label: str) -> str:
         if _US_PERSON_ASKED.search(text):
             return "us_person"
         bare = _BARE_ASKED.search(text)
-        return "us_person" if bare and _OWN_HEADING.match(text[:bare.start()]) and (
-            not bare.group("citizen") or _PERSONS_AFTER.match(_undotted(bare.group("rest")))) else ""
+        # (or after another question: "Legally authorized to work? U.S. citizen?" is the citizen's too, never one Yes
+        # for both; left)
+        if bare is None or not (_OWN_HEADING.match(text[:bare.start()]) or text[:bare.start()].rstrip().endswith("?")):
+            return ""
+        # (a bare "U.S. Citizen?" after "Work Authorization:" is the citizen's, never the work authorization rule's
+        # Yes: the tenth review of Oct 18)
+        return "us_citizen" if bare.group("citizen") and not _PERSONS_AFTER.match(_undotted(bare.group("rest"))) \
+            else "us_person"
     first = re.split(r"[?.!;]", _undotted(m.group("rest")), maxsplit=1)[0]
     return "us_person" if _OTHER_US_PERSONS.search(first) and not _NOT_THEM.search(first) else "us_citizen"
+
+
+def _from_the_question(raw_label: str) -> str:
+    """The label from the U.S. citizen's or person's question on, without its heading ("U.S. Person: Are you a U.S.
+    citizen, refugee or asylee?" names no permanent residents: the tenth review of Oct 18)."""
+    text = re.sub(r"\s+", " ", raw_label or "")
+    for asked in (_CITIZEN_ASKED, _US_PERSON_ASKED):
+        if (m := asked.search(text)) is not None:
+            return text[m.start():]
+    bare = _BARE_ASKED.search(text)
+    return text[bare.start():] if bare is not None and _OWN_HEADING.match(text[:bare.start()]) else text
 
 
 def _among_the_named(prof: Profile, job: dict) -> Any:
@@ -2454,7 +2476,7 @@ def _resolve_field(field: dict, prof: Profile, job: dict | None = None, file_inp
                     continue  # the U.S. citizen's or person's question: only its own rules read it, whatever's around it
                 if name == "us_person" and (asked_as != "us_person" or _asks_more_than_citizenship(asked, persons=True)):
                     continue  # more than the U.S. person's question asked, or a wording the check doesn't know: theirs
-                if name == "us_person" and not _NAMES_RESIDENTS.search(_undotted(asked)):
+                if name == "us_person" and not _NAMES_RESIDENTS.search(_undotted(_from_the_question(asked))):
                     getter = _among_the_named  # (a list that leaves out the permanent residents)
                 if name in {"sponsorship", "no_sponsorship"} and (
                         _THEIR_FAMILY_SPONSORSHIP.search(label)
