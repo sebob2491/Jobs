@@ -9,7 +9,7 @@ import pytest
 
 from job_apply import config, formjs, pipeline
 from job_apply.autofill import _CONSENT_KINDS, _answer_bank
-from job_apply.never import (ANYWHERE, BOX_WORDS, EMAILS, FUTURE_ROLES, NEVER, PARAGRAPH_WORDS, PRECISE,
+from job_apply.never import (ANYWHERE, BOX_WORDS, EMAILS, FUTURE_ROLES, MAIL, NEVER, PARAGRAPH_WORDS, PRECISE,
                              _never_for_them)
 
 # One sentence for each kind never agreed to for the person, worded as the tests of each path word theirs, and
@@ -24,7 +24,8 @@ SAID = {
     "talent community": "have a place in the Talent Network",
     "marketing": "get marketing and promotional material",
     "offers": "get special offers",
-    EMAILS: "receive email communications from Example Corp",
+    EMAILS: "receive communications from Example Corp",
+    MAIL: "receive a message from Example Corp",
     "texts or calls": "let Example Corp call or text me",
     "being contacted": "be contacted by recruiters",
     "other roles": "be considered for other open roles",
@@ -36,17 +37,17 @@ SAID = {
     BOX_WORDS: "let a third party process my application",
 }
 # (a sign-up in so many words names what it signs up for; a box's and a paragraph's own words hold some precise ones')
-ALSO = {"signs up": {"talent community"}, EMAILS: {BOX_WORDS}, FUTURE_ROLES: {BOX_WORDS},
+ALSO = {"signs up": {"talent community"}, EMAILS: {BOX_WORDS}, MAIL: {BOX_WORDS}, FUTURE_ROLES: {BOX_WORDS},
         "job alerts": {PARAGRAPH_WORDS}, "texts or calls": {PARAGRAPH_WORDS}}
 EVERY = frozenset(NEVER)
 # What each kind of path reads (pipeline.py says why): an agreement's own words or a notice's heading or opening, an
 # attestation's (which reads emails beyond the application too), a Create Account box's own words, the words above a
 # bare "I agree", an attestation's label
 AGREEMENT = PRECISE | {FUTURE_ROLES}
-ATTESTATION = AGREEMENT | {EMAILS}
-BOX = EVERY - {PARAGRAPH_WORDS}
-ABOVE = EVERY - {BOX_WORDS}
-ATTESTED = PRECISE | {EMAILS}
+ATTESTATION = AGREEMENT | {EMAILS, MAIL}
+BOX = EVERY - {PARAGRAPH_WORDS, "cookies", "their data kept"}
+ABOVE = EVERY - {BOX_WORDS, MAIL}
+ATTESTED = (PRECISE - {"cookies", "their data kept"}) | {EMAILS, MAIL}
 
 
 def test_each_sentence_is_its_own_kind_and_every_kind_has_one():
@@ -60,7 +61,7 @@ def test_each_sentence_is_its_own_kind_and_every_kind_has_one():
 def test_the_kinds_each_path_reads_are_the_ones_pipeline_says():
     assert pipeline._AGREEMENT_KINDS == AGREEMENT
     assert pipeline._BOX_KINDS == BOX and pipeline._ATTESTED_KINDS == ATTESTED
-    assert pipeline._ABOVE_KINDS | {EMAILS} == ABOVE  # (emails less a verification email: _ACCOUNT_MAIL)
+    assert pipeline._ABOVE_KINDS == ABOVE
 
 
 def _and(words, clause):
@@ -244,6 +245,30 @@ STILL_AGREED = {
     "a remembered answer by a notice of partners": lambda: _remembered("work at its partners' sites"),
     "a remembered answer by a notice of the outcome": lambda: _remembered("be notified of the outcome"),
 }
+# (the re-review of 0.3.208) a Create Account's box or an attestation that names the site's cookie policy beside its
+# terms, or how long it keeps the application, as before; and the account's own mail named above a bare "I agree"
+TERMS_AND_COOKIES = "I have read and agree to the Terms and Conditions, Privacy Policy and Cookie Policy"
+for _what, _label in {"its cookie policy": TERMS_AND_COOKIES,
+                      "its cookies notice": "I agree to the Terms of Use and acknowledge the Privacy and Cookies Notice",
+                      "how it uses cookies": "I agree to the candidate privacy policy, including how Acme uses cookies",
+                      "how long it keeps the data": "I agree to the Terms of Use and Privacy Policy and understand Acme may "
+                                                    "keep my data for 12 months"}.items():
+    STILL_AGREED[f"a Create Account's terms box naming {_what}"] = lambda b=_label: bool(pipeline._terms_boxes(_box(b)))
+    STILL_AGREED[f"an email-first site's agreement box naming {_what}"] = \
+        lambda b=_label: bool(pipeline._consent_boxes(_box(b)))
+for _what, _label in {"the cookie policy read": "I certify that the answers given are true and complete, and that I have "
+                                                "read the Candidate Privacy Notice and Cookie Policy",
+                      "the application retained": f"{CERTIFY}. I understand Acme will retain my application in line with "
+                                                  "its records policy.",
+                      "the information kept on file": f"{CERTIFY}, and I understand Acme may keep my information on file "
+                                                      "for one year."}.items():
+    STILL_AGREED[f"a certification naming {_what}"] = lambda b=_label: _attests("checkbox", b)
+TERMS_PARAGRAPH = "By creating an account you accept our Terms of Use and Privacy Policy."
+for _mail in ("You will receive emails about your account.", "You will receive a one-time passcode by email.",
+              "You will receive an email confirming your registration.",
+              "You will receive a verification code at the email address you entered.",
+              "You will receive emails related to your application.", "You will receive an email with your username."):
+    STILL_AGREED[f"terms above: {_mail}"] = lambda m=_mail: pipeline._terms_above(f"{TERMS_PARAGRAPH} {m}")
 
 
 # A waiver's words inside other words ("injury", "perjury") are no waiver: every path that reads a waiver agrees to
@@ -275,11 +300,31 @@ def test_what_each_path_agreed_to_before_it_still_agrees_to(wording):
     assert STILL_AGREED[wording](), wording
 
 
-def test_an_email_to_verify_the_account_takes_nothing_else_with_it():
-    """The review of 0.3.208: the verification email taken out of a paragraph's words took what came after it too."""
-    for more in ("news from Acme", "career opportunities"):
-        assert not pipeline._terms_above(f"Accept our Terms of Use. You will receive an email to verify your account and "
-                                         f"{more}."), more
+# What stays refused beside those: a sign-up's mail above a bare "I agree" (and the account's own mail takes nothing
+# else with it: the review of 0.3.208), a consent to be considered for similar roles in an attestation (a consent to
+# other roles, which CLAUDE.md keeps narrow), a subscription in a Create Account's terms box, a cookie banner's agreement
+STILL_REFUSED = {
+    "terms above communications received electronically": lambda: pipeline._terms_above(
+        f"{TERMS_PARAGRAPH} You consent to receive communications electronically."),
+    "terms above email communications": lambda: pipeline._terms_above(
+        f"{TERMS_PARAGRAPH} You will receive email communications from Acme."),
+    "terms above an email to verify the account and news": lambda: pipeline._terms_above(
+        "Accept our Terms of Use. You will receive an email to verify your account and news from Acme."),
+    "terms above an email to verify the account and career opportunities": lambda: pipeline._terms_above(
+        "Accept our Terms of Use. You will receive an email to verify your account and career opportunities."),
+    "a certification with similar roles": lambda: _attests(
+        "checkbox", "I certify the information is true and complete and understand I may be considered for similar "
+                    "roles at Acme."),
+    "a terms box with a subscription": lambda: bool(pipeline._terms_boxes(_box(
+        "I accept the Terms of Service and the Subscription Agreement"))),
+    "an agreement button for cookies": lambda: pipeline._agreement_button(
+        {"actions": [{"id": "a", "text": "I accept the Cookie Policy"}]}) is not None,
+}
+
+
+@pytest.mark.parametrize("wording", list(STILL_REFUSED))
+def test_what_each_path_refused_before_it_still_refuses(wording):
+    assert not STILL_REFUSED[wording](), wording
 
 
 def _alternatives(pattern):

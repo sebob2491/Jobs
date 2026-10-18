@@ -45,7 +45,8 @@ from .autofill import (classes_only, clean_label, degree_kinds_listed, degree_no
                        polarity, tailored_document, works_there_now)
 from .browser import (_SENDS_TOO, CONFIRMATION_RE, SubmitBlocked, TabClosed, _accepts_cookies, _cookie_setting,
                       confirmations, declines_cookies, final_text, may_accept_cookies, questions_shown)
-from .never import ANYWHERE, CALLS_OR_TEXTS, EMAILS, FUTURE_ROLES, NEVER, PARAGRAPH_WORDS, PRECISE, _never_for_them
+from .never import (ANYWHERE, CALLS_OR_TEXTS, EMAILS, FUTURE_ROLES, MAIL, NEVER, PARAGRAPH_WORDS, PRECISE,
+                    _never_for_them)
 
 NEW_TAB_WAIT = 4  # seconds to wait for a tab opened late by a click before calling it a stall
 ONCE_SETTLE = 1.0  # seconds after filling the person's answers before checking they stayed in
@@ -421,25 +422,18 @@ _ATTESTS_ABOVE = re.compile(r"of employment|certif|true and complete|background 
 # The kinds of what's never agreed to (never.py) each path reads: what it read before 0.3.208, and besides only words
 # that are a sign-up or a consent wherever they stand (PRECISE: the review of 0.3.208)
 # - an agreement's own words (_agrees_to_terms, the consent to other positions), a notice's heading and opening, a terms
-#   gate's headings, as the agreements' and notices' own list read them: with the future roles kept on file for. Emails beyond the application are an attestation's to read (_ATTESTED_KINDS), as
+#   gate's headings, as the agreements' and notices' own list read them: with the future roles kept on file for. What
+#   a sign-up sends and the mail received beyond the application are an attestation's to read (_ATTESTED_KINDS), as
 #   before: elsewhere they're said in passing ("you consent to receive communications electronically")
 _AGREEMENT_KINDS = PRECISE | {FUTURE_ROLES}
-# - a Create Account box's own words (_more_than_terms): every kind but a paragraph's
-_BOX_KINDS = frozenset(NEVER) - {PARAGRAPH_WORDS}
-# - the words above a bare "I agree" (_terms_above): an agreement's, a paragraph's sign-up words, and emails less an
-#   account's own (_ACCOUNT_MAIL)
-_ABOVE_KINDS = PRECISE | {PARAGRAPH_WORDS, FUTURE_ROLES}
-# An email to verify, confirm or activate the account, which a terms paragraph names in passing ("Accept our Terms of
-# Use. You will receive an email to verify your account.", the review's; "You will receive a verification email.", "...
-# an email with a link to activate your account", "... a confirmation email shortly": the review of 0.3.208), and
-# word of the application's own status ("You will receive information about the status of your application"): no
-# sign-up for emails, as the words above a box read them (_terms_above). Taken out for that kind alone: what else the
-# paragraph says is read in its whole words ("... and news from Acme")
-_ACCOUNT_MAIL = re.compile(r"\breceiv\w* (?:an?|the|your) (?:(?:account )?(?:verification|confirmation|activation) e-?mail\b|"
-                           r"e-?mail (?:to|with (?:a|the) link to) (?:verify|confirm|activate) (?:your|the) (?:new )?"
-                           r"(?:account|e-?mail(?: address)?)\b)|\breceiv\w* (?:information|updates|e-?mails|"
-                           r"communications|messages|notifications) (?:about|regarding|on|concerning) the status of "
-                           r"(?:your|my|the|this) application\b", re.I)
+# - a Create Account box's own words (_more_than_terms): every kind but a paragraph's, and neither cookies nor their data
+#   kept, as before: a box that names the site's cookie policy beside its terms isn't a cookie banner, which keeps its
+#   own rule ("I have read and agree to the Terms and Conditions, Privacy Policy and Cookie Policy"), and how long the
+#   site keeps the account's data is its terms' ("... Acme may keep my data for 12 months": the review of 0.3.208)
+_BOX_KINDS = frozenset(NEVER) - {PARAGRAPH_WORDS, "cookies", "their data kept"}
+# - the words above a bare "I agree" (_terms_above): an agreement's, a paragraph's sign-up words, and what a sign-up
+#   sends (not the account's own mail: MAIL)
+_ABOVE_KINDS = PRECISE | {PARAGRAPH_WORDS, FUTURE_ROLES, EMAILS}
 
 
 def _more_than_terms(label: str) -> str | None:
@@ -453,10 +447,9 @@ def _terms_above(above: str) -> bool:
     """Do the words just above a box that says only that it agrees (a bare "I agree", "the documents above", "read and
     understood") name the site's terms or privacy statement, or its processing of personal data, and nothing more?
     Never anything never agreed to for the person (_never_for_them, _ABOVE_KINDS: a sign-up, texts or calls, a waiver;
-    the safety audit of Oct 12, the reviews of 0.3.126's and 0.3.133's), nor an attestation (_ATTESTS_ABOVE). An email
-    to verify the account is no sign-up for emails (_ACCOUNT_MAIL)."""
+    the safety audit of Oct 12, the reviews of 0.3.126's and 0.3.133's), nor an attestation (_ATTESTS_ABOVE). The
+    account's own mail it names isn't a sign-up ("You will receive an email to verify your account")."""
     return bool(above and not _never_for_them(above, only=_ABOVE_KINDS)
-                and not _never_for_them(_ACCOUNT_MAIL.sub(" ", above), only={EMAILS})
                 and _SITES_TERMS.search(above) and not _ATTESTS_ABOVE.search(above))
 
 
@@ -650,10 +643,12 @@ _OWN_INFO_TRUE = re.compile(r"\b(?:information|answers?|responses?)\b[^.]{0,80}\
 # and only for the kinds they'd be read as (_PASSING_KINDS): every other kind is read in the whole label
 _ATTESTED_IN_PASSING = re.compile(r"\baffiliat\w*|\boffers? of employment", re.I)
 _PASSING_KINDS = frozenset({"their data shared", "offers"})
-# - an attestation's label: the precise kinds and the emails it may sign up for. Not the future opportunities false
-#   statements cost ("... may disqualify me from future opportunities"), which a certification names; an agreement's
-#   are _agrees_to_terms's to read, as before
-_ATTESTED_KINDS = PRECISE | {EMAILS}
+# - an attestation's label: the precise kinds and the mail it may sign up for. Not the future opportunities false
+#   statements cost ("... may disqualify me from future opportunities"), which a certification names, nor the site's
+#   cookie policy it has read or how long it keeps the application ("I understand Acme will retain my application"),
+#   as before (the review of 0.3.208); an agreement's are _agrees_to_terms's to read. Being considered for similar
+#   roles is refused (job alerts' "similar roles"): a consent to other roles, which CLAUDE.md keeps narrow
+_ATTESTED_KINDS = (PRECISE - {"cookies", "their data kept"}) | {EMAILS, MAIL}
 # - a group of ticks' own label: a legal waiver and the terms of employment alone, as before ("Privacy and Marketing
 #   Preferences" over its "I accept the privacy notice": the review of 0.3.208); each tick's words are read in full
 _GROUP_LABEL_KINDS = frozenset({"arbitration", "waiver", "at-will"})
@@ -6282,7 +6277,7 @@ def _attestation(q: dict[str, Any]) -> Any:
     if q["kind"] == "checkbox_group":
         # its ticks that accept the terms, and only those: EMD's required pair is its Terms of Use &
         # Data Privacy Statement and its "Email Communications" (marketing, left unticked)
-        agreed = [o for o in choices if _agrees_to_terms(o) and not _never_for_them(o, only={EMAILS})]
+        agreed = [o for o in choices if _agrees_to_terms(o) and not _never_for_them(o, only={EMAILS, MAIL})]
         return agreed or None
     if not (_ATTESTS.search(label) or _agrees_to_terms(label)):
         return None
@@ -6296,7 +6291,7 @@ def _attestation(q: dict[str, Any]) -> Any:
         # (an agreement's kinds and emails beyond the application, as before: "I have received and agree to the Privacy
         # Notice" is one)
         one = choices[0]
-        more = _never_for_them(one, only=_AGREEMENT_KINDS | {EMAILS}) or _CLAIMS.search(one)
+        more = _never_for_them(one, only=_AGREEMENT_KINDS | {EMAILS, MAIL}) or _CLAIMS.search(one)
         return one if polarity(one) is not False and not more else None
     if _about_person(label):
         return None  # a Yes there would answer something else too ("Have you ever been convicted ...?")

@@ -38,11 +38,17 @@ PARAGRAPH_WORDS = "a paragraph's sign-up words"
 # - the future roles a person is kept on file for, which a certification names as what false statements cost
 #   ("... may disqualify me from future opportunities"): read in an agreement's or a notice's words, as before
 FUTURE_ROLES = "future roles"
-# - emails or updates beyond the application itself ("... and consent to receive email communications from Acme": the
-#   safety audit of Oct 12), as an attestation and an account's box read them, and the words above a bare "I agree"; a
-#   notice's or an agreement's words say so in passing ("you consent to receive communications electronically"). Read
-#   with the words after it: "emails about my application" is no sign-up
+# - what a sign-up sends, beyond the application itself: communications, updates, news, offers ("... and consent to
+#   receive email communications from Acme", "... and would like to receive updates": the safety audit of Oct 12), as an
+#   attestation and an account's box read them, and the words above a bare "I agree"; a notice's or an agreement's
+#   words say so in passing ("you consent to receive communications electronically")
 EMAILS = "emails or updates"
+# - an email, a message or a text received, beyond the application itself ("... and agree to receive emails"), as an
+#   attestation and an account's box read them. Not above a bare "I agree", whose paragraph names the account's own
+#   ("You will receive an email to verify your account", "... a one-time passcode by email", "... an email with your
+#   username": the reviews of 0.3.133's and 0.3.208)
+MAIL = "an email or a message"
+# (both read with the words after them: "emails about my application" is no sign-up)
 
 # By kind, in the order a match is named. Every word each path's own list held before is here (the tests keep those
 # lists, word for word, and check each path still refuses them)
@@ -67,8 +73,9 @@ NEVER: dict[str, re.Pattern[str]] = {kind: re.compile(words, re.I | re.S) for ki
     "talent community": r"talent (?:community|network|pool)|stay informed|keep me",
     "marketing": r"marketing|promotion|campaigns?",
     "offers": r"offers",
-    EMAILS: r"\breceiv\w*\b.{0,40}\b(?:e-?mails?|communications?|updates?|messages?|news\w*|offers|information about|"
-            r"texts?)\b|\b(?:e-?mail|marketing|promotional) communications?\b|\bupdates? (?:about|on|from)\b",
+    EMAILS: r"\breceiv\w*\b.{0,40}\b(?:communications?|updates?|news\w*|offers)\b|"
+            r"\b(?:e-?mail|marketing|promotional) communications?\b|\bupdates? (?:about|on|from)\b",
+    MAIL: r"\breceiv\w*\b.{0,40}\b(?:e-?mails?|messages?|information about|texts?)\b",
     "texts or calls": CALLS_OR_TEXTS + r"|text messages?|\bsms\b",
     "being contacted": r"contact(?:ed)? me|be contacted|send me",
     "other roles": r"other (?:\w+ )?(?:roles|positions|jobs|openings|opportunities)",
@@ -86,7 +93,7 @@ NEVER: dict[str, re.Pattern[str]] = {kind: re.compile(words, re.I | re.S) for ki
 }.items()}
 
 # The kinds whose words say what they are wherever they're read: every path that agrees for the person reads these
-PRECISE = frozenset(NEVER) - {BOX_WORDS, PARAGRAPH_WORDS, FUTURE_ROLES, EMAILS}
+PRECISE = frozenset(NEVER) - {BOX_WORDS, PARAGRAPH_WORDS, FUTURE_ROLES, EMAILS, MAIL}
 # What a long notice's or page's words are read for wherever in them they sit: a legal waiver, and a sign-up in so many
 # words. The rest of such words name the employer's practices (its affiliates, its marketing, its cookies: APS's privacy
 # statement, live) and the other positions it may suggest (Micron's AI notice, live), so they're read where the notice
@@ -113,7 +120,7 @@ def _never_for_them(text: str, *, only: Collection[str] | None = None, but: Coll
     for kind, words in NEVER.items():
         if kind in but or only is not None and kind not in only:
             continue
-        if kind == EMAILS:
+        if kind in (EMAILS, MAIL):
             if any(not _about_the_application(text[m.end():]) for m in words.finditer(text)):
                 return kind
         elif words.search(text):
