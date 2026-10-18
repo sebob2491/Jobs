@@ -106,9 +106,10 @@ def _codes(node: ast.AST) -> set[str] | None:
     return None
 
 
-# The one stop whose code comes from elsewhere: what's left on a filled page (_stop_for_what_is_left) names the code
-# _entry_gaps gives for the entries the profile lacks (a Degree list, a box that refused its answer, ...)
-PASSED_ON = {("_stop_for_what_is_left", "gap_code"): "_entry_gaps"}
+# The stops whose code comes from elsewhere: what's left on a filled page (_stop_for_what_is_left) names the code
+# _entry_gaps returns for the entries the profile lacks (a Degree list, a box that refused its answer, ...); a step of
+# making an account (_account_theirs) the code each of its callers gives, written out there
+PASSED_ON = {("_stop_for_what_is_left", "gap_code"): "_entry_gaps", ("_account_theirs", "code"): "(its callers)"}
 
 
 def test_every_stop_has_a_code_in_stop_codes():
@@ -126,7 +127,14 @@ def test_every_stop_has_a_code_in_stop_codes():
     for call in pauses:
         given = next((k.value for k in call.keywords if k.arg == "code"), None)
         codes = _codes(given) if given is not None else None
-        if codes is None and isinstance(given, ast.Name) and (where[id(call)], given.id) in PASSED_ON:
+        if codes is None and isinstance(given, ast.Name) and PASSED_ON.get((where[id(call)], given.id)) == \
+                "(its callers)":
+            callers = [c for c in ast.walk(tree) if isinstance(c, ast.Call)
+                       and getattr(c.func, "attr", getattr(c.func, "id", "")) == where[id(call)]]
+            parts = [_codes(next((k.value for k in c.keywords if k.arg == given.id), ast.Constant(None)))
+                     for c in callers]
+            codes = None if not callers or None in parts else set().union(*parts)
+        elif codes is None and isinstance(given, ast.Name) and (where[id(call)], given.id) in PASSED_ON:
             producer = functions[PASSED_ON[(where[id(call)], given.id)]]
             returned = [r.value for r in ast.walk(producer) if isinstance(r, ast.Return) and r.value is not None
                         and where[id(r)] == producer.name]  # (not a helper's defined inside it)
@@ -147,6 +155,41 @@ def test_every_stop_has_a_code_in_stop_codes():
             used |= set().union(*(_codes(k.value) or {"(unread)"} for k in call.keywords if k.arg == "code"))
     assert used - STOP_CODES == set(), used - STOP_CODES
     assert STOP_CODES - used == set(), STOP_CODES - used
+
+
+# Stops whose code says whose trouble it is (the read-only review of stop-codes, Oct 18): a step the desk took that
+# didn't work is never coded as the person's or the site's, and two stops told apart only by their words have codes
+EXPECTED_CODES = {
+    "didn't take my click": {"account_step_failed"},
+    "it showed a step I don't know": {"account_step_failed"},
+    "its box didn't take my tick": {"account_step_failed"},
+    "its choice didn't take my": {"account_step_failed"},
+    "and it didn't go on": {"account_step_failed"},
+    "I couldn't find the button that goes on with making your account": {"no_step_button"},
+    "show a picture check": {"account_theirs"},
+    "is emailing you a password reset": {"reset_pending"},
+    "couldn't be reached, so the page": {"site_unreachable"},
+    "A cookie or privacy banner is in the way": {"no_step_button"},
+    "Something went wrong": {"site_went_wrong"},
+    "The way on is": {"agreement_theirs"},
+    "doesn't allow automated": {"submit_not_allowed"},
+    "Practice mode:": {"practice_stop"},
+    "Sign in (or create your account) on {}": {"account_theirs", "sign_in_refused"},
+}
+
+
+def test_a_stop_the_desk_caused_is_coded_as_the_desks():
+    tree = ast.parse(PIPELINE.read_text(encoding="utf-8"))
+    found: dict[str, set[str]] = {}
+    for call in ast.walk(tree):
+        if not (isinstance(call, ast.Call) and getattr(call.func, "attr", "") in ("_pause", "_account_theirs")):
+            continue
+        said = _words(call.args[2]) if len(call.args) > 2 else ""  # (the reason: both take it third)
+        code = _codes(next((k.value for k in call.keywords if k.arg == "code"), ast.Constant(None))) or set()
+        for fragment in EXPECTED_CODES:
+            if fragment in said:
+                found.setdefault(fragment, set()).update(code)
+    assert found == EXPECTED_CODES
 
 
 def test_the_code_audit_reads_only_literals():

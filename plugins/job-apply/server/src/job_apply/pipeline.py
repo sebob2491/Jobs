@@ -852,17 +852,19 @@ STOP_CODES = frozenset({
     "questions", "profile_gap", "degree_list", "box_refused_answer", "box_not_filled", "upload_not_kept",
     # a step that wouldn't go on, or no way found into or through the application
     "step_not_saved", "no_step_button", "button_greyed", "no_way_in", "too_long", "agreement_stayed",
-    # the site's own trouble
-    "blank_page", "page_not_loaded", "site_error", "site_down", "site_blocks", "try_later", "posting_closed",
+    # the site's own trouble (or one the desk can't tell from it: a host that couldn't be reached)
+    "blank_page", "page_not_loaded", "site_error", "site_went_wrong", "site_unreachable", "site_down",
+    "site_blocks", "try_later", "posting_closed",
     # the person's by the rules
-    "bot_check", "captcha", "cookie_banner", "notice_theirs", "sends_first", "assessment", "screening",
-    "maybe_duplicate", "tailor",
-    # accounts, sign-ins and emails
-    "account_theirs", "account_form_filled", "account_captcha", "security_questions", "account_form_more",
-    "sign_in_refused", "reset_failed", "email_code", "verify_pending",
+    "bot_check", "captcha", "cookie_banner", "notice_theirs", "agreement_theirs", "sends_first", "practice_stop",
+    "assessment", "screening", "maybe_duplicate", "tailor",
+    # accounts, sign-ins and emails: the person's steps, then the desk's own that didn't work
+    "account_theirs", "account_form_filled", "account_captcha", "security_questions", "email_code",
+    "verify_pending", "account_form_more", "account_step_failed", "sign_in_refused", "reset_failed",
+    "reset_pending",
     # the send
-    "your_submit", "account_as_you_apply", "review_errors", "not_submitted", "submit_failed", "check_submit",
-    "restarted",
+    "your_submit", "submit_not_allowed", "account_as_you_apply", "review_errors", "not_submitted", "submit_failed",
+    "check_submit", "restarted",
 })
 
 
@@ -3266,7 +3268,7 @@ class Applier:
                 where = f"{host}, which" if host else "a page that"
                 return self._pause(run, "stuck", f"The application went on to {where} couldn't be reached, so the page "
                                    "didn't load. Press Resume to try again, or open the posting in your own browser to "
-                                   "apply there.", code="site_error")
+                                   "apply there.", code="site_unreachable")
             if (kind == "page" and not data.get("fields") and not run.refreshed and run.page is not None
                     and _REFRESH_ASKED.search(text)):
                 # KLA's Workday right after its sign-in (live, Oct 2026): "Something went wrong. Please refresh
@@ -3615,7 +3617,7 @@ class Applier:
                 return self._pause(run, "sign_in", f"Sign in (or create your account) on {_site(run, data)} in the "
                                    "desk's browser window; the desk carries on by itself after that." + failed
                                    + tip,
-                                   seen=data, code="account_theirs")
+                                   seen=data, code="sign_in_refused" if failed else "account_theirs")
             if kind == "email_code":
                 await self._bring_forward(run)
                 watching = (" Your email app password is saved, so the desk is also watching your inbox for it."
@@ -3974,12 +3976,12 @@ class Applier:
                 return self._pause(run, "stuck", f"Practice mode: “{action['text'].strip()}” sends a form "
                                    "and isn't a step button I know, so I didn't press it. Nothing was sent. This is as "
                                    "far as practice mode goes here: skip the job, or turn practice mode off to go on.",
-                                   code="sends_first")
+                                   code="practice_stop")
             if clicked.get("clicked") is False and str(clicked.get("blocked") or "").startswith("Cookie"):
                 # never picked by the desk (it only declines banners), but never taken for the review page
                 return self._pause(run, "stuck", "A cookie or privacy banner is in the way, and the desk never "
                                    "accepts one for you. Choose in the desk's browser window, then press Resume.",
-                                   code="cookie_banner")
+                                   code="no_step_button")
             if clicked.get("clicked") is False:  # the guard says it's the final submit
                 return await self._finish(run, data, text)
             self._log(run, f"clicked “{action['text']}”")
@@ -4137,7 +4139,7 @@ class Applier:
                     return _Then.AGAIN
             self._pause(run, "stuck", f"The way on is \u201c{said}\u201d, which agrees to something in your name, so "
                         "it's yours to press. Read it and press it in the desk's browser window if "
-                        "you're happy to, then press Resume.", code="notice_theirs")
+                        "you're happy to, then press Resume.", code="agreement_theirs")
             return _Then.STOP
         if _account_step(data):
             # the person's to do (an account site's steps aren't a Create Account form the desk knows,
@@ -4219,7 +4221,7 @@ class Applier:
             self._pause(run, "stuck", f"{_site(run, data)} said \u201cSomething went wrong\u201d again and asked for "
                         "the page to be refreshed, and I had reloaded once already for this application. That's the "
                         "site's own trouble: reload the page in the desk's browser window (now, or later if it "
-                        "still says so), then press Resume.", code="site_error")
+                        "still says so), then press Resume.", code="site_went_wrong")
             return _Then.STOP
         if (run.opened_fresh and not ps.pressed and not ps.sign_ins and not ps.agreed and not ps.dismissed
                 and not run.seen_form and not run.start_reloaded and not run.hands_on and not run.pressed_before
@@ -4280,7 +4282,7 @@ class Applier:
             self._pause(run, "stuck", f"{_site(run, data)} said \u201cSomething went wrong\u201d and asked for the "
                         "page to be refreshed; I reloaded it, and it came back without the application, only the "
                         "site's header and footer. That's the site's own trouble: reload the page in the desk's "
-                        "browser window (now, or later if it's still so), then press Resume.", code="site_error")
+                        "browser window (now, or later if it's still so), then press Resume.", code="site_went_wrong")
             return _Then.STOP
         if (run.came_back_empty and not ps.pressed and not run.pressed_before and not data.get("fields") and all(
                 h.strip() == str(data.get("title") or "").strip() for h in data.get("headings") or [])):
@@ -4291,7 +4293,7 @@ class Applier:
             self._pause(run, "stuck", f"{_site(run, data)}'s page still shows only its header and footer, without the "
                         "application, as after its \u201cSomething went wrong\u201d. That's the site's own trouble: "
                         "reload the page in the desk's browser window (later, if it's still so), then press Resume.",
-                        code="site_error")
+                        code="site_went_wrong")
             return _Then.STOP
         self._pause(run, "stuck", "I couldn't find the button that moves this application on. Press it in the desk's "
                     "browser window, then press Resume.", code="no_step_button")
@@ -5463,13 +5465,13 @@ class Applier:
         site = _site(run, data)
         if data.get("captcha") or data.get("challenge"):
             return await self._account_theirs(run, data, f"{site} has no account for your email yet, and its sign-in shows "
-                                        "a picture check (CAPTCHA), which is yours")
+                                        "a picture check (CAPTCHA), which is yours", code="account_theirs")
         run.accounts_tried += 1
         try:
             await self.srv.click(create["id"])
         except Exception:  # gone, or it won't take a click: the person's, as without the setting
             return await self._account_theirs(run, data, f"{site} has no account for your email yet, and its "
-                                        f"“{create['text'].strip()}” didn't take my click")
+                                        f"“{create['text'].strip()}” didn't take my click", code="account_step_failed")
         self._log(run, f"{site} has no account for your email, so I pressed “{create['text'].strip()}” to make "
                   "one" + _manage_hint())
         now, _ = await self._after_press(data)
@@ -5478,7 +5480,8 @@ class Applier:
             return True  # its emailed code: the main loop's (the inbox's, or the person's)
         if view is None:
             return await self._account_theirs(run, now, f"I pressed {site}'s “{create['text'].strip()}”, as it has "
-                                        "no account for your email yet, and it showed a step I don't know")
+                                        "no account for your email yet, and it showed a step I don't know",
+                                              code="account_step_failed")
         return await self._email_account_step(run, now, view)
 
     async def _email_account_step(self, run: Run, data: dict[str, Any], view: str) -> bool:
@@ -5494,7 +5497,7 @@ class Applier:
         site = _site(run, data)
         if data.get("captcha") or data.get("challenge"):
             return await self._account_theirs(run, data, f"{site}'s steps of making your account show a picture check "
-                                        "(CAPTCHA), which is yours")
+                                        "(CAPTCHA), which is yours", code="account_theirs")
         ticked: list[dict[str, Any]] = []
         pattern = _ONE_TIME_CODE if view == "options" else _ACCOUNT_ON
         button = self._account_button(data.get("actions") or [], pattern)
@@ -5508,24 +5511,24 @@ class Applier:
             data, button = now, self._account_button(now.get("actions") or [], pattern)
         if button is None:
             return await self._account_theirs(run, data, f"I couldn't find the button that goes on with making your account "
-                                        f"on {site}")
+                                        f"on {site}", code="no_step_button")
         if view == "consent":
             ticked = _consent_boxes(data)
             if ticked and not (await srv.fill_form([{"id": f["id"], "value": True} for f in ticked])).get("ok"):
                 return await self._account_theirs(run, data, f"{site} asks you to agree to its terms before making your "
-                                            "account, and its box didn't take my tick")
+                                            "account, and its box didn't take my tick", code="account_step_failed")
             for f in ticked:
                 self._log(run, f"ticked “{_short(f.get('label') or '')}” to make your account on {site}")
             if not await self._give_other_positions(run, data, _other_positions_boxes(data)):
                 return await self._account_theirs(run, data, f"{site} asks you to agree to be considered for other "
                                             "open positions before making your account, and its choice didn't take my "
-                                            "click")
+                                            "click", code="account_step_failed")
         elif view == "email":
             address = config.Profile.load().get("personal.email")
             box = next(f for f in data.get("fields") or [] if not f.get("disabled") and not f.get("aside"))
             if not address:
                 return await self._account_theirs(run, data, f"{site} asks for your email to make your account, and your "
-                                            "profile has none")
+                                            "profile has none", code="profile_gap")
             if str(box.get("value") or "").strip().lower() != address.strip().lower():
                 await srv.fill_form([{"id": box["id"], "value": address}])
         try:
@@ -5533,7 +5536,7 @@ class Applier:
             await srv.browser.click(button["id"], allow_submit=True)
         except Exception:
             return await self._account_theirs(run, data, f"{site}'s “{button['text'].strip()}” didn't take my click "
-                                        "while I was making your account there")
+                                        "while I was making your account there", code="account_step_failed")
         if view == "email":
             self._log(run, f"gave {site} your email for the new account and pressed “{button['text'].strip()}”")
         elif view == "options":
@@ -5567,9 +5570,10 @@ class Applier:
                                         f"“{button['text'].strip()}” in the desk's browser window if you're happy to "
                                         "(or sign in with the email you use there). The desk then makes the account "
                                         "with your email and the code it emails you, and carries on",
-                                        tail=False)
+                                        tail=False, code="account_theirs")
         return await self._account_theirs(run, now, f"I pressed “{button['text'].strip()}” while making your "
-                                    f"account on {site}, and it didn't go on" + (f": “{said}”" if said else ""))
+                                    f"account on {site}, and it didn't go on" + (f": “{said}”" if said else ""),
+                                          code="account_step_failed")
 
     async def _give_other_positions(self, run: Run, data: dict[str, Any], fields: list[dict[str, Any]],
                                     refused: bool = False) -> bool:
@@ -5596,12 +5600,15 @@ class Applier:
         said = f"{label}: {options[0]}" if len(options) == 1 and label else label or (options[0] if options else "a box")
         return said if len(said) <= 160 else said[:158].rsplit(" ", 1)[0].rstrip(" ,.;:") + "…"
 
-    async def _account_theirs(self, run: Run, data: dict[str, Any], why: str, tail: bool = True) -> bool:
-        """Pause on a step of making an account that's the person's (False, for the step's caller)."""
+    async def _account_theirs(self, run: Run, data: dict[str, Any], why: str, tail: bool = True, *,
+                              code: str) -> bool:
+        """Pause on a step of making an account that's the person's (False, for the step's caller). `code`: the stop's
+        (STOP_CODES): account_theirs for a step that's theirs (a CAPTCHA, a choice), another where the desk's own
+        step didn't work (a click not taken, a button not found)."""
         await self._bring_forward(run)
         self._pause(run, "sign_in", why + (". Finish making the account in the desk's browser window (or sign in with "
                                            "the email you use there); the desk carries on by itself after that."
-                                           if tail else "."), seen=data, code="account_theirs")
+                                           if tail else "."), seen=data, code=code)
         return False
 
     async def _after_press(self, before: dict[str, Any]) -> tuple[dict[str, Any], str]:
@@ -5811,7 +5818,7 @@ class Applier:
                     "lets it do all this itself).")
         run.reset_waited = True
         self._pause(run, "email_code", f"{_site(run, data)} is emailing you a password reset: your saved password didn't "
-                    "sign in there." + watching, seen=data, code="email_code")
+                    "sign in there." + watching, seen=data, code="reset_pending")
         if watched:  # nothing for the person to do: the queue goes on, and the job is picked up again after
             run.blocking, run.left = False, True
             self._wake.set()
@@ -6397,7 +6404,7 @@ class Applier:
             srv._mark_ready(job, f"filled on {ATS_NAMES.get(ats, ats)} by the Job Desk")
             return self._pause(run, "your_submit", f"Filled. {ATS_NAMES.get(ats, ats)} doesn't allow automated "
                                "submitting: review it in the desk's browser window and click Submit yourself.",
-                               code="your_submit")
+                               code="submit_not_allowed")
         if _CAPTCHA.search(text):
             srv._mark_ready(job, "filled by the Job Desk; has a CAPTCHA")
             return self._pause(run, "captcha", "Filled. The form has a CAPTCHA: tick it in the desk's browser window, "

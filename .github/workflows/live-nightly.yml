@@ -19,7 +19,8 @@ name: live-nightly
 # "Last checked" line and tables are rewritten, which notifies no one. A run whose check
 # didn't finish fails (employers it didn't reach keep their last result). And a second comment, "Needs a person",
 # only when something does (scripts/nightly_summary.py --digest: an employer went backwards, a check didn't finish,
-# desk_handled.yaml drifted from the run, the test inbox refused its login, the weekly probes found a desk failure).
+# an employer desk_handled.yaml lists is out of "all the way" for two runs, the test inbox refused its login, the
+# weekly probes found a desk failure).
 # A second issue, "Nightly live trends" (label live-trends, never live-check: the steps here find the first
 # issue by that label and its title), keeps the history: the last 60 runs' counts per check, each employer's
 # last 20 runs, and the employers whose result keeps flipping. Its body is rewritten, never commented on.
@@ -376,9 +377,12 @@ jobs:
           gh issue edit "$TREND_ISSUE" --body-file live-compare/trend.md
       - name: Say what needs a person
         # (A2, the review of Oct 18: one comment on the issue only when something does: an employer went backwards, a
-        # check didn't finish, desk_handled.yaml drifted from the run, the test inbox refused its login. A quiet night
-        # posts nothing. As the issue above: full runs of the default branch only)
+        # check didn't finish, an employer desk_handled.yaml lists out of "all the way" for two runs, the test inbox
+        # refused its login. A quiet night posts nothing. As the issue above: full runs of the default branch only.
+        # A digest that fails never turns the run red. At most one a run: the probes' job, below, posts its own only
+        # in a run of the probes, which never runs this job: those name their checks, or are the weekly schedule's)
         if: always() && steps.compare.outcome == 'success' && (github.event_name == 'schedule' || github.ref_name == github.event.repository.default_branch)
+        continue-on-error: true
         env:
           ISSUE: ${{ steps.compare.outputs.issue }}
           UNFINISHED: ${{ steps.compare.outputs.unfinished }}
@@ -467,6 +471,7 @@ jobs:
       - name: Audit what it wrote
         # (the rules audit, as each check's: a consent the desk never gives, a submit, or the test identity's secrets,
         # an emailed code or a security answer in a file fail this job)
+        id: audit
         if: steps.setup.outputs.ready == 'true'
         env:
           LIVE_TEST_EMAIL: ${{ secrets.LIVE_TEST_EMAIL }}
@@ -480,8 +485,11 @@ jobs:
             echo "The probes wrote no report (see the job's log)."; fi >> "$GITHUB_STEP_SUMMARY"
       - name: Say what needs a person
         # (A2: a desk failure the probes found, or a test inbox that refused its login, as one comment on the nightly
-        # issue; nothing when the probes passed. Scheduled runs and the default branch's only)
-        if: always() && steps.setup.outputs.ready == 'true' && (github.event_name == 'schedule' || github.ref_name == github.event.repository.default_branch)
+        # issue; nothing when the probes passed. Scheduled runs and the default branch's only; never a probe of a few
+        # employers (never written to the issue), and only once the audit found nothing of the test identity's in what
+        # the probes wrote. A digest that fails never turns the run red)
+        if: always() && steps.setup.outputs.ready == 'true' && steps.audit.outcome == 'success' && github.event.inputs.companies == '' && (github.event_name == 'schedule' || github.ref_name == github.event.repository.default_branch)
+        continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}

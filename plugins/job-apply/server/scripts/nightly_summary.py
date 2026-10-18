@@ -76,13 +76,26 @@ def issue_body(path: str | None = None) -> str:
     return fetch(f"https://api.github.com/repos/{REPO}/issues/{ISSUE}")["body"]
 
 
+# a changes comment's first line (live_compare.render_comment): "3 changes since the last nightly live check ..."
+_CHANGES_HEAD = re.compile(r"^\d+ changes? since the last nightly live check")
+COMMENTS_PAGE = 30  # comments read a page at a time, newest page first
+COMMENT_PAGES = 3  # and at most this many pages back
+
+
 def last_comment() -> str:
+    """The newest changes comment on the issue (live_compare's), passing over the ones after it that aren't one: the
+    "Needs a person" digest posted after it (the review of stop-codes, Oct 18: --changes read the digest and found no
+    change at all), or a person's. "" when none of the last few pages has one."""
     issue = fetch(f"https://api.github.com/repos/{REPO}/issues/{ISSUE}")
     n = issue.get("comments") or 0
-    if not n:
-        return ""
-    page = fetch(f"https://api.github.com/repos/{REPO}/issues/{ISSUE}/comments?per_page=1&page={n}")
-    return page[0]["body"] if page else ""
+    page = -(-n // COMMENTS_PAGE)  # (the last page: GitHub lists the oldest first)
+    for at in range(page, max(page - COMMENT_PAGES, 0), -1):
+        got = fetch(f"https://api.github.com/repos/{REPO}/issues/{ISSUE}/comments?per_page={COMMENTS_PAGE}&page={at}")
+        for comment in reversed(got or []):
+            body = str((comment or {}).get("body") or "")
+            if _CHANGES_HEAD.match(body):
+                return body
+    return ""
 
 
 # --- the trend issue: the last runs, and the employers that flip ----------------------------------------------
@@ -208,6 +221,8 @@ CODE_WHY: dict[str, tuple[str, str]] = {
     "blank_page": ("Blank page", "Being looked into"),
     "page_not_loaded": ("Page didn't finish loading", "Being looked into"),
     "site_error": ("Site error (the site's own page)", "Reload or open the posting later, then Resume"),
+    "site_went_wrong": ("Site error (\"Something went wrong\")", "Being looked into"),
+    "site_unreachable": ("The application's page couldn't be reached", "Being looked into"),
     "site_down": ("Site error (down for maintenance)", "Resume once it's back"),
     "site_blocks": ("Site blocks automated browsers", "Apply in your own browser"),
     "try_later": ("Site error (it says try again later)", "Leave it a while, then Resume"),
@@ -216,7 +231,9 @@ CODE_WHY: dict[str, tuple[str, str]] = {
     "captcha": ("CAPTCHA", "Solve it; the desk carries on"),
     "cookie_banner": ("Cookie banner with no decline", "Choose in the banner (or turn on accept_cookies)"),
     "notice_theirs": ("AI or privacy notice", "Accepted for you (accept_notices); practice runs leave it"),
+    "agreement_theirs": ("Privacy notice to accept", "Accepted for you (accept_notices)"),
     "sends_first": ("Sends your name and email first", "Press its Apply yourself"),
+    "practice_stop": ("Practice mode stops at a button that sends", "Press it yourself (practice sends nothing)"),
     "assessment": ("An assessment to take", "Take it, then press Resume"),
     "screening": ("A tax credit screening", "Fill it in, then press Resume"),
     "maybe_duplicate": ("May be a job applied to already", "Apply anyway, or Skip"),
@@ -226,11 +243,14 @@ CODE_WHY: dict[str, tuple[str, str]] = {
     "account_captcha": ("Account form (site) with a CAPTCHA", "Solve the CAPTCHA, create the account"),
     "security_questions": ("Account needed (site): security questions", "Answer them, create the account"),
     "account_form_more": ("Account form wants more", "Being looked into"),
+    "account_step_failed": ("An account step the desk couldn't take", "Being looked into"),
     "sign_in_refused": ("Sign-in failed after the account was made", "Being looked into"),
     "reset_failed": ("Password reset didn't take", "Being looked into"),
+    "reset_pending": ("Waiting on a password reset email", "Being looked into"),
     "email_code": ("Account needed (an emailed code)", "The desk reads it from the inbox"),
     "verify_pending": ("Account needed (a link to confirm the email)", "Open the emailed link"),
     "your_submit": ("Filled; its send button reads \"Apply\"", "Check it, press Apply"),
+    "submit_not_allowed": ("Filled; its job system takes no automated Submit", "Check it, press Submit"),
     "account_as_you_apply": ("Account made as you apply", "Choose a password, press its Apply"),
     "review_errors": ("Review page shows errors", "Being looked into"),
     "not_submitted": ("Submit not pressed (see the run)", "Being looked into"),
@@ -251,7 +271,8 @@ def stop_code(said: str) -> tuple[str, str]:
 
 def _coded_why(code: str, d: str) -> tuple[str, str]:
     """CODE_WHY's place for a code, naming the site from the reason (`d`) where it can: the place stays in its bucket
-    whatever the reason says."""
+    whatever the reason says. (Two stops that only a reason's words told apart have codes of their own: a detail cut
+    short loses its words.)"""
     where, what = CODE_WHY[code]
     form = _FORM_OF.search(d)
     site = next((g for g in form.groups() if g), "") if form else ""
@@ -259,14 +280,6 @@ def _coded_why(code: str, d: str) -> tuple[str, str]:
         where = f"Account needed ({system.group(1)})"
     elif code in ("account_form_filled", "account_captcha", "security_questions") and site:
         where = where.replace("(site)", f"({site})", 1)
-    elif code == "site_error" and "Something went wrong" in d:
-        where, what = "Site error (\"Something went wrong\")", "Being looked into"
-    elif code == "notice_theirs" and "way on is" in d:
-        where, what = "Privacy notice to accept", "Accepted for you (accept_notices)"
-    elif code == "your_submit" and "doesn't allow automated" in d:
-        where, what = "Filled; its job system takes no automated Submit", "Check it, press Submit"
-    elif code == "sends_first" and d.startswith("Practice mode"):
-        where, what = "Practice mode stops at a button that sends", "Press it yourself (practice sends nothing)"
     elif code == "profile_gap" and "past jobs" in d:
         where = "Past jobs' details the profile lacks"
     return where, what
@@ -499,9 +512,9 @@ def digest(*, comment: str = "", unfinished: Iterable[str] = (), drift: Iterable
            probes: Iterable[str] = (), refused: Iterable[str] = (), run_url: str = "") -> str:
     """One comment for the nightly issue when something needs a person (A2, the review of Oct 18), else "" (a quiet
     night posts nothing): an employer that went backwards (the changes comment's own line), a check that didn't
-    finish, desk_handled.yaml against the last run (handled_drift), the weekly probes' desk failures, and a test
-    inbox that refused its login. (A Windows-only failure on main is the weekly flake report's: scripts/flake_rate.py;
-    a new "Report:" issue is GitHub's own notification.)"""
+    finish, an employer desk_handled.yaml lists out of "all the way" for two runs (handled_gone), the weekly probes'
+    desk failures, and a test inbox that refused its login. (A Windows-only failure on main is the weekly flake
+    report's: scripts/flake_rate.py; a new "Report:" issue is GitHub's own notification.)"""
     lines = []
     if m := _WENT_BACK.search(comment or ""):
         lines.append(m.group(0).replace("**Went backwards:**", "Went backwards:", 1))
@@ -519,6 +532,20 @@ def digest(*, comment: str = "", unfinished: Iterable[str] = (), drift: Iterable
     return "\n".join([head, "", *(f"- {line}" for line in lines)]) + "\n"
 
 
+def handled_gone(now: list[str], listed: list[str], trend: live_compare.Trend, runs: int = 2) -> list[str]:
+    """desk_handled.yaml's drift that needs a person (the review of stop-codes, Oct 18): an employer it lists that the
+    accounts check hasn't taken all the way in the last `runs` runs it was checked in (the trend, this run's included),
+    not one that flips (--handled leaves those out: said by the summary, not here). An employer the run took all the
+    way that the file doesn't list waits for the next refresh before a release: no one's needed for that."""
+    went = {n.casefold() for n in now}
+    flips = {n.casefold() for n in flippers(trend)}
+    letters = {name.casefold(): said for name, said in (trend.letters.get("accounts") or {}).items()}
+    gone = [n for n in listed if n.casefold() not in went and n.casefold() not in flips
+            and len(seen := letters.get(n.casefold(), "").replace("-", "")) >= runs and "R" not in seen[-runs:]]
+    return [f"desk_handled.yaml: {len(gone)} listed, not all the way in the accounts check's last {runs} runs: "
+            + ", ".join(gone)] if gone else []
+
+
 def digest_from(*, body: str = "", comment: str = "", trend_body: str = "", unfinished: str = "",
                 logs: Iterable[str] = (), probes_dir: Path | None = None, run_url: str = "") -> str:
     """digest() from what the nightly's compare job (or the weekly probes' job) has at hand: the issue's new body and
@@ -526,9 +553,9 @@ def digest_from(*, body: str = "", comment: str = "", trend_body: str = "", unfi
     space-separated), the checks' logs and the probes' folder. Nothing is fetched."""
     drift: list[str] = []
     state = (live_compare.read_state(body) or {}) if body else {}
-    if state.get("accounts"):
-        trend = live_compare.read_trend(trend_body) if trend_body else None
-        drift = handled_drift(handled(state, details(body)), listed_handled(), flippers(trend) if trend else {})
+    trend = live_compare.read_trend(trend_body) if trend_body else None
+    if state.get("accounts") and trend is not None:
+        drift = handled_gone(handled(state, details(body)), listed_handled(), trend)
     failures: list[str] = []
     if probes_dir is not None:
         try:

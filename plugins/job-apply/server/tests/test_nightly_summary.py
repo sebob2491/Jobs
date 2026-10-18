@@ -454,9 +454,22 @@ def test_handled_without_the_trend_issue_is_as_before_with_a_warning(tmp_path, c
 
 # --- what needs a person: the digest (A2, the review of Oct 18) -------------------------------------------------
 
-def _digest_files(tmp_path, *, comment="", accounts=None, probes=None, log=""):
+def _accounts_nights(*outs):
+    """The accounts check's last six runs at the employers desk_handled.yaml lists, all at their review page but where
+    `outs` says ({employer: its letters, oldest first: R reached, x not}), and one new to the check that the file
+    doesn't list (the next refresh's, no one's now). The last run's outcomes, and the trend with all six."""
+    listed = ns.listed_handled()
+    said = {name: "RRRRRR" for name in listed} | {"Example Not Listed Co": "xxxxxR"}
+    for out in outs:
+        said |= out
+    runs = [{"accounts": {name: "ready" if letters[i] == "R" else "needs_you stuck" for name, letters in said.items()}}
+            for i in range(6)]
+    return runs[-1]["accounts"], _trend(runs)
+
+
+def _digest_files(tmp_path, *, comment="", accounts=None, probes=None, log="", trend=None):
     """The files the nightly's compare job has: the issue's new body (the accounts check's state as given, else none),
-    the changes comment, a check's log and the probes' folder."""
+    the changes comment, the trend issue's new body, a check's log and the probes' folder."""
     state = {"pipeline": {"KLA": "ready"}} | ({"accounts": accounts} if accounts else {})
     current = {check: {name: lc.Result(outcome, "Technician") for name, outcome in outcomes.items()}
                for check, outcomes in state.items()}
@@ -466,6 +479,9 @@ def _digest_files(tmp_path, *, comment="", accounts=None, probes=None, log=""):
     (tmp_path / "run.log").write_text(log, encoding="utf-8")
     args = ["--digest", "--body-file", str(body), "--comment-file", str(tmp_path / "comment.md"),
             "--logs", str(tmp_path / "run.log"), "--run-url", "https://example.com/run/9"]
+    if trend is not None:
+        (tmp_path / "trend.md").write_text(lc.render_trend(trend), encoding="utf-8")
+        args += ["--trend-body", str(tmp_path / "trend.md")]
     if probes is not None:
         (tmp_path / "probes").mkdir()
         (tmp_path / "probes" / "probes.json").write_text(json.dumps(probes), encoding="utf-8")
@@ -483,12 +499,18 @@ QUIET = """2 changes since the last nightly live check:
 
 
 def test_a_quiet_day_has_no_digest(tmp_path, capsys):
-    """Changes that need no one (an employer further on, a bot check), every check finished, the handled list as the
-    run, the probes passing and the inbox letting the test identity in: nothing is printed, so nothing is posted."""
-    listed = ns.listed_handled()
+    """Changes that need no one (an employer further on, a bot check), every check finished, the probes passing and the
+    inbox letting the test identity in: nothing is printed, so nothing is posted. Nor for desk_handled.yaml as a real
+    night has it (the review of stop-codes: "2 listed that flip" posted every night): one it lists that flips, one
+    out of "all the way" this run only, and one the run took all the way that it doesn't list."""
     probes = {"reset": [{"employer": "Example", "status": "pass", "warning": "", "passes": []}], "tailored": []}
     log = 'LIVE_INBOX {"company": "Acme", "messages": [], "mail_problem": null}\n'
-    args = _digest_files(tmp_path, comment=QUIET, accounts={name: "ready" for name in listed}, probes=probes, log=log)
+    flipper, once = ns.listed_handled()[:2]
+    accounts, trend = _accounts_nights({flipper: "RxRxRx", once: "RRRRRx"})
+    assert ns.flippers(trend) and accounts[flipper] != "ready" and accounts[once] != "ready"
+    assert any("listed that flip" in line for line in
+               ns.handled_drift(ns.handled({"accounts": accounts}, {}), ns.listed_handled(), ns.flippers(trend)))
+    args = _digest_files(tmp_path, comment=QUIET, accounts=accounts, probes=probes, log=log, trend=trend)
     assert ns.main(args) == 0
     assert capsys.readouterr().out == ""
     assert ns.digest() == "" and ns.digest_from() == ""
@@ -501,8 +523,9 @@ def test_each_thing_that_needs_a_person_makes_a_digest(tmp_path, capsys):
     cases = {
         "went": (dict(comment=went), [], "Went backwards: 1 employer no longer reaches the review page: KLA"),
         "unfinished": ({}, ["--unfinished", "accounts hr"], "A check didn't finish: accounts, hr"),
-        "drift": (dict(accounts={"Example Not Listed Co": "ready"}), [],
-                  "desk_handled.yaml: 1 all the way in the last run, not listed: Example Not Listed Co"),
+        "drift": (dict(zip(("accounts", "trend"), _accounts_nights({ns.listed_handled()[2]: "RRRRxx"}))), [],
+                  f"desk_handled.yaml: 1 listed, not all the way in the accounts check's last 2 runs: "
+                  f"{ns.listed_handled()[2]}"),
         "probes": (dict(probes={"reset": [{"employer": "Example Tenant", "status": "fail",
                                            "warning": "pass 2 never signed in", "passes": []}], "tailored": []}), [],
                    "Weekly probes, the desk's failure: Example Tenant: pass 2 never signed in"),
@@ -526,3 +549,29 @@ def test_probes_that_wrote_no_results_and_a_refused_inbox_are_read_as_such(tmp_p
     assert ns.inbox_refusals(['LIVE_INBOX {"company": "A", "error": "error: b\'[AUTHENTICATIONFAILED] Invalid\'"}\n'
                               'LIVE_INBOX {"company": "B", "error": "TimeoutError: timed out"}\nLIVE_INBOX not json',
                               'LIVE_INBOX {"company": "A", "mail_problem": "AUTHENTICATIONFAILED"}']) == ["A"]
+
+
+def test_the_changes_are_read_from_the_newest_changes_comment_not_a_digest_after_it(monkeypatch, capsys):
+    """The review of stop-codes (Oct 18): the "Needs a person" digest is posted after the changes comment, so the
+    issue's newest comment was the digest, and --changes read it as no change at all. The newest changes comment is
+    read, past the digest and a person's comment; one on an earlier page too."""
+    comments = [{"body": f"{i} changes since the last nightly live check: an old one"} for i in range(40)]
+    comments += [{"body": COMMENT}, {"body": "**Needs a person** ([run](https://example.com/run/2)):\n\n- Went "
+                                             "backwards: ..."}, {"body": "Looked at it: a site's."}]
+    pages: list[str] = []
+
+    def fake(url):
+        if url.endswith("/issues/54"):
+            return {"comments": len(comments)}
+        pages.append(url)
+        page, per = int(url.rsplit("page=", 1)[1]), int(url.split("per_page=")[1].split("&")[0])
+        return comments[(page - 1) * per:page * per]
+    monkeypatch.setattr(ns, "fetch", fake)
+    assert ns.last_comment() == COMMENT
+    assert ns.main(["--changes"]) == 0
+    out = capsys.readouterr().out
+    assert "Look at (likely the desk's): 1" in out and "accounts: Intel" in out, out
+    comments[41:] = [{"body": "Looked at it."}] * 35  # (the changes comment a page further back)
+    assert ns.last_comment() == COMMENT and len(pages) > 3
+    comments[:] = [{"body": "Looked at it."}] * 100  # (none in the last pages: nothing, never a wrong one)
+    assert ns.last_comment() == ""
