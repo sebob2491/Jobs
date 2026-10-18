@@ -107,7 +107,8 @@ ul.rows { list-style: none; margin: 0; padding: 0; }
 button.score { border: 0; cursor: pointer; }
 button.score:hover { outline: 1px solid var(--muted); }
 .parts { font-size: 13px; color: var(--muted); margin-top: 6px; overflow-wrap: anywhere; }
-.parts .pt { white-space: nowrap; font-variant-numeric: tabular-nums; }
+/* (the words wrap, so a long one, an employer's name, never widens the page; only the number stays whole) */
+.parts .n { white-space: nowrap; font-variant-numeric: tabular-nums; }
 .state button.link { font-size: 13px; }
 /* the Safety window: each setting, its value, and what it means now */
 #safety-body ul { list-style: none; margin: 0; padding: 0; }
@@ -862,7 +863,8 @@ function renderRows() {
       ? `<button class="score ${scoreClass(fit.score)}" data-parts="${esc(r.url)}" aria-expanded="${partsOpen.has(r.url)}" title="${esc(tip)}">${esc(fit.score)}</button>`
       : `<span class="score ${scoreClass(fit.score)}" title="${esc(tip)}">${esc(fit.score)}</span>`;
     const sum = parts.length && partsOpen.has(r.url) ? `<div class="parts">${(fit.parts || []).map((p) =>
-      `<span class="pt">${esc(p.why)} ${esc(points(p.points, p.why === "start"))}</span>`).join(" · ")} = ${esc(fit.score)}</div>` : "";
+      `<span class="pt">${esc(p.why)} <span class="n">${esc(points(p.points, p.why === "start"))}</span></span>`).join(" · ")}
+      = <span class="n">${esc(fit.score)}</span></div>` : "";
     return {key: r.url, html: `<li class="row ${DONE.has(r.status) || unwanted ? "done" : ""}">
       <input type="checkbox" data-pick="${esc(r.url)}" ${checked} ${done ? "disabled" : ""} aria-label="Select ${esc(r.title)}">
       ${score}

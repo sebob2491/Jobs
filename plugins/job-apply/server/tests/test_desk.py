@@ -13,7 +13,7 @@ import yaml
 from conftest import browser_available, fixture_url, person_browser, run
 
 import job_apply.pipeline as pipeline
-from job_apply import autofill, config
+from job_apply import autofill, config, mailbox
 from job_apply.desk import Desk
 from job_apply.postings import Posting
 
@@ -3885,6 +3885,11 @@ def test_the_safety_window_says_each_setting_as_the_desk_acts_on_it(srv, job_app
     assert accounts["value"] == "on" and "ticking only the site's terms (never a newsletter)" in accounts["said"]
     assert "\"Forgot password\"" in accounts["said"] and "CAPTCHA or security question" in accounts["said"]
     assert "one with no way to decline is accepted for you" in s["accept_cookies"]["said"]
+    # (saved, for an address whose mail the desk can't read: as its inbox has it, and the page's notices left alone)
+    assert s["email_password"]["value"] == "saved, but the desk can't use it now"
+    assert "can't read mail for example.com addresses" in s["email_password"]["said"] and desk.applier.mail_problem is None
+    monkeypatch.setitem(mailbox.IMAP_HOSTS, "example.com", "imap.example.com")
+    s = lines()
     assert s["email_password"]["value"] == "saved"
     assert "the password-reset email it just asked that site for" in s["email_password"]["said"]
     assert "not-a-real-app-password" not in json.dumps(desk.safety())
@@ -3902,7 +3907,7 @@ def test_the_safety_window_says_each_setting_as_the_desk_acts_on_it(srv, job_app
     assert "JOB_APPLY_NEVER_SUBMIT=1" in lines()["practice"]["where"]
     monkeypatch.delenv("JOB_APPLY_NEVER_SUBMIT")
     _set_profile_settings(job_apply_home, submit_mode="review", accept_notices=False)
-    desk.troubleshoot = True
+    desk.troubleshoot = desk.applier.hold_submits = True  # (as its box sets them: settings_view)
     s = lines()
     assert s["auto_submit"]["value"] == "off while Troubleshooting is on" and s["troubleshoot"]["value"] == "on"
     assert s["accept_notices"]["value"] == "off" and "the desk stops for you" in s["accept_notices"]["said"]
@@ -4022,3 +4027,225 @@ def test_the_page_marks_new_openings_hides_one_not_wanted_with_undo_and_shows_sa
     assert seen["safety"].startswith("Submit for me: off. The desk stops at each review page; you press Submit."), seen
     assert seen["safety_lines"] >= 12, seen
     assert all(scroll <= client for scroll, client in seen["sizes"]), seen["sizes"]
+
+
+def _marked_on_indeed(srv):
+    """A job Claude saved from Indeed, marked Not interested on its row in a desk whose queue isn't worked."""
+    saved = srv.add_job(url=INDEED_JOB, title="Equipment Technician", company="Intel Corporation",
+                        location="Chandler, AZ", source="indeed")["job"]
+    desk = Desk(srv)
+    desk.applier.start = lambda: None  # (nothing is filled: what's queued is what's looked at)
+    desk.search.update(status="done", at=time.time())
+    desk.not_interested(INDEED_JOB, "pay")
+    return saved, desk
+
+
+def test_a_job_marked_not_interested_on_indeed_stays_so_on_the_employers_site(srv, job_apply_home):
+    """The review of 0.3.207 (HIGH, A): Not interested was kept by the address it was pressed on alone. A job marked on
+    Indeed, then found on the employer's site (one row, the same job: 0.3.206), wasn't hidden there and Apply with
+    Submit for me queued it; once the two were made one (its address moving to the employer's) the mark matched
+    nothing. The mark is the job's now (its number, and each of its addresses), checked by the job each opening is."""
+    from job_apply import desk as desk_module
+
+    saved, desk = _marked_on_indeed(srv)
+    t = srv.tracker()
+    desk.listings = [{"url": INTEL_JOB, "title": "Equipment Technician", "company": "Intel",
+                      "location": "US-Arizona-Chandler", "ats": "workday", "fit": _fit(80)}]
+    (row,) = desk.state()["listings"]
+    assert row["job_id"] == saved["id"] and (row["not_interested"] or {}).get("reason") == "pay", row
+    notes: dict = {}
+    assert desk.apply(urls=[INTEL_JOB], job_ids=[], submit=True, notes=notes) == ([], [])
+    assert notes == {"not_interested": ["Equipment Technician"]}
+    assert t.get(saved["id"])["url"] == INDEED_JOB  # (nor saved for Apply)
+    # made one with it all the same (Claude saves Intel's posting): its address is Intel's now, and the mark holds
+    srv.add_job(url=INTEL_JOB, title="Equipment Technician", company="Intel", location="US-Arizona-Chandler")
+    assert t.get(saved["id"])["url"] == INTEL_JOB and len(t.list()) == 1
+    assert desk.state()["listings"][0]["not_interested"]["reason"] == "pay"
+    for urls, ids in (([INTEL_JOB], []), ([INDEED_JOB], []), ([], [saved["id"]])):
+        assert desk.apply(urls=urls, job_ids=ids, submit=True) == ([], []), (urls, ids)
+    (job_apply_home / "recommendations.json").write_text(json.dumps({"results": desk.listings, "at": time.time()}),
+                                                        encoding="utf-8")
+    assert desk_module.whats_new(t, 0) == []
+    # Undo from its other address: the job shows again, and Apply queues it
+    assert t.undo_not_interested(INDEED_JOB) and t.marked_not_interested(job_id=saved["id"]) is None
+    assert desk.state()["listings"][0]["not_interested"] is None
+    assert desk.apply(urls=[INTEL_JOB], job_ids=[], submit=False) == ([saved["id"]], [])
+
+
+def test_a_job_marked_not_interested_on_the_employers_row_is_never_its_indeed_copy_either(srv, job_apply_home):
+    """The review of 0.3.207 (HIGH, B): marked on the employer's row (which is a job saved from Indeed: one row),
+    whats_new still listed the Indeed copy, and Apply queued it by its number. The row's job is marked, on every one of
+    its addresses."""
+    from job_apply import desk as desk_module
+
+    t = srv.tracker()
+    board = srv.add_job(url="https://www.indeed.com/viewjob?jk=9999999999999999", title="Field Service Engineer",
+                        company="Example Fab", location="Phoenix, AZ", source="indeed")["job"]
+    own = "https://examplefab.wd5.myworkdayjobs.com/External/job/Phoenix/Field-Service-Engineer_R77"
+    desk = Desk(srv)
+    desk.applier.start = lambda: None
+    desk.search.update(status="done", at=time.time())
+    desk.listings = [{"url": own, "title": "Field Service Engineer", "company": "Example Fab", "location": "Phoenix, AZ",
+                      "fit": _fit(80)}]
+    assert desk.state()["listings"][0]["job_id"] == board["id"]
+    desk.not_interested(own, "title")
+    (job_apply_home / "recommendations.json").write_text(json.dumps({"results": desk.listings, "at": time.time()}),
+                                                        encoding="utf-8")
+    assert desk_module.whats_new(t, 0) == []  # (neither the employer's posting nor its Indeed copy)
+    assert desk.apply(urls=[], job_ids=[board["id"]], submit=True) == ([], [])
+    assert desk.apply(urls=[own], job_ids=[], submit=True) == ([], [])
+    assert t.marked_not_interested(job_id=board["id"])["reason"] == "title"
+    assert t.marked_not_interested(url=board["url"])["reason"] == "title"
+    assert t.undo_not_interested(board["url"]) and t.marked_not_interested(url=own) is None
+    assert desk.apply(urls=[], job_ids=[board["id"]], submit=False) == ([board["id"]], [])
+
+
+def test_the_queue_never_takes_in_a_job_marked_not_interested(srv, job_apply_home):
+    """The review of 0.3.207 (HIGH): the queue itself refuses a job marked Not interested, however it comes (a Resume,
+    a call past the desk's Apply), as it refuses a skipped one; and a queue kept before a restart, or another desk's
+    taken over, leaves it out."""
+    saved, desk = _marked_on_indeed(srv)
+    with pytest.raises(ValueError, match="marked Not interested"):
+        desk.applier.enqueue(saved["id"], submit=True)
+    with pytest.raises(ValueError, match="marked Not interested"):
+        desk.applier.resume(saved["id"])
+    assert not desk.applier.tasks and saved["id"] not in desk.applier.runs
+    _keep_queue([saved["id"]], submit=True)  # (a queue kept before a restart, or another desk's, holding it)
+    later = Desk(srv)
+    later.applier.restore()
+    try:
+        assert saved["id"] not in later.applier.runs and not later.applier.tasks
+    finally:
+        run(later.applier.stop())  # (its hold on the kept queue given back)
+
+
+@pytest.mark.parametrize("practice", [False, True])
+@pytest.mark.parametrize("troubleshoot", [False, True])
+@pytest.mark.parametrize("accounts", [False, True])
+def test_the_safety_windows_troubleshooting_and_accounts_say_what_the_desk_does(srv, job_apply_home, practice,
+                                                                               troubleshoot, accounts):
+    """The review of 0.3.207 (HIGH): Troubleshooting off said "The desk applies for real." in practice mode too, and on
+    said the desk still makes accounts with account handling off or in practice mode; Make accounts spoke only of a
+    saved password, though the desk makes an Eightfold site's account with its emailed code and no password. Each line
+    goes by the desk's own functions now (_may_manage_accounts, its hold on sending)."""
+    _set_profile_settings(job_apply_home, submit_mode="dry_run" if practice else "review", manage_accounts=accounts)
+    desk = Desk(srv)
+    desk.troubleshoot = desk.applier.hold_submits = troubleshoot
+    s = {line["key"]: line for line in desk.safety()["lines"]}
+    said = s["troubleshoot"]["said"]
+    makes = accounts and not practice
+    if troubleshoot:
+        assert said.startswith("Nothing is submitted, by your Submit or for you.") and s["troubleshoot"]["value"] == "on"
+        assert ("makes accounts" in said) == makes, said
+    else:
+        assert said == ("Practice mode sends nothing either way." if practice else "The desk applies for real."), said
+    made = s["manage_accounts"]
+    assert (made["value"] == "on") == makes, made
+    if makes:
+        assert "with the job system's password saved under Site passwords, or with the code the site emails where it " \
+               "asks for no password (Eightfold's)" in made["said"], made
+        assert "never when it also signs you up for job alerts, a newsletter, a talent community or marketing" \
+            in made["said"], made
+
+
+def test_the_safety_window_turns_off_what_an_unreadable_profile_allows(srv, job_apply_home, monkeypatch):
+    """The review of 0.3.207 (LOW): with a profile.yaml that can't be read, the window showed the settings' defaults (on
+    for notices and accounts) while the desk's own functions allow nothing. Off until it's fixed, as the desk has it."""
+    desk = Desk(srv)
+    (job_apply_home / "profile.yaml").write_text("settings: [unclosed\n", encoding="utf-8")
+    shown = desk.safety()
+    s = {line["key"]: line for line in shown["lines"]}
+    assert shown["problem"] and "typo" in shown["problem"]
+    fix = "off until profile.yaml is fixed"
+    assert [s[k]["value"] for k in ("accept_notices", "manage_accounts", "accept_cookies", "email_codes",
+                                    "email_tracking", "auto_submit")] == [fix] * 6, s
+    assert s["practice"]["value"] == "can't tell until profile.yaml is fixed"
+    monkeypatch.setenv("JOB_APPLY_NEVER_SUBMIT", "1")
+    assert {line["key"]: line for line in desk.safety()["lines"]}["practice"]["value"] == "on"
+
+
+def test_the_safety_windows_words_leave_out_nothing_the_desk_and_claude_may_do(srv, job_apply_home):
+    """The review of 0.3.207 (LOW): the email_codes, consent and practice lines left things out: a verification link
+    Claude may open, that a consent to other positions is never given when it signs the person up for alerts or
+    marketing, and that Claude submits one the person confirms in the chat (submit_application's policy)."""
+    _set_profile_settings(job_apply_home, email_codes=True, manage_accounts=True)
+    s = {line["key"]: line for line in Desk(srv).safety()["lines"]}
+    assert "or when you tell Claude to submit one in the chat" in s["practice"]["said"]
+    assert "or a verification link" in s["email_codes"]["said"]
+    assert "a link only when it goes back to that site" in s["email_codes"]["said"]
+    assert "never when it also signs you up for job alerts, a newsletter, a talent community or marketing" \
+        in s["manage_accounts"]["said"]
+
+
+def test_desk_json_is_written_whole_or_not_at_all(srv, job_apply_home, monkeypatch):
+    """The review of 0.3.207 (MEDIUM): desk.json was written in place, and now at each look at the page: a write cut
+    short (a full disk) left it torn, and a torn one turns every switch back to its default, Troubleshooting's hold on
+    sending among them. It's written whole or not at all."""
+    import io
+
+    desk = Desk(srv)
+    desk.troubleshoot = desk.applier.hold_submits = True
+    desk._save_settings()
+    path = job_apply_home / "desk.json"
+    before = path.read_text(encoding="utf-8")
+
+    def torn(real_open):  # (a disk that fills up half way through the write)
+        def opener(*args, **kwargs):
+            f = real_open(*args, **kwargs)
+
+            class Half(io.TextIOBase):
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *exc):
+                    f.close()
+
+                def write(self, text):
+                    f.write(text[:len(text) // 2])
+                    f.flush()
+                    raise OSError(28, "No space left on device")
+            return Half()
+        return opener
+
+    with monkeypatch.context() as m:
+        m.setattr(Path, "open", torn(Path.open))
+        m.setattr(os, "fdopen", torn(os.fdopen))
+        desk.applier.auto_submit = True
+        with pytest.raises(OSError):
+            desk._save_settings()
+    assert path.read_text(encoding="utf-8") == before
+    assert Desk(srv).troubleshoot
+
+
+def test_the_score_breakdown_wraps_on_a_phone(srv, job_apply_home):
+    """The review of 0.3.207 (LOW): each part of a score's breakdown was kept on one line, so one naming a long
+    employer ("you said not interested in ...") pushed a phone's page to 716 px. Only the numbers stay whole now."""
+    long = "Example Semiconductor Equipment and Advanced Materials Manufacturing Holdings of North America"
+    desk = Desk(srv)
+    desk.applier.start = lambda: None
+    desk.search.update(status="done", at=time.time())
+    url = "https://example.com/long"
+    desk.listings = [{"company": long, "title": "Equipment Technician", "url": url, "location": "Phoenix, AZ",
+                      "fit": {**_fit(70), "parts": [{"why": "start", "points": 50},
+                                                    {"why": "title matches “Equipment Technician”", "points": 30},
+                                                    {"why": f"you said not interested in {long}", "points": -10}]}}]
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with person_browser() as browser:
+                page = await browser.new_page(viewport={"width": 390, "height": 900})
+                await page.goto(desk.url)
+                await page.click(f"button.score[data-parts='{url}']")
+                await page.wait_for_selector(".parts")
+                sizes = await page.evaluate("() => [document.documentElement.scrollWidth, "
+                                            "document.documentElement.clientWidth]")
+                text = " ".join((await page.inner_text(".parts")).split())
+                await browser.close()
+                return sizes, text
+        finally:
+            await desk.stop()
+
+    (scroll, client), text = run(go())
+    assert text.endswith(f"you said not interested in {long} −10 = 70"), text
+    assert scroll <= client, (scroll, client)

@@ -34,13 +34,15 @@ from starlette.responses import HTMLResponse, JSONResponse, Response
 from starlette.routing import Route
 
 from . import autofill, config, history, report
-from .pipeline import DESK_PASSWORDS, Applier, placed_key, question_key
+from .browser import _cookie_setting
+from .pipeline import (DESK_PASSWORDS, Applier, _may_accept_notices, _may_manage_accounts, _test_identity,
+                       placed_key, question_key)
 from .ats import JOB_BOARDS, detect_ats, job_board
 from .postings import FetchError, Posting, fetch_posting, finalize, parse_html
 from .recommend import not_interested_in, recommend, score_listing
 from .search import (MAX_ALTERNATIVES, alternatives, every_employer, load_companies, own_companies_path, search_area,
                      set_search_area)
-from .tracker import APPLICATION_STATUSES, company_key, normalize_url, standing
+from .tracker import APPLICATION_STATUSES, NotInterested, company_key, normalize_url, standing
 from .updates import UpdateCheck
 
 PAGE = Path(__file__).resolve().parent / "static" / "desk.html"
@@ -214,16 +216,18 @@ class Desk:
             pass
 
     def _save_settings(self) -> None:
+        """desk.json, all or nothing (it's written at each look at the page too): a write cut short (a full disk, the
+        program ending) leaves it as it was, never torn, which would turn every switch back to its default, Troubleshooting's
+        hold on sending among them."""
         config.ensure_home()
-        _settings_path().write_text(json.dumps({"auto_submit": self.applier.auto_submit,
+        config.write_text_atomic(_settings_path(), json.dumps({"auto_submit": self.applier.auto_submit,
                                                 "tailor_resumes": self.applier.tailor,
                                                 "handled_only": self.handled_only,
                                                 "troubleshoot": self.troubleshoot,
                                                 "auto_search": self.auto_search,
                                                 "jobs_at_once": self.applier.jobs_at_once,
                                                 "jobs_at_once_profile": self._at_once_profile,
-                                                "last_seen": self.last_seen, "seen_since": self.seen_since}),
-                                    encoding="utf-8")
+                                                "last_seen": self.last_seen, "seen_since": self.seen_since}))
 
     def saw(self, now: float | None = None) -> None:
         """The person looked at the openings (the page loaded, or came to the front). A look VISIT_GAP or more after the
@@ -769,7 +773,7 @@ class Desk:
         Not one the desk has a card for (begun, or skipped from its card, whose Undo would queue it again: Skip job is
         for those), nor one sent in already."""
         t = self.srv.tracker()
-        item, job = self._listing(url), t.find_by_url(url)
+        item, job = self._listing(url), self._job_of(url)
         if item is None and job is None:
             raise KeyError("That opening isn't in the list any more.")
         if job is not None and job["id"] in self.applier.runs:
@@ -779,7 +783,26 @@ class Desk:
             raise ValueError("This job is already sent in, or waiting on its review page.")
         said = item or job or {}
         t.set_not_interested(url, company=str(said.get("company") or ""), title=str(said.get("title") or ""),
-                             reason=reason)
+                             reason=reason, job_id=job["id"] if job is not None else None)
+
+    def unwanted(self, url: str) -> dict[str, Any] | None:
+        """The person's Not interested mark on an opening, if any: on its address, or on the job its row is (_job_of),
+        by that job's number or any of its addresses (Tracker.marked_not_interested)."""
+        t = self.srv.tracker()
+        mark = t.marked_not_interested(url=url)
+        if mark is None and (job := self._job_of(url)) is not None:
+            mark = t.marked_not_interested(job_id=job["id"])
+        return mark
+
+    def _job_of(self, url: str) -> dict[str, Any] | None:
+        """The job an opening's row is: the one at its address (or with it among its other addresses), or, for an
+        opening on the employer's site not saved yet, the job saved from a job board that it surely is (one row, as
+        state() lists them: Tracker.same_posting)."""
+        t = self.srv.tracker()
+        job = t.find_by_url(url)
+        if job is None and (item := self._listing(url)) is not None:
+            job = t.same_posting([item])[0]
+        return job
 
     def apply(self, urls: list[str], job_ids: list[int], submit: bool,
               notes: dict[str, Any] | None = None) -> tuple[list[int], list[str]]:
@@ -790,24 +813,13 @@ class Desk:
         way first (likely_order; `notes["ordered"]` when that changed their order); one alone keeps its place, after
         those queued before it."""
         t = self.srv.tracker()
-        unwanted = t.not_interested()
         left_out: list[str] = []
-
-        def wanted(url: str, title: Any) -> bool:
-            if normalize_url(url) not in unwanted:
-                return True
-            left_out.append(str(title or "a job"))
-            return False
-
-        ids = []
-        for j in job_ids:
-            job = t.get(int(j), with_description=False)
-            if job is None or wanted(job["url"], job.get("title")):
-                ids.append(int(j))
+        ids = [int(j) for j in job_ids]
         for url in urls:
             if not re.match(r"(?i)^(https?|file)://", str(url)) or config.own_file(str(url)):
                 continue  # a listing whose link isn't a web address ("javascript:…"), or is one of the desk's own files
-            if not wanted(url, (self._listing(url) or {}).get("title")):
+            if self.unwanted(url):  # (never saved for Apply either: by its address, or the job its row is)
+                left_out.append(str((self._listing(url) or self._job_of(url) or {}).get("title") or "a job"))
                 continue
             tracked = t.find_by_url(url)
             if tracked is not None and self._listing(url) is None:
@@ -824,7 +836,15 @@ class Desk:
                 "posted_at": posting.get("posted_at") or item.get("posted"), "description": posting.get("description"),
             })
             ids.append(job["id"])
-        ids = list(dict.fromkeys(ids))
+        # and by the job each is (by its number, or any of its addresses: one made one with a job marked on another
+        # site is that job)
+        kept = []
+        for j in dict.fromkeys(ids):
+            if t.marked_not_interested(job_id=j) is None:
+                kept.append(j)
+            else:
+                left_out.append(str((t.get(j, with_description=False) or {}).get("title") or f"job {j}"))
+        ids = kept
         if len(ids) > 1:  # (queued together: the likeliest to go all the way first, each tier in the person's order)
             jobs = {j: t.get(j, with_description=False) or {"id": j} for j in ids}
             mine, ids = ids, [job["id"] for job in likely_order([jobs[j] for j in ids])]
@@ -945,8 +965,8 @@ class Desk:
         also = t.aliases()
         # the openings the person said Not interested in (shown only in that group of the bar), and the employers they
         # said it of for reason Company, whose other openings score lower
-        unwanted = t.not_interested()
-        employers = unwanted_employers(unwanted)
+        marks = t.not_interested_marks()  # (by the job each row is too: NotInterested)
+        employers = unwanted_employers(marks)
         since = self.seen_since
 
         def news(url: str, job: dict[str, Any] | None, run: Any) -> tuple[float | None, bool]:
@@ -963,7 +983,7 @@ class Desk:
             jid = job["id"] if job else None
             seen.add(jid)
             run = runs.get(jid) if jid is not None else None
-            said = unwanted.get(normalize_url(item["url"]))
+            said = marks.mark(item["url"], job, also.get(jid, []) if jid is not None else ()) if marks else None
             first, new = news(item["url"], job, run)
             rows.append({
                 "url": item["url"], "title": item.get("title"), "company": item.get("company"),
@@ -990,7 +1010,7 @@ class Desk:
             job = t.get(brief["id"]) or brief
             seen.add(job["id"])
             listing = {"title": job.get("title"), "location": job.get("location"), "posted": job.get("posted_at")}
-            said = unwanted.get(normalize_url(job["url"]))
+            said = marks.mark(job["url"], job, also.get(job["id"], [])) if marks else None
             fit = score_listing(listing, prof, job.get("description") or "").to_dict()
             first, new = news(job["url"], job, runs.get(job["id"]))
             rows.append({
@@ -1050,41 +1070,55 @@ class Desk:
 
     def safety(self) -> dict[str, Any]:
         """The Safety window: each setting that decides what the desk does in the person's name, with its value now,
-        what that means for them in plain words, and where to change it; and the rules no setting changes. Read-only,
-        from the same settings and switches the desk acts on (the profile's Settings, the Applier's Submit for me and
-        Jobs at once, Troubleshooting, the saved email app password), so it says what the desk does."""
+        what that means for them in plain words, and where to change it; and the rules no setting changes. Read-only.
+        Each value is the one the desk acts on, from its own functions (the pipeline's _may_accept_notices,
+        _may_manage_accounts and _test_identity, the browser's _cookie_setting, the Applier's Submit for me, hold on
+        sending, Jobs at once and inbox), so the window can't say otherwise: a profile.yaml that can't be read turns
+        what it allows off until it's fixed, as the desk does."""
         try:
             prof, problem = config.Profile.load(), None
         except Exception as e:  # said at the top: the desk can't fill an application until it's fixed
             prof, problem = config.Profile({}), _first_line(e)
         s, a = prof.settings, self.applier
+        unread = problem is not None
+        fix = "off until profile.yaml is fixed"
         profile = "profile.yaml, under settings:"
-        practice = s.dry_run and not s.test_identity  # (practice mode, which makes no account and agrees to nothing)
+        # practice mode, as submit_application's policy has it (the environment's hard switch whatever the profile says)
+        dry = config.never_submit() or (not unread and s.dry_run)
+        identity = _test_identity()  # (the live check's test identity: accounts and notices in practice mode too)
+        notices, accounts, cookies = _may_accept_notices(), _may_manage_accounts(), _cookie_setting()
         lines: list[dict[str, str]] = []
 
         def line(key: str, name: str, value: str, said: str, where: str) -> None:
             lines.append({"key": key, "name": name, "value": value, "said": said, "where": where})
 
-        if s.dry_run:
+        if dry:
             line("practice", "Practice mode", "on",
                  "Nothing is sent: the desk fills each application up to its review page and never submits it."
                  + (" As the live check's test identity it makes accounts and agrees to notices; Submit stays refused."
-                    if s.test_identity else " It makes no accounts and agrees to nothing for you."),
+                    if identity else " It makes no accounts and agrees to nothing for you."),
                  "JOB_APPLY_NEVER_SUBMIT=1 in the environment, which comes before profile.yaml" if config.never_submit()
                  else f"{profile} submit_mode (dry_run is practice mode; review applies for real)")
+        elif unread:
+            line("practice", "Practice mode", "can't tell until profile.yaml is fixed",
+                 "Your profile can't be read, so the desk fills and sends nothing until it's fixed.",
+                 f"{profile} submit_mode")
         else:
             auto = ", ".join(s.auto_submit_ats) or "none listed under auto_submit_ats, so it asks you everywhere"
             line("practice", "Practice mode", "off",
-                 "Applications can be sent: only when you press Submit, or by Submit for me when it's on."
+                 "Applications can be sent: when you press Submit on the desk, by Submit for me when it's on, or when "
+                 "you tell Claude to submit one in the chat."
                  + (f" submit_mode is auto: when Claude fills an application with you in the chat, it submits one that's "
                     f"complete without asking on these job systems: {auto}. Never LinkedIn or Indeed, and the desk itself "
                     "still waits for your Submit or Submit for me." if s.submit_mode == "auto" else ""),
                  f"{profile} submit_mode (dry_run is practice mode: nothing is sent)")
         submit_box = "The Submit for me box under Openings (kept in desk.json)"
-        if s.dry_run:
+        if dry:
             line("auto_submit", "Submit for me", "off in practice mode",
                  "Practice mode sends nothing: the desk stops at each review page.", submit_box)
-        elif self.troubleshoot:
+        elif unread:
+            line("auto_submit", "Submit for me", fix, "Nothing is sent while your profile can't be read.", submit_box)
+        elif a.hold_submits:
             line("auto_submit", "Submit for me", "off while Troubleshooting is on",
                  "Troubleshooting is on, so nothing is submitted: not by your Submit, nor for you.", submit_box)
         elif a.auto_submit:
@@ -1099,58 +1133,85 @@ class Desk:
         line("boards", "LinkedIn and Indeed", "always yours",
              "The desk fills LinkedIn and Indeed applications but never presses their Submit, whatever the settings: you "
              "do, in the browser window.", "Not a setting: always so")
-        notices = f"{profile} accept_notices (on unless set to false)"
-        if s.may_accept_notices:
+        where = f"{profile} accept_notices (on unless set to false)"
+        if notices:
             line("accept_notices", "Agree to notices", "on",
                  "The desk agrees for you to an employer's notice about AI screening, its privacy notice and its terms "
                  "of use, and picks an application's attestation that its information is true (or consent to the "
                  "background check that comes with applying), and logs each. Never a newsletter, job alerts, a talent "
                  "community or marketing; cookie banners have their own setting. Any other dialog over the form stops "
-                 "the desk for you.", notices)
-        elif s.accept_notices and practice:
+                 "the desk for you.", where)
+        elif unread:
+            line("accept_notices", "Agree to notices", fix,
+                 "Notices, terms and attestations wait for you until it's fixed.", where)
+        elif s.accept_notices:  # (on, but not in practice mode)
             line("accept_notices", "Agree to notices", "off in practice mode",
-                 "Practice mode agrees to nothing: notices, terms and attestations wait for you.", notices)
+                 "Practice mode agrees to nothing: notices, terms and attestations wait for you.", where)
         else:
             line("accept_notices", "Agree to notices", "off",
-                 "Notices, terms and attestations are yours: the desk stops for you at each one.", notices)
-        accounts = f"{profile} manage_accounts (on unless set to false)"
-        if s.may_manage_accounts:
+                 "Notices, terms and attestations are yours: the desk stops for you at each one.", where)
+        where = f"{profile} manage_accounts (on unless set to false)"
+        if accounts:
             line("manage_accounts", "Make accounts", "on" if s.manage_accounts_chosen else
                  "on (your profile doesn't say, so it's on by default)",
-                 "With a password saved for a job system under Site passwords, the desk creates your account at that "
-                 "system's employers with it, ticking only the site's terms (never a newsletter), and resets a saved "
-                 "password a site refuses through the site's own \"Forgot password\" email. A consent to be considered "
-                 "for other positions is given only where the site won't make the account without it. A CAPTCHA or "
-                 "security question on the way stays yours.", accounts)
-        elif s.manage_accounts and practice:
+                 "Where an employer's site needs an account, the desk creates yours there: with the job system's "
+                 "password saved under Site passwords, or with the code the site emails where it asks for no password "
+                 "(Eightfold's), ticking only the site's terms (never a newsletter). It resets a saved password a site "
+                 "refuses through the site's own \"Forgot password\" email. A consent to be considered for other "
+                 "positions is given only where the site won't make the account without it, never when it also signs "
+                 "you up for job alerts, a newsletter, a talent community or marketing. A CAPTCHA or security question "
+                 "on the way stays yours.", where)
+        elif unread:
+            line("manage_accounts", "Make accounts", fix,
+                 "The desk makes no account and resets no password until it's fixed.", where)
+        elif s.manage_accounts:  # (on, but not in practice mode)
             line("manage_accounts", "Make accounts", "off in practice mode",
-                 "Practice mode makes no accounts: Create Account is left to you.", accounts)
+                 "Practice mode makes no accounts: Create Account is left to you.", where)
         else:
             line("manage_accounts", "Make accounts", "off",
                  "The desk never creates an account or resets a password: it fills in Create Account and leaves the "
-                 "rest to you.", accounts)
-        line("accept_cookies", "Accept cookies", "on" if s.accept_cookies else "off",
-             "Cookie banners are declined; one with no way to decline is accepted for you." if s.accept_cookies else
+                 "rest to you.", where)
+        line("accept_cookies", "Accept cookies", "on" if cookies else fix if unread else "off",
+             "Cookie banners are declined; one with no way to decline is accepted for you." if cookies else
              "Cookie banners are declined, or left to you when there's no way to decline: never accepted.",
              f"{profile} accept_cookies (off unless set to true)")
-        line("email_codes", "Emailed codes (Claude)", "on" if s.email_codes else "off",
-             "When you apply with Claude in the chat, Claude may read a sign-up or verification code a career site "
-             "emails you, through the Gmail connector: only the newest message from that job's site or its job "
-             "system, and no other mail."
-             if s.email_codes else "When you apply with Claude in the chat, Claude asks you for a code a career site "
-             "emails you.", f"{profile} email_codes (off unless set to true)")
-        inbox = _saved(["email_password"])["email_password"]
-        line("email_password", "Email app password (the desk)", "saved" if inbox else "not saved",
-             "The desk reads only the sign-up codes and links a job's own site emails you"
-             + (", and the password-reset email it just asked that site for" if s.may_manage_accounts else "")
-             + ", opened read-only. Nothing else in your inbox, and Claude never sees the password." if inbox else
-             "A site that emails a sign-up code or link waits for you to enter it.",
-             "The Site passwords card (Your email)")
-        line("email_tracking", "Replies to your applications", "on" if s.email_tracking else "off",
+        where = f"{profile} email_codes (off unless set to true)"
+        if s.email_codes and not unread:
+            line("email_codes", "Emailed codes (Claude)", "on",
+                 "When you apply with Claude in the chat, Claude may read a sign-up or verification code, or a "
+                 "verification link, that a career site emails you, through the Gmail connector: only the newest "
+                 "message from that job's site or its job system, a link only when it goes back to that site, and no "
+                 "other mail.", where)
+        else:
+            line("email_codes", "Emailed codes (Claude)", fix if unread else "off",
+                 "When you apply with Claude in the chat, Claude asks you for a code or link a career site emails you.",
+                 where)
+        saved = _saved(["email_password"])["email_password"]
+        before = a.mail_problem
+        try:  # (the desk's own way into its inbox; what it would say of one it can't use isn't put on the page from here)
+            usable, why = a.mail_login() is not None, a.mail_problem
+        finally:
+            a.mail_problem = before
+        where = "The Site passwords card (Your email)"
+        if saved and usable:
+            line("email_password", "Email app password (the desk)", "saved",
+                 "The desk reads only the sign-up codes and links a job's own site emails you"
+                 + (", and the password-reset email it just asked that site for" if accounts else "")
+                 + ", opened read-only. Nothing else in your inbox, and Claude never sees the password.", where)
+        elif saved:
+            line("email_password", "Email app password (the desk)", "saved, but the desk can't use it now",
+                 (why or "Your profile has no email address it can read mail for, or your mail service turned the "
+                  "password down.") + " Until then, a site that emails a sign-up code or link waits for you to enter it.",
+                 where)
+        else:
+            line("email_password", "Email app password (the desk)", "not saved",
+                 "A site that emails a sign-up code or link waits for you to enter it.", where)
+        line("email_tracking", "Replies to your applications",
+             "on" if s.email_tracking and not unread else fix if unread else "off",
              "Claude may read your email through the Gmail connector for employers' replies to your applications, "
              "and logs them under My applications. Never with the desk's email app password; a follow-up is only "
-             "ever a draft for you to send." if s.email_tracking else "Claude doesn't read your email for replies.",
-             f"{profile} email_tracking (off unless set to true)")
+             "ever a draft for you to send." if s.email_tracking and not unread else
+             "Claude doesn't read your email for replies.", f"{profile} email_tracking (off unless set to true)")
         n = a.at_once()
         line("jobs_at_once", "Jobs at once", str(n),
              ("The desk fills one application at a time." if n == 1 else
@@ -1159,10 +1220,14 @@ class Desk:
                "emailed code.",
              "The Jobs at once buttons under Openings" + (" (your choice there is in force)" if a.jobs_at_once is not None
                                                           else f", or {profile} jobs_at_once"))
-        line("troubleshoot", "Troubleshooting", "on" if self.troubleshoot else "off",
-             "Nothing is submitted, by your Submit or for you. Find jobs searches every list's employers and shows only "
-             "the openings where the desk doesn't go all the way yet; the desk still makes accounts and fills each "
-             "step, which the sites keep." if self.troubleshoot else "The desk applies for real.",
+        if a.hold_submits:
+            said = ("Nothing is submitted, by your Submit or for you. Find jobs searches every list's employers and shows "
+                    "only the openings where the desk doesn't go all the way yet; the desk still fills each step"
+                    + (" and makes accounts" if accounts else "") + ", which the sites keep.")
+        else:
+            said = ("Practice mode sends nothing either way." if dry else
+                    "Nothing is sent while your profile can't be read." if unread else "The desk applies for real.")
+        line("troubleshoot", "Troubleshooting", "on" if a.hold_submits else "off", said,
              "The Troubleshooting box under Openings")
         line("bot_checks", "Bot checks and CAPTCHAs", "always yours",
              "The desk never gets around a bot check and never solves a CAPTCHA: it pauses the job and brings its tab "
@@ -1201,10 +1266,10 @@ def _also_on(urls: list[str]) -> list[dict[str, str]]:
     return [{"site": JOB_BOARDS.get(job_board(u) or "", "another site"), "url": u} for u in dict.fromkeys(urls)]
 
 
-def unwanted_employers(unwanted: dict[str, dict[str, str]]) -> dict[str, str]:
-    """The employers the person said Not interested in for reason Company (Tracker.not_interested), by company_key, each
-    with its name as the opening gave it."""
-    return {company_key(said["company"]): said["company"] for said in unwanted.values()
+def unwanted_employers(marks: NotInterested) -> dict[str, str]:
+    """The employers the person said Not interested in for reason Company (Tracker.not_interested_marks), by
+    company_key, each with its name as the opening gave it."""
+    return {company_key(said["company"]): said["company"] for said in marks.by_url.values()
             if said.get("reason") == "company" and company_key(said.get("company") or "")}
 
 
@@ -1286,8 +1351,9 @@ def whats_new(tracker: Any, since: float) -> list[dict[str, Any]]:
     listings = [r for r in results if isinstance(r, dict) and isinstance(r.get("url"), str)] \
         if isinstance(results, list) else []
     searched, found = _seconds(saved.get("at")) if isinstance(saved, dict) else None, read_found()
-    unwanted = tracker.not_interested()
-    employers = unwanted_employers(unwanted)
+    marks = tracker.not_interested_marks()  # (by the job each is too: NotInterested)
+    employers = unwanted_employers(marks)
+    also = tracker.aliases()
     out: list[dict[str, Any]] = []
     taken: set[Any] = set()
 
@@ -1297,7 +1363,10 @@ def whats_new(tracker: Any, since: float) -> list[dict[str, Any]]:
         if key in taken or (job is not None and job["id"] in taken):
             return
         taken.update({key, *([job["id"]] if job is not None else [])})
-        if first is None or first < since or key in unwanted or (job is not None and job.get("status") != "saved"):
+        if job is not None:  # (and its other addresses: one posting, one line)
+            taken.update(normalize_url(u) for u in also.get(job["id"], []))
+        unwanted = marks.mark(url, job, also.get(job["id"], []) if job is not None else ()) if marks else None
+        if first is None or first < since or unwanted or (job is not None and job.get("status") != "saved"):
             return
         fit = fit_for(fit if isinstance(fit, dict) else {}, company, employers)
         out.append({"title": title or "", "company": company or "", "location": location or "",
@@ -1305,8 +1374,12 @@ def whats_new(tracker: Any, since: float) -> list[dict[str, Any]]:
                     "job_id": job["id"] if job is not None else None,
                     "saved_at": history.stamp(first)})
 
-    for item in listings:
-        job = tracker.find_by_url(item["url"])
+    tracked = [tracker.find_by_url(item["url"]) for item in listings]
+    # (an opening on the employer's site not saved yet is the job saved from a job board that it surely is, as the desk
+    # lists them: Tracker.same_posting)
+    copies = iter(tracker.same_posting([item for item, job in zip(listings, tracked) if job is None]))
+    for item, job in zip(listings, tracked):
+        job = job or next(copies)
         at = [s for s in (found.get(item["url"], searched), _iso_seconds(job.get("created_at")) if job else None)
               if s is not None]
         add(item["url"], job, item.get("title"), item.get("company"), item.get("location"), item.get("fit"),

@@ -111,6 +111,33 @@ def test_claudes_tools_say_a_job_may_be_one_applied_to_on_indeed_and_ask_first(s
     assert words not in run(srv.submit_application(job_id=own["id"])).get("reason", "")
 
 
+@needs_browser
+def test_claudes_tools_say_a_job_is_marked_not_interested_and_ask_first(srv):
+    """The review of 0.3.207 (MEDIUM): a job the person marked Not interested on the desk was like any other to
+    Claude's tools. list_jobs and get_job say so (with the reason), open_application warns, as for a job that may be
+    one applied to elsewhere, and submit_application presses nothing for it without user_confirmed. An opening marked
+    before it was saved is said so by its address."""
+    sent = routed(srv)
+    job = srv.add_job(url="https://careers.example.com/a", title="Tech", company="Example Fab")["job"]
+    other = srv.add_job(url="https://careers.example.com/indeed-host", title="Tech II", company="Example Fab")["job"]
+    srv.tracker().set_not_interested(job["url"], company="Example Fab", title="Tech", reason="pay")
+    listed = {j["id"]: j for j in srv.list_jobs()["jobs"]}
+    assert (listed[job["id"]]["not_interested"], listed[job["id"]]["not_interested_reason"]) == (True, "pay")
+    assert "not_interested" not in listed[other["id"]]
+    assert srv.get_job(job["id"])["job"]["not_interested_reason"] == "pay"
+    assert "not_interested" not in srv.get_job(other["id"])["job"]
+    words = "the person marked this job Not interested: ask before applying"
+    assert run(srv.open_application(job_id=job["id"]))["not_interested"] == {"reason": "pay", "warning": words}
+    out = run(srv.submit_application(job_id=job["id"]))
+    assert out["submitted"] is False and words in out["reason"] and sent == [], out
+    assert "not_interested" not in run(srv.open_application(job_id=other["id"]))
+    srv.tracker().set_not_interested("https://jobs.other.com/b", reason="")  # (an opening never saved as a job)
+    assert run(srv.open_application(url="https://jobs.other.com/b"))["not_interested"] == {"reason": "", "warning": words}
+    srv.tracker().undo_not_interested(job["url"])
+    assert "not_interested" not in run(srv.open_application(job_id=job["id"]))
+    assert words not in run(srv.submit_application(job_id=job["id"])).get("reason", "")
+
+
 def test_a_greenhouse_posting_opened_by_its_address_opens_greenhouses_own_form(srv, monkeypatch):
     """A Greenhouse board set to send visitors to the employer's site redirects its postings
     there (Carvana's, behind a Cloudflare check, Oct 2026). Opened by job or by address, the

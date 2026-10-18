@@ -554,14 +554,22 @@ def list_jobs(status: str | None = None, company: str | None = None, limit: int 
     yet), and `follow_up_due`: the day a follow-up became due, for one applied to
     settings.follow_up_days days ago (10 unless the profile says) or more with no email
     logged, not even a confirmation; null otherwise. The Job Desk's My applications
-    marks those "Follow up?"."""
+    marks those "Follow up?".
+
+    A job the user marked Not interested on the Job Desk has `not_interested: true` and
+    `not_interested_reason` (title, company, location, pay, other, or "" for none): ask
+    before applying to it."""
     t = tracker()
     jobs = t.list(status=status, company=company, limit=limit)
     sent = any(j["status"] in APPLICATION_STATUSES for j in jobs)  # (none sent: neither the emails nor the profile read)
     heard, days = (t.last_heard(), _follow_up_days()) if sent else ({}, config.FOLLOW_UP_DAYS_DEFAULT)
+    marks = t.not_interested_marks()
+    also = t.aliases() if marks else {}
     out = []
     for j in jobs:
         brief = _brief(j)
+        if marks and (mark := marks.mark(job=j, aliases=also.get(j["id"], []))) is not None:
+            brief.update(not_interested=True, not_interested_reason=mark["reason"])
         if j["status"] in APPLICATION_STATUSES:
             stands = standing(j, heard.get(j["id"]), days)
             last = stands["last_heard"]
@@ -573,8 +581,12 @@ def list_jobs(status: str | None = None, company: str | None = None, limit: int 
 
 @tool()
 def get_job(job_id: int) -> dict[str, Any]:
-    """Full record for one job, including description and status history."""
+    """Full record for one job, including description and status history. One the user
+    marked Not interested on the Job Desk has `not_interested: true` and
+    `not_interested_reason`: ask before applying to it."""
     job = _job(job_id)
+    if (mark := tracker().marked_not_interested(job_id=job["id"])) is not None:
+        job = {**job, "not_interested": True, "not_interested_reason": mark["reason"]}
     return {"job": job, "history": tracker().events(job_id)}
 
 
@@ -766,7 +778,8 @@ async def open_application(job_id: int | None = None, url: str | None = None) ->
     Next steps are usually click("Apply") / click("Easy Apply"), then autofill().
     `maybe_same`, when present: this job may be one already started or applied to on
     another site (an Indeed job and the employer's posting kept apart). Ask the person
-    before applying."""
+    before applying. `not_interested`, when present: the person marked this job Not
+    interested on the Job Desk. Ask before applying."""
     if job_id is None and not url:
         raise ValueError("Pass job_id or url")
     target, job = url or "", None
@@ -804,6 +817,8 @@ async def open_application(job_id: int | None = None, url: str | None = None) ->
     summary["submit_policy"] = _submit_policy(await browser.human_submit_ats() or summary["ats"])
     if maybe := _maybe_same(job_id):
         summary["maybe_same"] = {"jobs": maybe, "warning": MAYBE_SAME_SAYS}
+    if (mark := _not_interested(job_id, url)) is not None:
+        summary["not_interested"] = {"reason": mark["reason"], "warning": NOT_INTERESTED_SAYS}
     return summary
 
 
@@ -1256,6 +1271,19 @@ MAYBE_SAME_SAYS = "may be the job already started or applied to: ask the person 
 _BEGUN_OR_DONE = frozenset({"in_progress", "ready_to_submit", "applied", "interviewing", "offer", "rejected", "withdrawn"})
 
 
+# A job the person marked Not interested on the Job Desk: what Claude's tools say of it, and submit_application presses
+# nothing for it without user_confirmed (the review of 0.3.207)
+NOT_INTERESTED_SAYS = "the person marked this job Not interested: ask before applying"
+
+
+def _not_interested(job_id: int | None, url: str | None = None) -> dict[str, Any] | None:
+    """The person's Not interested mark on this job (by its number or any of its addresses), or on an opening at this
+    address not saved as a job; None for none."""
+    if job_id is None and not url:
+        return None
+    return tracker().marked_not_interested(url=url if job_id is None else None, job_id=job_id)
+
+
 def _maybe_same(job_id: int | None) -> list[dict[str, Any]]:
     """The jobs begun or applied to that this one may be the same posting as (Tracker.maybe_same: until the person
     said Apply anyway on the desk), each by its id, title, company and status."""
@@ -1274,7 +1302,8 @@ async def submit_application(job_id: int | None = None, user_confirmed: bool = F
     On LinkedIn and Indeed this never clicks: it marks the job ready_to_submit and
     the user clicks Submit in the browser; then call update_job(status="applied").
     A job that may be one already started or applied to on another site (`maybe_same`
-    from open_application) is never pressed without user_confirmed=true."""
+    from open_application), or one the user marked Not interested on the Job Desk
+    (`not_interested`), is never pressed without user_confirmed=true."""
     from . import desk as job_desk  # (the desk's own module imports this one)
     if job_desk._desk is not None and job_desk._desk.applier.hold_submits:
         return {"submitted": False, "reason": "The Job Desk's Troubleshooting is on, so nothing is submitted. Turn it "
@@ -1295,6 +1324,9 @@ async def submit_application(job_id: int | None = None, user_confirmed: bool = F
             "reason": f"{ATS_NAMES.get(ats, ats)} prohibits automated submission. Ask the user to review the "
                       "browser window and click Submit themselves, then call update_job(status='applied').",
         }
+    if (unwanted := _not_interested(job["id"])) is not None and not user_confirmed:
+        return {"submitted": False, "reason": f"Not pressed: {NOT_INTERESTED_SAYS}.",
+                "not_interested": {"reason": unwanted["reason"]}}
     if (maybe := _maybe_same(job["id"])) and not user_confirmed:
         said = "; ".join(f"job {o['job_id']} ({o['title']} at {o['company']}, {o['status'].replace('_', ' ')})"
                          for o in maybe)

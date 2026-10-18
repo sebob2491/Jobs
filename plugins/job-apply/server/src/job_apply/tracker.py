@@ -14,6 +14,7 @@ import threading
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from pathlib import Path
+from collections.abc import Iterable
 from typing import Any, NamedTuple
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
@@ -88,19 +89,46 @@ CREATE TABLE IF NOT EXISTS maybe_same (
     cleared INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (job_id, other_id)
 );
--- openings the person said they're not interested in (the desk's Not interested), by address (most aren't saved as jobs):
--- hidden from the desk's openings and never queued, until their Undo; with the employer, the title and the reason given
--- (NOT_INTERESTED_REASONS, or none). "company" lowers that employer's other openings (recommend.not_interested_in)
+-- openings and jobs the person said they're not interested in (the desk's Not interested): hidden from the desk's
+-- openings and never queued, until their Undo. By address (most openings aren't saved as jobs), and, for one that's a
+-- job, by its number on each of its addresses: the mark is the job's, whichever site its posting is read from
+-- (NotInterested). With the employer, the title and the reason given (NOT_INTERESTED_REASONS, or none). "company" lowers
+-- that employer's other openings (recommend.not_interested_in). (job_id isn't a reference: a job merged into another
+-- passes its marks on, _fold)
 CREATE TABLE IF NOT EXISTS not_interested (
     url TEXT PRIMARY KEY,
+    job_id INTEGER,
     company TEXT DEFAULT '',
     title TEXT DEFAULT '',
     reason TEXT DEFAULT '',
     at TEXT NOT NULL
 );
+CREATE INDEX IF NOT EXISTS not_interested_job ON not_interested(job_id);
 """
 # The reasons the desk's Not interested offers (each optional)
 NOT_INTERESTED_REASONS = ("title", "company", "location", "pay", "other")
+
+
+class NotInterested:
+    """The person's Not interested marks, read once (Tracker.not_interested_marks), to check openings and jobs against:
+    an opening is marked when its job (by its number) is, or any of the job's addresses (its own, where it's applied
+    for, its other sites': aliases), or the opening's own address. So a job marked on Indeed stays marked once the
+    employer's posting is found and made one with it, and the other way round."""
+
+    def __init__(self, rows: list[dict[str, Any]]):
+        self.by_url = {r["url"]: r for r in rows}
+        self.by_job = {r["job_id"]: r for r in rows if r.get("job_id") is not None}
+
+    def __bool__(self) -> bool:
+        return bool(self.by_url)
+
+    def mark(self, url: str | None = None, job: dict[str, Any] | None = None,
+             aliases: Iterable[str] = ()) -> dict[str, Any] | None:
+        """The mark on this opening (its address) or job (the tracker's row, and its other addresses), if any."""
+        if job is not None and job.get("id") in self.by_job:
+            return self.by_job[job["id"]]
+        addresses = [url, *((job.get("url"), job.get("apply_url")) if job is not None else ()), *aliases]
+        return next((self.by_url[u] for u in {normalize_url(a) for a in addresses if a} if u in self.by_url), None)
 
 # What an employer email means for the application's status.
 EMAIL_CATEGORIES = {
@@ -474,7 +502,7 @@ class Tracker:
     def _fold(self, keep: int, drop: int) -> None:
         """A job about to go, one posting with `keep`: its history, emails, other addresses and maybe-the-same links moved
         onto that one, and noted as merged into it (Tracker.merged_into), with any merged into it before."""
-        for table in ("events", "emails", "aliases"):
+        for table in ("events", "emails", "aliases", "not_interested"):
             self.conn.execute(f"UPDATE {table} SET job_id = ? WHERE job_id = ?", (keep, drop))
         self.conn.execute("UPDATE OR IGNORE maybe_same SET job_id = ? WHERE job_id = ?", (keep, drop))
         self.conn.execute("UPDATE OR IGNORE maybe_same SET other_id = ? WHERE other_id = ?", (keep, drop))
@@ -911,16 +939,37 @@ class Tracker:
                 status = target
         return self.update(job_id, status=status, note=note)
 
+    def _the_job(self, url: str | None = None, job_id: int | None = None) -> sqlite3.Row | None:
+        """The job an address is (its own, or among its other addresses), or a job number names (or the job it was
+        merged into, one posting saved twice)."""
+        if job_id is not None:
+            row = self.conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
+            if row is None and (into := self.merged_into(job_id)) is not None:
+                row = self.conn.execute("SELECT * FROM jobs WHERE id = ?", (into,)).fetchone()
+            return row
+        return self._at(normalize_url(url)) if url else None
+
+    def _addresses(self, job: sqlite3.Row) -> builtins.list[str]:  # (in here `list` is Tracker.list)
+        """Every address a job is at: its own, where it's applied for, and its other sites' (aliases)."""
+        own = [job["url"], job["apply_url"]] + [r[0] for r in self.conn.execute(
+            "SELECT url FROM aliases WHERE job_id = ?", (job["id"],))]
+        return list(dict.fromkeys(normalize_url(u) for u in own if u))
+
     @_locked
-    def set_not_interested(self, url: str, company: str = "", title: str = "", reason: str = "") -> None:
+    def set_not_interested(self, url: str, company: str = "", title: str = "", reason: str = "",
+                           job_id: int | None = None) -> None:
         """The person said Not interested in the opening at this address (the desk's Not interested), for `reason` (one
-        of NOT_INTERESTED_REASONS, or none): kept until undone, and said in its job's history when it's a saved job."""
+        of NOT_INTERESTED_REASONS, or none), kept until undone. The mark is the job's when the opening is one (the job at
+        the address, or `job_id`: the one the desk's row shows, saved from another site): on its number and each of its
+        addresses, and said in its history."""
         if reason and reason not in NOT_INTERESTED_REASONS:
             raise ValueError(f"reason should be one of {', '.join(NOT_INTERESTED_REASONS)}, or none")
-        url, now = normalize_url(url), _now()
-        self.conn.execute("INSERT OR REPLACE INTO not_interested (url, company, title, reason, at) VALUES (?, ?, ?, ?, ?)",
-                          (url, company or "", title or "", reason or "", now))
-        job = self._at(url)
+        now = _now()
+        job = self._the_job(job_id=job_id) if job_id is not None else self._the_job(url=url)
+        for address in dict.fromkeys([normalize_url(url), *(self._addresses(job) if job is not None else [])]):
+            self.conn.execute("INSERT OR REPLACE INTO not_interested (url, job_id, company, title, reason, at) "
+                              "VALUES (?, ?, ?, ?, ?, ?)", (address, job["id"] if job is not None else None,
+                                                            company or "", title or "", reason or "", now))
         if job is not None:
             self.conn.execute("INSERT INTO events (job_id, at, status, note) VALUES (?, ?, '', ?)",
                               (job["id"], now, "not interested" + (f" ({reason})" if reason else "")))
@@ -928,10 +977,18 @@ class Tracker:
 
     @_locked
     def undo_not_interested(self, url: str) -> bool:
-        """The person's Undo on Not interested: the opening shows again. Whether it was marked."""
+        """The person's Undo on Not interested: the opening shows again, and its job (whichever of its addresses it was
+        marked at, and on its number). Whether it was marked."""
         url = normalize_url(url)
-        gone = self.conn.execute("DELETE FROM not_interested WHERE url = ?", (url,)).rowcount
-        job = self._at(url)
+        job = self._the_job(url=url)
+        if job is None:  # (an opening marked with the job its row showed, saved from another site: by its mark)
+            row = self.conn.execute("SELECT job_id FROM not_interested WHERE url = ?", (url,)).fetchone()
+            job = self._the_job(job_id=row["job_id"]) if row is not None and row["job_id"] is not None else None
+        addresses = [url, *(self._addresses(job) if job is not None else [])]
+        marks = ", ".join("?" for _ in addresses)
+        gone = self.conn.execute(f"DELETE FROM not_interested WHERE url IN ({marks})"
+                                 + (" OR job_id = ?" if job is not None else ""),
+                                 (*addresses, *([job["id"]] if job is not None else []))).rowcount
         if gone and job is not None:
             self.conn.execute("INSERT INTO events (job_id, at, status, note) VALUES (?, ?, '', ?)",
                               (job["id"], _now(), "not interested undone"))
@@ -939,11 +996,28 @@ class Tracker:
         return bool(gone)
 
     @_locked
-    def not_interested(self) -> dict[str, dict[str, str]]:
-        """The openings the person said Not interested in, by their address (normalized), each with its company, title,
-        reason ("" for none) and when (`at`)."""
-        rows = self.conn.execute("SELECT url, company, title, reason, at FROM not_interested ORDER BY at")
-        return {r["url"]: {k: r[k] or "" for k in ("company", "title", "reason", "at")} for r in rows}
+    def not_interested(self) -> dict[str, dict[str, Any]]:
+        """The addresses marked Not interested (normalized), each with its job's number (None for an opening not saved
+        as one), company, title, reason ("" for none) and when (`at`). One job marked has a line for each of its
+        addresses: not_interested_marks checks openings and jobs against them."""
+        rows = self.conn.execute("SELECT url, job_id, company, title, reason, at FROM not_interested ORDER BY at")
+        return {r["url"]: {"job_id": r["job_id"], **{k: r[k] or "" for k in ("company", "title", "reason", "at")}}
+                for r in rows}
+
+    def not_interested_marks(self) -> NotInterested:
+        """The person's Not interested marks, read once, to check many openings against (the desk's list)."""
+        return NotInterested([{"url": u, **said} for u, said in self.not_interested().items()])
+
+    @_locked
+    def marked_not_interested(self, url: str | None = None, job_id: int | None = None) -> dict[str, Any] | None:
+        """The Not interested mark on an opening (by its address) or a job (by its number), or None: the job it is
+        (_the_job) marked by its number or at any of its addresses, or the address itself marked. What the desk's Apply,
+        its queue and Claude's tools go by."""
+        marks = self.not_interested_marks()
+        if not marks:
+            return None
+        job = self._the_job(url=url, job_id=job_id)
+        return marks.mark(url, dict(job) if job is not None else None, self._addresses(job) if job is not None else ())
 
     @_locked
     def log_email(self, job_id: int, thread_id: str, category: str, summary: str = "",

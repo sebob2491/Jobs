@@ -22,7 +22,11 @@ The desk is a local web page served by this plugin. It does what the `find-jobs`
   selected or otherwise, until its **Undo** (in the word at the foot of the window, or by its
   row in the bar's **Not interested** group). For Company, that employer's other openings
   score 10 lower ("you said not interested in Acme −10"). It isn't offered on a job the desk
-  has a card for (Skip job is for those) or one sent in.
+  has a card for (Skip job is for those) or one sent in. The mark is the job's, whichever
+  site its posting is read from (Indeed's, or the employer's once they're one job).
+  `list_jobs` and `get_job` say `not_interested: true` with the reason, `open_application`
+  warns, and `submit_application` presses nothing for it without `user_confirmed`: ask the
+  user before applying to one.
   It searches only when pressed. **Search by itself every 12 hours** (beside
   Troubleshooting, off unless the user turns it on) also searches when the openings are
   over 12 hours old, but not while the queue is paused. While a search runs, the header

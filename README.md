@@ -171,8 +171,10 @@ opens a page on your computer (served by the plugin on `127.0.0.1`):
    **Not interested** on an opening hides it, with a reason if you give one (Title,
    Company, Location, Pay or Other). It's never applied to, not even by **Apply to
    selected**; **Undo** (at the foot of the window, or by its row under the bar's **Not
-   interested** group) brings it back. For Company, that employer's other openings score
-   10 lower, said in their score's breakdown.
+   interested** group) brings it back. The mark is the job's, so the same posting found on
+   Indeed and on the employer's site stays hidden on both, and Claude asks you before
+   applying to it. For Company, that employer's other openings score 10 lower, said in their
+   score's breakdown.
    It searches only when you press it, unless you turn on **Search by itself every 12
    hours** (off by default; it waits while the queue is paused). A search running is
    shown in the header, with **Stop search** beside it.
