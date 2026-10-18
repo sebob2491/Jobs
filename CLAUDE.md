@@ -75,10 +75,18 @@ the scrubber (`python -m job_apply.fixtures`) before they become test fixtures.
   - The answer rules' fuzz (`tests/test_properties.py::test_resolve_field_never_claims_more_than_the_profile_says`):
     4,000 seeded labels, none of whose answers may say more than conftest's profile does (a planted "Master's: Yes"
     rule fails it). A new word real questions use goes in its `FUZZ_WORDS`.
+  - Its `coverage` job runs the suite once with `--cov=job_apply --cov-report=json:coverage.json`, then
+    `uv run python scripts/coverage_floor.py coverage.json`: a module under its floor (the script's `FLOORS`, the
+    measure less two points) fails it, and the 20 functions with the most lines never run go in its summary.
+    Raise a floor when a module's tests grow (`--suggest` prints the floors a report would set); a new module
+    without one is named, not failed.
 - Live checks against real employer sites: `uv run python scripts/live_smoke.py`.
   - Add `--pipeline --fake-passwords --parallel 4` to drive the Job Desk pipeline. The full run takes about 6 minutes.
   - Add `--lists phoenix-metro` to check another list, and `--role hr` (or `--role finance`) to look
     for HR (or finance) jobs as an applicant with that background (the default is technician jobs).
+  - Add `--save-postings <dir>` (the search check, not `--pipeline`) to save each job system's first posting API
+    answer, scrubbed, as `<dir>/<system>.json`: the form of the posting readers' fixtures (`tests/fixtures/postings`,
+    made up today). Look one over before it replaces a made-up one (the repo is public).
   - It forces a fake profile and `JOB_APPLY_NEVER_SUBMIT=1`, so nothing can be submitted. The fake profile has
     `accept_cookies` on, so a banner with no way to decline (Texas Instruments') is accepted (the owner asked, Oct 13).
   - Each application goes as far as the rules let it, for the most to fix from (the owner, Oct 13): 5 minutes a round,

@@ -1,6 +1,6 @@
 name: weekly
 
-# Once a week (and by hand), two looks that don't belong on every change (the review of Oct 15):
+# Once a week (and by hand), looks that don't belong on every change (the review of Oct 15):
 # - the packages uv.lock pins, against the advisories PyPI and OSV know of: a finding fails the run, and GitHub
 #   mails the repository's owner about a failed scheduled run;
 # - the tests that failed in the week's CI runs, a flake (its commit's tests passed in another run or attempt)
@@ -9,6 +9,9 @@ name: weekly
 #   answer, seeded by the ISO week, each run against their tests. It fails under the kill rate scripts/mutation_pass.py
 #   keeps (FLOOR), and lists each change no test noticed, with its diff, in the summary: a test for it, or an entry in
 #   scripts/mutation_equivalents.txt with the reason it changes nothing.
+# - the suite's coverage of job_apply, module by module: one under its floor (scripts/coverage_floor.py, today's
+#   measure less two points) fails the run, and the functions with the most lines never run are in its summary
+#   (T5, the review of Oct 18).
 on:
   schedule:
     - cron: "23 14 * * 1"  # Mondays, 7:23 in Arizona
@@ -72,3 +75,33 @@ jobs:
           name: mutants
           path: ${{ runner.temp }}/mutants.json
           retention-days: 30
+
+  coverage:
+    name: coverage (floors per module)
+    runs-on: ubuntu-latest
+    # (the whole suite in one job, at -n 8 as the tests' parts run it: the six parts' 5 to 6 minutes each, and
+    # coverage's own cost on top)
+    timeout-minutes: 90
+    defaults:
+      run:
+        working-directory: plugins/job-apply/server
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.13"
+          enable-cache: true
+          cache-dependency-glob: plugins/job-apply/server/uv.lock
+      - run: uv sync --frozen --extra dev
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ms-playwright-${{ runner.os }}-${{ hashFiles('plugins/job-apply/server/uv.lock') }}
+      - run: uv run --frozen playwright install --with-deps chromium
+      # (a test that fails is the tests workflow's to say, and shows here as this step's warning: the floors are
+      # checked on what ran all the same)
+      - run: uv run --frozen pytest -q -n 8 --maxschedchunk=1 --cov=job_apply --cov-report=json:coverage.json
+        continue-on-error: true
+        env:
+          JOB_APPLY_SLOW_FIRST: "1"
+      - run: uv run --frozen python scripts/coverage_floor.py coverage.json

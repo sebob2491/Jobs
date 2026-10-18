@@ -48,6 +48,13 @@ The weekly probes (scripts/live_probes.py) run it one employer at a time with tw
 which the site refuses, so the desk resets the site to it; masked like the others) and --tailored-resume
 (with --pipeline: a clearly marked tailored test resume in each job's folder before the desk applies,
 which the desk prefers to the profile's; its file's name goes in the employer's record as "tailored").
+
+--save-postings DIR (the search check, not --pipeline): each job system's first posting read from its API (Workday,
+Greenhouse, Lever, SmartRecruiters, Oracle, Cornerstone) goes to DIR/<system>.json, in the form of the posting readers'
+offline fixtures (tests/fixtures/postings): the answers it read (a page on the way only as what the reader takes from
+it), scrubbed (job_apply.fixtures' redact and scrub_others, keys naming a person left out, the test identity's details
+masked), and what the desk reads from them, read again offline from the scrubbed answers. Look one over before it
+replaces a made-up fixture: the repo is public.
 """
 
 from __future__ import annotations
@@ -77,6 +84,7 @@ os.environ["JOB_APPLY_HOME"] = str(_HOME)
 
 import secrets  # noqa: E402
 
+import httpx  # noqa: E402
 import yaml  # noqa: E402
 
 from live_profile import FAKE_EMAIL, FAKE_PROFILE  # noqa: E402,F401  (scripts/live_profile.py: the fake applicant)
@@ -86,8 +94,9 @@ from live_profile import FAKE_EMAIL, FAKE_PROFILE  # noqa: E402,F401  (scripts/l
 from job_apply import pay, server  # noqa: E402
 from job_apply import fixtures as fixture_files  # noqa: E402
 from job_apply.config import Profile  # noqa: E402
-from job_apply.fixtures import convert, personal_strings, redact  # noqa: E402
-from job_apply.postings import FetchError, Posting, fetch_posting, finalize, parse_html  # noqa: E402
+from job_apply.fixtures import convert, personal_strings, redact, scrub_others  # noqa: E402
+from job_apply.postings import (_ORACLE_HOST, USER_AGENT, FetchError, Posting, csod_context, fetch_posting,  # noqa: E402
+                                finalize, parse_html)
 from job_apply.search import title_matches  # noqa: E402
 from job_apply.autofill import is_empty_value, polarity  # noqa: E402
 from job_apply.ats import detect_ats  # noqa: E402
@@ -383,7 +392,7 @@ async def read_posting(url: str) -> Posting:
     posting: Posting | None = None
     refused: Exception | None = None
     try:
-        posting = await fetch_posting(url)
+        posting = await (fetch_saving(url) if SAVE_POSTINGS is not None else fetch_posting(url))
     except Exception as e:  # as the desk: the browser gets a go
         refused = e
     if posting is None or not posting.is_useful:
@@ -402,6 +411,114 @@ async def read_posting(url: str) -> Posting:
 
 async def _tab_posting(url: str) -> Posting:
     return finalize(parse_html(await server.browser.background_html(url), url))
+
+
+SAVE_POSTINGS: Path | None = None  # --save-postings: the folder each job system's first posting API answer goes to
+POSTING_APIS = ("workday", "greenhouse", "lever", "smartrecruiters", "oracle_hcm", "csod")  # (postings._fetch_with's)
+# An answer's keys that name a person (SmartRecruiters' "creator", a recruiter, a hiring manager, a contact): left out
+# of a saved answer, with what's under them (none is one a reader reads)
+_PERSON_KEY = re.compile(r"creator|recruiter|manager|contact|owner|author|e-?mail|phone", re.I)
+POSTING_FIXTURE_FIELDS = ("title", "company", "location", "apply_url", "external_id", "employment_type", "posted_at")
+
+
+async def fetch_saving(url: str) -> Posting:
+    """fetch_posting, keeping each answer it reads; the first posting of its job system read from its API is saved
+    (save_posting)."""
+    answers: dict[str, Any] = {}
+
+    async def keep(response: httpx.Response) -> None:
+        await response.aread()
+        kind = response.headers.get("content-type", "")
+        if response.status_code != 200:
+            return
+        if "json" in kind:
+            with contextlib.suppress(ValueError):
+                answers[str(response.request.url)] = response.json()
+        elif "html" in kind:
+            answers[str(response.request.url)] = response.text
+
+    headers = {"User-Agent": USER_AGENT, "Accept-Language": "en-US,en;q=0.9"}  # (as fetch_posting's own client)
+    async with httpx.AsyncClient(headers=headers, follow_redirects=True, timeout=20.0,
+                                 event_hooks={"response": [keep]}) as client:
+        posting = await fetch_posting(url, client=client)
+    if posting.parse_method.endswith("-api"):
+        try:
+            saved = await save_posting(url, answers)
+        except Exception as e:  # (the check goes on without it)
+            print(f"--save-postings: {detect_ats(url)}'s answer wasn't saved: {type(e).__name__}: {str(e)[:200]}",
+                  flush=True)
+        else:
+            if saved is not None:
+                print(f"--save-postings: {saved.as_posix()} ({url})", flush=True)
+    return posting
+
+
+def _without_people(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {k: _without_people(v) for k, v in value.items() if not _PERSON_KEY.search(str(k))}
+    if isinstance(value, list):
+        return [_without_people(v) for v in value]
+    return value
+
+
+def _page_stand_in(page: str) -> str:
+    """A page a reader read on the way to its API (Cornerstone's posting page, for its token; an employer's own address
+    for its Oracle site, for the Oracle host), as only what the reader takes from it."""
+    head = []
+    ctx = csod_context(page)
+    if ctx:
+        head.append(f"<script>csod.context={json.dumps({k: ctx[k] for k in ('token', 'cultureID') if k in ctx})};</script>")
+    if m := _ORACLE_HOST.search(page):
+        head.append(f'<link rel="preconnect" href="https://{m.group(0)}">')
+    return f"<html><head>{''.join(head)}</head><body></body></html>"
+
+
+async def replay_posting(fixture: dict[str, Any]) -> Posting:
+    """The posting fetch_posting reads at fixture["posting_url"] with each request answered from fixture["answers"]
+    (as tests/test_ats_postings.py reads one)."""
+    answers = fixture["answers"]
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        body = answers.get(str(request.url))
+        if body is None:
+            return httpx.Response(404)
+        return httpx.Response(200, html=body) if isinstance(body, str) else httpx.Response(200, json=body)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(answer)) as client:
+        return await fetch_posting(fixture["posting_url"], client=client)
+
+
+async def save_posting(url: str, answers: dict[str, Any]) -> Path | None:
+    """The answers a posting at `url` was read from, as SAVE_POSTINGS/<system>.json, unless its system has one already
+    (a run's first only, in any of its --parallel groups): scrubbed, then read again from what's left, offline, for
+    what the desk reads from them (its "expect"); not saved when that read isn't the API's. Its path, or None."""
+    system = detect_ats(url)
+    if SAVE_POSTINGS is None or system not in POSTING_APIS or not answers:
+        return None
+    path = SAVE_POSTINGS / f"{system}.json"
+    if path.exists():
+        return None
+    raw = {"system": system,
+           "note": f"Recorded by live_smoke.py --save-postings on {datetime.date.today().isoformat()}, scrubbed: look it "
+                   "over before committing it (the repo is public).",
+           "posting_url": url,
+           "answers": {u: _page_stand_in(b) if isinstance(b, str) else _without_people(b) for u, b in answers.items()}}
+    text = scrub_others(redact(json.dumps(raw, ensure_ascii=False), personal_strings(Profile.load())))
+    fixture = json.loads(_mask(text))
+    posting = await replay_posting(fixture)
+    if not posting.parse_method.endswith("-api"):
+        raise ValueError(f"read again from the scrubbed answers, the posting came from {posting.parse_method!r}")
+    lines = [line.strip() for line in posting.description.splitlines() if line.strip()]
+    fixture["expect"] = {**{k: getattr(posting, k) for k in POSTING_FIXTURE_FIELDS
+                            if getattr(posting, k) or k in ("title", "location", "apply_url")},
+                         "text": list(dict.fromkeys(line[:80] for line in lines[:1] + lines[-1:]))}
+    SAVE_POSTINGS.mkdir(parents=True, exist_ok=True)
+    try:
+        with path.open("x", encoding="utf-8") as f:  # (another group's may have come first)
+            f.write(json.dumps(fixture, indent=2, ensure_ascii=False) + "\n")
+    except FileExistsError:
+        return None
+    return path
 
 
 async def check_company(company: dict[str, Any], out: Path, fixtures: bool, rec: dict[str, Any]) -> None:
@@ -1023,7 +1140,15 @@ async def main() -> int:
     ap.add_argument("--tailored-resume", action="store_true",
                     help="with --pipeline: a clearly marked tailored test resume in each job's folder before the desk "
                          "applies (the weekly tailored-resume probe, scripts/live_probes.py)")
+    ap.add_argument("--save-postings", type=Path, default=None, metavar="DIR",
+                    help="the search check: each job system's first posting API answer, scrubbed, as DIR/<system>.json "
+                         "(the posting readers' offline fixtures, tests/fixtures/postings)")
     args = ap.parse_args()
+    if args.save_postings and args.pipeline:
+        print("--save-postings goes with the search check, not --pipeline. Nothing was run.", file=sys.stderr)
+        return 2
+    global SAVE_POSTINGS
+    SAVE_POSTINGS = args.save_postings
     if args.derived_password and not args.test_identity:
         print("--derived-password goes with --test-identity. Nothing was run.", file=sys.stderr)
         return 2
@@ -2412,6 +2537,7 @@ async def parallel_main(args: argparse.Namespace) -> int:
               *(["--derived-password"] if args.derived_password else []),
               *(["--tailored-resume"] if args.tailored_resume else []),
               *(["--machine", args.machine] if args.machine else []),
+              *(["--save-postings", str(args.save_postings)] if args.save_postings else []),
               *(["--lists", args.lists] if args.lists else []), "--role", args.role]
     children = [await asyncio.create_subprocess_exec(
         sys.executable, __file__, *passed, "--shard", f"{i}/{n}", "--out", str(args.out / f"shard-{i}"),

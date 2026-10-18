@@ -1,0 +1,42 @@
+{
+  "system": "greenhouse",
+  "note": "Made up, in the shape of Greenhouse's job board API (boards-api.greenhouse.io/v1/boards/<board>/jobs/<id>?questions=true). live_smoke.py --save-postings records a real one.",
+  "posting_url": "https://job-boards.greenhouse.io/examplefab/jobs/4000001001",
+  "answers": {
+    "https://boards-api.greenhouse.io/v1/boards/examplefab/jobs/4000001001?questions=true": {
+      "absolute_url": "https://www.example.com/careers/open-roles/?gh_jid=4000001001",
+      "data_compliance": [{"type": "gdpr", "requires_consent": false, "requires_processing_consent": false, "requires_retention_consent": false, "retention_period": null}],
+      "internal_job_id": 3000000101,
+      "location": {"name": "Tempe, Arizona, United States"},
+      "metadata": null,
+      "id": 4000001001,
+      "updated_at": "2026-10-14T09:30:00-04:00",
+      "requisition_id": "EF-0042",
+      "title": "Process Engineer",
+      "company_name": "Example Fab",
+      "first_published": "2026-10-01T08:00:00-04:00",
+      "content": "&lt;h3&gt;What you will do&lt;/h3&gt;&lt;p&gt;Tune the made-up plating line and write its control plans.&lt;/p&gt;&lt;ul&gt;&lt;li&gt;A bachelor&amp;#39;s degree in chemical engineering&lt;/li&gt;&lt;/ul&gt;",
+      "departments": [{"id": 1001, "name": "Engineering", "child_ids": [], "parent_id": null}],
+      "offices": [{"id": 2001, "name": "Tempe", "location": "Tempe, Arizona, United States", "child_ids": [], "parent_id": null}],
+      "questions": [
+        {"description": null, "label": "First Name", "required": true, "fields": [{"name": "first_name", "type": "input_text", "values": []}]},
+        {"description": null, "label": "Are you legally authorized to work in the United States?", "required": true,
+         "fields": [{"name": "question_1", "type": "multi_value_single_select", "values": [{"label": "Yes", "value": 1}, {"label": "No", "value": 0}]}]},
+        {"description": null, "label": "", "required": false, "fields": []}
+      ],
+      "location_questions": [],
+      "compliance": [],
+      "demographic_questions": null
+    }
+  },
+  "expect": {
+    "title": "Process Engineer",
+    "company": "Example Fab",
+    "location": "Tempe, Arizona, United States",
+    "apply_url": "https://job-boards.greenhouse.io/examplefab/jobs/4000001001",
+    "external_id": "EF-0042",
+    "posted_at": "2026-10-14T09:30:00-04:00",
+    "text": ["What you will do", "Tune the made-up plating line", "- A bachelor's degree in chemical engineering",
+             "Application questions:", "- Are you legally authorized to work in the United States?"]
+  }
+}

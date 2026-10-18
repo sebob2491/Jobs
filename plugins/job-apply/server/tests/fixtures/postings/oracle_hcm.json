@@ -1,0 +1,43 @@
+{
+  "system": "oracle_hcm",
+  "note": "Made up, in the shape of Oracle Recruiting Cloud's requisition details API (/hcmRestApi/resources/latest/recruitingCEJobRequisitionDetails). live_smoke.py --save-postings records a real one.",
+  "posting_url": "https://examplefab.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1/job/300001",
+  "answers": {
+    "https://examplefab.fa.us2.oraclecloud.com/hcmRestApi/resources/latest/recruitingCEJobRequisitionDetails?expand=all&onlyData=true&finder=ById;Id=%22300001%22,siteNumber=CX_1": {
+      "items": [
+        {
+          "Id": "300001",
+          "Title": "Metrology Technician",
+          "ExternalPostedStartDate": "2026-10-05T07:00:00+00:00",
+          "PrimaryLocation": "Chandler, AZ, United States",
+          "PrimaryLocationCountry": "US",
+          "WorkerType": "Employee",
+          "JobSchedule": "Full time",
+          "JobShift": "Night",
+          "ShortDescriptionStr": "Measure the made-up wafers.",
+          "ExternalDescriptionStr": "<p>Run the example fab's thickness and overlay gauges on nights.</p>",
+          "ExternalResponsibilitiesStr": "<ul><li>Log every gauge check</li></ul>",
+          "ExternalQualificationsStr": "<ul><li>A high school diploma</li></ul>",
+          "Organization": "Example Fab Operations",
+          "workLocation": [{"TownOrCity": "Chandler", "Region2": "AZ", "Country": "US"}],
+          "secondaryLocations": [],
+          "requisitionFlexFields": []
+        }
+      ],
+      "count": 1,
+      "hasMore": false,
+      "limit": 25,
+      "offset": 0,
+      "links": []
+    }
+  },
+  "expect": {
+    "title": "Metrology Technician",
+    "location": "Chandler, AZ, United States",
+    "apply_url": "https://examplefab.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1/job/300001",
+    "external_id": "300001",
+    "employment_type": "Employee",
+    "posted_at": "2026-10-05T07:00:00+00:00",
+    "text": ["Run the example fab's thickness and overlay gauges on nights.", "- Log every gauge check", "- A high school diploma"]
+  }
+}
