@@ -1093,7 +1093,7 @@ def test_only_where_the_desk_goes_all_the_way_shows_those_employers_alone_and_is
     assert Desk(srv).handled_only is True  # still on next time the desk opens
 
 
-_PAY_KEYS = ("pay_min", "pay_max", "pay_period", "pay_source")
+_PAY_KEYS = ("pay_min", "pay_max", "pay_period", "pay_source", "pay_sure")
 
 
 def _fixture_openings():
@@ -1128,7 +1128,7 @@ def test_each_opening_says_its_pay_or_that_it_isnt_listed(srv, job_apply_home):
     rows = {r["company"]: r for r in desk.state()["listings"]}
     assert rows["Lam Research"]["pay"] is None and rows["Lam Research"]["posted_days"] == 2
     onto, ebara = rows["Onto Innovation"]["pay"], rows["Ebara Technologies"]["pay"]
-    assert (onto["shown"], onto["top"], onto["from"]) == ("$71k–$107k/yr", 107040, "From the posting's text")
+    assert (onto["shown"], onto["top"], onto["from"]) == ("$71k–$107k/yr", 107040, "From the posting's pay line")
     assert (ebara["shown"], ebara["top"], ebara["yearly_min"]) == ("$26–$28/hr (≈$54k–$58k/yr)", 58240, 54080)
     assert rows["Ebara Technologies"]["posted_days"] is None and rows["Onto Innovation"]["ats"] == "workday"
     job = srv.add_job(url="https://www.indeed.com/viewjob?jk=0a1b2c3d4e5f6a7b", title="Equipment Technician",
@@ -1166,12 +1166,15 @@ def test_the_openings_sort_by_pay_or_date_and_the_filters_hide_only_what_says_it
                 ebara = page.locator("li.row", has_text="Ebara Technologies Technician").locator(".meta").first
                 assert "$26–$28/hr (≈$54k–$58k/yr)" in await ebara.inner_text()
                 assert "date unknown" in await ebara.inner_text()
-                assert await ebara.locator(".pay").get_attribute("title") == "From the posting's text"
+                assert await ebara.locator(".pay").get_attribute("title") == "From the posting's pay line"
                 onto = page.locator("li.row", has_text="Onto Innovation Technician").locator(".meta").first
                 assert "$71k–$107k/yr" in await onto.inner_text()
                 lam = page.locator("li.row", has_text="Lam Research Technician").locator(".meta").first
                 assert "pay not listed" in await lam.inner_text()
                 assert await order(page) == ["Lam", "Onto", "Ebara"]  # (fit)
+                # (the second review) a pay read from the text, not its pay line, never fails "Pay at least"
+                assert await page.evaluate("[paysEnough({pay: {sure: false, top: 40000}}, 60000),"
+                                           " paysEnough({pay: {sure: true, top: 40000}}, 60000)]") == [True, False]
                 await page.click("[data-sort='pay']")
                 assert await order(page) == ["Onto", "Ebara", "Lam"]
                 await page.click("[data-sort='newest']")

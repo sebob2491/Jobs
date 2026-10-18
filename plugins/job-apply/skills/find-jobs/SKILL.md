@@ -43,8 +43,10 @@ The goal is a short, deduplicated list of real openings saved to the tracker
    - `min_pay` leaves out an opening whose pay is listed and below it (`below_min_pay` counts
      them). Most employers' lists don't give pay, so most results have no `pay`: they stay,
      and the posting says (`ingest_job` reads it: `pay` on the saved job, from the posting's
-     own data or its words, such as "Salary Range $26.00 - $28.00 Hourly"). Never drop a job
-     for pay it doesn't list. `list_jobs(min_pay=...)` does the same over the tracker.
+     own data or its words, such as "Salary Range $26.00 - $28.00 Hourly"). Only pay the posting
+     states on its pay line (or in its own data) can leave a job out; pay only read from its
+     other words is shown with "≈" and never does. Never drop a job for pay it doesn't list.
+     `list_jobs(min_pay=...)` does the same over the tracker.
    - Results already in the tracker carry `tracked`. Skip those.
    - Eightfold sites (Lam Research, Micron, Infineon) refuse direct API calls, and
      ASML's, Daifuku's (iCIMS), Ebara's (Paycom), Nikon Precision's (UKG Pro), Edwards' and

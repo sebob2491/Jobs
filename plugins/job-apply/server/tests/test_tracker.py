@@ -964,6 +964,18 @@ def test_a_new_read_of_the_same_posting_corrects_or_clears_its_text_pay(job_appl
     joined, _ = t.upsert(_indeed(description="Duties. " * 40, pay_min=20, pay_max=21, pay_period="hour",
                                  pay_source="text"))
     assert joined["id"] == job["id"] and _pay_of(joined) == (26.0, 28.0, "hour", "text")
+    # (the second review) nor does the employer's posting read again clear a pay a job board's copy of it gave: its
+    # own words may simply not say it
+    job, _ = t.upsert({"url": "https://careers.example.com/job/9", "title": "Process Technician", "company": "Example",
+                       "location": "Tempe, AZ"})
+    t.upsert({"url": "https://www.indeed.com/viewjob?jk=9999999999999999", "title": "Process Technician",
+              "company": "Example", "location": "Tempe, AZ", "source": "indeed", "ats": "indeed",
+              "description": "Pay: $25 - $30 per hour", "pay_min": 25, "pay_max": 30, "pay_period": "hour",
+              "pay_source": "text", "pay_sure": 1})
+    assert t.aliases().get(job["id"]) and _pay_of(t.get(job["id"])) == (25.0, 30.0, "hour", "text")
+    again, _ = t.upsert({"url": "https://careers.example.com/job/9", "description": "Duties. " * 40, "pay_min": None,
+                         "pay_max": None, "pay_period": "", "pay_source": ""})
+    assert _pay_of(again) == (25.0, 30.0, "hour", "text") and again["pay_sure"] == 1
     t.close()
 
 

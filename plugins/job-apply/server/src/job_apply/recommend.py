@@ -515,7 +515,8 @@ def score_listing(listing: dict[str, Any], prof: Profile, description: str = "",
         fit.concerns.append(note)
     # pay: a plus where it reaches what the person wants; never a minus, and nothing for pay not listed
     desired = pay.desired_yearly(prof.get("preferences.desired_salary"))
-    if desired and pay.meets(pay.from_fields(listing), desired):
+    listed = pay.from_fields(listing)  # (only a sure pay: one read from the words may be wrong)
+    if desired and listed is not None and listed.sure and pay.meets(listed, desired):
         said = f"pay meets your desired ${desired:,.0f}"
         fit.add(5, said)
         fit.reasons.append(said)
@@ -634,9 +635,9 @@ async def recommend(prof: Profile, search: Search, limit_per_company: int = 10, 
             return
         item["posting"] = {k: getattr(posting, k) for k in
                            ("title", "location", "description", "apply_url", "salary", "employment_type",
-                            "posted_at", "external_id", "ats", "pay_min", "pay_max", "pay_period", "pay_source")}
+                            "posted_at", "external_id", "ats", *pay.FIELDS)}
         if posting.pay_period and not item.get("pay_period"):  # (the opening's pay: shown on the desk, and scored)
-            item.update({k: getattr(posting, k) for k in ("pay_min", "pay_max", "pay_period", "pay_source")})
+            item.update({k: getattr(posting, k) for k in pay.FIELDS})
         if not str(item.get("posted") or "").strip() and posting.posted_at:
             item["posted"] = posting.posted_at  # the list didn't say when (EY's, iCIMS portals'); the posting does
         item["fit"] = score_listing(item, prof, posting.description, today)

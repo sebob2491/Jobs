@@ -120,6 +120,7 @@ class Listing:
     pay_max: float | None = None
     pay_period: str = ""
     pay_source: str = ""
+    pay_sure: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         out = asdict(self)
@@ -128,7 +129,7 @@ class Listing:
         if not out["in_area"]:
             del out["in_area"]
         if not out["pay_period"]:  # (no pay given)
-            for k in ("pay_min", "pay_max", "pay_period", "pay_source"):
+            for k in ("pay_min", "pay_max", "pay_period", "pay_source", "pay_sure"):
                 del out[k]
         return out
 

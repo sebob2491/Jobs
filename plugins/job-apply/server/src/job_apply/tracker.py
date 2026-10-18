@@ -52,6 +52,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     pay_max REAL,
     pay_period TEXT DEFAULT '',
     pay_source TEXT DEFAULT '',
+    pay_sure INTEGER DEFAULT 0,
     posted_at TEXT DEFAULT '',
     description TEXT DEFAULT '',
     status TEXT NOT NULL DEFAULT 'saved',
@@ -168,9 +169,10 @@ def _progress(status: str) -> int:
 _JOB_FIELDS = [
     "url", "apply_url", "title", "company", "location", "ats", "source", "external_id",
     "salary", "employment_type", "posted_at", "description", "pay_min", "pay_max", "pay_period", "pay_source",
+    "pay_sure",
 ]
 # a job's pay, kept together: filled in where the job has none, and replaced by a better source's (_pay), never mixed
-_PAY_FIELDS = ("pay_min", "pay_max", "pay_period", "pay_source")
+_PAY_FIELDS = ("pay_min", "pay_max", "pay_period", "pay_source", "pay_sure")
 
 
 def _values(posting: dict[str, Any]) -> dict[str, Any]:
@@ -181,22 +183,26 @@ def _values(posting: dict[str, Any]) -> dict[str, Any]:
             out[k] = float(posting[k]) if posting.get(k) not in (None, "") else None
         except (TypeError, ValueError):
             out[k] = None
+    out["pay_sure"] = 1 if posting.get("pay_sure") and posting.get("pay_sure") not in ("0", "False") else 0
     if out["pay_min"] is None and out["pay_max"] is None:
         out["pay_period"] = out["pay_source"] = ""
+        out["pay_sure"] = 0
     return out
 
 
-def _pay(row: Any, new: Any, again: bool = False) -> dict[str, Any]:
-    """The pay fields to set on a job (`row`) from another posting of it (`new`): all four, where the job has no pay
-    or the other's source is better (structured > indeed > text: pay.better); else none. Its own posting read again
-    (`again`: at the job's own address, with its text) also replaces a pay of the same rank (the newer read: a parser's
-    fix corrects an older one's), and clears a pay read from the words that the new read no longer finds there."""
+def _pay(row: Any, new: Any, again: bool = False, copies: bool = False) -> dict[str, Any]:
+    """The pay fields to set on a job (`row`) from another posting of it (`new`): all of them, where the job has no pay
+    or the other's source is better (structured > indeed > text > a board's estimate: pay.better); else none. Its own
+    posting read again (`again`: at the job's own address, with its text) also replaces a pay of the same rank (the
+    newer read: a parser's fix corrects an older one's), and clears a pay read from the words that the new read no
+    longer finds there; but not for a job holding a job board's copy (`copies`), whose pay may be that copy's (the
+    second review)."""
     new = dict(new)
     if pay.better(new, row, again):
         return {k: new[k] for k in _PAY_FIELDS}
     found = new.get("pay_min") is not None or new.get("pay_max") is not None
-    if again and new.get("description") and not found and row["pay_source"] == "text":
-        return {"pay_min": None, "pay_max": None, "pay_period": "", "pay_source": ""}
+    if again and not copies and new.get("description") and not found and row["pay_source"] == "text":
+        return {"pay_min": None, "pay_max": None, "pay_period": "", "pay_source": "", "pay_sure": 0}
     return {}
 
 
@@ -819,7 +825,8 @@ class Tracker:
         board = _board(url, values["source"])
         if existing:
             updates = {k: v for k, v in values.items() if k not in _PAY_FIELDS and v and not existing[k]}
-            updates.update(_pay(existing, values, again=existing["url"] == url))
+            copies = self.conn.execute("SELECT 1 FROM aliases WHERE job_id = ?", (existing["id"],)).fetchone()
+            updates.update(_pay(existing, values, again=existing["url"] == url, copies=copies is not None))
             if board and _board(existing["url"], existing["source"] or "") is None:
                 # a job board's copy of a job kept at the employer's site: never where it's applied for
                 updates = {k: v for k, v in updates.items() if k not in _PLACE_FIELDS}

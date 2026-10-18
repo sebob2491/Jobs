@@ -484,7 +484,10 @@ def test_min_pay_leaves_out_only_openings_whose_listed_pay_is_below_it(srv, monk
         asked.update(kw)
         return {"results": [
             {"company": "Lever Co", "title": "FSE", "url": "https://jobs.lever.co/leverco/low", "pay_min": 18,
-             "pay_max": 20, "pay_period": "hour", "pay_source": "text"},
+             "pay_max": 20, "pay_period": "hour", "pay_source": "text", "pay_sure": True},
+            # (the second review) read from the text, not its pay line: never left out for it
+            {"company": "Lever Co", "title": "FSE 4", "url": "https://jobs.lever.co/leverco/guess", "pay_min": 18,
+             "pay_max": 20, "pay_period": "hour", "pay_source": "text", "pay_sure": False},
             {"company": "Lever Co", "title": "FSE 2", "url": "https://jobs.lever.co/leverco/unsaid"},
             {"company": "Lever Co", "title": "FSE 3", "url": "https://jobs.lever.co/leverco/tracked"}],
             "errors": {}, "browser_only": []}
@@ -494,9 +497,9 @@ def test_min_pay_leaves_out_only_openings_whose_listed_pay_is_below_it(srv, monk
                 salary="$80,000 - $95,000 a year")
     out = asyncio.run(server.search_company_jobs("field service", min_pay=60000, posted_within_days=14))
     assert asked["posted_within_days"] == 14
-    assert [r["url"].rsplit("/", 1)[1] for r in out["results"]] == ["unsaid", "tracked"]
-    assert out["below_min_pay"] == 1 and out["results"][1]["pay"] == "$80k–$95k/yr" and "pay" not in out["results"][0]
-    assert len(asyncio.run(server.search_company_jobs("field service"))["results"]) == 3
+    assert [r["url"].rsplit("/", 1)[1] for r in out["results"]] == ["guess", "unsaid", "tracked"]
+    assert out["below_min_pay"] == 1 and out["results"][2]["pay"] == "$80k–$95k/yr" and "pay" not in out["results"][1]
+    assert len(asyncio.run(server.search_company_jobs("field service"))["results"]) == 4
     srv.add_job(url="https://careers.example.com/job/9", title="Tech", company="Example Fab", salary="$17 an hour")
     srv.add_job(url="https://careers.example.com/job/10", title="Tech 2", company="Example Fab")
     jobs = srv.list_jobs(min_pay=60000)["jobs"]
@@ -513,6 +516,8 @@ def test_min_pay_leaves_out_only_openings_whose_listed_pay_is_below_it(srv, monk
 
     with pytest.raises(ToolError, match="min_pay is dollars a year"):
         srv.list_jobs(min_pay=-1)
+    with pytest.raises(ToolError, match="min_pay is dollars a year"):  # (over the desk's own limit too)
+        srv.list_jobs(min_pay=20_000_000)
     with pytest.raises(ToolError, match="min_pay is dollars a year"):
         asyncio.run(server.search_company_jobs("field service", min_pay=-5))
     with pytest.raises(ToolError, match="posted_within_days is a number of days"):

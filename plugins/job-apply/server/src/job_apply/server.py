@@ -468,9 +468,9 @@ async def read_icims_posting(url: str) -> Posting:
 
 def _check_min_pay(min_pay: float | None) -> None:
     """A min_pay a tool was given: dollars a year, 0 or more (0 or none: any pay)."""
-    if min_pay is not None and not (math.isfinite(min_pay) and min_pay >= 0):
-        raise ToolError(f"min_pay is dollars a year, 0 or more (an hourly rate × 2,080); {min_pay} isn't. Leave it out "
-                        "for any pay.")
+    if min_pay is not None and not (math.isfinite(min_pay) and 0 <= min_pay <= pay.MIN_PAY_MOST):
+        raise ToolError(f"min_pay is dollars a year, 0 to {pay.MIN_PAY_MOST:,} (an hourly rate × 2,080); {min_pay} "
+                        "isn't. Leave it out for any pay.")
 
 
 @tool()
@@ -498,8 +498,9 @@ async def search_company_jobs(
     careers_url to search in their own browser.
     every_list: every plugin list's employers too, not only the person's (the desk's troubleshooting).
     min_pay: dollars a year (hourly pay counts 2,080 hours): leaves out an opening whose pay is listed (by its
-    site's list, or its job in the tracker) and the most it pays is below this. Most lists don't give pay: those
-    openings stay, with no `pay` (read the posting, or ingest_job, for it). Results with pay carry `pay`.
+    site's list, or its job in the tracker) on its pay line or in its own data, and the most it pays is below this
+    (pay only read from a posting's other words never leaves one out). Most lists don't give pay: those openings
+    stay, with no `pay` (read the posting, or ingest_job, for it). Results with pay carry `pay`.
     posted_within_days: leaves out openings posted longer ago (7, 14, 30...); one whose site gives no date stays
     (ApplicantStack, Talemetry, Jobvite, Avature and a few others never do). `below_min_pay` counts what min_pay left
     out."""
@@ -623,7 +624,8 @@ def list_jobs(status: str | None = None, company: str | None = None, limit: int 
 
     A job whose pay is listed has `pay` ("$26–$28/hr (≈$54k–$58k/yr)") and `pay_yearly` (the most it pays a year;
     for "from $X", X a year). min_pay (dollars a year; hourly pay counts 2,080 hours) leaves out a job whose pay is
-    listed and below it; a job that doesn't list its pay stays. Up to `limit` jobs either way."""
+    listed on its pay line (or in its own data) and below it; a job that doesn't list its pay, or whose pay is only
+    read from its words, stays. Up to `limit` jobs either way."""
     _check_min_pay(min_pay)
     t = tracker()
     if min_pay:

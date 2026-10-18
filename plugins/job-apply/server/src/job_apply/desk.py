@@ -1466,9 +1466,9 @@ def likely_order(jobs: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return sorted(jobs, key=tier)  # (sorted keeps the order of the ones alike)
 
 
-PAY_KEYS = ("pay_min", "pay_max", "pay_period", "pay_source")
+PAY_KEYS = pay.FIELDS
 POSTED_WITHIN = (7, 14, 30)  # the page's "Posted" choices, in days (none: any day)
-MIN_PAY_MOST = 10_000_000  # a "Pay at least" over this is a typo
+MIN_PAY_MOST = pay.MIN_PAY_MOST  # a "Pay at least" over this is a typo
 
 
 def _min_pay(value: Any) -> int | None:

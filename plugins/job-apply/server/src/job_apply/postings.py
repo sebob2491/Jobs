@@ -57,6 +57,7 @@ class Posting:
     pay_max: float | None = None
     pay_period: str = ""
     pay_source: str = ""
+    pay_sure: bool = False  # (structured, or right after a pay label: only a sure pay fails a "Pay at least")
     # the whole text, before MAX_DESCRIPTION's cut, and the page's description: read by finalize() for the pay (often
     # the last thing a long posting says), then let go. Never saved
     full_text: str = field(default="", repr=False, compare=False)

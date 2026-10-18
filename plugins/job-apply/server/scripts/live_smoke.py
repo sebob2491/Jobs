@@ -431,6 +431,7 @@ async def check_company(company: dict[str, Any], out: Path, fixtures: bool, rec:
             # its pay as the desk lists it ("" when the posting doesn't say), and its date (the list's, else the
             # posting's: "" when neither gives one), for the audit's counts per system (live_audit.posting_facts)
             "pay": pay.shown(pay.from_fields(vars(posting))), "pay_source": posting.pay_source,
+            "pay_sure": posting.pay_sure,
             "posted": str(first.get("posted") or posting.posted_at or ""),
         }
     except Exception as e:  # report everything

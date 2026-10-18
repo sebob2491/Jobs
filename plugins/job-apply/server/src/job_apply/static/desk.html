@@ -239,7 +239,7 @@ footer { max-width: 1240px; margin: 0 auto; padding: 0 16px 24px; color: var(--m
     <div class="filters openings-only" id="filters">
       <span class="group" role="group" aria-label="Sort the openings">Sort
         <button data-sort="fit" aria-pressed="true" title="Best fit for your profile first">Fit</button><button data-sort="pay" aria-pressed="false" title="Best paid first (over a year), openings whose pay isn't listed last">Pay</button><button data-sort="newest" aria-pressed="false" title="Most recently posted first, openings without a date last">Newest</button></span>
-      <label class="group" title="Hides an opening whose posting lists its pay and the most it pays is below this (hourly pay counted as 2,080 hours a year). One that doesn't list its pay always stays.">Pay at least $<input type="text" id="min-pay" inputmode="numeric" placeholder="any" aria-label="Pay at least, dollars a year" autocomplete="off">/yr</label>
+      <label class="group" title="Hides an opening whose posting gives its pay on its pay line (or in its own data) and the most it pays is below this (hourly pay counted as 2,080 hours a year). One that doesn't list its pay, or whose pay is only read from its text (≈), always stays.">Pay at least $<input type="text" id="min-pay" inputmode="numeric" placeholder="any" aria-label="Pay at least, dollars a year" autocomplete="off">/yr</label>
       <span class="group" role="group" aria-label="Posted within" title="Hides an opening posted longer ago. One whose site gives no date always stays.">Posted
         <button data-posted="" aria-pressed="true">Any</button><button data-posted="7" aria-pressed="false">7 days</button><button data-posted="14" aria-pressed="false">14 days</button><button data-posted="30" aria-pressed="false">30 days</button></span>
     </div>
@@ -1568,7 +1568,8 @@ function shown(r) {
   return (s.handled_only ? kept(r) : s.troubleshoot ? keptElse(r) : true)
     && (theirs(r) || (paysEnough(r, s.min_pay) && postedWithin(r, s.posted_within)));
 }
-const paysEnough = (r, floor) => !floor || !r.pay || r.pay.top == null || r.pay.top >= floor;
+// (only a pay said on its pay line, or in the posting's own data, is "sure": one read from the text never hides a job)
+const paysEnough = (r, floor) => !floor || !r.pay || !r.pay.sure || r.pay.top == null || r.pay.top >= floor;
 const postedWithin = (r, days) => !days || r.posted_days == null || r.posted_days <= days;
 const theirs = (r) => !!(r.added || r.run || (r.job_id != null && r.status && r.status !== "skipped"));
 const kept = (r) => !!r.handled || theirs(r);

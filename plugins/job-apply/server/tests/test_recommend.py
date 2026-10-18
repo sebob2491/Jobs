@@ -638,7 +638,8 @@ def test_pay_that_meets_the_desired_salary_adds_five_and_pay_not_listed_takes_no
     """The design of Oct 18, F1: +5 "pay meets your desired $X" only when preferences.desired_salary is set and the
     listed pay reaches it; never a minus, for pay below it or not listed."""
     listing = {"title": "Equipment Technician", "location": "Phoenix, AZ", "posted": "2026-10-01"}
-    paid = {**listing, "pay_min": 26, "pay_max": 28, "pay_period": "hour", "pay_source": "text"}  # (≈$58,240 at most)
+    paid = {**listing, "pay_min": 26, "pay_max": 28, "pay_period": "hour", "pay_source": "text",  # (≈$58,240 at most)
+            "pay_sure": True}
     wants = tech(preferences={**tech().get("preferences"), "desired_salary": "$55,000"})
     plain = score_listing(listing, wants, today=TODAY)
     met = score_listing(paid, wants, today=TODAY)
@@ -649,6 +650,9 @@ def test_pay_that_meets_the_desired_salary_adds_five_and_pay_not_listed_takes_no
     assert score_listing(paid, high, today=TODAY).score == score_listing(listing, high, today=TODAY).score
     assert score_listing(paid, tech(), today=TODAY).score == score_listing(listing, tech(), today=TODAY).score
     assert not any("pay" in p["why"] for p in score_listing(listing, wants, today=TODAY).parts)
+    # (the second review) only a sure pay earns it: one read from the words may be wrong
+    unsure = {**paid, "pay_sure": False}
+    assert score_listing(unsure, wants, today=TODAY).score == plain.score
 
 
 def test_recommend_takes_a_read_postings_pay_onto_the_opening():
@@ -661,7 +665,7 @@ def test_recommend_takes_a_read_postings_pay_onto_the_opening():
 
     async def fetch(url):
         return Posting(url=url, description=LAM_FSE2, location="Phoenix, AZ", salary="$26 - $28 an hour",
-                       pay_min=26, pay_max=28, pay_period="hour", pay_source="text")
+                       pay_min=26, pay_max=28, pay_period="hour", pay_source="text", pay_sure=True)
 
     item = asyncio.run(recommend(p, search, read_postings=1, fetch=fetch, today=TODAY))["results"][0]
     assert (item["pay_min"], item["pay_max"], item["pay_period"], item["pay_source"]) == (26, 28, "hour", "text")
