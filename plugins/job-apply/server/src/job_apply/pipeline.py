@@ -107,6 +107,11 @@ DESK_SETTLE = 30  # seconds a paused tab may go on changing after the desk typed
 # A password reset asked for with the inbox watched: when no email has come by then, the email most
 # likely has no account there (most sites won't say), so the desk makes one instead
 RESET_MAIL_WAIT = 3 * 60
+# A reset email from before the desk asked for the reset, by this computer's clock: an earlier reset's, its link spent
+# (KLA's Workday, the reset probe's second pass, run 136), or this one's with the two clocks apart (the mail service's
+# INTERNALDATE against this computer's time). A newer one is waited for this long after the reset was asked for, and
+# that one is used only if none comes
+RESET_FRESH_WAIT = 30
 # How long a site may take over a new account before the page is looked at again (a Workday site goes on
 # to its Sign In page a few seconds after Create Account is pressed)
 ACCOUNT_WAIT = 15
@@ -247,18 +252,28 @@ _BOT_TITLE = re.compile(r"just a moment|attention required|access denied|pardon 
 # solve, so it holds nothing up: the person applies elsewhere
 _RESET_DONE = re.compile(r"\b(?:your )?password (?:has been|was|is)(?: successfully)? (?:reset|changed|updated)\b|"
                          r"\bpassword (?:reset|change|changed|updated?) (?:was |is )?(?:a )?success", re.I)
-# A reset's page, its button pressed, saying the new password wasn't set: its link spent ("This link has expired", "is
-# no longer valid", "has already been used", "Invalid link"), or the password one the site had before ("previously
-# used", "used recently", "You can't reuse a recent password"). The usual words: none of Workday's is on record (KLA's,
-# the reset probe's second pass, run 136, opened a spent link, saw its form go and said the password was set). Only
-# where they're said of a link, a password or the like (_RESET_OF): never a posting's "non-expired driver's license"
-# beside a sign-in
-_RESET_REFUSED = re.compile(r"\bexpired\b|\bno longer valid\b|\b(?:already|previously) (?:been )?used\b|"
-                            r"\bused (?:recently|before|previously)\b|\bcan(?:not|'t|\u2019t| not) (?:be )?re-?used?\b|"
-                            r"\b(?:last|previous|recent) (?:\d+ )?passwords\b|"
-                            r"\binvalid (?:or expired )?(?:reset )?(?:link|token|request)\b|"
-                            r"\b(?:link|token|request) (?:is|was) (?:invalid|not valid)\b", re.I)
-_RESET_OF = re.compile(r"\b(?:link|password|token|reset|request|url|session)s?\b", re.I)
+# A reset's page saying it set nothing (opened from its email, or once its button is pressed). Its link spent: "This link
+# has expired", "The password reset link is invalid or has expired", "This reset link is no longer active", "The
+# password reset has timed out", "The link you clicked has already been used", "Invalid Password Reset Request". Or the
+# password one the site had before: "Password was recently used", "You can't reuse a recent password", "Password cannot
+# be the same as your previous 5 passwords". The usual words (none of Workday's is on record: KLA's, the reset probe's
+# second pass, run 136, opened a spent link, saw its form go and said the password was set), and only said of a link, a
+# token, a reset or a password: never "Your session has expired. Please sign in again." after a reset that went in, nor
+# a posting's "non-expired driver's license" beside a sign-in
+_LINK_SPENT = re.compile(r"\b(?:link|token|reset|url)s?\b[^.!?\n]{0,40}?\b(?:expired|no longer (?:valid|active)|"
+                         r"(?:already )?been used|already used|invalid|not valid|timed out)\b|"
+                         r"\b(?:expired|invalid)(?: or expired)? (?:(?:password )?reset (?:link|token|request)|link|token|"
+                         r"url)\b", re.I)
+_PASSWORD_USED = re.compile(r"\bpasswords?\b[^.!?\n]{0,40}?\b(?:(?:recently|previously) used|used (?:recently|before|"
+                            r"previously)|(?:already )?been used|can(?:not|'t|\u2019t| not) be re-?used|"
+                            r"same as (?:your |the |any of your )?(?:current|old|previous|last|recent)|"
+                            r"different from (?:your |the )?(?:current|old|previous)|(?:last|previous|recent) (?:\d+ )?"
+                            r"passwords)\b|\bcan(?:not|'t|\u2019t| not) (?:re-?use|use a password)\b[^.!?\n]{0,40}?"
+                            r"\b(?:password|used)\b", re.I)
+# The site's password rules, shown beside its boxes ("Passwords must not match your last 5 passwords"): no refusal
+# unless an alert says them
+_PASSWORD_RULES = re.compile(r"\bpasswords (?:must|should|may|cannot|can't)\b|\b(?:must|should) (?:not )?(?:contain|"
+                             r"include|match|have|be at least)\b|\bat least \d", re.I)
 _STEPISH = re.compile(r"\b(next|continue|save|submit|review|apply|finish|done|proceed)\b", re.I)
 # Workday saving again what a step saved a moment ago: "A phone number already exists for this application. Update or
 # delete the phone number." (PayPal's, run 56; Grand Canyon Education's address, run 55)
@@ -848,9 +863,15 @@ class Run:
     # when the reset was asked for (the desk's press of its button, or the pause for the person's past a picture code):
     # its email comes after that, and one from before is an earlier reset's, its link spent (_check_mail)
     reset_at: float = 0.0
-    # the saved password set as the site's new one through its reset (_set_new_password): the account is there, so a
-    # sign-in refused after it is said for what it is, and never goes on to a Create Account
+    # the saved password set as the site's new one through its reset (_set_new_password); or a reset link opened for the
+    # account (the desk's, from the inbox, for this job; or one it found opened already, said on a card): the account is
+    # there, so a sign-in refused after it is said for what it is, and never goes on to a Create Account. Until a
+    # sign-in gets in, or another password is saved
     reset_set: bool = False
+    reset_opened: bool = False
+    # the reset email found was one whose link was opened already (_link_opened): an email came, so its wait running
+    # out is said on a card, never taken for "no email: no account there"
+    reset_spent: bool = False
     refreshed: bool = False  # reloaded once for a page that asked for it ("Please refresh the page")
     start_reloaded: bool = False  # reloaded once for a posting page with no way on (the State of Arizona's, run 63)
     reuploaded: bool = False  # a resume the page showed but never kept: its Delete tried, to upload it again (EMD's, once a job)
@@ -882,7 +903,9 @@ class Run:
     # re-review of 0.3.209)
     in_their_hands: bool = False
     invalid_redone: bool = False  # the review page's invalid lists answered again from the profile (once a job)
-    reset_no_mail: bool = False  # and none came in RESET_MAIL_WAIT: no account there, most likely, so one is made
+    # its wait ran out in RESET_MAIL_WAIT with no email it could use: none came (no account there, most likely, so one is
+    # made), or only one whose link was opened already (reset_spent: said on a card)
+    reset_no_mail: bool = False
     reopened_elsewhere: bool = False  # its sign-in page, opened again, led elsewhere: the job opened again (once a job)
     schools_dropped: list[str] = field(default_factory=list)  # education blocks deleted (_drop_unfit_school)
     schools_tried: list[str] = field(default_factory=list)  # and those whose Delete was pressed, gone or not
@@ -986,7 +1009,8 @@ class Run:
     def public(self) -> dict[str, Any]:
         return {**{k: v for k, v in self.__dict__.items() if k not in ("page", "tab_mark", "desk_at", "desk_code", "cookies_asked", "resetting",
                                                                         "reset_asked", "reset_from", "reset_waited",
-                                                                        "reset_at", "reset_set",
+                                                                        "reset_at", "reset_set", "reset_opened",
+                                                                        "reset_spent",
                                                                         "reset_no_mail", "reopened_elsewhere", "reopened", "sign_in_tries", "sign_in_key",
                                                                         "accounts_tried", "account_made", "account_in", "account_page",
                                                                         "account_finished", "verifying", "verify_resent", "mail_looks", "mail_last",
@@ -1632,7 +1656,7 @@ class Applier:
             if run.need == "email_code":
                 await self._check_mail_safely(run)  # the code or link came after the queue went on
             if self._reset_overdue(run):
-                run.reset_no_mail = True  # no reset email: _drive goes back to make an account
+                run.reset_no_mail = True  # none it could use: _drive makes an account, or says so
                 moved = True
             else:
                 try:
@@ -1953,7 +1977,7 @@ class Applier:
             except Exception:  # a tab that can't be read just now (mid-load, crashed): not past it, and the
                 moved = False  # idle and long-wait releases below still apply
             if not moved and self._reset_overdue(blocker):
-                blocker.reset_no_mail = moved = True  # no reset email: _drive goes back to make an account
+                blocker.reset_no_mail = moved = True  # (none it could use: as above)
             if time.time() - blocker.paused_at > HANDS_ON_TIMEOUT:
                 self._go_on_without(blocker, "the other jobs went ahead after a long wait")
             elif moved:
@@ -2624,14 +2648,14 @@ class Applier:
         # began earlier. With an earlier job waiting on the same sender, mail between its step's start and that is
         # either job's (the other's Resend, pressed in its tab meanwhile): neither's, left for the person (the
         # re-checks of jobs at once)
+        want = "code" if boxes else "reset" if run.resetting else "link"
+        # (a reset's email from when the desk asked for it: an older one is an earlier reset's, or the clocks apart)
+        asked = run.reset_at if want == "reset" and run.reset_at else run.paused_at
         try:
-            want = "code" if boxes else "reset" if run.resetting else "link"
             if run.others_mail is False:  # (the lists read once a job, off the event loop)
                 job = self.srv.tracker().get(run.job_id, with_description=False) or {}
                 run.others_mail = await asyncio.to_thread(_another_employers_mail, str(run.company or job.get("company")
                                                                                        or ""), run.employer_mail or frozenset())
-            # (a reset's email from when the desk asked for it, never before: an earlier reset's, its link spent)
-            asked = run.reset_at if want == "reset" and run.reset_at else run.paused_at
             found = await asyncio.to_thread(mailbox.search, *login, asked, senders, want, own_link,
                                             min(later) if later else None, look_back,
                                             others=run.others_mail if want == "code" else None)
@@ -2672,8 +2696,14 @@ class Applier:
             return
         if found.kind == "reset" and _link_opened(found.value):
             # a reset's link works once: one opened already (for this job or another) sets nothing. The new one is
-            # waited for
+            # waited for; and should none come, its wait running out is said, never taken for no email at all
+            run.reset_spent = True
             run.mail_last += "; not used: that reset link was opened already"
+            return
+        if found.kind == "reset" and found.received < asked and time.time() - asked < RESET_FRESH_WAIT:
+            # from before the reset was asked for, by this computer's clock: an earlier reset's (its link spent: run 136),
+            # or this one's with the clocks apart. A newer one is waited for a moment, and this one used if none comes
+            run.mail_last += "; not used yet: it came before the reset was asked for, so a newer one is waited for"
             return
         try:
             if found.kind == "code":
@@ -2688,6 +2718,7 @@ class Applier:
             elif found.kind == "reset":  # its page sets the new password: opened in the job's own tab
                 if run.page is None or run.page.is_closed():
                     return
+                run.reset_opened = True  # (the account is there: a refused sign-in after this makes none)
                 await run.page.goto(found.value, wait_until="domcontentloaded", timeout=45000)
                 run.mail_done = True
                 self._log(run, f"opened the password reset link from your email ({_sent_from(found)})")
@@ -3227,6 +3258,18 @@ class Applier:
             if kind == "sign_in" and _account_and_application(data):
                 return await self._apply_with_account(run, data)
             manage = (kind in ("sign_in", "page", "email_code") or run.resetting) and _may_manage_accounts()
+            if (manage and run.resetting and run.reset_opened and not _new_password_boxes(data, text)
+                    and (refused := _reset_refused(data, text))):
+                # the reset link from the inbox opened on a page that says it's spent (expired, used, invalid), with no
+                # new-password boxes: nothing to set there, and the account is there (never a Create Account)
+                await self._bring_forward(run)
+                site = _site(run, data)
+                return self._pause(run, "sign_in", f"The password reset link from your email opened on {site}'s page "
+                                   f"saying \u201c{refused.rstrip(' .')}\u201d, so the desk couldn't set your saved "
+                                   f"password there. Ask {site} for a new reset through its \u201cForgot password\u201d and open "
+                                   "the new email's link, set the password you saved on the desk as the new one (or "
+                                   "another, and save that one on the desk), then press Resume: the desk signs in with it.",
+                                   seen=data)
             # On the reset's "email sent" page, or back from waiting on an email that didn't come, on whatever
             # page the site left (Workday's reset form stays, filled, with its "if an account exists" note,
             # which can read as a form: so before a form's "past the sign-in" below)
@@ -3234,6 +3277,20 @@ class Applier:
             if manage and run.resetting and (sent_page or run.reset_no_mail):
                 if not run.reset_waited:
                     return await self._await_reset_email(run, data)
+                if run.reset_no_mail and run.reset_spent:
+                    # its wait ran out on an email whose link was opened already (a site that sent the same link again,
+                    # or an earlier reset's): an email came, so the account is there, and it's never "no email: no
+                    # account there, make one". Left where it is: a new reset's link opened in the tab is set on Resume
+                    run.reset_no_mail = run.reset_spent = False
+                    run.reset_opened = True
+                    await self._bring_forward(run)
+                    site = _site(run, data)
+                    return self._pause(run, "sign_in", f"{site} emailed you a password reset, but its link is one the desk "
+                                       "opened already (a reset link works once), so it couldn't set your saved password "
+                                       f"with it. Ask {site} for a new one through its \u201cForgot password\u201d in the "
+                                       "browser window, or open that email's link yourself; set the password you saved on "
+                                       "the desk as the new one (or another, and save that one on the desk), then press "
+                                       "Resume: the desk signs in with it.", seen=data)
                 # Resume pressed on it: the person set the password from the email themselves (or the
                 # inbox wait ran out), so back to the sign-in page, where the saved password is tried again.
                 # No email in RESET_MAIL_WAIT: most likely no account there, so the way to a new one instead.
@@ -3251,6 +3308,7 @@ class Applier:
             if kind == "form" and finish is None:
                 run.resetting = False  # past the sign-in, however the password was set
                 run.sign_in_tries = 0  # (and none of its sign-ins was refused)
+                run.reset_set = run.reset_opened = run.reset_spent = False  # (a refusal after this is the ordinary one)
             if kind == "sign_in":
                 # signed in (or an account made) since a refresh for "Something went wrong": the page after it is the
                 # account's, not what the refresh brought back (presses alone count the steps: the review of 0.3.172)
@@ -3403,15 +3461,17 @@ class Applier:
                     return self._pause(run, "sign_in", f"I filled in your email and saved password on {_site(run, data)}'s "
                                        "sign-in form. Press its sign-in button in the browser window; the desk carries on "
                                        "after that.", seen=data)
-                if done == "refused" and run.reset_set:
-                    # Right after the desk set the saved password through the site's own reset: the account is there,
-                    # so never a Create Account (KLA's Workday, the reset probe's second pass, run 136: a spent link's
-                    # reset set nothing, and the desk pressed Create Account)
+                if done == "refused" and (run.reset_set or run.reset_opened):
+                    # Right after the desk set the saved password through the site's own reset, or opened its link: the
+                    # account is there, so never a Create Account (KLA's Workday, the reset probe's second pass, run
+                    # 136: a spent link's reset set nothing, and the desk pressed Create Account)
                     told = next((e for e in data.get("errors") or [] if not _ERROR_COUNT.match(e.strip())), "")
-                    return self._pause(run, "sign_in", f"I set your saved password through {_site(run, data)}'s password "
-                                       "reset, and it still doesn't sign in there"
-                                       + (f" (it says \u201c{told[:160].rstrip(' .')}\u201d)" if told else "") + ". The "
-                                       "site may not have taken it: a reset link works once, and some sites won't take "
+                    it_says = f" (it says \u201c{told[:160].rstrip(' .')}\u201d)" if told else ""
+                    opening = (f"I set your saved password through {_site(run, data)}'s password reset, and it still "
+                              f"doesn't sign in there{it_says}. The site may not have taken it" if run.reset_set else
+                              f"Your saved password still doesn't sign in on {_site(run, data)} after its password "
+                              f"reset{it_says}. The reset may not have set it")
+                    return self._pause(run, "sign_in", opening + ": a reset link works once, and some sites won't take "
                                        "back a password you've used there before. Reset it there to the one you saved on "
                                        "the desk (or another, and save that one on the desk), then press Resume: the desk "
                                        "signs in with it.", seen=data)
@@ -5609,7 +5669,8 @@ class Applier:
         run.verifying = True
 
     def _reset_overdue(self, run: Run) -> bool:
-        """Waiting on a reset email, with the inbox watched, that hasn't come in RESET_MAIL_WAIT."""
+        """Waiting on a reset email, with the inbox watched, that hasn't come in RESET_MAIL_WAIT (or only one whose link
+        was opened already, Run.reset_spent: _drive says so on a card, and never takes it for no email at all)."""
         # (the wait's own time: not while another job's email step kept its mail from being read; and only once a look
         # made after it has found none, never in the pass that couldn't look: the review of jobs at once)
         return (run.resetting and run.reset_waited and run.status == "needs_you" and run.need == "email_code"
@@ -5631,14 +5692,9 @@ class Applier:
         boxes, and its button pressed. "set" when the site took it, "paused" when it's the
         person's (a picture code, or a password the site turned down); None for any other page."""
         srv = self.srv
-        fields = [f for f in data.get("fields") or [] if not re.match(r"f\d+-", str(f.get("id")))]
-        passwords = [f for f in fields if f.get("kind") == "password" and not _code_box(f)]
-        named = [f for f in fields if f.get("kind") in ("text", "email")
-                 and re.search(r"e-?mail|user ?name|login", f.get("label") or "", re.I)]
-        new = len(passwords) >= 2 or any(_NEW_PASSWORD.search(f.get("label") or "") for f in passwords)
-        if (not passwords or named or not new or any(_OLD_PASSWORD.search(f.get("label") or "") for f in passwords)
-                or not _RESET_PAGE.search(" ".join([text[:2000], *(data.get("headings") or [])]))):
-            return None  # not a reset's page (a Create Account form asks for the email; a change asks the old one)
+        passwords = _new_password_boxes(data, text)
+        if not passwords:
+            return None
         secret = password_for(data["url"])
         if secret is None or _secret(secret) is None:
             return None
@@ -5922,6 +5978,7 @@ class Applier:
         key = hashlib.sha256(saved.encode()).hexdigest()
         if key != run.sign_in_key:  # a password saved since: not the one the site refused
             run.sign_in_key, run.sign_in_tries = key, 0
+            run.reset_set = run.reset_opened = False  # (nor the one a reset set: its refusal is the ordinary path's)
         # the page's own fields: never a password box inside a frame from another site
         fields = [f for f in data.get("fields") or [] if not re.match(r"f\d+-", str(f.get("id")))]
         actions = [a for a in data.get("actions") or [] if not a.get("disabled")]
@@ -5952,9 +6009,10 @@ class Applier:
             # an account" made before that has finished is lost. A Create Account the desk pressed
             # for this job already didn't make one (a Workday site goes back to its Sign In either
             # way): never a second, the password is reset instead. Nor one after the desk set the
-            # saved password through the site's own reset: the account is there (_drive says so).
+            # saved password through the site's own reset, or opened its link: the account is there
+            # (_drive says so).
             if (create is None or tried.get("create_account", 0) >= 2 or run.accounts_tried
-                    or reset_first and _forgot_action(actions) or run.reset_set):
+                    or reset_first and _forgot_action(actions) or run.reset_set or run.reset_opened):
                 return "refused"
             try:
                 await srv.click(create["id"])
@@ -6274,14 +6332,30 @@ _ACCOUNT_FIELD = re.compile(r"e-?mail|password|user ?name|log ?in|terms|privacy|
                             r"text in (?:the )?(?:image|picture)", re.I)  # Benchmark's "Enter the text in image above"
 
 
+def _new_password_boxes(data: dict[str, Any], text: str) -> list[dict[str, Any]]:
+    """A password reset's page (opened from its email): its new-password boxes. [] for any other page (a Create Account
+    form asks for the email; a change asks the old one; a sign-in has one box, not a new password's)."""
+    fields = [f for f in data.get("fields") or [] if not re.match(r"f\d+-", str(f.get("id")))]
+    passwords = [f for f in fields if f.get("kind") == "password" and not _code_box(f)]
+    named = [f for f in fields if f.get("kind") in ("text", "email")
+             and re.search(r"e-?mail|user ?name|login", f.get("label") or "", re.I)]
+    new = len(passwords) >= 2 or any(_NEW_PASSWORD.search(f.get("label") or "") for f in passwords)
+    if (not passwords or named or not new or any(_OLD_PASSWORD.search(f.get("label") or "") for f in passwords)
+            or not _RESET_PAGE.search(" ".join([text[:2000], *(data.get("headings") or [])]))):
+        return []
+    return passwords
+
+
 def _reset_refused(data: dict[str, Any], text: str) -> str:
-    """What a reset's page says, its button pressed, of a new password it didn't set (_RESET_REFUSED), in its own
-    words: its alerts, its headings, then its lines. "" when it says no such thing, or says the password is reset."""
+    """What a reset's page says of a new password it didn't set, or can't (_LINK_SPENT, _PASSWORD_USED), in its own
+    words: its alerts, then its headings and lines (but the site's password rules shown there). "" when it says no such
+    thing, or says the password is reset."""
     if _RESET_DONE.search(text[:2000]):
         return ""
-    for said in [*(data.get("errors") or []), *(data.get("headings") or []), *text[:2000].splitlines()]:
-        said = " ".join(str(said or "").split())
-        if _RESET_REFUSED.search(said) and _RESET_OF.search(said):
+    errors = [" ".join(str(e or "").split()) for e in data.get("errors") or []]
+    shown = [" ".join(str(t or "").split()) for t in [*(data.get("headings") or []), *text[:2000].splitlines()]]
+    for said in [*errors, *(t for t in shown if not _PASSWORD_RULES.search(t))]:
+        if _LINK_SPENT.search(said) or _PASSWORD_USED.search(said):
             return said[:160]
     return ""
 

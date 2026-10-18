@@ -2553,6 +2553,9 @@ def test_with_manage_accounts_a_refused_saved_password_is_reset(srv, monkeypatch
     assert "reset" in wanted
     assert "opened Create Account" not in log and "created your account" not in log, log
     assert not waits  # (the reset form has two password boxes, but it isn't a Create Account form drawing its application)
+    # (signed in: what the reset left on the job is spent, and a refusal after this is the ordinary one: the review of
+    # 0.3.209)
+    assert not (r.reset_set or getattr(r, "reset_opened", True)), (r.reset_set, getattr(r, "reset_opened", None))
 
 
 def test_a_new_password_the_site_never_takes_is_left_to_the_person(srv, monkeypatch, job_apply_home):
@@ -2646,6 +2649,99 @@ def test_a_reset_page_that_says_its_link_has_expired_is_said_not_taken_for_a_set
     assert r.need == "sign_in" and "it says “This link has expired" in r.reason, (r.need, r.reason, r.log)
     assert "didn't set it as the new one" in r.reason and "Forgot password" in r.reason, r.reason
     assert "set your saved password as" not in "\n".join(r.log), r.log
+
+
+def test_a_reset_link_that_says_its_spent_as_it_opens_is_said_and_makes_no_account(srv, monkeypatch, job_apply_home):
+    """The review of 0.3.209: a spent reset link whose page says so as it opens (no new-password boxes, "This link has
+    expired") was read only after a press there never was: the job stopped on "couldn't find the button", or went on to
+    the sign-in and Create Account. Its words are read as it opens, and said."""
+    r = _reset_through(monkeypatch, job_apply_home, srv, fixture_url("site/reset-password.html") + "?token=abc&gone")
+    log = "\n".join(r.log)
+    assert r.need == "sign_in" and r.reason.startswith("The password reset link from your email opened on "), \
+        (r.need, r.reason, r.log)
+    assert "saying “This link has expired" in r.reason and "couldn't find the button" not in r.reason, r.reason
+    assert "set your saved password as" not in log and "opened Create Account" not in log, r.log
+    assert "create your account" not in log, r.log
+
+
+def test_a_sign_in_refused_after_the_reset_link_opened_makes_no_account(srv, monkeypatch, job_apply_home):
+    """The review of 0.3.209: a reset link that goes on to the sign-in at once, saying nothing (spent, or the site's way
+    with one), and the saved password still refused there: the account is there (the site emailed its reset), so no
+    Create Account; a card says what happened."""
+    r = _reset_through(monkeypatch, job_apply_home, srv, fixture_url("site/reset-password.html") + "?token=abc&straight")
+    log = "\n".join(r.log)
+    assert "opened the password reset link from your email" in log and "set your saved password as" not in log, r.log
+    assert r.need == "sign_in" and r.reason.startswith("Your saved password still doesn't sign in on"), \
+        (r.need, r.reason, r.log)
+    assert "after its password reset (it says “Wrong email address or password" in r.reason, r.reason
+    assert "a reset link works once" in r.reason and "then press Resume" in r.reason, r.reason
+    assert "opened Create Account" not in log and "create your account" not in log, r.log
+
+
+def test_a_session_expired_note_after_a_reset_that_went_in_is_no_refusal(srv, monkeypatch, job_apply_home):
+    """The review of 0.3.209: a site whose password change ends every session goes on to its sign-in saying "Your
+    session has expired. Please sign in again.": read as the reset's refusal, the desk stopped. The password is set, and
+    the desk signs in with it."""
+    r = _reset_through(monkeypatch, job_apply_home, srv,
+                       fixture_url("site/reset-password.html") + "?token=abc&then=session")
+    log = "\n".join(r.log)
+    assert "set your saved password as" in log and "didn't set it" not in (r.reason or ""), (r.reason, r.log)
+    assert r.seen_form and not any(w in r.url for w in ("signin", "reset", "forgot")), (r.url, r.reason, r.log)
+
+
+def test_a_reset_email_whose_link_was_opened_already_is_said_never_taken_for_no_email(srv, monkeypatch,
+                                                                                      job_apply_home):
+    """The review of 0.3.209: a site that sends the same reset link again (or an earlier reset's email, its link opened
+    already) had it passed over until the wait ran out, which then read as no email at all: "no password reset email
+    came ... so I went back to make an account there". An email came, so the account is there: a card says so."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "RESET_MAIL_WAIT", 4)
+    saved_password(monkeypatch)
+    manage_accounts(job_apply_home)
+    link = fixture_url("site/reset-password.html") + "?token=sent-again"
+    watched_inbox(monkeypatch, reset_link=link)
+    pipeline._take_code(("careers.example.com", link, time.time()), 999)  # (opened already: another job's reset)
+    job = srv.add_job(url=fixture_url("site/signin-forgot.html"), title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status == "needs_you" and r.need != "email_code" or r.status == "ready",
+                        timeout=60, about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    log = "\n".join(r.log)
+    assert r.need == "sign_in" and "but its link is one the desk opened already" in r.reason, (r.need, r.reason, r.log)
+    assert "no password reset email came" not in log and "opened the password reset link" not in log, r.log
+    assert "opened Create Account" not in log and "create your account" not in log, r.log
+
+
+def test_a_password_saved_since_the_reset_is_refused_the_ordinary_way(srv, monkeypatch):
+    """The review of 0.3.209: what a reset leaves on the job (the desk set the saved password there, or opened its
+    link: no Create Account on a refusal) holds for that password only. Days later the person saves another, and the
+    site refuses it: the ordinary path's, its Create Account."""
+    import hashlib
+
+    saved_password(monkeypatch)
+    run(srv.open_application(url=fixture_url("jsonld_posting.html")))
+    page = run(srv.browser.page())
+    run(page.goto(fixture_url("site/signin-forgot.html")))
+    data = run(srv.inspect_form(include_dropdown_options=False))
+    applier = Applier(srv)
+    same = Run(1, "FSE", "Example Fab", sign_in_tries=2,
+               sign_in_key=hashlib.sha256(b"not-a-real-password").hexdigest())  # (the saved one: the reset's)
+    same.reset_set = same.reset_opened = True
+    assert run(applier._sign_in(same, data, {"submitted": 1, "settled": 1})) == "refused"
+    since = Run(2, "FSE", "Example Fab", sign_in_tries=2,
+                sign_in_key=hashlib.sha256(b"the-password-the-reset-set").hexdigest())  # (another saved since)
+    since.reset_set = since.reset_opened = True
+    assert run(applier._sign_in(since, data, {"submitted": 1})) == "create_account"
+    assert not (since.reset_set or since.reset_opened)
 
 
 def test_a_new_account_is_signed_in_with_and_only_its_own_form_is_sent(srv, monkeypatch, job_apply_home):
@@ -13288,8 +13384,9 @@ def test_a_reset_link_opened_once_is_never_opened_again(srv, monkeypatch):
     """Run 136 again: the first pass's reset link, opened again, set nothing (a reset's link works once). A reset link
     opened once, for this job or another, is passed over, and the new one waited for and opened."""
     first_link = "https://kla.wd1.myworkdayjobs.com/Search/passwordReset?token=first"
-    inbox = [pipeline.mailbox.Found("reset", first_link, "workday.kla.com", time.time() - 2)]
+    inbox: list = []
     applier, (first, second), asked, opened = _waiting_on_resets(srv, monkeypatch, inbox)
+    inbox.append(pipeline.mailbox.Found("reset", first_link, "workday.kla.com", first.reset_at + 1))
     run(applier._check_mail(first))
     assert opened == [first_link] and first.mail_done, (opened, first.mail_last)
     run(applier._check_mail(second))  # the same email: its link spent, passed over
@@ -13298,6 +13395,78 @@ def test_a_reset_link_opened_once_is_never_opened_again(srv, monkeypatch):
     inbox.append(pipeline.mailbox.Found("reset", second_link, "workday.kla.com", time.time()))  # its own, come since
     run(applier._check_mail(second))
     assert opened == [first_link, second_link] and second.mail_done, second.mail_last
+
+
+def test_a_reset_email_from_before_the_request_waits_a_moment_for_a_newer_one(srv, monkeypatch):
+    """The review of 0.3.209: a reset's email is looked for as far back as a code's (the two clocks can be apart), and
+    one from before the desk asked for the reset, by this computer's clock, may be an earlier reset's, its link spent
+    (run 136: the first pass's, opened again, set nothing). A newer one is waited for a moment, and used when it comes;
+    the older one is never opened then."""
+    inbox: list = []
+    applier, (r, _), asked, opened = _waiting_on_resets(srv, monkeypatch, inbox)
+    stale = "https://kla.wd1.myworkdayjobs.com/Search/passwordReset?token=stale"
+    inbox.append(pipeline.mailbox.Found("reset", stale, "workday.kla.com", r.reset_at - 60))
+    run(applier._check_mail(r))
+    assert opened == [] and not r.mail_done and "a newer one is waited for" in r.mail_last, r.mail_last
+    fresh = "https://kla.wd1.myworkdayjobs.com/Search/passwordReset?token=fresh"
+    inbox.append(pipeline.mailbox.Found("reset", fresh, "workday.kla.com", r.reset_at + 4))
+    run(applier._check_mail(r))
+    assert opened == [fresh] and r.mail_done, (opened, r.mail_last)
+
+
+def test_a_reset_email_that_looks_early_by_this_computers_clock_is_used_after_the_wait(srv, monkeypatch):
+    """The review of 0.3.209: with this computer's clock 40 seconds fast, the reset email the site sent for this request
+    arrived "before" it, by the mail service's clock, and 15 seconds back missed it. With nothing newer in
+    RESET_FRESH_WAIT, it's the one: opened."""
+    inbox: list = []
+    applier, (r, _), asked, opened = _waiting_on_resets(srv, monkeypatch, inbox)
+    link = "https://kla.wd1.myworkdayjobs.com/Search/passwordReset?token=skewed"
+    inbox.append(pipeline.mailbox.Found("reset", link, "workday.kla.com", r.reset_at - 40))
+    run(applier._check_mail(r))
+    assert opened == [] and not r.mail_done, r.mail_last  # (a newer one waited for a moment)
+    r.reset_at -= pipeline.RESET_FRESH_WAIT  # (that moment gone by, and nothing newer)
+    run(applier._check_mail(r))
+    assert opened == [link] and r.mail_done, (opened, r.mail_last)
+
+
+@pytest.mark.parametrize("said, refused", [
+    # a reset that went in, and the page after it (the review of 0.3.209): no refusal
+    ("Sign In\nYour session has expired. Please sign in again.", False),
+    ("Your session expired due to inactivity. Sign in to continue.", False),
+    ("Sign In\nFor security, all sessions were ended. Session expired - please log in again with your new password",
+     False),
+    ("Sign In\nEmail Address\nPassword\nForgot your password?\nPasswords must not match your last 5 passwords", False),
+    ("Sign In\nCreate Account\nRequests for reasonable accommodation: link below. Offers expired after 7 days", False),
+    ("Must hold a valid, non-expired driver's license", False),
+    ("Invalid email address or password", False),
+    ("Invalid request", False),
+    ("Your password has expired", False),  # (a reset's own form: a new one is wanted)
+    ("Your password has been reset. This link has expired.", False),  # (it says the password is reset)
+    # the link spent, or the password one the site had before
+    ("This link has expired. Request a new password reset from the sign-in page.", True),
+    ("The password reset link is invalid or has expired.", True),
+    ("Invalid Password Reset Request", True),
+    ("This password reset request is no longer valid.", True),
+    ("Your password reset token has expired", True),
+    ("The link you clicked has already been used.", True),
+    ("This reset link is no longer active.", True),
+    ("Sorry, this link is not valid anymore.", True),
+    ("The password reset has timed out. Please request a new one.", True),
+    ("Error: Password was recently used.", True),
+    ("You can't reuse a recent password.", True),
+    ("You cannot use a password that you have used before.", True),
+    ("Password cannot be the same as your previous 5 passwords.", True),
+    ("New password must be different from your current password.", True)])
+def test_what_a_reset_page_says_of_a_password_it_didnt_set(said, refused):
+    """Only words said of a link, a token, a reset or a password, and never the site's password rules shown beside its
+    boxes (but in an alert: test_a_reset_alert_that_says_the_rules_is_a_refusal)."""
+    assert bool(pipeline._reset_refused({}, said)) == refused, pipeline._reset_refused({}, said)
+
+
+def test_a_reset_alert_that_says_the_rules_is_a_refusal():
+    rules = "Passwords must not match your last 5 passwords"
+    assert pipeline._reset_refused({"errors": [rules]}, "") == rules
+    assert pipeline._reset_refused({"headings": [rules]}, rules) == ""
 
 
 def test_a_look_in_the_inbox_begun_before_another_job_took_it_isnt_used(srv, monkeypatch):

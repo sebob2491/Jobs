@@ -343,11 +343,12 @@ def test_mail_from_before_the_wait_can_be_left_out(imap):
     assert mailbox.search("sam@example.com", "pw", since, {"workday.com"}, "code", look_back=0) is None
 
 
-def test_a_password_resets_email_is_one_since_the_desk_asked_for_it(imap):
-    """KLA's Workday, the reset probe's second pass a minute after the first (run 136): the newest reset email in the
-    two minutes before the wait was the first pass's, its link spent; opened again, the site took nothing, and the desk
-    said it had set the password. A reset's email is one the desk asked for: none from before its request (but a few
-    seconds, for the two clocks) is looked at, and the desk waits for the new one. Codes still look back as before."""
+def test_a_password_resets_email_is_looked_for_as_far_back_as_a_codes(imap):
+    """A reset's email is looked for from when the desk asked for it (`since`), as far back as a code's: the mail
+    service's clock and this computer's can be apart, and 15 seconds back (0.3.209 at first) missed the email the site
+    sent for the request with this computer's clock 40 seconds fast (the review of 0.3.209). The newest comes first: an
+    earlier reset's (KLA's Workday, run 136: its link spent) only when nothing newer came, and the desk waits a moment
+    for one newer than its request (pipeline.RESET_FRESH_WAIT) and opens each link once."""
     asked = time.time()
     own = lambda url: "myworkdayjobs.com" in url  # noqa: E731
     allowed = {"workday.kla.com", "myworkdayjobs.com"}
@@ -357,16 +358,14 @@ def test_a_password_resets_email_is_one_since_the_desk_asked_for_it(imap):
     def reset_mail(link: str) -> bytes:
         return _message("Workday <noreply@workday.kla.com>", "Reset your password", f"Reset your password here: {link}")
 
-    imap.messages = [(asked - 60, reset_mail(spent))]
+    imap.messages = [(asked - 40, reset_mail(fresh))]  # (this computer's clock 40 seconds fast)
     for look_back in (mailbox.LOOK_BACK, None):  # (as the desk asks, and as the default)
         more = {} if look_back is None else {"look_back": look_back}
-        assert mailbox.search("sam@example.com", "pw", asked, allowed, "reset", own, **more) is None
-    imap.messages.append((asked + 20, reset_mail(fresh)))
-    assert mailbox.search("sam@example.com", "pw", asked, allowed, "reset", own, look_back=mailbox.LOOK_BACK).value == fresh
-    imap.messages = [(asked - 60, reset_mail(spent)), (asked - 5, reset_mail(fresh))]  # (a clock a few seconds out)
+        assert mailbox.search("sam@example.com", "pw", asked, allowed, "reset", own, **more).value == fresh
+    imap.messages = [(asked - 60, reset_mail(spent)), (asked + 20, reset_mail(fresh))]
     assert mailbox.search("sam@example.com", "pw", asked, allowed, "reset", own).value == fresh
-    imap.messages = [(asked - 60, _message("noreply@workday.kla.com", "Verify", "Your verification code is 482913"))]
-    assert mailbox.search("sam@example.com", "pw", asked, allowed, "code").value == "482913"
+    imap.messages = [(asked - mailbox.LOOK_BACK - 30, reset_mail(spent))]
+    assert mailbox.search("sam@example.com", "pw", asked, allowed, "reset", own) is None
 
 
 def test_codes_from_greenhouses_mail_domain_and_an_employers_own_eightfold_site():

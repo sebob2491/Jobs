@@ -328,6 +328,17 @@ def test_a_pass_two_that_set_the_real_password_and_didnt_sign_in_leaves_the_site
     said = "\n".join(lp.summary_lines({"reset": [result], "tailored": []}))
     assert "reset KLA: FAIL (site left on an unknown password: maybe still the derived one" in said, said
     assert "maybe still the derived one" in lp.report_markdown({"reset": [result], "tailored": []})
+    assert "never signed in with it after that (it ended needs_you sign_in)" in result["warning"], result["warning"]
+
+
+def test_a_pass_two_that_broke_off_right_after_setting_the_password_says_so():
+    """The review of 0.3.209: a pass 2 that crashed (or was stopped) right after it said it set the real password was
+    said to have been refused by the site ("the real password didn't sign in after it"). It's said for what's known."""
+    broke = _rec(SIGN_IN + RESET[:3], status="needs_you", need="sign_in", crash="TimeoutError: still running")
+    result = lp.reset_result(lp.RESET_TENANTS[0], WHOLE, broke, True)
+    assert result["left_on"] == "unknown" and result["status"] == "fail", result
+    assert "the run broke off before any sign-in" in result["warning"], result["warning"]
+    assert "didn't sign in" not in result["warning"] and "may still be on the derived password" in result["warning"]
 
 
 def test_a_tenant_whose_password_was_never_changed_is_left_as_it_was_but_fails():
