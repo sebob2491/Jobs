@@ -17,7 +17,8 @@ the scrubber (`python -m job_apply.fixtures`) before they become test fixtures.
   - `desk.py` and `static/desk.html`: the Job Desk page;
   - `autofill.py`: answers from the profile;
   - `never.py`: what the desk never agrees to, ticks or presses for the person (one list, every path);
-  - `browser.py` and `formjs.py`: the browser and the form reader;
+  - `browser.py` and `formjs.py`: the browser and the form reader; the browser's tabs, menus, dates, uploads and
+    blocks are in `browser_tabs.py`, `browser_menus.py`, `browser_dates.py`, `browser_uploads.py`, `browser_blocks.py`;
   - `search.py`: employer job searches;
   - `recommend.py`: ranking;
   - `mailbox.py`: emailed codes;
